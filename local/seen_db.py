@@ -1,0 +1,162 @@
+"""SQLite registry of seen job_posting_ids + the local application tracker.
+
+The registry is the local source of truth for whether a job has been
+triaged. The is_seen column inside each synced .csv.gz is a denormalized
+projection — when the VM overwrites the master CSV (all is_seen="no"),
+the watcher rebuilds the column from this registry.
+
+Two more tables extend it into an application tracker:
+  app_status   — one row per job the user acted on (applied / interviewing /
+                 rejected / offer), with dates and a company/title/url snapshot
+                 so the row survives the job aging out of the master CSV.
+  resume_paths — job_posting_id -> the folder the tailored resume landed in,
+                 so re-finding a generated PDF is one click from the UI.
+"""
+from __future__ import annotations
+
+import os
+import sqlite3
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+APP_STATUSES = ("applied", "interviewing", "rejected", "offer")
+
+
+def _default_db_path() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    d = Path(base) / "linkedin_watcher"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "seen.db"
+
+
+class SeenRegistry:
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        self.path = Path(db_path) if db_path else _default_db_path()
+        self._conn = sqlite3.connect(self.path)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS seen ("
+            "  job_posting_id TEXT PRIMARY KEY,"
+            "  marked_at      TEXT NOT NULL"
+            ")"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_status ("
+            "  job_posting_id TEXT PRIMARY KEY,"
+            "  status         TEXT NOT NULL,"
+            "  status_date    TEXT NOT NULL,"   # ISO date of the last status change
+            "  applied_date   TEXT,"            # ISO date first marked applied
+            "  followed_up_at TEXT,"            # ISO date a follow-up nudge was sent
+            "  company        TEXT DEFAULT ''," # snapshot — survives master turnover
+            "  job_title      TEXT DEFAULT '',"
+            "  url            TEXT DEFAULT ''"
+            ")"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS resume_paths ("
+            "  job_posting_id TEXT PRIMARY KEY,"
+            "  path           TEXT NOT NULL,"
+            "  created_at     TEXT NOT NULL"
+            ")"
+        )
+        self._conn.commit()
+
+    # ---- seen ----
+
+    def mark(self, job_posting_ids: list[str]) -> int:
+        if not job_posting_ids:
+            return 0
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        rows = [(str(i), now) for i in job_posting_ids]
+        cur = self._conn.executemany(
+            "INSERT OR IGNORE INTO seen (job_posting_id, marked_at) VALUES (?, ?)",
+            rows,
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def all_ids(self) -> set[str]:
+        cur = self._conn.execute("SELECT job_posting_id FROM seen")
+        return {row[0] for row in cur.fetchall()}
+
+    # ---- application tracker ----
+
+    def set_status(self, job_posting_id: str, status: str, *,
+                   company: str = "", job_title: str = "", url: str = "") -> None:
+        """Upsert a tracker row. applied_date is set the first time the status
+        becomes 'applied' and never overwritten; snapshot fields only fill in
+        when non-empty so a later status change can't blank them."""
+        if status not in APP_STATUSES:
+            raise ValueError(f"status must be one of {APP_STATUSES}, got {status!r}")
+        today = date.today().isoformat()
+        applied = today if status == "applied" else None
+        self._conn.execute(
+            "INSERT INTO app_status (job_posting_id, status, status_date, applied_date,"
+            "                        company, job_title, url)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(job_posting_id) DO UPDATE SET"
+            "   status      = excluded.status,"
+            "   status_date = excluded.status_date,"
+            "   applied_date = COALESCE(app_status.applied_date, excluded.applied_date),"
+            "   company   = CASE WHEN excluded.company   != '' THEN excluded.company   ELSE app_status.company   END,"
+            "   job_title = CASE WHEN excluded.job_title != '' THEN excluded.job_title ELSE app_status.job_title END,"
+            "   url       = CASE WHEN excluded.url       != '' THEN excluded.url       ELSE app_status.url       END",
+            (str(job_posting_id), status, today, applied, company, job_title, url),
+        )
+        self._conn.commit()
+
+    def clear_status(self, job_posting_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM app_status WHERE job_posting_id = ?", (str(job_posting_id),)
+        )
+        self._conn.commit()
+
+    def mark_followed_up(self, job_posting_ids: list[str]) -> None:
+        today = date.today().isoformat()
+        self._conn.executemany(
+            "UPDATE app_status SET followed_up_at = ? WHERE job_posting_id = ?",
+            [(today, str(i)) for i in job_posting_ids],
+        )
+        self._conn.commit()
+
+    def status_rows(self) -> list[dict]:
+        """All tracker rows as dicts, newest status change first."""
+        cur = self._conn.execute(
+            "SELECT job_posting_id, status, status_date, applied_date, followed_up_at,"
+            "       company, job_title, url"
+            " FROM app_status ORDER BY status_date DESC, job_posting_id"
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    # ---- tailored-resume locations ----
+
+    def record_resume(self, job_posting_id: str, path: str) -> None:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self._conn.execute(
+            "INSERT INTO resume_paths (job_posting_id, path, created_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(job_posting_id) DO UPDATE SET"
+            "   path = excluded.path, created_at = excluded.created_at",
+            (str(job_posting_id), str(path), now),
+        )
+        self._conn.commit()
+
+    def resume_path(self, job_posting_id: str) -> str | None:
+        cur = self._conn.execute(
+            "SELECT path FROM resume_paths WHERE job_posting_id = ?",
+            (str(job_posting_id),),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def resume_paths(self) -> dict[str, str]:
+        cur = self._conn.execute("SELECT job_posting_id, path FROM resume_paths")
+        return {row[0]: row[1] for row in cur.fetchall()}
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> "SeenRegistry":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()

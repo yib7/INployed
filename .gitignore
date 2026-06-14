@@ -1,0 +1,35 @@
+# ── Secrets / credentials ────────────────────────────────────────────────────
+.env
+
+# ── Machine-local Claude Code settings ───────────────────────────────────────
+.claude/settings.local.json
+
+# ── Personal / user-supplied content (commit the *.example templates instead) ─
+resume.md
+resume_tailor_files/master_experience.yaml
+resume_tailor_files/resume_*.pdf
+local/config.json
+
+# ── LaTeX build artifacts ────────────────────────────────────────────────────
+*.aux
+*.log
+*.synctex.gz
+*.out
+
+# ── Generated / runtime data ─────────────────────────────────────────────────
+seen.db
+*.csv
+*.csv.gz
+last_run_job_ids.json
+company_blocklist.txt
+linkedin_jobs_master.csv
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# ── OS / editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

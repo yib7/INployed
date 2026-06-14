@@ -1,0 +1,25 @@
+# Local Windows side (C:\Python314, Python 3.14.0): watcher, dashboard,
+# resume tailor, and tests. Snapshot of the working install on 2026-06-12.
+#
+#   python -m pip install -r requirements.txt
+#
+# NOT pip-installable but REQUIRED locally:
+#   * MiKTeX — resume_tailor compiles LaTeX -> PDF and needs pdflatex on PATH
+#     (or set PDFLATEX_PATH). Install: winget install MiKTeX.MiKTeX
+#     First compile may prompt MiKTeX to fetch missing LaTeX packages — allow it.
+#   * Tkinter — ships with the python.org installer; no pip package.
+#
+# The VM has its own pin set: see requirements-vm.txt.
+
+pandas==3.0.1
+google-genai==1.56.0
+markdownify==1.2.2
+pypdf==6.11.0
+PyYAML==6.0.3
+python-dotenv==1.1.1   # auto-loads .env so secrets stay out of the repo
+
+# only needed to run scraper.py locally (it normally runs on the VM)
+aiohttp==3.13.5
+
+# dev / tests (python -m pytest tests/ -v)
+pytest==9.0.3

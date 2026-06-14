@@ -1,0 +1,70 @@
+"""Write apply_data.json next to each tailored resume.
+
+This is the machine-readable profile a browser form-fill assistant
+(Claude-in-Chrome, etc.) consumes to prefill Greenhouse/Lever/Workday
+applications: candidate basics + education from master_experience.yaml, the
+exact document paths, the job's identity, and the tailored bullets. The
+assistant fills the form; the human reviews before submitting — this file
+never auto-submits anything.
+"""
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List
+
+from . import assets, output
+
+
+def write(job: Dict[str, str], out_dir: Path, bullets: List[str],
+          cover_letter: bool = False) -> Path:
+    master = assets.load_master()
+    basics = master.get("basics", {}) or {}
+    education = master.get("education", []) or []
+
+    resume_pdf = out_dir / output.resume_filename()
+    cover_pdf = out_dir / output.cover_filename()
+
+    data = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "instructions": (
+            "Prefill application forms from this profile. Always leave the final "
+            "submit to the human (review-before-submit). Never invent answers for "
+            "fields not covered here — leave them blank and flag them."
+        ),
+        "candidate": {
+            "full_name": basics.get("name", ""),
+            "email": basics.get("email", ""),
+            "phone": basics.get("phone", ""),
+            "location": basics.get("location", ""),
+            "linkedin": basics.get("linkedin", ""),
+            "github": basics.get("github", ""),
+        },
+        "education": [
+            {
+                "school": e.get("school", ""),
+                "degree": e.get("degree", ""),
+                "concentration": e.get("concentration", ""),
+                "minor": e.get("minor", ""),
+                "gpa": e.get("gpa", ""),
+                "dates": e.get("dates", ""),
+                "location": e.get("location", ""),
+            }
+            for e in education
+        ],
+        "documents": {
+            "resume_pdf": str(resume_pdf) if resume_pdf.exists() else "",
+            "cover_letter_pdf": str(cover_pdf) if cover_letter and cover_pdf.exists() else "",
+        },
+        "job": {
+            "job_posting_id": str(job.get("job_posting_id", "")),
+            "company": job.get("company_name", ""),
+            "title": job.get("job_title", ""),
+            "url": job.get("url", ""),
+        },
+        "resume_bullets": bullets,
+    }
+    path = out_dir / "apply_data.json"
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path

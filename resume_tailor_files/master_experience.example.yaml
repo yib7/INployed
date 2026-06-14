@@ -1,0 +1,98 @@
+# ============================================================
+# master_experience.example.yaml — TEMPLATE (copy to master_experience.yaml)
+# ============================================================
+# This is the SOURCE OF TRUTH the resume tailor selects from. Copy it to
+# `master_experience.yaml` (which is git-ignored) and replace every value below
+# with your own. The real file is intentionally kept out of the repo.
+#
+# How this file works:
+#   - Hold MORE than fits on one page. The pipeline SELECTS from it; it never
+#     invents facts. The richer this file, the better each tailored résumé.
+#   - Store facts as ATOMS (what / how / scope / impact / angles), NOT finished
+#     sentences, so the compose step can re-angle each item per job description.
+#   - Quantify everything you can (%, $, counts, time saved). Numbers win.
+#   - `angles` are free-form tags (e.g. llm, backend, data-pipeline) that help
+#     the selector match an atom to a job description's keywords.
+# ============================================================
+
+basics:
+  name: Jane Doe
+  location: City, ST
+  email: jane.doe@example.com
+  phone: "555-555-0100"            # quoted so it stays a string
+  linkedin: linkedin.com/in/janedoe
+  github: github.com/janedoe
+
+education:
+  - school: State University
+    location: City, ST
+    degree: B.S. Computer Science
+    concentration: AI/ML
+    minor: Data Science
+    gpa: 3.7                        # no quotes -> parsed as a number
+    dates: "2021-08 / 2025-05"
+    honors: [Dean's List, Honors College]
+
+experience:
+  - org: Example Corp
+    title: Software Engineering Intern
+    location: City, ST
+    dates: "2024-06 / 2024-08"
+    context:
+      team: "4-person platform team"
+      stack: "Python, PostgreSQL, AWS"
+      duration: "10-week summer internship"
+    achievements:
+      - id: pipeline_speedup
+        what: "rebuilt the nightly data-ingestion pipeline"
+        how: "replaced sequential REST calls with a batched, async fetcher"
+        scope: "~2M records/day across 12 source systems"
+        impact:
+          - "cut runtime from 6h to 90min (75% faster)"
+          - "reduced cloud spend ~$400/mo by removing redundant calls"
+        angles: [data-pipeline, async, backend, cost-optimization]
+      - id: test_coverage
+        what: "raised service test coverage and added CI gates"
+        how: "wrote pytest suites for the 3 least-covered modules"
+        scope: "coverage 42% -> 81% on the billing service"
+        impact:
+          - "caught 3 regressions before release"
+        angles: [testing, ci-cd, quality]
+
+projects:
+  - name: ExampleApp
+    title_full: "ExampleApp: a natural-language interface for X"
+    dates: "2024-01 / 2024-05"
+    team: "solo, built end-to-end"
+    repo: "github.com/janedoe/exampleapp"
+    live_url: "https://exampleapp.example.com"
+    achievements:
+      - id: core_feature
+        what: "built a web app that turns plain English into runnable queries"
+        how: "LLM drafts the query, a validator checks it, results stream back"
+        impact:
+          - "removes the SQL barrier for non-technical users"
+        angles: [llm, full-stack, product]
+        models: "Gemini (drafting) + a cheaper flash model (validation)"
+        frontend: "vanilla JS + Tailwind, single-page dashboard"
+        deployment: "Dockerized; live demo hosted on a PaaS"
+
+leadership:
+  - org: Campus Coding Club
+    title: President
+    dates: "2023-09 / 2024-05"
+    achievements:
+      - id: membership_growth
+        what: "grew active membership and ran weekly workshops"
+        impact:
+          - "membership 20 -> 60 over one academic year"
+        angles: [leadership, community, teaching]
+
+# Skills taxonomy — group however reads best on a résumé line. The tailor will
+# select and reorder these per job description.
+skills:
+  languages: [Python, JavaScript, SQL, Java]
+  ml_ai: [PyTorch, scikit-learn, LLM prompt engineering, RAG]
+  data: [pandas, NumPy, PostgreSQL, Spark]
+  cloud_devops: [AWS, Docker, GitHub Actions, Linux]
+  tools: [Git, Jupyter, FastAPI, React]

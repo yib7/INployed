@@ -46,6 +46,10 @@ GCP_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 MODEL_FLASH = os.getenv("RESUME_TAILOR_MODEL_FLASH", "gemini-2.5-flash")
 # Pro tier: this project exposes gemini-3.1-pro-preview (3.5-pro/3.1-pro 404 here).
 MODEL_PRO = os.getenv("RESUME_TAILOR_MODEL_PRO", "gemini-3.1-pro-preview")
+# flash-lite → cheapest tier for high-frequency, low-stakes classification (the
+# master_experience JD-gap screen/placement). Quality isn't critical and edits are
+# reviewed before any write, so the cheapest model is the right call.
+MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-2.5-flash-lite")
 
 # ── pdflatex ─────────────────────────────────────────────────────────────────
 PDFLATEX_PATH = os.getenv("PDFLATEX_PATH", "pdflatex")

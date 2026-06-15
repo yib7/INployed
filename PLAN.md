@@ -50,7 +50,7 @@ Optimize resume space and provide the LLM with strict formatting constraints for
 2. ~~`git init` + `.gitignore` + `gitleaks` scan + first commit.~~ **(Completed)**
 3. ~~Modularize for any user, Phase 1: config-driven inputs + `master_experience.example.yaml`.~~ **(Completed)** — `tailor:` yaml section drives required blocks + fixed line budgets (no hardcoded org names); header/Education render from yaml `basics`/`education`; template stripped to a generic preamble; candidate name derived from yaml. Tests in `tests/test_tailor_config.py`; resume compiles end-to-end.
 4. Setup wizard (fast vs long) with persisted config + UI responsiveness optimizations. (large — isolate)
-5. Smarter master_experience JD-gap feature + bullet length formatting. (medium)
+5. ~~Smarter master_experience JD-gap feature + bullet length formatting.~~ **(Completed)** — bullet length floors (75% single / 50% multi-final) + unicode→LaTeX math in `latexutil`/`layout`/`run`; JD-gap module `master_gaps.py` (detect → flash-lite screen/place → comment-preserving reviewable diff, opt-in write w/ backup) + CLI. Tests: `test_bullet_length.py`, `test_master_gaps.py`.
 6. Showpiece README + architecture diagram + setup docs. (medium)
 7. Closeout checklist (security review, credits, refactor, codebase-explainer doc, push). (medium)
 

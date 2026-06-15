@@ -44,15 +44,33 @@ def strip_emphasis(text: str) -> str:
     return text.strip()
 
 
-def clean_bullet(text: str) -> str:
-    """Strip emphasis, escape for LaTeX, normalize whitespace.
+# Unicode math glyphs a model may emit in a bullet -> the LaTeX that renders them
+# correctly in the template's OT1 font (raw glyphs render as tofu/wrong chars).
+# Applied AFTER escape_latex so the replacement values keep their backslashes.
+_MATH_GLYPHS = {
+    "≥": r"$\ge$", "≤": r"$\le$", "≈": r"$\approx$", "≠": r"$\neq$",
+    "×": r"$\times$", "÷": r"$\div$", "±": r"$\pm$", "→": r"$\rightarrow$",
+    "↑": r"$\uparrow$", "↓": r"$\downarrow$", "∞": r"$\infty$", "µ": r"$\mu$",
+    "μ": r"$\mu$", "°": r"$^\circ$",
+}
 
-    Renders '~' (approximately) as the math tilde $\\sim$, matching the
-    template's own typography instead of a raised ASCII tilde.
+
+def _math_to_latex(text: str) -> str:
+    text = text.replace(r"\textasciitilde{}", r"$\sim$")  # '~' (approximately)
+    for glyph, tex in _MATH_GLYPHS.items():
+        if glyph in text:
+            text = text.replace(glyph, tex)
+    return text
+
+
+def clean_bullet(text: str) -> str:
+    """Strip emphasis, escape for LaTeX, normalize whitespace, and convert any
+    unicode math glyphs ('~', '≥', '×', …) to LaTeX math so they render in the PDF
+    instead of dropping out or rendering as the wrong character.
     """
     text = strip_emphasis(text)
     text = re.sub(r"\s+", " ", text).strip().rstrip(".")
-    text = escape_latex(text).replace(r"\textasciitilde{}", r"$\sim$")
+    text = _math_to_latex(escape_latex(text))
     return text + "."
 
 

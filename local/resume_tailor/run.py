@@ -141,6 +141,27 @@ def _enforce_layout(jd: str, sel: dict, bullets: Dict[str, str],
                 log(f"layout: [{gk}] wanted {tgt} line(s), best effort ~{got} "
                     f"({layout._visible_len(bullets[gk])} chars)")
 
+    # Free (un-budgeted) bullets: a stubby single line wastes space (PLAN stage 5
+    # — single-line bullets should fill >= 75%). For each free bullet that renders
+    # to ONE line but under that floor, try one grounded refit to develop it from
+    # its atoms. Never pad without facts: if it can't grow, leave it as-is.
+    lo1, _hi1 = layout.body_line_budget(1)
+    for gk, ids in compose.group_map(sel).items():
+        if gk in budgets or gk not in bullets:
+            continue
+        if layout.est_body_lines(bullets[gk]) != 1 or layout._visible_len(bullets[gk]) >= lo1:
+            continue
+        try:
+            cand = compose.refit(jd, ids, bullets[gk], 1)
+        except Exception:
+            cand = ""
+        # Accept only a strictly fuller line that still fits on one line.
+        if cand and lo1 <= layout._visible_len(cand) <= layout.BODY_CPL - 2:
+            bullets[gk] = cand
+        else:
+            log(f"layout: free bullet [{gk}] short single line "
+                f"({layout._visible_len(bullets[gk])} chars); left as-is (no padding without facts)")
+
 
 def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: StatusFn = None) -> Path:
     log = on_status or _noop

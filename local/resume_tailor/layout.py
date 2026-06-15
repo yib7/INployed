@@ -27,7 +27,11 @@ from typing import Dict, List, Tuple
 # ── Calibrated column capacities ─────────────────────────────────────────────
 BODY_CPL = int(os.getenv("RESUME_TAILOR_BODY_CPL", "92"))    # body bullet column
 SKILL_CPL = int(os.getenv("RESUME_TAILOR_SKILL_CPL", "105"))  # technical-skills line
-MIN_FILL = float(os.getenv("RESUME_TAILOR_MIN_LINE_FILL", "0.5"))  # "no >half-empty line"
+# Fill floors that keep the page from looking sparse (PLAN stage 5):
+#   - a SINGLE-line bullet must fill >= 75% of its line (no 7-word stubs);
+#   - the LAST line of a MULTI-line bullet must fill >= 50% (it may "breathe").
+MIN_SINGLE_LINE_FILL = float(os.getenv("RESUME_TAILOR_MIN_SINGLE_FILL", "0.75"))
+MIN_FILL = float(os.getenv("RESUME_TAILOR_MIN_LINE_FILL", "0.5"))  # trailing line of a multi-line bullet
 _SAFETY = 2  # keep a couple chars off the wrap boundary so a target line never spills
 
 # ── The strict spec ──────────────────────────────────────────────────────────
@@ -67,9 +71,12 @@ def _label_w(label: str) -> int:
 # ── Body-bullet line math ────────────────────────────────────────────────────
 def body_line_budget(target_lines: int) -> Tuple[int, int]:
     """(min_chars, max_chars) for a body bullet to render to EXACTLY target_lines
-    and fill its last printed line at least MIN_FILL (no >half-empty trailing line)."""
+    and fill its last printed line adequately. A single-line bullet must reach
+    MIN_SINGLE_LINE_FILL (75%); a multi-line bullet's trailing line must reach
+    MIN_FILL (50%)."""
     hi = target_lines * BODY_CPL - _SAFETY
-    lo = ceil((target_lines - 1 + MIN_FILL) * BODY_CPL)
+    last_line_fill = MIN_SINGLE_LINE_FILL if target_lines == 1 else MIN_FILL
+    lo = ceil((target_lines - 1 + last_line_fill) * BODY_CPL)
     return lo, hi
 
 

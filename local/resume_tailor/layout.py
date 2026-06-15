@@ -30,14 +30,15 @@ SKILL_CPL = int(os.getenv("RESUME_TAILOR_SKILL_CPL", "105"))  # technical-skills
 MIN_FILL = float(os.getenv("RESUME_TAILOR_MIN_LINE_FILL", "0.5"))  # "no >half-empty line"
 _SAFETY = 2  # keep a couple chars off the wrap boundary so a target line never spills
 
-# ── The strict spec (the thing the user asked to hard-code) ──────────────────
-# Initech: EXACTLY 2 bullets = 3 printed lines (a 2-line lead bullet + a 1-line
-# tail bullet). Tuple is the per-bullet line target, in render order.
-JCPENNEY_BULLET_LINES: Tuple[int, ...] = (2, 1)
-
-# Each Leadership org: EXACTLY 2 printed lines. Realised as either two 1-line
-# bullets or one 2-line bullet, chosen deterministically from how many atoms the
-# org actually has (see plan_leadership_lines).
+# ── The strict spec ──────────────────────────────────────────────────────────
+# Per-bullet printed-line targets for the fixed EXPERIENCE blocks are config-driven
+# (yaml `tailor.fixed_blocks.<block>.line_targets`, e.g. [2, 1] = a 2-line lead
+# bullet + a 1-line tail bullet) so the spec isn't tied to one employer.
+#
+# Each Leadership org defaults to this many printed lines (overridable via
+# `tailor.leadership_entry_lines`). Realised as either two 1-line bullets or one
+# 2-line bullet, chosen deterministically from how many atoms the org has (see
+# plan_leadership_lines).
 LEADERSHIP_ENTRY_LINES = 2
 
 # Technical Skills: 3 fixed category lines, total 3-4 printed lines. Languages
@@ -107,12 +108,14 @@ def skill_floors() -> Dict[str, int]:
 
 
 # ── Bullet-count planning for the fixed blocks ───────────────────────────────
-def plan_leadership_lines(group_count: int) -> List[int]:
+def plan_leadership_lines(group_count: int, entry_lines: int = LEADERSHIP_ENTRY_LINES) -> List[int]:
     """Per-bullet line targets for one Leadership org given how many bullets it has.
 
     2+ bullets -> two 1-line bullets (extra bullets, if any, also 1 line);
-    1 bullet   -> a single 2-line bullet.  Either way the org totals ~2 lines.
+    1 bullet   -> a single `entry_lines`-line bullet.  Either way the org totals
+    ~`entry_lines` printed lines. `entry_lines` is config-overridable (yaml
+    `tailor.leadership_entry_lines`) so the spec isn't tied to one resume.
     """
     if group_count <= 1:
-        return [LEADERSHIP_ENTRY_LINES]
+        return [entry_lines]
     return [1] * group_count

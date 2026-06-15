@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any, Dict, List
 
@@ -15,16 +16,28 @@ import yaml
 
 from . import config
 
-# The body sections begin at this marker in resume_template.tex. Everything
-# before it (preamble, name/contact header, Education) is job-independent and
-# reused verbatim.
-_BODY_MARKER = "%-----------EXPERIENCE-----------"
+# Everything up to and including \begin{document} is the job-AND-candidate-
+# independent preamble (page geometry, fonts, the \resume* macros). It is reused
+# verbatim. The name/contact header, Education, and every body section are
+# generated from master_experience.yaml in render.py, so the tracked template
+# carries no personal data and works for any user.
+_PREAMBLE_MARKER = "\\begin{document}"
 
 
 @lru_cache(maxsize=1)
 def load_master() -> Dict[str, Any]:
     with config.MASTER_YAML.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
+
+
+@lru_cache(maxsize=1)
+def tailor_config() -> Dict[str, Any]:
+    """Optional top-level `tailor:` block: which blocks are required to render and
+    the hard per-block line budgets for the template's fixed sections. Absent ->
+    {} (compose.py then falls back to sensible defaults). See the example yaml for
+    the schema. This is what makes the layout config-driven for any user instead of
+    hardcoding one person's org names."""
+    return load_master().get("tailor") or {}
 
 
 @lru_cache(maxsize=1)
@@ -78,11 +91,16 @@ def blocks() -> Dict[str, List[Dict[str, Any]]]:
 
 @lru_cache(maxsize=1)
 def template_head() -> str:
+    """The LaTeX preamble through \\begin{document} (everything candidate-
+    independent). The header/Education/body are rendered from the yaml.
+
+    Matches the marker only at the start of a line so a mention inside a comment
+    (e.g. the template's own explanatory header) never truncates the preamble."""
     text = config.TEMPLATE_TEX.read_text(encoding="utf-8")
-    idx = text.find(_BODY_MARKER)
-    if idx == -1:
-        raise ValueError(f"Body marker {_BODY_MARKER!r} not found in template.")
-    return text[:idx].rstrip() + "\n\n"
+    m = re.search(r"(?m)^" + re.escape(_PREAMBLE_MARKER), text)
+    if not m:
+        raise ValueError(f"Preamble marker {_PREAMBLE_MARKER!r} not found at a line start.")
+    return text[:m.end()].rstrip() + "\n\n"
 
 
 def _pdf_text(path) -> str:

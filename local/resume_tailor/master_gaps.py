@@ -170,9 +170,16 @@ def _bucket_span(text: str, skills_start: int, bucket: str) -> Optional[tuple[in
     return None
 
 
+def _safe_item(item: str) -> bool:
+    """Reject anything that could break the yaml flow list when inserted as a
+    quoted scalar (defense-in-depth — inputs are already lexicon/JD-derived)."""
+    return not any(c in item for c in ('"', "]", "[", "\n", "\r", "\\"))
+
+
 def _insert_items(text: str, close_idx: int, items: List[str]) -> str:
-    """Insert quoted items just before the flow list's closing ']' at close_idx."""
-    addition = "".join(f', "{it}"' for it in items)
+    """Insert quoted items just before the flow list's closing ']' at close_idx.
+    Items with yaml-breaking characters are skipped rather than corrupt the file."""
+    addition = "".join(f', "{it}"' for it in items if _safe_item(it))
     return text[:close_idx] + addition + text[close_idx:]
 
 

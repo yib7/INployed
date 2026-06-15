@@ -5,11 +5,12 @@ On collision (same company+title already has a resume), nest a dated subfolder.
 """
 from __future__ import annotations
 
+import os
 import re
 from datetime import date
 from pathlib import Path
 
-from . import config
+from . import assets, config
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -20,12 +21,25 @@ def sanitize(name: str, *, max_len: int = 80) -> str:
     return (name[:max_len].rstrip(". ") or "Unknown")
 
 
+def candidate_slug() -> str:
+    """File-name stem for the candidate. RESUME_TAILOR_CANDIDATE wins if set;
+    otherwise derived from yaml basics.name; else a safe default."""
+    env = os.getenv("RESUME_TAILOR_CANDIDATE")
+    if env:
+        return env
+    try:
+        name = (assets.load_master().get("basics", {}) or {}).get("name", "")
+    except Exception:
+        name = ""
+    return sanitize(name).replace(" ", "_") if name else config.CANDIDATE_NAME
+
+
 def resume_filename() -> str:
-    return f"{config.CANDIDATE_NAME}_Resume.pdf"
+    return f"{candidate_slug()}_Resume.pdf"
 
 
 def cover_filename() -> str:
-    return f"{config.CANDIDATE_NAME}_Cover_Letter.pdf"
+    return f"{candidate_slug()}_Cover_Letter.pdf"
 
 
 def resolve_dir(company: str, job_title: str) -> Path:

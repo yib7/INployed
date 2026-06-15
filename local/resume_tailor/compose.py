@@ -46,12 +46,10 @@ _CORE_VERBS = (
     "Benchmarked, Prototyped, Instrumented"
 )
 
-# Blocks the new template keeps fixed — they must always render, even if the model
-# under-selects. (org/name as it appears in master_experience.yaml.)
-_REQUIRED = {
-    "experience": ["Globex", "Initech"],
-    "leadership": ["Example Honor Society", "Example Student Council"],
-}
+# Which blocks must always render and the hard line budgets for the fixed blocks
+# are CONFIG-DRIVEN (yaml `tailor:` section) so nothing is tied to one person's
+# resume. See _required_blocks / _fixed_experience_specs / _leadership_entry_lines
+# below for the schema and defaults.
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -76,6 +74,81 @@ def _first_atom(section: str, name: str) -> List[str]:
         if b["name"] == name and b["atoms"]:
             return [b["atoms"][0]]
     return []
+
+
+# ── Config-driven layout spec (yaml `tailor:` section) ────────────────────────
+# tailor:
+#   required:                       # blocks that must always render (default: all)
+#     experience: all               #   'all' or a list of block names
+#     leadership: [Org A, Org B]
+#   fixed_blocks:                   # hard per-bullet line budgets (default: none)
+#     Initech: {line_targets: [2, 1]}   # EXACTLY len(line_targets) bullets
+#   leadership_entry_lines: 2       # each leadership org forced to N printed lines
+def _required_blocks() -> Dict[str, List[str]]:
+    """Section -> block names that must always render. Default: every block in
+    experience and leadership (projects are selected, never force-injected).
+    Explicitly-listed names that don't exist raise, to fail loud on a typo."""
+    cfg = assets.tailor_config().get("required") or {}
+    bl = assets.blocks()
+    out: Dict[str, List[str]] = {}
+    for sec in ("experience", "leadership"):
+        present = [b["name"] for b in bl.get(sec, [])]
+        spec = cfg.get(sec, "all")
+        if spec in (None, "all"):
+            out[sec] = present
+            continue
+        missing = [n for n in spec if n not in present]
+        if missing:
+            raise RuntimeError(
+                f"tailor.required.{sec} names block(s) not in master_experience.yaml: "
+                f"{missing} (present: {present})"
+            )
+        out[sec] = list(spec)
+    return out
+
+
+def _fixed_experience_specs() -> Dict[str, List[int]]:
+    """{experience_block_name: [per-bullet printed-line targets]}. Blocks not listed
+    are free (model chooses the count, no hard line budget)."""
+    fb = assets.tailor_config().get("fixed_blocks") or {}
+    exp_names = {b["name"] for b in assets.blocks().get("experience", [])}
+    out: Dict[str, List[int]] = {}
+    for name, spec in fb.items():
+        targets = (spec or {}).get("line_targets")
+        if name in exp_names and targets:
+            out[name] = [int(t) for t in targets]
+    return out
+
+
+def _leadership_entry_lines() -> int:
+    """Printed lines each leadership org is forced to (0/absent -> not enforced)."""
+    cfg = assets.tailor_config()
+    if "leadership_entry_lines" not in cfg:
+        return layout.LEADERSHIP_ENTRY_LINES
+    return int(cfg.get("leadership_entry_lines") or 0)
+
+
+def _experience_guidance() -> str:
+    """Per-block selection guidance for the select() prompt, generated from the
+    config so it never hardcodes one person's employers."""
+    specs = _fixed_experience_specs()
+    required = set(_required_blocks().get("experience", []))
+    lines: List[str] = []
+    for b in assets.blocks().get("experience", []):
+        name = b["name"]
+        if name in specs:
+            t = specs[name]
+            lines.append(
+                f"  - {name}: EXACTLY {len(t)} bullet group(s) "
+                f"(printed-line targets {t}); keep it tight."
+            )
+        else:
+            tag = "ALWAYS include" if name in required else "include if relevant"
+            lines.append(
+                f"  - {name}: {tag}; choose the number of groups that best fits, "
+                f"densest / most JD-relevant first."
+            )
+    return "\n".join(lines)
 
 
 def group_map(sel: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -104,18 +177,18 @@ def _catalog() -> str:
 
 
 def _check_required_blocks() -> None:
-    """Fail loudly if master_experience.yaml no longer has the blocks _REQUIRED
-    names — otherwise _ensure_required_blocks silently no-ops and the template's
-    fixed sections vanish from the output."""
-    bl = assets.blocks()
-    for sec, names in _REQUIRED.items():
-        have = {b["name"] for b in bl.get(sec, [])}
-        missing = [n for n in names if n not in have]
-        if missing:
-            raise RuntimeError(
-                f"master_experience.yaml is missing required {sec} block(s): {missing} "
-                f"(update _REQUIRED in compose.py if these were renamed)"
-            )
+    """Fail loudly if a required block (or a fixed-block spec) names a block that
+    isn't in master_experience.yaml — otherwise the template's fixed sections
+    silently vanish from the output. _required_blocks() already raises for explicit
+    missing names; here we also validate fixed_blocks."""
+    _required_blocks()  # raises on explicit missing required names
+    exp_names = {b["name"] for b in assets.blocks().get("experience", [])}
+    missing = [n for n in _fixed_experience_specs() if n not in exp_names]
+    if missing:
+        raise RuntimeError(
+            f"tailor.fixed_blocks names experience block(s) not in "
+            f"master_experience.yaml: {missing} (present: {sorted(exp_names)})"
+        )
 
 
 # ── Stage 1: select ──────────────────────────────────────────────────────────
@@ -143,6 +216,14 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         + _PRINCIPLE
     )
     pools = _skill_pools()
+    exp_guidance = _experience_guidance()
+    lead_lines = _leadership_entry_lines()
+    lead_guidance = (
+        f"Each entry = EXACTLY {lead_lines} printed line(s), normally as "
+        f"{lead_lines} tight single-line bullet(s) (one per atom)."
+        if lead_lines else
+        "Choose the number of groups per entry that best fits."
+    )
     # Static blocks first (catalog/pools/guidance/schema are identical every run),
     # the per-job JOB/JD last — so Gemini's implicit prefix cache can discount the
     # large static prefix across back-to-back tailor runs. JSON mode fixes the
@@ -156,20 +237,20 @@ Tools & Infrastructure: {json.dumps(pools["Tools & Infrastructure"], ensure_asci
 Libraries & Frameworks: {json.dumps(pools["Libraries & Frameworks"], ensure_ascii=False)}
 
 Selection guidance — the resume template has FIXED sections; fill them to one full page (~14-18 bullets):
-- Work Experience: ALWAYS include Globex (~3 groups) AND Initech (EXACTLY 2 groups, targeting ~3 printed lines total — one bullet should be dense enough to wrap to 2 lines, the other fits on 1). Globex carries the resume; Initech is intentionally brief.
+- Work Experience (use the block names exactly as listed in the catalog above):
+{exp_guidance}
 - Projects: include ALL available projects, ORDERED STRONGEST-FIRST for THIS job. Give the strongest ~2-3 groups and weaker ones ~1 group.
-- Leadership: ALWAYS include BOTH leadership entries. Each entry = EXACTLY 2 printed lines, normally as 2 tight single-line bullets (one per atom). Total leadership = 4 printed lines across both entries.
+- Leadership: ALWAYS include EVERY leadership entry. {lead_guidance}
 - Line density rule: every bullet must fill at least half its printed line. Never write a bullet so short it leaves more than half the line blank — fuse atoms or pick denser content instead.
 - Within a block, order groups by relevance to THIS job.
 
-Return ONLY JSON (groups is a list of lists of atom ids):
+Return ONLY JSON (use the real block names + atom ids from the catalog; groups is a list of lists of atom ids):
 {{
   "experience": [
-    {{"name": "Globex", "groups": [["extraction_model"], ["integrity_safeguards"], ["cost_speed", "extraction_eval"]]}},
-    {{"name": "Initech", "groups": [["transactions"], ["onboarding_support"]]}}
+    {{"name": "<experience block name>", "groups": [["<atom_id>"], ["<atom_id>", "<atom_id>"]]}}
   ],
-  "projects":   [{{"name": "ExampleApp", "groups": [["..."], ["...", "..."]]}}],
-  "leadership": [{{"name": "...", "groups": [["..."]]}}, {{"name": "...", "groups": [["..."]]}}],
+  "projects":   [{{"name": "<project name>", "groups": [["<atom_id>"], ["<atom_id>", "<atom_id>"]]}}],
+  "leadership": [{{"name": "<leadership org>", "groups": [["<atom_id>"]]}}],
   "skill_focus": "one of: ml_research | backend_platform | data_analytics | general",
   "skills": {{"Languages": "Python, SQL, R", "Tools & Infrastructure": "...", "Libraries & Frameworks": "..."}},
   "rationale": "1-2 sentences (incl. why projects are ordered as they are)"
@@ -220,7 +301,7 @@ def _normalize_selection(sel: Dict[str, Any]) -> Dict[str, Any]:
 
 def _ensure_required_blocks(clean: Dict[str, Any], used: set[str]) -> None:
     """Guarantee the template's fixed blocks render, even if the model omitted them."""
-    for sec, required_names in _REQUIRED.items():
+    for sec, required_names in _required_blocks().items():
         present = {e["name"] for e in clean.get(sec, [])}
         for name in required_names:
             if name in present:
@@ -250,10 +331,11 @@ def _block_atoms(section: str, name: str) -> List[str]:
 
 
 def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
-    """Force Initech to EXACTLY 2 bullets and each Leadership org to exactly the
-    bullet count its line-budget needs (2 single-atom bullets when it has >=2
-    atoms, else 1). This is deterministic — the model cannot over/under-fill the
-    fixed blocks regardless of what select() returned."""
+    """Force each configured fixed experience block to EXACTLY len(line_targets)
+    bullets, and each Leadership org to the bullet count its line-budget needs
+    (2 single-atom bullets when it has >=2 atoms, else 1). Deterministic — the
+    model cannot over/under-fill the fixed blocks regardless of what select()
+    returned. All driven by the yaml `tailor:` config (no hardcoded org names)."""
     used: set[str] = {
         aid
         for sec in ("experience", "projects", "leadership")
@@ -261,13 +343,17 @@ def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
         for g in e["groups"]
         for aid in g
     }
+    specs = _fixed_experience_specs()
     for e in clean.get("experience", []):
-        if e["name"] == "Initech":
-            _resize_to_count(e, "experience", "Initech", 2, used, singles=False)
-    for e in clean.get("leadership", []):
-        avail = _block_atoms("leadership", e["name"])
-        target = layout.LEADERSHIP_ENTRY_LINES if len(avail) >= 2 else 1
-        _resize_to_count(e, "leadership", e["name"], target, used, singles=True)
+        targets = specs.get(e["name"])
+        if targets:
+            _resize_to_count(e, "experience", e["name"], len(targets), used, singles=False)
+    lead_lines = _leadership_entry_lines()
+    if lead_lines:
+        for e in clean.get("leadership", []):
+            avail = _block_atoms("leadership", e["name"])
+            target = lead_lines if len(avail) >= 2 else 1
+            _resize_to_count(e, "leadership", e["name"], target, used, singles=True)
 
 
 def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
@@ -308,18 +394,22 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
 
 def layout_budgets(sel: Dict[str, Any]) -> Dict[str, int]:
     """{gkey: target_printed_lines} for every bullet under a hard line budget
-    (Initech's two bullets + each Leadership bullet). Bullets not listed are free."""
+    (configured fixed experience blocks + each Leadership bullet). Bullets not
+    listed are free. All targets come from the yaml `tailor:` config."""
     budgets: Dict[str, int] = {}
+    specs = _fixed_experience_specs()
     for e in sel.get("experience", []):
-        if e["name"] != "Initech":
+        targets = specs.get(e["name"])
+        if not targets:
             continue
         for i, ids in enumerate(e["groups"]):
-            tgt = layout.JCPENNEY_BULLET_LINES[i] if i < len(layout.JCPENNEY_BULLET_LINES) else 1
-            budgets[_gkey(ids)] = tgt
-    for e in sel.get("leadership", []):
-        plan = layout.plan_leadership_lines(len(e["groups"]))
-        for ids, tgt in zip(e["groups"], plan):
-            budgets[_gkey(ids)] = tgt
+            budgets[_gkey(ids)] = targets[i] if i < len(targets) else 1
+    lead_lines = _leadership_entry_lines()
+    if lead_lines:
+        for e in sel.get("leadership", []):
+            plan = layout.plan_leadership_lines(len(e["groups"]), lead_lines)
+            for ids, tgt in zip(e["groups"], plan):
+                budgets[_gkey(ids)] = tgt
     return budgets
 
 

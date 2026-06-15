@@ -15,6 +15,25 @@
 #     the selector match an atom to a job description's keywords.
 # ============================================================
 
+# ============================================================
+# tailor: OPTIONAL layout spec. The compose step keeps your résumé to one page by
+# enforcing a few fixed-section budgets. Everything here is optional — omit the
+# whole `tailor:` block and you get sensible defaults:
+#   - required: every experience + leadership block always renders.
+#   - leadership_entry_lines: 2 (each leadership org takes ~2 printed lines).
+#   - no experience block has a hard bullet budget (the model picks the count).
+# Declare a block under `fixed_blocks` only when you want it pinned to an exact
+# bullet count + per-bullet printed-line target (e.g. keep a part-time job brief).
+# ============================================================
+# tailor:
+#   required:
+#     experience: all            # 'all', or a list: [Example Corp]
+#     leadership: all
+#   fixed_blocks:
+#     Example Corp:
+#       line_targets: [2, 1]     # EXACTLY 2 bullets: a 2-line lead + a 1-line tail
+#   leadership_entry_lines: 2
+
 basics:
   name: Jane Doe
   location: City, ST

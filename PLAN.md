@@ -1,11 +1,11 @@
 # Job Scraper — Finish, Productionize, Ship
 
-> Self-contained brief. Paste into a fresh Claude session to drive this project. Don't mix other projects into the session.
+> Self-contained brief to drive this project. Do all work in a single continuous session, progressing in discrete stages.
 
 ## Working agreement
 - **Git hygiene:** private repo; write `.gitignore` *before* the first commit; commit small, conventional units (`feat:`/`fix:`/`docs:`/`refactor:`); run `gitleaks detect` before any push and before flipping public. Private now → public when polished.
-- **How to chunk for Claude:** point at file paths, never paste large files; one verifiable deliverable per session; design in plan mode, implement in fresh sessions; subagents only for fan-out exploration; one session = one commit.
-- **Closeout (end of project):** ① you write the "why" in your own words; ② read-only session produces a codebase-explainer doc for your `master_experience` notes; ③ `/security-review`; ④ `CREDITS.md`; ⑤ cohesion refactor (Claude lists dead files, *you* delete); ⑥ showpiece README with screenshots; ⑦ push.
+- **How to chunk for Claude:** point at file paths, never paste large files; one verifiable deliverable per stage; design in plan mode, implement sequentially; subagents only for fan-out exploration; one stage = one commit.
+- **Closeout (end of project):** ① you write the "why" in your own words; ② read-only stage produces a codebase-explainer doc for your `master_experience` notes; ③ `/security-review`; ④ `CREDITS.md`; ⑤ cohesion refactor (Claude lists dead files, *you* delete); ⑥ showpiece README with screenshots; ⑦ push.
 
 ## Context
 End-to-end job pipeline: GCP VM cron → Bright Data LinkedIn scrape (`scraper.py`) → two-stage Gemini scorer (`score_jobs.py`) → Google Drive → Windows Tkinter dashboard (`local/ui.py`: high-score triage, application tracker, stats) → on-demand LaTeX résumé-tailoring engine (`local/resume_tailor/`: ATS scoring, cover letters, interview prep, autofill data for Claude-in-Chrome). ~7K LOC, polished, tested. **Not a git repo yet; no `.gitignore`.** Goal: make it publishable, productionize it for any user, add a smarter master-experience flow.
@@ -45,10 +45,10 @@ Optimize resume space and provide the LLM with strict formatting constraints for
 - This ensures the resume space is adequately utilized without being bloated, allowing the LLM to "breathe" when needed. 
 - *Note:* Ensure the LLM uses proper LaTeX code for symbols (e.g., `\ge` or `\geq` for greater than or equal to) so they render correctly in the PDF.
 
-## Suggested sessions (each = one commit)
-1. Externalize secrets/identity + `.env.example` + sanitize `HANDOFF.md`. (small)
-2. `git init` + `.gitignore` + `gitleaks` scan + first commit. (small)
-3. Modularize for any user, Phase 1: config-driven inputs + `master_experience.example.yaml`. (medium)
+## Implementation stages (each = one commit)
+1. ~~Externalize secrets/identity + `.env.example` + sanitize `HANDOFF.md`.~~ **(Completed)**
+2. ~~`git init` + `.gitignore` + `gitleaks` scan + first commit.~~ **(Completed)**
+3. ~~Modularize for any user, Phase 1: config-driven inputs + `master_experience.example.yaml`.~~ **(Completed)** — `tailor:` yaml section drives required blocks + fixed line budgets (no hardcoded org names); header/Education render from yaml `basics`/`education`; template stripped to a generic preamble; candidate name derived from yaml. Tests in `tests/test_tailor_config.py`; resume compiles end-to-end.
 4. Setup wizard (fast vs long) with persisted config + UI responsiveness optimizations. (large — isolate)
 5. Smarter master_experience JD-gap feature + bullet length formatting. (medium)
 6. Showpiece README + architecture diagram + setup docs. (medium)

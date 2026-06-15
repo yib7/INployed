@@ -1,11 +1,13 @@
 """Assemble the tailored resume .tex.
 
-Keeps the template's preamble + header + Education verbatim (via assets.template_head)
-and emits Work Experience / Projects / Leadership / Technical Skills from the composed
-data, mirroring resume_template.tex's macros and spacing exactly. Bullets are keyed by
-group key (gkey = '+'.join(atom_ids)) and rendered in selection order. Bullet and skill
-text is plain (no bold/italics) per the "no bolded words" rule; structural bold (names,
-titles, project names, skill labels) follows the template.
+Keeps the template's preamble (page geometry, fonts, \\resume* macros) verbatim via
+assets.template_head, then generates EVERYTHING candidate-specific — the name/contact
+header, Education, Work Experience, Projects, Leadership, Technical Skills — from
+master_experience.yaml, mirroring the template's macros and spacing. This keeps the
+tracked template free of personal data and makes the layout work for any user. Bullets
+are keyed by group key (gkey = '+'.join(atom_ids)) and rendered in selection order.
+Bullet and skill text is plain (no bold/italics) per the "no bolded words" rule;
+structural bold (names, titles, project names, skill labels) follows the template.
 """
 from __future__ import annotations
 
@@ -13,6 +15,60 @@ from typing import Dict, List
 
 from . import assets
 from .latexutil import clean_bullet, escape_latex, fmt_dates
+
+
+def _header(basics: dict) -> str:
+    """The centered name + contact line, from yaml `basics`. Missing fields are
+    simply omitted so the line stays clean for any user."""
+    name = escape_latex(basics.get("name", "") or "")
+    contact_bits = [
+        escape_latex(str(basics[k]))
+        for k in ("location", "phone", "email", "linkedin", "github")
+        if basics.get(k)
+    ]
+    contact = " $|$ ".join(f"\\small{{{b}}}" for b in contact_bits)
+    return (
+        "\\begin{center}\n"
+        f"\\textbf{{\\Huge \\scshape {name}}} \\\\ \\vspace{{1pt}}\n"
+        f"{contact}\n"
+        "\\end{center}\n\n\n"
+    )
+
+
+def _degree_line(e: dict) -> str:
+    """'B.S. in Computer Science' + optional concentration/minor, from structured
+    fields. A `degree_line` field, if present, is used verbatim (full control)."""
+    if e.get("degree_line"):
+        return escape_latex(str(e["degree_line"]))
+    parts = [escape_latex(str(e.get("degree", "") or ""))]
+    if e.get("concentration"):
+        parts.append(f" with a Concentration in {escape_latex(str(e['concentration']))}")
+    if e.get("minor"):
+        parts.append(f", Minor in {escape_latex(str(e['minor']))}")
+    return "".join(parts).strip()
+
+
+def _education(edu: List[dict]) -> str:
+    if not edu:
+        return ""
+    rows: List[str] = []
+    for e in edu:
+        school = escape_latex(str(e.get("school", "") or ""))
+        gpa = e.get("gpa")
+        left = f"{school} $|$ {escape_latex(str(gpa))} GPA" if gpa not in (None, "") else school
+        row = (
+            "\\resumeSubheading\n"
+            f"{{{left}}}{{{fmt_dates(str(e.get('dates', '') or ''))}}}\n"
+            f"{{{_degree_line(e)}}}{{{escape_latex(str(e.get('location', '') or ''))}}}"
+        )
+        honors = e.get("honors") or []
+        if honors:
+            row += "\\vspace{2pt}\n\\item \\small{\\textbf{Honors:} " \
+                   + "; ".join(escape_latex(str(h)) for h in honors) + "}"
+        rows.append(row)
+    return ("%-----------EDUCATION-----------\n\\section{Education}\n"
+            "\\resumeSubHeadingListStart\n" + "\n".join(rows)
+            + "\n\\resumeSubHeadingListEnd\n\n\\vspace{-10pt}\n\n\n")
 
 
 def _block_meta(section: str) -> Dict[str, dict]:
@@ -108,8 +164,11 @@ def _skills(skill_lines: List[Dict[str, str]]) -> str:
 
 def render(sel: dict, bullets: Dict[str, str], skill_lines: List[Dict[str, str]]) -> str:
     """Build the complete tailored resume .tex."""
+    master = assets.load_master()
     body = (
-        _experience(sel, bullets)
+        _header(master.get("basics", {}) or {})
+        + _education(master.get("education", []) or [])
+        + _experience(sel, bullets)
         + _projects(sel, bullets)
         + _leadership(sel, bullets)
         + _skills(skill_lines)

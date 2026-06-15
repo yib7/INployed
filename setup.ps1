@@ -59,11 +59,16 @@ function Resolve-Value($current, $label, $default) {
     return (Read-WithDefault $label $default)
 }
 
-# Set KEY=value in a .env text body, preserving comments/order. Adds the key if absent.
+# Set KEY=value in a .env text body, preserving comments/order. Adds the key if
+# absent. Operates line-by-line (no regex replacement) so a '$' or other regex
+# metacharacter in the value is written literally, never interpreted.
 function Set-EnvValue($text, $key, $value) {
-    $pattern = "(?m)^#?\s*$([regex]::Escape($key))=.*$"
     $line = "$key=$value"
-    if ($text -match $pattern) { return [regex]::Replace($text, $pattern, $line) }
+    $pattern = "^#?\s*$([regex]::Escape($key))="
+    $lines = $text -split "`n"
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $pattern) { $lines[$i] = $line; return ($lines -join "`n") }
+    }
     return ($text.TrimEnd() + "`n" + $line + "`n")
 }
 

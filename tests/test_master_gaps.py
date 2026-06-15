@@ -107,6 +107,16 @@ def test_preview_skips_unknown_bucket():
     assert "skipped" in diff
 
 
+def test_preview_skips_yaml_breaking_items():
+    # Defense-in-depth: an item with a quote/bracket must not corrupt the file.
+    placements = {"developer_tools": ["Kubernetes", 'Ev"il', "Bad]name", "back\\slash"]}
+    new_text, _diff = master_gaps.preview_additions(placements, _MASTER_TEXT)
+    assert '"Kubernetes"' in new_text
+    assert 'Ev"il' not in new_text and "Bad]name" not in new_text and "back\\slash" not in new_text
+    dev_line = [l for l in new_text.splitlines() if l.strip().startswith("developer_tools:")][0]
+    assert dev_line.rstrip().endswith("]")  # list still well-formed
+
+
 def test_apply_to_file_backs_up_and_writes(tmp_path):
     p = tmp_path / "master_experience.yaml"
     p.write_text(_MASTER_TEXT, encoding="utf-8")

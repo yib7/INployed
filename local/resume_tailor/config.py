@@ -24,10 +24,8 @@ ASSETS_DIR = SCRAPE_DIR / "resume_tailor_files"
 
 MASTER_YAML = ASSETS_DIR / "master_experience.yaml"
 TEMPLATE_TEX = ASSETS_DIR / "resume_template.tex"
-VERBS_PDF = ASSETS_DIR / "active-verb-list-final.pdf"
 # Style exemplar fed (bounded) into the rephrase prompt — the one-page look the user likes.
 EXAMPLE_PDF = ASSETS_DIR / "resume_sample.pdf"
-VERBS_TXT_CACHE = ASSETS_DIR / "active_verbs.txt"      # extracted once, then reused
 
 OUTPUT_ROOT = Path(os.getenv("RESUME_TAILOR_OUTPUT", str(Path.home() / "Downloads" / "Generated_Resumes")))
 CANDIDATE_NAME = os.getenv("RESUME_TAILOR_CANDIDATE", "Your_Name")

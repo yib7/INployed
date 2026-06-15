@@ -446,7 +446,12 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
         "italics. One sentence (a fused group may run to ~2 clauses), <= ~300 characters. "
         "Front-load the result/impact that matters for THIS job. Open with a strong action "
         "verb from the provided list that matches the atom's real ownership. Numbers exactly "
-        "as written."
+        "as written. Write 'greater than or equal to' style comparisons with the symbols "
+        ">= and <= (they are converted to proper math notation later).\n"
+        "SPACE: a bullet that fits on ONE printed line should fill at least ~75% of it — "
+        "never leave a stubby half-empty line (fold in more grounded detail from the atoms "
+        "or fuse, but NEVER invent facts to pad). A bullet that wraps to multiple lines may "
+        "let its last line run shorter (down to ~50% full)."
     )
     user = f"""TARGET JOB: {job_title}
 

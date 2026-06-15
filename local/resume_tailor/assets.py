@@ -1,9 +1,9 @@
-"""Load and cache the four tailoring inputs from resume_tailor_files/.
+"""Load and cache the tailoring inputs from resume_tailor_files/.
 
-- master_experience.yaml -> parsed dict, a flat atom index, and block structure
-- resume_template.tex     -> the static head (preamble + header + Education),
-                             reused verbatim so output matches the example's look
-- active-verb-list PDF    -> extracted once to active_verbs.txt
+- master_experience.yaml -> parsed dict, a flat atom index, block structure, and
+                             the optional `tailor:` layout config
+- resume_template.tex     -> the LaTeX preamble (candidate-independent), reused
+                             verbatim; header/Education/body are rendered from the yaml
 - example resume PDF      -> extracted text, used as a style exemplar in prompts
 """
 from __future__ import annotations
@@ -108,19 +108,6 @@ def _pdf_text(path) -> str:
 
     reader = PdfReader(str(path))
     return "\n".join((pg.extract_text() or "") for pg in reader.pages).strip()
-
-
-@lru_cache(maxsize=1)
-def active_verbs() -> str:
-    """Extract the action-verb list once, cache to active_verbs.txt, reuse."""
-    if config.VERBS_TXT_CACHE.exists():
-        return config.VERBS_TXT_CACHE.read_text(encoding="utf-8")
-    text = _pdf_text(config.VERBS_PDF)
-    try:
-        config.VERBS_TXT_CACHE.write_text(text, encoding="utf-8")
-    except OSError:
-        pass
-    return text
 
 
 @lru_cache(maxsize=1)

@@ -68,6 +68,21 @@ def _block_of(aid: str) -> str:
     return assets.atoms_by_id()[aid].get("_block", "")
 
 
+def atom_material_len(ids: List[str]) -> int:
+    """Rough count of grounded text available across a group's atoms (string +
+    list-of-string fields). Used to decide whether a short bullet could be
+    expanded FROM FACTS — if the atoms hold no more material than the bullet
+    already shows, a 'lengthen' call could only pad, so skip it."""
+    total = 0
+    for aid in ids:
+        for v in _atom_payload(aid).values():
+            if isinstance(v, str):
+                total += len(v)
+            elif isinstance(v, list):
+                total += sum(len(str(x)) for x in v)
+    return total
+
+
 def _first_atom(section: str, name: str) -> List[str]:
     """A sensible default group (the block's first atom) for required-block injection."""
     for b in assets.blocks().get(section, []):
@@ -97,13 +112,16 @@ def _required_blocks() -> Dict[str, List[str]]:
         if spec in (None, "all"):
             out[sec] = present
             continue
-        missing = [n for n in spec if n not in present]
+        # A single block name may be written as a bare scalar (e.g. `experience: Globex`);
+        # treat it as a one-element list instead of iterating its characters.
+        names = [spec] if isinstance(spec, str) else list(spec)
+        missing = [n for n in names if n not in present]
         if missing:
             raise RuntimeError(
                 f"tailor.required.{sec} names block(s) not in master_experience.yaml: "
                 f"{missing} (present: {present})"
             )
-        out[sec] = list(spec)
+        out[sec] = names
     return out
 
 
@@ -115,8 +133,20 @@ def _fixed_experience_specs() -> Dict[str, List[int]]:
     out: Dict[str, List[int]] = {}
     for name, spec in fb.items():
         targets = (spec or {}).get("line_targets")
-        if name in exp_names and targets:
+        if name not in exp_names or not targets:
+            continue
+        if isinstance(targets, (str, bytes)) or not isinstance(targets, (list, tuple)):
+            raise RuntimeError(
+                f"tailor.fixed_blocks.{name}.line_targets must be a list of integers "
+                f"(e.g. [2, 1]); got {targets!r}"
+            )
+        try:
             out[name] = [int(t) for t in targets]
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"tailor.fixed_blocks.{name}.line_targets must contain only integers; "
+                f"got {targets!r}"
+            )
     return out
 
 
@@ -125,7 +155,13 @@ def _leadership_entry_lines() -> int:
     cfg = assets.tailor_config()
     if "leadership_entry_lines" not in cfg:
         return layout.LEADERSHIP_ENTRY_LINES
-    return int(cfg.get("leadership_entry_lines") or 0)
+    raw = cfg.get("leadership_entry_lines") or 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise RuntimeError(
+            f"tailor.leadership_entry_lines must be an integer; got {raw!r}"
+        )
 
 
 def _experience_guidance() -> str:

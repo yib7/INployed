@@ -114,6 +114,41 @@ def test_fixed_experience_specs_from_config(synthetic_master):
     assert specs == {"Side Gig": [2, 1]}
 
 
+def test_required_accepts_bare_string(synthetic_master, monkeypatch):
+    # A single block name written as a scalar must become a one-element list,
+    # not iterate its characters.
+    monkeypatch.setattr(assets, "tailor_config",
+                        lambda: {"required": {"experience": "Big Co"}})
+    assert compose._required_blocks()["experience"] == ["Big Co"]
+
+
+def test_fixed_blocks_scalar_line_targets_raises(synthetic_master, monkeypatch):
+    monkeypatch.setattr(assets, "tailor_config",
+                        lambda: {"fixed_blocks": {"Side Gig": {"line_targets": 2}}})
+    with pytest.raises(RuntimeError, match="must be a list"):
+        compose._fixed_experience_specs()
+
+
+def test_fixed_blocks_non_int_line_targets_raises(synthetic_master, monkeypatch):
+    monkeypatch.setattr(assets, "tailor_config",
+                        lambda: {"fixed_blocks": {"Side Gig": {"line_targets": ["two"]}}})
+    with pytest.raises(RuntimeError, match="only integers"):
+        compose._fixed_experience_specs()
+
+
+def test_leadership_entry_lines_bad_value_raises(synthetic_master, monkeypatch):
+    monkeypatch.setattr(assets, "tailor_config",
+                        lambda: {"leadership_entry_lines": "lots"})
+    with pytest.raises(RuntimeError, match="must be an integer"):
+        compose._leadership_entry_lines()
+
+
+def test_atom_material_len_reflects_content(synthetic_master):
+    # An atom with impact bullets carries more grounded material than a bare one.
+    assert compose.atom_material_len(["bigco_a"]) > 0
+    assert compose.atom_material_len(["bigco_a", "bigco_b"]) > compose.atom_material_len(["bigco_a"])
+
+
 def test_enforce_fixed_counts_pins_bullets(synthetic_master):
     # Side Gig has 3 atoms but a [2,1] spec -> exactly 2 bullet groups.
     sel = {
@@ -161,6 +196,22 @@ def test_header_and_education_render_from_yaml(synthetic_master):
     assert "Honors:" in tex
     # the preamble is reused; no other person's data leaks in
     assert "\\begin{document}" in tex
+
+
+def test_education_gpa_and_spacing(synthetic_master):
+    tex = render.render({"experience": [], "projects": [], "leadership": []}, {}, [])
+    # real GPA shown; \vspace{2pt} present even with honors absent
+    assert "3.7 GPA" in tex
+    assert "\\vspace{2pt}" in tex
+
+
+def test_education_hides_zero_gpa(synthetic_master, monkeypatch):
+    master = assets.load_master()
+    master["education"][0]["gpa"] = 0
+    monkeypatch.setattr(assets, "load_master", lambda: master)
+    tex = render.render({"experience": [], "projects": [], "leadership": []}, {}, [])
+    assert "0 GPA" not in tex
+    assert "State University" in tex  # school still rendered, just no GPA
 
 
 def test_candidate_slug_from_basics(synthetic_master):

@@ -55,15 +55,19 @@ def _education(edu: List[dict]) -> str:
     for e in edu:
         school = escape_latex(str(e.get("school", "") or ""))
         gpa = e.get("gpa")
-        left = f"{school} $|$ {escape_latex(str(gpa))} GPA" if gpa not in (None, "") else school
+        # Show GPA only when it's a real, non-zero value (0 / blank means "unset").
+        show_gpa = gpa not in (None, "", 0, 0.0, "0")
+        left = f"{school} $|$ {escape_latex(str(gpa))} GPA" if show_gpa else school
+        # \vspace{2pt} follows the degree line in all cases (matches the template),
+        # then an Honors item only when honors are present.
         row = (
             "\\resumeSubheading\n"
             f"{{{left}}}{{{fmt_dates(str(e.get('dates', '') or ''))}}}\n"
-            f"{{{_degree_line(e)}}}{{{escape_latex(str(e.get('location', '') or ''))}}}"
+            f"{{{_degree_line(e)}}}{{{escape_latex(str(e.get('location', '') or ''))}}}\\vspace{{2pt}}"
         )
         honors = e.get("honors") or []
         if honors:
-            row += "\\vspace{2pt}\n\\item \\small{\\textbf{Honors:} " \
+            row += "\n\\item \\small{\\textbf{Honors:} " \
                    + "; ".join(escape_latex(str(h)) for h in honors) + "}"
         rows.append(row)
     return ("%-----------EDUCATION-----------\n\\section{Education}\n"

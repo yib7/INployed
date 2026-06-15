@@ -65,11 +65,12 @@ function Resolve-Value($current, $label, $default) {
 function Set-EnvValue($text, $key, $value) {
     $line = "$key=$value"
     $pattern = "^#?\s*$([regex]::Escape($key))="
-    $lines = $text -split "`n"
+    $nl = if ($text -match "`r`n") { "`r`n" } else { "`n" }   # preserve the file's line endings
+    $lines = $text -split "`r?`n"
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match $pattern) { $lines[$i] = $line; return ($lines -join "`n") }
+        if ($lines[$i] -match $pattern) { $lines[$i] = $line; return ($lines -join $nl) }
     }
-    return ($text.TrimEnd() + "`n" + $line + "`n")
+    return ($text.TrimEnd() + $nl + $line + $nl)
 }
 
 $envPath       = Join-Path $Root '.env'

@@ -54,7 +54,7 @@ Optimize resume space and provide the LLM with strict formatting constraints for
    - NOTE: UI responsiveness is already sound — heavy ops (`_tailor_worker`, `_prep_worker`) run on background threads with `root.after` marshaling. Remaining candidate: move `reload_data()`'s CSV load off the main thread; deferred because it needs the live GUI + real data to validate safely (can't run interactively here).
    - NOTE: on-demand "fetch latest jobs" for non-VM users = run `scraper.py` then `score_jobs.py` locally (documented in README); a one-click GUI button is deferred for the same live-GUI reason.
 5. ~~Smarter master_experience JD-gap feature + bullet length formatting.~~ **(Completed)** — bullet length floors (75% single / 50% multi-final) + unicode→LaTeX math in `latexutil`/`layout`/`run`; JD-gap module `master_gaps.py` (detect → flash-lite screen/place → comment-preserving reviewable diff, opt-in write w/ backup) + CLI. Tests: `test_bullet_length.py`, `test_master_gaps.py`.
-6. Showpiece README + architecture diagram + setup docs. (medium)
+6. ~~Showpiece README + architecture diagram + setup docs.~~ **(Completed)** — `README.md`: systems-engineering framing, GitHub-rendered Mermaid architecture diagram, non-expert quick-start (setup.ps1 fast/long, prereqs, auth), usage (tailor CLI, JD-gap CLI, dashboard, on-demand + VM scrape), "how it stays honest" pipeline, tech stack, tests, project layout. Screenshots left as a placeholder (needs the live GUI to capture).
 7. Closeout checklist (security review, credits, refactor, codebase-explainer doc, push). (medium)
 
 ## Verification

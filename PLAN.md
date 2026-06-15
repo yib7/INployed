@@ -49,7 +49,10 @@ Optimize resume space and provide the LLM with strict formatting constraints for
 1. ~~Externalize secrets/identity + `.env.example` + sanitize `HANDOFF.md`.~~ **(Completed)**
 2. ~~`git init` + `.gitignore` + `gitleaks` scan + first commit.~~ **(Completed)**
 3. ~~Modularize for any user, Phase 1: config-driven inputs + `master_experience.example.yaml`.~~ **(Completed)** — `tailor:` yaml section drives required blocks + fixed line budgets (no hardcoded org names); header/Education render from yaml `basics`/`education`; template stripped to a generic preamble; candidate name derived from yaml. Tests in `tests/test_tailor_config.py`; resume compiles end-to-end.
-4. Setup wizard (fast vs long) with persisted config + UI responsiveness optimizations. (large — isolate)
+4. **(Mostly done)** Setup wizard (fast vs long) with persisted config + UI responsiveness optimizations. (large — isolate)
+   - DONE: `setup.ps1` — one code path, Fast (drop-in examples + defaults) vs Long (guided prompts) flows; writes `.env` + `local/config.json`, copies the example yaml; idempotent/non-destructive (`-Force` to overwrite), re-runnable, fully param-driven for non-interactive use. Verified both modes.
+   - NOTE: UI responsiveness is already sound — heavy ops (`_tailor_worker`, `_prep_worker`) run on background threads with `root.after` marshaling. Remaining candidate: move `reload_data()`'s CSV load off the main thread; deferred because it needs the live GUI + real data to validate safely (can't run interactively here).
+   - NOTE: on-demand "fetch latest jobs" for non-VM users = run `scraper.py` then `score_jobs.py` locally (documented in README); a one-click GUI button is deferred for the same live-GUI reason.
 5. ~~Smarter master_experience JD-gap feature + bullet length formatting.~~ **(Completed)** — bullet length floors (75% single / 50% multi-final) + unicode→LaTeX math in `latexutil`/`layout`/`run`; JD-gap module `master_gaps.py` (detect → flash-lite screen/place → comment-preserving reviewable diff, opt-in write w/ backup) + CLI. Tests: `test_bullet_length.py`, `test_master_gaps.py`.
 6. Showpiece README + architecture diagram + setup docs. (medium)
 7. Closeout checklist (security review, credits, refactor, codebase-explainer doc, push). (medium)

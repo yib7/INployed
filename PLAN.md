@@ -55,7 +55,16 @@ Optimize resume space and provide the LLM with strict formatting constraints for
    - NOTE: on-demand "fetch latest jobs" for non-VM users = run `scraper.py` then `score_jobs.py` locally (documented in README); a one-click GUI button is deferred for the same live-GUI reason.
 5. ~~Smarter master_experience JD-gap feature + bullet length formatting.~~ **(Completed)** — bullet length floors (75% single / 50% multi-final) + unicode→LaTeX math in `latexutil`/`layout`/`run`; JD-gap module `master_gaps.py` (detect → flash-lite screen/place → comment-preserving reviewable diff, opt-in write w/ backup) + CLI. Tests: `test_bullet_length.py`, `test_master_gaps.py`.
 6. ~~Showpiece README + architecture diagram + setup docs.~~ **(Completed)** — `README.md`: systems-engineering framing, GitHub-rendered Mermaid architecture diagram, non-expert quick-start (setup.ps1 fast/long, prereqs, auth), usage (tailor CLI, JD-gap CLI, dashboard, on-demand + VM scrape), "how it stays honest" pipeline, tech stack, tests, project layout. Screenshots left as a placeholder (needs the live GUI to capture).
-7. Closeout checklist (security review, credits, refactor, codebase-explainer doc, push). (medium)
+7. **(Mostly done)** Closeout checklist (security review, credits, refactor, codebase-explainer doc, push). (medium)
+   - ① "Why" in your own words — **TODO (yours):** add a short personal "why I built this" to the README; I left that for your voice rather than fabricate it.
+   - ② Codebase-explainer doc — DONE: `docs/ARCHITECTURE.md`.
+   - ③ Security review — self-review done (below); **recommend you run `/security-review` and `/code-review ultra` before pushing.** Findings: no secrets or personal identifiers in tracked files (scanned); new write paths are safe — `master_gaps.apply_to_file` backs up before writing and only on `--apply`; `setup.ps1` writes only git-ignored `.env`/`config.json`; no new network/eval/injection surface (LLM calls reuse the existing transport).
+   - ④ CREDITS.md — DONE (incl. upstream "Jake's Resume" template attribution).
+   - ⑤ Cohesion — dead code/files for **you to delete** (per the plan, I list, you remove):
+       * `local/resume_tailor/assets.py::active_verbs()` + `config.VERBS_PDF` + `config.VERBS_TXT_CACHE` — unused; `compose.py` uses the hardcoded `_CORE_VERBS` palette instead.
+       * `resume_tailor_files/active-verb-list-final.pdf` and `resume_tailor_files/active_verbs.txt` — the source/cache for that dead path.
+   - ⑥ Showpiece README — DONE (stage 6).
+   - ⑦ Push — **NOT done (needs you):** no git remote is configured and `gitleaks` isn't installed. Before pushing: install + run `gitleaks detect`, rotate the Bright Data token (precaution), create the private GitHub remote, then push. Also still open from earlier sessions: token rotation, `HEALTHCHECK_URL`.
 
 ## Verification
 `grep` finds no literal Bright Data token / personal email in tracked files • `pytest` passes (existing 36+ tests) • pipeline runs purely from env/config with no hardcoded identity • dashboard smoke test (`tests/smoke_ui.py`) passes • fresh clone + fast-setup produces a runnable tool with placeholder data.

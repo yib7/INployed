@@ -1,6 +1,6 @@
 """Resolve where a tailored resume PDF goes.
 
-Downloads/Generated_Resumes/<Company>/<Job Title>/You_Tadesse_Resume.pdf
+Downloads/Generated_Resumes/<Company>/<Job Title>/<Candidate>_Resume.pdf
 On collision (same company+title already has a resume), nest a dated subfolder.
 """
 from __future__ import annotations

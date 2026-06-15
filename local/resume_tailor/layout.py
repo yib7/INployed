@@ -1,6 +1,6 @@
 """HARD-CODED layout spec for the resume's fixed sections.
 
-The template's fixed blocks (Initech, the two Leadership orgs, Technical Skills)
+The template's fixed blocks (any config-pinned experience block, the Leadership orgs, Technical Skills)
 must hit an EXACT printed-line / bullet budget. That budget is enforced in code
 here — it is NOT left to the model's discretion ("vibe"). The model still writes
 the prose, but this module decides how many bullets each block gets and the

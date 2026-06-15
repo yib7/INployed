@@ -58,13 +58,11 @@ Optimize resume space and provide the LLM with strict formatting constraints for
 7. **(Mostly done)** Closeout checklist (security review, credits, refactor, codebase-explainer doc, push). (medium)
    - ① "Why" in your own words — **TODO (yours):** add a short personal "why I built this" to the README; I left that for your voice rather than fabricate it.
    - ② Codebase-explainer doc — DONE: `docs/ARCHITECTURE.md`.
-   - ③ Security review — self-review done (below); **recommend you run `/security-review` and `/code-review ultra` before pushing.** Findings: no secrets or personal identifiers in tracked files (scanned); new write paths are safe — `master_gaps.apply_to_file` backs up before writing and only on `--apply`; `setup.ps1` writes only git-ignored `.env`/`config.json`; no new network/eval/injection surface (LLM calls reuse the existing transport).
+   - ③ Security review — DONE (self-review of the diff, commit `def8701`): found + fixed two hardening items — `setup.ps1` wrote `.env` values through `[regex]::Replace` (a `$` in a token became a backreference → corruption; now line-by-line literal), and `master_gaps` now skips yaml-breaking skill items (defense-in-depth). No secrets/personal identifiers in tracked files; `apply_to_file` backs up + is opt-in; no new network/eval surface. **Still recommend `/code-review ultra` before pushing** (billed, must be run by you).
    - ④ CREDITS.md — DONE (incl. upstream "Jake's Resume" template attribution).
-   - ⑤ Cohesion — dead code/files for **you to delete** (per the plan, I list, you remove):
-       * `local/resume_tailor/assets.py::active_verbs()` + `config.VERBS_PDF` + `config.VERBS_TXT_CACHE` — unused; `compose.py` uses the hardcoded `_CORE_VERBS` palette instead.
-       * `resume_tailor_files/active-verb-list-final.pdf` and `resume_tailor_files/active_verbs.txt` — the source/cache for that dead path.
+   - ⑤ Cohesion — DONE (commit `11b7437`): removed the dead verb-list path — `assets.active_verbs()`, `config.VERBS_PDF`/`VERBS_TXT_CACHE`, and `active-verb-list-final.pdf` + `active_verbs.txt` (compose uses `_CORE_VERBS`).
    - ⑥ Showpiece README — DONE (stage 6).
-   - ⑦ Push — **NOT done (needs you):** no git remote is configured and `gitleaks` isn't installed. Before pushing: install + run `gitleaks detect`, rotate the Bright Data token (precaution), create the private GitHub remote, then push. Also still open from earlier sessions: token rotation, `HEALTHCHECK_URL`.
+   - ⑦ Push — gitleaks **DONE** (v8.30.1 scanned all 9 commits of history → **no leaks**). **Still needs you:** create the private GitHub remote + push (none configured), and rotate the Bright Data token (precaution, external). Also still open from earlier sessions: token rotation, `HEALTHCHECK_URL`.
 
 ## Verification
 `grep` finds no literal Bright Data token / personal email in tracked files • `pytest` passes (existing 36+ tests) • pipeline runs purely from env/config with no hardcoded identity • dashboard smoke test (`tests/smoke_ui.py`) passes • fresh clone + fast-setup produces a runnable tool with placeholder data.

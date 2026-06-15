@@ -151,6 +151,13 @@ def _enforce_layout(jd: str, sel: dict, bullets: Dict[str, str],
             continue
         if layout.est_body_lines(bullets[gk]) != 1 or layout._visible_len(bullets[gk]) >= lo1:
             continue
+        # Only spend an LLM call when the atoms actually hold more grounded
+        # material than the line already shows; otherwise 'lengthen' could only
+        # pad (forbidden), so skip the call and leave the bullet as-is.
+        if compose.atom_material_len(ids) <= layout._visible_len(bullets[gk]):
+            log(f"layout: free bullet [{gk}] short single line "
+                f"({layout._visible_len(bullets[gk])} chars); no extra grounded material to expand")
+            continue
         try:
             cand = compose.refit(jd, ids, bullets[gk], 1)
         except Exception:

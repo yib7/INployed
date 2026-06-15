@@ -82,7 +82,7 @@ def _first_atom(section: str, name: str) -> List[str]:
 #     experience: all               #   'all' or a list of block names
 #     leadership: [Org A, Org B]
 #   fixed_blocks:                   # hard per-bullet line budgets (default: none)
-#     Initech: {line_targets: [2, 1]}   # EXACTLY len(line_targets) bullets
+#     Side Gig: {line_targets: [2, 1]}   # EXACTLY len(line_targets) bullets
 #   leadership_entry_lines: 2       # each leadership org forced to N printed lines
 def _required_blocks() -> Dict[str, List[str]]:
     """Section -> block names that must always render. Default: every block in

@@ -102,7 +102,7 @@ def _word_trim(text: str, max_visible: int) -> str:
 
 def _enforce_layout(jd: str, sel: dict, bullets: Dict[str, str],
                     log: Callable[[str], None]) -> None:
-    """Drive every layout-budgeted bullet (Initech's two, each leadership bullet)
+    """Drive every layout-budgeted bullet (the fixed experience block's bullets, each leadership bullet)
     into its target printed-line window. Tries up to two grounded `refit` rewrites,
     keeping the candidate closest to the window; if still over-length, deterministically
     word-trims as a last resort. Under-length bullets whose atoms can't fill the

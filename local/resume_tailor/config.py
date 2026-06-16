@@ -93,7 +93,7 @@ def _config_json() -> dict:
 def backend() -> str:
     """Active LLM backend: 'vertex' (default) or 'claude'."""
     val = os.getenv("RESUME_TAILOR_BACKEND") or _config_json().get("backend")
-    val = (val or "vertex").strip().lower()
+    val = val.strip().lower() if isinstance(val, str) else "vertex"
     return val if val in ("vertex", "claude") else "vertex"
 
 

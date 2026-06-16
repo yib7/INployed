@@ -32,6 +32,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from csv_io import read_csv_gz, reconcile_file  # noqa: E402
+from jsonutil import atomic_write_json  # noqa: E402
 from seen_db import SeenRegistry  # noqa: E402
 
 
@@ -124,7 +125,7 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    atomic_write_json(CONFIG_PATH, cfg)
 
 
 def detect_gdrive_root() -> str | None:

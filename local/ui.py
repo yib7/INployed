@@ -39,6 +39,8 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
+
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic  # noqa: E402
 from seen_db import APP_STATUSES, SeenRegistry  # noqa: E402
 
@@ -524,7 +526,7 @@ def _save_cfg(updates: dict) -> None:
     cfg = _load_cfg()
     cfg.update(updates)
     try:
-        (HERE / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        atomic_write_json(HERE / "config.json", cfg)
     except OSError:
         pass
 

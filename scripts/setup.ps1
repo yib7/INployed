@@ -16,16 +16,16 @@
     .env (secrets) and local/config.json (dashboard prefs) - both git-ignored.
 
 .EXAMPLE
-    ./setup.ps1                     # fast: drop example files into place
+    ./scripts/setup.ps1                     # fast: drop example files into place
 .EXAMPLE
-    ./setup.ps1 -Mode long          # guided wizard with prompts
+    ./scripts/setup.ps1 -Mode long          # guided wizard with prompts
 .EXAMPLE
-    ./setup.ps1 -Mode long -InstallDeps    # also pip-install requirements
+    ./scripts/setup.ps1 -Mode long -InstallDeps    # also pip-install requirements
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('fast', 'long')] [string]$Mode = 'fast',
-    [string]$Root = $PSScriptRoot,
+    [string]$Root = (Split-Path -Parent $PSScriptRoot),
     [switch]$Force,
     [switch]$InstallDeps,
     # Long-mode values (optional; prompted when missing in long mode)
@@ -161,6 +161,6 @@ Write-Host @"
     2. Fill any blanks in  .env  (Bright Data + Google Cloud keys).
     3. Authenticate Google Cloud:  gcloud auth application-default login
     4. (Scraping) run your own pipeline:  python scraper.py   then   python score_jobs.py
-       or follow HANDOFF.md to run it on a GCP VM via cron.
+       or follow docs/HANDOFF.md to run it on a GCP VM via cron.
     5. (Dashboard) launch:  python local/ui.py   (or local/open_dashboard.pyw)
 "@ -ForegroundColor Gray

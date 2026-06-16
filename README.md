@@ -37,7 +37,7 @@ flowchart TD
     end
 ```
 
-Plain-text view and full operator details live in **[HANDOFF.md](HANDOFF.md)**.
+Plain-text view and full operator details live in **[HANDOFF.md](docs/HANDOFF.md)**.
 
 ---
 
@@ -53,10 +53,10 @@ Plain-text view and full operator details live in **[HANDOFF.md](HANDOFF.md)**.
 ### 2. One-command setup
 ```powershell
 # Fast: drop the example config into place, then edit it
-./setup.ps1
+./scripts/setup.ps1
 
 # Or guided, with prompts for your keys and preferences
-./setup.ps1 -Mode long -InstallDeps
+./scripts/setup.ps1 -Mode long -InstallDeps
 ```
 This writes a git-ignored `.env` (your keys), `local/config.json` (dashboard
 preferences), and a starter `resume_tailor_files/master_experience.yaml`. Re-run it
@@ -111,7 +111,7 @@ High-score triage, an application tracker with follow-up nudges, run stats, and 
   ```
 - **Hands-off (recommended for daily use):** run that pair on a small GCP VM via
   cron and sync results to Google Drive — full instructions in
-  [HANDOFF.md](HANDOFF.md).
+  [HANDOFF.md](docs/HANDOFF.md).
 
 ---
 
@@ -151,11 +151,11 @@ _Add dashboard / tailored-résumé screenshots here (e.g. `docs/dashboard.png`).
 ```
 scraper.py              LinkedIn scrape (Bright Data)
 score_jobs.py           two-stage Gemini relevance scorer
-run_scraper.sh          VM cron orchestration (scrape -> score -> Drive)
-setup.ps1               Fast/Long setup wizard
+scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)
+scripts/setup.ps1       Fast/Long setup wizard
 local/ui.py             Tkinter dashboard
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
-HANDOFF.md              full operator guide
+docs/                   ARCHITECTURE, HANDOFF (operator guide), PLAN, CREDITS
 ```

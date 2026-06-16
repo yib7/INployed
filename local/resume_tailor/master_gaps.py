@@ -85,7 +85,7 @@ def screen_candidates(candidates: List[str]) -> List[str]:
         + '\n\nReturn ONLY JSON: {"keep": ["..."]}'
     )
     try:
-        out = call(system, user, config.MODEL_FLASH_LITE, json_out=True, temperature=0.0)
+        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
     except Exception:
         return []
     kept = out.get("keep", []) if isinstance(out, dict) else []
@@ -115,7 +115,7 @@ def place_skills(skills: List[str], buckets: List[str]) -> Dict[str, List[str]]:
         + '\n\nReturn ONLY JSON: {"assignments": {"<skill>": "<bucket>"}}'
     )
     try:
-        out = call(system, user, config.MODEL_FLASH_LITE, json_out=True, temperature=0.0)
+        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
         raw = out.get("assignments", {}) if isinstance(out, dict) else {}
         if isinstance(raw, dict):
             mapping = {str(k): str(v) for k, v in raw.items()}

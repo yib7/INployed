@@ -8,8 +8,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
@@ -86,7 +84,7 @@ def test_preview_preserves_comments_and_inserts_single_line():
     assert "# languages line" in new_text
     assert '"Kubernetes"' in new_text and '"Airflow"' in new_text
     # inserted into the right bucket, before its closing bracket
-    dev_line = [l for l in new_text.splitlines() if l.strip().startswith("developer_tools:")][0]
+    dev_line = [ln for ln in new_text.splitlines() if ln.strip().startswith("developer_tools:")][0]
     assert dev_line.rstrip().endswith("]")
     assert "Kubernetes" in dev_line and "Docker" in dev_line
     assert "+" in diff and "Kubernetes" in diff
@@ -113,7 +111,7 @@ def test_preview_skips_yaml_breaking_items():
     new_text, _diff = master_gaps.preview_additions(placements, _MASTER_TEXT)
     assert '"Kubernetes"' in new_text
     assert 'Ev"il' not in new_text and "Bad]name" not in new_text and "back\\slash" not in new_text
-    dev_line = [l for l in new_text.splitlines() if l.strip().startswith("developer_tools:")][0]
+    dev_line = [ln for ln in new_text.splitlines() if ln.strip().startswith("developer_tools:")][0]
     assert dev_line.rstrip().endswith("]")  # list still well-formed
 
 

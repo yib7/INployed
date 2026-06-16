@@ -13,8 +13,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from . import apply_data, assets, ats, compose, config, coverletter, layout, llm, output, research
-from .compile import compile_tex, enforce_one_page, pdflatex_available
+from . import apply_data, ats, compose, config, coverletter, layout, llm, output, research
+from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
 

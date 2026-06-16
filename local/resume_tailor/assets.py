@@ -59,8 +59,8 @@ def atoms_by_id() -> Dict[str, Dict[str, Any]]:
         add("experience", e.get("org", "?"), e.get("achievements", []))
     for p in master.get("projects", []):
         add("projects", p.get("name", "?"), p.get("achievements", []))
-    for l in master.get("leadership", []):
-        add("leadership", l.get("org", "?"), l.get("achievements", []))
+    for ld in master.get("leadership", []):
+        add("leadership", ld.get("org", "?"), ld.get("achievements", []))
     return index
 
 
@@ -81,10 +81,10 @@ def blocks() -> Dict[str, List[Dict[str, Any]]]:
             "live_url": p.get("live_url"), "repo": p.get("repo"),
             "atoms": [a["id"] for a in p.get("achievements", []) if a.get("id")],
         })
-    for l in master.get("leadership", []):
+    for ld in master.get("leadership", []):
         out["leadership"].append({
-            "name": l.get("org"), "dates": l.get("dates"),
-            "atoms": [a["id"] for a in l.get("achievements", []) if a.get("id")],
+            "name": ld.get("org"), "dates": ld.get("dates"),
+            "atoms": [a["id"] for a in ld.get("achievements", []) if a.get("id")],
         })
     return out
 

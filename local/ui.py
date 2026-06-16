@@ -519,6 +519,20 @@ def _load_cfg() -> dict:
         return {}
 
 
+def _save_cfg(updates: dict) -> None:
+    """Merge updates into local/config.json (best-effort; never crash the UI)."""
+    cfg = _load_cfg()
+    cfg.update(updates)
+    try:
+        (HERE / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+_ENGINE_LABELS = {"vertex": "Engine: Vertex Gemini", "claude": "Engine: Claude (subscription)"}
+_LABEL_TO_BACKEND = {v: k for k, v in _ENGINE_LABELS.items()}
+
+
 def load_min_score(default: int = 4) -> int:
     try:
         return int(_load_cfg().get("min_score", default))
@@ -813,6 +827,16 @@ class App:
                                      style="Accent.TButton")
         self.btn_tailor.pack(side="right", padx=4)
         ttk.Checkbutton(bar1, text="+ cover letter", variable=self.cover_var).pack(side="right", padx=(4, 10))
+        self.engine_var = tk.StringVar(
+            value=_ENGINE_LABELS.get(_load_cfg().get("backend", "vertex"), _ENGINE_LABELS["vertex"])
+        )
+        eng_cb = ttk.Combobox(
+            bar1, textvariable=self.engine_var, state="readonly", width=24,
+            values=[_ENGINE_LABELS["vertex"], _ENGINE_LABELS["claude"]],
+        )
+        eng_cb.bind("<<ComboboxSelected>>", lambda *_: self._on_engine_change())
+        eng_cb.pack(side="right", padx=(4, 10))
+        self._apply_backend_env()
 
         # Tab 2 — All Jobs (multi-column filter + query view)
         f2 = ttk.Frame(nb)
@@ -1007,13 +1031,16 @@ class App:
         tmp = view
         if "extracted_date" in tmp.columns:
             tmp = tmp.assign(__d=tmp["extracted_date"].astype(str))
-            keys.append("__d"); asc.append(False)
+            keys.append("__d")
+            asc.append(False)
         if "score" in tmp.columns:
             tmp = tmp.assign(__s=pd.to_numeric(tmp["score"], errors="coerce").fillna(-1))
-            keys.append("__s"); asc.append(False)
+            keys.append("__s")
+            asc.append(False)
         if "deep_score" in tmp.columns:
             tmp = tmp.assign(__ds=pd.to_numeric(tmp["deep_score"], errors="coerce").fillna(-1))
-            keys.append("__ds"); asc.append(False)
+            keys.append("__ds")
+            asc.append(False)
         if keys:
             tmp = tmp.sort_values(keys, ascending=asc, kind="stable")
             tmp = tmp.drop(columns=["__d", "__s", "__ds"], errors="ignore")
@@ -1611,6 +1638,7 @@ class App:
         resume_dir = self.registry.resume_path(jid)
         self._prepping = True
         self._set_status(f"Generating interview prep for {job['company_name']} — {job['job_title']} …")
+        self._apply_backend_env()
         threading.Thread(target=self._prep_worker, args=(job, resume_dir), daemon=True).start()
 
     def _prep_worker(self, job: dict, resume_dir: str | None) -> None:
@@ -1629,6 +1657,21 @@ class App:
                 pass
         finally:
             self._prepping = False
+
+    # ---- engine selector ----
+
+    def _current_backend(self) -> str:
+        return _LABEL_TO_BACKEND.get(self.engine_var.get(), "vertex")
+
+    def _apply_backend_env(self) -> None:
+        """Seed the env var the in-process tailor reads at call time."""
+        os.environ["RESUME_TAILOR_BACKEND"] = self._current_backend()
+
+    def _on_engine_change(self) -> None:
+        backend = self._current_backend()
+        _save_cfg({"backend": backend})
+        self._apply_backend_env()
+        self._set_status(f"LLM engine: {self.engine_var.get().replace('Engine: ', '')}")
 
     # ---- resume tailor ----
 
@@ -1649,6 +1692,7 @@ class App:
             return
         self._tailoring = True
         self.btn_tailor.config(state="disabled")
+        self._apply_backend_env()
         threading.Thread(
             target=self._tailor_worker, args=(jobs, bool(self.cover_var.get())), daemon=True
         ).start()

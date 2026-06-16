@@ -162,6 +162,14 @@ def test_claude_error_exit_retries_then_raises(monkeypatch):
         llm.call("sys", "user", config.TIER_FLASH)
 
 
+def test_claude_is_error_envelope_retries_then_raises(monkeypatch):
+    _use_claude(monkeypatch)
+    monkeypatch.setattr(llm.subprocess, "run",
+                        lambda *a, **k: _FakeProc(stdout=_envelope("ctx limit", is_error=True)))
+    with pytest.raises(llm.LLMError, match="reported error"):
+        llm.call("sys", "user", config.TIER_FLASH)
+
+
 def test_dispatch_routes_to_vertex_with_resolved_model(monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_BACKEND", "vertex")
     monkeypatch.setattr(config, "_config_json", lambda: {})

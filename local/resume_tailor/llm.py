@@ -162,7 +162,8 @@ def _call_claude(
     inherit this repo's CLAUDE.md/skills/project context -- a clean generator.
     temperature is not exposed by the print-mode CLI and is ignored.
     """
-    if shutil.which("claude") is None:
+    exe = shutil.which("claude")
+    if exe is None:
         raise LLMError("Claude backend selected but `claude` CLI not found on PATH")
 
     sys_prompt = system
@@ -170,7 +171,7 @@ def _call_claude(
         sys_prompt += "\n\nRespond with ONLY valid JSON -- no prose, no markdown, no code fences."
 
     argv = [
-        "claude", "-p",
+        exe, "-p",
         "--output-format", "json",
         "--model", model,
         "--system-prompt", sys_prompt,

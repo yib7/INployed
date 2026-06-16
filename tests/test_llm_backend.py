@@ -188,3 +188,21 @@ def test_dispatch_routes_to_claude_with_resolved_model(monkeypatch):
                         lambda system, user, model, **k: captured.update(model=model) or "C")
     assert llm.call("sys", "user", config.TIER_FLASH_LITE) == "C"
     assert captured["model"] == config.CLAUDE_HAIKU
+
+
+def test_claude_uses_resolved_executable_path(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+    resolved = r"C:\fake\path\claude.CMD"
+    monkeypatch.setattr(llm.shutil, "which", lambda _: resolved)
+    seen = {}
+
+    def fake_run(argv, **k):
+        seen["argv"] = argv
+        return _FakeProc(stdout=_envelope("ok"))
+
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    out = llm.call("sys", "user", config.TIER_FLASH)
+    assert out == "ok"
+    assert seen["argv"][0] == resolved  # full resolved path, not bare "claude"

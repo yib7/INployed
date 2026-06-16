@@ -34,7 +34,7 @@ def company_blurb(company: str, job_title: str = "") -> str:
     text = call(
         system,
         user,
-        config.MODEL_FLASH,
+        config.TIER_FLASH,
         json_out=False,  # grounding tools and JSON mode don't mix on Vertex
         temperature=0.2,
         tools=[types.Tool(google_search=types.GoogleSearch())],

@@ -94,7 +94,7 @@ The 2-4 weakest spots vs. this JD and a suggested honest framing for each.
 4-6 specific, informed questions for the interviewer (about the team, stack,
 roadmap — tied to details actually in the JD)."""
 
-    text = call(system, user, config.MODEL_FLASH, json_out=False, temperature=0.3)
+    text = call(system, user, config.TIER_FLASH, json_out=False, temperature=0.3)
     path = out_dir / "interview_prep.md"
     header = f"<!-- generated {date.today().isoformat()} from job {json.dumps(_field(job, 'job_posting_id') or '?')} -->\n"
     path.write_text(header + text.strip() + "\n", encoding="utf-8")

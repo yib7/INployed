@@ -23,8 +23,11 @@ def company_blurb(company: str, job_title: str = "") -> str:
         "recent news or a recent product launch (within ~12 months), its stated "
         "mission or values, and rough scale (size/industry position) if findable. "
         "Plain text only — no markdown, no bullet points, no URLs, no marketing "
-        "fluff. Every sentence must be a verifiable fact from search results; if "
-        "you cannot find solid information, reply with exactly: NONE"
+        "fluff. Output ONLY the factual sentences themselves: no preamble or "
+        "introduction (do not start with phrases like 'Here is' or 'Based on my "
+        "research'), no headings, no closing remarks. Every sentence must be a "
+        "verifiable fact from search results; if you cannot find solid "
+        "information, reply with exactly: NONE"
     )
     user = (
         f"Company: {company}"

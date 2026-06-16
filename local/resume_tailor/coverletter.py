@@ -75,7 +75,7 @@ FACTS YOU MAY DRAW FROM (the candidate's tailored resume bullets):
 Candidate: {_display_name()}, {assets.load_master().get('basics', {}).get('location', '')}.
 
 Write the body now."""
-    return compose.call(system, user, config.MODEL_PRO, json_out=False, temperature=0.4)
+    return compose.call(system, user, config.TIER_PRO, json_out=False, temperature=0.4)
 
 
 def _paragraphs(body: str) -> str:

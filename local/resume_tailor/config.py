@@ -5,8 +5,10 @@ re-tuned against the $300 credit without code changes.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import Optional
 
 # ── Locations ────────────────────────────────────────────────────────────────
 PKG_DIR = Path(__file__).resolve().parent              # local/resume_tailor
@@ -55,3 +57,49 @@ PAGE_LIMIT = 1
 # The deterministic drop-weakest-bullet step usually converges the page well
 # before this; 3 flash shrink passes is plenty (was 4).
 MAX_SHRINK_ATTEMPTS = 3
+
+# ── Backend selection (Vertex Gemini vs local Claude CLI) ────────────────────
+# Resolved at call time (not cached) so the long-lived dashboard picks up a
+# toggle without restart. Precedence: env var > local/config.json > "vertex".
+CONFIG_JSON = PKG_DIR.parent / "config.json"            # local/config.json
+
+TIER_FLASH_LITE = "flash_lite"
+TIER_FLASH = "flash"
+TIER_PRO = "pro"
+
+# Claude tier targets (CLI model aliases). pro reuses sonnet — no opus tier.
+CLAUDE_HAIKU = os.getenv("RESUME_TAILOR_CLAUDE_HAIKU", "haiku")
+CLAUDE_SONNET = os.getenv("RESUME_TAILOR_CLAUDE_SONNET", "sonnet")
+
+_VERTEX_TIERS = {
+    TIER_FLASH_LITE: MODEL_FLASH_LITE,
+    TIER_FLASH: MODEL_FLASH,
+    TIER_PRO: MODEL_PRO,
+}
+_CLAUDE_TIERS = {
+    TIER_FLASH_LITE: CLAUDE_HAIKU,
+    TIER_FLASH: CLAUDE_SONNET,
+    TIER_PRO: CLAUDE_SONNET,
+}
+
+
+def _config_json() -> dict:
+    """local/config.json (shared with the dashboard), {} when unreadable."""
+    try:
+        return json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def backend() -> str:
+    """Active LLM backend: 'vertex' (default) or 'claude'."""
+    val = os.getenv("RESUME_TAILOR_BACKEND") or _config_json().get("backend")
+    val = val.strip().lower() if isinstance(val, str) else "vertex"
+    return val if val in ("vertex", "claude") else "vertex"
+
+
+def model_for(tier: str, backend_name: Optional[str] = None) -> str:
+    """Concrete model for a tier token under the given (or active) backend."""
+    be = backend_name if backend_name is not None else backend()
+    table = _CLAUDE_TIERS if be == "claude" else _VERTEX_TIERS
+    return table[tier]

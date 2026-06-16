@@ -297,7 +297,7 @@ JOB: {job_title} at {company}
 
 JOB DESCRIPTION:
 {jd[:7000]}"""
-    out = call(system, user, config.MODEL_FLASH, json_out=True, temperature=0.1)
+    out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
     return _normalize_selection(out)
 
 
@@ -510,7 +510,7 @@ group's facts; for a 1-line target, write one tight line. Stay within the atoms'
 facts either way (never invent to pad, never drop a number to shorten).
 
 Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ...]}}"""
-    out = call(system, user, config.MODEL_PRO, json_out=True, temperature=0.25)
+    out = call(system, user, config.TIER_PRO, json_out=True, temperature=0.25)
     result: Dict[str, str] = {}
     for b in out.get("bullets", []):
         gk, text = b.get("gkey"), (b.get("text") or "").strip()
@@ -536,7 +536,7 @@ PREVIOUS BULLET: {bad_text}
 PROBLEMS TO FIX: {problems}
 
 Return ONLY JSON: {{"text": "<corrected bullet>"}}"""
-    out = call(system, user, config.MODEL_FLASH, json_out=True, temperature=0.0)
+    out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.0)
     return (out.get("text") or "").strip()
 
 
@@ -568,7 +568,7 @@ CURRENT BULLET ({cur} chars): {text}
 TARGET: rewrite to between {lo} and {hi} characters. {direction}
 
 Return ONLY JSON: {{"text": "<rewritten bullet>"}}"""
-    out = call(system, user, config.MODEL_FLASH, json_out=True, temperature=0.1)
+    out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
     return (out.get("text") or "").strip()
 
 
@@ -698,7 +698,7 @@ Rules:
 
 Return ONLY JSON: {{"Languages": "Python, SQL, R", "Tools & Infrastructure": "...", "Libraries & Frameworks": "..."}}"""
     try:
-        out = call(system, user, config.MODEL_FLASH, json_out=True, temperature=0.1)
+        out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
     except Exception:
         out = {}
     return _finalize_skill_lines(out)
@@ -724,7 +724,7 @@ def shrink(jd: str, bullets: Dict[str, str], pages: int) -> Dict[str, str]:
         + '\n\nReturn ONLY JSON: {"bullets": [{"gkey": "...", "text": "..."}, ...]}'
     )
     try:
-        out = call(system, user, config.MODEL_FLASH, json_out=True, temperature=0.0)
+        out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.0)
     except Exception:
         return bullets
     result = dict(bullets)
@@ -756,7 +756,7 @@ def verify(bullets: Dict[str, str], gm: Dict[str, List[str]]) -> Dict[str, Dict[
         + json.dumps(payload, ensure_ascii=False, indent=1)
         + '\n\nReturn ONLY JSON: {"results": [{"gkey": "...", "ok": true, "problems": []}, ...]}'
     )
-    out = call(system, user, config.MODEL_FLASH, json_out=True, temperature=0.0)
+    out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.0)
     results: Dict[str, Dict[str, Any]] = {}
     for r in out.get("results", []):
         gk = r.get("gkey")

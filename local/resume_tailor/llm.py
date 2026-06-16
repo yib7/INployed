@@ -95,8 +95,9 @@ def call(
     tools: optional list (e.g. Vertex GoogleSearch grounding). On the Claude
     backend a non-empty tools list enables `--allowedTools WebSearch`.
     """
-    model = config.model_for(tier)
-    if config.backend() == "claude":
+    active = config.backend()
+    model = config.model_for(tier, active)
+    if active == "claude":
         return _call_claude(
             system, user, model,
             json_out=json_out, tools=tools, max_output_tokens=max_output_tokens,

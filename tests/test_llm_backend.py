@@ -190,6 +190,23 @@ def test_dispatch_routes_to_claude_with_resolved_model(monkeypatch):
     assert captured["model"] == config.CLAUDE_HAIKU
 
 
+def test_call_resolves_backend_once_consistently(monkeypatch):
+    # backend() would flip between reads; with a single read the model and the
+    # dispatched transport must agree.
+    seq = iter(["claude", "vertex", "vertex", "vertex"])
+    monkeypatch.setattr(config, "backend", lambda: next(seq))
+    captured = {}
+    monkeypatch.setattr(llm, "_call_claude",
+                        lambda system, user, model, **k: captured.update(be="claude", model=model) or "C")
+    monkeypatch.setattr(llm, "_call_vertex",
+                        lambda system, user, model, **k: captured.update(be="vertex", model=model) or "V")
+    llm.call("s", "u", config.TIER_FLASH)
+    if captured["be"] == "claude":
+        assert captured["model"] == config.CLAUDE_SONNET
+    else:
+        assert captured["model"] == config.MODEL_FLASH
+
+
 def test_claude_uses_resolved_executable_path(monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
     monkeypatch.setattr(config, "_config_json", lambda: {})

@@ -38,6 +38,12 @@ def test_backend_unknown_falls_back_to_vertex(monkeypatch):
     assert config.backend() == "vertex"
 
 
+def test_backend_non_string_config_falls_back_to_vertex(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_BACKEND", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"backend": 123})
+    assert config.backend() == "vertex"
+
+
 def test_model_for_vertex(monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_BACKEND", "vertex")
     monkeypatch.setattr(config, "_config_json", lambda: {})

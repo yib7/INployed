@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
 # ── Locations ────────────────────────────────────────────────────────────────
 PKG_DIR = Path(__file__).resolve().parent              # local/resume_tailor
@@ -97,7 +98,8 @@ def backend() -> str:
     return val if val in ("vertex", "claude") else "vertex"
 
 
-def model_for(tier: str) -> str:
-    """Concrete model for a tier token under the active backend."""
-    table = _CLAUDE_TIERS if backend() == "claude" else _VERTEX_TIERS
+def model_for(tier: str, backend_name: Optional[str] = None) -> str:
+    """Concrete model for a tier token under the given (or active) backend."""
+    be = backend_name if backend_name is not None else backend()
+    table = _CLAUDE_TIERS if be == "claude" else _VERTEX_TIERS
     return table[tier]

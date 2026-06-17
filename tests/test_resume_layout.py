@@ -37,3 +37,51 @@ def test_block_targets_bad_shape_falls_back(monkeypatch):
 def test_constants_present():
     assert config.MAX_LINE_CHARS == 100
     assert config.PROJECTS_MAX == 3 and config.PROJECT_BULLETS_MAX == 2
+
+
+from resume_tailor import compose  # noqa: E402
+
+
+def _fake_sel():
+    # Two experience blocks, two leadership orgs, two projects, over-filled.
+    return {
+        "experience": [
+            {"name": "Globex", "groups": [["a1"], ["a2"], ["a3"], ["a4"]]},
+            {"name": "Initech", "groups": [["b1"], ["b2"], ["b3"]]},
+        ],
+        "leadership": [
+            {"name": "NRHH", "groups": [["c1"], ["c2"]]},
+            {"name": "RHA", "groups": [["d1"], ["d2"]]},
+        ],
+        "projects": [
+            {"name": "P1", "groups": [["e1"], ["e2"], ["e3"]]},
+            {"name": "P2", "groups": [["f1"]]},
+            {"name": "P3", "groups": [["g1"]]},
+            {"name": "P4", "groups": [["h1"]]},
+        ],
+    }
+
+
+def test_cap_projects_limits_count_and_bullets(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    sel = _fake_sel()
+    compose._cap_projects(sel)
+    assert len(sel["projects"]) == config.PROJECTS_MAX           # 4 -> 3
+    assert len(sel["projects"][0]["groups"]) == config.PROJECT_BULLETS_MAX  # 3 -> 2
+
+
+def test_bullet_line_targets_maps_each_bullet(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
+        "Globex": {"line_targets": [2, 1]},
+        "NRHH": {"line_targets": [2]},
+    }})
+    sel = {
+        "experience": [{"name": "Globex", "groups": [["a1"], ["a2"]]}],
+        "leadership": [{"name": "NRHH", "groups": [["c1"]]}],
+        "projects": [{"name": "P1", "groups": [["e1"]]}],
+    }
+    tgt = compose.bullet_line_targets(sel)
+    assert tgt[compose._gkey(["a1"])] == 2
+    assert tgt[compose._gkey(["a2"])] == 1
+    assert tgt[compose._gkey(["c1"])] == 2
+    assert tgt[compose._gkey(["e1"])] == config.PROJECT_BULLET_LINES

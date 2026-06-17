@@ -367,11 +367,9 @@ def _block_atoms(section: str, name: str) -> List[str]:
 
 
 def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
-    """Force each configured fixed experience block to EXACTLY len(line_targets)
-    bullets, and each Leadership org to the bullet count its line-budget needs
-    (2 single-atom bullets when it has >=2 atoms, else 1). Deterministic — the
-    model cannot over/under-fill the fixed blocks regardless of what select()
-    returned. All driven by the yaml `tailor:` config (no hardcoded org names)."""
+    """Force each constant block to EXACTLY len(config.block_targets(name)) bullets
+    (experience as fused groups, leadership as single-atom bullets), and cap projects.
+    Deterministic — the model cannot over/under-fill regardless of select()."""
     used: set[str] = {
         aid
         for sec in ("experience", "projects", "leadership")
@@ -379,17 +377,22 @@ def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
         for g in e["groups"]
         for aid in g
     }
-    specs = _fixed_experience_specs()
     for e in clean.get("experience", []):
-        targets = specs.get(e["name"])
-        if targets:
-            _resize_to_count(e, "experience", e["name"], len(targets), used, singles=False)
-    lead_lines = _leadership_entry_lines()
-    if lead_lines:
-        for e in clean.get("leadership", []):
-            avail = _block_atoms("leadership", e["name"])
-            target = lead_lines if len(avail) >= 2 else 1
-            _resize_to_count(e, "leadership", e["name"], target, used, singles=True)
+        n = len(config.block_targets(e["name"]))
+        _resize_to_count(e, "experience", e["name"], n, used, singles=False)
+    for e in clean.get("leadership", []):
+        n = len(config.block_targets(e["name"]))
+        _resize_to_count(e, "leadership", e["name"], n, used, singles=True)
+    _cap_projects(clean)
+
+
+def _cap_projects(clean: Dict[str, Any]) -> None:
+    """Keep the top PROJECTS_MAX projects (strength-ordered by select) and cap each
+    to PROJECT_BULLETS_MAX groups. Projects are never force-injected, only trimmed."""
+    projects = clean.get("projects", [])[:config.PROJECTS_MAX]
+    for entry in projects:
+        entry["groups"] = entry["groups"][:config.PROJECT_BULLETS_MAX]
+    clean["projects"] = projects
 
 
 def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
@@ -447,6 +450,22 @@ def layout_budgets(sel: Dict[str, Any]) -> Dict[str, int]:
             for ids, tgt in zip(e["groups"], plan):
                 budgets[_gkey(ids)] = tgt
     return budgets
+
+
+def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
+    """{gkey: target_printed_lines} for EVERY bullet. Constant blocks (experience +
+    leadership) use config.block_targets; projects use config.PROJECT_BULLET_LINES.
+    Feeds the rephrase soft hint and the deterministic trim cap."""
+    out: Dict[str, int] = {}
+    for sec in ("experience", "leadership"):
+        for e in sel.get(sec, []):
+            targets = config.block_targets(e["name"])
+            for i, ids in enumerate(e["groups"]):
+                out[_gkey(ids)] = targets[i] if i < len(targets) else targets[-1]
+    for e in sel.get("projects", []):
+        for ids in e["groups"]:
+            out[_gkey(ids)] = config.PROJECT_BULLET_LINES
+    return out
 
 
 # ── Stage 2: rephrase ────────────────────────────────────────────────────────

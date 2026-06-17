@@ -54,10 +54,6 @@ MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-2.5-flash
 # ── pdflatex ─────────────────────────────────────────────────────────────────
 PDFLATEX_PATH = os.getenv("PDFLATEX_PATH", "pdflatex")
 PAGE_LIMIT = 1
-# The deterministic drop-weakest-bullet step usually converges the page well
-# before this; 3 flash shrink passes is plenty (was 4).
-MAX_SHRINK_ATTEMPTS = 3
-
 # ── Backend selection ────────────────────
 # Resolved at call time. Precedence: env var > local/config.json > "gemini".
 CONFIG_JSON = PKG_DIR.parent / "config.json"            # local/config.json

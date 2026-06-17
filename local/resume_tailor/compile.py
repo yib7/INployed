@@ -2,7 +2,7 @@
 
 compile_tex/page_count/pdflatex_available are ported from Resume_Tailor's
 compiler.py (the proven core). enforce_one_page re-renders the composed data
-after each shrink instead of injecting into marker blocks.
+after each bullet drop instead of injecting into marker blocks.
 """
 from __future__ import annotations
 

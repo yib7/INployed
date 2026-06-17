@@ -180,3 +180,4 @@ def test_enforce_one_page_drops_until_one_page(tmp_path, monkeypatch):
         sel, bullets, skills, tmp_path / "r.tex", tmp_path, jd="x" * 50)
     assert res.ok
     assert rt_compile.page_count(res.pdf_path) == 1
+    assert not hasattr(rt_compile, "compose")  # compile must never import compose

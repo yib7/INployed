@@ -143,6 +143,23 @@ def test_claude_no_websearch_without_tools(monkeypatch):
     monkeypatch.setattr(llm.subprocess, "run", fake_run)
     llm.call("sys", "user", config.TIER_FLASH)
     assert "--allowedTools" not in seen["argv"]
+    # no-tools path denies the heavy built-ins to shrink the cached prompt prefix
+    assert "--disallowedTools" in seen["argv"]
+    assert "Bash" in seen["argv"] and "WebSearch" not in seen["argv"]
+
+
+def test_claude_no_disallowed_tools_when_tools_requested(monkeypatch):
+    _use_claude(monkeypatch)
+    seen = {}
+
+    def fake_run(argv, **k):
+        seen["argv"] = argv
+        return _FakeProc(stdout=_envelope("ok"))
+
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    llm.call("sys", "user", config.TIER_FLASH, tools=[object()])
+    # search path uses an allow-list instead; no blanket deny that could clash
+    assert "--disallowedTools" not in seen["argv"]
 
 
 def test_claude_missing_cli_raises(monkeypatch):

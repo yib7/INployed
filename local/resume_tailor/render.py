@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from . import assets
-from .latexutil import clean_bullet, escape_latex, fmt_dates
+from .latexutil import clean_bullet, escape_latex, fmt_dates, to_latex
 
 
 def _header(basics: dict) -> str:
@@ -158,7 +158,7 @@ def _skills(skill_lines: List[Dict[str, str]]) -> str:
     if not skill_lines:
         return ""
     rows = " \\\\\n".join(
-        f"\\textbf{{{escape_latex(ln['label'])}}}{{: }} {escape_latex(ln['items'])}"
+        f"\\textbf{{{escape_latex(ln['label'])}}}{{: }} {to_latex(ln['items'])}"
         for ln in skill_lines
     )
     return ("%-----------Technical SKILLS-----------\n\\section{Technical Skills}\n"

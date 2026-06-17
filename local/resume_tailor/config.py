@@ -38,17 +38,18 @@ GCP_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
 GCP_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 
 # ── Per-task model tiers ─────────────────────────────────────────────────────
-# flash       → selection+skills, fact-verify, shrink, AND the constrained fix-up
-#               passes (rephrase_fix / refit) — these only rewrite already-good
-#               text to fix grounding or hit a line length, so flash matches PRO
-#               quality at ~5x lower cost.
+# flash       → the judgment passes: selection (which evidence), fact-verify
+#               (anti-inflation audit), and the skills fallback. Few calls/run.
 # pro         → the creative first pass (rephrase) + cover letter (quality-critical)
 MODEL_FLASH = os.getenv("RESUME_TAILOR_MODEL_FLASH", "gemini-2.5-flash")
 # Pro tier: this project exposes gemini-3.1-pro-preview (3.5-pro/3.1-pro 404 here).
 MODEL_PRO = os.getenv("RESUME_TAILOR_MODEL_PRO", "gemini-3.1-pro-preview")
-# flash-lite → cheapest tier for high-frequency, low-stakes classification (the
-# master_experience JD-gap screen/placement). Quality isn't critical and edits are
-# reviewed before any write, so the cheapest model is the right call.
+# flash-lite → cheapest tier for high-frequency, low-stakes work: the JD-gap
+# screen/placement AND the mechanical constrained edits (rephrase_fix / refit /
+# shrink). Those just rewrite already-grounded text to fix a grounding nit or hit
+# a char window — the per-bullet refit loop is the bulk of calls/run, so keeping
+# it on the cheapest tier is the main cost lever (esp. on the Claude backend,
+# where every call carries ~10k tokens of fixed CLI overhead). See [[resume-tailor-claude-backend]].
 MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-2.5-flash-lite")
 
 # ── pdflatex ─────────────────────────────────────────────────────────────────
@@ -58,28 +59,28 @@ PAGE_LIMIT = 1
 # before this; 3 flash shrink passes is plenty (was 4).
 MAX_SHRINK_ATTEMPTS = 3
 
-# ── Backend selection (Vertex Gemini vs local Claude CLI) ────────────────────
-# Resolved at call time (not cached) so the long-lived dashboard picks up a
-# toggle without restart. Precedence: env var > local/config.json > "vertex".
+# ── Backend selection ────────────────────
+# Resolved at call time. Precedence: env var > local/config.json > "gemini".
 CONFIG_JSON = PKG_DIR.parent / "config.json"            # local/config.json
 
 TIER_FLASH_LITE = "flash_lite"
 TIER_FLASH = "flash"
 TIER_PRO = "pro"
 
-# Claude tier targets (CLI model aliases). pro reuses sonnet — no opus tier.
-CLAUDE_HAIKU = os.getenv("RESUME_TAILOR_CLAUDE_HAIKU", "haiku")
-CLAUDE_SONNET = os.getenv("RESUME_TAILOR_CLAUDE_SONNET", "sonnet")
-
-_VERTEX_TIERS = {
+_GEMINI_TIERS = {
     TIER_FLASH_LITE: MODEL_FLASH_LITE,
     TIER_FLASH: MODEL_FLASH,
     TIER_PRO: MODEL_PRO,
 }
-_CLAUDE_TIERS = {
-    TIER_FLASH_LITE: CLAUDE_HAIKU,
-    TIER_FLASH: CLAUDE_SONNET,
-    TIER_PRO: CLAUDE_SONNET,
+_ANTHROPIC_TIERS = {
+    TIER_FLASH_LITE: os.getenv("RESUME_TAILOR_CLAUDE_HAIKU", "claude-3-5-haiku-latest"),
+    TIER_FLASH: os.getenv("RESUME_TAILOR_CLAUDE_SONNET", "claude-3-7-sonnet-latest"),
+    TIER_PRO: os.getenv("RESUME_TAILOR_CLAUDE_PRO", "claude-3-7-sonnet-latest"),
+}
+_OPENAI_TIERS = {
+    TIER_FLASH_LITE: os.getenv("RESUME_TAILOR_OPENAI_MINI", "gpt-4o-mini"),
+    TIER_FLASH: os.getenv("RESUME_TAILOR_OPENAI_BASE", "gpt-4o"),
+    TIER_PRO: os.getenv("RESUME_TAILOR_OPENAI_PRO", "o3-mini"),
 }
 
 
@@ -92,14 +93,18 @@ def _config_json() -> dict:
 
 
 def backend() -> str:
-    """Active LLM backend: 'vertex' (default) or 'claude'."""
+    """Active LLM backend: 'gemini' (default), 'anthropic', or 'openai'."""
     val = os.getenv("RESUME_TAILOR_BACKEND") or _config_json().get("backend")
-    val = val.strip().lower() if isinstance(val, str) else "vertex"
-    return val if val in ("vertex", "claude") else "vertex"
+    val = val.strip().lower() if isinstance(val, str) else "gemini"
+    # Legacy fallbacks
+    if val == "vertex": val = "gemini"
+    if val == "claude": val = "anthropic"
+    return val if val in ("gemini", "anthropic", "openai") else "gemini"
 
 
 def model_for(tier: str, backend_name: Optional[str] = None) -> str:
     """Concrete model for a tier token under the given (or active) backend."""
     be = backend_name if backend_name is not None else backend()
-    table = _CLAUDE_TIERS if be == "claude" else _VERTEX_TIERS
-    return table[tier]
+    if be == "anthropic": return _ANTHROPIC_TIERS[tier]
+    if be == "openai": return _OPENAI_TIERS[tier]
+    return _GEMINI_TIERS.get(tier, MODEL_FLASH)

@@ -85,3 +85,22 @@ def test_bullet_line_targets_maps_each_bullet(monkeypatch):
     assert tgt[compose._gkey(["a2"])] == 1
     assert tgt[compose._gkey(["c1"])] == 2
     assert tgt[compose._gkey(["e1"])] == config.PROJECT_BULLET_LINES
+
+
+def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
+    # "Globex" is NOT in the resume_layout config below, so block_targets("Globex")
+    # falls back to DEFAULT_LINE_TARGETS (length 3).  With 4 atoms available it
+    # must be resized DOWN to exactly 3 bullet groups.
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
+        "Initech": {"line_targets": [2, 1]},  # some OTHER block — Globex absent
+    }})
+    sel = {
+        "experience": [
+            {"name": "Globex", "groups": [["a1"], ["a2"], ["a3"], ["a4"]]},
+        ],
+        "leadership": [],
+        "projects": [],
+    }
+    compose._enforce_fixed_counts(sel)
+    octus = sel["experience"][0]
+    assert len(octus["groups"]) == len(config.DEFAULT_LINE_TARGETS)  # must be 3

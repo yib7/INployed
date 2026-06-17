@@ -1717,6 +1717,7 @@ class App:
         win.title("Resume layout")
         win.configure(bg=BG)
         win.transient(self.root)
+        win.grab_set()
         rows: dict[str, dict] = {}
 
         for r, name in enumerate(names):
@@ -1724,7 +1725,7 @@ class App:
             targets = rt_config.block_targets(name)
             n_var = tk.IntVar(value=len(targets))
             line_holder = ttk.Frame(win)
-            line_holder.grid(row=r, column=2, sticky="w", padx=8)
+            line_holder.grid(row=r, column=4, sticky="w", padx=8)
             line_vars: list[tk.IntVar] = []
 
             def _render_lines(_=None, name=name, n_var=n_var, holder=line_holder, lv=line_vars, base=targets):
@@ -1738,7 +1739,7 @@ class App:
 
             ttk.Label(win, text="Bullets").grid(row=r, column=1, padx=(8, 2))
             ttk.Spinbox(win, from_=1, to=5, width=3, textvariable=n_var,
-                        command=_render_lines).grid(row=r, column=1, sticky="e")
+                        command=_render_lines).grid(row=r, column=2, sticky="w")
             _render_lines()
             rows[name] = {"n": n_var, "lines": line_vars}
 
@@ -1750,7 +1751,7 @@ class App:
             self._set_status("Resume layout saved (applies on the next tailor run).")
 
         btnbar = ttk.Frame(win)
-        btnbar.grid(row=len(names), column=0, columnspan=3, pady=10)
+        btnbar.grid(row=len(names), column=0, columnspan=5, pady=10)
         ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=6)
         ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=6)
 

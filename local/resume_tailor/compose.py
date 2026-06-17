@@ -5,11 +5,10 @@ rephrase()        pro   : one bullet per GROUP, faithfully fusing only that grou
 compress_skills() flash : exactly 3 fixed-label lines drawn from the taxonomy
 verify()          flash : anti-inflation gate — each bullet vs the UNION of its group's atoms
 rephrase_fix()    flash : regenerate a flagged bullet once, fixing the cited problems
-refit()           flash : nudge a bullet to its target printed-line length
 
-Only the creative first pass (rephrase) and the cover letter run on the PRO tier
-— the fix-up passes (rephrase_fix/refit) are constrained rewrites of already-good
-text, so flash handles them at a fraction of the cost without touching quality.
+Only the creative first pass (rephrase) and the cover letter run on the PRO tier.
+All other stages (selection, verify, rephrase_fix) use flash for constrained rewrites
+of already-grounded text. Length is finalized deterministically downstream.
 
 A "group" is a list of 1-3 closely-related atom ids fused into ONE bullet (e.g. an
 accuracy gain + the cost cut). Each bullet's group key is "+".join(ids); every bullet

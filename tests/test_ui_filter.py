@@ -40,3 +40,14 @@ def test_column_search_no_match():
 def test_all_columns_default_behaviour():
     out = _call(_df(), "globex", None)
     assert list(out["job_title"]) == ["ML Engineer"]
+
+
+def test_search_column_precomputed():
+    """_filter_and_sort uses the _search column when search_column is None/All."""
+    df = _df().copy()
+    df["_search"] = [
+        "data analyst acme seattle",
+        "ml engineer globex austin tx",
+    ]
+    out = _call(df, "acme", None)
+    assert list(out["company_name"]) == ["Acme"]

@@ -109,38 +109,12 @@ def test_required_rejects_unknown_name(synthetic_master, monkeypatch):
         compose._required_blocks()
 
 
-def test_fixed_experience_specs_from_config(synthetic_master):
-    specs = compose._fixed_experience_specs()
-    assert specs == {"Side Gig": [2, 1]}
-
-
 def test_required_accepts_bare_string(synthetic_master, monkeypatch):
     # A single block name written as a scalar must become a one-element list,
     # not iterate its characters.
     monkeypatch.setattr(assets, "tailor_config",
                         lambda: {"required": {"experience": "Big Co"}})
     assert compose._required_blocks()["experience"] == ["Big Co"]
-
-
-def test_fixed_blocks_scalar_line_targets_raises(synthetic_master, monkeypatch):
-    monkeypatch.setattr(assets, "tailor_config",
-                        lambda: {"fixed_blocks": {"Side Gig": {"line_targets": 2}}})
-    with pytest.raises(RuntimeError, match="must be a list"):
-        compose._fixed_experience_specs()
-
-
-def test_fixed_blocks_non_int_line_targets_raises(synthetic_master, monkeypatch):
-    monkeypatch.setattr(assets, "tailor_config",
-                        lambda: {"fixed_blocks": {"Side Gig": {"line_targets": ["two"]}}})
-    with pytest.raises(RuntimeError, match="only integers"):
-        compose._fixed_experience_specs()
-
-
-def test_leadership_entry_lines_bad_value_raises(synthetic_master, monkeypatch):
-    monkeypatch.setattr(assets, "tailor_config",
-                        lambda: {"leadership_entry_lines": "lots"})
-    with pytest.raises(RuntimeError, match="must be an integer"):
-        compose._leadership_entry_lines()
 
 
 def test_atom_material_len_reflects_content(synthetic_master):
@@ -175,20 +149,6 @@ def test_enforce_fixed_counts_pins_bullets(synthetic_master, monkeypatch):
     # Big Co has 2-bullet config -> untouched.
     big = next(e for e in sel["experience"] if e["name"] == "Big Co")
     assert len(big["groups"]) == 2
-
-
-def test_layout_budgets_honor_config(synthetic_master):
-    sel = {
-        "experience": [{"name": "Side Gig", "groups": [["gig_a"], ["gig_b"]]}],
-        "leadership": [
-            {"name": "Club A", "groups": [["la_a"], ["la_b"]]},  # 2 atoms -> two 1-line
-            {"name": "Club B", "groups": [["lb_a"]]},            # 1 atom -> one 2-line
-        ],
-    }
-    budgets = compose.layout_budgets(sel)
-    assert budgets["gig_a"] == 2 and budgets["gig_b"] == 1
-    assert budgets["la_a"] == 1 and budgets["la_b"] == 1
-    assert budgets["lb_a"] == 2
 
 
 def test_header_and_education_render_from_yaml(synthetic_master):

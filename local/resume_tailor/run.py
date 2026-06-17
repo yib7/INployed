@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from . import apply_data, ats, compose, config, coverletter, layout, llm, output, research
+from . import apply_data, ats, compose, config, coverletter, llm, output, research
 from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
@@ -79,37 +79,16 @@ def _word_trim(text: str, max_visible: int) -> str:
     return (cut[:sp] if sp > 0 else cut).rstrip(",; ")
 
 
-def _enforce_layout(jd: str, sel: dict, bullets: Dict[str, str],
-                    log: Callable[[str], None]) -> None:
-    """Drive every layout-budgeted bullet into its target printed-line window.
-    Applies deterministic word-trimming if over-length, bypassing LLM refit loops."""
-    budgets = compose.layout_budgets(sel)
-
-    def dist(text: str, tgt: int) -> int:
-        lo, hi = layout.body_line_budget(tgt)
-        n = layout._visible_len(text)
-        return 0 if lo <= n <= hi else (lo - n if n < lo else n - hi)
-
-    for gk, tgt in budgets.items():
-        if gk not in bullets or layout.body_fits(bullets[gk], tgt):
-            continue
-        lo, hi = layout.body_line_budget(tgt)
-        cur = layout._visible_len(bullets[gk])
-        if cur < lo:
-            log(f"layout: [{gk}] under target ({cur} chars for {tgt} line(s)); "
-                f"left as-is (no padding without facts)")
-            continue
-        
-        # Deterministic trim only (no LLM refit loop to save calls)
-        if not layout.body_fits(bullets[gk], tgt):
-            if layout._visible_len(bullets[gk]) > hi:
-                bullets[gk] = _word_trim(bullets[gk], hi)
-            got = layout.est_body_lines(bullets[gk])
-            if got != tgt:
-                log(f"layout: [{gk}] wanted {tgt} line(s), best effort ~{got} "
-                    f"({layout._visible_len(bullets[gk])} chars)")
-
-    # Free (un-budgeted) bullets: skipped LLM lengthening to save calls.
+def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:
+    """Deterministically word-trim each bullet to its per-bullet char cap
+    (target_lines * config.MAX_LINE_CHARS). Over-length is trimmed at a word
+    boundary (numbers are front-loaded, so the tail trims safely); under-length is
+    left as-is — we never pad, which would mean inventing facts."""
+    targets = compose.bullet_line_targets(sel)
+    for gk, text in list(bullets.items()):
+        cap = targets.get(gk, config.PROJECT_BULLET_LINES) * config.MAX_LINE_CHARS
+        if len(text.strip()) > cap:
+            bullets[gk] = _word_trim(text, cap)
 
 
 def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: StatusFn = None) -> Path:
@@ -133,7 +112,7 @@ def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: Status
     if not bullets:
         raise RuntimeError("No grounded bullets survived verification.")
 
-    _enforce_layout(jd, sel, bullets, log)
+    _trim_to_caps(sel, bullets)
 
     log("compressing skills…")
     skill_lines = compose.compress_skills(jd, job_title, sel)

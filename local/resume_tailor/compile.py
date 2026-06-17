@@ -14,7 +14,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from pypdf import PdfReader
 
-from . import compose, config, render
+from . import config, render
 
 
 @dataclass
@@ -92,7 +92,7 @@ def enforce_one_page(
     skill_lines: List[Dict[str, str]],
     tex_path: Path,
     work_dir: Path,
-    jd: str,
+    jd: str = "",
     on_status: Optional[Callable[[str], None]] = None,
 ) -> Tuple[CompileResult, Dict[str, str], str]:
     def log(msg: str) -> None:
@@ -101,7 +101,7 @@ def enforce_one_page(
 
     cur = dict(bullets)
     tex = ""
-    for attempt in range(config.MAX_SHRINK_ATTEMPTS + 1):
+    while True:
         tex = render.render(sel, cur, skill_lines)
         tex_path.write_text(tex, encoding="utf-8")
         result = compile_tex(tex_path, work_dir)
@@ -111,19 +111,8 @@ def enforce_one_page(
         log(f"compiled to {pages} page(s)")
         if pages <= config.PAGE_LIMIT:
             return result, cur, tex
-        if attempt == config.MAX_SHRINK_ATTEMPTS:
-            log("hit max shrink attempts; returning best effort (still > 1 page)")
+        dropped = _drop_weakest_group(sel, cur)
+        if not dropped:
+            log("over one page but nothing left to drop — returning best effort")
             return result, cur, tex
-        if attempt < 2:
-            log(f"over one page; shrinking bullets (attempt {attempt + 1})…")
-            cur = compose.shrink(jd, cur, pages)
-        else:
-            # Wording alone didn't get us there — drop the weakest project
-            # bullet instead of silently shipping a 2-page resume.
-            dropped = _drop_weakest_group(sel, cur)
-            if dropped:
-                log(f"over one page; dropping weakest project bullet [{dropped}]")
-            else:
-                log(f"over one page; nothing left to drop — shrinking again (attempt {attempt + 1})…")
-                cur = compose.shrink(jd, cur, pages)
-    return result, cur, tex
+        log(f"over one page; dropping weakest project bullet [{dropped}]")

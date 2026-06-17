@@ -152,3 +152,31 @@ def test_refit_and_body_math_removed():
     from resume_tailor import layout
     assert not hasattr(layout, "body_line_budget")
     assert not hasattr(layout, "body_fits")
+
+
+import shutil
+import pytest
+
+
+@pytest.mark.skipif(shutil.which("pdflatex") is None, reason="pdflatex not installed")
+def test_enforce_one_page_drops_until_one_page(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    from resume_tailor import assets, compile as rt_compile
+    bl = assets.blocks()
+    sel = {"experience": [], "projects": [], "leadership": [],
+           "skill_focus": "general", "skills": {}, "rationale": ""}
+    for sec in ("experience", "projects", "leadership"):
+        for b in bl[sec]:
+            if b["atoms"]:
+                sel[sec].append({"name": b["name"], "groups": [[a] for a in b["atoms"]]})
+    sel = compose._normalize_selection(sel)
+    gm = compose.group_map(sel)
+    # Deliberately bloated bullets to force >1 page.
+    bullets = {gk: ("Engineered a large multi-stage system " * 6).strip() + "." for gk in gm}
+    skills = [{"label": "Languages", "items": "Python, SQL"},
+              {"label": "Tools & Infrastructure", "items": "Git, Docker"},
+              {"label": "Libraries & Frameworks", "items": "Pandas, NumPy"}]
+    res, final, _tex = rt_compile.enforce_one_page(
+        sel, bullets, skills, tmp_path / "r.tex", tmp_path, jd="x" * 50)
+    assert res.ok
+    assert rt_compile.page_count(res.pdf_path) == 1

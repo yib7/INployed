@@ -470,25 +470,22 @@ def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
 
 # ── Stage 2: rephrase ────────────────────────────────────────────────────────
 def _length_hint(target_lines: int) -> str:
-    lo, hi = layout.body_line_budget(target_lines)
-    return f"{lo}-{hi} chars ({target_lines} printed line{'s' if target_lines > 1 else ''})"
+    cap = target_lines * config.MAX_LINE_CHARS
+    unit = "line" if target_lines == 1 else "lines"
+    return f"about {target_lines} {unit} (<= {cap} characters)"
 
 
-def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
-             budgets: Dict[str, int] | None = None) -> Dict[str, str]:
-    """Return {gkey: bullet_text} — one bullet per selected group.
-
-    `budgets` (gkey -> target printed lines) carries the hard layout spec for the
-    fixed blocks; those bullets are given an explicit character window to hit so
-    they render to the intended line count (a fit loop in run.py then verifies).
-    """
+def rephrase(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:
+    """Return {gkey: bullet_text} — one bullet per selected group. Each bullet gets
+    a soft length hint from its per-bullet line target; final length is enforced
+    deterministically later (run._trim_to_caps), so this is guidance, not a gate."""
     gm = group_map(sel)
-    budgets = budgets or {}
+    targets = bullet_line_targets(sel)
     payload = []
     for gk, ids in gm.items():
         item: Dict[str, Any] = {"gkey": gk, "atoms": {a: _atom_payload(a) for a in ids}}
-        if gk in budgets:
-            item["length_target"] = _length_hint(budgets[gk])
+        if gk in targets:
+            item["length_target"] = _length_hint(targets[gk])
         payload.append(item)
     verbs = _CORE_VERBS
     example = assets.example_text()[:1200]
@@ -522,11 +519,10 @@ STYLE EXEMPLAR (match this voice, length and density — NEVER copy its facts):
 GROUPS (write exactly ONE bullet per gkey, re-phrasing ONLY the atoms in that group):
 {json.dumps(payload, ensure_ascii=False, indent=1)}
 
-LAYOUT (HARD requirement): any group with a "length_target" MUST land inside that
-character range — this controls how many printed lines the bullet takes and is not
-optional. For a 2-line target, write a dense, fully-developed line that uses all the
-group's facts; for a 1-line target, write one tight line. Stay within the atoms'
-facts either way (never invent to pad, never drop a number to shorten).
+LENGTH (guidance): aim each bullet near its "length_target" so the page stays
+balanced — a 2-line target wants a dense, fully-developed line using the group's
+facts; a 1-line target wants one tight line. Never invent facts to pad and never
+drop a number to shorten; length is finalized automatically afterward.
 
 Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ...]}}"""
     out = call(system, user, config.TIER_PRO, json_out=True, temperature=0.25)

@@ -104,3 +104,15 @@ def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
     compose._enforce_fixed_counts(sel)
     octus = sel["experience"][0]
     assert len(octus["groups"]) == len(config.DEFAULT_LINE_TARGETS)  # must be 3
+
+
+import inspect
+
+
+def test_length_hint_is_plain_lines():
+    assert compose._length_hint(1) == "about 1 line (<= 100 characters)"
+    assert compose._length_hint(2) == "about 2 lines (<= 200 characters)"
+
+
+def test_rephrase_dropped_budgets_param():
+    assert "budgets" not in inspect.signature(compose.rephrase).parameters

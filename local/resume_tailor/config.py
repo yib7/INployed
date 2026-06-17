@@ -92,6 +92,40 @@ def _config_json() -> dict:
         return {}
 
 
+# ── Resume layout (per-bullet line targets for the constant blocks) ───────────
+# Editable from the dashboard; persisted in local/config.json under "resume_layout"
+# as {block_name: {"line_targets": [int, ...]}}. The list length is the bullet
+# count for that block; each int is that bullet's printed-line target, which drives
+# the soft length hint in rephrase and the deterministic trim cap (lines * MAX_LINE_CHARS).
+MAX_LINE_CHARS = int(os.getenv("RESUME_TAILOR_MAX_LINE_CHARS", "100"))
+DEFAULT_LINE_TARGETS = [2, 2, 2]
+PROJECTS_MAX = int(os.getenv("RESUME_TAILOR_PROJECTS_MAX", "3"))
+PROJECT_BULLETS_MAX = int(os.getenv("RESUME_TAILOR_PROJECT_BULLETS_MAX", "2"))
+PROJECT_BULLET_LINES = int(os.getenv("RESUME_TAILOR_PROJECT_BULLET_LINES", "2"))
+
+
+def resume_layout() -> dict:
+    """Raw {block: {'line_targets': [...]}} from config.json ({} when absent/bad)."""
+    val = _config_json().get("resume_layout")
+    return val if isinstance(val, dict) else {}
+
+
+def block_targets(name: str) -> list[int]:
+    """Sanitized per-bullet line targets for a constant block. config.json value
+    (ints clamped 1-3, list length clamped 1-5) else DEFAULT_LINE_TARGETS."""
+    spec = resume_layout().get(name)
+    raw = spec.get("line_targets") if isinstance(spec, dict) else None
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return list(DEFAULT_LINE_TARGETS)
+    out: list[int] = []
+    for t in raw[:5]:
+        try:
+            out.append(max(1, min(3, int(t))))
+        except (TypeError, ValueError):
+            return list(DEFAULT_LINE_TARGETS)
+    return out or list(DEFAULT_LINE_TARGETS)
+
+
 def backend() -> str:
     """Active LLM backend: 'gemini' (default), 'anthropic', or 'openai'."""
     val = os.getenv("RESUME_TAILOR_BACKEND") or _config_json().get("backend")

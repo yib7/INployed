@@ -832,6 +832,7 @@ class App:
 
         ttk.Button(bar1, text="Refresh", command=self.reload_data).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
+        ttk.Button(bar1, text="Resume layout…", command=self._open_resume_layout_dialog).pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark all shown seen", command=self._mark_all_shown_seen,
                    style="Accent.TButton").pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark seen (selected)", command=self._mark_seen_selected,
@@ -1699,6 +1700,59 @@ class App:
     def _apply_backend_env(self) -> None:
         """Seed the env var the in-process tailor reads at call time."""
         os.environ["RESUME_TAILOR_BACKEND"] = self._current_backend()
+
+    def _open_resume_layout_dialog(self) -> None:
+        """Edit per-bullet line targets for the constant resume blocks. Each block:
+        a Bullets spinbox + one 'lines' spinbox per bullet (1-3). Saved to config.json."""
+        from resume_tailor import assets, config as rt_config
+        try:
+            blocks = assets.blocks()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Resume layout", f"Could not read blocks: {exc}", parent=self.root)
+            return
+        names = [b["name"] for b in blocks.get("experience", [])] + \
+                [b["name"] for b in blocks.get("leadership", [])]
+
+        win = tk.Toplevel(self.root)
+        win.title("Resume layout")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        rows: dict[str, dict] = {}
+
+        for r, name in enumerate(names):
+            ttk.Label(win, text=name).grid(row=r, column=0, sticky="w", padx=8, pady=6)
+            targets = rt_config.block_targets(name)
+            n_var = tk.IntVar(value=len(targets))
+            line_holder = ttk.Frame(win)
+            line_holder.grid(row=r, column=2, sticky="w", padx=8)
+            line_vars: list[tk.IntVar] = []
+
+            def _render_lines(_=None, name=name, n_var=n_var, holder=line_holder, lv=line_vars, base=targets):
+                for w in holder.winfo_children():
+                    w.destroy()
+                lv.clear()
+                for i in range(max(1, min(5, n_var.get()))):
+                    v = tk.IntVar(value=base[i] if i < len(base) else 2)
+                    lv.append(v)
+                    ttk.Spinbox(holder, from_=1, to=3, width=3, textvariable=v).pack(side="left", padx=2)
+
+            ttk.Label(win, text="Bullets").grid(row=r, column=1, padx=(8, 2))
+            ttk.Spinbox(win, from_=1, to=5, width=3, textvariable=n_var,
+                        command=_render_lines).grid(row=r, column=1, sticky="e")
+            _render_lines()
+            rows[name] = {"n": n_var, "lines": line_vars}
+
+        def _save():
+            layout_cfg = {nm: {"line_targets": [v.get() for v in d["lines"]]}
+                          for nm, d in rows.items()}
+            _save_cfg({"resume_layout": layout_cfg})
+            win.destroy()
+            self._set_status("Resume layout saved (applies on the next tailor run).")
+
+        btnbar = ttk.Frame(win)
+        btnbar.grid(row=len(names), column=0, columnspan=3, pady=10)
+        ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=6)
+        ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=6)
 
     def _on_engine_change(self) -> None:
         backend = self._current_backend()

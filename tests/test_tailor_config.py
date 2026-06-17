@@ -149,8 +149,15 @@ def test_atom_material_len_reflects_content(synthetic_master):
     assert compose.atom_material_len(["bigco_a", "bigco_b"]) > compose.atom_material_len(["bigco_a"])
 
 
-def test_enforce_fixed_counts_pins_bullets(synthetic_master):
-    # Side Gig has 3 atoms but a [2,1] spec -> exactly 2 bullet groups.
+def test_enforce_fixed_counts_pins_bullets(synthetic_master, monkeypatch):
+    # Side Gig has 3 atoms but a [2,1] config -> exactly 2 bullet groups.
+    # New contract: counts come from config.block_targets (config.json), not yaml.
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
+        "Side Gig": {"line_targets": [2, 1]},
+        "Big Co": {"line_targets": [2, 2]},
+        "Club A": {"line_targets": [1, 1]},
+        "Club B": {"line_targets": [2]},
+    }})
     sel = {
         "experience": [
             {"name": "Big Co", "groups": [["bigco_a"], ["bigco_b"]]},
@@ -165,7 +172,7 @@ def test_enforce_fixed_counts_pins_bullets(synthetic_master):
     compose._enforce_fixed_counts(sel)
     side = next(e for e in sel["experience"] if e["name"] == "Side Gig")
     assert len(side["groups"]) == 2
-    # Big Co is free -> untouched.
+    # Big Co has 2-bullet config -> untouched.
     big = next(e for e in sel["experience"] if e["name"] == "Big Co")
     assert len(big["groups"]) == 2
 

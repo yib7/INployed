@@ -821,7 +821,6 @@ class App:
         )
         self.lbl_status.pack(side="left")
 
-        self.cover_var = tk.BooleanVar(value=False)
         ttk.Button(bar1, text="Refresh", command=self.reload_data).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark all shown seen", command=self._mark_all_shown_seen,
@@ -833,7 +832,6 @@ class App:
         self.btn_tailor = ttk.Button(bar1, text="Tailor resume", command=self._tailor_selected,
                                      style="Green.TButton")
         self.btn_tailor.pack(side="right", padx=4)
-        ttk.Checkbutton(bar1, text="+ cover letter", variable=self.cover_var).pack(side="right", padx=(4, 10))
         self.engine_var = tk.StringVar(
             value=_ENGINE_LABELS.get(_load_cfg().get("backend", "vertex"), _ENGINE_LABELS["vertex"])
         )
@@ -1697,11 +1695,16 @@ class App:
         if not jobs:
             self._set_status("Could not find job data for the selection.")
             return
+        cover = messagebox.askyesno(
+            "Cover letter",
+            f"Also generate a cover letter for the selected {len(jobs)} job(s)?",
+            parent=self.root,
+        )
         self._tailoring = True
         self.btn_tailor.config(state="disabled")
         self._apply_backend_env()
         threading.Thread(
-            target=self._tailor_worker, args=(jobs, bool(self.cover_var.get())), daemon=True
+            target=self._tailor_worker, args=(jobs, cover), daemon=True
         ).start()
 
     def _tailor_worker(self, jobs: list[dict], cover: bool) -> None:

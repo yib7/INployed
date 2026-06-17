@@ -767,9 +767,10 @@ class App:
 
         self.searchcol_h_var = tk.StringVar(value="All")
         _high_choices = ["All"] + [COLUMN_LABELS.get(c, c) for c, _ in HIGH_SCORE_COLUMNS]
+        ttk.Label(hbar, text="In:").pack(side="left")
         cb_col_h = ttk.Combobox(hbar, textvariable=self.searchcol_h_var, state="readonly",
                                 width=12, values=_high_choices)
-        cb_col_h.pack(side="left", padx=(0, 12))
+        cb_col_h.pack(side="left", padx=(4, 12))
         cb_col_h.bind("<<ComboboxSelected>>", lambda *_: self._apply_filters_high())
 
         ttk.Label(hbar, text="Min score:").pack(side="left")
@@ -864,9 +865,10 @@ class App:
 
         self.searchcol_var = tk.StringVar(value="All")
         _all_choices = ["All"] + [COLUMN_LABELS.get(c, c) for c, _ in ALL_COLUMNS]
+        ttk.Label(fbar, text="In:").pack(side="left")
         cb_col = ttk.Combobox(fbar, textvariable=self.searchcol_var, state="readonly",
                               width=12, values=_all_choices)
-        cb_col.pack(side="left", padx=(0, 12))
+        cb_col.pack(side="left", padx=(4, 12))
         cb_col.bind("<<ComboboxSelected>>", lambda *_: self._apply_filters())
 
         ttk.Label(fbar, text="Min score:").pack(side="left")

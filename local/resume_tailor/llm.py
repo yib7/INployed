@@ -1,30 +1,23 @@
 """Thin synchronous LLM transport for the resume tailor.
 
-Supports two backends selected via config.backend():
-  - "vertex"  — Google Vertex AI Gemini (default)
-  - "claude"  — local `claude` CLI (headless, subscription auth)
+Supports three backends selected via config.backend():
+  - "gemini"    — Google Gemini (API Key or Vertex AI) (default)
+  - "anthropic" — Anthropic Claude API
+  - "openai"    — OpenAI API
 
 One public entry-point: call(system, user, tier, **kwargs).
 JSON mode returns parsed Python; text mode returns a stripped string.
-Retries a few times on transient errors.
+Retries a few times on transient errors, with backoff for 429s.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
-import shutil
-import subprocess
-import tempfile
 import time
-from functools import lru_cache
 from typing import Any, Optional
 
-from google import genai
-from google.genai import types
-
 from . import config
-
-CLAUDE_TIMEOUT = 180  # seconds; web search makes some calls slow
 
 
 class LLMError(RuntimeError):
@@ -51,11 +44,6 @@ def usage_summary() -> str:
     return " | ".join(
         f"{m}: {c} calls, {i}+{o} tok" for m, (c, i, o) in by_model.items()
     )
-
-
-@lru_cache(maxsize=1)
-def client() -> genai.Client:
-    return genai.Client(vertexai=True, project=config.GCP_PROJECT, location=config.GCP_LOCATION)
 
 
 def _extract_json(text: str) -> Any:
@@ -91,25 +79,27 @@ def call(
 
     `tier` is a tier token (config.TIER_FLASH etc.); the concrete model is
     resolved per backend. Returns parsed JSON if json_out else stripped text.
-
-    tools: optional list (e.g. Vertex GoogleSearch grounding). On the Claude
-    backend a non-empty tools list enables `--allowedTools WebSearch`.
     """
     active = config.backend()
     model = config.model_for(tier, active)
-    if active == "claude":
-        return _call_claude(
+    if active == "anthropic":
+        return _call_anthropic(
             system, user, model,
-            json_out=json_out, tools=tools, max_output_tokens=max_output_tokens,
+            json_out=json_out, temperature=temperature, max_output_tokens=max_output_tokens,
         )
-    return _call_vertex(
+    if active == "openai":
+        return _call_openai(
+            system, user, model,
+            json_out=json_out, temperature=temperature, max_output_tokens=max_output_tokens,
+        )
+    return _call_gemini(
         system, user, model,
         json_out=json_out, temperature=temperature,
         max_output_tokens=max_output_tokens, tools=tools,
     )
 
 
-def _call_vertex(
+def _call_gemini(
     system: str,
     user: str,
     model: str,
@@ -119,8 +109,17 @@ def _call_vertex(
     max_output_tokens: Optional[int] = None,
     tools: Optional[list] = None,
 ) -> Any:
-    """Vertex Gemini transport. JSON mode and tools don't mix on Vertex —
-    callers using tools should take text output."""
+    from google import genai
+    from google.genai import types
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if api_key:
+        client = genai.Client(api_key=api_key)
+    else:
+        if not config.GCP_PROJECT:
+            raise LLMError("Neither GEMINI_API_KEY nor GOOGLE_CLOUD_PROJECT is set.")
+        client = genai.Client(vertexai=True, project=config.GCP_PROJECT, location=config.GCP_LOCATION)
+
     cfg = types.GenerateContentConfig(
         system_instruction=system,
         temperature=temperature,
@@ -128,10 +127,11 @@ def _call_vertex(
         max_output_tokens=max_output_tokens,
         tools=tools,
     )
+    
     last_err: Optional[Exception] = None
-    for attempt in range(3):
+    for attempt in range(4):
         try:
-            resp = client().models.generate_content(model=model, contents=user, config=cfg)
+            resp = client.models.generate_content(model=model, contents=user, config=cfg)
             text = resp.text or ""
             if not text.strip():
                 raise LLMError("empty response")
@@ -142,68 +142,118 @@ def _call_vertex(
                 "out": getattr(meta, "candidates_token_count", 0) or 0,
             })
             return _extract_json(text) if json_out else text.strip()
-        except Exception as exc:  # noqa: BLE001 - retry any transient transport/parse error
+        except Exception as exc:  # noqa: BLE001
             last_err = exc
-            time.sleep(1.5 * (attempt + 1))
+            err_str = str(exc).lower()
+            if "429" in err_str or "quota" in err_str:
+                time.sleep(60)
+            else:
+                time.sleep(1.5 * (attempt + 1))
     raise LLMError(f"Gemini call failed after retries ({model}): {last_err}")
 
 
-def _call_claude(
+def _call_anthropic(
     system: str,
     user: str,
     model: str,
     *,
     json_out: bool = False,
-    tools: Optional[list] = None,
-    max_output_tokens: Optional[int] = None,  # accepted for signature parity; CLI has no flag
+    temperature: float = 0.2,
+    max_output_tokens: Optional[int] = None,
 ) -> Any:
-    """Local `claude` CLI transport (headless, subscription auth).
-
-    Runs in a temp cwd with a full --system-prompt override so it does not
-    inherit this repo's CLAUDE.md/skills/project context -- a clean generator.
-    temperature is not exposed by the print-mode CLI and is ignored.
-    """
-    exe = shutil.which("claude")
-    if exe is None:
-        raise LLMError("Claude backend selected but `claude` CLI not found on PATH")
-
+    try:
+        import anthropic
+    except ImportError:
+        raise LLMError("Anthropic backend selected but 'anthropic' package not installed.")
+    
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise LLMError("ANTHROPIC_API_KEY not set")
+    client = anthropic.Anthropic(api_key=api_key)
+    
     sys_prompt = system
     if json_out:
         sys_prompt += "\n\nRespond with ONLY valid JSON -- no prose, no markdown, no code fences."
 
-    argv = [
-        exe, "-p",
-        "--output-format", "json",
-        "--model", model,
-        "--system-prompt", sys_prompt,
-        "--exclude-dynamic-system-prompt-sections",
-    ]
-    if tools:
-        argv += ["--allowedTools", "WebSearch"]
-
     last_err: Optional[Exception] = None
-    for attempt in range(3):
+    for attempt in range(4):
         try:
-            proc = subprocess.run(
-                argv, input=user, capture_output=True, text=True,
-                encoding="utf-8", timeout=CLAUDE_TIMEOUT, cwd=tempfile.gettempdir(),
+            resp = client.messages.create(
+                model=model,
+                system=sys_prompt,
+                messages=[{"role": "user", "content": user}],
+                max_tokens=max_output_tokens or 4096,
+                temperature=temperature,
             )
-            if proc.returncode != 0:
-                raise LLMError(f"claude exited {proc.returncode}: {(proc.stderr or '')[:300]}")
-            envelope = json.loads(proc.stdout or "{}")
-            if envelope.get("is_error"):
-                raise LLMError(f"claude reported error: {str(envelope.get('result'))[:300]}")
-            text = (envelope.get("result") or "").strip()
-            if not text:
-                raise LLMError("empty response")
-            usage = envelope.get("usage") or {}
+            text = resp.content[0].text
             USAGE.append({
-                "model": f"claude:{model}",
-                "in": usage.get("input_tokens", 0) or 0,
-                "out": usage.get("output_tokens", 0) or 0,
+                "model": model,
+                "in": resp.usage.input_tokens,
+                "out": resp.usage.output_tokens,
             })
-            return _extract_json(text) if json_out else text
-        except Exception as exc:  # noqa: BLE001 - retry any transient transport/parse error
+            return _extract_json(text) if json_out else text.strip()
+        except Exception as exc:  # noqa: BLE001
             last_err = exc
-            time.sleep(1.5 * (attempt + 1))
-    raise LLMError(f"Claude call failed after retries ({model}): {last_err}")
+            if getattr(exc, "status_code", 0) == 429 or "429" in str(exc):
+                time.sleep(60)
+            else:
+                time.sleep(1.5 * (attempt + 1))
+    raise LLMError(f"Anthropic call failed after retries ({model}): {last_err}")
+
+
+def _call_openai(
+    system: str,
+    user: str,
+    model: str,
+    *,
+    json_out: bool = False,
+    temperature: float = 0.2,
+    max_output_tokens: Optional[int] = None,
+) -> Any:
+    try:
+        import openai
+    except ImportError:
+        raise LLMError("OpenAI backend selected but 'openai' package not installed.")
+    
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise LLMError("OPENAI_API_KEY not set")
+    client = openai.OpenAI(api_key=api_key)
+    
+    kwargs = {}
+    if json_out and "o1" not in model and "o3" not in model:
+        kwargs["response_format"] = {"type": "json_object"}
+        system += "\n\nRespond with ONLY valid JSON."
+    
+    if "o1" in model or "o3" in model:
+        messages = [{"role": "developer", "content": system}, {"role": "user", "content": user}]
+        temperature = 1.0
+    else:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+    if max_output_tokens:
+        kwargs["max_completion_tokens"] = max_output_tokens
+        
+    last_err: Optional[Exception] = None
+    for attempt in range(4):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                **kwargs
+            )
+            text = resp.choices[0].message.content
+            USAGE.append({
+                "model": model,
+                "in": resp.usage.prompt_tokens,
+                "out": resp.usage.completion_tokens,
+            })
+            return _extract_json(text) if json_out else text.strip()
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            if getattr(exc, "status_code", 0) == 429 or "429" in str(exc):
+                time.sleep(60)
+            else:
+                time.sleep(1.5 * (attempt + 1))
+    raise LLMError(f"OpenAI call failed after retries ({model}): {last_err}")

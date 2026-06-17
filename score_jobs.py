@@ -43,6 +43,12 @@ STAGE2_THRESHOLD = 4
 MAX_SCORED_PER_RUN = int(os.environ.get("SCORE_MAX_PER_RUN", "800"))
 RESCORE_CAP = int(os.environ.get("SCORE_RESCORE_CAP", "200"))
 
+is_free_tier = bool(os.environ.get("GEMINI_API_KEY"))
+if is_free_tier:
+    # Free tier has 15 RPM limits, so we significantly throttle concurrency.
+    STAGE1_CONCURRENCY = 2
+    STAGE2_CONCURRENCY = 1
+
 OUTPUT_DIR = Path(__file__).parent
 RESUME_PATH = OUTPUT_DIR / "resume.md"
 
@@ -84,6 +90,10 @@ JUNK_TITLE_PATTERNS = [
     re.compile(r"\b(senior|sr\.?|staff|principal|lead|manager|director|head of|vp|vice president|chief|architect)\b", re.I),
     re.compile(r"\b(iii|iv|level\s*[3-9])\b", re.I),
     re.compile(r"\bii\b", re.I),
+]
+
+JUNK_DESC_PATTERNS = [
+    re.compile(r"\b(senior|staff|principal|lead|manager|director|vp|vice president)\s+(level|role|position|engineer|developer|scientist|analyst)\b", re.I),
 ]
 # Capture "<n>", "<n>+", or a range "<n>-<m>" / "<n> to <m>" before years/yrs.
 #   group 1 = lower number (the experience floor)
@@ -190,12 +200,15 @@ STAGE2_SCHEMA = {
 
 
 def make_client() -> genai.Client:
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if api_key:
+        return genai.Client(api_key=api_key)
+    
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project:
         sys.exit(
-            "GOOGLE_CLOUD_PROJECT is not set. Point it at the project linked to "
-            "your $300 trial billing account, and make sure the Vertex AI API is "
-            "enabled (gcloud services enable aiplatform.googleapis.com)."
+            "GEMINI_API_KEY is not set, and GOOGLE_CLOUD_PROJECT is not set. "
+            "Please provide an API key, or point to a GCP project for Vertex AI."
         )
     location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
     return genai.Client(vertexai=True, project=project, location=location)
@@ -235,6 +248,11 @@ def is_junk_title(title: Any) -> bool:
     if not isinstance(title, str):
         return False
     return any(p.search(title) for p in JUNK_TITLE_PATTERNS)
+
+def is_junk_desc(text: Any) -> bool:
+    if not isinstance(text, str):
+        return False
+    return any(p.search(text) for p in JUNK_DESC_PATTERNS)
 
 
 def min_required_years(text: Any) -> int | None:
@@ -284,52 +302,69 @@ def pick_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
 async def score_stage1(client: genai.Client, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
         prompt = STAGE1_TEMPLATE.format(resume=resume, job=job_md)
-        try:
-            resp = await client.aio.models.generate_content(
-                model=STAGE1_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=STAGE1_SYSTEM,
-                    temperature=0.0,
-                    response_mime_type="application/json",
-                    response_schema=STAGE1_SCHEMA,
-                ),
-            )
-            _track_usage(resp)
-            data = json.loads(resp.text)
-            return {"job_posting_id": job_id, "score": int(data["score"]), "reason": data["reason"]}
-        except Exception as e:
-            return {"job_posting_id": job_id, "score": None, "reason": f"ERROR: {type(e).__name__}: {e}"}
+        for attempt in range(4):
+            try:
+                resp = await client.aio.models.generate_content(
+                    model=STAGE1_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=STAGE1_SYSTEM,
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                        response_schema=STAGE1_SCHEMA,
+                    ),
+                )
+                _track_usage(resp)
+                data = json.loads(resp.text)
+                return {"job_posting_id": job_id, "score": int(data["score"]), "reason": data["reason"]}
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "quota" in err_str.lower():
+                    print(f"Stage 1 Rate limited (429), sleeping 60s... (attempt {attempt+1}/4)")
+                    await asyncio.sleep(60)
+                    continue
+                return {"job_posting_id": job_id, "score": None, "reason": f"ERROR: {type(e).__name__}: {e}"}
+        return {"job_posting_id": job_id, "score": None, "reason": "ERROR: Max retries exceeded due to rate limits."}
 
 
 async def score_stage2(client: genai.Client, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
         prompt = STAGE2_TEMPLATE.format(resume=resume, job=job_md)
-        try:
-            resp = await client.aio.models.generate_content(
-                model=STAGE2_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=STAGE2_SYSTEM,
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                    response_schema=STAGE2_SCHEMA,
-                ),
-            )
-            _track_usage(resp)
-            data = json.loads(resp.text)
-            return {
-                "job_posting_id": job_id,
-                "deep_score": int(data["deep_score"]),
-                "strengths": " | ".join(data["strengths"]),
-                "gaps": " | ".join(data["gaps"]),
-                "recommendation": data["recommendation"],
-            }
-        except Exception as e:
-            return {
-                "job_posting_id": job_id, "deep_score": None,
-                "strengths": "", "gaps": "", "recommendation": f"ERROR: {type(e).__name__}: {e}"[:200],
-            }
+        for attempt in range(4):
+            try:
+                resp = await client.aio.models.generate_content(
+                    model=STAGE2_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=STAGE2_SYSTEM,
+                        temperature=0.2,
+                        response_mime_type="application/json",
+                        response_schema=STAGE2_SCHEMA,
+                    ),
+                )
+                _track_usage(resp)
+                data = json.loads(resp.text)
+                return {
+                    "job_posting_id": job_id,
+                    "deep_score": int(data["deep_score"]),
+                    "strengths": " | ".join(data["strengths"]),
+                    "gaps": " | ".join(data["gaps"]),
+                    "recommendation": data["recommendation"],
+                }
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "quota" in err_str.lower():
+                    print(f"Stage 2 Rate limited (429), sleeping 60s... (attempt {attempt+1}/4)")
+                    await asyncio.sleep(60)
+                    continue
+                return {
+                    "job_posting_id": job_id, "deep_score": None,
+                    "strengths": "", "gaps": "", "recommendation": f"ERROR: {type(e).__name__}: {e}"[:200],
+                }
+        return {
+            "job_posting_id": job_id, "deep_score": None,
+            "strengths": "", "gaps": "", "recommendation": "ERROR: Max retries exceeded due to rate limits."
+        }
 
 
 # Columns produced by scoring that should be carried into the master CSV so it
@@ -383,8 +418,9 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None) -
     """Add job_description_md + the mechanical-filter columns."""
     df["job_description_md"] = df[desc_col].apply(html_to_md)
     df["filter_junk_title"] = df[title_col].apply(is_junk_title) if title_col else False
+    df["filter_junk_desc"] = df["job_description_md"].apply(is_junk_desc)
     df["filter_too_many_years"] = df["job_description_md"].apply(has_too_many_years)
-    df["filtered_out"] = df["filter_junk_title"] | df["filter_too_many_years"]
+    df["filtered_out"] = df["filter_junk_title"] | df["filter_junk_desc"] | df["filter_too_many_years"]
     # An unscoreable (empty/missing) description would otherwise be retried by
     # the rescore pass forever — park it as filtered.
     no_desc = df["job_description_md"].str.len() < 40

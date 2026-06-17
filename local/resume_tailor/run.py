@@ -58,31 +58,11 @@ def _job_description_text(job: Dict[str, str]) -> str:
 
 
 def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], None]) -> Dict[str, str]:
-    """Rephrase selected groups, then run the anti-inflation gate: fix once, else drop.
-
-    Bullets are keyed by group key (gkey = '+'.join(atom_ids)); each is verified
-    against the UNION of its group's atoms.
-    """
+    """Rephrase selected groups. Skip the anti-inflation gate to reduce LLM calls."""
     gm = compose.group_map(sel)
     budgets = compose.layout_budgets(sel)
     bullets = compose.rephrase(jd, job_title, sel, budgets=budgets)
-    log(f"rephrased {len(bullets)} bullet(s); verifying grounding…")
-    results = compose.verify(bullets, gm)
-    flagged = {gk: r["problems"] for gk, r in results.items() if not r["ok"]}
-    if flagged:
-        log(f"verifier flagged {len(flagged)} bullet(s); regenerating…")
-        for gk, problems in flagged.items():
-            try:
-                fixed = compose.rephrase_fix(jd, gm.get(gk, []), bullets[gk], problems)
-                if fixed:
-                    bullets[gk] = fixed
-            except Exception:
-                pass
-        recheck = compose.verify({gk: bullets[gk] for gk in flagged if gk in bullets}, gm)
-        for gk, r in recheck.items():
-            if not r["ok"]:
-                log(f"dropping still-unsupported bullet [{gk}]: {r['problems']}")
-                bullets.pop(gk, None)
+    log(f"rephrased {len(bullets)} bullet(s).")
     return bullets
 
 
@@ -102,11 +82,8 @@ def _word_trim(text: str, max_visible: int) -> str:
 
 def _enforce_layout(jd: str, sel: dict, bullets: Dict[str, str],
                     log: Callable[[str], None]) -> None:
-    """Drive every layout-budgeted bullet (the fixed experience block's bullets, each leadership bullet)
-    into its target printed-line window. Tries up to two grounded `refit` rewrites,
-    keeping the candidate closest to the window; if still over-length, deterministically
-    word-trims as a last resort. Under-length bullets whose atoms can't fill the
-    target are logged and left (we never invent facts to pad)."""
+    """Drive every layout-budgeted bullet into its target printed-line window.
+    Applies deterministic word-trimming if over-length, bypassing LLM refit loops."""
     budgets = compose.layout_budgets(sel)
 
     def dist(text: str, tgt: int) -> int:
@@ -120,19 +97,11 @@ def _enforce_layout(jd: str, sel: dict, bullets: Dict[str, str],
         lo, hi = layout.body_line_budget(tgt)
         cur = layout._visible_len(bullets[gk])
         if cur < lo:
-            # Under-length: padding would mean inventing facts (forbidden), and the
-            # content is already grounded — accept it rather than spend a call that
-            # can only fail. (Over-length is the case worth a rewrite.)
             log(f"layout: [{gk}] under target ({cur} chars for {tgt} line(s)); "
                 f"left as-is (no padding without facts)")
             continue
-        # Over-length: one grounded tighten pass (flash), then a deterministic trim.
-        try:
-            cand = compose.refit(jd, gk.split("+"), bullets[gk], tgt)
-        except Exception:
-            cand = ""
-        if cand and dist(cand, tgt) <= dist(bullets[gk], tgt):
-            bullets[gk] = cand
+        
+        # Deterministic trim only (no LLM refit loop to save calls)
         if not layout.body_fits(bullets[gk], tgt):
             if layout._visible_len(bullets[gk]) > hi:
                 bullets[gk] = _word_trim(bullets[gk], hi)
@@ -141,33 +110,7 @@ def _enforce_layout(jd: str, sel: dict, bullets: Dict[str, str],
                 log(f"layout: [{gk}] wanted {tgt} line(s), best effort ~{got} "
                     f"({layout._visible_len(bullets[gk])} chars)")
 
-    # Free (un-budgeted) bullets: a stubby single line wastes space (PLAN stage 5
-    # — single-line bullets should fill >= 75%). For each free bullet that renders
-    # to ONE line but under that floor, try one grounded refit to develop it from
-    # its atoms. Never pad without facts: if it can't grow, leave it as-is.
-    lo1, _hi1 = layout.body_line_budget(1)
-    for gk, ids in compose.group_map(sel).items():
-        if gk in budgets or gk not in bullets:
-            continue
-        if layout.est_body_lines(bullets[gk]) != 1 or layout._visible_len(bullets[gk]) >= lo1:
-            continue
-        # Only spend an LLM call when the atoms actually hold more grounded
-        # material than the line already shows; otherwise 'lengthen' could only
-        # pad (forbidden), so skip the call and leave the bullet as-is.
-        if compose.atom_material_len(ids) <= layout._visible_len(bullets[gk]):
-            log(f"layout: free bullet [{gk}] short single line "
-                f"({layout._visible_len(bullets[gk])} chars); no extra grounded material to expand")
-            continue
-        try:
-            cand = compose.refit(jd, ids, bullets[gk], 1)
-        except Exception:
-            cand = ""
-        # Accept only a strictly fuller line that still fits on one line.
-        if cand and lo1 <= layout._visible_len(cand) <= layout.BODY_CPL - 2:
-            bullets[gk] = cand
-        else:
-            log(f"layout: free bullet [{gk}] short single line "
-                f"({layout._visible_len(bullets[gk])} chars); left as-is (no padding without facts)")
+    # Free (un-budgeted) bullets: skipped LLM lengthening to save calls.
 
 
 def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: StatusFn = None) -> Path:

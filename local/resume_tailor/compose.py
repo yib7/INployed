@@ -536,7 +536,8 @@ PREVIOUS BULLET: {bad_text}
 PROBLEMS TO FIX: {problems}
 
 Return ONLY JSON: {{"text": "<corrected bullet>"}}"""
-    out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.0)
+    # Mechanical constrained edit (fix grounding on one bullet) -> cheapest tier.
+    out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
     return (out.get("text") or "").strip()
 
 
@@ -568,7 +569,8 @@ CURRENT BULLET ({cur} chars): {text}
 TARGET: rewrite to between {lo} and {hi} characters. {direction}
 
 Return ONLY JSON: {{"text": "<rewritten bullet>"}}"""
-    out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
+    # Mechanical constrained edit (refit one bullet to a char window) -> cheapest tier.
+    out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.1)
     return (out.get("text") or "").strip()
 
 
@@ -724,7 +726,8 @@ def shrink(jd: str, bullets: Dict[str, str], pages: int) -> Dict[str, str]:
         + '\n\nReturn ONLY JSON: {"bullets": [{"gkey": "...", "text": "..."}, ...]}'
     )
     try:
-        out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.0)
+        # Mechanical batch tighten (trim wording to fit one page) -> cheapest tier.
+        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
     except Exception:
         return bullets
     result = dict(bullets)

@@ -48,8 +48,7 @@ _CORE_VERBS = (
 
 # Which blocks must always render and the hard line budgets for the fixed blocks
 # are CONFIG-DRIVEN (yaml `tailor:` section) so nothing is tied to one person's
-# resume. See _required_blocks / _fixed_experience_specs / _leadership_entry_lines
-# below for the schema and defaults.
+# resume. See _required_blocks below for the schema and defaults.
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -125,65 +124,16 @@ def _required_blocks() -> Dict[str, List[str]]:
     return out
 
 
-def _fixed_experience_specs() -> Dict[str, List[int]]:
-    """{experience_block_name: [per-bullet printed-line targets]}. Blocks not listed
-    are free (model chooses the count, no hard line budget)."""
-    fb = assets.tailor_config().get("fixed_blocks") or {}
-    exp_names = {b["name"] for b in assets.blocks().get("experience", [])}
-    out: Dict[str, List[int]] = {}
-    for name, spec in fb.items():
-        targets = (spec or {}).get("line_targets")
-        if name not in exp_names or not targets:
-            continue
-        if isinstance(targets, (str, bytes)) or not isinstance(targets, (list, tuple)):
-            raise RuntimeError(
-                f"tailor.fixed_blocks.{name}.line_targets must be a list of integers "
-                f"(e.g. [2, 1]); got {targets!r}"
-            )
-        try:
-            out[name] = [int(t) for t in targets]
-        except (TypeError, ValueError):
-            raise RuntimeError(
-                f"tailor.fixed_blocks.{name}.line_targets must contain only integers; "
-                f"got {targets!r}"
-            )
-    return out
-
-
-def _leadership_entry_lines() -> int:
-    """Printed lines each leadership org is forced to (0/absent -> not enforced)."""
-    cfg = assets.tailor_config()
-    if "leadership_entry_lines" not in cfg:
-        return layout.LEADERSHIP_ENTRY_LINES
-    raw = cfg.get("leadership_entry_lines") or 0
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        raise RuntimeError(
-            f"tailor.leadership_entry_lines must be an integer; got {raw!r}"
-        )
-
-
 def _experience_guidance() -> str:
     """Per-block selection guidance for the select() prompt, generated from the
     config so it never hardcodes one person's employers."""
-    specs = _fixed_experience_specs()
     required = set(_required_blocks().get("experience", []))
     lines: List[str] = []
     for b in assets.blocks().get("experience", []):
         name = b["name"]
-        if name in specs:
-            t = specs[name]
-            lines.append(
-                f"  - {name}: EXACTLY {len(t)} bullet group(s) "
-                f"(printed-line targets {t}); keep it tight."
-            )
-        else:
-            tag = "ALWAYS include" if name in required else "include if relevant"
-            lines.append(
-                f"  - {name}: {tag}; choose the number of groups that best fits, "
-                f"densest / most JD-relevant first."
-            )
+        n = len(config.block_targets(name))
+        tag = "ALWAYS include" if name in required else "include if relevant"
+        lines.append(f"  - {name}: {tag}; aim for {n} bullet group(s), densest / most JD-relevant first.")
     return "\n".join(lines)
 
 
@@ -213,18 +163,10 @@ def _catalog() -> str:
 
 
 def _check_required_blocks() -> None:
-    """Fail loudly if a required block (or a fixed-block spec) names a block that
-    isn't in master_experience.yaml — otherwise the template's fixed sections
-    silently vanish from the output. _required_blocks() already raises for explicit
-    missing names; here we also validate fixed_blocks."""
+    """Fail loudly if a required block names a block that isn't in
+    master_experience.yaml — otherwise the template's fixed sections silently
+    vanish from the output. _required_blocks() already raises for missing names."""
     _required_blocks()  # raises on explicit missing required names
-    exp_names = {b["name"] for b in assets.blocks().get("experience", [])}
-    missing = [n for n in _fixed_experience_specs() if n not in exp_names]
-    if missing:
-        raise RuntimeError(
-            f"tailor.fixed_blocks names experience block(s) not in "
-            f"master_experience.yaml: {missing} (present: {sorted(exp_names)})"
-        )
 
 
 # ── Stage 1: select ──────────────────────────────────────────────────────────
@@ -253,7 +195,7 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
     )
     pools = _skill_pools()
     exp_guidance = _experience_guidance()
-    lead_lines = _leadership_entry_lines()
+    lead_lines = layout.LEADERSHIP_ENTRY_LINES
     lead_guidance = (
         f"Each entry = EXACTLY {lead_lines} printed line(s), normally as "
         f"{lead_lines} tight single-line bullet(s) (one per atom)."
@@ -431,27 +373,6 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
         entry["groups"].append([extra])
 
 
-def layout_budgets(sel: Dict[str, Any]) -> Dict[str, int]:
-    """{gkey: target_printed_lines} for every bullet under a hard line budget
-    (configured fixed experience blocks + each Leadership bullet). Bullets not
-    listed are free. All targets come from the yaml `tailor:` config."""
-    budgets: Dict[str, int] = {}
-    specs = _fixed_experience_specs()
-    for e in sel.get("experience", []):
-        targets = specs.get(e["name"])
-        if not targets:
-            continue
-        for i, ids in enumerate(e["groups"]):
-            budgets[_gkey(ids)] = targets[i] if i < len(targets) else 1
-    lead_lines = _leadership_entry_lines()
-    if lead_lines:
-        for e in sel.get("leadership", []):
-            plan = layout.plan_leadership_lines(len(e["groups"]), lead_lines)
-            for ids, tgt in zip(e["groups"], plan):
-                budgets[_gkey(ids)] = tgt
-    return budgets
-
-
 def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
     """{gkey: target_printed_lines} for EVERY bullet. Constant blocks (experience +
     leadership) use config.block_targets; projects use config.PROJECT_BULLET_LINES.
@@ -553,39 +474,6 @@ PROBLEMS TO FIX: {problems}
 Return ONLY JSON: {{"text": "<corrected bullet>"}}"""
     # Mechanical constrained edit (fix grounding on one bullet) -> cheapest tier.
     out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
-    return (out.get("text") or "").strip()
-
-
-def refit(jd: str, ids: List[str], text: str, target_lines: int) -> str:
-    """Rewrite one bullet to a STRICT character window so it renders to exactly
-    `target_lines` printed lines. Same grounding rule: re-phrase the atoms only —
-    lengthen with real detail, shorten by cutting filler; never invent or drop a fact."""
-    lo, hi = layout.body_line_budget(target_lines)
-    cur = layout._visible_len(text)
-    atoms = {a: _atom_payload(a) for a in ids}
-    direction = (
-        "It is TOO SHORT — develop it with more concrete detail drawn FROM THE ATOMS "
-        "(more specifics, fuller phrasing); never invent facts or numbers to pad."
-        if cur < lo else
-        "It is TOO LONG — tighten wording and cut filler/adjectives; keep every number, "
-        "tool, and claim."
-    )
-    system = (
-        f"Rewrite ONE resume bullet so it occupies EXACTLY {target_lines} printed "
-        f"line(s) on the resume. " + _PRINCIPLE + "\n"
-        "Plain text, past tense, no pronouns, no markup."
-    )
-    user = f"""ATOMS (the only allowed source of facts):
-{json.dumps(atoms, ensure_ascii=False, indent=1)}
-
-JOB CONTEXT (emphasis only): {jd[:1200]}
-
-CURRENT BULLET ({cur} chars): {text}
-TARGET: rewrite to between {lo} and {hi} characters. {direction}
-
-Return ONLY JSON: {{"text": "<rewritten bullet>"}}"""
-    # Mechanical constrained edit (refit one bullet to a char window) -> cheapest tier.
-    out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.1)
     return (out.get("text") or "").strip()
 
 

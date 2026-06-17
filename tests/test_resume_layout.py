@@ -116,3 +116,39 @@ def test_length_hint_is_plain_lines():
 
 def test_rephrase_dropped_budgets_param():
     assert "budgets" not in inspect.signature(compose.rephrase).parameters
+
+
+from resume_tailor import run as rt_run  # noqa: E402
+
+
+def test_trim_to_caps_trims_over_length(monkeypatch):
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"resume_layout": {"RHA": {"line_targets": [1]}}})
+    sel = {"experience": [], "leadership": [{"name": "RHA", "groups": [["d1"]]}],
+           "projects": []}
+    gk = compose._gkey(["d1"])
+    long_text = "Led " + "x" * 200  # ~204 chars, target 1 line -> cap 100
+    bullets = {gk: long_text}
+    rt_run._trim_to_caps(sel, bullets)
+    assert len(bullets[gk]) <= config.MAX_LINE_CHARS
+    assert bullets[gk].startswith("Led")  # front-loaded content preserved
+
+
+def test_trim_to_caps_leaves_short_bullets(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    sel = {"experience": [{"name": "Globex", "groups": [["a1"]]}],
+           "leadership": [], "projects": []}
+    gk = compose._gkey(["a1"])
+    short = "Built a small pipeline"
+    bullets = {gk: short}
+    rt_run._trim_to_caps(sel, bullets)
+    assert bullets[gk] == short  # under cap (2 lines = 200) -> untouched, never padded
+
+
+def test_refit_and_body_math_removed():
+    assert not hasattr(compose, "refit")
+    assert not hasattr(compose, "layout_budgets")
+    assert not hasattr(rt_run, "_enforce_layout")
+    from resume_tailor import layout
+    assert not hasattr(layout, "body_line_budget")
+    assert not hasattr(layout, "body_fits")

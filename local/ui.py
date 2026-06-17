@@ -197,6 +197,7 @@ COLUMN_LABELS = {
     "rescore_scored": "Rescored", "llm_calls": "Calls",
     "prompt_tokens": "In tok", "output_tokens": "Out tok",
 }
+LABEL_TO_COLUMN = {v: k for k, v in COLUMN_LABELS.items()}
 
 
 def apply_theme(root: tk.Tk) -> None:
@@ -764,6 +765,13 @@ class App:
         self.search_h_var.trace_add("write", lambda *_: self._debounce("_deb_high", self._apply_filters_high))
         ttk.Entry(hbar, textvariable=self.search_h_var, width=24).pack(side="left", padx=(4, 12))
 
+        self.searchcol_h_var = tk.StringVar(value="All")
+        _high_choices = ["All"] + [COLUMN_LABELS.get(c, c) for c, _ in HIGH_SCORE_COLUMNS]
+        cb_col_h = ttk.Combobox(hbar, textvariable=self.searchcol_h_var, state="readonly",
+                                width=12, values=_high_choices)
+        cb_col_h.pack(side="left", padx=(0, 12))
+        cb_col_h.bind("<<ComboboxSelected>>", lambda *_: self._apply_filters_high())
+
         ttk.Label(hbar, text="Min score:").pack(side="left")
         self.minscore_h_var = tk.StringVar(value="Any")
         hb_s = ttk.Combobox(hbar, textvariable=self.minscore_h_var, state="readonly",
@@ -853,6 +861,13 @@ class App:
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self._debounce("_deb_all", self._apply_filters))
         ttk.Entry(fbar, textvariable=self.search_var, width=24).pack(side="left", padx=(4, 12))
+
+        self.searchcol_var = tk.StringVar(value="All")
+        _all_choices = ["All"] + [COLUMN_LABELS.get(c, c) for c, _ in ALL_COLUMNS]
+        cb_col = ttk.Combobox(fbar, textvariable=self.searchcol_var, state="readonly",
+                              width=12, values=_all_choices)
+        cb_col.pack(side="left", padx=(0, 12))
+        cb_col.bind("<<ComboboxSelected>>", lambda *_: self._apply_filters())
 
         ttk.Label(fbar, text="Min score:").pack(side="left")
         self.minscore_var = tk.StringVar(value="Any")
@@ -1052,13 +1067,18 @@ class App:
         return tmp
 
     def _filter_and_sort(self, base: pd.DataFrame, search: str, minscore: str,
-                         day: str, time_: str, reco: str, easy: bool = False) -> pd.DataFrame:
-        """Apply the shared multi-column filters (AND) + default sort to a base set."""
+                         day: str, time_: str, reco: str, easy: bool = False,
+                         search_column: str | None = None) -> pd.DataFrame:
+        """Apply the shared multi-column filters (AND) + default sort to a base set.
+        search_column: a column id to restrict the text search to; None/"All" = all."""
         view = base
         if view.empty:
             return view
         if search:
-            if "_search" in view.columns:
+            if search_column and search_column not in ("", "All") and search_column in view.columns:
+                hay = view[search_column].fillna("").astype(str).str.lower()
+                view = view.loc[hay.str.contains(search, na=False, regex=False)]
+            elif "_search" in view.columns:
                 view = view.loc[view["_search"].str.contains(search, na=False, regex=False)]
             else:
                 cols = [c for c in ("job_title", "company_name", "url") if c in view.columns]
@@ -1080,6 +1100,7 @@ class App:
 
     def _reset_filters(self) -> None:
         self.search_var.set("")
+        self.searchcol_var.set("All")
         self.minscore_var.set("Any")
         self.day_var.set("All")
         self.runlabel_var.set("All")
@@ -1089,6 +1110,7 @@ class App:
 
     def _reset_filters_high(self) -> None:
         self.search_h_var.set("")
+        self.searchcol_h_var.set("All")
         self.minscore_h_var.set("Any")
         self.day_h_var.set("All")
         self.runlabel_h_var.set("All")
@@ -1109,9 +1131,11 @@ class App:
 
     def _apply_filters(self) -> None:
         """All Jobs tab: filter over the full dataset."""
+        col = LABEL_TO_COLUMN.get(self.searchcol_var.get(), self.searchcol_var.get())
         view = self._filter_and_sort(
             self.df, self.search_var.get().strip().lower(), self.minscore_var.get(),
-            self.day_var.get(), self.runlabel_var.get(), self.reco_var.get(), self.easy_var.get(),
+            self.day_var.get(), self.runlabel_var.get(), self.reco_var.get(),
+            self.easy_var.get(), col,
         )
         populate(self.tv_all, view, [c for c, _ in ALL_COLUMNS])
         if hasattr(self, "lbl_all"):
@@ -1120,9 +1144,11 @@ class App:
 
     def _apply_filters_high(self) -> None:
         """High Score (Unseen) tab: filter over the score>=4 + unseen set."""
+        col_h = LABEL_TO_COLUMN.get(self.searchcol_h_var.get(), self.searchcol_h_var.get())
         view = self._filter_and_sort(
             self.df_high, self.search_h_var.get().strip().lower(), self.minscore_h_var.get(),
-            self.day_h_var.get(), self.runlabel_h_var.get(), self.reco_h_var.get(), self.easy_h_var.get(),
+            self.day_h_var.get(), self.runlabel_h_var.get(), self.reco_h_var.get(),
+            self.easy_h_var.get(), col_h,
         )
         populate(self.tv_high, view, [c for c, _ in HIGH_SCORE_COLUMNS])
         if hasattr(self, "lbl_high"):

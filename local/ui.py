@@ -250,6 +250,11 @@ def apply_theme(root: tk.Tk) -> None:
     style.map("Accent.TButton",
               background=[("active", ACCENT_HOVER), ("pressed", ACCENT_DEEP)],
               foreground=[("active", ACCENT_INK)])
+    style.configure("Green.TButton", background=GOOD, foreground="#06222f",
+                    padding=(13, 7), relief="flat", borderwidth=0, font=FONT_BOLD)
+    style.map("Green.TButton",
+              background=[("active", "#7df0b4"), ("pressed", "#34d399")],
+              foreground=[("active", "#06222f")])
 
     style.configure("TEntry", fieldbackground=INPUT_BG, foreground=TEXT,
                     insertcolor=ACCENT, borderwidth=1, relief="flat", padding=6,
@@ -818,15 +823,15 @@ class App:
 
         self.cover_var = tk.BooleanVar(value=False)
         ttk.Button(bar1, text="Refresh", command=self.reload_data).pack(side="right", padx=4)
-        ttk.Button(bar1, text="Open URL", command=self._open_selected_url).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
-        ttk.Button(bar1, text="Mark all shown seen", command=self._mark_all_shown_seen).pack(side="right", padx=4)
+        ttk.Button(bar1, text="Mark all shown seen", command=self._mark_all_shown_seen,
+                   style="Accent.TButton").pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark seen (selected)", command=self._mark_seen_selected,
                    style="Accent.TButton").pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark applied", command=self._mark_applied_selected,
                    style="Accent.TButton").pack(side="right", padx=4)
         self.btn_tailor = ttk.Button(bar1, text="Tailor resume", command=self._tailor_selected,
-                                     style="Accent.TButton")
+                                     style="Green.TButton")
         self.btn_tailor.pack(side="right", padx=4)
         ttk.Checkbutton(bar1, text="+ cover letter", variable=self.cover_var).pack(side="right", padx=(4, 10))
         self.engine_var = tk.StringVar(

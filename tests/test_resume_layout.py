@@ -134,6 +134,39 @@ def test_trim_to_caps_trims_over_length(monkeypatch):
     assert bullets[gk].startswith("Led")  # front-loaded content preserved
 
 
+def test_word_trim_ends_on_clean_boundary():
+    """Over-length bullets must never end mid-clause on a dangling connective
+    (the 'utilizing Gemini Flash to.' / 'while maintaining.' bug)."""
+    cases = [
+        ("Streamlined transactions for 100+ customers per shift during peak "
+         "periods while maintaining accuracy", 100),
+        ("Architected a multi-model pipeline inside a hardened Docker sandbox "
+         "with a 60s timeout and 16MB upload cap, utilizing Gemini Flash to "
+         "moderate content", 200),
+        ("Quantified the driving factors behind public support for social "
+         "policies by applying OLS regression to survey data, identifying "
+         "ideological alignment as the primary driver of polarization", 200),
+        ("Built an AI platform to train a Gradient Boosting Classifier that "
+         "achieved high accuracy across many statistical features extracted "
+         "from raw packet captures via Wireshark", 200),
+    ]
+    dangling = {"to", "that", "of", "like", "with", "by", "while", "and",
+                "using", "utilizing", "for", "as", "the", "a", "an"}
+    for text, cap in cases:
+        out = rt_run._word_trim(text, cap)
+        assert len(out) <= cap - 1
+        assert out.split()[-1].lower().strip(",;:") not in dangling, out
+
+
+def test_word_trim_keeps_thousands_separator():
+    """A comma inside a number (4,000) is not a clause boundary to cut on."""
+    text = ("Led community service efforts, earning membership among the top "
+            "1% of 4,000+ residence-hall leaders nationwide")
+    out = rt_run._word_trim(text, 100)
+    assert not out.endswith("4")
+    assert out.split()[-1].lower() not in {"of", "top"}
+
+
 def test_trim_to_caps_leaves_short_bullets(monkeypatch):
     monkeypatch.setattr(config, "_config_json", lambda: {})
     sel = {"experience": [{"name": "Globex", "groups": [["a1"]]}],

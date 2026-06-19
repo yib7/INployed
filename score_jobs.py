@@ -31,23 +31,19 @@ from google import genai
 from google.genai import types
 from markdownify import markdownify
 
-STAGE1_MODEL = os.environ.get("SCORE_STAGE1_MODEL", "gemini-2.5-flash-lite")
-STAGE2_MODEL = os.environ.get("SCORE_STAGE2_MODEL", "gemini-2.5-flash")
+from keypool import KeyPool, PoolError
 
-STAGE1_CONCURRENCY = 10
-STAGE2_CONCURRENCY = 5
+STAGE1_MODEL = os.environ.get("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite")
+STAGE2_MODEL = os.environ.get("SCORE_STAGE2_MODEL", "gemini-3.5-flash")
+
+STAGE1_CONCURRENCY = int(os.environ.get("SCORE_STAGE1_CONCURRENCY", "6"))
+STAGE2_CONCURRENCY = int(os.environ.get("SCORE_STAGE2_CONCURRENCY", "4"))
 STAGE2_THRESHOLD = 4
 # Spend guards: cap LLM calls per run so a keyword change or scrape anomaly
-# can't fire thousands of Vertex calls unattended. Overflow rows keep score=NaN
-# and are picked up by the rescore pass on later runs.
+# can't fire thousands of calls unattended. Overflow rows keep score=NaN and are
+# picked up by the rescore pass on later runs.
 MAX_SCORED_PER_RUN = int(os.environ.get("SCORE_MAX_PER_RUN", "800"))
 RESCORE_CAP = int(os.environ.get("SCORE_RESCORE_CAP", "200"))
-
-is_free_tier = bool(os.environ.get("GEMINI_API_KEY"))
-if is_free_tier:
-    # Free tier has 15 RPM limits, so we significantly throttle concurrency.
-    STAGE1_CONCURRENCY = 2
-    STAGE2_CONCURRENCY = 1
 
 OUTPUT_DIR = Path(__file__).parent
 RESUME_PATH = OUTPUT_DIR / "resume.md"
@@ -59,7 +55,7 @@ RUN_STATS_CSV = OUTPUT_DIR / "run_stats.csv"
 RUN_STATS_COLS = [
     "timestamp", "input_csv", "rows_in", "filtered_out", "llm_scored",
     "llm_errors", "stage2_done", "rescore_attempted", "rescore_scored",
-    "llm_calls", "prompt_tokens", "output_tokens",
+    "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls",
 ]
 
 # Aggregate token spend across both stages and both passes (fresh + rescore).
@@ -199,19 +195,14 @@ STAGE2_SCHEMA = {
 }
 
 
-def make_client() -> genai.Client:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if api_key:
-        return genai.Client(api_key=api_key)
-    
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not project:
-        sys.exit(
-            "GEMINI_API_KEY is not set, and GOOGLE_CLOUD_PROJECT is not set. "
-            "Please provide an API key, or point to a GCP project for Vertex AI."
-        )
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
-    return genai.Client(vertexai=True, project=project, location=location)
+def make_pool() -> KeyPool:
+    """Build the rotating key pool: GEMINI_API_KEYS (free tier) plus a Vertex
+    backstop from GOOGLE_CLOUD_PROJECT. Exits with a clear message if neither is
+    configured."""
+    try:
+        return KeyPool.from_env(state_path=OUTPUT_DIR / "score_state.json")
+    except PoolError as e:
+        sys.exit(str(e))
 
 
 def latest_input_csv() -> Path | None:
@@ -299,72 +290,57 @@ def pick_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
     return next((c for c in candidates if c in df.columns), None)
 
 
-async def score_stage1(client: genai.Client, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
+async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
         prompt = STAGE1_TEMPLATE.format(resume=resume, job=job_md)
-        for attempt in range(4):
-            try:
-                resp = await client.aio.models.generate_content(
-                    model=STAGE1_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=STAGE1_SYSTEM,
-                        temperature=0.0,
-                        response_mime_type="application/json",
-                        response_schema=STAGE1_SCHEMA,
-                    ),
-                )
-                _track_usage(resp)
-                data = json.loads(resp.text)
-                return {"job_posting_id": job_id, "score": int(data["score"]), "reason": data["reason"]}
-            except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "quota" in err_str.lower():
-                    print(f"Stage 1 Rate limited (429), sleeping 60s... (attempt {attempt+1}/4)")
-                    await asyncio.sleep(60)
-                    continue
-                return {"job_posting_id": job_id, "score": None, "reason": f"ERROR: {type(e).__name__}: {e}"}
-        return {"job_posting_id": job_id, "score": None, "reason": "ERROR: Max retries exceeded due to rate limits."}
+        try:
+            resp = await pool.generate(
+                model=STAGE1_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=STAGE1_SYSTEM,
+                    temperature=0.0,
+                    response_mime_type="application/json",
+                    response_schema=STAGE1_SCHEMA,
+                ),
+            )
+            _track_usage(resp)
+            data = json.loads(resp.text)
+            return {"job_posting_id": job_id, "score": int(data["score"]), "reason": data["reason"]}
+        except Exception as e:  # noqa: BLE001
+            return {"job_posting_id": job_id, "score": None,
+                    "reason": f"ERROR: {type(e).__name__}: {e}"[:200]}
 
 
-async def score_stage2(client: genai.Client, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
+async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
         prompt = STAGE2_TEMPLATE.format(resume=resume, job=job_md)
-        for attempt in range(4):
-            try:
-                resp = await client.aio.models.generate_content(
-                    model=STAGE2_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=STAGE2_SYSTEM,
-                        temperature=0.2,
-                        response_mime_type="application/json",
-                        response_schema=STAGE2_SCHEMA,
-                    ),
-                )
-                _track_usage(resp)
-                data = json.loads(resp.text)
-                return {
-                    "job_posting_id": job_id,
-                    "deep_score": int(data["deep_score"]),
-                    "strengths": " | ".join(data["strengths"]),
-                    "gaps": " | ".join(data["gaps"]),
-                    "recommendation": data["recommendation"],
-                }
-            except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "quota" in err_str.lower():
-                    print(f"Stage 2 Rate limited (429), sleeping 60s... (attempt {attempt+1}/4)")
-                    await asyncio.sleep(60)
-                    continue
-                return {
-                    "job_posting_id": job_id, "deep_score": None,
-                    "strengths": "", "gaps": "", "recommendation": f"ERROR: {type(e).__name__}: {e}"[:200],
-                }
-        return {
-            "job_posting_id": job_id, "deep_score": None,
-            "strengths": "", "gaps": "", "recommendation": "ERROR: Max retries exceeded due to rate limits."
-        }
+        try:
+            resp = await pool.generate(
+                model=STAGE2_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=STAGE2_SYSTEM,
+                    temperature=0.2,
+                    response_mime_type="application/json",
+                    response_schema=STAGE2_SCHEMA,
+                ),
+            )
+            _track_usage(resp)
+            data = json.loads(resp.text)
+            return {
+                "job_posting_id": job_id,
+                "deep_score": int(data["deep_score"]),
+                "strengths": " | ".join(data["strengths"]),
+                "gaps": " | ".join(data["gaps"]),
+                "recommendation": data["recommendation"],
+            }
+        except Exception as e:  # noqa: BLE001
+            return {
+                "job_posting_id": job_id, "deep_score": None,
+                "strengths": "", "gaps": "",
+                "recommendation": f"ERROR: {type(e).__name__}: {e}"[:200],
+            }
 
 
 # Columns produced by scoring that should be carried into the master CSV so it
@@ -428,7 +404,7 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None) -
     return df
 
 
-async def run_scoring(client: genai.Client, resume: str, df: pd.DataFrame) -> pd.DataFrame:
+async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
     """Stage 1 + Stage 2 over the unfiltered rows of df; returns df with score columns merged.
 
     df must carry job_posting_id (str), job_description_md, and the filter columns.
@@ -453,20 +429,28 @@ async def run_scoring(client: genai.Client, resume: str, df: pd.DataFrame) -> pd
     sem1 = asyncio.Semaphore(STAGE1_CONCURRENCY)
     print(f"Stage 1: scoring {len(to_score)} jobs with {STAGE1_MODEL}")
     s1_tasks = [
-        score_stage1(client, sem1, resume, r.job_posting_id, r.job_description_md)
+        score_stage1(pool, sem1, resume, r.job_posting_id, r.job_description_md)
         for r in to_score.itertuples(index=False)
     ]
     s1_results = await asyncio.gather(*s1_tasks)
     s1_df = pd.DataFrame(s1_results)
 
-    s2_ids = s1_df[s1_df["score"].fillna(0) >= STAGE2_THRESHOLD]["job_posting_id"].tolist()
+    s2 = s1_df[s1_df["score"].fillna(0) >= STAGE2_THRESHOLD].sort_values(
+        "score", ascending=False, kind="stable"
+    )
+    s2_ids = s2["job_posting_id"].tolist()
     print(f"Stage 2: {len(s2_ids)} jobs at threshold >= {STAGE2_THRESHOLD}")
 
     if s2_ids:
         sem2 = asyncio.Semaphore(STAGE2_CONCURRENCY)
-        s2_input = to_score[to_score["job_posting_id"].isin(s2_ids)]
+        # Dispatch highest Stage-1 score first so the scarce free flash budget
+        # goes to the best-fit jobs; the overflow tail spills to Vertex.
+        rank = {jid: i for i, jid in enumerate(s2_ids)}
+        s2_input = to_score[to_score["job_posting_id"].isin(s2_ids)].copy()
+        s2_input["_rank"] = s2_input["job_posting_id"].map(rank)
+        s2_input = s2_input.sort_values("_rank", kind="stable").drop(columns="_rank")
         s2_tasks = [
-            score_stage2(client, sem2, resume, r.job_posting_id, r.job_description_md)
+            score_stage2(pool, sem2, resume, r.job_posting_id, r.job_description_md)
             for r in s2_input.itertuples(index=False)
         ]
         s2_results = await asyncio.gather(*s2_tasks)
@@ -501,7 +485,7 @@ def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
     return master[(score.isna() & ~filtered) | err]
 
 
-async def rescore_master_failures(client: genai.Client, resume: str) -> tuple[int, int]:
+async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     """Retry failed/missing master rows. Returns (attempted, newly_scored)."""
     if not MASTER_CSV.exists():
         return 0, 0
@@ -521,7 +505,7 @@ async def rescore_master_failures(client: genai.Client, resume: str) -> tuple[in
     todo = todo.drop(columns=[c for c in SCORE_COLS if c in todo.columns], errors="ignore")
     title_col = pick_col(master, ("job_title", "job_posting_title", "title"))
     todo = add_filter_columns(todo, desc_col, title_col)
-    merged = await run_scoring(client, resume, todo)
+    merged = await run_scoring(pool, resume, todo)
     # Fold back WITHOUT is_seen so locally-triaged state is never reset here.
     update_master_scores(merged.drop(columns=["is_seen"], errors="ignore"))
     n = int(pd.to_numeric(merged["score"], errors="coerce").notna().sum())
@@ -532,7 +516,7 @@ async def rescore_master_failures(client: genai.Client, resume: str) -> tuple[in
 async def main() -> None:
     args = parse_args()
     resume = RESUME_PATH.read_text(encoding="utf-8")
-    client = make_client()
+    pool = make_pool()
 
     stats = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -575,7 +559,7 @@ async def main() -> None:
                 df = df.rename(columns={id_col: "job_posting_id"})
 
             df = add_filter_columns(df, desc_col, title_col)
-            merged = await run_scoring(client, resume, df)
+            merged = await run_scoring(pool, resume, df)
             out = save_output(merged, csv_path)
             n_scored = merged["score"].notna().sum()
             n_deep = merged["deep_score"].notna().sum()
@@ -589,12 +573,14 @@ async def main() -> None:
             )
             stats["stage2_done"] = int(n_deep)
 
-    rescore_attempted, rescore_scored = await rescore_master_failures(client, resume)
+    rescore_attempted, rescore_scored = await rescore_master_failures(pool, resume)
     stats["rescore_attempted"] = rescore_attempted
     stats["rescore_scored"] = rescore_scored
     stats["llm_calls"] = TOKEN_USAGE["calls"]
     stats["prompt_tokens"] = TOKEN_USAGE["prompt"]
     stats["output_tokens"] = TOKEN_USAGE["output"]
+    stats["free_calls"] = pool.stats()["free_calls"]
+    stats["vertex_calls"] = pool.stats()["vertex_calls"]
     append_run_stats(stats)
 
 

@@ -39,6 +39,16 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+# Load scrape_data/.env so LINKEDIN_CHROME_ACCOUNT (and other local secrets) are
+# populated even when the dashboard is launched directly. The VM never runs the
+# UI, so a missing python-dotenv is harmless. Mirrors scraper.py.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(HERE.parent / ".env")  # HERE is local/, so .parent is scrape_data/
+except Exception:
+    pass
+
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic  # noqa: E402
@@ -84,15 +94,28 @@ def _find_chrome() -> str | None:
 
 
 def _chrome_profile_dir(account: str) -> str:
-    """Profile directory whose signed-in user_name matches `account` (default 'Default')."""
+    """Profile directory whose signed-in account matches `account` (default 'Default').
+
+    Matches user_name, then gaia_name, then the email local-part, so a profile that
+    stores the address differently still resolves. An empty `account` short-circuits
+    to 'Default' so it never matches a blank-user_name (signed-out) profile. Prints a
+    warning when a non-empty account finds no match, so a silent fallback is visible.
+    """
+    if not account:
+        return "Default"
+    want = account.lower()
+    want_local = want.split("@", 1)[0]
     local_state = Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/User Data/Local State"
     try:
         info = json.loads(local_state.read_text(encoding="utf-8")).get("profile", {}).get("info_cache", {})
-        for directory, meta in info.items():
-            if (meta.get("user_name") or "").lower() == account.lower():
-                return directory
     except (OSError, ValueError):
-        pass
+        return "Default"
+    for directory, meta in info.items():
+        user_name = (meta.get("user_name") or "").lower()
+        gaia_name = (meta.get("gaia_name") or "").lower()
+        if user_name == want or gaia_name == want or (user_name and user_name.split("@", 1)[0] == want_local):
+            return directory
+    print(f"[chrome] no Chrome profile matched {account!r}; using Default profile")
     return "Default"
 
 
@@ -106,7 +129,12 @@ def _chrome_launcher() -> tuple[str, str] | None:
 
 
 def open_in_chrome(url: str) -> None:
-    """Open `url` in Chrome under the configured profile; fall back to the default browser."""
+    """Open `url` in Chrome under the configured profile; fall back to the default browser.
+
+    With LINKEDIN_CHROME_ACCOUNT resolved, --profile-directory opens the URL in
+    that profile's window. A profile cannot be force-switched inside an already-
+    running Chrome via CLI; the resolved-Default case is the one that matters here.
+    """
     launcher = _chrome_launcher()
     if launcher:
         chrome, profile = launcher

@@ -1,9 +1,11 @@
-"""Backend selection + tier->model resolution for the resume tailor LLM layer.
+"""Backend selection + tier->model resolution + transport for the resume-tailor
+LLM layer (gemini / anthropic / openai).
 
-All Claude transport tests mock subprocess — no real `claude` calls, no network.
+All transport tests fake the provider SDKs (google.genai.Client is monkeypatched;
+anthropic / openai are injected into sys.modules) — no real API calls, no network.
 """
-import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -12,73 +14,94 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 from resume_tailor import config  # noqa: E402
+from resume_tailor import llm  # noqa: E402
 
 
-def test_backend_default_is_vertex(monkeypatch):
+# ── Backend resolution ───────────────────────────────────────────────────────
+def test_backend_default_is_gemini(monkeypatch):
     monkeypatch.delenv("RESUME_TAILOR_BACKEND", raising=False)
     monkeypatch.setattr(config, "_config_json", lambda: {})
-    assert config.backend() == "vertex"
+    assert config.backend() == "gemini"
 
 
 def test_backend_from_config_json(monkeypatch):
     monkeypatch.delenv("RESUME_TAILOR_BACKEND", raising=False)
-    monkeypatch.setattr(config, "_config_json", lambda: {"backend": "claude"})
-    assert config.backend() == "claude"
+    monkeypatch.setattr(config, "_config_json", lambda: {"backend": "anthropic"})
+    assert config.backend() == "anthropic"
 
 
 def test_backend_env_overrides_config(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
-    monkeypatch.setattr(config, "_config_json", lambda: {"backend": "vertex"})
-    assert config.backend() == "claude"
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "openai")
+    monkeypatch.setattr(config, "_config_json", lambda: {"backend": "gemini"})
+    assert config.backend() == "openai"
 
 
-def test_backend_unknown_falls_back_to_vertex(monkeypatch):
+def test_backend_legacy_vertex_maps_to_gemini(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "vertex")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.backend() == "gemini"
+
+
+def test_backend_legacy_claude_maps_to_anthropic(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_BACKEND", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"backend": "claude"})
+    assert config.backend() == "anthropic"
+
+
+def test_backend_unknown_falls_back_to_gemini(monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_BACKEND", "gpt5")
     monkeypatch.setattr(config, "_config_json", lambda: {})
-    assert config.backend() == "vertex"
+    assert config.backend() == "gemini"
 
 
-def test_backend_non_string_config_falls_back_to_vertex(monkeypatch):
+def test_backend_non_string_config_falls_back_to_gemini(monkeypatch):
     monkeypatch.delenv("RESUME_TAILOR_BACKEND", raising=False)
     monkeypatch.setattr(config, "_config_json", lambda: {"backend": 123})
-    assert config.backend() == "vertex"
+    assert config.backend() == "gemini"
 
 
-def test_model_for_vertex(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "vertex")
+# ── tier -> model resolution (robust to env-overridable model ids) ───────────
+def test_model_for_gemini(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "gemini")
     monkeypatch.setattr(config, "_config_json", lambda: {})
     assert config.model_for(config.TIER_FLASH_LITE) == config.MODEL_FLASH_LITE
     assert config.model_for(config.TIER_FLASH) == config.MODEL_FLASH
     assert config.model_for(config.TIER_PRO) == config.MODEL_PRO
 
 
-def test_model_for_claude(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
+def test_model_for_anthropic(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "anthropic")
     monkeypatch.setattr(config, "_config_json", lambda: {})
-    assert config.model_for(config.TIER_FLASH_LITE) == config.CLAUDE_HAIKU
-    assert config.model_for(config.TIER_FLASH) == config.CLAUDE_SONNET
-    # pro maps to sonnet too (no opus tier)
-    assert config.model_for(config.TIER_PRO) == config.CLAUDE_SONNET
+    for tier in (config.TIER_FLASH_LITE, config.TIER_FLASH, config.TIER_PRO):
+        assert config.model_for(tier) == config._ANTHROPIC_TIERS[tier]
 
 
-from resume_tailor import llm  # noqa: E402
+def test_model_for_openai(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "openai")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    for tier in (config.TIER_FLASH_LITE, config.TIER_FLASH, config.TIER_PRO):
+        assert config.model_for(tier) == config._OPENAI_TIERS[tier]
 
 
-class _FakeProc:
-    def __init__(self, returncode=0, stdout="", stderr=""):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
+# ── _extract_json ────────────────────────────────────────────────────────────
+def test_extract_json_plain():
+    assert llm._extract_json('{"a": 1}') == {"a": 1}
 
 
-def _envelope(result, in_tok=11, out_tok=22, is_error=False):
-    return json.dumps({
-        "type": "result", "subtype": "success", "is_error": is_error,
-        "result": result,
-        "usage": {"input_tokens": in_tok, "output_tokens": out_tok},
-    })
+def test_extract_json_fenced():
+    assert llm._extract_json('```json\n{"a": 1}\n```') == {"a": 1}
 
 
+def test_extract_json_embedded_in_prose():
+    assert llm._extract_json('Sure! {"a": 1} done') == {"a": 1}
+
+
+def test_extract_json_invalid_raises():
+    with pytest.raises(llm.LLMError):
+        llm._extract_json("not json at all")
+
+
+# ── usage_summary ────────────────────────────────────────────────────────────
 @pytest.fixture(autouse=True)
 def _reset_usage():
     llm.reset_usage()
@@ -86,157 +109,186 @@ def _reset_usage():
     llm.reset_usage()
 
 
-def _use_claude(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
-    monkeypatch.setattr(config, "_config_json", lambda: {})
-    monkeypatch.setattr(llm.shutil, "which", lambda _: "/usr/bin/claude")
-    monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+def test_usage_summary_empty():
+    assert llm.usage_summary() == "no LLM calls recorded"
 
 
-def test_claude_text_call(monkeypatch):
-    _use_claude(monkeypatch)
-    monkeypatch.setattr(llm.subprocess, "run",
-                        lambda *a, **k: _FakeProc(stdout=_envelope("hello world")))
-    out = llm.call("sys", "user", config.TIER_FLASH)
-    assert out == "hello world"
-    assert llm.USAGE and llm.USAGE[0]["model"] == f"claude:{config.CLAUDE_SONNET}"
-    assert llm.USAGE[0]["in"] == 11 and llm.USAGE[0]["out"] == 22
+def test_usage_summary_aggregates():
+    llm.USAGE.append({"model": "m", "in": 10, "out": 20})
+    llm.USAGE.append({"model": "m", "in": 5, "out": 6})
+    assert llm.usage_summary() == "m: 2 calls, 15+26 tok"
 
 
-def test_claude_json_call_and_system_augment(monkeypatch):
-    _use_claude(monkeypatch)
-    seen = {}
-
-    def fake_run(argv, **k):
-        seen["argv"] = argv
-        return _FakeProc(stdout=_envelope('{"score": 5}'))
-
-    monkeypatch.setattr(llm.subprocess, "run", fake_run)
-    out = llm.call("sys", "user", config.TIER_FLASH, json_out=True)
-    assert out == {"score": 5}
-    i = seen["argv"].index("--system-prompt")
-    assert "ONLY valid JSON" in seen["argv"][i + 1]
-
-
-def test_claude_websearch_flag_present_with_tools(monkeypatch):
-    _use_claude(monkeypatch)
-    seen = {}
-
-    def fake_run(argv, **k):
-        seen["argv"] = argv
-        return _FakeProc(stdout=_envelope("ok"))
-
-    monkeypatch.setattr(llm.subprocess, "run", fake_run)
-    llm.call("sys", "user", config.TIER_FLASH, tools=[object()])
-    assert "--allowedTools" in seen["argv"]
-    assert "WebSearch" in seen["argv"]
-
-
-def test_claude_no_websearch_without_tools(monkeypatch):
-    _use_claude(monkeypatch)
-    seen = {}
-
-    def fake_run(argv, **k):
-        seen["argv"] = argv
-        return _FakeProc(stdout=_envelope("ok"))
-
-    monkeypatch.setattr(llm.subprocess, "run", fake_run)
-    llm.call("sys", "user", config.TIER_FLASH)
-    assert "--allowedTools" not in seen["argv"]
-    # no-tools path denies the heavy built-ins to shrink the cached prompt prefix
-    assert "--disallowedTools" in seen["argv"]
-    assert "Bash" in seen["argv"] and "WebSearch" not in seen["argv"]
-
-
-def test_claude_no_disallowed_tools_when_tools_requested(monkeypatch):
-    _use_claude(monkeypatch)
-    seen = {}
-
-    def fake_run(argv, **k):
-        seen["argv"] = argv
-        return _FakeProc(stdout=_envelope("ok"))
-
-    monkeypatch.setattr(llm.subprocess, "run", fake_run)
-    llm.call("sys", "user", config.TIER_FLASH, tools=[object()])
-    # search path uses an allow-list instead; no blanket deny that could clash
-    assert "--disallowedTools" not in seen["argv"]
-
-
-def test_claude_missing_cli_raises(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
-    monkeypatch.setattr(config, "_config_json", lambda: {})
-    monkeypatch.setattr(llm.shutil, "which", lambda _: None)
-    monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
-    with pytest.raises(llm.LLMError):
-        llm.call("sys", "user", config.TIER_FLASH)
-
-
-def test_claude_error_exit_retries_then_raises(monkeypatch):
-    _use_claude(monkeypatch)
-    monkeypatch.setattr(llm.subprocess, "run",
-                        lambda *a, **k: _FakeProc(returncode=1, stderr="boom"))
-    with pytest.raises(llm.LLMError):
-        llm.call("sys", "user", config.TIER_FLASH)
-
-
-def test_claude_is_error_envelope_retries_then_raises(monkeypatch):
-    _use_claude(monkeypatch)
-    monkeypatch.setattr(llm.subprocess, "run",
-                        lambda *a, **k: _FakeProc(stdout=_envelope("ctx limit", is_error=True)))
-    with pytest.raises(llm.LLMError, match="reported error"):
-        llm.call("sys", "user", config.TIER_FLASH)
-
-
-def test_dispatch_routes_to_vertex_with_resolved_model(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "vertex")
+# ── Dispatch routing (call -> _call_X with the resolved model) ───────────────
+def test_call_routes_to_gemini(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "gemini")
     monkeypatch.setattr(config, "_config_json", lambda: {})
     captured = {}
-    monkeypatch.setattr(llm, "_call_vertex",
-                        lambda system, user, model, **k: captured.update(model=model) or "V")
-    assert llm.call("sys", "user", config.TIER_PRO) == "V"
+    monkeypatch.setattr(llm, "_call_gemini",
+                        lambda system, user, model, **k: captured.update(model=model) or "G")
+    assert llm.call("s", "u", config.TIER_PRO) == "G"
     assert captured["model"] == config.MODEL_PRO
 
 
-def test_dispatch_routes_to_claude_with_resolved_model(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
+def test_call_routes_to_anthropic(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "anthropic")
     monkeypatch.setattr(config, "_config_json", lambda: {})
     captured = {}
-    monkeypatch.setattr(llm, "_call_claude",
-                        lambda system, user, model, **k: captured.update(model=model) or "C")
-    assert llm.call("sys", "user", config.TIER_FLASH_LITE) == "C"
-    assert captured["model"] == config.CLAUDE_HAIKU
+    monkeypatch.setattr(llm, "_call_anthropic",
+                        lambda system, user, model, **k: captured.update(model=model) or "A")
+    assert llm.call("s", "u", config.TIER_FLASH) == "A"
+    assert captured["model"] == config._ANTHROPIC_TIERS[config.TIER_FLASH]
 
 
-def test_call_resolves_backend_once_consistently(monkeypatch):
-    # backend() would flip between reads; with a single read the model and the
-    # dispatched transport must agree.
-    seq = iter(["claude", "vertex", "vertex", "vertex"])
-    monkeypatch.setattr(config, "backend", lambda: next(seq))
+def test_call_routes_to_openai(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "openai")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
     captured = {}
-    monkeypatch.setattr(llm, "_call_claude",
-                        lambda system, user, model, **k: captured.update(be="claude", model=model) or "C")
-    monkeypatch.setattr(llm, "_call_vertex",
-                        lambda system, user, model, **k: captured.update(be="vertex", model=model) or "V")
-    llm.call("s", "u", config.TIER_FLASH)
-    if captured["be"] == "claude":
-        assert captured["model"] == config.CLAUDE_SONNET
-    else:
-        assert captured["model"] == config.MODEL_FLASH
+    monkeypatch.setattr(llm, "_call_openai",
+                        lambda system, user, model, **k: captured.update(model=model) or "O")
+    assert llm.call("s", "u", config.TIER_FLASH_LITE) == "O"
+    assert captured["model"] == config._OPENAI_TIERS[config.TIER_FLASH_LITE]
 
 
-def test_claude_uses_resolved_executable_path(monkeypatch):
-    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "claude")
+# ── Transport: Gemini (real google.genai module, fake Client) ────────────────
+def _fake_gemini_client(result_text):
+    resp = types.SimpleNamespace(
+        text=result_text,
+        usage_metadata=types.SimpleNamespace(prompt_token_count=10, candidates_token_count=20),
+    )
+    models = types.SimpleNamespace(generate_content=lambda model, contents, config: resp)
+
+    class _Client:
+        def __init__(self, **kwargs):
+            self.models = models
+
+    return _Client
+
+
+def test_gemini_text_call(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr("google.genai.Client", _fake_gemini_client("hello world"))
+    out = llm.call("sys", "user", config.TIER_FLASH)
+    assert out == "hello world"
+    assert llm.USAGE and llm.USAGE[0] == {"model": config.MODEL_FLASH, "in": 10, "out": 20}
+
+
+def test_gemini_json_call(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr("google.genai.Client", _fake_gemini_client('{"score": 5}'))
+    assert llm.call("sys", "user", config.TIER_FLASH, json_out=True) == {"score": 5}
+
+
+def test_gemini_missing_key_and_project_raises(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr(config, "GCP_PROJECT", "")
+    monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+    with pytest.raises(llm.LLMError):
+        llm.call("sys", "user", config.TIER_FLASH)
+
+
+# ── Transport: Anthropic (fake 'anthropic' module in sys.modules) ────────────
+def _install_fake_anthropic(monkeypatch, result_text):
+    mod = types.ModuleType("anthropic")
+    resp = types.SimpleNamespace(
+        content=[types.SimpleNamespace(text=result_text)],
+        usage=types.SimpleNamespace(input_tokens=11, output_tokens=22),
+    )
+    messages = types.SimpleNamespace(create=lambda **k: resp)
+
+    class _Anthropic:
+        def __init__(self, api_key=None):
+            self.messages = messages
+
+    mod.Anthropic = _Anthropic
+    monkeypatch.setitem(sys.modules, "anthropic", mod)
+
+
+def test_anthropic_text_call_records_usage(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    _install_fake_anthropic(monkeypatch, "hi there")
+    out = llm.call("sys", "user", config.TIER_FLASH)
+    assert out == "hi there"
+    assert llm.USAGE[0] == {"model": config._ANTHROPIC_TIERS[config.TIER_FLASH], "in": 11, "out": 22}
+
+
+def test_anthropic_json_call(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    _install_fake_anthropic(monkeypatch, '{"ok": true}')
+    assert llm.call("sys", "user", config.TIER_PRO, json_out=True) == {"ok": True}
+
+
+def test_anthropic_missing_key_raises(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    _install_fake_anthropic(monkeypatch, "unused")
+    with pytest.raises(llm.LLMError, match="ANTHROPIC_API_KEY"):
+        llm.call("sys", "user", config.TIER_FLASH)
+
+
+# ── Transport: OpenAI (fake 'openai' module in sys.modules) ──────────────────
+def _install_fake_openai(monkeypatch, result_text):
+    mod = types.ModuleType("openai")
+    resp = types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=result_text))],
+        usage=types.SimpleNamespace(prompt_tokens=7, completion_tokens=8),
+    )
+    completions = types.SimpleNamespace(create=lambda **k: resp)
+    chat = types.SimpleNamespace(completions=completions)
+
+    class _OpenAI:
+        def __init__(self, api_key=None):
+            self.chat = chat
+
+    mod.OpenAI = _OpenAI
+    monkeypatch.setitem(sys.modules, "openai", mod)
+
+
+def test_openai_text_call_records_usage(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    _install_fake_openai(monkeypatch, "yo")
+    out = llm.call("sys", "user", config.TIER_FLASH)
+    assert out == "yo"
+    assert llm.USAGE[0] == {"model": config._OPENAI_TIERS[config.TIER_FLASH], "in": 7, "out": 8}
+
+
+def test_openai_missing_key_raises(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    _install_fake_openai(monkeypatch, "unused")
+    with pytest.raises(llm.LLMError, match="OPENAI_API_KEY"):
+        llm.call("sys", "user", config.TIER_FLASH)
+
+
+def test_anthropic_retries_then_raises(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_BACKEND", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
     monkeypatch.setattr(config, "_config_json", lambda: {})
     monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
-    resolved = r"C:\fake\path\claude.CMD"
-    monkeypatch.setattr(llm.shutil, "which", lambda _: resolved)
-    seen = {}
+    mod = types.ModuleType("anthropic")
 
-    def fake_run(argv, **k):
-        seen["argv"] = argv
-        return _FakeProc(stdout=_envelope("ok"))
+    def _boom(**_k):
+        raise RuntimeError("transient")
 
-    monkeypatch.setattr(llm.subprocess, "run", fake_run)
-    out = llm.call("sys", "user", config.TIER_FLASH)
-    assert out == "ok"
-    assert seen["argv"][0] == resolved  # full resolved path, not bare "claude"
+    class _Anthropic:
+        def __init__(self, api_key=None):
+            self.messages = types.SimpleNamespace(create=_boom)
+
+    mod.Anthropic = _Anthropic
+    monkeypatch.setitem(sys.modules, "anthropic", mod)
+    with pytest.raises(llm.LLMError, match="Anthropic call failed"):
+        llm.call("sys", "user", config.TIER_FLASH)

@@ -89,3 +89,111 @@ class UsageState:
             )
         except OSError:
             pass
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return any(t in s for t in ("429", "quota", "resource_exhausted", "rate limit"))
+
+
+class KeyPool:
+    """Async scheduler over free Gemini keys plus an optional Vertex backstop.
+
+    members: list of {"client": <genai client>, "kind": "free"|"vertex",
+                      "fp": <8-char fingerprint> | None}. Free members are gated
+    by LIMITS; the Vertex member is unlimited and used only when every free key
+    is RPD-exhausted for the requested model.
+    """
+
+    def __init__(self, members: list[dict], state: UsageState) -> None:
+        self._members = members
+        self._state = state
+        self._rpm: dict[tuple[int, str], deque] = defaultdict(deque)
+        self._lock = asyncio.Lock()
+        self._free_calls = 0
+        self._vertex_calls = 0
+
+    def stats(self) -> dict:
+        return {"free_calls": self._free_calls, "vertex_calls": self._vertex_calls}
+
+    def _select(self, model: str, limits: Optional[dict]) -> tuple[str, int, float]:
+        """Pick a member. Returns (kind, idx, wait):
+        ("free", idx, 0)   reserve and call a free key;
+        ("vertex", idx, 0) use the Vertex backstop;
+        ("wait", -1, secs) a free key has RPD left but is RPM-throttled;
+        ("none", -1, 0)    nothing usable.
+        Free keys are preferred; we only wait for a throttled free key or fall to
+        Vertex once no free key has RPD headroom -- preserving free quota.
+        """
+        now = time.monotonic()
+        soonest: Optional[float] = None
+        vertex_idx: Optional[int] = None
+        for idx, m in enumerate(self._members):
+            if m["kind"] == "vertex":
+                vertex_idx = idx
+                continue
+            if limits is None:
+                return ("free", idx, 0.0)
+            if self._state.get(m["fp"], model) >= limits["rpd"]:
+                continue
+            dq = self._rpm[(idx, model)]
+            while dq and dq[0] <= now - 60.0:
+                dq.popleft()
+            if len(dq) < limits["rpm"]:
+                return ("free", idx, 0.0)
+            w = 60.0 - (now - dq[0])
+            soonest = w if soonest is None else min(soonest, w)
+        if soonest is not None:
+            return ("wait", -1, max(0.05, soonest))
+        if vertex_idx is not None:
+            return ("vertex", vertex_idx, 0.0)
+        return ("none", -1, 0.0)
+
+    def _reserve(self, idx: int, model: str) -> None:
+        self._rpm[(idx, model)].append(time.monotonic())
+        m = self._members[idx]
+        self._state.incr(m["fp"], model)
+        self._state.save()
+
+    async def generate(self, *, model: str, contents: Any, config: Any) -> Any:
+        limits = LIMITS.get(model)
+        transient = 0
+        while True:
+            async with self._lock:
+                kind, idx, wait = self._select(model, limits)
+                if kind == "free":
+                    self._reserve(idx, model)
+            if kind == "wait":
+                await asyncio.sleep(wait)
+                continue
+            if kind == "none":
+                raise PoolError(f"No usable pool member for model {model}")
+            member = self._members[idx]
+            try:
+                resp = await member["client"].aio.models.generate_content(
+                    model=model, contents=contents, config=config
+                )
+            except Exception as exc:  # noqa: BLE001
+                if _is_quota_error(exc):
+                    if member["kind"] == "free":
+                        async with self._lock:
+                            self._state.set_exhausted(
+                                member["fp"], model, limits["rpd"] if limits else 0
+                            )
+                            self._state.save()
+                        continue
+                    transient += 1
+                    if transient >= 4:
+                        raise PoolError(f"Vertex quota error for {model}: {exc}")
+                    await asyncio.sleep(60)
+                    continue
+                transient += 1
+                if transient >= 3:
+                    raise
+                await asyncio.sleep(1.5 * transient)
+                continue
+            if member["kind"] == "free":
+                self._free_calls += 1
+            else:
+                self._vertex_calls += 1
+            return resp

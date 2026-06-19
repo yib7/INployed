@@ -155,6 +155,26 @@ _CLEARANCE_NEG = re.compile(
     re.I,
 )
 
+# --- hard advanced-degree requirement -----------------------------------------
+# Fires only when an advanced-degree token co-occurs with a REQUIRE cue and NO
+# softener in the same window. The required-vs-preferred distinction is the whole
+# game, so softeners (preferred / a plus / or equivalent / bachelor's-or...) keep
+# the job. A bachelor's requirement is NEVER filtered (the candidate has one);
+# "MS"/"M.S." only counts as a degree when followed by "degree" or "in <field>"
+# so unit tokens like "5 ms latency" never match.
+_DEGREE_TOKEN = re.compile(
+    r"\b(ph\.?\s?d|doctorate|doctoral degree|graduate degree|advanced degree"
+    r"|master's(?:\s+degree)?|master of (?:science|engineering|arts)"
+    r"|m\.?s\.?\s+(?:degree|in\b)|m\.?eng\b|mba)\b",
+    re.I,
+)
+_DEGREE_REQ_CUE = ("requir", "must have", "must possess", "must hold", "minimum")
+_DEGREE_SOFTENER = (
+    "preferred", "a plus", "nice to have", "a bonus", "or equivalent",
+    "equivalent experience", "or related experience", "bachelor",
+    "undergraduate", "desired", "ideally", "not required",
+)
+
 
 STAGE1_SYSTEM = "You honestly evaluate how well a new-grad candidate fits early-career roles. Return JSON only."
 
@@ -295,6 +315,27 @@ def requires_clearance(text: Any) -> bool:
     if not any(p.search(text) for p in CLEARANCE_PATTERNS):
         return False
     return not bool(_CLEARANCE_NEG.search(text))
+
+
+def requires_advanced_degree(text: Any) -> bool:
+    """True when the JD HARD-requires a Master's/PhD-level degree.
+
+    Proximity rule: for each advanced-degree token, look in a +-60 char window;
+    the job is filtered only if that window has a require-cue and no softener. A
+    bachelor's requirement never trips this. Errs toward keeping the job.
+    """
+    if not isinstance(text, str):
+        return False
+    low = text.lower().replace("'", "'")  # normalize curly apostrophe
+    for m in _DEGREE_TOKEN.finditer(low):
+        lo = max(0, m.start() - 60)
+        hi = min(len(low), m.end() + 60)
+        ctx = low[lo:hi]
+        if any(s in ctx for s in _DEGREE_SOFTENER):
+            continue
+        if any(c in ctx for c in _DEGREE_REQ_CUE):
+            return True
+    return False
 
 
 def min_required_years(text: Any) -> int | None:

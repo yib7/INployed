@@ -17,6 +17,7 @@ markdownify==1.2.2
 pypdf==6.11.0
 PyYAML==6.0.3
 python-dotenv==1.1.1   # auto-loads .env so secrets stay out of the repo
+tzdata==2025.2         # IANA tz database for zoneinfo on Windows (Pacific RPD reset)
 
 # only needed to run scraper.py locally (it normally runs on the VM)
 aiohttp==3.13.5

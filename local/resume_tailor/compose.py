@@ -328,11 +328,14 @@ def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
 
 
 def _cap_projects(clean: Dict[str, Any]) -> None:
-    """Keep the top PROJECTS_MAX projects (strength-ordered by select) and cap each
-    to PROJECT_BULLETS_MAX groups. Projects are never force-injected, only trimmed."""
+    """Keep the top PROJECTS_MAX projects (strength-ordered by select) and cap each to
+    its per-project bullet count (config.project_targets) when set, else the global
+    PROJECT_BULLETS_MAX. Projects are never force-injected, only trimmed."""
     projects = clean.get("projects", [])[:config.PROJECTS_MAX]
     for entry in projects:
-        entry["groups"] = entry["groups"][:config.PROJECT_BULLETS_MAX]
+        targets = config.project_targets(entry["name"])
+        cap = len(targets) if targets else config.PROJECT_BULLETS_MAX
+        entry["groups"] = entry["groups"][:cap]
     clean["projects"] = projects
 
 
@@ -383,8 +386,12 @@ def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
             for i, ids in enumerate(e["groups"]):
                 out[_gkey(ids)] = targets[i] if i < len(targets) else targets[-1]
     for e in sel.get("projects", []):
-        for ids in e["groups"]:
-            out[_gkey(ids)] = config.PROJECT_BULLET_LINES
+        targets = config.project_targets(e["name"])
+        for i, ids in enumerate(e["groups"]):
+            if targets:
+                out[_gkey(ids)] = targets[i] if i < len(targets) else targets[-1]
+            else:
+                out[_gkey(ids)] = config.PROJECT_BULLET_LINES
     return out
 
 

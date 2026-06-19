@@ -218,3 +218,39 @@ def test_project_targets_empty_list_returns_none(synthetic_master, monkeypatch):
     monkeypatch.setattr(config, "_config_json", lambda: {
         "project_layout": {"ProjOne": {"line_targets": []}}})
     assert config.project_targets("ProjOne") is None
+
+
+def test_cap_projects_honors_per_project_count(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjOne": {"line_targets": [2, 2, 1]}}})  # 3 bullets
+    clean = {"projects": [{"name": "ProjOne",
+                           "groups": [["a"], ["b"], ["c"], ["d"]]}]}
+    compose._cap_projects(clean)
+    assert len(clean["projects"][0]["groups"]) == 3
+
+
+def test_cap_projects_falls_back_to_global(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr(config, "PROJECT_BULLETS_MAX", 2)
+    clean = {"projects": [{"name": "ProjOne", "groups": [["a"], ["b"], ["c"]]}]}
+    compose._cap_projects(clean)
+    assert len(clean["projects"][0]["groups"]) == 2
+
+
+def test_bullet_line_targets_honors_per_project(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjOne": {"line_targets": [3, 1]}}})
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjOne", "groups": [["a1"], ["a2"], ["a3"]]}]}
+    targets = compose.bullet_line_targets(sel)
+    # bullet0->3, bullet1->1, bullet2-> last(1)
+    assert sorted(targets.values()) == [1, 1, 3]
+
+
+def test_bullet_line_targets_project_fallback(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr(config, "PROJECT_BULLET_LINES", 2)
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjOne", "groups": [["a1"], ["a2"]]}]}
+    targets = compose.bullet_line_targets(sel)
+    assert sorted(targets.values()) == [2, 2]

@@ -1754,6 +1754,9 @@ class App:
         btnbar.grid(row=len(names), column=0, columnspan=5, pady=10)
         ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=6)
         ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=6)
+        # Block here until the modal closes so the dialog is fully modal (not just
+        # input-grabbed) and a second editor can't be opened over the first.
+        win.wait_window(win)
 
     def _on_engine_change(self) -> None:
         backend = self._current_backend()

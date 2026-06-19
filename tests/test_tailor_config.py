@@ -188,3 +188,33 @@ def test_candidate_slug_from_basics(synthetic_master):
 def test_candidate_slug_env_override(synthetic_master, monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Custom_Name")
     assert output.candidate_slug() == "Custom_Name"
+
+
+def test_project_targets_none_when_unconfigured(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.project_targets("ProjOne") is None
+
+
+def test_project_targets_returns_configured(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjOne": {"line_targets": [3, 2, 1]}}})
+    assert config.project_targets("ProjOne") == [3, 2, 1]
+
+
+def test_project_targets_clamps_and_truncates(synthetic_master, monkeypatch):
+    # ints clamped to 1-3, list truncated to 5
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjOne": {"line_targets": [9, 0, 2, 2, 2, 2]}}})
+    assert config.project_targets("ProjOne") == [3, 1, 2, 2, 2]
+
+
+def test_project_targets_bad_value_returns_none(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjOne": {"line_targets": ["x"]}}})
+    assert config.project_targets("ProjOne") is None
+
+
+def test_project_targets_empty_list_returns_none(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjOne": {"line_targets": []}}})
+    assert config.project_targets("ProjOne") is None

@@ -137,6 +137,24 @@ NONREQ_CTX = ("founded", "founding", " ago", "of service", "sabbatical",
 # stays, but "1+", "1-2", or anything requiring >= 1 year is filtered out.
 MIN_FILTER_YEARS = 1
 
+# --- security-clearance requirement -------------------------------------------
+# A new grad provably cannot hold an active US clearance, so any genuine
+# clearance requirement is a hard drop. The negation guard keeps "no clearance
+# required" / "clearance is not required" postings (precision bias: keep on doubt).
+CLEARANCE_PATTERNS = [
+    re.compile(r"\b(active|current)?\s*(secret|top[\s-]*secret|ts/sci|ts-sci)\b[^.\n]{0,40}\bclearance\b", re.I),
+    re.compile(r"\bclearance\b[^.\n]{0,25}\b(is\s+)?required\b", re.I),
+    re.compile(r"\brequires?\b[^.\n]{0,30}\bclearance\b", re.I),
+    re.compile(r"\bmust\b[^.\n]{0,40}\b(have|possess|obtain|hold|maintain)\b[^.\n]{0,30}\bclearance\b", re.I),
+    re.compile(r"\bability to obtain\b[^.\n]{0,30}\bclearance\b", re.I),
+    re.compile(r"\bpolygraph\b", re.I),
+]
+_CLEARANCE_NEG = re.compile(
+    r"\b(no|not|without|does not|do not|don'?t|doesn'?t)\b[^.\n]{0,30}\bclearance\b"
+    r"|\bclearance\b[^.\n]{0,30}\bnot\s+(required|needed)\b",
+    re.I,
+)
+
 
 STAGE1_SYSTEM = "You honestly evaluate how well a new-grad candidate fits early-career roles. Return JSON only."
 
@@ -265,6 +283,18 @@ def is_junk_desc(text: Any) -> bool:
     if not isinstance(text, str):
         return False
     return any(p.search(text) for p in JUNK_DESC_PATTERNS)
+
+def requires_clearance(text: Any) -> bool:
+    """True when the JD genuinely requires a US security clearance / polygraph.
+
+    Suppressed by an explicit negation ("no clearance required") so such postings
+    survive (precision bias favors keeping a job on doubt).
+    """
+    if not isinstance(text, str):
+        return False
+    if not any(p.search(text) for p in CLEARANCE_PATTERNS):
+        return False
+    return not bool(_CLEARANCE_NEG.search(text))
 
 
 def min_required_years(text: Any) -> int | None:

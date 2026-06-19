@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from score_jobs import requires_clearance  # noqa: E402
+from score_jobs import requires_advanced_degree  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -41,3 +42,32 @@ from score_jobs import requires_clearance  # noqa: E402
 )
 def test_requires_clearance(text, expected):
     assert requires_clearance(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # --- positives: hard Master's/PhD requirement ----------------------
+        ("PhD required in machine learning.", True),
+        ("Master's degree is required for this role.", True),
+        ("Requires an MS in Computer Science.", True),
+        ("Minimum: Master's degree in statistics.", True),
+        ("Position requiring a Master's degree; must have it to apply.", True),
+        ("An advanced degree is required.", True),
+        ("MBA required for this management-track role.", True),
+        # --- negatives: must NOT trip (preferred / equivalent / bachelor) ---
+        ("Master's degree preferred but not required.", False),
+        ("PhD a plus.", False),
+        ("Master's or equivalent experience.", False),
+        ("Bachelor's or Master's in CS.", False),
+        ("BS or MS required.", False),                 # a bachelor's suffices
+        ("Bachelor's degree required.", False),        # not an advanced degree
+        ("Graduate from a 4-year program.", False),    # 'graduate' != 'graduate degree'
+        ("Master's degree is a plus; we value hands-on experience.", False),
+        # --- non-string input ----------------------------------------------
+        (None, False),
+        (float("nan"), False),
+    ],
+)
+def test_requires_advanced_degree(text, expected):
+    assert requires_advanced_degree(text) is expected

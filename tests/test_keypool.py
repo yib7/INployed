@@ -113,3 +113,36 @@ def test_select_waits_when_free_key_rpm_throttled(tmp_path):
     pool._rpm[(0, FLASH)].extend([now] * keypool.LIMITS[FLASH]["rpm"])
     kind, idx, wait = pool._select(FLASH, keypool.LIMITS[FLASH])
     assert kind == "wait" and wait > 0
+
+
+def test_from_env_builds_free_members_and_vertex(monkeypatch, tmp_path):
+    created = []
+
+    def fake_client(**kwargs):
+        created.append(kwargs)
+        return _client(lambda *_: _resp("ok"))
+
+    monkeypatch.setattr("google.genai.Client", fake_client)
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1, k2 ,k3")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+
+    pool = keypool.KeyPool.from_env(state_path=tmp_path / "s.json")
+    kinds = [m["kind"] for m in pool._members]
+    assert kinds == ["free", "free", "free", "vertex"]
+    assert pool._members[-1]["fp"] is None
+    assert all(m["fp"] for m in pool._members[:3])
+    assert created[0] == {"api_key": "k1"}
+    assert created[-1] == {"vertexai": True, "project": "proj", "location": "global"}
+
+
+def test_from_env_raises_without_any_credential(monkeypatch, tmp_path):
+    monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.setattr("google.genai.Client", lambda **k: None)
+    try:
+        keypool.KeyPool.from_env(state_path=tmp_path / "s.json")
+        assert False, "expected PoolError"
+    except keypool.PoolError:
+        pass

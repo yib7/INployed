@@ -155,6 +155,39 @@ class KeyPool:
         self._state.incr(m["fp"], model)
         self._state.save()
 
+    @classmethod
+    def from_env(cls, *, state_path: Path | str | None = None) -> "KeyPool":
+        from google import genai
+
+        keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
+        if not keys:
+            single = os.environ.get("GEMINI_API_KEY", "").strip()
+            if single:
+                keys = [single]
+        members: list[dict] = []
+        for k in keys:
+            members.append(
+                {"client": genai.Client(api_key=k), "kind": "free", "fp": key_fingerprint(k)}
+            )
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+        if project:
+            location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1").strip() or "us-central1"
+            members.append(
+                {
+                    "client": genai.Client(vertexai=True, project=project, location=location),
+                    "kind": "vertex",
+                    "fp": None,
+                }
+            )
+        if not members:
+            raise PoolError(
+                "No Gemini credentials: set GEMINI_API_KEYS (or GEMINI_API_KEY) "
+                "or GOOGLE_CLOUD_PROJECT."
+            )
+        state = UsageState(Path(state_path) if state_path else Path("score_state.json"))
+        state.load()
+        return cls(members, state)
+
     async def generate(self, *, model: str, contents: Any, config: Any) -> Any:
         limits = LIMITS.get(model)
         transient = 0

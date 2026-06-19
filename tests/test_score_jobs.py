@@ -68,6 +68,7 @@ def test_stage2_dispatched_highest_score_first(monkeypatch):
             for sub in ("AAA", "BBB", "CCC"):
                 if sub in contents:
                     order.append(sub)
+    # AAA before CCC: stable sort keeps original order among equal (score-5) jobs
     assert order == ["AAA", "CCC", "BBB"]
 
 
@@ -76,3 +77,22 @@ def test_make_pool_delegates(monkeypatch):
     monkeypatch.setattr(sj.KeyPool, "from_env",
                         classmethod(lambda cls, *, state_path: sentinel))
     assert sj.make_pool() is sentinel
+
+
+def test_append_run_stats_migrates_old_header(tmp_path, monkeypatch):
+    import csv as _csv
+    old = tmp_path / "run_stats.csv"
+    old_cols = sj.RUN_STATS_COLS[:-2]  # header before free_calls/vertex_calls were added
+    with open(old, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=old_cols)
+        w.writeheader()
+        w.writerow({c: 1 for c in old_cols})
+    monkeypatch.setattr(sj, "RUN_STATS_CSV", old)
+
+    sj.append_run_stats({c: 2 for c in sj.RUN_STATS_COLS})
+
+    df = pd.read_csv(old)
+    assert list(df.columns) == sj.RUN_STATS_COLS  # uniform width, pandas-readable
+    assert len(df) == 2
+    assert df.iloc[0]["free_calls"] == 0   # old row backfilled
+    assert df.iloc[1]["free_calls"] == 2   # new row written

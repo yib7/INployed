@@ -70,17 +70,38 @@ def _track_usage(resp: Any) -> None:
 
 
 def append_run_stats(stats: dict) -> None:
-    """Append one metrics row; never let stats bookkeeping kill the run."""
+    """Append one metrics row; never let stats bookkeeping kill the run.
+
+    Self-heals an older CSV whose header predates added columns by rewriting it
+    with the current header (missing columns backfilled with 0) before appending,
+    so pandas can always read a uniform-width file.
+    """
     try:
-        new_file = not RUN_STATS_CSV.exists()
-        with open(RUN_STATS_CSV, "a", encoding="utf-8", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=RUN_STATS_COLS)
-            if new_file:
+        rows: list[dict] = []
+        existing_header: list[str] = []
+        if RUN_STATS_CSV.exists():
+            with open(RUN_STATS_CSV, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                existing_header = reader.fieldnames or []
+                rows = list(reader)
+        new_row = {c: stats.get(c, 0) for c in RUN_STATS_COLS}
+
+        if not RUN_STATS_CSV.exists() or existing_header != RUN_STATS_COLS:
+            # Fresh file, or an older/narrower header -- rewrite with the current
+            # columns, backfilling anything the old rows lack.
+            with open(RUN_STATS_CSV, "w", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=RUN_STATS_COLS, extrasaction="ignore")
                 w.writeheader()
-            w.writerow({c: stats.get(c, 0) for c in RUN_STATS_COLS})
+                for r in rows:
+                    w.writerow({c: r.get(c, 0) for c in RUN_STATS_COLS})
+                w.writerow(new_row)
+        else:
+            with open(RUN_STATS_CSV, "a", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=RUN_STATS_COLS, extrasaction="ignore")
+                w.writerow(new_row)
         print(f"Run stats appended -> {RUN_STATS_CSV.name}: {stats}")
     except OSError as e:
-        print(f"Could not append run stats ({e}) — continuing")
+        print(f"Could not append run stats ({e}) -- continuing")
 
 JUNK_TITLE_PATTERNS = [
     re.compile(r"\b(senior|sr\.?|staff|principal|lead|manager|director|head of|vp|vice president|chief|architect)\b", re.I),

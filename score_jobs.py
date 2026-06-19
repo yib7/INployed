@@ -141,6 +141,10 @@ MIN_FILTER_YEARS = 1
 # A new grad provably cannot hold an active US clearance, so any genuine
 # clearance requirement is a hard drop. The negation guard keeps "no clearance
 # required" / "clearance is not required" postings (precision bias: keep on doubt).
+# Note: a bare mention of a clearance LEVEL ("Secret clearance shop", "team holds
+# an active clearance") is treated as a drop -- such roles effectively require
+# clearance. Only clearly-non-requiring phrasings ("no clearance required",
+# "clearance holders") are kept via _CLEARANCE_NEG.
 CLEARANCE_PATTERNS = [
     re.compile(r"\b(active|current)?\s*(secret|top[\s-]*secret|ts/sci|ts-sci)\b[^.\n]{0,40}\bclearance\b", re.I),
     re.compile(r"\bclearance\b[^.\n]{0,25}\b(is\s+)?required\b", re.I),
@@ -149,9 +153,15 @@ CLEARANCE_PATTERNS = [
     re.compile(r"\bability to obtain\b[^.\n]{0,30}\bclearance\b", re.I),
     re.compile(r"\bpolygraph\b", re.I),
 ]
+# Keeps postings whose only clearance/polygraph signal is negated ("no clearance
+# required", "no polygraph required") or merely describes cleared colleagues
+# ("clearance holders"). Precision bias: a suppressor can only ever KEEP a job.
 _CLEARANCE_NEG = re.compile(
     r"\b(no|not|without|does not|do not|don'?t|doesn'?t)\b[^.\n]{0,30}\bclearance\b"
-    r"|\bclearance\b[^.\n]{0,30}\bnot\s+(required|needed)\b",
+    r"|\bclearance\b[^.\n]{0,30}\bnot\s+(required|needed)\b"
+    r"|\b(no|not|without|does not|do not|don'?t|doesn'?t)\b[^.\n]{0,20}\bpolygraph\b"
+    r"|\bpolygraph\b[^.\n]{0,20}\bnot\s+(required|needed)\b"
+    r"|\bclearance\s+holders?\b",
     re.I,
 )
 
@@ -165,7 +175,8 @@ _CLEARANCE_NEG = re.compile(
 _DEGREE_TOKEN = re.compile(
     r"\b(ph\.?\s?d|doctorate|doctoral degree|graduate degree|advanced degree"
     r"|master's(?:\s+degree)?|master of (?:science|engineering|arts)"
-    r"|m\.?s\.?\s+(?:degree|in\b)|m\.?eng\b|mba)\b",
+    r"|m\.?s\.?\s+(?:degree|in\b)|m\.?eng\b"
+    r"|mba\b(?![\s-]+(?:students?|alumni|alumnus|network|track|program|candidates?|grads?)))\b",
     re.I,
 )
 _DEGREE_REQ_CUE = ("requir", "must have", "must possess", "must hold", "minimum")

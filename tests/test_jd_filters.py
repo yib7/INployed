@@ -34,6 +34,9 @@ from score_jobs import requires_advanced_degree  # noqa: E402
         ("Security clearance is not required.", False),
         ("We build software for a security-cleared facility; tours available.", False),
         ("Backend engineer building web apps and REST APIs.", False),
+        ("No polygraph required.", False),
+        ("A polygraph is not required for this role.", False),
+        ("You will collaborate with TS/SCI clearance holders on the team.", False),
         # --- non-string input ----------------------------------------------
         (None, False),
         (float("nan"), False),
@@ -56,6 +59,8 @@ def test_requires_clearance(text, expected):
         ("An advanced degree is required.", True),
         ("MBA required for this management-track role.", True),
         # --- negatives: must NOT trip (preferred / equivalent / bachelor) ---
+        ("Help our MBA students; a CS background is required.", False),
+        ("Our MBA alumni network is strong; SQL skills required.", False),
         ("Master's degree preferred but not required.", False),
         ("PhD a plus.", False),
         ("Master's or equivalent experience.", False),

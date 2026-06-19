@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 # ── Locations ────────────────────────────────────────────────────────────────
 PKG_DIR = Path(__file__).resolve().parent              # local/resume_tailor
@@ -41,21 +40,17 @@ GCP_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 # flash       → the judgment passes: selection (which evidence), fact-verify
 #               (anti-inflation audit), and the skills fallback. Few calls/run.
 # pro         → the creative first pass (rephrase) + cover letter (quality-critical)
-MODEL_FLASH = os.getenv("RESUME_TAILOR_MODEL_FLASH", "gemini-2.5-flash")
-# Pro tier: this project exposes gemini-3.1-pro-preview (3.5-pro/3.1-pro 404 here).
-MODEL_PRO = os.getenv("RESUME_TAILOR_MODEL_PRO", "gemini-3.1-pro-preview")
-# flash-lite → cheapest tier for high-frequency, low-stakes work: the JD-gap
-# screen/placement and the rephrase_fix grounding fixes. Constrained rewrites
-# of already-grounded text to fix a cited issue — flash-lite is the main cost
-# lever, especially on the Claude backend where every call carries ~10k tokens
-# of fixed CLI overhead. See [[resume-tailor-claude-backend]].
-MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-2.5-flash-lite")
+MODEL_FLASH = os.getenv("RESUME_TAILOR_MODEL_FLASH", "gemini-3.5-flash")
+# PRO tier maps to 3.5-flash by default; set this to gemini-3.1-pro-preview for
+# max-quality (slower) rephrase + cover-letter passes.
+MODEL_PRO = os.getenv("RESUME_TAILOR_MODEL_PRO", "gemini-3.5-flash")
+MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-3.1-flash-lite")
 
 # ── pdflatex ─────────────────────────────────────────────────────────────────
 PDFLATEX_PATH = os.getenv("PDFLATEX_PATH", "pdflatex")
 PAGE_LIMIT = 1
-# ── Backend selection ────────────────────
-# Resolved at call time. Precedence: env var > local/config.json > "gemini".
+# ── Auth / model selection ────────────────────────────────────────────────────
+# Resolved at call time. Precedence: env var > local/config.json > default.
 CONFIG_JSON = PKG_DIR.parent / "config.json"            # local/config.json
 
 TIER_FLASH_LITE = "flash_lite"
@@ -66,16 +61,6 @@ _GEMINI_TIERS = {
     TIER_FLASH_LITE: MODEL_FLASH_LITE,
     TIER_FLASH: MODEL_FLASH,
     TIER_PRO: MODEL_PRO,
-}
-_ANTHROPIC_TIERS = {
-    TIER_FLASH_LITE: os.getenv("RESUME_TAILOR_CLAUDE_HAIKU", "claude-3-5-haiku-latest"),
-    TIER_FLASH: os.getenv("RESUME_TAILOR_CLAUDE_SONNET", "claude-3-7-sonnet-latest"),
-    TIER_PRO: os.getenv("RESUME_TAILOR_CLAUDE_PRO", "claude-3-7-sonnet-latest"),
-}
-_OPENAI_TIERS = {
-    TIER_FLASH_LITE: os.getenv("RESUME_TAILOR_OPENAI_MINI", "gpt-4o-mini"),
-    TIER_FLASH: os.getenv("RESUME_TAILOR_OPENAI_BASE", "gpt-4o"),
-    TIER_PRO: os.getenv("RESUME_TAILOR_OPENAI_PRO", "o3-mini"),
 }
 
 
@@ -121,19 +106,15 @@ def block_targets(name: str) -> list[int]:
     return out or list(DEFAULT_LINE_TARGETS)
 
 
-def backend() -> str:
-    """Active LLM backend: 'gemini' (default), 'anthropic', or 'openai'."""
-    val = os.getenv("RESUME_TAILOR_BACKEND") or _config_json().get("backend")
-    val = val.strip().lower() if isinstance(val, str) else "gemini"
-    # Legacy fallbacks
-    if val == "vertex": val = "gemini"
-    if val == "claude": val = "anthropic"
-    return val if val in ("gemini", "anthropic", "openai") else "gemini"
+def gemini_auth() -> str:
+    """Gemini auth mode: 'vertex' (default; uses GOOGLE_CLOUD_PROJECT) or
+    'api_key' (uses RESUME_TAILOR_GEMINI_API_KEY -- for users without Vertex).
+    Precedence: env var > local/config.json > 'vertex'."""
+    val = os.getenv("RESUME_TAILOR_GEMINI_AUTH") or _config_json().get("gemini_auth")
+    val = val.strip().lower() if isinstance(val, str) else "vertex"
+    return "api_key" if val == "api_key" else "vertex"
 
 
-def model_for(tier: str, backend_name: Optional[str] = None) -> str:
-    """Concrete model for a tier token under the given (or active) backend."""
-    be = backend_name if backend_name is not None else backend()
-    if be == "anthropic": return _ANTHROPIC_TIERS[tier]
-    if be == "openai": return _OPENAI_TIERS[tier]
+def model_for(tier: str) -> str:
+    """Concrete Gemini model id for a tier token."""
     return _GEMINI_TIERS.get(tier, MODEL_FLASH)

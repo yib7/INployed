@@ -488,7 +488,12 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None) -
     df["filter_junk_title"] = df[title_col].apply(is_junk_title) if title_col else False
     df["filter_junk_desc"] = df["job_description_md"].apply(is_junk_desc)
     df["filter_too_many_years"] = df["job_description_md"].apply(has_too_many_years)
-    df["filtered_out"] = df["filter_junk_title"] | df["filter_junk_desc"] | df["filter_too_many_years"]
+    df["filter_clearance"] = df["job_description_md"].apply(requires_clearance)
+    df["filter_degree"] = df["job_description_md"].apply(requires_advanced_degree)
+    df["filtered_out"] = (
+        df["filter_junk_title"] | df["filter_junk_desc"] | df["filter_too_many_years"]
+        | df["filter_clearance"] | df["filter_degree"]
+    )
     # An unscoreable (empty/missing) description would otherwise be retried by
     # the rescore pass forever — park it as filtered.
     no_desc = df["job_description_md"].str.len() < 40

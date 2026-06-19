@@ -71,3 +71,31 @@ def test_requires_clearance(text, expected):
 )
 def test_requires_advanced_degree(text, expected):
     assert requires_advanced_degree(text) is expected
+
+
+import pandas as pd  # noqa: E402
+
+from score_jobs import add_filter_columns  # noqa: E402
+
+
+def test_add_filter_columns_flags_clearance_and_degree():
+    df = pd.DataFrame(
+        {
+            "desc": [
+                "We are hiring a software engineer to build web apps and REST APIs.",
+                "Backend engineer role; an active TS/SCI clearance is required here.",
+                "Data role requiring a Master's degree in statistics; must have it.",
+                "Entry-level analyst; a Master's degree is preferred but not required.",
+            ],
+            "title": [
+                "Software Engineer",
+                "Backend Engineer",
+                "Data Scientist",
+                "Analyst",
+            ],
+        }
+    )
+    out = add_filter_columns(df, "desc", "title")
+    assert list(out["filter_clearance"]) == [False, True, False, False]
+    assert list(out["filter_degree"]) == [False, False, True, False]
+    assert list(out["filtered_out"]) == [False, True, True, False]

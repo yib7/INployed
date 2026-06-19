@@ -537,8 +537,8 @@ def _save_cfg(updates: dict) -> None:
         pass
 
 
-_ENGINE_LABELS = {"vertex": "Engine: Vertex Gemini", "claude": "Engine: Claude (subscription)"}
-_LABEL_TO_BACKEND = {v: k for k, v in _ENGINE_LABELS.items()}
+_ENGINE_LABELS = {"vertex": "Engine: Vertex Gemini", "api_key": "Engine: Gemini API key"}
+_LABEL_TO_AUTH = {v: k for k, v in _ENGINE_LABELS.items()}
 
 
 def load_min_score(default: int = 4) -> int:
@@ -843,15 +843,15 @@ class App:
                                      style="Green.TButton")
         self.btn_tailor.pack(side="right", padx=4)
         self.engine_var = tk.StringVar(
-            value=_ENGINE_LABELS.get(_load_cfg().get("backend", "vertex"), _ENGINE_LABELS["vertex"])
+            value=_ENGINE_LABELS.get(_load_cfg().get("gemini_auth", "vertex"), _ENGINE_LABELS["vertex"])
         )
         eng_cb = ttk.Combobox(
             bar1, textvariable=self.engine_var, state="readonly", width=24,
-            values=[_ENGINE_LABELS["vertex"], _ENGINE_LABELS["claude"]],
+            values=[_ENGINE_LABELS["vertex"], _ENGINE_LABELS["api_key"]],
         )
         eng_cb.bind("<<ComboboxSelected>>", lambda *_: self._on_engine_change())
         eng_cb.pack(side="right", padx=(4, 10))
-        self._apply_backend_env()
+        self._apply_auth_env()
 
         # Tab 2 — All Jobs (multi-column filter + query view)
         f2 = ttk.Frame(nb)
@@ -1672,7 +1672,7 @@ class App:
         resume_dir = self.registry.resume_path(jid)
         self._prepping = True
         self._set_status(f"Generating interview prep for {job['company_name']} — {job['job_title']} …")
-        self._apply_backend_env()
+        self._apply_auth_env()
         threading.Thread(target=self._prep_worker, args=(job, resume_dir), daemon=True).start()
 
     def _prep_worker(self, job: dict, resume_dir: str | None) -> None:
@@ -1694,12 +1694,12 @@ class App:
 
     # ---- engine selector ----
 
-    def _current_backend(self) -> str:
-        return _LABEL_TO_BACKEND.get(self.engine_var.get(), "vertex")
+    def _current_auth(self) -> str:
+        return _LABEL_TO_AUTH.get(self.engine_var.get(), "vertex")
 
-    def _apply_backend_env(self) -> None:
+    def _apply_auth_env(self) -> None:
         """Seed the env var the in-process tailor reads at call time."""
-        os.environ["RESUME_TAILOR_BACKEND"] = self._current_backend()
+        os.environ["RESUME_TAILOR_GEMINI_AUTH"] = self._current_auth()
 
     def _open_resume_layout_dialog(self) -> None:
         """Edit per-bullet line targets for the constant resume blocks. Each block:
@@ -1759,9 +1759,9 @@ class App:
         win.wait_window(win)
 
     def _on_engine_change(self) -> None:
-        backend = self._current_backend()
-        _save_cfg({"backend": backend})
-        self._apply_backend_env()
+        auth = self._current_auth()
+        _save_cfg({"gemini_auth": auth})
+        self._apply_auth_env()
         self._set_status(f"LLM engine: {self.engine_var.get().replace('Engine: ', '')}")
 
     # ---- resume tailor ----
@@ -1788,7 +1788,7 @@ class App:
         )
         self._tailoring = True
         self.btn_tailor.config(state="disabled")
-        self._apply_backend_env()
+        self._apply_auth_env()
         threading.Thread(
             target=self._tailor_worker, args=(jobs, cover), daemon=True
         ).start()

@@ -861,6 +861,7 @@ class App:
         ttk.Button(bar1, text="Refresh", command=self.reload_data).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume layout…", command=self._open_resume_layout_dialog).pack(side="right", padx=4)
+        ttk.Button(bar1, text="Add entry…", command=self._open_add_entry_dialog).pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark all shown seen", command=self._mark_all_shown_seen,
                    style="Accent.TButton").pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark seen (selected)", command=self._mark_seen_selected,
@@ -1800,6 +1801,101 @@ class App:
         btnbar.grid(row=r, column=0, columnspan=5, pady=10)
         ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=6)
         ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=6)
+        win.wait_window(win)
+
+    def _open_add_entry_dialog(self) -> None:
+        """Append a new project / work / leadership entry to master_experience.yaml."""
+        from resume_tailor import master_edit
+
+        win = tk.Toplevel(self.root)
+        win.title("Add entry")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        win.grab_set()
+
+        sec_var = tk.StringVar(value="projects")
+        field_vars: dict[str, tk.StringVar] = {}
+        ach_rows: list[dict] = []
+
+        section_fields = {
+            "projects": [("name", "Name"), ("dates", "Dates"),
+                         ("live_url", "Live URL"), ("repo", "Repo")],
+            "experience": [("org", "Org"), ("title", "Title"),
+                           ("location", "Location"), ("dates", "Dates")],
+            "leadership": [("org", "Org"), ("dates", "Dates")],
+        }
+
+        topbar = ttk.Frame(win)
+        topbar.grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        ttk.Label(topbar, text="Section:").pack(side="left")
+        ttk.Combobox(topbar, textvariable=sec_var, state="readonly", width=12,
+                     values=list(section_fields)).pack(side="left", padx=6)
+
+        fields_frame = ttk.Frame(win)
+        fields_frame.grid(row=1, column=0, sticky="w", padx=8)
+        ttk.Label(win, text="Achievements").grid(row=2, column=0, sticky="w", padx=8, pady=(8, 0))
+        ach_frame = ttk.Frame(win)
+        ach_frame.grid(row=3, column=0, sticky="w", padx=8)
+
+        def _render_fields(*_):
+            for w in fields_frame.winfo_children():
+                w.destroy()
+            field_vars.clear()
+            for i, (key, label) in enumerate(section_fields[sec_var.get()]):
+                ttk.Label(fields_frame, text=label).grid(row=i, column=0, sticky="w", pady=2)
+                v = tk.StringVar()
+                field_vars[key] = v
+                ttk.Entry(fields_frame, textvariable=v, width=52).grid(row=i, column=1, padx=6, pady=2)
+
+        def _add_ach():
+            idx = len(ach_rows)
+            fr = ttk.LabelFrame(ach_frame, text=f"Achievement {idx + 1}")
+            fr.grid(row=idx, column=0, sticky="w", pady=4)
+            ttk.Label(fr, text="What").grid(row=0, column=0, sticky="w")
+            what_v = tk.StringVar()
+            ttk.Entry(fr, textvariable=what_v, width=64).grid(row=0, column=1, padx=4, pady=2)
+            ttk.Label(fr, text="Angles (comma-sep)").grid(row=1, column=0, sticky="w")
+            ang_v = tk.StringVar()
+            ttk.Entry(fr, textvariable=ang_v, width=64).grid(row=1, column=1, padx=4, pady=2)
+            ttk.Label(fr, text="Impact (one per line)").grid(row=2, column=0, sticky="nw")
+            imp_txt = tk.Text(fr, width=48, height=2)
+            imp_txt.grid(row=2, column=1, padx=4, pady=2)
+            ach_rows.append({"what": what_v, "angles": ang_v, "impact": imp_txt})
+
+        def _save():
+            section = sec_var.get()
+            data = {k: v.get().strip() for k, v in field_vars.items() if v.get().strip()}
+            achievements = []
+            for row in ach_rows:
+                what = row["what"].get().strip()
+                angles = [a.strip() for a in row["angles"].get().split(",") if a.strip()]
+                impact = [ln.strip() for ln in row["impact"].get("1.0", "end").splitlines() if ln.strip()]
+                if not what and not angles and not impact:
+                    continue  # skip a wholly-empty row
+                achievements.append({"what": what, "angles": angles, "impact": impact})
+            data["achievements"] = achievements
+            try:
+                master_edit.append_entry(section, data)
+            except ValueError as exc:
+                messagebox.showerror("Add entry", str(exc), parent=win)
+                return
+            except Exception as exc:  # noqa: BLE001 - never crash the UI
+                self._log_error("add entry failed", exc)
+                messagebox.showerror("Add entry", f"Failed: {exc}", parent=win)
+                return
+            name = data.get("name") or data.get("org") or "entry"
+            win.destroy()
+            self._set_status(f"Added {section} entry '{name}' — available on the next tailor run.")
+
+        btnbar = ttk.Frame(win)
+        btnbar.grid(row=4, column=0, sticky="w", padx=8, pady=10)
+        ttk.Button(btnbar, text="Add achievement", command=_add_ach).pack(side="left", padx=4)
+        ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=8)
+        ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=4)
+
+        sec_var.trace_add("write", _render_fields)
+        _render_fields()
+        _add_ach()
         win.wait_window(win)
 
     def _on_engine_change(self) -> None:

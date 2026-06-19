@@ -6,7 +6,9 @@ unchanged; only the freshly appended node is formatted by the dumper.
 """
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from typing import Any, Dict, List
 
 from ruamel.yaml import YAML
@@ -80,8 +82,18 @@ def append_entry(section: str, data: Dict[str, Any]) -> None:
         doc = y.load(fh)
     doc.setdefault(section, [])
     doc[section].append(data)
-    with config.MASTER_YAML.open("w", encoding="utf-8") as fh:
-        y.dump(doc, fh)
+    target = config.MASTER_YAML
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".master_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            y.dump(doc, fh)
+        os.replace(tmp, str(target))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
     for fn in (assets.load_master, assets.tailor_config,
                assets.atoms_by_id, assets.blocks):

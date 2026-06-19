@@ -377,7 +377,9 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
 
 def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
     """{gkey: target_printed_lines} for EVERY bullet. Constant blocks (experience +
-    leadership) use config.block_targets; projects use config.PROJECT_BULLET_LINES.
+    leadership) use config.block_targets; projects use their per-project
+    config.project_targets line targets when configured, else fall back to
+    config.PROJECT_BULLET_LINES.
     Feeds the rephrase soft hint and the deterministic trim cap."""
     out: Dict[str, int] = {}
     for sec in ("experience", "leadership"):

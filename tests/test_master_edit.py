@@ -121,6 +121,19 @@ def test_impact_normalized(master):
     assert list(atom["impact"]) == ["big win"]  # blank impact dropped
 
 
+def test_multi_achievement_ids(master):
+    master_edit.append_entry("projects", {
+        "name": "Multi Proj", "dates": "2025",
+        "achievements": [
+            {"what": "first thing", "angles": ["a"]},
+            {"what": "second thing", "angles": ["b"]},
+        ],
+    })
+    ids = set(assets.atoms_by_id())
+    assert "multi_proj_1" in ids
+    assert "multi_proj_2" in ids
+
+
 @pytest.mark.parametrize("section,data,msg", [
     ("projects", {"name": "", "dates": "2025",
                   "achievements": [{"what": "x", "angles": ["a"]}]}, "name is required"),

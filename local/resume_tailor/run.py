@@ -65,18 +65,66 @@ def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], No
     return bullets
 
 
+# Words that must never be the LAST word of a trimmed bullet — they leave the
+# sentence dangling (e.g. "...utilizing Gemini Flash to.").
+_TRAILING_STOPWORDS = frozenset((
+    "a", "an", "the", "to", "of", "for", "and", "or", "but", "with", "by",
+    "in", "on", "at", "as", "from", "into", "that", "which", "while", "via",
+    "using", "utilizing", "like", "such", "including", "enabling", "is", "was",
+    "were", "are", "be", "been", "their", "its", "this", "these", "those",
+    "where", "when", "than", "then", "so", "up", "out", "over", "per", "about",
+))
+# Connectives that introduce a clause; if one shows up near the end of a trimmed
+# bullet with only a fragment after it, drop the whole dangling clause.
+_CLAUSE_INTROS = frozenset((
+    "while", "when", "where", "as", "since", "although", "after", "before",
+    "by", "via", "using", "utilizing", "including", "enabling", "to", "that",
+    "which", "and", "or", "with", "for", "of", "from",
+))
+
+
+def _strip_dangling(text: str) -> str:
+    """Drop trailing words/clauses that leave a sentence grammatically incomplete:
+    first any trailing pure stopword, then a trailing fragment introduced by a
+    clause connective (e.g. '...periods while maintaining' -> '...periods')."""
+    words = text.split()
+    while len(words) > 3 and words[-1].lower().strip(",;:") in _TRAILING_STOPWORDS:
+        words.pop()
+    for k in range(1, min(5, len(words))):
+        if words[-k].lower().strip(",;:") in _CLAUSE_INTROS:
+            candidate = words[:-k]
+            if len(candidate) >= 4:
+                words = candidate
+            break
+    return " ".join(words).rstrip(",;: ")
+
+
 def _word_trim(text: str, max_visible: int) -> str:
-    """Hard-trim to <= max_visible rendered glyphs at a word boundary (clean_bullet
-    re-adds the trailing period). Numbers/impact are front-loaded, so trimming the
-    tail preserves the metrics — the deterministic last resort when the model can't
-    hit an over-length target on its own."""
+    """Trim to <= max_visible rendered glyphs, ending on a clean grammatical
+    boundary (clean_bullet re-adds the trailing period). Numbers/impact are
+    front-loaded, so trimming the tail preserves the metrics. Prefer cutting at a
+    clause boundary (comma/semicolon) that keeps the line reasonably full; else
+    word-trim and strip any dangling connective. The deterministic last resort
+    when the model overshoots its length target."""
     text = text.rstrip().rstrip(".")
     budget = max_visible - 1  # leave room for the period clean_bullet appends
     if len(text) <= budget:
         return text
     cut = text[:budget]
+    # A clause boundary makes the cleanest cut, if it doesn't gut the line.
+    floor = int(budget * 0.6)
+    for sep in (";", ","):
+        idx = cut.rfind(sep)
+        while idx >= floor:
+            # Skip a thousands-separator comma (digit,digit) — not a clause break.
+            if (sep == "," and 0 < idx < len(cut) - 1
+                    and cut[idx - 1].isdigit() and cut[idx + 1].isdigit()):
+                idx = cut.rfind(sep, 0, idx)
+                continue
+            return cut[:idx].rstrip(",;: ")
     sp = cut.rfind(" ")
-    return (cut[:sp] if sp > 0 else cut).rstrip(",; ")
+    trimmed = (cut[:sp] if sp > 0 else cut).rstrip(",; ")
+    return _strip_dangling(trimmed) or trimmed
 
 
 def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:

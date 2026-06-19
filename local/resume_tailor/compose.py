@@ -415,7 +415,10 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:
         "line that states only what those atoms say. You are a translator turning structured "
         "facts into one polished line, not a writer inventing content.\n" + _PRINCIPLE + "\n"
         "STYLE: past tense, no first-person pronouns, no markdown, no LaTeX, NO bold or "
-        "italics. One sentence (a fused group may run to ~2 clauses), <= ~300 characters. "
+        "italics. One sentence (a fused group may run to ~2 clauses). Each bullet MUST be a "
+        "COMPLETE sentence that ends naturally WITHIN its own character budget (the "
+        "'length_target' given below) — never write a longer sentence assuming it will be "
+        "trimmed; a truncated bullet ending mid-clause is a failure. "
         "Front-load the result/impact that matters for THIS job. Open with a strong action "
         "verb from the provided list that matches the atom's real ownership. Numbers exactly "
         "as written. Write 'greater than or equal to' style comparisons with the symbols "
@@ -439,10 +442,11 @@ STYLE EXEMPLAR (match this voice, length and density — NEVER copy its facts):
 GROUPS (write exactly ONE bullet per gkey, re-phrasing ONLY the atoms in that group):
 {json.dumps(payload, ensure_ascii=False, indent=1)}
 
-LENGTH (guidance): aim each bullet near its "length_target" so the page stays
-balanced — a 2-line target wants a dense, fully-developed line using the group's
-facts; a 1-line target wants one tight line. Never invent facts to pad and never
-drop a number to shorten; length is finalized automatically afterward.
+LENGTH (hard ceiling): each bullet's "length_target" gives a character cap. Write a
+COMPLETE sentence that fits within that cap and ends naturally — a 2-line target
+wants a dense, fully-developed line; a 1-line target wants one tight, self-contained
+line. Do NOT exceed the cap and do NOT end mid-clause expecting truncation. Never
+invent facts to pad and never drop a number to shorten.
 
 Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ...]}}"""
     out = call(system, user, config.TIER_PRO, json_out=True, temperature=0.25)

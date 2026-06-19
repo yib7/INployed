@@ -1730,8 +1730,9 @@ class App:
         os.environ["RESUME_TAILOR_GEMINI_AUTH"] = self._current_auth()
 
     def _open_resume_layout_dialog(self) -> None:
-        """Edit per-bullet line targets for the constant resume blocks. Each block:
-        a Bullets spinbox + one 'lines' spinbox per bullet (1-3). Saved to config.json."""
+        """Edit per-bullet line targets for the constant blocks AND per-project bullet
+        lengths. Each row: a Bullets spinbox + one 'lines' spinbox per bullet (1-3).
+        Blocks -> config.json['resume_layout']; projects -> ['project_layout']."""
         from resume_tailor import assets, config as rt_config
         try:
             blocks = assets.blocks()
@@ -1740,6 +1741,7 @@ class App:
             return
         names = [b["name"] for b in blocks.get("experience", [])] + \
                 [b["name"] for b in blocks.get("leadership", [])]
+        project_names = [b["name"] for b in blocks.get("projects", [])]
 
         win = tk.Toplevel(self.root)
         win.title("Resume layout")
@@ -1747,16 +1749,16 @@ class App:
         win.transient(self.root)
         win.grab_set()
         rows: dict[str, dict] = {}
+        project_rows: dict[str, dict] = {}
 
-        for r, name in enumerate(names):
+        def _add_row(r, name, base):
             ttk.Label(win, text=name).grid(row=r, column=0, sticky="w", padx=8, pady=6)
-            targets = rt_config.block_targets(name)
-            n_var = tk.IntVar(value=len(targets))
+            n_var = tk.IntVar(value=len(base))
             line_holder = ttk.Frame(win)
             line_holder.grid(row=r, column=4, sticky="w", padx=8)
             line_vars: list[tk.IntVar] = []
 
-            def _render_lines(_=None, name=name, n_var=n_var, holder=line_holder, lv=line_vars, base=targets):
+            def _render_lines(_=None, n_var=n_var, holder=line_holder, lv=line_vars, base=base):
                 for w in holder.winfo_children():
                     w.destroy()
                 lv.clear()
@@ -1769,21 +1771,35 @@ class App:
             ttk.Spinbox(win, from_=1, to=5, width=3, textvariable=n_var,
                         command=_render_lines).grid(row=r, column=2, sticky="w")
             _render_lines()
-            rows[name] = {"n": n_var, "lines": line_vars}
+            return {"n": n_var, "lines": line_vars}
+
+        r = 0
+        for name in names:
+            rows[name] = _add_row(r, name, rt_config.block_targets(name))
+            r += 1
+        if project_names:
+            ttk.Label(win, text="Projects", style="Muted.TLabel").grid(
+                row=r, column=0, sticky="w", padx=8, pady=(12, 2))
+            r += 1
+            for name in project_names:
+                base = rt_config.project_targets(name) or \
+                    [rt_config.PROJECT_BULLET_LINES] * rt_config.PROJECT_BULLETS_MAX
+                project_rows[name] = _add_row(r, name, base)
+                r += 1
 
         def _save():
             layout_cfg = {nm: {"line_targets": [v.get() for v in d["lines"]]}
                           for nm, d in rows.items()}
-            _save_cfg({"resume_layout": layout_cfg})
+            project_cfg = {nm: {"line_targets": [v.get() for v in d["lines"]]}
+                           for nm, d in project_rows.items()}
+            _save_cfg({"resume_layout": layout_cfg, "project_layout": project_cfg})
             win.destroy()
             self._set_status("Resume layout saved (applies on the next tailor run).")
 
         btnbar = ttk.Frame(win)
-        btnbar.grid(row=len(names), column=0, columnspan=5, pady=10)
+        btnbar.grid(row=r, column=0, columnspan=5, pady=10)
         ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=6)
         ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=6)
-        # Block here until the modal closes so the dialog is fully modal (not just
-        # input-grabbed) and a second editor can't be opened over the first.
         win.wait_window(win)
 
     def _on_engine_change(self) -> None:

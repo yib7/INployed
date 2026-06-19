@@ -106,6 +106,29 @@ def block_targets(name: str) -> list[int]:
     return out or list(DEFAULT_LINE_TARGETS)
 
 
+def project_layout() -> dict:
+    """Raw {project_name: {'line_targets': [...]}} from config.json ({} when absent/bad)."""
+    val = _config_json().get("project_layout")
+    return val if isinstance(val, dict) else {}
+
+
+def project_targets(name: str) -> list[int] | None:
+    """Sanitized per-bullet line targets for a project (ints clamped 1-3, list length
+    clamped 1-5). Returns None when this project is NOT configured, so callers fall
+    back to the global PROJECT_BULLETS_MAX / PROJECT_BULLET_LINES."""
+    spec = project_layout().get(name)
+    raw = spec.get("line_targets") if isinstance(spec, dict) else None
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return None
+    out: list[int] = []
+    for t in raw[:5]:
+        try:
+            out.append(max(1, min(3, int(t))))
+        except (TypeError, ValueError):
+            return None
+    return out or None
+
+
 def gemini_auth() -> str:
     """Gemini auth mode: 'vertex' (default; uses GOOGLE_CLOUD_PROJECT) or
     'api_key' (uses RESUME_TAILOR_GEMINI_API_KEY -- for users without Vertex).

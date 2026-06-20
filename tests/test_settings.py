@@ -83,3 +83,45 @@ def test_save_raises_on_invalid(tmp_path):
     values["min_score"] = 99
     with pytest.raises(ValueError):
         settings.save(values, targets)
+
+
+# --- new Scraper / Scoring targets and the "list" field type -------------------
+
+def _all_targets(tmp_path: Path) -> dict[str, Path]:
+    return {
+        "config": tmp_path / "config.json",
+        "search": tmp_path / "search_config.json",
+        "scoring": tmp_path / "scoring_config.json",
+    }
+
+
+def test_scraper_and_scoring_targets_registered():
+    assert "search" in settings.TARGET_FILES
+    assert "scoring" in settings.TARGET_FILES
+    # they point at the repo ROOT (settings.py lives in local/)
+    root = settings.HERE.parent
+    assert settings.TARGET_FILES["search"] == root / "search_config.json"
+    assert settings.TARGET_FILES["scoring"] == root / "scoring_config.json"
+
+
+def test_list_type_validate_accepts_list_of_str():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert "keywords" in by_key and by_key["keywords"].type == "list"
+    assert settings.validate({"keywords": ['"Data Scientist"', '"AI Engineer"']}) == {}
+
+
+def test_list_type_validate_rejects_non_list_and_non_str_items():
+    assert "keywords" in settings.validate({"keywords": "not a list"})
+    assert "keywords" in settings.validate({"keywords": ["ok", 5]})
+
+
+def test_list_field_save_roundtrips_to_search_target(tmp_path):
+    targets = _all_targets(tmp_path)
+    values = settings.load(targets)
+    values["keywords"] = ['"Foo"', '"Bär"']  # non-ASCII keyword
+    settings.save(values, targets)
+    on_disk = json.loads(targets["search"].read_text(encoding="utf-8"))
+    assert on_disk["keywords"] == ['"Foo"', '"Bär"']
+    # ensure_ascii=False keeps the non-ASCII char literal (not \uXXXX-escaped)
+    assert "Bär" in targets["search"].read_text(encoding="utf-8")
+    assert settings.load(targets)["keywords"] == ['"Foo"', '"Bär"']

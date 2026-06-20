@@ -1780,8 +1780,21 @@ class App:
         self.tab_settings = frame = ttk.Frame(nb)
         nb.add(frame, text="Settings")
 
-        body = ttk.Frame(frame)
-        body.pack(fill="both", expand=True, padx=16, pady=12)
+        # The form spans several sections (Dashboard / Scraper / Scoring /
+        # Resume / Apply); host it in a scrollable canvas so the lower sections
+        # and the Save button stay reachable on any window height.
+        canvas = tk.Canvas(frame, bg=BG, highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        body = ttk.Frame(canvas, padding=(16, 12))
+        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(body_window, width=e.width))
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
         stored = settings.load()
         self._settings_vars: dict[str, tk.Variable] = {}
@@ -1825,6 +1838,22 @@ class App:
                    style="Accent.TButton").pack(side="left")
         self.lbl_settings = ttk.Label(btnbar, text="", style="Muted.TLabel")
         self.lbl_settings.pack(side="left", padx=(12, 0))
+
+        # Wheel scrolls the whole form, except over the multi-line list boxes
+        # (which scroll their own contents). Bound per-widget so the wheel isn't
+        # hijacked on the other tabs.
+        def _wheel(e):
+            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+            return "break"
+
+        def _bind_wheel(w):
+            if not isinstance(w, tk.Text):
+                w.bind("<MouseWheel>", _wheel)
+            for child in w.winfo_children():
+                _bind_wheel(child)
+
+        canvas.bind("<MouseWheel>", _wheel)
+        _bind_wheel(body)
 
     def _make_settings_var(self, f: "settings.Field", value) -> tk.Variable:
         if f.type == "bool":

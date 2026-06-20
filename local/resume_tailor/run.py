@@ -1,10 +1,12 @@
 """Orchestrate the tailor pipeline and expose a single entry point + CLI.
 
-    tailor(job, cover_letter=False, on_status=None) -> Path (output directory)
+    tailor(job, cover_letter=False, ats_report=True, prep_sheet=False,
+           tone="professional", on_status=None) -> Path (output directory)
 
 job is a dict with: company_name, job_title, job_summary, url (job_posting_id optional).
 
-CLI:  python -m resume_tailor.run --job-id <id> [--cover-letter] [--csv <path>]
+CLI:  python -m resume_tailor.run --job-id <id> [--cover-letter]
+        [--no-ats-report] [--prep] [--tone <tone>] [--csv <path>]
 """
 from __future__ import annotations
 
@@ -139,7 +141,15 @@ def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:
             bullets[gk] = _word_trim(text, cap)
 
 
-def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: StatusFn = None) -> Path:
+def tailor(
+    job: Dict[str, str],
+    *,
+    cover_letter: bool = False,
+    ats_report: bool = True,
+    prep_sheet: bool = False,
+    tone: str = "professional",
+    on_status: StatusFn = None,
+) -> Path:
     log = on_status or _noop
     llm.reset_usage()
 
@@ -179,11 +189,12 @@ def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: Status
         shutil.copyfile(result.pdf_path, out_dir / output.resume_filename())
         shutil.copyfile(tex_path, out_dir / "resume.tex")  # keep source for inspection
 
-        try:
-            cov = ats.write_report(jd, out_dir / output.resume_filename(), out_dir)
-            log(f"ATS keyword coverage: {cov:.0%} (details in ats_report.txt)")
-        except Exception as exc:  # noqa: BLE001 - the report is advisory, never fatal
-            log(f"ATS check skipped ({exc})")
+        if ats_report:
+            try:
+                cov = ats.write_report(jd, out_dir / output.resume_filename(), out_dir)
+                log(f"ATS keyword coverage: {cov:.0%} (details in ats_report.txt)")
+            except Exception as exc:  # noqa: BLE001 - the report is advisory, never fatal
+                log(f"ATS check skipped ({exc})")
 
         if cover_letter:
             log("writing cover letter…")
@@ -195,7 +206,7 @@ def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: Status
                 except Exception as exc:  # noqa: BLE001 - research is optional
                     log(f"company research unavailable ({exc})")
                 body = coverletter.generate_body(jd, job_title, company, final_bullets,
-                                                 research=blurb)
+                                                 research=blurb, tone=tone)
                 cl_tex = tmp_path / "cover_letter.tex"
                 cl_res, _ = coverletter.render_cover_letter(body, company, cl_tex, tmp_path)
                 if cl_res.ok and cl_res.pdf_path:
@@ -204,6 +215,17 @@ def tailor(job: Dict[str, str], *, cover_letter: bool = False, on_status: Status
                     log(f"cover letter compile failed: {cl_res.error}")
             except Exception as exc:  # noqa: BLE001 - cover letter is optional, never fatal
                 log(f"cover letter skipped ({exc})")
+
+        if prep_sheet:
+            log("building interview-prep sheet…")
+            try:
+                # Same path the "Interview prep" button uses; reads the resume.tex
+                # we just wrote into out_dir for the tailored-bullet evidence.
+                from .prep import generate_prep_sheet
+                generate_prep_sheet(job, out_dir)
+                log("interview_prep.md written")
+            except Exception as exc:  # noqa: BLE001 - advisory artifact, never fatal
+                log(f"interview prep skipped ({exc})")
 
         try:
             apply_data.write(job, out_dir, list(final_bullets.values()), cover_letter)
@@ -246,11 +268,27 @@ def main() -> None:
     ap.add_argument("--job-id", required=True, help="job_posting_id from the master CSV")
     ap.add_argument("--csv", default=_DEFAULT_CSV, help="path to the master CSV(.gz)")
     ap.add_argument("--cover-letter", action="store_true", help="also generate a cover letter")
+    ap.add_argument("--ats-report", dest="ats_report", action="store_true", default=True,
+                    help="write ats_report.txt keyword coverage (default on)")
+    ap.add_argument("--no-ats-report", dest="ats_report", action="store_false",
+                    help="skip the ATS keyword-coverage report")
+    ap.add_argument("--prep", action="store_true",
+                    help="also generate the interview-prep sheet")
+    ap.add_argument("--tone", default="professional",
+                    choices=("professional", "concise", "enthusiastic", "impactful"),
+                    help="tone used when generating the cover letter")
     args = ap.parse_args()
 
     job = _job_from_csv(args.job_id, args.csv)
     print(f"Tailoring: {job['job_title']} @ {job['company_name']}")
-    out = tailor(job, cover_letter=args.cover_letter, on_status=lambda m: print("  ·", m))
+    out = tailor(
+        job,
+        cover_letter=args.cover_letter,
+        ats_report=args.ats_report,
+        prep_sheet=args.prep,
+        tone=args.tone,
+        on_status=lambda m: print("  ·", m),
+    )
     print(f"\nOutput: {out}")
 
 

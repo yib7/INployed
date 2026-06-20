@@ -11,6 +11,7 @@ resume_tailor_files/resume_*.pdf
 local/config.json
 search_config.json
 scoring_config.json
+apply_config.json
 
 # ── LaTeX build artifacts ────────────────────────────────────────────────────
 *.aux

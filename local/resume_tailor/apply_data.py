@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
-from . import assets, output
+from . import apply_config, assets, output
 
 
 def write(job: Dict[str, str], out_dir: Path, bullets: List[str],
@@ -63,6 +63,10 @@ def write(job: Dict[str, str], out_dir: Path, bullets: List[str],
             "title": job.get("job_title", ""),
             "url": job.get("url", ""),
         },
+        # Boilerplate form answers (work auth, sponsorship, EEO, source). Personal
+        # and config-driven via repo-root apply_config.json; defaults reflect a
+        # US citizen / GC who needs no sponsorship. The filler still never submits.
+        "standard_answers": apply_config.load_apply_config(),
         "resume_bullets": bullets,
     }
     path = out_dir / "apply_data.json"

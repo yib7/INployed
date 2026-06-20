@@ -42,20 +42,70 @@ try:
 except ImportError:
     pass
 
-STAGE1_MODEL = os.environ.get("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite")
-STAGE2_MODEL = os.environ.get("SCORE_STAGE2_MODEL", "gemini-3.5-flash")
-
-STAGE1_CONCURRENCY = int(os.environ.get("SCORE_STAGE1_CONCURRENCY", "6"))
-STAGE2_CONCURRENCY = int(os.environ.get("SCORE_STAGE2_CONCURRENCY", "4"))
-STAGE2_THRESHOLD = 4
-# Spend guards: cap LLM calls per run so a keyword change or scrape anomaly
-# can't fire thousands of calls unattended. Overflow rows keep score=NaN and are
-# picked up by the rescore pass on later runs.
-MAX_SCORED_PER_RUN = int(os.environ.get("SCORE_MAX_PER_RUN", "800"))
-RESCORE_CAP = int(os.environ.get("SCORE_RESCORE_CAP", "200"))
-
 OUTPUT_DIR = Path(__file__).parent
 RESUME_PATH = OUTPUT_DIR / "resume.md"
+
+# Root-level scoring_config.json lets a local user (or the dashboard's Settings
+# tab) retune the scorer without editing this file. Precedence is
+# env > config-file > built-in default: an env var (exported by run_scraper.sh
+# on the VM) always wins, then the file, then today's constant. The VM runs with
+# NO such file, so absent it the scorer behaves exactly as before.
+SCORING_CONFIG_FILE = "scoring_config.json"
+
+# Built-in defaults, keyed by config name -> (env var name, default value, kind).
+# kind drives coercion: "str" leaves the value alone, "int" casts via int().
+_SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
+    "stage1_model": ("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite", "str"),
+    "stage2_model": ("SCORE_STAGE2_MODEL", "gemini-3.5-flash", "str"),
+    "stage1_concurrency": ("SCORE_STAGE1_CONCURRENCY", 6, "int"),
+    "stage2_concurrency": ("SCORE_STAGE2_CONCURRENCY", 4, "int"),
+    "stage2_threshold": ("SCORE_STAGE2_THRESHOLD", 4, "int"),
+    # Spend guards: cap LLM calls per run so a keyword change or scrape anomaly
+    # can't fire thousands of calls unattended. Overflow rows keep score=NaN and
+    # are picked up by the rescore pass on later runs.
+    "max_scored_per_run": ("SCORE_MAX_PER_RUN", 800, "int"),
+    "rescore_cap": ("SCORE_RESCORE_CAP", 200, "int"),
+    # The seniority cutoff: roles requiring >= this many years are filtered out.
+    "min_filter_years": ("SCORE_MIN_FILTER_YEARS", 1, "int"),
+}
+
+
+def load_scoring_config() -> dict:
+    """Effective scoring config with env > scoring_config.json > built-in default.
+
+    Reads OUTPUT_DIR / scoring_config.json (or {} when absent/unreadable) and, for
+    each key, returns the env var if set, else the file value, else the constant.
+    """
+    path = OUTPUT_DIR / SCORING_CONFIG_FILE
+    raw: dict = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                raw = data
+        except (OSError, ValueError) as e:
+            print(f"Could not read {SCORING_CONFIG_FILE} ({e}); using built-in defaults")
+    cfg: dict = {}
+    for key, (env_var, default, kind) in _SCORING_DEFAULTS.items():
+        env_val = os.environ.get(env_var)
+        if env_val is not None:
+            value = env_val
+        elif key in raw:
+            value = raw[key]
+        else:
+            value = default
+        cfg[key] = int(value) if kind == "int" else value
+    return cfg
+
+
+_SCORING = load_scoring_config()
+STAGE1_MODEL = _SCORING["stage1_model"]
+STAGE2_MODEL = _SCORING["stage2_model"]
+STAGE1_CONCURRENCY = _SCORING["stage1_concurrency"]
+STAGE2_CONCURRENCY = _SCORING["stage2_concurrency"]
+STAGE2_THRESHOLD = _SCORING["stage2_threshold"]
+MAX_SCORED_PER_RUN = _SCORING["max_scored_per_run"]
+RESCORE_CAP = _SCORING["rescore_cap"]
 
 # Per-run metrics appended to run_stats.csv (uploaded to Drive by run_scraper.sh,
 # shown in the dashboard's Stats tab). One row per score_jobs.py invocation, so
@@ -144,7 +194,8 @@ NONREQ_CTX = ("founded", "founding", " ago", "of service", "sabbatical",
 # Minimum required years at or above which the role is scrapped. The user only
 # wants roles a 0-experience applicant can clear: a 0-floor range ("0-2 years")
 # stays, but "1+", "1-2", or anything requiring >= 1 year is filtered out.
-MIN_FILTER_YEARS = 1
+# Sourced via env > scoring_config.json > default 1 (load_scoring_config()).
+MIN_FILTER_YEARS = _SCORING["min_filter_years"]
 
 # --- security-clearance requirement -------------------------------------------
 # A new grad provably cannot hold an active US clearance, so any genuine

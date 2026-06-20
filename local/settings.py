@@ -52,6 +52,7 @@ TARGET_FILES: dict[str, Path] = {
     "config": HERE / "config.json",
     "search": ROOT / "search_config.json",
     "scoring": ROOT / "scoring_config.json",
+    "apply": ROOT / "apply_config.json",
 }
 
 
@@ -129,6 +130,33 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("resume_tone", "Cover-letter tone", "choice", "professional", "Resume", "config",
           help="Tone used when generating the cover letter.",
           choices=("professional", "concise", "enthusiastic", "impactful")),
+
+    # --- Apply: boilerplate form answers written into apply_data.json's ---
+    # "standard_answers" (root-level apply_config.json, git-ignored). A browser
+    # form-filler uses these for the common questions; it never auto-submits.
+    # Defaults reflect a US citizen / GC who needs no sponsorship.
+    Field("work_authorized", "Authorized to work in the US", "bool", True, "Apply", "apply",
+          help="Are you legally authorized to work in the United States?"),
+    Field("requires_sponsorship", "Requires visa sponsorship", "bool", False, "Apply", "apply",
+          help="Will you now or in the future require sponsorship? (No for citizens/GC.)"),
+    Field("willing_to_relocate", "Willing to relocate", "bool", True, "Apply", "apply",
+          help="Default answer to relocation questions."),
+    Field("years_experience", "Years of experience", "str", "0", "Apply", "apply",
+          help="Default answer to 'years of experience' prompts."),
+    Field("authorization_statement", "Work-authorization statement", "str",
+          "Authorized to work in the United States; no visa sponsorship required.",
+          "Apply", "apply",
+          help="Free-text statement for work-authorization fields."),
+    Field("how_did_you_hear", "How did you hear about us", "str", "LinkedIn", "Apply", "apply",
+          help="Default source for 'how did you hear about this role'."),
+    Field("gender", "Gender (EEO)", "str", "Decline to self-identify", "Apply", "apply",
+          help="EEO self-identification default."),
+    Field("race_ethnicity", "Race / ethnicity (EEO)", "str", "Decline to self-identify",
+          "Apply", "apply", help="EEO self-identification default."),
+    Field("veteran_status", "Veteran status (EEO)", "str", "Decline to self-identify",
+          "Apply", "apply", help="EEO self-identification default."),
+    Field("disability_status", "Disability status (EEO)", "str", "Decline to self-identify",
+          "Apply", "apply", help="EEO self-identification default."),
 ]
 
 

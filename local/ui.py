@@ -1709,6 +1709,9 @@ class App:
 
         stored = settings.load()
         self._settings_vars: dict[str, tk.Variable] = {}
+        # "list" Fields render as a multi-line Text box (no tk.Variable backs a
+        # Text), so the save handler reads them from here instead of _settings_vars.
+        self._settings_texts: dict[str, tk.Text] = {}
 
         # Group fields by section, preserving first-seen order.
         sections: dict[str, list[settings.Field]] = {}
@@ -1721,12 +1724,18 @@ class App:
                 row=row, column=0, columnspan=2, sticky="w", pady=(8 if row else 0, 4))
             row += 1
             for f in fields:
+                value = stored.get(f.key, f.default)
+                anchor = "nw" if f.type == "list" else "w"
                 ttk.Label(body, text=f.label).grid(
-                    row=row, column=0, sticky="w", padx=(8, 12), pady=(6, 0))
-                var = self._make_settings_var(f, stored.get(f.key, f.default))
+                    row=row, column=0, sticky=anchor, padx=(8, 12), pady=(6, 0))
+                var = self._make_settings_var(f, value)
                 self._settings_vars[f.key] = var
-                self._settings_widget(body, f, var).grid(
-                    row=row, column=1, sticky="w", pady=(6, 0))
+                widget = self._settings_widget(body, f, var)
+                widget.grid(row=row, column=1, sticky="w", pady=(6, 0))
+                if f.type == "list":
+                    items = value if isinstance(value, list) else []
+                    widget.insert("1.0", "\n".join(str(v) for v in items))
+                    self._settings_texts[f.key] = widget
                 row += 1
                 if f.help:
                     ttk.Label(body, text=f.help, style="Muted.TLabel",
@@ -1744,6 +1753,9 @@ class App:
     def _make_settings_var(self, f: "settings.Field", value) -> tk.Variable:
         if f.type == "bool":
             return tk.BooleanVar(value=bool(value))
+        if f.type == "list":
+            # A Text widget backs list fields; this StringVar is just a placeholder.
+            return tk.StringVar(value="")
         return tk.StringVar(value="" if value is None else str(value))
 
     def _settings_widget(self, parent, f: "settings.Field", var: tk.Variable):
@@ -1752,6 +1764,9 @@ class App:
         if f.type == "choice":
             return ttk.Combobox(parent, textvariable=var, state="readonly",
                                 width=22, values=list(f.choices))
+        if f.type == "list":
+            # One item per line; populated/read by the caller (not a tk.Variable).
+            return tk.Text(parent, width=44, height=8, wrap="none")
         width = 48 if f.type == "path" else 14
         return ttk.Entry(parent, textvariable=var, width=width)
 
@@ -1763,6 +1778,11 @@ class App:
         """
         if f.type == "bool":
             return bool(raw), None
+        if f.type == "list":
+            # `raw` is the Text box's whole content; split into non-empty,
+            # stripped lines (one config item per line).
+            items = [ln.strip() for ln in str(raw).splitlines() if ln.strip()]
+            return items, None
         text = str(raw).strip()
         if f.type == "int":
             try:
@@ -1782,7 +1802,11 @@ class App:
         errors: dict[str, str] = {}
         labels = {f.key: f.label for f in settings.SETTINGS_SCHEMA}
         for f in settings.SETTINGS_SCHEMA:
-            value, err = self._coerce_settings_value(f, self._settings_vars[f.key].get())
+            if f.type == "list":
+                raw = self._settings_texts[f.key].get("1.0", "end")
+            else:
+                raw = self._settings_vars[f.key].get()
+            value, err = self._coerce_settings_value(f, raw)
             values[f.key] = value
             if err:
                 errors[f.key] = err

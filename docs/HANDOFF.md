@@ -170,11 +170,21 @@ its regexes. `python tests/smoke_ui.py` smoke-tests the dashboard end to end.
 | Path (`<repo>\local\`) | Role |
 |---|---|
 | `watcher.py` | Detects synced files, reconciles `is_seen`, launches dashboard |
-| `ui.py` | Tkinter dashboard (dark theme): High Score / All Jobs / **Tracker** / **Stats** tabs, details pane, right-click menu |
+| `ui.py` | Tkinter dashboard (dark theme): High Score / All Jobs / **Tracker** / **Stats** / **Settings** tabs, details pane, right-click menu, **Apply** button |
+| `settings.py` | One editable-options schema powering the **Settings** tab; atomic writes (with `.bak`) to the config files below |
 | `seen_db.py` | SQLite registry: seen ids + `app_status` (application tracker) + `resume_paths` (tailored-resume folders) |
 | `csv_io.py` | gz read/write + is_seen reconciliation |
 | `config.json` | `gdrive_root = E:\My Drive\LinkedInJobs`, `min_score = 4`, `followup_days = 5` |
-| `resume_tailor/` | Gemini resume tailor (select→rephrase→verify→PDF) + `ats.py` (keyword coverage), `research.py` (grounded company blurb), `prep.py` (interview sheets), `apply_data.py` (form-prefill profile) |
+| `resume_tailor/` | Gemini resume tailor (select→rephrase→verify→PDF) + `ats.py` (keyword coverage), `research.py` (grounded company blurb), `prep.py` (interview sheets), `apply_data.py` (form-prefill profile), `apply.py` + `apply_config.py` (apply launcher + standard answers) |
+
+**Config files (git-ignored; edited via the Settings tab, env still overrides, absent = built-in defaults):**
+
+| Path (repo root unless noted) | Read by | Holds |
+|---|---|---|
+| `search_config.json` | `scraper.py` | keywords, remote types, postings-per-search, exclusion window, location/country/time-range/job-type/experience |
+| `scoring_config.json` | `score_jobs.py` | stage-1/2 models, concurrency, stage-2 threshold, per-run spend caps, seniority-years cutoff |
+| `apply_config.json` | `apply_data.py` | `standard_answers` (work auth, sponsorship, relocation, EEO self-id, "how did you hear") |
+| `local/config.json` | dashboard | gdrive_root, min_score, followup_days, backend, résumé artifact toggles + tone |
 | `setup_tasks.ps1` + `task.xml` | Registers the scheduled task |
 
 - **Scheduled task:** `LinkedInJobsWatcher` (triggers: logon, unlock, wake, +6

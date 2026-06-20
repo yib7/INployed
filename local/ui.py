@@ -2069,19 +2069,31 @@ class App:
         if not jobs:
             self._set_status("Could not find job data for the selection.")
             return
+        # Artifact toggles + tone come from the Settings tab (config.json). The
+        # cover-letter default is seeded from Settings but stays a per-run prompt
+        # so a quick override is one click away; ATS/prep/tone are taken straight
+        # from the saved configuration.
+        cfg = settings.load()
         cover = messagebox.askyesno(
             "Cover letter",
             f"Also generate a cover letter for the selected {len(jobs)} job(s)?",
             parent=self.root,
+            default=("yes" if cfg.get("tailor_cover_letter", False) else "no"),
         )
+        opts = {
+            "cover_letter": cover,
+            "ats_report": bool(cfg.get("tailor_ats_report", True)),
+            "prep_sheet": bool(cfg.get("tailor_prep_sheet", False)),
+            "tone": cfg.get("resume_tone", "professional"),
+        }
         self._tailoring = True
         self.btn_tailor.config(state="disabled")
         self._apply_auth_env()
         threading.Thread(
-            target=self._tailor_worker, args=(jobs, cover), daemon=True
+            target=self._tailor_worker, args=(jobs, opts), daemon=True
         ).start()
 
-    def _tailor_worker(self, jobs: list[dict], cover: bool) -> None:
+    def _tailor_worker(self, jobs: list[dict], opts: dict) -> None:
         try:
             from resume_tailor import tailor as tailor_resume
         except Exception as exc:  # missing deps / import error — never crash the UI
@@ -2096,7 +2108,11 @@ class App:
             self._set_status(f"Tailoring {i}/{n}: {label} …")
             try:
                 last_dir = tailor_resume(
-                    job, cover_letter=cover,
+                    job,
+                    cover_letter=opts["cover_letter"],
+                    ats_report=opts["ats_report"],
+                    prep_sheet=opts["prep_sheet"],
+                    tone=opts["tone"],
                     on_status=lambda m, i=i, n=n, label=label: self._set_status(f"[{i}/{n}] {label}: {m}"),
                 )
             except Exception as exc:

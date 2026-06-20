@@ -45,15 +45,36 @@ def _display_name() -> str:
     return assets.load_master().get("basics", {}).get("name", config.CANDIDATE_NAME.replace("_", " "))
 
 
+# One-line style instruction per Settings tone choice. The body's content rules
+# (grounded, 3 short paragraphs, no sign-off) never change — only the voice.
+_TONE_DIRECTIVES: Dict[str, str] = {
+    "professional": "Use a confident, professional tone.",
+    "concise": "Keep it tight and concise — short sentences, no filler.",
+    "enthusiastic": "Let genuine enthusiasm and energy come through, while staying grounded.",
+    "impactful": "Lead with impact and outcomes; make every sentence earn its place.",
+}
+
+
+def tone_directive(tone: str) -> str:
+    """Map a Settings tone choice to a one-line style instruction.
+
+    Unknown or empty input falls back to the professional directive so the
+    prompt always carries a valid voice cue.
+    """
+    key = (tone or "").strip().lower()
+    return _TONE_DIRECTIVES.get(key, _TONE_DIRECTIVES["professional"])
+
+
 def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str],
-                  research: str = "") -> str:
+                  research: str = "", tone: str = "professional") -> str:
     used = "\n".join(f"- {t}" for t in bullets.values())
     system = (
         "Write a concise, genuine cover-letter body (3 short paragraphs) for an "
         "early-career candidate. Use ONLY facts present in the provided resume bullets "
         "and basics — never invent experience, numbers, or interest you can't support. "
         "No salutation and no sign-off (the template adds them). Plain text, paragraphs "
-        "separated by a blank line. Warm but professional; no clichés or buzzword stacks."
+        "separated by a blank line. Warm but professional; no clichés or buzzword stacks. "
+        + tone_directive(tone)
     )
     research_block = (
         f"""

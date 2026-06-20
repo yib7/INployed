@@ -9,6 +9,8 @@ resume.md
 resume_tailor_files/master_experience.yaml
 resume_tailor_files/resume_*.pdf
 local/config.json
+search_config.json
+scoring_config.json
 
 # ── LaTeX build artifacts ────────────────────────────────────────────────────
 *.aux

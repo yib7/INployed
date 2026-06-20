@@ -103,6 +103,40 @@ BASE_FILTERS = {
     "selective_search": True,
 }
 
+# Root-level search_config.json lets a local user (or the dashboard's Settings
+# tab) override the search inputs without editing this file. The VM runs with NO
+# such file, so the loader MUST fall back to the constants above byte-for-byte.
+SEARCH_CONFIG_FILE = "search_config.json"
+
+
+def load_search_config() -> dict:
+    """Effective search config: file values where present, built-in constants else.
+
+    Reads OUTPUT_DIR / search_config.json (or {} when absent/unreadable) and
+    returns every externalized key, each falling back to today's module constant
+    so the VM's behavior is unchanged with no config file.
+    """
+    path = OUTPUT_DIR / SEARCH_CONFIG_FILE
+    raw: dict = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                raw = data
+        except (OSError, ValueError) as e:
+            print(f"Could not read {SEARCH_CONFIG_FILE} ({e}); using built-in defaults")
+    return {
+        "keywords": raw.get("keywords", KEYWORDS),
+        "remote_types": raw.get("remote_types", REMOTE_TYPES),
+        "limit_per_input": raw.get("limit_per_input", LIMIT_PER_INPUT),
+        "exclude_window_days": raw.get("exclude_window_days", EXCLUDE_WINDOW_DAYS),
+        "location": raw.get("location", BASE_FILTERS["location"]),
+        "country": raw.get("country", BASE_FILTERS["country"]),
+        "time_range": raw.get("time_range", BASE_FILTERS["time_range"]),
+        "job_type": raw.get("job_type", BASE_FILTERS["job_type"]),
+        "experience_level": raw.get("experience_level", BASE_FILTERS["experience_level"]),
+    }
+
 
 def get_run_label() -> str:
     return "morning" if datetime.now().hour < 14 else "evening"
@@ -121,6 +155,7 @@ def load_exclude_ids() -> list[str]:
     still-live posting from >= 2 runs ago was re-collected — and re-billed —
     every time it matched a keyword. Falls back to the last-run JSON if the
     master is missing/unreadable."""
+    exclude_window_days = load_search_config()["exclude_window_days"]
     if MASTER_CSV.exists():
         try:
             df = pd.read_csv(
@@ -130,7 +165,7 @@ def load_exclude_ids() -> list[str]:
             )
             if "job_posting_id" in df.columns and not df.empty:
                 if "extracted_date" in df.columns:
-                    cutoff = (datetime.now() - timedelta(days=EXCLUDE_WINDOW_DAYS)).strftime("%Y-%m-%d")
+                    cutoff = (datetime.now() - timedelta(days=exclude_window_days)).strftime("%Y-%m-%d")
                     dates = df["extracted_date"].fillna("")
                     df = df[(dates == "") | (dates >= cutoff)]
                 ids = df["job_posting_id"].dropna().astype(str).unique().tolist()
@@ -196,15 +231,27 @@ def append_to_master(df: pd.DataFrame) -> int:
 def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> list[dict]:
     """One search input per (keyword x remote type).
 
+    Keywords, remote types, and the base filters come from load_search_config()
+    (which falls back to the module constants when no search_config.json exists).
     `max_keywords` caps how many keywords are used (the first N) — a spend guard
     for verification runs so a single scrape can't fan out to every keyword.
     None (the default, used by the VM cron) keeps the full keyword list.
     """
-    keywords = KEYWORDS if max_keywords is None else KEYWORDS[:max_keywords]
+    cfg = load_search_config()
+    keywords = cfg["keywords"] if max_keywords is None else cfg["keywords"][:max_keywords]
+    remote_types = cfg["remote_types"]
+    base_filters = {
+        "location": cfg["location"],
+        "country": cfg["country"],
+        "time_range": cfg["time_range"],
+        "job_type": cfg["job_type"],
+        "experience_level": cfg["experience_level"],
+        "selective_search": BASE_FILTERS["selective_search"],
+    }
     return [
-        {**BASE_FILTERS, "keyword": kw, "remote": remote, "jobs_to_not_include": exclude_ids}
+        {**base_filters, "keyword": kw, "remote": remote, "jobs_to_not_include": exclude_ids}
         for kw in keywords
-        for remote in REMOTE_TYPES
+        for remote in remote_types
     ]
 
 
@@ -308,8 +355,13 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
 
 async def main(snapshot_id: str | None = None, run_label: str | None = None,
                max_keywords: int | None = None,
-               limit_per_input: int = LIMIT_PER_INPUT) -> None:
+               limit_per_input: int | None = None) -> None:
     run_label = run_label or get_run_label()
+    cfg = load_search_config()
+    # CLI > config > built-in default: an explicit --limit wins, else the config
+    # (which itself falls back to LIMIT_PER_INPUT) drives the per-input cap.
+    if limit_per_input is None:
+        limit_per_input = cfg["limit_per_input"]
 
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         if snapshot_id is None:
@@ -318,8 +370,9 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
             print(f"Run: {run_label} | Excluding {len(exclude_ids)} recently-seen job IDs")
             inputs = build_inputs(exclude_ids, max_keywords=max_keywords)
             payload = {"input": inputs}
-            kw_used = len(KEYWORDS) if max_keywords is None else min(max_keywords, len(KEYWORDS))
-            print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(REMOTE_TYPES)} remote types), "
+            n_keywords = len(cfg["keywords"])
+            kw_used = n_keywords if max_keywords is None else min(max_keywords, n_keywords)
+            print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
                   f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
             snapshot_id = await trigger(session, payload, limit_per_input=limit_per_input)
             print(f"Snapshot: {snapshot_id}")
@@ -396,8 +449,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--limit",
         type=int,
-        default=LIMIT_PER_INPUT,
-        help=f"Spend guard: max postings collected per search (default: {LIMIT_PER_INPUT}).",
+        default=None,
+        help="Spend guard: max postings collected per search "
+             f"(default: search_config.json limit_per_input, else {LIMIT_PER_INPUT}).",
     )
     args = parser.parse_args()
     asyncio.run(main(

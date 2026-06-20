@@ -106,12 +106,38 @@ High-score triage, an application tracker with follow-up nudges, run stats, and 
 ### Get fresh jobs
 - **On-demand (local):** run your own pipeline, then open the dashboard:
   ```bash
-  python scraper.py        # needs Bright Data keys in .env
-  python score_jobs.py     # needs Vertex AI / ADC
+  python scraper.py                              # full run (needs Bright Data keys in .env)
+  python scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
+  python score_jobs.py                           # needs Vertex AI / ADC (auto-loads .env locally)
   ```
+  `--max-keywords N` / `--limit N` cap a run's cost — Bright Data bills per
+  collected posting, so the full keyword list (the VM default) can collect
+  thousands. Use the caps for a quick check.
 - **Hands-off (recommended for daily use):** run that pair on a small GCP VM via
   cron and sync results to Google Drive — full instructions in
   [HANDOFF.md](docs/HANDOFF.md).
+
+### Customize everything (Settings tab)
+The dashboard's **Settings** tab edits every tunable in-app — no hand-editing files:
+- **Dashboard:** min score, follow-up days, data folder, file-settle seconds.
+- **Scraper:** search keywords, remote types, postings-per-search, exclusion window, location / country / time-range / job-type / experience level.
+- **Scoring:** stage-1/2 models, concurrency, the stage-2 threshold, per-run spend caps, and the seniority-years cutoff.
+- **Résumé:** which artifacts to generate (cover letter / ATS report / interview-prep) and the cover-letter tone.
+- **Apply:** the standard application answers (work authorization, sponsorship, relocation, EEO self-id, "how did you hear").
+
+Edits are written atomically (with a `.bak`) to `local/config.json` and the
+git-ignored `search_config.json` / `scoring_config.json` / `apply_config.json`.
+Environment variables still override, and an absent file falls back to built-in
+defaults — so the VM keeps running unchanged.
+
+### Apply to a job (semi-automated, in Chrome)
+Every tailored résumé folder gets an `apply_data.json` (candidate basics,
+education, document paths, tailored bullets, and a `standard_answers` block). To apply:
+1. Tailor the résumé for the job (the **Tailor resume** button).
+2. Click **Apply** in the dashboard — it opens the posting in Chrome and copies the résumé PDF path to your clipboard.
+3. In Claude-in-Chrome, run the **apply-to-job** skill — it reads `apply_data.json`, fills the Greenhouse / Lever / Ashby / Workday / generic form, and **stops for you to review and submit. It never auto-submits.**
+
+CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
 
 ---
 

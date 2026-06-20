@@ -51,6 +51,7 @@ except Exception:
 
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 
+import settings  # noqa: E402  (central user-settings layer)
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic  # noqa: E402
 from seen_db import APP_STATUSES, SeenRegistry  # noqa: E402
 
@@ -1002,6 +1003,11 @@ class App:
         self.tv_stats.bind("<Motion>", self._on_row_motion)
         self.tv_stats.bind("<Leave>", self._clear_hover)
 
+        # Tab 5 — Settings: user-editable options from settings.SETTINGS_SCHEMA,
+        # grouped by section. SP2 only has the "Dashboard" group; SP3 will add
+        # Scraper / Scoring / Resume rows. Save validates then writes config.json.
+        self._build_settings_tab(nb)
+
         # Details pane (between the notebook and the action bar): the model's
         # stage-2 analysis — reason, strengths, gaps — plus salary/applicants
         # and a JD snippet for whichever row is selected.
@@ -1684,6 +1690,123 @@ class App:
             self._set_status(f"Export failed: {e}")
             return
         self._set_status(f"Calibration labels → {out}")
+
+    # ---- settings ----
+
+    def _build_settings_tab(self, nb: ttk.Notebook) -> None:
+        """Render settings.SETTINGS_SCHEMA grouped by section into a Settings tab.
+
+        One labelled input row per Field (with its help text underneath); a Save
+        button validates + persists via settings.save and refreshes in-memory
+        state. self._settings_vars maps each Field.key to its tk variable so the
+        handler can read the entered values back out.
+        """
+        self.tab_settings = frame = ttk.Frame(nb)
+        nb.add(frame, text="Settings")
+
+        body = ttk.Frame(frame)
+        body.pack(fill="both", expand=True, padx=16, pady=12)
+
+        stored = settings.load()
+        self._settings_vars: dict[str, tk.Variable] = {}
+
+        # Group fields by section, preserving first-seen order.
+        sections: dict[str, list[settings.Field]] = {}
+        for f in settings.SETTINGS_SCHEMA:
+            sections.setdefault(f.section, []).append(f)
+
+        row = 0
+        for section, fields in sections.items():
+            ttk.Label(body, text=section, style="Subtitle.TLabel").grid(
+                row=row, column=0, columnspan=2, sticky="w", pady=(8 if row else 0, 4))
+            row += 1
+            for f in fields:
+                ttk.Label(body, text=f.label).grid(
+                    row=row, column=0, sticky="w", padx=(8, 12), pady=(6, 0))
+                var = self._make_settings_var(f, stored.get(f.key, f.default))
+                self._settings_vars[f.key] = var
+                self._settings_widget(body, f, var).grid(
+                    row=row, column=1, sticky="w", pady=(6, 0))
+                row += 1
+                if f.help:
+                    ttk.Label(body, text=f.help, style="Muted.TLabel",
+                              wraplength=520).grid(
+                        row=row, column=1, sticky="w", pady=(0, 2))
+                    row += 1
+
+        btnbar = ttk.Frame(body)
+        btnbar.grid(row=row, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        ttk.Button(btnbar, text="Save", command=self._on_save_settings,
+                   style="Accent.TButton").pack(side="left")
+        self.lbl_settings = ttk.Label(btnbar, text="", style="Muted.TLabel")
+        self.lbl_settings.pack(side="left", padx=(12, 0))
+
+    def _make_settings_var(self, f: "settings.Field", value) -> tk.Variable:
+        if f.type == "bool":
+            return tk.BooleanVar(value=bool(value))
+        return tk.StringVar(value="" if value is None else str(value))
+
+    def _settings_widget(self, parent, f: "settings.Field", var: tk.Variable):
+        if f.type == "bool":
+            return ttk.Checkbutton(parent, variable=var)
+        if f.type == "choice":
+            return ttk.Combobox(parent, textvariable=var, state="readonly",
+                                width=22, values=list(f.choices))
+        width = 48 if f.type == "path" else 14
+        return ttk.Entry(parent, textvariable=var, width=width)
+
+    def _coerce_settings_value(self, f: "settings.Field", raw):
+        """Turn a widget's raw value into the Field's Python type.
+
+        Returns (value, error). A blank int/float keeps validation honest by
+        surfacing a friendly message rather than a stray ValueError.
+        """
+        if f.type == "bool":
+            return bool(raw), None
+        text = str(raw).strip()
+        if f.type == "int":
+            try:
+                return int(text), None
+            except ValueError:
+                return raw, f"{f.label}: must be a whole number."
+        if f.type == "float":
+            try:
+                return float(text), None
+            except ValueError:
+                return raw, f"{f.label}: must be a number."
+        return text, None  # str / path / choice
+
+    def _on_save_settings(self) -> None:
+        """Validate the Settings form, persist on success, refresh state."""
+        values: dict = {}
+        errors: dict[str, str] = {}
+        labels = {f.key: f.label for f in settings.SETTINGS_SCHEMA}
+        for f in settings.SETTINGS_SCHEMA:
+            value, err = self._coerce_settings_value(f, self._settings_vars[f.key].get())
+            values[f.key] = value
+            if err:
+                errors[f.key] = err
+
+        errors.update(settings.validate(values))
+        if errors:
+            msg = "\n".join(f"{labels.get(k, k)}: {m}" for k, m in errors.items())
+            self.lbl_settings.configure(text="Not saved — see error.")
+            messagebox.showerror("Settings", msg, parent=self.root)
+            return
+
+        try:
+            settings.save(values)
+        except (ValueError, OSError) as exc:
+            self.lbl_settings.configure(text="Save failed.")
+            messagebox.showerror("Settings", str(exc), parent=self.root)
+            return
+
+        # Refresh affected in-memory state so the change takes effect now.
+        self.min_score = load_min_score()
+        self.followup_days = load_followup_days()
+        self.reload_data()
+        self.lbl_settings.configure(text="Saved.")
+        self._set_status("Settings saved.")
 
     # ---- interview prep ----
 

@@ -114,6 +114,21 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("min_filter_years", "Min required years cutoff", "int", 1, "Scoring", "scoring",
           help="Roles requiring at least this many years of experience are filtered out.",
           min=0, max=20),
+
+    # --- Resume: artifact toggles + cover-letter tone (local/config.json) ---
+    # Line budgets / required sections stay where they already are: the
+    # "Resume layout…" button (project line targets) and the master_experience
+    # yaml `tailor:` block. These four are artifact toggles + tone only.
+    Field("tailor_cover_letter", "Generate cover letter", "bool", False, "Resume", "config",
+          help="When tailoring, also generate a cover letter PDF."),
+    Field("tailor_ats_report", "Write ATS report", "bool", True, "Resume", "config",
+          help="Write ats_report.txt (keyword coverage) for each tailored résumé."),
+    Field("tailor_prep_sheet", "Generate interview-prep sheet", "bool", False, "Resume", "config",
+          help="Also generate the interview-prep sheet during tailoring (otherwise "
+               "it's on-demand via the Interview prep button)."),
+    Field("resume_tone", "Cover-letter tone", "choice", "professional", "Resume", "config",
+          help="Tone used when generating the cover letter.",
+          choices=("professional", "concise", "enthusiastic", "impactful")),
 ]
 
 

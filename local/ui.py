@@ -248,7 +248,8 @@ def apply_theme(root: tk.Tk) -> None:
     style.map("Treeview", background=[("selected", SEL)],
               foreground=[("selected", SEL_TEXT)])
     style.configure("Treeview.Heading", background=ELEV, foreground=ACCENT,
-                    font=FONT_BOLD, relief="flat", padding=(10, 9), borderwidth=0)
+                    font=FONT_BOLD, relief="solid", padding=(10, 9), borderwidth=1,
+                    bordercolor=BORDER)
     style.map("Treeview.Heading", background=[("active", "#283141")],
               foreground=[("active", ACCENT_HOVER)])
 

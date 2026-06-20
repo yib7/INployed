@@ -193,19 +193,27 @@ def append_to_master(df: pd.DataFrame) -> int:
     return len(combined)
 
 
-def build_inputs(exclude_ids: list[str]) -> list[dict]:
+def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> list[dict]:
+    """One search input per (keyword x remote type).
+
+    `max_keywords` caps how many keywords are used (the first N) — a spend guard
+    for verification runs so a single scrape can't fan out to every keyword.
+    None (the default, used by the VM cron) keeps the full keyword list.
+    """
+    keywords = KEYWORDS if max_keywords is None else KEYWORDS[:max_keywords]
     return [
         {**BASE_FILTERS, "keyword": kw, "remote": remote, "jobs_to_not_include": exclude_ids}
-        for kw in KEYWORDS
+        for kw in keywords
         for remote in REMOTE_TYPES
     ]
 
 
-async def trigger(session: aiohttp.ClientSession, payload: dict) -> str:
+async def trigger(session: aiohttp.ClientSession, payload: dict,
+                  limit_per_input: int = LIMIT_PER_INPUT) -> str:
     url = (
         "https://api.brightdata.com/datasets/v3/scrape"
         f"?dataset_id={DATASET_ID}"
-        f"&type=discover_new&discover_by=keyword&limit_per_input={LIMIT_PER_INPUT}"
+        f"&type=discover_new&discover_by=keyword&limit_per_input={limit_per_input}"
     )
     async with session.post(url, json=payload) as resp:
         if resp.status >= 400:
@@ -298,7 +306,9 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
         await asyncio.sleep(POLL_INTERVAL)
 
 
-async def main(snapshot_id: str | None = None, run_label: str | None = None) -> None:
+async def main(snapshot_id: str | None = None, run_label: str | None = None,
+               max_keywords: int | None = None,
+               limit_per_input: int = LIMIT_PER_INPUT) -> None:
     run_label = run_label or get_run_label()
 
     async with aiohttp.ClientSession(headers=HEADERS) as session:
@@ -306,9 +316,12 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None) -> 
             # Normal path: trigger a fresh (billed) collection and wait for it.
             exclude_ids = load_exclude_ids()
             print(f"Run: {run_label} | Excluding {len(exclude_ids)} recently-seen job IDs")
-            payload = {"input": build_inputs(exclude_ids)}
-            print(f"Triggering {len(payload['input'])} searches ({len(KEYWORDS)} keywords x {len(REMOTE_TYPES)} remote types)")
-            snapshot_id = await trigger(session, payload)
+            inputs = build_inputs(exclude_ids, max_keywords=max_keywords)
+            payload = {"input": inputs}
+            kw_used = len(KEYWORDS) if max_keywords is None else min(max_keywords, len(KEYWORDS))
+            print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(REMOTE_TYPES)} remote types), "
+                  f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
+            snapshot_id = await trigger(session, payload, limit_per_input=limit_per_input)
             print(f"Snapshot: {snapshot_id}")
             await wait_until_ready(session, snapshot_id)
         else:
@@ -373,5 +386,23 @@ if __name__ == "__main__":
         choices=("morning", "evening"),
         help="Force the run label (default: derived from the current hour).",
     )
+    parser.add_argument(
+        "--max-keywords",
+        type=int,
+        default=None,
+        help="Spend guard: use only the first N keywords (default: all). "
+             "Each keyword fans out to one search per remote type.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=LIMIT_PER_INPUT,
+        help=f"Spend guard: max postings collected per search (default: {LIMIT_PER_INPUT}).",
+    )
     args = parser.parse_args()
-    asyncio.run(main(snapshot_id=args.snapshot, run_label=args.label))
+    asyncio.run(main(
+        snapshot_id=args.snapshot,
+        run_label=args.label,
+        max_keywords=args.max_keywords,
+        limit_per_input=args.limit,
+    ))

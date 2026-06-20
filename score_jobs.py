@@ -33,6 +33,15 @@ from markdownify import markdownify
 
 from keypool import KeyPool, PoolError
 
+# Optional: load a local .env so credentials work for manual/local runs. The VM
+# path exports these via run_scraper.sh, so a missing python-dotenv is fine.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 STAGE1_MODEL = os.environ.get("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite")
 STAGE2_MODEL = os.environ.get("SCORE_STAGE2_MODEL", "gemini-3.5-flash")
 

@@ -27,13 +27,16 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
+# settings.py lives in local/, so the repo root (where scraper.py / score_jobs.py
+# read their standalone JSON configs) is one level up.
+ROOT = HERE.parent
 
 
 @dataclass(frozen=True)
 class Field:
     key: str            # config key
     label: str          # UI label
-    type: str           # "int" | "float" | "str" | "bool" | "choice" | "path"
+    type: str           # "int" | "float" | "str" | "bool" | "choice" | "path" | "list"
     default: Any
     section: str        # "Dashboard" | "Scraper" | "Scoring" | "Resume"
     target: str         # backing-file id; SP2 only uses "config"
@@ -43,8 +46,13 @@ class Field:
     max: float | None = None
 
 
-# Backing files, keyed by Field.target. SP3 may add more (e.g. an .env target).
-TARGET_FILES: dict[str, Path] = {"config": HERE / "config.json"}
+# Backing files, keyed by Field.target. The Scraper/Scoring sections write the
+# root-level configs that scraper.py / score_jobs.py read standalone on the VM.
+TARGET_FILES: dict[str, Path] = {
+    "config": HERE / "config.json",
+    "search": ROOT / "search_config.json",
+    "scoring": ROOT / "scoring_config.json",
+}
 
 
 SETTINGS_SCHEMA: list[Field] = [
@@ -56,6 +64,56 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Folder the dashboard reads scored CSVs from."),
     Field("mtime_stable_seconds", "File settle (seconds)", "int", 30, "Dashboard", "config",
           help="How long a file must be unchanged before the watcher reads it.", min=1, max=600),
+
+    # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
+    Field("keywords", "Search keywords", "list",
+          ['"Data Scientist"', '"AI Engineer"', '"AI Developer"', '"AI Scientist"',
+           '"Software Engineer"', '"Software Developer"', '"Data Analyst"',
+           '"Data Engineer"', '"LLM"', '"Analytics Engineer"', '"Decision Scientist"',
+           '"Generative AI"', '"Gen AI"', '"GenAI"', '"Quant"',
+           '"Implementation Engineer"', '"Agentic"', '"Applied AI"',
+           '"Artificial Intelligence"', '"Business Analyst"'],
+          "Scraper", "search",
+          help="One LinkedIn search phrase per line (quote multi-word phrases). "
+               "Each fans out to one search per remote type."),
+    Field("remote_types", "Remote types", "list", ["Hybrid", "On-site"],
+          "Scraper", "search",
+          help="Workplace types to search, one per line (e.g. Remote, Hybrid, On-site)."),
+    Field("limit_per_input", "Postings per search", "int", 100, "Scraper", "search",
+          help="Max postings collected per (keyword x remote type). Higher = more spend.",
+          min=1, max=500),
+    Field("exclude_window_days", "Re-scrape exclusion (days)", "int", 14, "Scraper", "search",
+          help="Skip postings scraped within this many days (avoids re-billing live jobs).",
+          min=0, max=90),
+    Field("location", "Location", "str", "United States", "Scraper", "search",
+          help="Geographic location filter for searches."),
+    Field("country", "Country code", "str", "US", "Scraper", "search",
+          help="Two-letter country code."),
+    Field("time_range", "Time range", "str", "Past 24 hours", "Scraper", "search",
+          help="Posting-age filter (e.g. 'Past 24 hours', 'Past week')."),
+    Field("job_type", "Job type", "str", "Full-time", "Scraper", "search",
+          help="Employment type filter (e.g. 'Full-time')."),
+    Field("experience_level", "Experience level", "str", "Entry level", "Scraper", "search",
+          help="Seniority filter (e.g. 'Entry level')."),
+
+    # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
+    Field("stage1_model", "Stage-1 model", "str", "gemini-3.1-flash-lite", "Scoring", "scoring",
+          help="Cheap model that scores every surviving job 1-5."),
+    Field("stage2_model", "Stage-2 model", "str", "gemini-3.5-flash", "Scoring", "scoring",
+          help="Deeper model used for jobs that pass the Stage-2 threshold."),
+    Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
+          help="Parallel Stage-1 LLM calls.", min=1, max=50),
+    Field("stage2_concurrency", "Stage-2 concurrency", "int", 4, "Scoring", "scoring",
+          help="Parallel Stage-2 LLM calls.", min=1, max=50),
+    Field("stage2_threshold", "Stage-2 threshold", "int", 4, "Scoring", "scoring",
+          help="Stage-1 score at/above which a job gets deep Stage-2 analysis.", min=1, max=5),
+    Field("max_scored_per_run", "Max scored per run", "int", 800, "Scoring", "scoring",
+          help="Spend guard: cap on LLM-scored jobs per run.", min=1, max=5000),
+    Field("rescore_cap", "Rescore cap", "int", 200, "Scoring", "scoring",
+          help="Spend guard: cap on failed/missing master rows retried per run.", min=0, max=5000),
+    Field("min_filter_years", "Min required years cutoff", "int", 1, "Scoring", "scoring",
+          help="Roles requiring at least this many years of experience are filtered out.",
+          min=0, max=20),
 ]
 
 
@@ -103,6 +161,8 @@ def _coerce_ok(f: Field, value: Any) -> bool:
         return isinstance(value, str)
     if f.type == "choice":
         return value in f.choices
+    if f.type == "list":
+        return isinstance(value, list) and all(isinstance(v, str) for v in value)
     return True
 
 
@@ -139,7 +199,7 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     if path.exists():
         shutil.copy2(path, path.with_name(path.name + ".bak"))
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
 
 

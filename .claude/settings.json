@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest *)",
+      "Bash(python -m ruff *)",
+      "Bash(ruff check *)",
+      "Bash(python -m py_compile *)",
+      "mcp__computer-use__screenshot",
+      "mcp__computer-use__zoom"
+    ]
+  }
+}

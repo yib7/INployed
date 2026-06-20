@@ -861,6 +861,7 @@ class App:
         self.lbl_status.pack(side="left")
 
         ttk.Button(bar1, text="Refresh", command=self.reload_data).pack(side="right", padx=4)
+        ttk.Button(bar1, text="Apply", command=self._apply_selected).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume layout…", command=self._open_resume_layout_dialog).pack(side="right", padx=4)
         ttk.Button(bar1, text="Add entry…", command=self._open_add_entry_dialog).pack(side="right", padx=4)
@@ -1488,6 +1489,81 @@ class App:
             os.startfile(path)  # noqa: S606 - open the recorded folder for the user
         except OSError as e:
             self._set_status(f"Could not open {path}: {e}")
+
+    # ---- apply (open posting for human review; never auto-submits) ----
+
+    def _apply_selected(self) -> None:
+        """Open the selected job's posting for a human-reviewed application.
+
+        Off the UI thread: find the tailored-resume folder, load apply_data.json,
+        open the apply URL in Chrome, and surface the résumé path + a review note.
+        Nothing here submits — a human fills/reviews/submits the form."""
+        if getattr(self, "_applying", False):
+            return
+        ids = list(self.tv_tracker.selection()) or self._selected_ids()
+        if not ids:
+            self._set_status("Select a job to open its application.")
+            return
+        jid = ids[0]
+        self._applying = True
+        self._set_status("Opening application …")
+        threading.Thread(target=self._apply_worker, args=(jid,), daemon=True).start()
+
+    def _apply_worker(self, jid: str) -> None:
+        try:
+            from resume_tailor import apply as apply_mod
+            folder = apply_mod.resolve_generated_dir(job_id=jid)
+            ctx = apply_mod.build_apply_context(folder)
+        except FileNotFoundError as exc:
+            self.root.after(0, lambda: self._finish_apply_error(
+                "Tailor the résumé first",
+                f"{exc}\n\nUse 'Tailor resume' on this job, then try Apply again."))
+            return
+        except Exception as exc:  # noqa: BLE001 - never crash the UI
+            self._log_error("apply failed", exc)
+            self.root.after(0, lambda exc=exc: self._finish_apply_error(
+                "Apply failed", str(exc)))
+            return
+        # Open the posting for review (never submits) and surface the context.
+        url = ctx.get("apply_url", "")
+        if url:
+            try:
+                open_in_chrome(url)
+            except Exception as exc:  # noqa: BLE001
+                self._log_error("apply: open URL failed", exc)
+        self.root.after(0, lambda: self._finish_apply_ok(ctx))
+
+    def _finish_apply_ok(self, ctx: dict) -> None:
+        self._applying = False
+        resume_pdf = ctx.get("resume_pdf", "")
+        job = ctx.get("job") or {}
+        self._set_status(
+            f"Application opened for {job.get('company', '?')} — "
+            f"{job.get('title', '?')}. Review every field; submission is left to you.")
+        # Copy the résumé path to the clipboard so the upload step is one paste away.
+        if resume_pdf:
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(resume_pdf)
+            except tk.TclError:
+                pass
+        body = (
+            f"Company : {job.get('company', '?')}\n"
+            f"Role    : {job.get('title', '?')}\n"
+            f"Apply   : {ctx.get('apply_url') or '(none)'}\n\n"
+            f"Résumé PDF (copied to clipboard):\n{resume_pdf or '(missing)'}\n"
+        )
+        if ctx.get("cover_letter_pdf"):
+            body += f"\nCover letter:\n{ctx['cover_letter_pdf']}\n"
+        body += (
+            "\nReview every field. Submission is left to you.\n"
+            "Run the apply-to-job skill in Claude-in-Chrome to fill the form.")
+        messagebox.showinfo("Apply — review before submitting", body, parent=self.root)
+
+    def _finish_apply_error(self, title: str, body: str) -> None:
+        self._applying = False
+        self._set_status(body.splitlines()[0] if body else title)
+        messagebox.showinfo(title, body, parent=self.root)
 
     # ---- context menu + blocklist ----
 

@@ -48,13 +48,33 @@ bullet must be traceable to a fact ("atom") the user actually wrote in
 | `ats.py` | Deterministic ATS keyword-coverage report. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, form-prefill JSON. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
-| `run.py` | Orchestrates the full pipeline and exposes the CLI. |
+| `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are now config-driven, default-preserving. |
+| `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder, build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO). |
 
 ### Why it's config-driven
 `compose.py`/`layout.py`/`render.py` deliberately hardcode **no employer names**.
 Which blocks are required, the fixed per-block line budgets, and the candidate's
 identity all come from the yaml (the `tailor:` section + `basics`/`education`). That
 is what lets the same code produce anyone's résumé — see `tests/test_tailor_config.py`.
+
+## Settings & customization (`local/settings.py` + dashboard Settings tab)
+`settings.py` is one schema (`SETTINGS_SCHEMA`) describing every user-editable
+option (key, type, default, validation, backing file). The dashboard's **Settings**
+tab auto-renders it grouped by section (Dashboard / Scraper / Scoring / Résumé /
+Apply) inside a scrollable canvas. `load`/`save` read and atomically write (with a
+`.bak`) `local/config.json`, plus the git-ignored root-level `search_config.json`
+(read by `scraper.py`), `scoring_config.json` (read by `score_jobs.py`), and
+`apply_config.json` (read by `apply_data.py`). The VM-standalone scraper/scorer never
+import `local/`; they read their own JSON with **env-override > file > built-in-default**
+precedence, so an absent file reproduces today's behavior exactly.
+
+## Apply automation (`apply.py` + the `apply-to-job` skill)
+`apply_data.write` drops an `apply_data.json` next to each tailored résumé (candidate
+basics, education, doc paths, tailored bullets, and a `standard_answers` block). The
+dashboard's **Apply** button (and `python -m resume_tailor.apply`) resolves that folder,
+opens the posting in Chrome, and surfaces the context; the `.claude/skills/apply-to-job`
+playbook drives Claude-in-Chrome to fill the form and **stop for human review — it
+never auto-submits.**
 
 ### The one-page guarantee
 `layout.py` derives a `(min, max)` character window per bullet from empirically

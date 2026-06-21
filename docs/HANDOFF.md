@@ -42,7 +42,7 @@ matches.
 | GCP project | `YOUR_GCP_PROJECT` (linked to $300 trial billing) |
 | VM instance | `scraper-vm`, machine type **e2-micro** (free tier) |
 | Zone | **`us-east1-c`** (NOT us-east1-b) |
-| Linux user | **`orphan-user`** ← always use this. `localuser` is an empty orphan account — wrong. |
+| Linux user | **`clouduser`** ← always use this (the real account: venv, rclone, crontab, all data live in `/home/clouduser/`). `localuser` / `orphan-user` are empty orphan accounts gcloud auto-creates if you SSH as the wrong user — never use them. |
 | Google account | `you@example.com` |
 | VM timezone | `America/New_York` |
 | Scrape source | Bright Data LinkedIn dataset (`YOUR_DATASET_ID`) |
@@ -70,7 +70,7 @@ matches.
 
 ### Every time — SSH in
 ```
-gcloud compute ssh orphan-user@scraper-vm --zone=us-east1-c
+gcloud compute ssh clouduser@scraper-vm --zone=us-east1-c
 ```
 - First connection auto-creates the SSH keypair (`~/.ssh/google_compute_engine`
   and `.pub`) and registers the public key in the instance/project metadata.
@@ -85,20 +85,20 @@ gcloud compute instances list    # shows scraper-vm + status + zone
 ```
 
 ### ⚠️ Login gotchas (these have bitten us)
-- **Always** `orphan-user@scraper-vm`. A bare `scraper-vm:` or omitting the user
+- **Always** `clouduser@scraper-vm`. A bare `scraper-vm:` or omitting the user
   defaults to the orphan `localuser` account (empty home — none of the code/data).
 - **scp uses a bare colon, no `~/`:**
-  `gcloud compute scp file.py orphan-user@scraper-vm: --zone=us-east1-c`
+  `gcloud compute scp file.py clouduser@scraper-vm: --zone=us-east1-c`
   (pscp rejects `~/`; the bare colon means "home dir".)
   For pulling down, use an absolute remote path:
-  `gcloud compute scp orphan-user@scraper-vm:/home/orphan-user/file.gz local.gz --zone=us-east1-c`
+  `gcloud compute scp clouduser@scraper-vm:/home/clouduser/file.gz local.gz --zone=us-east1-c`
 - **PowerShell 5.1 mangles inner double-quotes** inside `--command='...'`. Keep the
   remote command **single-quoted with NO inner double quotes**. (For multi-word
   `grep` patterns, match a single word instead, e.g. `grep -c ADJACENT file`.)
 
 ---
 
-## 3. VM file layout (`/home/orphan-user/`)
+## 3. VM file layout (`/home/clouduser/`)
 
 | Path | Role |
 |---|---|
@@ -244,22 +244,22 @@ its regexes. `python tests/smoke_ui.py` smoke-tests the dashboard end to end.
 
 **Run the whole pipeline now (scrape + score + upload):**
 ```
-gcloud compute ssh orphan-user@scraper-vm --zone=us-east1-c --command='~/run_scraper.sh'
+gcloud compute ssh clouduser@scraper-vm --zone=us-east1-c --command='~/run_scraper.sh'
 ```
 
 **Re-score the existing master (after editing prompts/resume):**
 ```
-gcloud compute ssh orphan-user@scraper-vm --zone=us-east1-c --command='cd ~ && source ~/venv/bin/activate && export GOOGLE_CLOUD_PROJECT=YOUR_GCP_PROJECT && export GOOGLE_CLOUD_LOCATION=global && python score_jobs.py ~/linkedin_jobs_master.csv'
+gcloud compute ssh clouduser@scraper-vm --zone=us-east1-c --command='cd ~ && source ~/venv/bin/activate && export GOOGLE_CLOUD_PROJECT=YOUR_GCP_PROJECT && export GOOGLE_CLOUD_LOCATION=global && python score_jobs.py ~/linkedin_jobs_master.csv'
 ```
 
 **Deploy a changed file to the VM:**
 ```
-gcloud compute scp score_jobs.py orphan-user@scraper-vm: --zone=us-east1-c
+gcloud compute scp score_jobs.py clouduser@scraper-vm: --zone=us-east1-c
 ```
 
 **Re-upload the master to Drive (so the dashboard sees it):**
 ```
-gcloud compute ssh orphan-user@scraper-vm --zone=us-east1-c --command='gzip -c ~/linkedin_jobs_master.csv > /tmp/m.gz && rclone copyto /tmp/m.gz gdrive:LinkedInJobs/linkedin_jobs_master.csv.gz --update && rm /tmp/m.gz'
+gcloud compute ssh clouduser@scraper-vm --zone=us-east1-c --command='gzip -c ~/linkedin_jobs_master.csv > /tmp/m.gz && rclone copyto /tmp/m.gz gdrive:LinkedInJobs/linkedin_jobs_master.csv.gz --update && rm /tmp/m.gz'
 ```
 
 **Block another spam company:** right-click the row in the dashboard → **Block
@@ -275,7 +275,7 @@ python tests/smoke_ui.py          # dashboard smoke test (window flashes briefly
 
 **Check recent activity / errors:**
 ```
-gcloud compute ssh orphan-user@scraper-vm --zone=us-east1-c --command='tail -40 ~/scraper.log'
+gcloud compute ssh clouduser@scraper-vm --zone=us-east1-c --command='tail -40 ~/scraper.log'
 ```
 
 **Watcher/UI logs (local):** `%LOCALAPPDATA%\linkedin_watcher\watcher.log`,

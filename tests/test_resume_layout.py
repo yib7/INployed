@@ -1,7 +1,11 @@
 """Resume layout: config precedence, count caps, deterministic trim, line-target map.
 No LLM, no UI."""
+import inspect
+import shutil
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -106,9 +110,6 @@ def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
     assert len(octus["groups"]) == len(config.DEFAULT_LINE_TARGETS)  # must be 3
 
 
-import inspect
-
-
 def test_length_hint_is_plain_lines():
     assert compose._length_hint(1) == "about 1 line (<= 100 characters)"
     assert compose._length_hint(2) == "about 2 lines (<= 200 characters)"
@@ -185,10 +186,6 @@ def test_refit_and_body_math_removed():
     from resume_tailor import layout
     assert not hasattr(layout, "body_line_budget")
     assert not hasattr(layout, "body_fits")
-
-
-import shutil
-import pytest
 
 
 @pytest.mark.skipif(shutil.which("pdflatex") is None, reason="pdflatex not installed")

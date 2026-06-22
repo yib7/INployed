@@ -61,7 +61,6 @@ def _job_description_text(job: Dict[str, str]) -> str:
 
 def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], None]) -> Dict[str, str]:
     """Rephrase selected groups. Skip the anti-inflation gate to reduce LLM calls."""
-    gm = compose.group_map(sel)
     bullets = compose.rephrase(jd, job_title, sel)
     log(f"rephrased {len(bullets)} bullet(s).")
     return bullets

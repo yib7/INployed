@@ -1515,7 +1515,7 @@ class App:
             folder = apply_mod.resolve_generated_dir(job_id=jid)
             ctx = apply_mod.build_apply_context(folder)
         except FileNotFoundError as exc:
-            self.root.after(0, lambda: self._finish_apply_error(
+            self.root.after(0, lambda exc=exc: self._finish_apply_error(
                 "Tailor the résumé first",
                 f"{exc}\n\nUse 'Tailor resume' on this job, then try Apply again."))
             return

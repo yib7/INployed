@@ -8,9 +8,3 @@ Job Discovery & Résumé-Tailoring Pipeline. Three subsystems: `scraper.py` (Bri
 - The résumé engine's rule is **select and re-phrase, never invent** — every bullet traces to an
   atom the user wrote in `resume_tailor_files/master_experience.yaml`.
 - Tests: `python -m pytest`; dashboard smoke: `python tests/smoke_ui.py`.
-
-## Autopilot
-
-Autopilot runs: the autonomy contract is `.autopilot/AUTONOMY.md` — restate it in full to every
-subagent. The current cycle's plan + resume point is `.autopilot/PLAN.md` (first unchecked box).
-Shipped history: `.autopilot/MILESTONES.md`.

@@ -175,7 +175,12 @@ python tests/smoke_ui.py  # dashboard smoke test (a window flashes briefly)
 ```
 
 ## Screenshots
-_Add dashboard / tailored-résumé screenshots here (e.g. `docs/dashboard.png`)._
+![The triage dashboard showing high-score jobs with LLM relevance scores, deep scores, and apply/consider recommendations](docs/dashboard.png)
+
+The **High Score** tab surfaces only unseen postings scoring ≥4, ordered by score then
+fewest applicants (the freshest apply window first). Selecting a row shows the model's
+full analysis (reason, strengths, gaps, salary); the bottom bar drives résumé tailoring
+and the semi-automated apply flow.
 
 ## Project layout
 ```

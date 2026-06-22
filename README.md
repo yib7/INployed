@@ -1,5 +1,9 @@
 # Job Discovery & Résumé-Tailoring Pipeline
 
+[![CI](https://github.com/yib7/resume_tailor_helper/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/resume_tailor_helper/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.14-blue.svg)
+
 An end-to-end system that **finds relevant jobs, scores them with an LLM, and
 generates a tailored, ATS-friendly résumé for any posting in one click** — without
 ever inventing a fact about you.
@@ -183,5 +187,10 @@ local/ui.py             Tkinter dashboard
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
-docs/                   ARCHITECTURE, HANDOFF (operator guide), PLAN, CREDITS
+docs/                   ARCHITECTURE (code tour), HANDOFF (operator guide), CREDITS
 ```
+
+## License
+Released under the [MIT License](LICENSE). The LaTeX résumé template is derived
+from Jake Gutierrez's MIT-licensed ["Jake's Resume"](https://github.com/jakegut/resume);
+see [docs/CREDITS.md](docs/CREDITS.md) for full attribution.

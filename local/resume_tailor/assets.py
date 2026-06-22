@@ -26,7 +26,15 @@ _PREAMBLE_MARKER = "\\begin{document}"
 
 @lru_cache(maxsize=1)
 def load_master() -> Dict[str, Any]:
-    with config.MASTER_YAML.open(encoding="utf-8") as fh:
+    path = config.MASTER_YAML
+    if not path.exists():
+        # No personal master configured yet (e.g. a fresh clone before setup.ps1,
+        # or CI): fall back to the committed example so the engine and the test
+        # suite work with demo data instead of crashing on a missing file.
+        example = path.with_name("master_experience.example.yaml")
+        if example.exists():
+            path = example
+    with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
 
 

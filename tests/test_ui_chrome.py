@@ -1,6 +1,6 @@
 """Chrome profile resolution for opening job/resume links (local/ui.py).
 
-The candidate's Default profile IS you@example.com. An EMPTY account must NOT
+The configured account's Default profile IS you@example.com. An EMPTY account must NOT
 match a blank-user_name profile (e.g. a signed-out 'Work' profile) -- it must
 fall back to 'Default'. The matcher also tries gaia_name and the email local-part.
 """
@@ -15,7 +15,7 @@ _STATE = {
     "profile": {
         "info_cache": {
             "Default": {"user_name": "you@example.com", "gaia_name": "You"},
-            "Profile 1": {"user_name": "alt@example.com", "gaia_name": "Test User"},
+            "Profile 1": {"user_name": "alt@example.com", "gaia_name": "Alt Account"},
             "Profile 4": {"user_name": "", "gaia_name": ""},
         }
     }

@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from google import genai
 from google.genai import types
 from markdownify import markdownify
 

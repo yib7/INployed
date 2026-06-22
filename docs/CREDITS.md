@@ -19,8 +19,5 @@ This project stands on a lot of other people's work.
 pandas · google-genai · aiohttp · PyYAML · pypdf · markdownify · python-dotenv ·
 pytest · and the Python standard library (Tkinter, asyncio, sqlite3, argparse).
 
-## Tooling
-- Built and refactored with the help of **Claude** (Anthropic).
-
 If you reuse this project, please keep this file and the upstream template
 attribution.

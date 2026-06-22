@@ -42,7 +42,7 @@ matches.
 | GCP project | `YOUR_GCP_PROJECT` (linked to $300 trial billing) |
 | VM instance | `scraper-vm`, machine type **e2-micro** (free tier) |
 | Zone | **`us-east1-c`** (NOT us-east1-b) |
-| Linux user | **`clouduser`** ← always use this (the real account: venv, rclone, crontab, all data live in `/home/clouduser/`). `localuser` / `orphan-user` are empty orphan accounts gcloud auto-creates if you SSH as the wrong user — never use them. |
+| Linux user | **`clouduser`** ← always use this (the real account: venv, rclone, crontab, all data live in `/home/clouduser/`). Empty orphan accounts gcloud auto-creates when you SSH as the wrong user must never be used. |
 | Google account | `you@example.com` |
 | VM timezone | `America/New_York` |
 | Scrape source | Bright Data LinkedIn dataset (`YOUR_DATASET_ID`) |
@@ -86,7 +86,7 @@ gcloud compute instances list    # shows scraper-vm + status + zone
 
 ### ⚠️ Login gotchas (these have bitten us)
 - **Always** `clouduser@scraper-vm`. A bare `scraper-vm:` or omitting the user
-  defaults to the orphan `localuser` account (empty home — none of the code/data).
+  defaults to an empty orphan account (no home dir — none of the code/data).
 - **scp uses a bare colon, no `~/`:**
   `gcloud compute scp file.py clouduser@scraper-vm: --zone=us-east1-c`
   (pscp rejects `~/`; the bare colon means "home dir".)
@@ -327,12 +327,3 @@ If Vertex calls start failing with permission/region errors, the working config 
 - **Zero-result scrape:** scraper writes nothing and exits 0; score_jobs skips fresh
   scoring (it never re-picks an old input — anything with an existing `_scored.csv.gz`
   is skipped), runs only its rescore pass, and the master still uploads.
-
----
-
-## 9. Project memory
-
-Deeper running notes (the "why" behind every gotcha and calibration decision) live
-in Claude's project memory:
-`C:\Users\you\.claude\projects\project-memory\memory\project_vm_setup.md`
-(and `jobspy_site_status.md`).

@@ -18,15 +18,22 @@ except ImportError:
     pass
 
 # Bright Data credentials — supplied via environment (.env locally, exported on
-# the VM). Never hardcode the token in the repo; see .env.example.
+# the VM). Never hardcode the token in the repo; see .env.example. The presence
+# check is deferred to run time (require_credentials) so importing this module
+# never aborts a credential-less process (e.g. the test suite or reuse).
 API_TOKEN = os.environ.get("BRIGHT_DATA_API_TOKEN", "")
 DATASET_ID = os.environ.get("BRIGHT_DATA_DATASET_ID", "")
-if not API_TOKEN or not DATASET_ID:
-    sys.exit(
-        "Missing Bright Data credentials. Set BRIGHT_DATA_API_TOKEN and "
-        "BRIGHT_DATA_DATASET_ID in your environment or a local .env file "
-        "(see .env.example)."
-    )
+
+
+def require_credentials() -> None:
+    """Exit with a helpful message if Bright Data credentials are missing.
+    Called at the start of a run, not at import time."""
+    if not API_TOKEN or not DATASET_ID:
+        sys.exit(
+            "Missing Bright Data credentials. Set BRIGHT_DATA_API_TOKEN and "
+            "BRIGHT_DATA_DATASET_ID in your environment or a local .env file "
+            "(see .env.example)."
+        )
 LIMIT_PER_INPUT = 100
 POLL_INTERVAL = 10
 MAX_WAIT_MINUTES = 30
@@ -356,6 +363,7 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
 async def main(snapshot_id: str | None = None, run_label: str | None = None,
                max_keywords: int | None = None,
                limit_per_input: int | None = None) -> None:
+    require_credentials()
     run_label = run_label or get_run_label()
     cfg = load_search_config()
     # CLI > config > built-in default: an explicit --limit wins, else the config

@@ -1,6 +1,25 @@
 """Bounding controls for scraper.py — cap keywords and per-input limit so a
-verification run can't fire thousands of billed Bright Data collections."""
+verification run can't fire thousands of billed Bright Data collections.
+
+Importing `scraper` at module scope (below) is also the regression guard for the
+credential check: it must be deferred to run time, not fire at import, so the
+module stays importable on a clean machine with no Bright Data creds."""
+import pytest
+
 import scraper
+
+
+def test_require_credentials_exits_when_missing(monkeypatch):
+    monkeypatch.setattr(scraper, "API_TOKEN", "")
+    monkeypatch.setattr(scraper, "DATASET_ID", "")
+    with pytest.raises(SystemExit):
+        scraper.require_credentials()
+
+
+def test_require_credentials_passes_when_set(monkeypatch):
+    monkeypatch.setattr(scraper, "API_TOKEN", "token")
+    monkeypatch.setattr(scraper, "DATASET_ID", "dataset")
+    scraper.require_credentials()  # must not raise
 
 
 def test_max_keywords_caps_inputs():

@@ -44,13 +44,16 @@ SECTION_HELP = {
                 "defaults are tuned; changing the model names can silently break scoring, "
                 "so leave them unless you know the exact model IDs your account can use."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
+    "VM (cloud scraper)": ("Connect to your cloud scraper VM (GCP) so the VM tab can push config, "
+                           "schedule, and pause changes to it. Uses your existing `gcloud` login — "
+                           "no SSH password or key is ever stored."),
 }
 
 # New users need credentials/connection first; show those sections at the top.
 # (Apply-form answers are edited in the richer Apply Answers tab, not here.)
 SECTION_ORDER = [
     "Credentials", "Connection & paths", "Engine",
-    "Dashboard", "Scraper", "Scoring", "Resume",
+    "Dashboard", "Scraper", "Scoring", "Resume", "VM (cloud scraper)",
 ]
 
 _SECRET_SET = "saved — blank keeps it, type to replace"

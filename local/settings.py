@@ -236,6 +236,24 @@ SETTINGS_SCHEMA: list[Field] = [
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           help="Highest-quality tier — set to gemini-3.1-pro-preview for the strongest "
                "writing (slower / pricier)."),
+
+    # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
+    # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your
+    # existing `gcloud auth login` — no SSH password or key is ever stored.
+    Field("VM_INSTANCE", "VM instance name", "str", "", "VM (cloud scraper)", "env",
+          optional=True,
+          help="GCP instance running the scraper (e.g. scraper-vm). Blank = VM tab off."),
+    Field("VM_ZONE", "VM zone", "str", "", "VM (cloud scraper)", "env", optional=True,
+          help="Compute zone, e.g. us-east1-c."),
+    Field("VM_PROJECT", "GCP project", "str", "", "VM (cloud scraper)", "env", optional=True,
+          help="GCP project id the instance lives in (optional if gcloud has a default)."),
+    Field("VM_USER", "VM Linux user", "str", "", "VM (cloud scraper)", "env", optional=True,
+          help="Linux account on the VM that owns the scraper (run_scraper.sh, crontab, data)."),
+    Field("VM_REMOTE_DIR", "VM home dir", "str", "~", "VM (cloud scraper)", "env",
+          help="Remote dir the scraper files live in. Usually ~ (the Linux user's home)."),
+    Field("VM_GCLOUD_PATH", "gcloud path", "path", "gcloud", "VM (cloud scraper)", "env",
+          path_kind="file", optional=True,
+          help="Path to the gcloud CLI. Leave as 'gcloud' if it's on your PATH."),
 ]
 
 

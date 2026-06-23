@@ -23,6 +23,11 @@ from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 from csv_io import read_csv_gz  # noqa: E402
 from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
 
+# Repo root: scraper.py / score_jobs.py write their outputs here (one level above
+# local/). A LOCAL "Run scraper" lands in <REPO_ROOT>/<label>/, NOT the synced
+# Drive folder the dashboard normally reads — local_run_files() bridges that.
+REPO_ROOT = HERE.parent
+
 APPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "linkedin_watcher"
 APPDATA.mkdir(parents=True, exist_ok=True)
 RELOAD_FLAG = APPDATA / "reload.flag"
@@ -256,6 +261,25 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
         if scols else ""
     )
     return combined, id_to_path
+
+
+def local_run_files(base: Path | None = None) -> list[Path]:
+    """Scored run files produced by a LOCAL scrape, newest-last per label.
+
+    scraper.py / score_jobs.py write to the repo dir (`<root>/<label>/*_scored.csv.gz`),
+    not the synced Drive folder the dashboard reads — on the VM, rclone bridges that
+    gap; locally nothing does. The dashboard merges these into its sources so a
+    local "Run scraper" shows up immediately and survives a restart, with or
+    without a VM/Drive setup. `load_files` dedupes by job_posting_id, so a job that
+    is also in the Drive master is not double-counted.
+    """
+    base = Path(base) if base is not None else REPO_ROOT
+    out: list[Path] = []
+    for label in RUN_LABELS:
+        d = base / label
+        if d.is_dir():
+            out.extend(sorted(d.glob("*_scored.csv.gz")))
+    return out
 
 
 def _load_cfg() -> dict:

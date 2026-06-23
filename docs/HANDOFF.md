@@ -32,7 +32,7 @@ matches.
                                                  │  Drive desktop client syncs to  E:\My Drive\LinkedInJobs
                                                  ▼
                 ┌───────────────────────── Windows PC ─────────────────────────────┐
-                │  Task "LinkedInJobsWatcher"  →  watcher.py  →  ui.py (dashboard)   │
+                │  Task "LinkedInJobsWatcher"  →  watcher.py  →  app.py (dashboard)  │
                 │  (logon / unlock / wake / 6×daily)   reconciles is_seen, pops UI   │
                 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -192,7 +192,7 @@ counts, LLM calls + prompt/output tokens). Cost or volume drift shows up there
 
 **Tests:** the experience-years filter has a pinned regression suite —
 `python -m pytest tests/ -v` locally before touching `min_required_years()` or
-its regexes. `python tests/smoke_ui.py` smoke-tests the dashboard end to end.
+its regexes. `QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py` smoke-tests the dashboard end to end.
 
 ---
 
@@ -201,7 +201,8 @@ its regexes. `python tests/smoke_ui.py` smoke-tests the dashboard end to end.
 | Path (`<repo>\local\`) | Role |
 |---|---|
 | `watcher.py` | Detects synced files, reconciles `is_seen`, launches dashboard |
-| `ui.py` | Tkinter dashboard (dark theme): High Score / All Jobs / **Tracker** / **Stats** / **Settings** tabs, details pane, right-click menu, **Apply** button |
+| `app.py` + `qt/` | PySide6/Qt dashboard (modern dark): High Score / All Jobs / **Tracker** / **Stats** / **Resume Data** / **Apply Answers** / **Settings** tabs, score-preview pane, right-click menu, **Apply** button |
+| `jobsdata.py`, `chrome.py` | Toolkit-agnostic data/config logic + Chrome launcher (no Tk/Qt) |
 | `settings.py` | One editable-options schema powering the **Settings** tab; atomic writes (with `.bak`) to the config files below |
 | `seen_db.py` | SQLite registry: seen ids + `app_status` (application tracker) + `resume_paths` (tailored-resume folders) |
 | `csv_io.py` | gz read/write + is_seen reconciliation |
@@ -231,8 +232,8 @@ its regexes. `python tests/smoke_ui.py` smoke-tests the dashboard end to end.
 - **Desktop shortcut — "LinkedIn Jobs Dashboard":** opens the dashboard on
   demand (target: `pythonw open_dashboard.pyw`). `open_dashboard.pyw` reuses the
   watcher's config + Drive auto-detection to find the master (or the latest run
-  files), then launches `ui.py` in-process. Safe to double-click any time:
-  ui.py self-deduplicates, so if a window is already open it just reloads it.
+  files), then launches `app.py` in-process. Safe to double-click any time:
+  app.py takes a single-instance lock, so a second launch just exits.
   `setup_tasks.ps1` (re)creates the shortcut on the current user's desktop
   (`-NoShortcut`/`-NoTask` skip either half).
 - **is_seen survives VM overwrites:** the VM resets `is_seen=no`; the local SQLite
@@ -263,7 +264,7 @@ its regexes. `python tests/smoke_ui.py` smoke-tests the dashboard end to end.
   `PDFLATEX_PATH`) for resume/cover-letter compilation:
   `winget install MiKTeX.MiKTeX`.
 - **Manual open:**
-  `pythonw "<repo>\local\ui.py" "E:\My Drive\LinkedInJobs\linkedin_jobs_master.csv.gz"`
+  `pythonw "<repo>\local\app.py" "E:\My Drive\LinkedInJobs\linkedin_jobs_master.csv.gz"`
 - Windows Python: `C:\Python314\` (pythonw at `C:\Python314\pythonw.exe`).
 
 ---
@@ -300,8 +301,8 @@ hides it immediately and the VM purges it next run). Hardcoding in
 
 **Run the tests (after touching filters or the UI):**
 ```
-python -m pytest tests/ -v        # min_required_years regression suite
-python tests/smoke_ui.py          # dashboard smoke test (window flashes briefly)
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v   # full suite incl. headless Qt UI
+QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py     # Qt dashboard smoke test
 ```
 
 **Check recent activity / errors:**

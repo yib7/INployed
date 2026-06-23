@@ -157,12 +157,12 @@ def _summary(ctx: Dict[str, Any]) -> str:
 
 
 def _open_url(url: str) -> None:
-    """Open the apply URL in Chrome (configured profile) if ui's launcher is
+    """Open the apply URL in Chrome (configured profile) if the launcher is
     importable, else the default browser. Opens the posting only — never submits."""
     if not url:
         return
     try:
-        from ui import open_in_chrome  # type: ignore
+        from chrome import open_in_chrome  # type: ignore
         open_in_chrome(url)
     except Exception:
         webbrowser.open(url)

@@ -22,11 +22,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
 
-try:
-    import tkinter as tk
-except ImportError:  # pragma: no cover - tkinter missing
-    tk = None
-
 _MASTER_YAML = textwrap.dedent("""\
     # top comment
     basics:
@@ -93,19 +88,3 @@ def master_tmp_broken(tmp_path, monkeypatch):
     yield p
     for fn in cached:
         fn.cache_clear()
-
-
-@pytest.fixture(scope="session")
-def root():
-    if tk is None:
-        pytest.skip("tkinter not available")
-    try:
-        r = tk.Tk()
-    except tk.TclError:
-        pytest.skip("no display for Tk")
-    r.withdraw()
-    yield r
-    try:
-        r.destroy()
-    except tk.TclError:
-        pass

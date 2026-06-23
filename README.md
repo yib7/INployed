@@ -15,7 +15,7 @@ It is three cooperating pieces:
 1. **Scraper** (`scraper.py`) — pulls fresh LinkedIn postings via the Bright Data API.
 2. **Scorer** (`score_jobs.py`) — a two-stage Gemini relevance filter that ranks each
    job against your background, so you only look at the ~5% worth your time.
-3. **Desktop dashboard** (`local/ui.py`) — a Windows Tkinter app for triage, an
+3. **Desktop dashboard** (`local/app.py`) — a Windows PySide6/Qt app for triage, an
    application tracker, run statistics, and an on-demand **résumé-tailoring engine**
    (`local/resume_tailor/`) that produces a one-page LaTeX résumé, cover letter,
    ATS keyword report, and interview-prep sheet for the selected job.
@@ -37,7 +37,7 @@ flowchart TD
     B -->|scored CSVs| C[(Google Drive)]
     C -->|Drive desktop sync| D[Local LinkedInJobs folder]
     subgraph Desktop["Windows PC"]
-        D --> E[ui.py dashboard<br/>triage / tracker / stats]
+        D --> E[app.py dashboard (Qt)<br/>triage / tracker / stats]
         E -->|Tailor resume| F[resume_tailor/<br/>select - rephrase - verify - LaTeX]
         F --> G[Tailored PDF + cover letter<br/>+ ATS report + prep sheet]
     end
@@ -50,7 +50,7 @@ Plain-text view and full operator details live in **[HANDOFF.md](docs/HANDOFF.md
 ## Quick start
 
 ### 1. Prerequisites
-- **Python 3.14** (Tkinter ships with the python.org installer).
+- **Python 3.14** (the Qt UI installs via `pip` with the other deps — PySide6).
 - **MiKTeX** (for `pdflatex`): `winget install MiKTeX.MiKTeX` — the résumé engine
   compiles LaTeX to PDF. (Set `PDFLATEX_PATH` if it isn't on `PATH`.)
 - **A Google Cloud project** with Vertex AI enabled (for Gemini scoring + tailoring).
@@ -124,7 +124,7 @@ The easiest way: **double-click `Open INployed Dashboard.cmd`** in the project f
 (right-click it → *Send to* → *Desktop (create shortcut)* for a one-click desktop icon).
 Or, from a terminal:
 ```bash
-python local/ui.py        # or double-click local/open_dashboard.pyw
+python local/app.py       # or double-click local/open_dashboard.pyw
 ```
 High-score triage, an application tracker with follow-up nudges, run stats, and the
 **Tailor resume** button (runs in the background so the UI stays responsive). The window
@@ -288,13 +288,13 @@ for anyone's résumé, not one person's.
 ---
 
 ## Tech stack
-Python 3.14 · Gemini (Vertex AI) · Bright Data · pandas · LaTeX (MiKTeX) · Tkinter ·
+Python 3.14 · Gemini (Vertex AI) · Bright Data · pandas · LaTeX (MiKTeX) · PySide6/Qt ·
 Google Drive · cron · pytest.
 
 ## Tests
 ```bash
-python -m pytest          # unit + regression suite
-python tests/smoke_ui.py  # dashboard smoke test (a window flashes briefly)
+QT_QPA_PLATFORM=offscreen python -m pytest   # unit + regression + Qt UI suite (headless)
+QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py   # Qt dashboard smoke test
 ```
 
 ## Screenshots
@@ -313,13 +313,13 @@ score_jobs.py           two-stage Gemini relevance scorer
 run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
 scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)
 scripts/setup.ps1       Fast/Long setup wizard
-local/ui.py             Tkinter dashboard (triage, Resume Data + Apply Answers editors, Settings incl. VM)
-local/configure.pyw     standalone config GUI (settings.py schema + config_form.py)
-local/resume_data_form.py   Resume Data tab editor (master_experience.yaml)
-local/answers_form.py   Apply Answers tab editor (apply_answers.json)
+local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
+local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
+local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
+local/chrome.py         open job/resume links in the configured Chrome profile
+local/configure.py      standalone config GUI (settings.py schema + qt/settings_tab.py)
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders + settings->VM change detection
-local/vm_form.py        VM panel (schedule editor, pause-until, push to VM) — mounts in Settings
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test

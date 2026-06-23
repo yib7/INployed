@@ -1,6 +1,5 @@
-"""Column-scoped search in _filter_and_sort (pure DataFrame logic, no Tk)."""
+"""Column-scoped search + multi-filter in jobsdata.filter_and_sort (pure DataFrame logic)."""
 import sys
-import types
 from pathlib import Path
 
 import pandas as pd
@@ -8,7 +7,7 @@ import pandas as pd
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
-import ui  # noqa: E402
+import jobsdata  # noqa: E402
 
 
 def _df():
@@ -21,10 +20,7 @@ def _df():
 
 
 def _call(df, search, column=None):
-    # Bind the unbound method to a bare object that only needs _sort_query.
-    fake = types.SimpleNamespace(_sort_query=lambda v: v)
-    return ui.App._filter_and_sort(
-        fake, df, search, "Any", "All", "All", "All", False, column)
+    return jobsdata.filter_and_sort(df, search, "Any", "All", "All", "All", False, column)
 
 
 def test_column_search_matches_only_that_column():
@@ -43,11 +39,13 @@ def test_all_columns_default_behaviour():
 
 
 def test_search_column_precomputed():
-    """_filter_and_sort uses the _search column when search_column is None/All."""
+    """filter_and_sort uses the _search column when search_column is None/All."""
     df = _df().copy()
-    df["_search"] = [
-        "data analyst acme seattle",
-        "ml engineer globex austin tx",
-    ]
+    df["_search"] = ["data analyst acme seattle", "ml engineer globex austin tx"]
     out = _call(df, "acme", None)
     assert list(out["company_name"]) == ["Acme"]
+
+
+def test_min_score_filter():
+    out = jobsdata.filter_and_sort(_df(), "", "5", "All", "All", "All", False, None)
+    assert list(out["company_name"]) == ["Acme"]   # only the score-5 row

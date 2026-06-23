@@ -108,7 +108,14 @@ def _qss() -> str:
         selection-color: {SEL_TEXT}; }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
     QPlainTextEdit:focus, QTextEdit:focus, QDateEdit:focus {{ border-color: {ACCENT}; }}
-    QComboBox::drop-down {{ border: 0; width: 22px; }}
+    QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
+        border: 0; width: 22px; }}
+    QComboBox::down-arrow {{ width: 0; height: 0; margin-right: 8px;
+        border-left: 5px solid transparent; border-right: 5px solid transparent;
+        border-top: 6px solid {MUTED}; }}
+    QComboBox::down-arrow:hover {{ border-top-color: {TEXT}; }}
+    QComboBox::down-arrow:on {{ border-top: 0;
+        border-bottom: 6px solid {TEXT}; }}
     QComboBox QAbstractItemView {{ background: {SURFACE2}; color: {TEXT};
         border: 1px solid {BORDER}; selection-background-color: {SEL};
         selection-color: {SEL_TEXT}; outline: 0; }}

@@ -257,6 +257,23 @@ SETTINGS_SCHEMA: list[Field] = [
 ]
 
 
+# Friendly filename shown next to each field in the config GUI so a user can find
+# and inspect the file a value is saved to themselves (keyed by Field.target).
+STORAGE_LABELS: dict[str, str] = {
+    "config": "config.json",
+    "search": "search_config.json",
+    "scoring": "scoring_config.json",
+    "apply": "apply_config.json",
+    "env": ".env",
+}
+
+
+def storage_location(field: Field) -> str:
+    """The friendly filename a Field's value is saved to (for the GUI 'stored in'
+    tag). Falls back to the raw target id for any unmapped target."""
+    return STORAGE_LABELS.get(field.target, field.target)
+
+
 def _resolve_targets(targets: dict[str, Path] | None) -> dict[str, Path]:
     return TARGET_FILES if targets is None else targets
 

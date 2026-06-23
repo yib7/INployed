@@ -1,6 +1,6 @@
 ---
 name: apply-to-job
-description: Use when the user wants to fill out a job application form in Chrome from a tailored résumé's apply_data.json — fill-only, multi-page-aware form-filling for Greenhouse / Lever / Ashby / Workday / generic career pages. Fills every safe field across every page and stops at the final Submit screen for the human to review and send. Never submits, never logs in, never creates accounts.
+description: Use when the user wants to fill out a job application form in Chrome from a tailored résumé's apply_data.json — fill-only, multi-page-aware form-filling for Greenhouse / Lever / Ashby / Workday / generic career pages. Fills every safe field across every page and stops at the final Submit screen for the human to review and send. At any login/account/verification/CAPTCHA wall it pauses, tells the human exactly what to do, and resumes after. Never submits, never logs in, never creates accounts, never uses stored passwords.
 ---
 
 # Apply to a job (Claude-in-Chrome form-filler)
@@ -29,8 +29,11 @@ skills. To use it:
    submit screen, then stop and let the human review and send. Surface what's filled and what still
    needs them.
 2. **Never create an account, never enter a password, never log in, never read or enter an email
-   verification code.** If the site needs an account or login (very common on Workday), **stop and ask
-   the human to do that step themselves**, then continue once they're in.
+   verification code — and never use credentials stored in any file, config, or `apply_data.json`.**
+   This skill has no setting that changes this; saved passwords are out of scope by design. When the
+   site needs an account, login, or verification (very common on Workday), follow the **login / account
+   / verification wall** procedure below: stop, hand off clearly, and resume only once the human is
+   through.
 3. **Never enter credentials, payment info, SSN, or government IDs.**
 4. **Never solve CAPTCHAs or bot-checks.** If one appears, stop and ask the human to clear it, then
    continue.
@@ -87,8 +90,45 @@ The posting URL (`job.url`) is usually the LinkedIn listing. Click through to th
 (the **Apply** / **Apply on company site** link), which lands on the ATS. Confirm the company/role
 matches `apply_data.json` before filling anything.
 
-If the ATS requires an **account or login** (Workday almost always does): **stop and ask the human to
-log in / create the account themselves.** Do not do it for them. Once they're authenticated, continue.
+If the ATS requires an **account or login** (Workday almost always does), follow the **login / account /
+verification wall** procedure below — stop, hand off, and resume once the human is authenticated. Do not
+do it for them.
+
+## Login / account / verification wall — detect → hand off → resume
+
+Some sites gate the application behind authentication (Workday almost always; some Greenhouse /
+SmartRecruiters / iCIMS / Taleo accounts). The moment you recognize one of these, **stop filling and
+hand off — never type into these fields, never create the account, never read a code:**
+
+- **Sign in** to an existing account (email + password).
+- **Create account / Register / Sign up** (new-account form, "set a password", ToS checkbox).
+- **Email / SMS verification code** (magic link, 6-digit OTP).
+- **SSO / OAuth consent** ("Continue with Google / LinkedIn", a permission grant).
+- **2FA / MFA** prompt.
+- **CAPTCHA / "are you human" / bot-check.**
+
+These are off-limits **regardless of any credentials stored anywhere** — the skill never reads or uses
+saved passwords, and there is no config that changes that. The human (with their password manager) owns
+this step.
+
+**The handoff — do exactly this:**
+
+1. **Stop.** Don't touch the username, password, code, or consent controls. Leave the page as-is — don't
+   click away, don't refresh.
+2. **Note your resume point** *before* you announce the handoff: which page/section you'd filled up to
+   (e.g. "filled Contact + Education, was about to start Work Experience on page 2"), so you pick up
+   there afterward instead of re-filling or skipping.
+3. **Say precisely what's blocking and what to do.** Name the wall type and the site, e.g.:
+   > "Workday wants you to **create an account** before this application. I can't do that step — please
+   > create it or sign in (your password manager can fill it), clear any verification code, and then tell
+   > me **continue** and I'll keep filling the form."
+4. **Wait.** Do nothing on the page until the user says continue.
+5. **On continue, re-orient, then resume.** The page has changed (you're past the wall): take a fresh
+   look, reconfirm you're still on the right application for `job.url`, then **resume filling from your
+   noted resume point** (Step 3) through any remaining pages.
+
+If you hit the *same* wall again after a continue (the user isn't through yet), hand off again with what
+specifically still needs doing — don't try to push past it yourself.
 
 ## Step 3 — Fill, page by page, until the Submit screen
 
@@ -102,8 +142,8 @@ next page. **Repeat until you reach the page whose only remaining action is the 
 Submit/Apply/Send/Finish — then STOP.** Treat "advance" controls as safe to click; treat the final
 submit as forbidden (contract #1).
 
-If advancing hits a login / account / verification / CAPTCHA wall, pause per contract #2/#4, let the
-human clear it, then resume filling.
+If advancing hits a login / account / verification / CAPTCHA wall, follow the **login / account /
+verification wall** procedure below — pause, hand off, let the human clear it, then resume filling.
 
 Platform notes:
 - **Greenhouse** (`boards.greenhouse.io` / `job-boards.greenhouse.io`): usually one page. Upload the

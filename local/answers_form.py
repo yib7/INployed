@@ -87,7 +87,7 @@ class AnswersEditor:
         self.rows.clear()
         header = ttk.Frame(self.body)
         header.pack(fill="x")
-        for text, w in (("Question", 44), ("Answer", 30), ("Kind", 12), ("Status", 14), ("", 8)):
+        for text, w in (("Question", 56), ("Answer", 40), ("Kind", 12), ("Status", 14), ("", 8)):
             ttk.Label(header, text=text, style="Muted.TLabel", width=w, anchor="w").pack(side="left")
         for entry in apply_answers.load(self.store_path):
             self._add_row_widgets(entry)
@@ -105,8 +105,8 @@ class AnswersEditor:
             "status": tk.StringVar(value=str(entry.get("status", "active"))),
             "frame": fr,
         }
-        ttk.Entry(fr, textvariable=row["question"], width=44).pack(side="left")
-        ttk.Entry(fr, textvariable=row["answer"], width=30).pack(side="left", padx=(2, 0))
+        ttk.Entry(fr, textvariable=row["question"], width=56).pack(side="left")
+        ttk.Entry(fr, textvariable=row["answer"], width=40).pack(side="left", padx=(2, 0))
         ttk.Combobox(fr, textvariable=row["kind"], state="readonly", width=11,
                      values=list(apply_answers.KINDS)).pack(side="left", padx=(2, 0))
         ttk.Combobox(fr, textvariable=row["status"], state="readonly", width=13,

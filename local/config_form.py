@@ -238,19 +238,19 @@ class ConfigForm:
             var = tk.StringVar(value=str(value))
             self.vars[f.key] = var
             return ttk.Combobox(parent, textvariable=var, state="readonly",
-                                width=30, values=list(f.choices))
+                                width=38, values=list(f.choices))
         if f.type == "editable_choice":
             # pick from the list OR type a custom value (state="normal").
             var = tk.StringVar(value=str(value))
             self.vars[f.key] = var
             return ttk.Combobox(parent, textvariable=var, state="normal",
-                                width=32, values=list(f.choices))
+                                width=40, values=list(f.choices))
         if getattr(f, "slider", False) and f.type == "int":
             return self._slider_widget(parent, f, value)
         if f.type == "multichoice":
             return self._multichoice_widget(parent, f, value)
         if f.type == "list":
-            txt = tk.Text(parent, width=44, height=8, wrap="none", font=self._font,
+            txt = tk.Text(parent, width=58, height=12, wrap="none", font=self._font,
                           bg=self._field_bg, fg=self._fg, insertbackground=self._fg,
                           relief="flat", highlightthickness=1, highlightbackground="#2a3344")
             items = value if isinstance(value, list) else []
@@ -262,7 +262,7 @@ class ConfigForm:
         # str / int / float
         var = tk.StringVar(value="" if value is None else str(value))
         self.vars[f.key] = var
-        return ttk.Entry(parent, textvariable=var, width=46 if f.type == "str" else 14)
+        return ttk.Entry(parent, textvariable=var, width=58 if f.type == "str" else 16)
 
     def _slider_widget(self, parent: ttk.Frame, f: settings.Field, value):
         """A bounded int rendered as a drag slider + a live numeric readout. The
@@ -299,7 +299,7 @@ class ConfigForm:
         frame = ttk.Frame(parent)
         var = tk.StringVar(value="" if value is None else str(value))
         self.vars[f.key] = var
-        ttk.Entry(frame, textvariable=var, width=44).pack(side="left")
+        ttk.Entry(frame, textvariable=var, width=56).pack(side="left")
         ttk.Button(frame, text="Browse…",
                    command=lambda: self._browse(var, f.path_kind)).pack(side="left", padx=(6, 0))
         return frame
@@ -308,7 +308,7 @@ class ConfigForm:
         frame = ttk.Frame(parent)
         var = tk.StringVar(value="")  # never pre-filled with the stored secret
         self.vars[f.key] = var
-        ttk.Entry(frame, textvariable=var, width=40, show="•").grid(
+        ttk.Entry(frame, textvariable=var, width=52, show="•").grid(
             row=0, column=0, sticky="w")
         status = ttk.Label(frame, text=_SECRET_SET if is_set else _SECRET_UNSET,
                            style="Muted.TLabel")

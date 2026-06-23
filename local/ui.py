@@ -179,11 +179,11 @@ SEL = "#173a4d"         # selected row (teal-tinted)
 SEL_TEXT = "#ffffff"
 BTN = "#232b38"         # secondary button
 BTN_HOVER = "#2c3543"
-FONT = ("Segoe UI", 10)
-FONT_BOLD = ("Segoe UI Semibold", 10)
-FONT_TITLE = ("Segoe UI Semibold", 17)
-FONT_SUB = ("Segoe UI", 11)
-FONT_BADGE = ("Segoe UI Semibold", 9)
+FONT = ("Segoe UI", 11)
+FONT_BOLD = ("Segoe UI Semibold", 11)
+FONT_TITLE = ("Segoe UI Semibold", 18)
+FONT_SUB = ("Segoe UI", 12)
+FONT_BADGE = ("Segoe UI Semibold", 10)
 
 # Per-row coloring: recommendation wins; otherwise alternating stripe.
 # The tracker tab reuses the palette for application statuses, plus an
@@ -764,6 +764,26 @@ def populate(tv: ttk.Treeview, df: pd.DataFrame, columns: list[str],
 
 # --------------------------------------------------------------------------- App
 
+
+def maximize_window(root: tk.Misc) -> None:
+    """Open the window as large as the monitor so a big screen isn't wasted.
+
+    Tries the Windows/macOS 'zoomed' state, then the X11 '-zoomed' attribute,
+    then a full-screen geometry — each guarded so a headless or unusual window
+    manager can never crash startup (it just stays at the default geometry)."""
+    for attempt in (
+        lambda: root.state("zoomed"),
+        lambda: root.attributes("-zoomed", True),
+        lambda: root.geometry(
+            f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0"),
+    ):
+        try:
+            attempt()
+            return
+        except tk.TclError:
+            continue
+
+
 class App:
     def __init__(self, csv_paths: list[Path]) -> None:
         self.csv_paths = csv_paths
@@ -796,6 +816,7 @@ class App:
         self.root.update_idletasks()
         _enable_dark_titlebar(self.root)      # paint the OS title bar dark
         self.root.deiconify()                 # re-map so the dark frame takes effect
+        maximize_window(self.root)            # use the whole monitor, not a small box
         self.root.attributes("-topmost", True)
         self.root.after(500, lambda: self.root.attributes("-topmost", False))  # not always on top
         self.root.lift()

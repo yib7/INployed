@@ -146,7 +146,7 @@ class ResumeDataEditor:
             v = tk.StringVar(value=str(basics.get(k, "") or ""))
             self._basics_vars[k] = v
             self._basics_orig[k] = v.get()
-            ttk.Entry(f, textvariable=v, width=48).grid(row=i, column=1, sticky="w", pady=2)
+            ttk.Entry(f, textvariable=v, width=60).grid(row=i, column=1, sticky="w", pady=2)
 
     def _section_block(self, section: str, entries: list) -> None:
         outer = ttk.Frame(self.body)
@@ -173,7 +173,7 @@ class ResumeDataEditor:
             v = tk.StringVar(value=str(entry.get(k, "") or ""))
             self._entry_vars[(section, idx, k)] = v
             self._entry_orig[(section, idx, k)] = v.get()
-            ttk.Entry(grid, textvariable=v, width=48).grid(row=i, column=1, sticky="w", pady=2)
+            ttk.Entry(grid, textvariable=v, width=60).grid(row=i, column=1, sticky="w", pady=2)
 
         ttk.Label(lf, text="Achievements (atoms) — impact: one measurable result per line",
                   style="Muted.TLabel").pack(anchor="w", pady=(6, 2))
@@ -206,15 +206,15 @@ class ResumeDataEditor:
         wv = tk.StringVar(value=str(atom.get("what", "") or ""))
         self._atom_vars[(aid, "what")] = wv
         self._atom_orig[(aid, "what")] = wv.get()
-        ttk.Entry(fr, textvariable=wv, width=62).grid(row=0, column=1, sticky="w", padx=4)
+        ttk.Entry(fr, textvariable=wv, width=74).grid(row=0, column=1, sticky="w", padx=4)
         ttk.Label(fr, text="angles").grid(row=1, column=0, sticky="w")
         av = tk.StringVar(value=", ".join(str(x) for x in (atom.get("angles") or [])))
         self._atom_vars[(aid, "angles")] = av
         self._atom_orig[(aid, "angles")] = av.get()
-        ttk.Entry(fr, textvariable=av, width=62).grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Entry(fr, textvariable=av, width=74).grid(row=1, column=1, sticky="w", padx=4)
         ttk.Label(fr, text="impact").grid(row=2, column=0, sticky="nw")
         imp_lines = "\n".join(str(x) for x in (atom.get("impact") or []))
-        imp = self._impact_text(fr, width=62, height=2)
+        imp = self._impact_text(fr, width=74, height=3)
         imp.insert("1.0", imp_lines)
         imp.grid(row=2, column=1, sticky="w", padx=4, pady=(2, 0))
         self._atom_impact[aid] = imp

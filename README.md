@@ -72,6 +72,10 @@ python -m pip install -r requirements.txt
 gcloud auth application-default login
 ```
 
+**Prefer a GUI to editing `.env` by hand?** Once dependencies are installed, run
+`python local/configure.pyw` for a window that sets your keys, paths, and every
+other option — see [Configure everything from one window](#configure-everything-from-one-window-no-file-editing).
+
 ### 3. Tell the tool about you
 Edit **`resume_tailor_files/master_experience.yaml`** — the single source of truth.
 Store your experience as *atoms* (what / how / scope / impact / angles), not finished
@@ -121,18 +125,35 @@ High-score triage, an application tracker with follow-up nudges, run stats, and 
   cron and sync results to Google Drive — full instructions in
   [HANDOFF.md](docs/HANDOFF.md).
 
-### Customize everything (Settings tab)
-The dashboard's **Settings** tab edits every tunable in-app — no hand-editing files:
-- **Dashboard:** min score, follow-up days, data folder, file-settle seconds.
-- **Scraper:** search keywords, remote types, postings-per-search, exclusion window, location / country / time-range / job-type / experience level.
-- **Scoring:** stage-1/2 models, concurrency, the stage-2 threshold, per-run spend caps, and the seniority-years cutoff.
-- **Résumé:** which artifacts to generate (cover letter / ATS report / interview-prep) and the cover-letter tone.
-- **Apply:** the standard application answers (work authorization, sponsorship, relocation, EEO self-id, "how did you hear").
+### Configure everything from one window (no file editing)
+There are two ways into the **same** config form — pick whichever suits you:
 
-Edits are written atomically (with a `.bak`) to `local/config.json` and the
-git-ignored `search_config.json` / `scoring_config.json` / `apply_config.json`.
-Environment variables still override, and an absent file falls back to built-in
-defaults — so the VM keeps running unchanged.
+```powershell
+python local/configure.pyw   # standalone window (great for first-time setup)
+```
+…or open the dashboard and click the **Settings** tab. Both edit every tunable
+the project has, grouped and explained, so a non-technical user can set things up
+without touching a file:
+
+- **Credentials:** Bright Data token + dataset, the Gemini API-key pool, and the
+  résumé-tailor API key. These are **masked, write-only** boxes — a saved key is
+  never shown again; leave a box blank to keep it, or tick *Clear* to remove it.
+- **Connection & paths:** Google Cloud project + location, your name (for résumé
+  filenames), the résumé output folder and `pdflatex` path (with **Browse…**
+  buttons), and which Chrome profile to open links in.
+- **Engine:** which Gemini backend the tailor bills (Vertex project vs API key).
+- **Dashboard / Scraper / Scoring / Résumé / Apply:** scores, follow-up days,
+  search keywords, remote types, spend caps, models, artifact toggles, the
+  standard application answers, and more.
+
+Guard rails keep it hard to break: fixed-choice fields are **dropdowns** (no
+typos), multi-select fields are **checkboxes**, every field has a one-line
+explanation, numbers are range-checked on Save, and there's a **Restore
+defaults** button. Edits are written atomically (with a `.bak`) to your
+git-ignored `.env`, `local/config.json`, and `search_config.json` /
+`scoring_config.json` / `apply_config.json`. Environment variables still override
+a file, and an absent file falls back to built-in defaults — so the VM keeps
+running unchanged.
 
 ### Apply to a job (semi-automated, in Chrome)
 Every tailored résumé folder gets an `apply_data.json` (candidate basics,
@@ -189,6 +210,7 @@ score_jobs.py           two-stage Gemini relevance scorer
 scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)
 scripts/setup.ps1       Fast/Long setup wizard
 local/ui.py             Tkinter dashboard
+local/configure.pyw     standalone config GUI (settings.py schema + config_form.py)
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test

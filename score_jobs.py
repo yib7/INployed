@@ -31,6 +31,7 @@ from google.genai import types
 from markdownify import markdownify
 
 from keypool import KeyPool, PoolError
+from run_labels import RUN_LABELS
 
 # Optional: load a local .env so credentials work for manual/local runs. The VM
 # path exports these via run_scraper.sh, so a missing python-dotenv is fine.
@@ -335,15 +336,15 @@ def make_pool() -> KeyPool:
 
 
 def latest_input_csv() -> Path | None:
-    """Newest unscored input CSV across BOTH run dirs, or None.
+    """Newest unscored input CSV across ALL run-label dirs, or None.
 
-    Scanning both morning/ and evening/ (instead of recomputing the run label
-    at scoring time) avoids the label flipping when a run straddles 14:00 or is
-    triggered manually. Inputs whose _scored.csv.gz output already exists are
-    skipped so a no-new-jobs run never rescores an old file.
+    Scanning every run-label dir (instead of recomputing the run label at scoring
+    time) avoids the label flipping when a run is triggered manually. Inputs whose
+    _scored.csv.gz output already exists are skipped so a no-new-jobs run never
+    rescores an old file.
     """
     candidates: list[Path] = []
-    for label in ("morning", "evening"):
+    for label in RUN_LABELS:
         run_dir = OUTPUT_DIR / label
         if not run_dir.is_dir():
             continue

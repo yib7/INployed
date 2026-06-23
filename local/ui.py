@@ -1115,6 +1115,7 @@ class App:
 
     def _on_tab_changed(self, _event=None) -> None:
         self._apply_preview_visibility()
+        self._refresh_resume_md_push_state()  # vm_enabled may have changed in Settings
 
     def _apply_preview_visibility(self) -> None:
         """Show the score preview only on the job-list tabs; on others remove it
@@ -2026,10 +2027,167 @@ class App:
 
         self.tab_resume_data = frame = ttk.Frame(nb)
         nb.add(frame, text="Resume Data")
+        self._build_resume_md_bar(frame)
         self.resume_data_editor = ResumeDataEditor(frame, on_saved=self._on_resume_data_saved)
 
     def _on_resume_data_saved(self) -> None:
         self._set_status("Resume data saved (applies on the next tailor run).")
+
+    # ---------------------------------------------------- resume.md generator
+
+    def _build_resume_md_bar(self, parent: ttk.Frame) -> None:
+        """Controls atop the Resume Data tab to (re)generate the scorer's
+        resume.md from the master YAML via Gemini, and push it to the VM."""
+        bar = ttk.Frame(parent)
+        bar.pack(side="top", fill="x", padx=16, pady=(12, 0))
+        ttk.Label(bar, text="Scorer résumé (resume.md):", style="Subtitle.TLabel").pack(side="left")
+        self.resume_md_model = tk.StringVar(value="gemini-3.5-flash")
+        ttk.Combobox(bar, textvariable=self.resume_md_model, width=22,
+                     values=list(settings.GEMINI_MODELS)).pack(side="left", padx=(8, 6))
+        ttk.Button(bar, text="Generate from my data",
+                   command=self._generate_resume_md_dialog).pack(side="left")
+        self.btn_push_resume_md = ttk.Button(bar, text="Push resume.md to VM",
+                                             command=self._push_resume_md)
+        self.btn_push_resume_md.pack(side="left", padx=(8, 0))
+        ttk.Label(parent, style="Muted.TLabel", wraplength=760,
+                  text=("Rebuilds the résumé the job scorer matches against, from your Resume Data "
+                        "below (uses Gemini; you review it before it's saved). Push is enabled only "
+                        "when VM features are on.")).pack(side="top", fill="x", padx=16, pady=(2, 0))
+        self._refresh_resume_md_push_state()
+
+    def _refresh_resume_md_push_state(self) -> None:
+        """Enable 'Push resume.md to VM' only when VM features are on AND a VM is
+        configured; otherwise grey it out."""
+        btn = getattr(self, "btn_push_resume_md", None)
+        if btn is None:
+            return
+        import vm_sync
+        cfg = settings.load()
+        on = bool(cfg.get("vm_enabled")) and vm_sync.VMTarget.from_env().configured()
+        btn.configure(state=("normal" if on else "disabled"))
+
+    def _generate_resume_md_dialog(self) -> None:
+        import resume_md
+        model = self.resume_md_model.get().strip() or "gemini-3.5-flash"
+        if not resume_md.MASTER_YAML_PATH.exists():
+            messagebox.showerror(
+                "Generate resume.md",
+                "No master_experience.yaml found — add your Resume Data first.", parent=self.root)
+            return
+        if not messagebox.askyesno(
+                "Generate resume.md",
+                f"Rebuild resume.md (the résumé the job scorer uses) from your Resume Data "
+                f"with {model}?\n\nThis makes a Gemini API call.", parent=self.root):
+            return
+        self._set_status("Generating resume.md… (Gemini)")
+        yaml_text = resume_md.MASTER_YAML_PATH.read_text(encoding="utf-8")
+        threading.Thread(target=self._resume_md_worker, args=(yaml_text, model),
+                         daemon=True).start()
+
+    def _resume_md_worker(self, yaml_text: str, model: str) -> None:
+        import resume_md
+        try:
+            md = resume_md.generate_resume_md(yaml_text, model)
+        except Exception as exc:  # noqa: BLE001
+            self.root.after(0, lambda e=exc: self._resume_md_failed(e))
+            return
+        self.root.after(0, lambda: self._resume_md_preview(md))
+
+    def _resume_md_failed(self, exc: Exception) -> None:
+        self._set_status("resume.md generation failed.")
+        messagebox.showerror("Generate resume.md", f"Generation failed:\n\n{exc}",
+                             parent=self.root)
+
+    def _resume_md_preview(self, md: str) -> None:
+        """Preview-then-write: show the generated markdown (editable) and only
+        write resume.md (backing up the old one) when the user clicks Use this."""
+        self._set_status("resume.md generated — review it before it's saved.")
+        win = tk.Toplevel(self.root)
+        win.title("Generated resume.md — review before saving")
+        win.transient(self.root)
+        try:
+            win.grab_set()
+        except tk.TclError:
+            pass
+        ttk.Label(win, style="Muted.TLabel", wraplength=760,
+                  text=("Review (and edit if you like) the generated resume.md. 'Use this' backs "
+                        "up the current file to resume.md.bak, then writes this version.")).pack(
+            fill="x", padx=12, pady=(12, 6))
+        holder = ttk.Frame(win)
+        holder.pack(fill="both", expand=True, padx=12)
+        txt = tk.Text(holder, wrap="word", width=98, height=30, bg=SURFACE, fg=TEXT,
+                      font=FONT, relief="flat", highlightthickness=0,
+                      insertbackground=ACCENT, padx=12, pady=10)
+        sb = ttk.Scrollbar(holder, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        txt.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        txt.insert("1.0", md)
+        bar = ttk.Frame(win)
+        bar.pack(fill="x", padx=12, pady=10)
+
+        def _use():
+            final = txt.get("1.0", "end-1c").rstrip("\n") + "\n"
+            win.destroy()
+            self._resume_md_write(final)
+
+        ttk.Button(bar, text="Use this (write resume.md)", style="Accent.TButton",
+                   command=_use).pack(side="left")
+        ttk.Button(bar, text="Cancel", command=win.destroy).pack(side="left", padx=(8, 0))
+        win.geometry("840x660")
+
+    def _resume_md_write(self, text: str) -> None:
+        import resume_md
+        try:
+            resume_md.write_resume_md(text)
+        except OSError as exc:
+            messagebox.showerror("resume.md", f"Could not write resume.md:\n\n{exc}",
+                                 parent=self.root)
+            return
+        self._set_status("resume.md updated (old version saved to resume.md.bak).")
+        cfg = settings.load()
+        if not cfg.get("vm_enabled"):
+            return
+        import vm_sync
+        target = vm_sync.VMTarget.from_env()
+        if target.configured() and messagebox.askyesno(
+                "Push to VM?",
+                f"resume.md updated. Push it to {target.user}@{target.instance} so the cloud "
+                "scorer uses it?", parent=self.root):
+            threading.Thread(target=self._push_resume_md_worker, args=(target,),
+                             daemon=True).start()
+
+    def _push_resume_md(self) -> None:
+        import resume_md
+        import vm_sync
+        target = vm_sync.VMTarget.from_env()
+        if not target.configured():
+            messagebox.showinfo(
+                "Push resume.md",
+                "No VM configured. Set VM_INSTANCE / VM_ZONE / VM_USER in Settings.",
+                parent=self.root)
+            return
+        if not resume_md.RESUME_MD_PATH.exists():
+            messagebox.showerror("Push resume.md", "No resume.md yet — generate it first.",
+                                 parent=self.root)
+            return
+        if not messagebox.askyesno(
+                "Push resume.md",
+                f"Copy resume.md to {target.user}@{target.instance}?", parent=self.root):
+            return
+        threading.Thread(target=self._push_resume_md_worker, args=(target,), daemon=True).start()
+
+    def _push_resume_md_worker(self, target) -> None:
+        import resume_md
+        import vm_sync
+        try:
+            res = vm_sync.run_cmd(target.build_scp_cmd(str(resume_md.RESUME_MD_PATH), "resume.md"))
+            ok = getattr(res, "returncode", 0) == 0
+            out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()
+        except Exception as exc:  # noqa: BLE001
+            ok, out = False, str(exc)
+        self.root.after(0, lambda: self._set_status(
+            "resume.md pushed to VM." if ok else f"resume.md push failed: {out[:200]}"))
 
     def _build_answers_tab(self, nb: ttk.Notebook) -> None:
         """Mount the master-answer-store table editor as a dashboard tab so a user
@@ -2093,6 +2251,7 @@ class App:
         after = settings.load()
         self._maybe_prompt_vm_push(getattr(self, "_vm_settings_snapshot", after), after)
         self._vm_settings_snapshot = after
+        self._refresh_resume_md_push_state()  # vm_enabled toggle may have flipped
         self.reload_data()
         self._set_status("Settings saved.")
 

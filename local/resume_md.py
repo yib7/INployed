@@ -1,0 +1,124 @@
+"""Rebuild the scorer's `resume.md` from `master_experience.yaml` via Gemini.
+
+The job scorer (`score_jobs.py`) matches every posting against `resume.md`. When
+the user edits their Resume Data (the master YAML), this regenerates `resume.md`
+so the two stay in sync — **faithfully: select and rephrase, never invent** (the
+project's résumé rule). Output mirrors the existing `resume.md` section layout.
+
+The Gemini call is **injected** (`llm_call`) so the build and tests never spend a
+real paid API credit — the dashboard supplies the real transport only on the
+user's explicit button click (the same posture as the VM operations).
+"""
+from __future__ import annotations
+
+import re
+import shutil
+from pathlib import Path
+from typing import Callable
+
+# resume.md lives at the repo root — exactly where score_jobs.py reads it
+# (OUTPUT_DIR / "resume.md", OUTPUT_DIR being the repo root). resume_md.py is in
+# local/, so the root is one level up.
+ROOT = Path(__file__).resolve().parent.parent
+RESUME_MD_PATH = ROOT / "resume.md"
+MASTER_YAML_PATH = ROOT / "resume_tailor_files" / "master_experience.yaml"
+
+SYSTEM_PROMPT = (
+    "You convert a candidate's master-experience YAML into a clean Markdown "
+    "resume that an automated job-matching scorer reads. Absolute rule: SELECT "
+    "and REPHRASE only what the YAML contains — NEVER invent employers, titles, "
+    "dates, numbers, skills, or achievements. Include the candidate's full breadth "
+    "(this resume is for matching against many jobs, not a one-page tailored "
+    "version): every experience, project, leadership entry, and skill present in "
+    "the YAML. Output ONLY the Markdown resume, no commentary or code fences."
+)
+
+# The exact section structure of resume.md the scorer expects.
+_STRUCTURE = """\
+Produce GitHub-flavored Markdown with these sections, in this order, using the
+YAML's data:
+
+# <Full name>
+
+<City, ST | phone | email | linkedin | github>   (only the contact items present)
+
+## Summary
+<2-4 sentence professional summary drawn from the YAML's summary/tailor notes
+and the strongest evidence; do not invent claims.>
+
+## Education
+<each education entry: school, GPA if present, degree/concentration/minor,
+location, dates, honors if present.>
+
+## Work Experience
+### <Title> — <Org>
+<Location | dates>
+- <one bullet per achievement atom, rephrased faithfully from its what/impact/angles>
+
+## Projects
+### <Name> | <tech/stack if present>
+- <one bullet per achievement atom>
+
+## Leadership Experience
+### <Org / role>
+<dates>
+- <one bullet per achievement atom>
+
+## Technical Skills
+**<Pool>:** <comma-separated items>   (one line per skills pool in the YAML)
+"""
+
+
+def build_prompt(yaml_text: str) -> str:
+    """The user-message prompt: the structure guide + the candidate's YAML."""
+    return (
+        f"{_STRUCTURE}\n\n"
+        "Here is the candidate's master_experience.yaml. Convert it to resume.md "
+        "following the structure above, faithfully and without inventing anything:\n\n"
+        f"```yaml\n{yaml_text}\n```"
+    )
+
+
+def _default_llm_call(system: str, user: str, model: str) -> str:
+    """Real Gemini transport (paid). Only reached on the user's runtime click —
+    never from the build or tests, which inject a fake `llm_call`."""
+    from resume_tailor import llm
+    return llm._call_gemini(system, user, model, temperature=0.2)
+
+
+def _clean(text: str) -> str:
+    """Strip any ```markdown / ``` fences the model wrapped the output in, and
+    guarantee a trailing newline."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", t, flags=re.IGNORECASE).strip()
+    return t + "\n"
+
+
+def generate_resume_md(
+    yaml_text: str,
+    model: str,
+    *,
+    llm_call: Callable[[str, str, str], str] | None = None,
+) -> str:
+    """Return Markdown for resume.md, generated from `yaml_text` with `model`.
+
+    `llm_call(system, user, model) -> str` is injectable; the default uses the
+    résumé-tailor Gemini transport (a paid call). The build/tests always pass a
+    fake so no real credit is spent.
+    """
+    call = llm_call or _default_llm_call
+    out = call(SYSTEM_PROMPT, build_prompt(yaml_text), model)
+    if not isinstance(out, str) or not out.strip():
+        raise ValueError("The model returned no resume text.")
+    return _clean(out)
+
+
+def write_resume_md(text: str, path: Path | None = None) -> Path:
+    """Write resume.md, backing up any existing file to resume.md.bak first."""
+    p = Path(path) if path is not None else RESUME_MD_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if p.exists():
+        shutil.copy2(p, p.with_name(p.name + ".bak"))
+    p.write_text(text, encoding="utf-8")
+    return p

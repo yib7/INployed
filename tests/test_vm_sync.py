@@ -77,3 +77,21 @@ def test_run_cmd_invokes_subprocess(monkeypatch):
     res = vm_sync.run_cmd(["gcloud", "compute", "ssh"])
     assert seen["cmd"] == ["gcloud", "compute", "ssh"]
     assert res.returncode == 0
+
+
+def test_changed_vm_files_ignores_multichoice_reorder():
+    before = {"remote_types": ["Hybrid", "On-site"]}
+    after = {"remote_types": ["On-site", "Hybrid"]}
+    assert vm_sync.changed_vm_files(before, after) == set()
+
+
+def test_changed_vm_files_ignores_keyword_whitespace_only():
+    before = {"keywords": ['"a"', '"b"']}
+    after = {"keywords": [' "a" ', '"b"  ']}
+    assert vm_sync.changed_vm_files(before, after) == set()
+
+
+def test_changed_vm_files_flags_real_remote_type_change():
+    before = {"remote_types": ["Hybrid"]}
+    after = {"remote_types": ["Hybrid", "Remote"]}
+    assert vm_sync.changed_vm_files(before, after) == {"search_config.json"}

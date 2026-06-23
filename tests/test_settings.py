@@ -261,3 +261,14 @@ def test_storage_location_maps_each_target():
     assert settings.storage_location(by_key["stage1_model"]) == "scoring_config.json"
     assert settings.storage_location(by_key["min_score"]) == "config.json"
     assert settings.STORAGE_LABELS["apply"] == "apply_config.json"
+
+
+def test_vm_enabled_defaults_false(tmp_path):
+    assert settings.load(_targets(tmp_path))["vm_enabled"] is False
+
+
+def test_vm_enabled_is_a_config_bool_in_vm_section():
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["vm_enabled"]
+    assert f.type == "bool" and f.target == "config"
+    assert f.section == "VM (cloud scraper)"
+    assert settings.validate({"vm_enabled": True}) == {}

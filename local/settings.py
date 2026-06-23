@@ -240,6 +240,11 @@ SETTINGS_SCHEMA: list[Field] = [
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your
     # existing `gcloud auth login` — no SSH password or key is ever stored.
+    # vm_enabled is the section master switch (local, non-secret bool in config.json):
+    # off (the default) hides the whole VM area in the GUI and silences push prompts.
+    Field("vm_enabled", "Enable VM features", "bool", False, "VM (cloud scraper)", "config",
+          help="Turn on to manage a cloud scraper VM from here (schedule, pause, push config). "
+               "Off hides all VM settings and never prompts to push — leave off if you don't use a VM."),
     Field("VM_INSTANCE", "VM instance name", "str", "", "VM (cloud scraper)", "env",
           optional=True,
           help="GCP instance running the scraper (e.g. scraper-vm). Blank = VM tab off."),

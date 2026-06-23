@@ -194,6 +194,50 @@ def test_choice_validate_gemini_auth():
     assert "gemini_auth" in settings.validate({"gemini_auth": "nope"})
 
 
+# --- résumé-tailor model dropdowns + editable_choice + slider hint -------------
+
+def test_gemini_models_constant_lists_3x():
+    assert "gemini-3.1-flash-lite" in settings.GEMINI_MODELS
+    assert "gemini-3.5-flash" in settings.GEMINI_MODELS
+    assert "gemini-3.1-pro-preview" in settings.GEMINI_MODELS
+
+
+def test_resume_tailor_model_fields_present_and_editable():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for k in ("RESUME_TAILOR_MODEL_FLASH_LITE", "RESUME_TAILOR_MODEL_FLASH",
+              "RESUME_TAILOR_MODEL_PRO"):
+        assert k in by_key, k
+        f = by_key[k]
+        assert f.target == "env"
+        assert f.type == "editable_choice"
+        assert "gemini-3.1-pro-preview" in f.choices
+
+
+def test_scorer_models_are_editable_choice():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert by_key["stage1_model"].type == "editable_choice"
+    assert by_key["stage2_model"].type == "editable_choice"
+
+
+def test_editable_choice_accepts_a_custom_id_not_in_choices():
+    # editable: a custom model id that isn't in the dropdown still validates.
+    assert settings.validate({"stage1_model": "gemini-9-custom"}) == {}
+
+
+def test_slider_flag_on_bounded_ints_but_not_min_score():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert by_key["followup_days"].slider is True
+    assert by_key["stage2_threshold"].slider is True
+    assert by_key["min_score"].slider is False  # stays a plain entry
+
+
+def test_resume_tailor_model_roundtrips_to_dotenv(tmp_path):
+    targets = _all_targets_env(tmp_path)
+    settings.save({"RESUME_TAILOR_MODEL_PRO": "gemini-3.1-pro-preview"}, targets)
+    assert settings.load(targets)["RESUME_TAILOR_MODEL_PRO"] == "gemini-3.1-pro-preview"
+    assert "RESUME_TAILOR_MODEL_PRO=gemini-3.1-pro-preview" in (tmp_path / ".env").read_text("utf-8")
+
+
 def test_gemini_auth_saves_to_config_target(tmp_path):
     targets = _all_targets_env(tmp_path)
     settings.save({"gemini_auth": "api_key"}, targets)

@@ -49,11 +49,17 @@ class Field:
     secret: bool = False        # mask in UI; never displayed/echoed; blank-on-save keeps existing
     path_kind: str = "dir"      # for type=="path": "dir" picks a folder, "file" picks a file
     optional: bool = False      # UI hint: blank is fine (no value needed to run)
+    slider: bool = False        # UI hint: render a bounded int as a drag slider (needs min+max)
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
 # the literal environment-variable name, so values round-trip straight to .env.
 ENV_TARGETS = {"env"}
+
+# Gemini model ids offered in the model dropdowns (the recent 3.x family). These
+# are EDITABLE dropdowns ("editable_choice"): pick one or type a custom id, so a
+# new model id is never blocked — and a wrong pick can't silently break scoring.
+GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro-preview")
 
 
 # Backing files, keyed by Field.target. The Scraper/Scoring sections write the
@@ -73,7 +79,8 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("min_score", "Min score to highlight", "int", 4, "Dashboard", "config",
           help="Jobs at/above this score are surfaced as high-priority.", min=1, max=5),
     Field("followup_days", "Follow-up after (days)", "int", 5, "Dashboard", "config",
-          help="Days after applying before the tracker nudges a follow-up.", min=1, max=60),
+          help="Days after applying before the tracker nudges a follow-up.", min=1, max=60,
+          slider=True),
     Field("gdrive_root", "Job data folder", "path", "", "Dashboard", "config",
           help="Folder the dashboard reads scored CSVs from."),
     Field("mtime_stable_seconds", "Wait before opening a new file (seconds)", "int", 30,
@@ -103,7 +110,7 @@ SETTINGS_SCHEMA: list[Field] = [
           min=1, max=500),
     Field("exclude_window_days", "Re-scrape exclusion (days)", "int", 14, "Scraper", "search",
           help="Skip postings scraped within this many days (avoids re-billing live jobs).",
-          min=0, max=90),
+          min=0, max=90, slider=True),
     Field("location", "Location", "str", "United States", "Scraper", "search",
           help="Geographic location filter for searches."),
     Field("country", "Country code", "str", "US", "Scraper", "search",
@@ -121,27 +128,30 @@ SETTINGS_SCHEMA: list[Field] = [
                    "Mid-Senior level", "Director", "Executive")),
 
     # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
-    Field("stage1_model", "Stage-1 model", "str", "gemini-3.1-flash-lite", "Scoring", "scoring",
-          help="Advanced: cheap model that scores every surviving job 1-5. Leave as-is "
-               "unless you know the exact model ID your account can use — a wrong name "
-               "silently breaks scoring."),
-    Field("stage2_model", "Stage-2 model", "str", "gemini-3.5-flash", "Scoring", "scoring",
-          help="Advanced: deeper model for jobs that pass the Stage-2 threshold. Leave "
-               "as-is unless you know the exact model ID your account can use — a wrong "
-               "name silently breaks scoring."),
+    Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.1-flash-lite",
+          "Scoring", "scoring", choices=GEMINI_MODELS,
+          help="Advanced: cheap model that scores every surviving job 1-5. Pick from the "
+               "list or type a model ID your account can use — a wrong name silently "
+               "breaks scoring."),
+    Field("stage2_model", "Stage-2 model", "editable_choice", "gemini-3.5-flash",
+          "Scoring", "scoring", choices=GEMINI_MODELS,
+          help="Advanced: deeper model for jobs that pass the Stage-2 threshold. Pick from "
+               "the list or type a model ID your account can use — a wrong name silently "
+               "breaks scoring."),
     Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
-          help="Parallel Stage-1 LLM calls.", min=1, max=50),
+          help="Parallel Stage-1 LLM calls.", min=1, max=50, slider=True),
     Field("stage2_concurrency", "Stage-2 concurrency", "int", 4, "Scoring", "scoring",
-          help="Parallel Stage-2 LLM calls.", min=1, max=50),
+          help="Parallel Stage-2 LLM calls.", min=1, max=50, slider=True),
     Field("stage2_threshold", "Stage-2 threshold", "int", 4, "Scoring", "scoring",
-          help="Stage-1 score at/above which a job gets deep Stage-2 analysis.", min=1, max=5),
+          help="Stage-1 score at/above which a job gets deep Stage-2 analysis.", min=1, max=5,
+          slider=True),
     Field("max_scored_per_run", "Max scored per run", "int", 800, "Scoring", "scoring",
           help="Spend guard: cap on LLM-scored jobs per run.", min=1, max=5000),
     Field("rescore_cap", "Rescore cap", "int", 200, "Scoring", "scoring",
           help="Spend guard: cap on failed/missing master rows retried per run.", min=0, max=5000),
     Field("min_filter_years", "Min required years cutoff", "int", 1, "Scoring", "scoring",
           help="Roles requiring at least this many years of experience are filtered out.",
-          min=0, max=20),
+          min=0, max=20, slider=True),
 
     # --- Resume: artifact toggles + cover-letter tone (local/config.json) ---
     # Line budgets / required sections stay where they already are: the
@@ -212,6 +222,20 @@ SETTINGS_SCHEMA: list[Field] = [
           help="'vertex' bills your Google Cloud project (above). 'api_key' uses the single "
                "Gemini API key (above) - pick this if you don't have a Cloud project.",
           choices=("vertex", "api_key")),
+
+    # --- Resume tailor models: which Gemini model each tailoring stage uses, ----
+    # written to .env (read by local/resume_tailor/config.py as RESUME_TAILOR_MODEL_*).
+    # Editable dropdowns: pick a 3.x model or type a custom id.
+    Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model — fast (selection)",
+          "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
+          help="Cheapest model — the bullet-selection / quick stages of tailoring."),
+    Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model — standard (writing)",
+          "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
+          help="Default model — re-phrasing bullets and the cover letter."),
+    Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
+          "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
+          help="Highest-quality tier — set to gemini-3.1-pro-preview for the strongest "
+               "writing (slower / pricier)."),
 ]
 
 
@@ -286,6 +310,9 @@ def _coerce_ok(f: Field, value: Any) -> bool:
         return isinstance(value, str)
     if f.type == "choice":
         return value in f.choices
+    if f.type == "editable_choice":
+        # editable: any string is allowed (pick from choices OR type a custom id).
+        return isinstance(value, str)
     if f.type in ("list", "multichoice"):
         return isinstance(value, list) and all(isinstance(v, str) for v in value)
     return True

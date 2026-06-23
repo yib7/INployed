@@ -250,3 +250,14 @@ def test_path_field_with_spaces_roundtrips_through_dotenv(tmp_path):
     out = "C:\\Generated Resumes\\out"
     settings.save({"RESUME_TAILOR_OUTPUT": out}, targets)
     assert settings.load(targets)["RESUME_TAILOR_OUTPUT"] == out
+
+
+def test_storage_location_maps_each_target():
+    """Every field can report the friendly filename its value is saved to, so the
+    config GUI can show a 'stored in X' tag next to it."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert settings.storage_location(by_key["BRIGHT_DATA_API_TOKEN"]) == ".env"
+    assert settings.storage_location(by_key["keywords"]) == "search_config.json"
+    assert settings.storage_location(by_key["stage1_model"]) == "scoring_config.json"
+    assert settings.storage_location(by_key["min_score"]) == "config.json"
+    assert settings.STORAGE_LABELS["apply"] == "apply_config.json"

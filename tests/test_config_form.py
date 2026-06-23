@@ -142,3 +142,12 @@ def test_on_saved_callback_fires(root, tmp_path):
         tk.Frame(root), targets=_targets(tmp_path), on_saved=lambda: fired.append(1))
     assert form.save() is True
     assert fired == [1]
+
+
+def test_every_field_shows_storage_label(root, tmp_path):
+    """Each rendered field carries a muted tag naming the file its value lands in
+    (.env / config.json / search_config.json / ...), so a user can find it."""
+    form = _form(root, tmp_path)
+    assert form._storage_labels["BRIGHT_DATA_API_TOKEN"].cget("text").find(".env") >= 0
+    assert "search_config.json" in form._storage_labels["keywords"].cget("text")
+    assert "config.json" in form._storage_labels["min_score"].cget("text")

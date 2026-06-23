@@ -187,16 +187,23 @@ FONT_BADGE = ("Segoe UI Semibold", 9)
 # Per-row coloring: recommendation wins; otherwise alternating stripe.
 # The tracker tab reuses the palette for application statuses, plus an
 # orange "due" tag for follow-ups that are overdue.
+# Blue = "a tailored résumé exists" (High Score/All Jobs) and "applied" (Tracker);
+# red = "rejected" (Tracker). Dark tints keep light foreground text readable.
+BLUE_ROW_BG = "#11283a"
+RED_ROW_BG = "#3a1414"
+
 TAG_STYLES = {
     "apply":    {"background": "#102a1e", "foreground": GOOD},
     "consider": {"background": "#2a2410", "foreground": AMBER},
     "skip":     {"background": SURFACE,   "foreground": MUTED},
     "even":     {"background": SURFACE,   "foreground": TEXT},
     "odd":      {"background": SURFACE_ALT, "foreground": TEXT},
-    "applied":      {"background": SURFACE,   "foreground": TEXT},
+    # A tailored résumé already exists for this job (listing tabs).
+    "has_resume":   {"background": BLUE_ROW_BG, "foreground": ACCENT_HOVER},
+    "applied":      {"background": BLUE_ROW_BG, "foreground": ACCENT_HOVER},
     "interviewing": {"background": "#2a2410", "foreground": AMBER},
     "offer":        {"background": "#102a1e", "foreground": GOOD},
-    "rejected":     {"background": SURFACE,   "foreground": MUTED},
+    "rejected":     {"background": RED_ROW_BG, "foreground": DANGER},
     "due":          {"background": "#2e1d12", "foreground": "#fdba74"},
 }
 
@@ -726,7 +733,8 @@ def sort_treeview(tv: ttk.Treeview, col: str) -> None:
     tv.heading(col, text=label + (" ▲" if reverse else " ▼"))
 
 
-def populate(tv: ttk.Treeview, df: pd.DataFrame, columns: list[str]) -> None:
+def populate(tv: ttk.Treeview, df: pd.DataFrame, columns: list[str],
+             resume_ids: "set[str] | frozenset[str]" = frozenset()) -> None:
     tv.delete(*tv.get_children())
     if df.empty:
         return
@@ -744,8 +752,12 @@ def populate(tv: ttk.Treeview, df: pd.DataFrame, columns: list[str]) -> None:
     )
     insert = tv.insert
     for i in range(n):
-        rec = recos[i]
-        tag = rec if rec in ("apply", "consider", "skip") else ("odd" if i % 2 else "even")
+        # A tailored résumé already exists -> blue, wins over the reco color.
+        if ids[i] in resume_ids:
+            tag = "has_resume"
+        else:
+            rec = recos[i]
+            tag = rec if rec in ("apply", "consider", "skip") else ("odd" if i % 2 else "even")
         insert("", "end", iid=ids[i], values=[cl[i] for cl in col_lists], tags=(tag,))
 
 
@@ -1193,6 +1205,14 @@ class App:
                 pass
         setattr(self, key, self.root.after(ms, fn))
 
+    def _resume_ids(self) -> set[str]:
+        """Job ids that already have a tailored résumé recorded — colored blue in
+        the listing tabs. Cosmetic, so never let a DB hiccup break the view."""
+        try:
+            return set(self.registry.resume_paths())
+        except Exception:  # noqa: BLE001
+            return set()
+
     def _apply_filters(self) -> None:
         """All Jobs tab: filter over the full dataset."""
         col = LABEL_TO_COLUMN.get(self.searchcol_var.get(), self.searchcol_var.get())
@@ -1201,7 +1221,7 @@ class App:
             self.day_var.get(), self.runlabel_var.get(), self.reco_var.get(),
             self.easy_var.get(), col,
         )
-        populate(self.tv_all, view, [c for c, _ in ALL_COLUMNS])
+        populate(self.tv_all, view, [c for c, _ in ALL_COLUMNS], self._resume_ids())
         if hasattr(self, "lbl_all"):
             total = 0 if self.df.empty else len(self.df)
             self.lbl_all.config(text=f"{len(view)} of {total} shown")
@@ -1214,7 +1234,7 @@ class App:
             self.day_h_var.get(), self.runlabel_h_var.get(), self.reco_h_var.get(),
             self.easy_h_var.get(), col_h,
         )
-        populate(self.tv_high, view, [c for c, _ in HIGH_SCORE_COLUMNS])
+        populate(self.tv_high, view, [c for c, _ in HIGH_SCORE_COLUMNS], self._resume_ids())
         if hasattr(self, "lbl_high"):
             base = 0 if self.df_high.empty else len(self.df_high)
             self.lbl_high.config(

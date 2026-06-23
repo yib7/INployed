@@ -1,6 +1,6 @@
 # CLAUDE.md — project guidance
 
-Job Discovery & Résumé-Tailoring Pipeline. Three subsystems: `scraper.py` (Bright Data scrape) →
+INployed — a Job Discovery & Résumé-Tailoring Pipeline. Three subsystems: `scraper.py` (Bright Data scrape) →
 `score_jobs.py` (two-stage Gemini scorer) → `local/ui.py` (Tkinter dashboard) + `local/resume_tailor/`
 (LaTeX résumé engine). See `docs/ARCHITECTURE.md` for the codebase tour and `docs/HANDOFF.md` for ops.
 

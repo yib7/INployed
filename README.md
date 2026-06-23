@@ -1,4 +1,6 @@
-# Job Discovery & Résumé-Tailoring Pipeline
+# INployed
+
+> Job discovery & résumé tailoring, end to end.
 
 [![CI](https://github.com/yib7/resume_tailor_helper/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/resume_tailor_helper/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -77,11 +79,24 @@ gcloud auth application-default login
 other option — see [Configure everything from one window](#configure-everything-from-one-window-no-file-editing).
 
 ### 3. Tell the tool about you
-Edit **`resume_tailor_files/master_experience.yaml`** — the single source of truth.
-Store your experience as *atoms* (what / how / scope / impact / angles), not finished
-sentences, and quantify everything. The pipeline **selects** from this file per job;
-it never fabricates. See the heavily-commented
-[`master_experience.example.yaml`](resume_tailor_files/master_experience.example.yaml).
+Your experience lives in **`resume_tailor_files/master_experience.yaml`** — the single
+source of truth the pipeline **selects** from per job (it never fabricates). You don't
+have to edit the file by hand: open the dashboard's **Resume Data** tab to add / edit /
+delete entries and achievements with inline tips, a **Validate** button, and a **Revert
+to opening state** safety net. (The heavily-commented
+[`master_experience.example.yaml`](resume_tailor_files/master_experience.example.yaml)
+shows the structure if you prefer the file.)
+
+**Tips for a résumé the tailor can use well** (these maximize match quality):
+- Store **facts as atoms** — *what happened / how / scope / impact* — not finished
+  sentences. The tailor re-angles each atom to fit a job.
+- **Quantify** everything you can (%, $, counts, time saved). Numbers win.
+- Tag each atom with **angles** (e.g. `backend`, `llm`, `data-pipeline`) so it matches a
+  posting's keywords.
+- Hold **more than fits on one page** — selection picks the best evidence per job.
+- Click **Check setup** in the dashboard any time to lint your résumé data + apply
+  answers and get a clear error if something's malformed (so the pipeline never breaks
+  silently).
 
 ---
 
@@ -156,11 +171,31 @@ a file, and an absent file falls back to built-in defaults — so the VM keeps
 running unchanged.
 
 ### Apply to a job (semi-automated, in Chrome)
-Every tailored résumé folder gets an `apply_data.json` (candidate basics,
-education, document paths, tailored bullets, and a `standard_answers` block). To apply:
+Every tailored résumé folder gets an `apply_data.json` (candidate basics, education,
+document paths, tailored bullets, a flat `standard_answers` block, and the full
+`answer_bank` — your reusable screening answers). To apply:
+
 1. Tailor the résumé for the job (the **Tailor resume** button).
-2. Click **Apply** in the dashboard — it opens the posting in Chrome and copies the résumé PDF path to your clipboard.
-3. In Claude-in-Chrome, run the **apply-to-job** skill — it reads `apply_data.json`, fills the Greenhouse / Lever / Ashby / Workday / generic form, and **stops for you to review and submit. It never auto-submits.**
+2. Click **Apply** in the dashboard — it opens the posting in Chrome and copies the
+   résumé PDF path to your clipboard. *(This only opens the posting; it does not start
+   Claude — see the next step.)*
+3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome
+   extension connected**, tell Claude to run the **apply-to-job** skill. It reads
+   `apply_data.json` and fills the Greenhouse / Lever / Ashby / Workday / generic form
+   **page by page, advancing to the next page until the final Submit screen — then stops
+   for you to review and send.**
+
+> **Why "nothing happens" if you tried it on Google:** apply-to-job is a *Claude* skill,
+> not a Google/Gemini feature. It only runs inside Claude with the Chrome extension; you
+> trigger it by asking Claude, after tailoring the résumé so `apply_data.json` exists.
+
+**What it will and won't do (safety):** it fills every field it can and flags the rest;
+it **never logs in, never creates accounts, never enters passwords or email verification
+codes, never solves CAPTCHAs, and never clicks the final submit.** When it hits a login /
+account / verification / CAPTCHA wall it pauses and asks you to do that one step, then
+resumes. Any question it can't answer is captured as a **needs-review** entry you can
+finish in the **Apply Answers** tab — where you also mark answers *fixed* (never changed)
+or *open-ended* (the skill may adapt them per job).
 
 CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
 
@@ -209,9 +244,11 @@ scraper.py              LinkedIn scrape (Bright Data)
 score_jobs.py           two-stage Gemini relevance scorer
 scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)
 scripts/setup.ps1       Fast/Long setup wizard
-local/ui.py             Tkinter dashboard
+local/ui.py             Tkinter dashboard (triage, Resume Data + Apply Answers editors, Settings)
 local/configure.pyw     standalone config GUI (settings.py schema + config_form.py)
-local/resume_tailor/    résumé/cover-letter/ATS/prep engine
+local/resume_data_form.py   Resume Data tab editor (master_experience.yaml)
+local/answers_form.py   Apply Answers tab editor (apply_answers.json)
+local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
 docs/                   ARCHITECTURE (code tour), HANDOFF (operator guide), CREDITS

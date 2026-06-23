@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 from PySide6 import QtWidgets
 
 from qt import main_window as mw
@@ -26,6 +27,57 @@ def test_scraper_and_scorer_cmd(qtbot):
     assert w.scraper_cmd(False)[-1].endswith("scraper.py")
     assert "--max-keywords" in w.scraper_cmd(True)
     assert w.scorer_cmd()[-1].endswith("score_jobs.py")
+
+
+def test_console_python_swaps_pythonw_for_python(monkeypatch):
+    # pythonw has no usable stdout -> children must run on the console python
+    monkeypatch.setattr(mw.os.path, "exists", lambda p: True)
+    assert mw._console_python(r"C:\Py\pythonw.exe").lower().endswith("python.exe")
+    # but only when the sibling python.exe actually exists
+    monkeypatch.setattr(mw.os.path, "exists", lambda p: False)
+    assert mw._console_python(r"C:\Py\pythonw.exe").lower().endswith("pythonw.exe")
+    # a normal interpreter passes straight through
+    assert mw._console_python(r"C:\Py\python.exe").lower().endswith("python.exe")
+
+
+class _FakeProc:
+    def __init__(self, lines, rc):
+        self.stdout = iter(lines)
+        self._rc = rc
+
+    def wait(self):
+        return self._rc
+
+
+def test_scrape_work_success_returns_true(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    monkeypatch.setattr(mw.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc(["ok\n"], 0))
+    assert w._scrape_work(True) is True
+    assert "ok" in (tmp_path / "scrape.log").read_text(encoding="utf-8")
+
+
+def test_scrape_work_raises_with_captured_output_on_failure(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    monkeypatch.setattr(mw.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc(["scraping...\n", "BOOM bad token\n"], 2))
+    with pytest.raises(RuntimeError) as ei:
+        w._scrape_work(True)
+    msg = str(ei.value)
+    assert "BOOM bad token" in msg and "exit 2" in msg  # real error surfaced, not "check the console"
+    assert "BOOM bad token" in (tmp_path / "scrape.log").read_text(encoding="utf-8")
+
+
+def test_after_scrape_error_shows_dialog(qtbot, monkeypatch):
+    w = _win(qtbot)
+    shown = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: shown.setdefault("msg", a)))
+    w._scraping = True
+    w._after_scrape_error(RuntimeError("scraper.py failed (exit 1).\n\ndetails"))
+    assert shown.get("msg") and w._scraping is False
 
 
 def test_preview_visible_only_on_job_tabs(qtbot):

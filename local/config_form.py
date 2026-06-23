@@ -85,6 +85,7 @@ class ConfigForm:
         self.multi: dict[str, dict[str, tk.BooleanVar]] = {}   # multichoice -> {choice: var}
         self.clear_vars: dict[str, tk.BooleanVar] = {}         # secret -> "clear it" toggle
         self._secret_labels: dict[str, ttk.Label] = {}         # secret -> status label
+        self._storage_labels: dict[str, ttk.Label] = {}        # field -> "stored in X" tag
         self.status: ttk.Label | None = None
 
         style = ttk.Style(parent)
@@ -137,8 +138,15 @@ class ConfigForm:
     def _add_field(self, body: ttk.Frame, f: settings.Field, value, secret_set: dict,
                    row: int) -> int:
         anchor = "nw" if f.type in ("list", "multichoice") else "w"
-        ttk.Label(body, text=f.label).grid(
-            row=row, column=0, sticky=anchor, padx=(8, 12), pady=(6, 0))
+        # Label + a muted "(filename)" tag so the user can see — and go find — the
+        # exact file each value is saved to (e.g. ".env" / "search_config.json").
+        labcell = ttk.Frame(body)
+        labcell.grid(row=row, column=0, sticky=anchor, padx=(8, 12), pady=(6, 0))
+        ttk.Label(labcell, text=f.label).pack(side="left")
+        tag = ttk.Label(labcell, text=f"({settings.storage_location(f)})",
+                        style="Muted.TLabel")
+        tag.pack(side="left", padx=(6, 0))
+        self._storage_labels[f.key] = tag
         widget = self._make_widget(body, f, value, secret_set)
         widget.grid(row=row, column=1, sticky="w", pady=(6, 0))
         row += 1

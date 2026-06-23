@@ -134,6 +134,55 @@ def test_multi_achievement_ids(master):
     assert "multi_proj_2" in ids
 
 
+# --- edit / delete ops (full editor; each write makes a .bak) ------------------
+
+def test_update_atom_changes_field_and_keeps_comments(master):
+    master_edit.update_atom("bigco_a", {"what": "rebuilt the thing"})
+    assert "# HEADER COMMENT - must survive" in master.read_text(encoding="utf-8")
+    assert assets.atoms_by_id()["bigco_a"]["what"] == "rebuilt the thing"
+
+
+def test_delete_atom_removes_only_that_atom(master):
+    master_edit.delete_atom("p1")
+    ids = set(assets.atoms_by_id())
+    assert "p1" not in ids
+    assert "bigco_a" in ids  # others untouched
+
+
+def test_delete_entry_removes_block(master):
+    master_edit.delete_entry("experience", 0)
+    assert assets.blocks()["experience"] == []
+    assert "bigco_a" not in assets.atoms_by_id()
+
+
+def test_update_entry_sets_field(master):
+    master_edit.update_entry("experience", 0, {"title": "Senior Eng"})
+    assert assets.blocks()["experience"][0]["title"] == "Senior Eng"
+
+
+def test_add_atom_appends_with_unique_id(master):
+    master_edit.add_atom("projects", 0, {"what": "new bullet", "angles": ["z"]})
+    proj = assets.blocks()["projects"][0]
+    assert len(proj["atoms"]) == 2  # p1 + the new one
+    assert "p1" in proj["atoms"]
+
+
+def test_each_edit_write_makes_bak(master):
+    master_edit.update_atom("bigco_a", {"what": "x"})
+    assert master.with_name(master.name + ".bak").exists()
+
+
+@pytest.mark.parametrize("op,args", [
+    ("delete_entry", ("experience", 9)),
+    ("update_entry", ("bogus", 0, {})),
+    ("update_atom", ("no_such_atom", {"what": "x"})),
+    ("delete_atom", ("no_such_atom",)),
+])
+def test_edit_ops_raise_on_bad_target(master, op, args):
+    with pytest.raises(ValueError):
+        getattr(master_edit, op)(*args)
+
+
 @pytest.mark.parametrize("section,data,msg", [
     ("projects", {"name": "", "dates": "2025",
                   "achievements": [{"what": "x", "angles": ["a"]}]}, "name is required"),

@@ -68,6 +68,23 @@ def test_atom_impact_is_editable_and_saves(root, master_tmp):
     assert "cut runtime 40%" in master_tmp.read_text(encoding="utf-8")
 
 
+def test_atom_input_boxes_are_uniform_width(root, master_tmp):
+    """what / angles / impact must align to one width — they share grid column 1
+    with sticky=ew and a weighted column, so Entry vs Text char-width metrics
+    can't make the impact box render wider than the others."""
+    from tkinter import ttk
+    ed = _editor(root, master_tmp)
+    imp = ed._atom_impact["a1"]
+    fr = imp.master                                   # the atom row frame
+    assert "e" in str(imp.grid_info()["sticky"]) and "w" in str(imp.grid_info()["sticky"])
+    assert int(fr.grid_columnconfigure(1)["weight"]) == 1
+    entries = [w for w in fr.grid_slaves(column=1) if isinstance(w, ttk.Entry)]
+    assert entries, "no what/angles entries found in the input column"
+    for w in entries:
+        st = str(w.grid_info()["sticky"])
+        assert "e" in st and "w" in st                # entries stretch to the same width
+
+
 def test_impact_text_uses_theme_font_not_monospace(root, master_tmp):
     """The impact boxes (inline + the Add-achievement dialog) must use the same
     font as every other field, not Tk's default monospace TkFixedFont."""

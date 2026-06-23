@@ -195,28 +195,32 @@ class ResumeDataEditor:
         (otherwise it falls back to Tk's monospace TkFixedFont)."""
         return tk.Text(parent, width=width, height=height, bg=self._field_bg,
                        fg=self._fg, insertbackground=self._fg, relief="flat",
-                       highlightthickness=1, highlightbackground=self._bg,
+                       highlightthickness=1, highlightbackground="#2a3344",
                        wrap="word", font=self._font)
 
     def _atom_block(self, parent: ttk.Widget, atom: dict) -> None:
         aid = str(atom.get("id", ""))
         fr = ttk.Frame(parent)
         fr.pack(fill="x", pady=2, padx=(8, 0))
+        # The input column stretches so what / angles / impact all render at the
+        # SAME width (sticky=ew) — Entry vs Text char-width metrics differ, so a
+        # shared weighted column is what keeps them uniform.
+        fr.columnconfigure(1, weight=1)
         ttk.Label(fr, text="what").grid(row=0, column=0, sticky="w")
         wv = tk.StringVar(value=str(atom.get("what", "") or ""))
         self._atom_vars[(aid, "what")] = wv
         self._atom_orig[(aid, "what")] = wv.get()
-        ttk.Entry(fr, textvariable=wv, width=74).grid(row=0, column=1, sticky="w", padx=4)
+        ttk.Entry(fr, textvariable=wv).grid(row=0, column=1, sticky="ew", padx=4)
         ttk.Label(fr, text="angles").grid(row=1, column=0, sticky="w")
         av = tk.StringVar(value=", ".join(str(x) for x in (atom.get("angles") or [])))
         self._atom_vars[(aid, "angles")] = av
         self._atom_orig[(aid, "angles")] = av.get()
-        ttk.Entry(fr, textvariable=av, width=74).grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Entry(fr, textvariable=av).grid(row=1, column=1, sticky="ew", padx=4)
         ttk.Label(fr, text="impact").grid(row=2, column=0, sticky="nw")
         imp_lines = "\n".join(str(x) for x in (atom.get("impact") or []))
-        imp = self._impact_text(fr, width=74, height=3)
+        imp = self._impact_text(fr, width=10, height=3)   # width yields to sticky=ew
         imp.insert("1.0", imp_lines)
-        imp.grid(row=2, column=1, sticky="w", padx=4, pady=(2, 0))
+        imp.grid(row=2, column=1, sticky="ew", padx=4, pady=(2, 0))
         self._atom_impact[aid] = imp
         self._atom_impact_orig[aid] = imp_lines
         ttk.Button(fr, text="Delete", command=lambda a=aid: self._delete_atom(a)).grid(
@@ -379,16 +383,18 @@ class ResumeDataEditor:
         win.title("Add achievement")
         win.transient(self._top())
         win.grab_set()
+        win.columnconfigure(1, weight=1)  # all three inputs stretch to one width
         ttk.Label(win, text="What (required)").grid(row=0, column=0, sticky="w", padx=8, pady=(8, 2))
         what_v = tk.StringVar()
-        ttk.Entry(win, textvariable=what_v, width=64).grid(row=0, column=1, padx=8, pady=(8, 2))
+        ttk.Entry(win, textvariable=what_v, width=64).grid(
+            row=0, column=1, sticky="ew", padx=8, pady=(8, 2))
         ttk.Label(win, text="Angles (comma-separated, required)").grid(
             row=1, column=0, sticky="w", padx=8, pady=2)
         ang_v = tk.StringVar()
-        ttk.Entry(win, textvariable=ang_v, width=64).grid(row=1, column=1, padx=8, pady=2)
+        ttk.Entry(win, textvariable=ang_v, width=64).grid(row=1, column=1, sticky="ew", padx=8, pady=2)
         ttk.Label(win, text="Impact (one per line)").grid(row=2, column=0, sticky="nw", padx=8, pady=2)
-        imp_txt = self._impact_text(win, width=50, height=3)
-        imp_txt.grid(row=2, column=1, padx=8, pady=2)
+        imp_txt = self._impact_text(win, width=10, height=3)  # width yields to sticky=ew
+        imp_txt.grid(row=2, column=1, sticky="ew", padx=8, pady=2)
 
         def _ok():
             what = what_v.get().strip()

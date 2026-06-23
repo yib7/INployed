@@ -516,6 +516,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _after_scrape(self, _result) -> None:
         self._scraping = False
+        # A local scrape writes to the repo dir, not the synced Drive folder this
+        # window was opened against — fold the new scored run file(s) into the
+        # sources so the freshly scraped jobs actually appear.
+        for p in jobsdata.local_run_files():
+            if p not in self.csv_paths:
+                self.csv_paths.append(p)
         self.reload_data()
         self._set_status("Scrape + score complete — dashboard refreshed.")
 

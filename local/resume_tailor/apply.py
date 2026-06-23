@@ -125,8 +125,10 @@ def _summary(ctx: Dict[str, Any]) -> str:
         lines.append(f"  Cover     : {ctx['cover_letter_pdf']}")
     lines.append(f"  Folder    : {ctx.get('generated_dir', '')}")
     lines.append(
-        "  Reminder  : Run the apply-to-job skill in Claude-in-Chrome to fill the "
-        "form, then review every field. Submission is left to you."
+        "  Reminder  : This prints/opens the posting only — it does not start Claude. "
+        "In Claude (with the Chrome extension) run the apply-to-job skill: it fills "
+        "every safe field across all pages up to the final Submit screen, then stops "
+        "for you to review and send. It never logs in, never creates accounts, never submits."
     )
     return "\n".join(lines)
 

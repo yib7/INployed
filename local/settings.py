@@ -247,7 +247,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "Off hides all VM settings and never prompts to push — leave off if you don't use a VM."),
     Field("VM_INSTANCE", "VM instance name", "str", "", "VM (cloud scraper)", "env",
           optional=True,
-          help="GCP instance running the scraper (e.g. scraper-vm). Blank = VM tab off."),
+          help="GCP instance running the scraper (e.g. scraper-vm). Blank = VM actions disabled."),
     Field("VM_ZONE", "VM zone", "str", "", "VM (cloud scraper)", "env", optional=True,
           help="Compute zone, e.g. us-east1-c."),
     Field("VM_PROJECT", "GCP project", "str", "", "VM (cloud scraper)", "env", optional=True,

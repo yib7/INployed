@@ -1047,6 +1047,9 @@ class App:
         # grouped by section. Save validates then writes config.json / .env.
         self._build_settings_tab(nb)
 
+        # Tab 8 — VM: push config/schedule/pause to the cloud scraper via gcloud.
+        self._build_vm_tab(nb)
+
         # Details pane (between the notebook and the action bar): the model's
         # stage-2 analysis — reason, strengths, gaps — plus salary/applicants
         # and a JD snippet for whichever row is selected.
@@ -2008,14 +2011,68 @@ class App:
         form_holder = ttk.Frame(frame)
         form_holder.pack(side="top", fill="both", expand=True)
         self.config_form = ConfigForm(form_holder, on_saved=self._on_settings_saved)
+        # Snapshot of effective settings, to diff against after a save so we can
+        # offer to push VM-relevant changes (updated after every save).
+        self._vm_settings_snapshot = settings.load()
+
+    def _build_vm_tab(self, nb: ttk.Notebook) -> None:
+        """Mount the VM panel: schedule editor, pause-until, and push-to-VM."""
+        from vm_form import VMPanel
+
+        self.tab_vm = frame = ttk.Frame(nb)
+        nb.add(frame, text="VM")
+        self.vm_panel = VMPanel(frame)
+        self.vm_panel.frame.pack(fill="both", expand=True)
 
     def _on_settings_saved(self) -> None:
         """Re-read cached prefs and re-apply the chosen engine after a save."""
         self.min_score = load_min_score()
         self.followup_days = load_followup_days()
         self._apply_auth_env()  # Settings -> Engine may have changed gemini_auth
+        after = settings.load()
+        self._maybe_prompt_vm_push(getattr(self, "_vm_settings_snapshot", after), after)
+        self._vm_settings_snapshot = after
         self.reload_data()
         self._set_status("Settings saved.")
+
+    def _maybe_prompt_vm_push(self, before: dict, after: dict) -> None:
+        """If a saved setting changed a file the VM scraper reads, and a VM is
+        configured, offer to push the updated file(s) up via gcloud."""
+        import vm_sync
+        changed = vm_sync.changed_vm_files(before, after)
+        if not changed:
+            return
+        target = vm_sync.VMTarget.from_env()
+        if not target.configured():
+            return
+        files = ", ".join(sorted(changed))
+        if not messagebox.askyesno(
+            "Push to VM?",
+            f"You changed settings that affect {files} on the VM scraper.\n\n"
+            f"Push the updated file(s) to {target.user}@{target.instance} now?",
+            parent=self.root):
+            return
+        threading.Thread(target=self._vm_push_worker,
+                         args=(target, sorted(changed)), daemon=True).start()
+
+    def _vm_push_worker(self, target, remote_files: list[str]) -> None:
+        import vm_sync
+        remote_to_local = {remote: settings.TARGET_FILES[k]
+                           for k, remote in vm_sync.TARGET_REMOTE_FILE.items()}
+        failures: list[str] = []
+        for remote in remote_files:
+            local = remote_to_local.get(remote)
+            if not local:
+                continue
+            try:
+                res = vm_sync.run_cmd(target.build_scp_cmd(str(local), remote))
+                if getattr(res, "returncode", 0) != 0:
+                    failures.append(f"{remote}: {(res.stderr or '').strip()[:200]}")
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{remote}: {exc}")
+        msg = (f"Pushed to VM: {', '.join(remote_files)}" if not failures
+               else "VM push errors — " + " | ".join(failures))
+        self.root.after(0, lambda: self._set_status(msg))
 
     # ---- interview prep ----
 

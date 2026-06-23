@@ -121,6 +121,27 @@ CRON_TZ=America/New_York
 0 19 * * * ~/run_scraper.sh >> ~/scraper.log 2>&1
 ```
 
+### Manage the VM from the dashboard (no manual SSH)
+The dashboard's **VM** tab drives the VM over `gcloud compute ssh/scp` using your
+existing `gcloud auth login` — it stores only the non-secret connection details
+(instance / zone / project / Linux user) in your git-ignored `.env`, never a
+password or key. Set those in **Settings -> VM (cloud scraper)** first. Then:
+
+- **Schedule:** edit the run times (up to 6/day, >=2 h apart) + daily/weekly/biweekly;
+  *Apply schedule to VM* installs the generated `crontab`. A run is labelled by the
+  hour it starts: **morning / afternoon / evening / night** (`run_labels.py`, shared
+  by `scraper.py`, `score_jobs.py`, and the dashboard; legacy morning/evening data
+  still reads). `run_scraper.sh` now `mkdir`s and rclone-syncs all four label dirs.
+- **Pause:** `~/pause_until` may hold a date (`YYYY-MM-DD`) **or** date+time
+  (`YYYY-MM-DD HH:MM`); `run_scraper.sh` skips runs until then and self-clears. Set
+  it from the VM tab (*Pause VM* / *Resume now*) or by hand:
+  `echo "2026-07-01 09:00" > ~/pause_until`.
+- **Push config:** copy `search_config.json` / `scoring_config.json` up with one
+  click; saving a VM-relevant setting in the dashboard also offers to push it.
+
+`.sh` files are pinned to LF via `.gitattributes` so a Windows checkout's CRLF
+can't break the shebang when scp'd to the VM.
+
 ---
 
 ## 4. How scoring works

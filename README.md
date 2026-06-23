@@ -129,8 +129,19 @@ python local/ui.py        # or double-click local/open_dashboard.pyw
 High-score triage, an application tracker with follow-up nudges, run stats, and the
 **Tailor resume** button (runs in the background so the UI stays responsive).
 
+At-a-glance colors: a job you've already tailored a résumé for is tinted **blue**
+in the High Score / All Jobs lists, and in the **Tracker** an *applied* job is
+**blue** and a *rejected* one is **red**. Right-click any job → **Set status →**
+to mark it applied / interviewing / rejected / offer from any tab. A **Run
+scraper** button (top action bar) kicks off a fresh scrape + score on demand —
+it asks first (a *small test run* or a *full run*) because a scrape costs real
+Bright Data money.
+
 ### Get fresh jobs
-- **On-demand (local):** run your own pipeline, then open the dashboard:
+- **From the dashboard:** click **Run scraper** and choose a *small test run* or a
+  *full run*. It runs `scraper.py` then `score_jobs.py` in the background and
+  refreshes the view when done.
+- **On-demand (local CLI):** run your own pipeline, then open the dashboard:
   ```bash
   python scraper.py                              # full run (needs Bright Data keys in .env)
   python scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
@@ -160,18 +171,44 @@ without touching a file:
   filenames), the résumé output folder and `pdflatex` path (with **Browse…**
   buttons), and which Chrome profile to open links in.
 - **Engine:** which Gemini backend the tailor bills (Vertex project vs API key).
-- **Dashboard / Scraper / Scoring / Résumé / Apply:** scores, follow-up days,
-  search keywords, remote types, spend caps, models, artifact toggles, the
-  standard application answers, and more.
+- **Dashboard / Scraper / Scoring / Résumé:** scores, follow-up days, search
+  keywords, remote types, spend caps, artifact toggles, and more.
+- **Models:** the scorer's two stages **and** all three résumé-tailor stages
+  (fast / standard / deep) are **editable dropdowns** of the recent Gemini 3.x
+  models — pick one or type a custom id.
+- **VM (cloud scraper):** the non-secret connection details for your GCP scraper
+  VM (instance, zone, project, Linux user) — see *Manage the VM* below.
 
 Guard rails keep it hard to break: fixed-choice fields are **dropdowns** (no
-typos), multi-select fields are **checkboxes**, every field has a one-line
-explanation, numbers are range-checked on Save, and there's a **Restore
-defaults** button. Edits are written atomically (with a `.bak`) to your
+typos), bounded numbers are **sliders**, multi-select fields are **checkboxes**,
+every field has a one-line explanation, numbers are range-checked on Save, and
+there's a **Restore defaults** button. Edits are written atomically (with a `.bak`) to your
 git-ignored `.env`, `local/config.json`, and `search_config.json` /
 `scoring_config.json` / `apply_config.json`. Environment variables still override
 a file, and an absent file falls back to built-in defaults — so the VM keeps
 running unchanged.
+
+### Manage the VM from the dashboard
+If you run the scraper + scorer on a GCP VM (see [HANDOFF.md](docs/HANDOFF.md)),
+the **VM** tab drives it without SSH-by-hand. Fill the VM section in **Settings**
+first (instance, zone, project, Linux user); these non-secret identifiers are
+saved to your git-ignored `.env`. Authentication is your existing
+`gcloud auth login` — **no SSH password or key is ever stored.** Then the VM tab
+lets you:
+
+- **Schedule:** enter the run times (one `HH:MM` per line, up to 6/day, at least
+  2 h apart) and a frequency (daily / weekly / biweekly). It previews the exact
+  `crontab` and, on **Apply schedule to VM**, installs it over `gcloud compute ssh`.
+  Each run is labelled by time of day — **morning / afternoon / evening / night**.
+- **Pause:** set an *until* date (optionally a time) and **Pause VM** — the scraper
+  skips every run until then, then resumes on its own (no API spend while paused).
+  **Resume now** clears it.
+- **Push config to VM:** copy your current `search_config.json` / `scoring_config.json`
+  up with one click. And whenever you save a setting that the VM reads, the
+  dashboard asks if you'd like to push the changed file(s) right then.
+
+Every VM action asks for confirmation first and runs through `gcloud` — nothing
+happens automatically.
 
 ### Apply to a job (semi-automated, in Chrome)
 Every tailored résumé folder gets an `apply_data.json` (candidate basics, education,
@@ -246,12 +283,16 @@ and the semi-automated apply flow.
 Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
 scraper.py              LinkedIn scrape (Bright Data)
 score_jobs.py           two-stage Gemini relevance scorer
+run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
 scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)
 scripts/setup.ps1       Fast/Long setup wizard
-local/ui.py             Tkinter dashboard (triage, Resume Data + Apply Answers editors, Settings)
+local/ui.py             Tkinter dashboard (triage, Resume Data + Apply Answers editors, Settings, VM)
 local/configure.pyw     standalone config GUI (settings.py schema + config_form.py)
 local/resume_data_form.py   Resume Data tab editor (master_experience.yaml)
 local/answers_form.py   Apply Answers tab editor (apply_answers.json)
+local/vm_schedule.py    pure crontab / pause / run-label generators
+local/vm_sync.py        gcloud ssh/scp argv builders + settings->VM change detection
+local/vm_form.py        VM tab (schedule editor, pause-until, push to VM)
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test

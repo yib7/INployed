@@ -18,36 +18,14 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from . import config, output
-
-# ~/Downloads/Generated_Resumes — same root output.resolve_dir writes into.
-BASE_DIR = config.OUTPUT_ROOT
+from . import apply_data, config, output
 
 
-def resolve_generated_dir(job_id: Optional[str] = None,
-                          company: Optional[str] = None,
-                          title: Optional[str] = None) -> Path:
-    """Locate the folder holding this job's tailored résumé + apply_data.json.
-
-    With company+title, use output.resolve_dir's deterministic location. Else
-    scan BASE_DIR/**/apply_data.json (incl. dated subfolders) for one whose
-    job.job_posting_id matches job_id, returning the most-recently-modified on
-    ties. Raises FileNotFoundError with guidance when nothing matches.
-    """
-    if company and title:
-        folder = output.resolve_dir(company, title)
-        if not (folder / "apply_data.json").exists():
-            raise FileNotFoundError(
-                f"No apply_data.json under {folder}. Tailor this job first "
-                "(Tailor resume), then retry."
-            )
-        return folder
-
-    if not job_id:
-        raise ValueError("Provide either job_id, or both company and title.")
-
+def _scan_by_job_id(job_id: str) -> Optional[Path]:
+    """Most-recently-modified folder whose apply_data.json job_posting_id matches
+    (scanning dated subfolders too), or None."""
     matches: list[tuple[float, Path]] = []
-    base = Path(BASE_DIR)
+    base = Path(config.OUTPUT_ROOT)
     if base.is_dir():
         for meta in base.glob("**/apply_data.json"):
             try:
@@ -61,12 +39,57 @@ def resolve_generated_dir(job_id: Optional[str] = None,
                     mtime = 0.0
                 matches.append((mtime, meta.parent))
     if not matches:
-        raise FileNotFoundError(
-            f"No tailored résumé found for job {job_id} under {base}. "
-            "Tailor this job first (Tailor resume), then retry."
-        )
+        return None
     matches.sort(key=lambda t: t[0], reverse=True)
     return matches[0][1]
+
+
+def resolve_generated_dir(job_id: Optional[str] = None,
+                          company: Optional[str] = None,
+                          title: Optional[str] = None,
+                          job: Optional[Dict[str, Any]] = None) -> Path:
+    """Locate the folder holding this job's tailored résumé + apply_data.json.
+
+    Resolution order:
+      1. By job_id: scan for an existing apply_data.json that matches (incl. dated
+         subfolders), newest wins. Unchanged behaviour for already-tailored jobs.
+      2. By company+title: the canonical folder. If apply_data.json is missing but
+         a résumé PDF is there (folders tailored before apply_data.json existed),
+         BACKFILL the json from `job` (or company/title/id) and use that folder —
+         this fixes the "no tailored résumé found" error on older résumés.
+
+    Raises FileNotFoundError with guidance when nothing matches.
+    """
+    if job and not (company and title):
+        company = company or job.get("company_name")
+        title = title or job.get("job_title")
+        job_id = job_id or job.get("job_posting_id")
+
+    if job_id:
+        found = _scan_by_job_id(job_id)
+        if found is not None:
+            return found
+
+    if company and title:
+        folder = output.base_dir(company, title)
+        if (folder / "apply_data.json").exists():
+            return folder
+        if (folder / output.resume_filename()).exists():
+            backfill_job = job or {
+                "job_posting_id": str(job_id or ""),
+                "company_name": company, "job_title": title, "url": "",
+            }
+            apply_data.write_from_folder(folder, backfill_job)
+            return folder
+
+    if not job_id and not (company and title):
+        raise ValueError("Provide either job_id, or both company and title.")
+
+    where = output.base_dir(company, title) if (company and title) else config.OUTPUT_ROOT
+    raise FileNotFoundError(
+        f"No tailored résumé found for job {job_id or f'{company} — {title}'} under {where}. "
+        "Tailor this job first (Tailor resume), then retry."
+    )
 
 
 def build_apply_context(generated_dir: Path) -> Dict[str, Any]:

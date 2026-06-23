@@ -1537,14 +1537,17 @@ class App:
             self._set_status("Select a job to open its application.")
             return
         jid = ids[0]
+        # Pass the row payload (company/title/url) so the Apply button can resolve
+        # — and backfill — folders tailored before apply_data.json existed.
+        payload = self._job_payload(jid)
         self._applying = True
         self._set_status("Opening application …")
-        threading.Thread(target=self._apply_worker, args=(jid,), daemon=True).start()
+        threading.Thread(target=self._apply_worker, args=(jid, payload), daemon=True).start()
 
-    def _apply_worker(self, jid: str) -> None:
+    def _apply_worker(self, jid: str, payload: dict | None = None) -> None:
         try:
             from resume_tailor import apply as apply_mod
-            folder = apply_mod.resolve_generated_dir(job_id=jid)
+            folder = apply_mod.resolve_generated_dir(job_id=jid, job=payload)
             ctx = apply_mod.build_apply_context(folder)
         except FileNotFoundError as exc:
             self.root.after(0, lambda exc=exc: self._finish_apply_error(

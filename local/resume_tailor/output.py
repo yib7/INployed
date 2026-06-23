@@ -42,6 +42,13 @@ def cover_filename() -> str:
     return f"{candidate_slug()}_Cover_Letter.pdf"
 
 
+def base_dir(company: str, job_title: str) -> Path:
+    """The canonical (un-nested) folder for a company+title, WITHOUT creating it
+    or nesting a dated subfolder. Use this to LOCATE an already-tailored folder;
+    use resolve_dir() only when WRITING a new resume."""
+    return config.OUTPUT_ROOT / sanitize(company) / sanitize(job_title)
+
+
 def resolve_dir(company: str, job_title: str) -> Path:
     """Return the directory to write into, creating it. Dated subfolder on collision."""
     base = config.OUTPUT_ROOT / sanitize(company) / sanitize(job_title)

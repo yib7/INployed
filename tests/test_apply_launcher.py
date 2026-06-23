@@ -40,7 +40,7 @@ def _make_folder(base: Path, company: str, title: str, job_id: str,
 def base(tmp_path, monkeypatch):
     root = tmp_path / "Generated_Resumes"
     root.mkdir()
-    monkeypatch.setattr(apply, "BASE_DIR", root)
+    monkeypatch.setattr(apply.config, "OUTPUT_ROOT", root)
     return root
 
 
@@ -72,9 +72,10 @@ def test_resolve_missing_job_raises_filenotfound(base):
     assert "tailor" in str(exc.value).lower()
 
 
-def test_resolve_by_company_title_uses_output_resolve_dir(base, monkeypatch):
+def test_resolve_by_company_title_returns_canonical_folder(base):
+    # company+title resolves the canonical (un-nested) folder when its
+    # apply_data.json already exists.
     target = _make_folder(base, "Acme", "Engineer", "111")
-    monkeypatch.setattr(apply.output, "resolve_dir", lambda c, t: target)
     assert apply.resolve_generated_dir(company="Acme", title="Engineer") == target
 
 

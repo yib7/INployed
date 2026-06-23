@@ -46,7 +46,8 @@ def test_apply_worker_opens_url_and_surfaces_context(monkeypatch):
     fake = _fake_app()
     opened: list = []
     shown: list = []
-    monkeypatch.setattr(apply_mod, "resolve_generated_dir", lambda job_id: Path("/abs/folder"))
+    monkeypatch.setattr(apply_mod, "resolve_generated_dir",
+                        lambda job_id, job=None: Path("/abs/folder"))
     monkeypatch.setattr(apply_mod, "build_apply_context", lambda folder: _ctx())
     monkeypatch.setattr(ui, "open_in_chrome", lambda url: opened.append(url))
     monkeypatch.setattr(ui.messagebox, "showinfo", lambda *a, **k: shown.append((a, k)))
@@ -69,7 +70,7 @@ def test_apply_worker_missing_folder_tells_user_to_tailor(monkeypatch):
     fake = _fake_app()
     shown: list = []
 
-    def _raise(job_id):
+    def _raise(job_id, job=None):
         raise FileNotFoundError("No tailored résumé found. Tailor this job first.")
 
     monkeypatch.setattr(apply_mod, "resolve_generated_dir", _raise)

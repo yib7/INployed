@@ -142,13 +142,19 @@ class VMPanel:
             row=3, column=0, sticky="nw", padx=(0, 10))
         times_box = ttk.Frame(f)
         times_box.grid(row=3, column=1, sticky="w")
+        self.times_box = times_box
+        # Six clearly-numbered slots (Run 1..6); each picked time becomes its own
+        # crontab line, and the preview is fully rebuilt on every change (never
+        # appended). Laid out 3 rows x 2 columns so all six are visible at once.
         for i in range(MAX_TIMES):
             var = tk.StringVar(value=BLANK)
             self.time_vars.append(var)
             var.trace_add("write", lambda *_: self._refresh_preview())
-            ttk.Combobox(times_box, textvariable=var, state="readonly", width=7,
-                         values=[BLANK, *HOUR_OPTIONS]).grid(
-                row=i % 3, column=i // 3, sticky="w", padx=(0, 8), pady=2)
+            cell = ttk.Frame(times_box)
+            cell.grid(row=i % 3, column=i // 3, sticky="w", padx=(0, 12), pady=2)
+            ttk.Label(cell, text=f"Run {i + 1}").pack(side="left", padx=(0, 4))
+            ttk.Combobox(cell, textvariable=var, state="readonly", width=7,
+                         values=[BLANK, *HOUR_OPTIONS]).pack(side="left")
 
         freq_box = ttk.Frame(f)
         freq_box.grid(row=3, column=2, sticky="nw", padx=(12, 0))

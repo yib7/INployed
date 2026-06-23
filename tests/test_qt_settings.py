@@ -1,5 +1,5 @@
 """SP6: the Qt settings form — widget-by-type, secret masking, save/revert, VM toggle."""
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import settings
 from qt import settings_tab as st
@@ -27,6 +27,33 @@ def test_renders_widgets_by_type(qtbot, tmp_path):
     assert "remote_types" in form._multi
     # a scalar getter exists for a choice field
     assert "time_range" in form._getters
+
+
+def test_editable_combo_opens_popup_on_click(qtbot, monkeypatch):
+    # Editable model selectors must drop down when their text field is clicked,
+    # not just sit there looking like a text box.
+    combo = QtWidgets.QComboBox()
+    combo.setEditable(True)
+    combo.addItems(["gemini-3.5-flash", "gemini-3.1-pro-preview"])
+    qtbot.addWidget(combo)
+    filt = st._PopupOnClick(combo)
+    combo.lineEdit().installEventFilter(filt)
+    opened = []
+    monkeypatch.setattr(combo, "showPopup", lambda: opened.append(True))
+    press = QtGui.QMouseEvent(
+        QtCore.QEvent.Type.MouseButtonPress, QtCore.QPointF(5, 5), QtCore.QPointF(5, 5),
+        QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
+        QtCore.Qt.KeyboardModifier.NoModifier)
+    assert filt.eventFilter(combo.lineEdit(), press) is True
+    assert opened  # clicking the text field opened the dropdown
+
+
+def test_editable_choice_field_has_popup_filter(qtbot, tmp_path):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    # stage1_model is an editable_choice -> a popup filter was attached to it
+    combo = next(c for c in form.findChildren(QtWidgets.QComboBox) if c.isEditable())
+    assert combo.findChild(st._PopupOnClick) is not None
 
 
 def test_secret_collect_blank_keeps_typed_clears(qtbot, tmp_path):

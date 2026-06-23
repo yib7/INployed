@@ -29,6 +29,20 @@ def test_guard_swallows_wheel_on_unfocused_controls(qtbot):
     assert g.eventFilter(label, _wheel()) is False
 
 
+def test_guard_swallows_wheel_via_editable_combo_lineedit(qtbot):
+    # Regression: an *editable* combo delivers the wheel to its inner QLineEdit,
+    # not the combo. The guard must still neutralise it (the model selectors are
+    # editable_choice, so this is the exact field the user saw changing on scroll).
+    combo = QtWidgets.QComboBox()
+    combo.setEditable(True)
+    combo.addItems(["a", "b", "c"])
+    combo.setCurrentIndex(0)
+    qtbot.addWidget(combo)
+    g = wheelguard.WheelGuard()
+    assert g.eventFilter(combo.lineEdit(), _wheel()) is True
+    assert combo.currentIndex() == 0
+
+
 def test_guard_lets_focused_control_through(qtbot, monkeypatch):
     combo = QtWidgets.QComboBox()
     combo.addItems(["a", "b"])
@@ -36,6 +50,16 @@ def test_guard_lets_focused_control_through(qtbot, monkeypatch):
     monkeypatch.setattr(combo, "hasFocus", lambda: True)
     g = wheelguard.WheelGuard()
     assert g.eventFilter(combo, _wheel()) is False  # focused: user is deliberately scrolling it
+
+
+def test_guard_lets_open_combo_popup_scroll(qtbot, monkeypatch):
+    # When the dropdown is open, the wheel should scroll the popup list, not be eaten.
+    combo = QtWidgets.QComboBox()
+    combo.addItems(["a", "b", "c"])
+    qtbot.addWidget(combo)
+    monkeypatch.setattr(combo.view(), "isVisible", lambda: True)
+    g = wheelguard.WheelGuard()
+    assert g.eventFilter(combo, _wheel()) is False
 
 
 def test_unfocused_combo_value_unchanged_by_wheel(qtbot):

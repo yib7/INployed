@@ -127,7 +127,13 @@ Or, from a terminal:
 python local/ui.py        # or double-click local/open_dashboard.pyw
 ```
 High-score triage, an application tracker with follow-up nudges, run stats, and the
-**Tailor resume** button (runs in the background so the UI stays responsive).
+**Tailor resume** button (runs in the background so the UI stays responsive). The window
+opens **maximized** to use the whole screen.
+
+Selecting a job opens a **score preview** at the bottom — the model's reasoning,
+strengths, and gaps for that posting. It appears only on the job-list tabs (**High
+Score / All Jobs / Tracker**) and hides itself elsewhere; **drag the divider above it**
+to make it taller or shorter.
 
 At-a-glance colors: a job you've already tailored a résumé for is tinted **blue**
 in the High Score / All Jobs lists, and in the **Tracker** an *applied* job is
@@ -185,7 +191,9 @@ Guard rails keep it hard to break: fixed-choice fields are **dropdowns** (no
 typos), bounded numbers are **sliders**, multi-select fields are **checkboxes**,
 every field has a one-line explanation **and a muted tag naming the file its value
 is saved to** (e.g. `(.env)`, `(search_config.json)`) so you can find it yourself,
-numbers are range-checked on Save, and there's a **Restore defaults** button. Edits
+numbers are range-checked on Save, there's a **Revert changes** button (undo your edits
+back to how the form opened) alongside **Restore defaults**, and **Save tells you exactly
+which fields changed** (secrets shown as *updated* / *cleared*, never the value). Edits
 are written atomically (with a `.bak`) to your git-ignored `.env`,
 `local/config.json`, and `search_config.json` / `scoring_config.json` /
 `apply_config.json`. Environment variables still override a file, and an absent file
@@ -200,9 +208,10 @@ saved to your git-ignored `.env`. Authentication is your existing
 `gcloud auth login` — **no SSH password or key is ever stored.** The VM controls
 then appear at the bottom of Settings, letting you:
 
-- **Schedule:** enter the run times (one `HH:MM` per line, up to 6/day, at least
-  2 h apart) and a frequency (daily / weekly / biweekly). It previews the exact
-  `crontab` and, on **Apply schedule to VM**, installs it over `gcloud compute ssh`.
+- **Schedule:** pick the run times from the **Run 1–6** hour dropdowns (up to 6/day, at
+  least 2 h apart) and a frequency (daily / weekly / biweekly). Each picked time becomes
+  its **own** `crontab` line in a live preview, and on **Apply schedule to VM** it's
+  installed over `gcloud compute ssh`.
   Each run is labelled by time of day — **morning / afternoon / evening / night**.
 - **Pause:** set an *until* date (optionally a time) and **Pause VM** — the scraper
   skips every run until then, then resumes on its own (no API spend while paused).
@@ -215,6 +224,18 @@ then appear at the bottom of Settings, letting you:
 Every VM action asks for confirmation first and runs through `gcloud` — nothing
 happens automatically. With **Enable VM features** off, none of these prompts ever
 appear.
+
+### Keep the scorer's résumé in sync (`resume.md`)
+The scorer matches every job against `resume.md`. When you edit your **Resume Data**
+(the master experience file), regenerate `resume.md` so the two stay in step: on the
+**Resume Data** tab, pick a model (`gemini-3.5-flash` by default — or 3.1 flash-lite /
+3.1 pro) and click **Generate from my data**. It uses Gemini to rebuild `resume.md`
+**faithfully — selecting and rephrasing your data, never inventing.** You **review (and
+can edit) the result before it's saved**; saving backs up the old file to `resume.md.bak`.
+If VM features are on, it then offers to push the new `resume.md` to the VM, and a
+**Push resume.md to VM** button does the same anytime (greyed out when VM features are
+off). *(Generating makes a Gemini API call; the push runs `gcloud` — both only on your
+click, each after a confirm.)*
 
 ### Apply to a job (semi-automated, in Chrome)
 Every tailored résumé folder gets an `apply_data.json` (candidate basics, education,

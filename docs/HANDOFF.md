@@ -130,8 +130,9 @@ password or key. There's **no separate VM tab**: open **Settings**, turn on
 the controls appear at the bottom of Settings. With the toggle off, the VM area is
 hidden and no push prompts fire. Then:
 
-- **Schedule:** edit the run times (up to 6/day, >=2 h apart) + daily/weekly/biweekly;
-  *Apply schedule to VM* installs the generated `crontab`. A run is labelled by the
+- **Schedule:** pick the run times from the numbered **Run 1–6** hour dropdowns (up to
+  6/day, >=2 h apart) + daily/weekly/biweekly; each picked time is its own line in the
+  live `crontab` preview, and *Apply schedule to VM* installs it. A run is labelled by the
   hour it starts: **morning / afternoon / evening / night** (`run_labels.py`, shared
   by `scraper.py`, `score_jobs.py`, and the dashboard; legacy morning/evening data
   still reads). `run_scraper.sh` now `mkdir`s and rclone-syncs all four label dirs.
@@ -142,6 +143,11 @@ hidden and no push prompts fire. Then:
 - **Push config:** copy `search_config.json` / `scoring_config.json` up with one
   click; saving a setting that *actually changes* a VM-read file also offers to push
   it (the diff is value-semantic, so re-saving identical values never prompts).
+- **Push `resume.md`:** the **Resume Data** tab can regenerate the scorer's `resume.md`
+  from `master_experience.yaml` via Gemini (model-selectable; faithful select-and-rephrase;
+  preview-then-write with a `resume.md.bak` backup) and push it to `~/resume.md` so the
+  cloud scorer matches against the same résumé. The *Push resume.md to VM* button is
+  greyed out unless VM features are on and a VM is configured.
 
 `.sh` files are pinned to LF via `.gitattributes` so a Windows checkout's CRLF
 can't break the shebang when scp'd to the VM.

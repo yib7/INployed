@@ -75,5 +75,61 @@ def test_run_cmd_invokes_subprocess(monkeypatch):
 
     monkeypatch.setattr(vm_sync.subprocess, "run", _run)
     res = vm_sync.run_cmd(["gcloud", "compute", "ssh"])
-    assert seen["cmd"] == ["gcloud", "compute", "ssh"]
+    # run_cmd launches via launch_argv (which on Windows bypasses the gcloud.cmd
+    # batch wrapper); on a box without gcloud it's the same argv.
+    assert seen["cmd"] == vm_sync.launch_argv(["gcloud", "compute", "ssh"])
     assert res.returncode == 0
+
+
+def _fake_sdk(tmp_path, with_gpy=True, with_bundled=True):
+    sdk = tmp_path / "google-cloud-sdk"
+    (sdk / "bin").mkdir(parents=True)
+    (sdk / "lib").mkdir(parents=True)
+    cmd = sdk / "bin" / "gcloud.cmd"
+    cmd.write_text("@echo off\n", encoding="utf-8")
+    gpy = sdk / "lib" / "gcloud.py"
+    if with_gpy:
+        gpy.write_text("# gcloud entrypoint\n", encoding="utf-8")
+    bundled = sdk / "platform" / "bundledpython" / "python.exe"
+    if with_bundled:
+        bundled.parent.mkdir(parents=True)
+        bundled.write_text("", encoding="utf-8")
+    return cmd, gpy, bundled
+
+
+def test_bypass_argv_runs_gcloud_py_with_bundled_python(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLOUDSDK_PYTHON", raising=False)
+    cmd, gpy, bundled = _fake_sdk(tmp_path)
+    argv = vm_sync._bypass_argv(str(cmd), ["compute", "ssh", "--command=a && b"])
+    assert argv == [str(bundled), "-S", str(gpy), "compute", "ssh", "--command=a && b"]
+
+
+def test_bypass_argv_honours_cloudsdk_python_env(tmp_path, monkeypatch):
+    cmd, gpy, _ = _fake_sdk(tmp_path, with_bundled=False)
+    monkeypatch.setenv("CLOUDSDK_PYTHON", "C:/py/python.exe")
+    argv = vm_sync._bypass_argv(str(cmd), ["version"])
+    assert argv[0] == "C:/py/python.exe"
+    assert argv[1:] == ["-S", str(gpy), "version"]
+
+
+def test_bypass_argv_none_when_no_entrypoint(tmp_path):
+    cmd, _, _ = _fake_sdk(tmp_path, with_gpy=False)
+    assert vm_sync._bypass_argv(str(cmd), ["version"]) is None
+
+
+def test_changed_vm_files_ignores_multichoice_reorder():
+    before = {"remote_types": ["Hybrid", "On-site"]}
+    after = {"remote_types": ["On-site", "Hybrid"]}
+    assert vm_sync.changed_vm_files(before, after) == set()
+
+
+def test_changed_vm_files_ignores_keyword_whitespace_only():
+    before = {"keywords": ['"a"', '"b"']}
+    after = {"keywords": [' "a" ', '"b"  ']}
+    assert vm_sync.changed_vm_files(before, after) == set()
+
+
+def test_changed_vm_files_flags_real_remote_type_change():
+    before = {"remote_types": ["Hybrid"]}
+    after = {"remote_types": ["Hybrid", "Remote"]}
+    assert vm_sync.changed_vm_files(before, after) == {"search_config.json"}

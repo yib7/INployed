@@ -1044,11 +1044,10 @@ class App:
         self._build_answers_tab(nb)
 
         # Tab 7 — Settings: user-editable options from settings.SETTINGS_SCHEMA,
-        # grouped by section. Save validates then writes config.json / .env.
+        # grouped by section. Save validates then writes config.json / .env. The VM
+        # controls (schedule/pause/push) live at the bottom of this tab, behind the
+        # off-by-default "Enable VM features" toggle — there is no separate VM tab.
         self._build_settings_tab(nb)
-
-        # Tab 8 — VM: push config/schedule/pause to the cloud scraper via gcloud.
-        self._build_vm_tab(nb)
 
         # Details pane (between the notebook and the action bar): the model's
         # stage-2 analysis — reason, strengths, gaps — plus salary/applicants
@@ -2010,19 +2009,23 @@ class App:
 
         form_holder = ttk.Frame(frame)
         form_holder.pack(side="top", fill="both", expand=True)
-        self.config_form = ConfigForm(form_holder, on_saved=self._on_settings_saved)
+        # The VM operations panel rides at the bottom of the form, inside the
+        # "VM (cloud scraper)" collapsible section — it shows only when the VM
+        # master toggle is on (off by default), so non-VM users never see it.
+        self.config_form = ConfigForm(
+            form_holder, on_saved=self._on_settings_saved,
+            section_extras={"VM (cloud scraper)": self._make_vm_panel})
         # Snapshot of effective settings, to diff against after a save so we can
         # offer to push VM-relevant changes (updated after every save).
         self._vm_settings_snapshot = settings.load()
 
-    def _build_vm_tab(self, nb: ttk.Notebook) -> None:
-        """Mount the VM panel: schedule editor, pause-until, and push-to-VM."""
+    def _make_vm_panel(self, parent: ttk.Frame):
+        """Build the VM panel (schedule editor, pause-until, push) as the VM
+        section's extra widget, and return its frame for the form to mount."""
         from vm_form import VMPanel
 
-        self.tab_vm = frame = ttk.Frame(nb)
-        nb.add(frame, text="VM")
-        self.vm_panel = VMPanel(frame)
-        self.vm_panel.frame.pack(fill="both", expand=True)
+        self.vm_panel = VMPanel(parent)
+        return self.vm_panel.frame
 
     def _on_settings_saved(self) -> None:
         """Re-read cached prefs and re-apply the chosen engine after a save."""
@@ -2037,7 +2040,10 @@ class App:
 
     def _maybe_prompt_vm_push(self, before: dict, after: dict) -> None:
         """If a saved setting changed a file the VM scraper reads, and a VM is
-        configured, offer to push the updated file(s) up via gcloud."""
+        configured, offer to push the updated file(s) up via gcloud. Stays silent
+        unless VM features are enabled (the Settings master toggle)."""
+        if not after.get("vm_enabled", False):
+            return
         import vm_sync
         changed = vm_sync.changed_vm_files(before, after)
         if not changed:

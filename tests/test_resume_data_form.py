@@ -66,3 +66,12 @@ def test_atom_impact_is_editable_and_saves(root, master_tmp):
     ed._atom_impact["a1"].insert("1.0", "cut runtime 40%")
     assert ed.save() is True
     assert "cut runtime 40%" in master_tmp.read_text(encoding="utf-8")
+
+
+def test_impact_text_uses_theme_font_not_monospace(root, master_tmp):
+    """The impact boxes (inline + the Add-achievement dialog) must use the same
+    font as every other field, not Tk's default monospace TkFixedFont."""
+    ed = _editor(root, master_tmp)
+    box = ed._impact_text(tk.Frame(root), width=50, height=3)
+    assert box.cget("font") == ed._font
+    assert "Fixed" not in str(box.cget("font"))

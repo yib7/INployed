@@ -1,5 +1,9 @@
 # ── Secrets / credentials ────────────────────────────────────────────────────
 .env
+# Backups written next to atomically-saved configs (.env.bak holds secrets;
+# config.json.bak etc. mirror git-ignored configs) — never commit them.
+*.bak
+
 
 # ── Machine-local Claude Code settings ───────────────────────────────────────
 .claude/settings.local.json

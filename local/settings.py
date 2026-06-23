@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import envfile  # local module: comment-preserving .env reader/writer
+
 HERE = Path(__file__).resolve().parent
 # settings.py lives in local/, so the repo root (where scraper.py / score_jobs.py
 # read their standalone JSON configs) is one level up.
@@ -34,16 +36,24 @@ ROOT = HERE.parent
 
 @dataclass(frozen=True)
 class Field:
-    key: str            # config key
+    key: str            # config key (for env-target fields this is the ENV var name)
     label: str          # UI label
-    type: str           # "int" | "float" | "str" | "bool" | "choice" | "path" | "list"
+    type: str           # "int"|"float"|"str"|"bool"|"choice"|"multichoice"|"path"|"list"
     default: Any
-    section: str        # "Dashboard" | "Scraper" | "Scoring" | "Resume"
-    target: str         # backing-file id; SP2 only uses "config"
+    section: str        # "Dashboard"|"Scraper"|"Scoring"|"Resume"|"Apply"|"Credentials"|...
+    target: str         # backing-file id (TARGET_FILES): config|search|scoring|apply|env
     help: str = ""
     choices: tuple = ()
     min: float | None = None
     max: float | None = None
+    secret: bool = False        # mask in UI; never displayed/echoed; blank-on-save keeps existing
+    path_kind: str = "dir"      # for type=="path": "dir" picks a folder, "file" picks a file
+    optional: bool = False      # UI hint: blank is fine (no value needed to run)
+
+
+# Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
+# the literal environment-variable name, so values round-trip straight to .env.
+ENV_TARGETS = {"env"}
 
 
 # Backing files, keyed by Field.target. The Scraper/Scoring sections write the
@@ -53,6 +63,9 @@ TARGET_FILES: dict[str, Path] = {
     "search": ROOT / "search_config.json",
     "scoring": ROOT / "scoring_config.json",
     "apply": ROOT / "apply_config.json",
+    # Secrets, identity, and paths live in the git-ignored .env at the repo root,
+    # the same file scraper.py / score_jobs.py / the tailor load at runtime.
+    "env": ROOT / ".env",
 }
 
 
@@ -77,9 +90,10 @@ SETTINGS_SCHEMA: list[Field] = [
           "Scraper", "search",
           help="One LinkedIn search phrase per line (quote multi-word phrases). "
                "Each fans out to one search per remote type."),
-    Field("remote_types", "Remote types", "list", ["Hybrid", "On-site"],
+    Field("remote_types", "Remote types", "multichoice", ["Hybrid", "On-site"],
           "Scraper", "search",
-          help="Workplace types to search, one per line (e.g. Remote, Hybrid, On-site)."),
+          help="Which workplace types to search. Each ticked type runs once per keyword.",
+          choices=("On-site", "Remote", "Hybrid")),
     Field("limit_per_input", "Postings per search", "int", 100, "Scraper", "search",
           help="Max postings collected per (keyword x remote type). Higher = more spend.",
           min=1, max=500),
@@ -89,13 +103,18 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("location", "Location", "str", "United States", "Scraper", "search",
           help="Geographic location filter for searches."),
     Field("country", "Country code", "str", "US", "Scraper", "search",
-          help="Two-letter country code."),
-    Field("time_range", "Time range", "str", "Past 24 hours", "Scraper", "search",
-          help="Posting-age filter (e.g. 'Past 24 hours', 'Past week')."),
-    Field("job_type", "Job type", "str", "Full-time", "Scraper", "search",
-          help="Employment type filter (e.g. 'Full-time')."),
-    Field("experience_level", "Experience level", "str", "Entry level", "Scraper", "search",
-          help="Seniority filter (e.g. 'Entry level')."),
+          help="Two-letter country code (e.g. US, GB, CA)."),
+    Field("time_range", "Time range", "choice", "Past 24 hours", "Scraper", "search",
+          help="Only collect postings newer than this.",
+          choices=("Past 24 hours", "Past week", "Past month", "Any time")),
+    Field("job_type", "Job type", "choice", "Full-time", "Scraper", "search",
+          help="Employment type to search for.",
+          choices=("Full-time", "Part-time", "Contract", "Temporary",
+                   "Internship", "Volunteer", "Other")),
+    Field("experience_level", "Experience level", "choice", "Entry level", "Scraper", "search",
+          help="Seniority filter.",
+          choices=("Internship", "Entry level", "Associate",
+                   "Mid-Senior level", "Director", "Executive")),
 
     # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
     Field("stage1_model", "Stage-1 model", "str", "gemini-3.1-flash-lite", "Scoring", "scoring",
@@ -157,6 +176,55 @@ SETTINGS_SCHEMA: list[Field] = [
           "Apply", "apply", help="EEO self-identification default."),
     Field("disability_status", "Disability status (EEO)", "str", "Decline to self-identify",
           "Apply", "apply", help="EEO self-identification default."),
+
+    # --- Credentials: API keys / tokens, written to the git-ignored .env -------
+    # secret=True fields are masked and write-only: the stored value is never
+    # shown; saving with the box blank keeps the existing value. Field.key is the
+    # exact environment-variable name the pipeline reads.
+    Field("BRIGHT_DATA_API_TOKEN", "Bright Data API token", "str", "",
+          "Credentials", "env", secret=True, optional=True,
+          help="Needed to run the scraper. Bright Data dashboard - Account settings - API tokens."),
+    Field("BRIGHT_DATA_DATASET_ID", "Bright Data dataset ID", "str", "",
+          "Credentials", "env", optional=True,
+          help="The id of your LinkedIn-jobs dataset in Bright Data (not secret - an identifier)."),
+    Field("GEMINI_API_KEYS", "Gemini API key pool", "str", "",
+          "Credentials", "env", secret=True, optional=True,
+          help="Comma-separated Gemini API keys for the scorer (no spaces). Get keys at "
+               "aistudio.google.com. Leave blank to use your Google Cloud project instead."),
+    Field("RESUME_TAILOR_GEMINI_API_KEY", "Gemini API key (resume tailor)", "str", "",
+          "Credentials", "env", secret=True, optional=True,
+          help="Single Gemini API key for the resume tailor when the engine is set to "
+               "'api_key'. Only needed if you don't have a Google Cloud project."),
+
+    # --- Connection & paths: non-secret identity / locations, also in .env -----
+    Field("GOOGLE_CLOUD_PROJECT", "Google Cloud project ID", "str", "",
+          "Connection & paths", "env", optional=True,
+          help="Project with Vertex AI enabled (for Gemini scoring + tailoring). Leave blank "
+               "if you score with the Gemini API key pool above."),
+    Field("GOOGLE_CLOUD_LOCATION", "Google Cloud location", "choice", "global",
+          "Connection & paths", "env",
+          help="Vertex AI region. 'global' works for most users.",
+          choices=("global", "us-central1", "us-east1", "us-west1", "europe-west1")),
+    Field("RESUME_TAILOR_CANDIDATE", "Your name (resume filenames)", "str", "Your_Name",
+          "Connection & paths", "env",
+          help="Used in generated resume filenames. Use underscores instead of spaces."),
+    Field("RESUME_TAILOR_OUTPUT", "Resume output folder", "path", "",
+          "Connection & paths", "env", path_kind="dir", optional=True,
+          help="Where tailored resumes are saved. Blank = your Downloads/Generated_Resumes."),
+    Field("PDFLATEX_PATH", "pdflatex path", "path", "pdflatex",
+          "Connection & paths", "env", path_kind="file", optional=True,
+          help="Path to pdflatex (MiKTeX/TeX Live). Leave as 'pdflatex' if it's on your PATH."),
+    Field("LINKEDIN_CHROME_ACCOUNT", "Chrome profile (Google email)", "str", "",
+          "Connection & paths", "env", optional=True,
+          help="Open job links in the Chrome profile signed in to this Google account. "
+               "Blank = your default browser."),
+
+    # --- Engine: which Gemini backend the resume tailor bills (local/config.json) -
+    Field("gemini_auth", "Resume tailor engine", "choice", "vertex",
+          "Engine", "config",
+          help="'vertex' bills your Google Cloud project (above). 'api_key' uses the single "
+               "Gemini API key (above) - pick this if you don't have a Cloud project.",
+          choices=("vertex", "api_key")),
 ]
 
 
@@ -173,6 +241,16 @@ def _read_file(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _read_target(target_id: str, path: Path | None) -> dict[str, Any]:
+    """Read a backing store as a {key: value} dict, picking the right parser for
+    its target (env files vs JSON). {} when the path is unset/missing."""
+    if path is None:
+        return {}
+    if target_id in ENV_TARGETS:
+        return envfile.read(path)
+    return _read_file(path)
+
+
 def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
     """Return {key: stored-value-or-default} for every schema Field.
 
@@ -184,11 +262,28 @@ def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for f in SETTINGS_SCHEMA:
         if f.target not in cache:
-            path = targets.get(f.target)
-            cache[f.target] = _read_file(path) if path is not None else {}
+            cache[f.target] = _read_target(f.target, targets.get(f.target))
         store = cache[f.target]
         values[f.key] = store[f.key] if f.key in store else f.default
     return values
+
+
+def secret_status(targets: dict[str, Path] | None = None) -> dict[str, bool]:
+    """{key: is-it-set} for every secret Field, WITHOUT returning the value.
+
+    The config GUI uses this to show "configured / not set" next to a masked,
+    write-only secret box — so a stored token is never loaded into a widget.
+    """
+    targets = _resolve_targets(targets)
+    cache: dict[str, dict[str, Any]] = {}
+    out: dict[str, bool] = {}
+    for f in SETTINGS_SCHEMA:
+        if not f.secret:
+            continue
+        if f.target not in cache:
+            cache[f.target] = _read_target(f.target, targets.get(f.target))
+        out[f.key] = bool(str(cache[f.target].get(f.key, "")).strip())
+    return out
 
 
 def _coerce_ok(f: Field, value: Any) -> bool:
@@ -204,7 +299,7 @@ def _coerce_ok(f: Field, value: Any) -> bool:
         return isinstance(value, str)
     if f.type == "choice":
         return value in f.choices
-    if f.type == "list":
+    if f.type in ("list", "multichoice"):
         return isinstance(value, list) and all(isinstance(v, str) for v in value)
     return True
 
@@ -228,6 +323,10 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
                 errors[key] = f"Must be >= {f.min}."
             elif f.max is not None and value > f.max:
                 errors[key] = f"Must be <= {f.max}."
+        elif f.type == "multichoice":
+            bad = [v for v in value if v not in f.choices]
+            if bad:
+                errors[key] = f"Not allowed: {', '.join(bad)}."
     return errors
 
 
@@ -272,6 +371,11 @@ def save(values: dict[str, Any], targets: dict[str, Path] | None = None) -> None
         path = targets.get(target_id)
         if path is None:
             continue
-        merged = _read_file(path)
-        merged.update(updates)
-        _atomic_write(Path(path), merged)
+        if target_id in ENV_TARGETS:
+            # envfile.update merges in place (keeps comments + unknown keys) and
+            # backs up to .bak itself, so no read-merge-write dance here.
+            envfile.update(Path(path), {k: str(v) for k, v in updates.items()})
+        else:
+            merged = _read_file(path)
+            merged.update(updates)
+            _atomic_write(Path(path), merged)

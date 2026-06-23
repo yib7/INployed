@@ -125,3 +125,77 @@ def test_list_field_save_roundtrips_to_search_target(tmp_path):
     # ensure_ascii=False keeps the non-ASCII char literal (not \uXXXX-escaped)
     assert "Bär" in targets["search"].read_text(encoding="utf-8")
     assert settings.load(targets)["keywords"] == ['"Foo"', '"Bär"']
+
+
+# --- env target (secrets / paths in .env), choice + multichoice ---------------
+
+def _all_targets_env(tmp_path: Path) -> dict[str, Path]:
+    return {
+        "config": tmp_path / "config.json",
+        "search": tmp_path / "search_config.json",
+        "scoring": tmp_path / "scoring_config.json",
+        "apply": tmp_path / "apply_config.json",
+        "env": tmp_path / ".env",
+    }
+
+
+def test_env_target_registered_points_at_repo_dotenv():
+    assert "env" in settings.TARGET_FILES
+    assert settings.TARGET_FILES["env"] == settings.HERE.parent / ".env"
+
+
+def test_env_field_load_save_roundtrips_to_dotenv(tmp_path):
+    targets = _all_targets_env(tmp_path)
+    assert settings.load(targets)["RESUME_TAILOR_CANDIDATE"] == "Your_Name"  # default
+    settings.save({"RESUME_TAILOR_CANDIDATE": "Ada_Lovelace"}, targets)
+    assert "RESUME_TAILOR_CANDIDATE=Ada_Lovelace" in (tmp_path / ".env").read_text("utf-8")
+    assert settings.load(targets)["RESUME_TAILOR_CANDIDATE"] == "Ada_Lovelace"
+
+
+def test_env_secret_save_writes_only_to_dotenv(tmp_path):
+    targets = _all_targets_env(tmp_path)
+    settings.save({"GEMINI_API_KEYS": "k1,k2"}, targets)
+    assert "GEMINI_API_KEYS=k1,k2" in (tmp_path / ".env").read_text("utf-8")
+    assert settings.secret_status(targets)["GEMINI_API_KEYS"] is True
+
+
+def test_secret_status_reports_set_and_unset(tmp_path):
+    targets = _all_targets_env(tmp_path)
+    (tmp_path / ".env").write_text("BRIGHT_DATA_API_TOKEN=tok\n", encoding="utf-8")
+    status = settings.secret_status(targets)
+    assert status["BRIGHT_DATA_API_TOKEN"] is True
+    assert status["GEMINI_API_KEYS"] is False  # absent from .env
+
+
+def test_omitting_secret_key_preserves_existing_value(tmp_path):
+    """The form omits a blank secret box; saving other keys must not wipe it."""
+    targets = _all_targets_env(tmp_path)
+    (tmp_path / ".env").write_text("BRIGHT_DATA_API_TOKEN=existing\n", encoding="utf-8")
+    settings.save({"RESUME_TAILOR_CANDIDATE": "Ada"}, targets)
+    assert "existing" in (tmp_path / ".env").read_text("utf-8")
+    assert settings.secret_status(targets)["BRIGHT_DATA_API_TOKEN"] is True
+
+
+def test_multichoice_validate_accepts_subset_rejects_unknown_and_non_list():
+    assert settings.validate({"remote_types": ["Remote", "Hybrid"]}) == {}
+    assert "remote_types" in settings.validate({"remote_types": ["Telepathic"]})
+    assert "remote_types" in settings.validate({"remote_types": "Remote"})
+
+
+def test_choice_validate_gemini_auth():
+    assert settings.validate({"gemini_auth": "api_key"}) == {}
+    assert "gemini_auth" in settings.validate({"gemini_auth": "nope"})
+
+
+def test_gemini_auth_saves_to_config_target(tmp_path):
+    targets = _all_targets_env(tmp_path)
+    settings.save({"gemini_auth": "api_key"}, targets)
+    on_disk = json.loads((tmp_path / "config.json").read_text("utf-8"))
+    assert on_disk["gemini_auth"] == "api_key"
+
+
+def test_path_field_with_spaces_roundtrips_through_dotenv(tmp_path):
+    targets = _all_targets_env(tmp_path)
+    out = "C:\\Generated Resumes\\out"
+    settings.save({"RESUME_TAILOR_OUTPUT": out}, targets)
+    assert settings.load(targets)["RESUME_TAILOR_OUTPUT"] == out

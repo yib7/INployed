@@ -1770,171 +1770,27 @@ class App:
     # ---- settings ----
 
     def _build_settings_tab(self, nb: ttk.Notebook) -> None:
-        """Render settings.SETTINGS_SCHEMA grouped by section into a Settings tab.
+        """Mount the shared, schema-driven config form as the Settings tab.
 
-        One labelled input row per Field (with its help text underneath); a Save
-        button validates + persists via settings.save and refreshes in-memory
-        state. self._settings_vars maps each Field.key to its tk variable so the
-        handler can read the entered values back out.
+        config_form.ConfigForm covers every tunable — credentials, paths, the
+        engine, and all dashboard/scraper/scoring/resume/apply options — in one
+        scrollable form. on_saved refreshes the dashboard so a change takes effect
+        immediately and the action-bar engine selector stays in sync.
         """
+        from config_form import ConfigForm
+
         self.tab_settings = frame = ttk.Frame(nb)
         nb.add(frame, text="Settings")
+        self.config_form = ConfigForm(frame, on_saved=self._on_settings_saved)
 
-        # The form spans several sections (Dashboard / Scraper / Scoring /
-        # Resume / Apply); host it in a scrollable canvas so the lower sections
-        # and the Save button stay reachable on any window height.
-        canvas = tk.Canvas(frame, bg=BG, highlightthickness=0, bd=0)
-        vsb = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
-        body = ttk.Frame(canvas, padding=(16, 12))
-        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
-        canvas.bind("<Configure>",
-                    lambda e: canvas.itemconfigure(body_window, width=e.width))
-        body.bind("<Configure>",
-                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
-        stored = settings.load()
-        self._settings_vars: dict[str, tk.Variable] = {}
-        # "list" Fields render as a multi-line Text box (no tk.Variable backs a
-        # Text), so the save handler reads them from here instead of _settings_vars.
-        self._settings_texts: dict[str, tk.Text] = {}
-
-        # Group fields by section, preserving first-seen order.
-        sections: dict[str, list[settings.Field]] = {}
-        for f in settings.SETTINGS_SCHEMA:
-            sections.setdefault(f.section, []).append(f)
-
-        row = 0
-        for section, fields in sections.items():
-            ttk.Label(body, text=section, style="Subtitle.TLabel").grid(
-                row=row, column=0, columnspan=2, sticky="w", pady=(8 if row else 0, 4))
-            row += 1
-            for f in fields:
-                value = stored.get(f.key, f.default)
-                anchor = "nw" if f.type == "list" else "w"
-                ttk.Label(body, text=f.label).grid(
-                    row=row, column=0, sticky=anchor, padx=(8, 12), pady=(6, 0))
-                var = self._make_settings_var(f, value)
-                self._settings_vars[f.key] = var
-                widget = self._settings_widget(body, f, var)
-                widget.grid(row=row, column=1, sticky="w", pady=(6, 0))
-                if f.type == "list":
-                    items = value if isinstance(value, list) else []
-                    widget.insert("1.0", "\n".join(str(v) for v in items))
-                    self._settings_texts[f.key] = widget
-                row += 1
-                if f.help:
-                    ttk.Label(body, text=f.help, style="Muted.TLabel",
-                              wraplength=520).grid(
-                        row=row, column=1, sticky="w", pady=(0, 2))
-                    row += 1
-
-        btnbar = ttk.Frame(body)
-        btnbar.grid(row=row, column=0, columnspan=2, sticky="w", pady=(16, 0))
-        ttk.Button(btnbar, text="Save", command=self._on_save_settings,
-                   style="Accent.TButton").pack(side="left")
-        self.lbl_settings = ttk.Label(btnbar, text="", style="Muted.TLabel")
-        self.lbl_settings.pack(side="left", padx=(12, 0))
-
-        # Wheel scrolls the whole form, except over the multi-line list boxes
-        # (which scroll their own contents). Bound per-widget so the wheel isn't
-        # hijacked on the other tabs.
-        def _wheel(e):
-            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-            return "break"
-
-        def _bind_wheel(w):
-            if not isinstance(w, tk.Text):
-                w.bind("<MouseWheel>", _wheel)
-            for child in w.winfo_children():
-                _bind_wheel(child)
-
-        canvas.bind("<MouseWheel>", _wheel)
-        _bind_wheel(body)
-
-    def _make_settings_var(self, f: "settings.Field", value) -> tk.Variable:
-        if f.type == "bool":
-            return tk.BooleanVar(value=bool(value))
-        if f.type == "list":
-            # A Text widget backs list fields; this StringVar is just a placeholder.
-            return tk.StringVar(value="")
-        return tk.StringVar(value="" if value is None else str(value))
-
-    def _settings_widget(self, parent, f: "settings.Field", var: tk.Variable):
-        if f.type == "bool":
-            return ttk.Checkbutton(parent, variable=var)
-        if f.type == "choice":
-            return ttk.Combobox(parent, textvariable=var, state="readonly",
-                                width=22, values=list(f.choices))
-        if f.type == "list":
-            # One item per line; populated/read by the caller (not a tk.Variable).
-            return tk.Text(parent, width=44, height=8, wrap="none")
-        width = 48 if f.type == "path" else 14
-        return ttk.Entry(parent, textvariable=var, width=width)
-
-    def _coerce_settings_value(self, f: "settings.Field", raw):
-        """Turn a widget's raw value into the Field's Python type.
-
-        Returns (value, error). A blank int/float keeps validation honest by
-        surfacing a friendly message rather than a stray ValueError.
-        """
-        if f.type == "bool":
-            return bool(raw), None
-        if f.type == "list":
-            # `raw` is the Text box's whole content; split into non-empty,
-            # stripped lines (one config item per line).
-            items = [ln.strip() for ln in str(raw).splitlines() if ln.strip()]
-            return items, None
-        text = str(raw).strip()
-        if f.type == "int":
-            try:
-                return int(text), None
-            except ValueError:
-                return raw, f"{f.label}: must be a whole number."
-        if f.type == "float":
-            try:
-                return float(text), None
-            except ValueError:
-                return raw, f"{f.label}: must be a number."
-        return text, None  # str / path / choice
-
-    def _on_save_settings(self) -> None:
-        """Validate the Settings form, persist on success, refresh state."""
-        values: dict = {}
-        errors: dict[str, str] = {}
-        labels = {f.key: f.label for f in settings.SETTINGS_SCHEMA}
-        for f in settings.SETTINGS_SCHEMA:
-            if f.type == "list":
-                raw = self._settings_texts[f.key].get("1.0", "end")
-            else:
-                raw = self._settings_vars[f.key].get()
-            value, err = self._coerce_settings_value(f, raw)
-            values[f.key] = value
-            if err:
-                errors[f.key] = err
-
-        errors.update(settings.validate(values))
-        if errors:
-            msg = "\n".join(f"{labels.get(k, k)}: {m}" for k, m in errors.items())
-            self.lbl_settings.configure(text="Not saved — see error.")
-            messagebox.showerror("Settings", msg, parent=self.root)
-            return
-
-        try:
-            settings.save(values)
-        except (ValueError, OSError) as exc:
-            self.lbl_settings.configure(text="Save failed.")
-            messagebox.showerror("Settings", str(exc), parent=self.root)
-            return
-
-        # Refresh affected in-memory state so the change takes effect now.
+    def _on_settings_saved(self) -> None:
+        """Re-read cached prefs and re-sync the engine selector after a save."""
         self.min_score = load_min_score()
         self.followup_days = load_followup_days()
+        if hasattr(self, "engine_var"):
+            auth = _load_cfg().get("gemini_auth", "vertex")
+            self.engine_var.set(_ENGINE_LABELS.get(auth, _ENGINE_LABELS["vertex"]))
         self.reload_data()
-        self.lbl_settings.configure(text="Saved.")
         self._set_status("Settings saved.")
 
     # ---- interview prep ----

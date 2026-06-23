@@ -12,7 +12,7 @@ from typing import Dict, Tuple
 
 from . import assets, compose, config
 from .compile import CompileResult, compile_tex
-from .latexutil import escape_latex
+from .latexutil import to_latex
 
 _TEMPLATE = r"""\documentclass[11pt]{letter}
 \usepackage[utf8]{inputenc}
@@ -101,7 +101,7 @@ Write the body now."""
 
 def _paragraphs(body: str) -> str:
     paras = [p.strip() for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
-    esc = [escape_latex(p).replace("\n", " ") for p in paras]
+    esc = [to_latex(p).replace("\n", " ") for p in paras]
     return "\n\n\\medskip\n\n".join(esc)
 
 
@@ -111,8 +111,8 @@ def render_cover_letter(body: str, company: str, tex_path: Path, work_dir: Path)
     if len(lines) >= 2 and re.match(r"^\s*sincerely[,!.]?\s*$", lines[-2], re.I):
         body = "\n".join(lines[:-2]).rstrip()
     rendered = (
-        _TEMPLATE.replace("__CANDIDATE_NAME__", escape_latex(_display_name()))
-        .replace("__COMPANY_NAME__", escape_latex(company))
+        _TEMPLATE.replace("__CANDIDATE_NAME__", to_latex(_display_name()))
+        .replace("__COMPANY_NAME__", to_latex(company))
         .replace("__BODY__", _paragraphs(body))
     )
     tex_path.write_text(rendered, encoding="utf-8")

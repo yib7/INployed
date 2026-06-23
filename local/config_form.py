@@ -125,6 +125,9 @@ class ConfigForm:
 
         stored = settings.load(self.targets)
         secret_set = settings.secret_status(self.targets)
+        # Snapshot the values the form opens with, so "Revert changes" can return
+        # to this session's starting point (distinct from factory defaults).
+        self._opening_values = dict(stored)
 
         row = 0
         for section, fields in _ordered_sections():
@@ -325,6 +328,8 @@ class ConfigForm:
         btnbar.grid(row=row, column=0, columnspan=2, sticky="w", pady=(18, 4))
         ttk.Button(btnbar, text="Save", command=self.save,
                    style="Accent.TButton").pack(side="left")
+        ttk.Button(btnbar, text="Revert changes",
+                   command=self.revert).pack(side="left", padx=(8, 0))
         ttk.Button(btnbar, text="Restore defaults",
                    command=self.restore_defaults).pack(side="left", padx=(8, 0))
         self.status = ttk.Label(btnbar, text="", style="Muted.TLabel")
@@ -433,28 +438,48 @@ class ConfigForm:
             self.vars[key].set("")            # clear the box after a successful save
             self.clear_vars[key].set(False)
 
-    def restore_defaults(self) -> None:
-        """Repopulate widgets with each Field's default. Nothing is written until
-        Save. Secret boxes are left blank (a saved secret is only changed if you
-        type a new one or tick Clear)."""
+    def _repopulate(self, value_for: Callable[[settings.Field], object]) -> None:
+        """Reset every non-secret widget to value_for(field). Shared by Restore
+        defaults (factory) and Revert changes (this session's opening values)."""
         for f in settings.SETTINGS_SCHEMA:
             if f.secret:
                 continue
+            val = value_for(f)
             if f.type == "multichoice":
-                want = set(f.default if isinstance(f.default, list) else [])
+                want = set(val if isinstance(val, list) else [])
                 for choice, var in self.multi[f.key].items():
                     var.set(choice in want)
             elif f.type == "list":
                 txt = self.texts[f.key]
                 txt.delete("1.0", "end")
-                items = f.default if isinstance(f.default, list) else []
+                items = val if isinstance(val, list) else []
                 txt.insert("1.0", "\n".join(str(v) for v in items))
             elif f.type == "bool":
-                self.vars[f.key].set(bool(f.default))
+                self.vars[f.key].set(bool(val))
             elif getattr(f, "slider", False) and f.key in self.scales:
-                self.scales[f.key].set(int(f.default))  # command syncs the readout var
+                try:
+                    self.scales[f.key].set(int(val))  # command syncs the readout var
+                except (TypeError, ValueError):
+                    self.scales[f.key].set(int(f.default))
             else:
-                self.vars[f.key].set("" if f.default is None else str(f.default))
-        self._apply_section_visibility()  # a reset gate may re-hide its section
+                self.vars[f.key].set("" if val is None else str(val))
+        self._apply_section_visibility()  # a changed gate may re-hide its section
+
+    def restore_defaults(self) -> None:
+        """Repopulate widgets with each Field's default. Nothing is written until
+        Save. Secret boxes are left blank (a saved secret is only changed if you
+        type a new one or tick Clear)."""
+        self._repopulate(lambda f: f.default)
         if self.status:
             self.status.configure(text="Defaults restored — press Save to apply.")
+
+    def revert(self) -> None:
+        """Repopulate widgets with the values the form opened with this session
+        (undo my edits). Nothing is written until Save. Secret boxes return to
+        blank with Clear unticked, so a saved secret is left untouched."""
+        self._repopulate(lambda f: self._opening_values.get(f.key, f.default))
+        for key, clear in self.clear_vars.items():
+            clear.set(False)
+            self.vars[key].set("")
+        if self.status:
+            self.status.configure(text="Reverted to your last-opened settings — press Save to apply.")

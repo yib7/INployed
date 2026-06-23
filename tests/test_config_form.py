@@ -74,7 +74,8 @@ def test_collect_includes_typed_secret_and_explicit_clear(root, tmp_path):
     assert values["GEMINI_API_KEYS"] == ""  # Clear ticked -> explicit unset
 
 
-def test_save_roundtrips_choice_and_multichoice(root, tmp_path):
+def test_save_roundtrips_choice_and_multichoice(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(config_form.messagebox, "showinfo", lambda *a, **k: None)
     targets = _targets(tmp_path)
     form = config_form.ConfigForm(tk.Frame(root), targets=targets)
     form.vars["gemini_auth"].set("api_key")
@@ -85,7 +86,8 @@ def test_save_roundtrips_choice_and_multichoice(root, tmp_path):
     assert "Remote" in reloaded["remote_types"]
 
 
-def test_save_writes_secret_to_env_then_clears_box(root, tmp_path):
+def test_save_writes_secret_to_env_then_clears_box(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(config_form.messagebox, "showinfo", lambda *a, **k: None)
     targets = _targets(tmp_path)
     form = config_form.ConfigForm(tk.Frame(root), targets=targets)
     form.vars["GEMINI_API_KEYS"].set("k1,k2")
@@ -132,7 +134,8 @@ def test_editable_choice_model_combobox_present(root, tmp_path):
     assert "RESUME_TAILOR_MODEL_PRO" in form.vars            # tailor model dropdown
 
 
-def test_custom_model_value_roundtrips(root, tmp_path):
+def test_custom_model_value_roundtrips(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(config_form.messagebox, "showinfo", lambda *a, **k: None)
     targets = _targets(tmp_path)
     form = config_form.ConfigForm(tk.Frame(root), targets=targets)
     form.vars["stage1_model"].set("gemini-9-custom")         # type a value not in the list
@@ -150,12 +153,55 @@ def test_slider_field_saves_int(root, tmp_path):
     assert values["followup_days"] == 12
 
 
-def test_on_saved_callback_fires(root, tmp_path):
+def test_on_saved_callback_fires(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(config_form.messagebox, "showinfo", lambda *a, **k: None)
     fired = []
     form = config_form.ConfigForm(
         tk.Frame(root), targets=_targets(tmp_path), on_saved=lambda: fired.append(1))
     assert form.save() is True
     assert fired == [1]
+
+
+def test_changed_summary_lists_scalar_and_multichoice(root, tmp_path):
+    before = settings.load(_targets(tmp_path))           # all schema defaults
+    values = dict(before)
+    values["min_score"] = 5                               # 4 -> 5 (default is 4)
+    values["remote_types"] = ["Remote"]                  # default ["Hybrid","On-site"]
+    summary = config_form.ConfigForm._changed_summary(before, values)
+    assert any("Min score" in s and "4" in s and "5" in s for s in summary)
+    assert any("Remote types" in s for s in summary)
+    # an unchanged field is not listed
+    assert not any("Follow-up" in s for s in summary)
+
+
+def test_changed_summary_secret_updated_vs_cleared():
+    # secrets appear in `values` only when typed (replace) or explicitly cleared,
+    # and must never echo the value.
+    summ_updated = config_form.ConfigForm._changed_summary({}, {"GEMINI_API_KEYS": "k1,k2"})
+    assert summ_updated == ["Gemini API key pool: updated"]
+    summ_cleared = config_form.ConfigForm._changed_summary({}, {"GEMINI_API_KEYS": ""})
+    assert summ_cleared == ["Gemini API key pool: cleared"]
+    assert "k1,k2" not in " ".join(summ_updated)          # value never shown
+
+
+def test_save_pops_summary_of_changed_fields(root, tmp_path, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(config_form.messagebox, "showinfo",
+                        lambda title, msg, **k: captured.update(title=title, msg=msg))
+    targets = _targets(tmp_path)
+    form = config_form.ConfigForm(tk.Frame(root), targets=targets)
+    form.vars["min_score"].set("5")
+    assert form.save() is True
+    assert "Min score" in captured["msg"] and "5" in captured["msg"]
+
+
+def test_save_with_no_changes_says_so(root, tmp_path, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(config_form.messagebox, "showinfo",
+                        lambda title, msg, **k: captured.update(msg=msg))
+    form = config_form.ConfigForm(tk.Frame(root), targets=_targets(tmp_path))
+    assert form.save() is True                            # nothing edited
+    assert "no change" in captured["msg"].lower()
 
 
 def test_every_field_shows_storage_label(root, tmp_path):

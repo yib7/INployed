@@ -122,10 +122,13 @@ CRON_TZ=America/New_York
 ```
 
 ### Manage the VM from the dashboard (no manual SSH)
-The dashboard's **VM** tab drives the VM over `gcloud compute ssh/scp` using your
-existing `gcloud auth login` — it stores only the non-secret connection details
+The dashboard drives the VM over `gcloud compute ssh/scp` using your existing
+`gcloud auth login` — it stores only the non-secret connection details
 (instance / zone / project / Linux user) in your git-ignored `.env`, never a
-password or key. Set those in **Settings -> VM (cloud scraper)** first. Then:
+password or key. There's **no separate VM tab**: open **Settings**, turn on
+**Enable VM features** (off by default), and fill the VM (cloud scraper) section;
+the controls appear at the bottom of Settings. With the toggle off, the VM area is
+hidden and no push prompts fire. Then:
 
 - **Schedule:** edit the run times (up to 6/day, >=2 h apart) + daily/weekly/biweekly;
   *Apply schedule to VM* installs the generated `crontab`. A run is labelled by the
@@ -134,10 +137,11 @@ password or key. Set those in **Settings -> VM (cloud scraper)** first. Then:
   still reads). `run_scraper.sh` now `mkdir`s and rclone-syncs all four label dirs.
 - **Pause:** `~/pause_until` may hold a date (`YYYY-MM-DD`) **or** date+time
   (`YYYY-MM-DD HH:MM`); `run_scraper.sh` skips runs until then and self-clears. Set
-  it from the VM tab (*Pause VM* / *Resume now*) or by hand:
+  it from the VM controls (*Pause VM* / *Resume now*) or by hand:
   `echo "2026-07-01 09:00" > ~/pause_until`.
 - **Push config:** copy `search_config.json` / `scoring_config.json` up with one
-  click; saving a VM-relevant setting in the dashboard also offers to push it.
+  click; saving a setting that *actually changes* a VM-read file also offers to push
+  it (the diff is value-semantic, so re-saving identical values never prompts).
 
 `.sh` files are pinned to LF via `.gitattributes` so a Windows checkout's CRLF
 can't break the shebang when scp'd to the VM.

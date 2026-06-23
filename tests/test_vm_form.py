@@ -150,6 +150,18 @@ def test_weekday_change_updates_preview(root):
     assert "* * 3" in p.preview.get("1.0", "end")      # Wednesday -> cron dow 3
 
 
+def test_weekday_disabled_on_daily_enabled_on_weekly(root):
+    # Weekday only applies to weekly/biweekly; on daily it must be greyed out so
+    # it's clear switching it does nothing (the reported confusion).
+    p = _panel(root)
+    p.freq_var.set("daily")
+    assert str(p.weekday_cb.cget("state")) == "disabled"
+    p.freq_var.set("weekly")
+    assert str(p.weekday_cb.cget("state")) == "readonly"
+    p.freq_var.set("biweekly")
+    assert str(p.weekday_cb.cget("state")) == "readonly"
+
+
 def test_is_future_excludes_today_and_past():
     from datetime import date, timedelta
     assert vm_form.is_future(date.today() + timedelta(days=1)) is True

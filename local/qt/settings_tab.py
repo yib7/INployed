@@ -39,6 +39,28 @@ _SECRET_SET = "saved — blank keeps it, type to replace"
 _SECRET_UNSET = "not set"
 
 
+class _PopupOnClick(QtCore.QObject):
+    """Open an editable combo's dropdown when its text field is clicked.
+
+    An editable ``QComboBox`` shows its line edit, so a click lands on the text
+    field and Qt does *not* open the popup — the field just looks like a plain
+    text box. Installed on the combo's line edit, this opens the list on click so
+    the model selectors behave like the dropdowns users expect; typing a custom
+    id still works once the popup is dismissed.
+    """
+
+    def __init__(self, combo: QtWidgets.QComboBox):
+        super().__init__(combo)
+        self._combo = combo
+
+    def eventFilter(self, obj, event):  # noqa: N802 - Qt override name
+        if (event.type() == QtCore.QEvent.Type.MouseButtonPress
+                and not self._combo.view().isVisible()):
+            self._combo.showPopup()
+            return True
+        return False
+
+
 def _ordered_sections() -> list[tuple[str, list[settings.Field]]]:
     by_section: dict[str, list[settings.Field]] = {}
     for f in settings.SETTINGS_SCHEMA:
@@ -200,6 +222,7 @@ class SettingsForm(QtWidgets.QWidget):
             combo.setEditable(True)
             combo.addItems([str(c) for c in f.choices])
             combo.setCurrentText(str(value))
+            combo.lineEdit().installEventFilter(_PopupOnClick(combo))
             self._getters[f.key] = combo.currentText
             self._setters[f.key] = lambda v, c=combo: c.setCurrentText("" if v is None else str(v))
             return combo

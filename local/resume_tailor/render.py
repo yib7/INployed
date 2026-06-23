@@ -14,15 +14,15 @@ from __future__ import annotations
 from typing import Dict, List
 
 from . import assets
-from .latexutil import clean_bullet, escape_latex, fmt_dates, to_latex
+from .latexutil import clean_bullet, fmt_dates, to_latex
 
 
 def _header(basics: dict) -> str:
     """The centered name + contact line, from yaml `basics`. Missing fields are
     simply omitted so the line stays clean for any user."""
-    name = escape_latex(basics.get("name", "") or "")
+    name = to_latex(basics.get("name", "") or "")
     contact_bits = [
-        escape_latex(str(basics[k]))
+        to_latex(str(basics[k]))
         for k in ("location", "phone", "email", "linkedin", "github")
         if basics.get(k)
     ]
@@ -39,12 +39,12 @@ def _degree_line(e: dict) -> str:
     """'B.S. in Computer Science' + optional concentration/minor, from structured
     fields. A `degree_line` field, if present, is used verbatim (full control)."""
     if e.get("degree_line"):
-        return escape_latex(str(e["degree_line"]))
-    parts = [escape_latex(str(e.get("degree", "") or ""))]
+        return to_latex(str(e["degree_line"]))
+    parts = [to_latex(str(e.get("degree", "") or ""))]
     if e.get("concentration"):
-        parts.append(f" with a Concentration in {escape_latex(str(e['concentration']))}")
+        parts.append(f" with a Concentration in {to_latex(str(e['concentration']))}")
     if e.get("minor"):
-        parts.append(f", Minor in {escape_latex(str(e['minor']))}")
+        parts.append(f", Minor in {to_latex(str(e['minor']))}")
     return "".join(parts).strip()
 
 
@@ -53,22 +53,22 @@ def _education(edu: List[dict]) -> str:
         return ""
     rows: List[str] = []
     for e in edu:
-        school = escape_latex(str(e.get("school", "") or ""))
+        school = to_latex(str(e.get("school", "") or ""))
         gpa = e.get("gpa")
         # Show GPA only when it's a real, non-zero value (0 / blank means "unset").
         show_gpa = gpa not in (None, "", 0, 0.0, "0")
-        left = f"{school} $|$ {escape_latex(str(gpa))} GPA" if show_gpa else school
+        left = f"{school} $|$ {to_latex(str(gpa))} GPA" if show_gpa else school
         # \vspace{2pt} follows the degree line in all cases (matches the template),
         # then an Honors item only when honors are present.
         row = (
             "\\resumeSubheading\n"
             f"{{{left}}}{{{fmt_dates(str(e.get('dates', '') or ''))}}}\n"
-            f"{{{_degree_line(e)}}}{{{escape_latex(str(e.get('location', '') or ''))}}}\\vspace{{2pt}}"
+            f"{{{_degree_line(e)}}}{{{to_latex(str(e.get('location', '') or ''))}}}\\vspace{{2pt}}"
         )
         honors = e.get("honors") or []
         if honors:
             row += "\n\\item \\small{\\textbf{Honors:} " \
-                   + "; ".join(escape_latex(str(h)) for h in honors) + "}"
+                   + "; ".join(to_latex(str(h)) for h in honors) + "}"
         rows.append(row)
     return ("%-----------EDUCATION-----------\n\\section{Education}\n"
             "\\resumeSubHeadingListStart\n" + "\n".join(rows)
@@ -106,8 +106,8 @@ def _experience(sel: dict, bullets: Dict[str, str]) -> str:
             continue
         out.append(
             f"\\resumeSubheading\n"
-            f"{{{escape_latex(b.get('title',''))}}}{{{fmt_dates(b.get('dates',''))}}}\n"
-            f"{{{escape_latex(b.get('name',''))}}}{{{escape_latex(b.get('location',''))}}}\n"
+            f"{{{to_latex(b.get('title',''))}}}{{{fmt_dates(b.get('dates',''))}}}\n"
+            f"{{{to_latex(b.get('name',''))}}}{{{to_latex(b.get('location',''))}}}\n"
             + _bullet_list(items)
         )
     if not out:
@@ -124,7 +124,7 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         items = _group_bullets(entry, bullets)
         if not b or not items:
             continue
-        name = escape_latex(b.get("name", ""))
+        name = to_latex(b.get("name", ""))
         out.append(
             f"\\resumeProjectHeading\n{{\\textbf{{{name}}}}}{{}}\n" + _bullet_list(items)
         )
@@ -145,7 +145,7 @@ def _leadership(sel: dict, bullets: Dict[str, str]) -> str:
             continue
         out.append(
             f"\\resumeProjectHeading\n"
-            f"{{\\textbf{{{escape_latex(b.get('name',''))}}}}}{{{fmt_dates(b.get('dates',''))}}}\n"
+            f"{{\\textbf{{{to_latex(b.get('name',''))}}}}}{{{fmt_dates(b.get('dates',''))}}}\n"
             + _bullet_list(items)
         )
     if not out:
@@ -158,7 +158,7 @@ def _skills(skill_lines: List[Dict[str, str]]) -> str:
     if not skill_lines:
         return ""
     rows = " \\\\\n".join(
-        f"\\textbf{{{escape_latex(ln['label'])}}}{{: }} {to_latex(ln['items'])}"
+        f"\\textbf{{{to_latex(ln['label'])}}}{{: }} {to_latex(ln['items'])}"
         for ln in skill_lines
     )
     return ("%-----------Technical SKILLS-----------\n\\section{Technical Skills}\n"

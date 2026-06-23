@@ -20,21 +20,8 @@ tk = pytest.importorskip("tkinter")
 import config_form  # noqa: E402
 import settings  # noqa: E402
 
-
-@pytest.fixture(scope="module")
-def root():
-    # One Tk interpreter reused across the module: creating/destroying many roots
-    # in a single process is flaky on Windows (intermittent TclError).
-    try:
-        r = tk.Tk()
-    except tk.TclError:
-        pytest.skip("no display for Tk")
-    r.withdraw()
-    yield r
-    try:
-        r.destroy()
-    except tk.TclError:
-        pass
+# `root` is the session-scoped Tk fixture from conftest.py (shared by all GUI
+# tests; only one Tk interpreter per process to avoid Windows flakiness).
 
 
 def _targets(tmp_path: Path) -> dict[str, Path]:

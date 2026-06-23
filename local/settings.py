@@ -240,9 +240,14 @@ SETTINGS_SCHEMA: list[Field] = [
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your
     # existing `gcloud auth login` — no SSH password or key is ever stored.
+    # vm_enabled is the section master switch (local, non-secret bool in config.json):
+    # off (the default) hides the whole VM area in the GUI and silences push prompts.
+    Field("vm_enabled", "Enable VM features", "bool", False, "VM (cloud scraper)", "config",
+          help="Turn on to manage a cloud scraper VM from here (schedule, pause, push config). "
+               "Off hides all VM settings and never prompts to push — leave off if you don't use a VM."),
     Field("VM_INSTANCE", "VM instance name", "str", "", "VM (cloud scraper)", "env",
           optional=True,
-          help="GCP instance running the scraper (e.g. scraper-vm). Blank = VM tab off."),
+          help="GCP instance running the scraper (e.g. scraper-vm). Blank = VM actions disabled."),
     Field("VM_ZONE", "VM zone", "str", "", "VM (cloud scraper)", "env", optional=True,
           help="Compute zone, e.g. us-east1-c."),
     Field("VM_PROJECT", "GCP project", "str", "", "VM (cloud scraper)", "env", optional=True,
@@ -255,6 +260,23 @@ SETTINGS_SCHEMA: list[Field] = [
           path_kind="file", optional=True,
           help="Path to the gcloud CLI. Leave as 'gcloud' if it's on your PATH."),
 ]
+
+
+# Friendly filename shown next to each field in the config GUI so a user can find
+# and inspect the file a value is saved to themselves (keyed by Field.target).
+STORAGE_LABELS: dict[str, str] = {
+    "config": "config.json",
+    "search": "search_config.json",
+    "scoring": "scoring_config.json",
+    "apply": "apply_config.json",
+    "env": ".env",
+}
+
+
+def storage_location(field: Field) -> str:
+    """The friendly filename a Field's value is saved to (for the GUI 'stored in'
+    tag). Falls back to the raw target id for any unmapped target."""
+    return STORAGE_LABELS.get(field.target, field.target)
 
 
 def _resolve_targets(targets: dict[str, Path] | None) -> dict[str, Path]:

@@ -142,3 +142,52 @@ def test_on_saved_callback_fires(root, tmp_path):
         tk.Frame(root), targets=_targets(tmp_path), on_saved=lambda: fired.append(1))
     assert form.save() is True
     assert fired == [1]
+
+
+def test_every_field_shows_storage_label(root, tmp_path):
+    """Each rendered field carries a muted tag naming the file its value lands in
+    (.env / config.json / search_config.json / ...), so a user can find it."""
+    form = _form(root, tmp_path)
+    assert form._storage_labels["BRIGHT_DATA_API_TOKEN"].cget("text").find(".env") >= 0
+    assert "search_config.json" in form._storage_labels["keywords"].cget("text")
+    assert "config.json" in form._storage_labels["min_score"].cget("text")
+
+
+def test_section_extra_mounted_and_master_toggle_registered(root, tmp_path):
+    made = {}
+
+    def builder(parent):
+        w = tk.Frame(parent)
+        made["w"] = w
+        return w
+
+    form = config_form.ConfigForm(
+        tk.Frame(root), targets=_targets(tmp_path),
+        section_extras={"VM (cloud scraper)": builder})
+    assert "w" in made                        # the extra builder ran once
+    assert "vm_enabled" in form.vars          # master toggle is registered
+
+
+def test_vm_section_hidden_by_default_and_toggles(root, tmp_path):
+    form = _form(root, tmp_path)              # vm_enabled defaults False
+    frame = form._collapse_frames["VM (cloud scraper)"]
+    assert frame.winfo_manager() == ""        # collapsed (hidden) by default
+    form.vars["vm_enabled"].set(True)
+    form._apply_section_visibility()
+    assert frame.winfo_manager() == "grid"    # shown when enabled
+
+
+def test_collect_includes_vm_enabled_bool(root, tmp_path):
+    form = _form(root, tmp_path)
+    form.vars["vm_enabled"].set(True)
+    values, errors = form.collect()
+    assert values["vm_enabled"] is True and errors == {}
+
+
+def test_restore_defaults_resets_vm_enabled_and_hides(root, tmp_path):
+    form = _form(root, tmp_path)
+    form.vars["vm_enabled"].set(True)
+    form._apply_section_visibility()
+    form.restore_defaults()
+    assert form.vars["vm_enabled"].get() is False
+    assert form._collapse_frames["VM (cloud scraper)"].winfo_manager() == ""

@@ -176,25 +176,29 @@ without touching a file:
 - **Models:** the scorer's two stages **and** all three résumé-tailor stages
   (fast / standard / deep) are **editable dropdowns** of the recent Gemini 3.x
   models — pick one or type a custom id.
-- **VM (cloud scraper):** the non-secret connection details for your GCP scraper
-  VM (instance, zone, project, Linux user) — see *Manage the VM* below.
+- **VM (cloud scraper):** an **Enable VM features** master toggle (off by default)
+  plus the non-secret connection details for your GCP scraper VM (instance, zone,
+  project, Linux user). Off hides the whole VM area and silences VM prompts; turn
+  it on to reveal the controls — see *Manage the VM* below.
 
 Guard rails keep it hard to break: fixed-choice fields are **dropdowns** (no
 typos), bounded numbers are **sliders**, multi-select fields are **checkboxes**,
-every field has a one-line explanation, numbers are range-checked on Save, and
-there's a **Restore defaults** button. Edits are written atomically (with a `.bak`) to your
-git-ignored `.env`, `local/config.json`, and `search_config.json` /
-`scoring_config.json` / `apply_config.json`. Environment variables still override
-a file, and an absent file falls back to built-in defaults — so the VM keeps
-running unchanged.
+every field has a one-line explanation **and a muted tag naming the file its value
+is saved to** (e.g. `(.env)`, `(search_config.json)`) so you can find it yourself,
+numbers are range-checked on Save, and there's a **Restore defaults** button. Edits
+are written atomically (with a `.bak`) to your git-ignored `.env`,
+`local/config.json`, and `search_config.json` / `scoring_config.json` /
+`apply_config.json`. Environment variables still override a file, and an absent file
+falls back to built-in defaults — so the VM keeps running unchanged.
 
 ### Manage the VM from the dashboard
 If you run the scraper + scorer on a GCP VM (see [HANDOFF.md](docs/HANDOFF.md)),
-the **VM** tab drives it without SSH-by-hand. Fill the VM section in **Settings**
-first (instance, zone, project, Linux user); these non-secret identifiers are
+the dashboard drives it without SSH-by-hand — there's **no separate VM tab**. In
+**Settings**, turn on **Enable VM features** (off by default) and fill the VM
+section (instance, zone, project, Linux user); these non-secret identifiers are
 saved to your git-ignored `.env`. Authentication is your existing
-`gcloud auth login` — **no SSH password or key is ever stored.** Then the VM tab
-lets you:
+`gcloud auth login` — **no SSH password or key is ever stored.** The VM controls
+then appear at the bottom of Settings, letting you:
 
 - **Schedule:** enter the run times (one `HH:MM` per line, up to 6/day, at least
   2 h apart) and a frequency (daily / weekly / biweekly). It previews the exact
@@ -204,11 +208,13 @@ lets you:
   skips every run until then, then resumes on its own (no API spend while paused).
   **Resume now** clears it.
 - **Push config to VM:** copy your current `search_config.json` / `scoring_config.json`
-  up with one click. And whenever you save a setting that the VM reads, the
-  dashboard asks if you'd like to push the changed file(s) right then.
+  up with one click. And whenever you save a setting that **actually changes** a file
+  the VM reads, the dashboard asks if you'd like to push the changed file(s) right
+  then — re-saving the same values (or any non-VM setting) never prompts.
 
 Every VM action asks for confirmation first and runs through `gcloud` — nothing
-happens automatically.
+happens automatically. With **Enable VM features** off, none of these prompts ever
+appear.
 
 ### Apply to a job (semi-automated, in Chrome)
 Every tailored résumé folder gets an `apply_data.json` (candidate basics, education,
@@ -286,13 +292,13 @@ score_jobs.py           two-stage Gemini relevance scorer
 run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
 scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)
 scripts/setup.ps1       Fast/Long setup wizard
-local/ui.py             Tkinter dashboard (triage, Resume Data + Apply Answers editors, Settings, VM)
+local/ui.py             Tkinter dashboard (triage, Resume Data + Apply Answers editors, Settings incl. VM)
 local/configure.pyw     standalone config GUI (settings.py schema + config_form.py)
 local/resume_data_form.py   Resume Data tab editor (master_experience.yaml)
 local/answers_form.py   Apply Answers tab editor (apply_answers.json)
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders + settings->VM change detection
-local/vm_form.py        VM tab (schedule editor, pause-until, push to VM)
+local/vm_form.py        VM panel (schedule editor, pause-until, push to VM) — mounts in Settings
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test

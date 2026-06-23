@@ -82,8 +82,9 @@ tab_labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
 assert any("Settings" in lbl for lbl in tab_labels), f"no Settings tab: {tab_labels}"
 assert any("Resume Data" in lbl for lbl in tab_labels), f"no Resume Data tab: {tab_labels}"
 assert any("Apply Answers" in lbl for lbl in tab_labels), f"no Apply Answers tab: {tab_labels}"
-assert any(lbl == "VM" for lbl in tab_labels), f"no VM tab: {tab_labels}"
-assert app.vm_panel is not None, "VM panel missing"
+# VM controls now live inside Settings (no separate VM tab); the panel is still built.
+assert not any(lbl == "VM" for lbl in tab_labels), f"VM tab should be gone: {tab_labels}"
+assert app.vm_panel is not None, "VM panel missing (should be mounted in Settings)"
 
 # INployed rebrand (branding only) + Check setup control
 assert "INployed" in app.root.title(), f"title not rebranded: {app.root.title()!r}"

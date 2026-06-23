@@ -54,6 +54,12 @@ def build(root: tk.Tk, targets: dict | None = None) -> ConfigForm:
 
 
 def main() -> int:
+    try:
+        import ui
+
+        ui._enable_dpi_awareness()  # crisp text on scaled displays; before Tk()
+    except Exception:  # noqa: BLE001 - best-effort; window still works without it
+        pass
     root = tk.Tk()
     build(root)
     root.mainloop()

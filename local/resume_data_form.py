@@ -57,7 +57,11 @@ class ResumeDataEditor:
 
         style = ttk.Style(parent)
         self._bg = style.lookup("TFrame", "background") or "#1b2230"
+        self._field_bg = style.lookup("TEntry", "fieldbackground") or "#0f1420"
         self._fg = style.lookup("TLabel", "foreground") or "#e6e9ef"
+        # tk.Text ignores the ttk theme, so match the entries' font explicitly
+        # (the dashboard sets every ttk widget to Segoe UI 10 via the "." style).
+        self._font = style.lookup("TLabel", "font") or "Segoe UI 10"
 
         self.sections: dict = {}
         self._basics_vars: dict[str, tk.StringVar] = {}
@@ -66,6 +70,8 @@ class ResumeDataEditor:
         self._entry_orig: dict[tuple, str] = {}
         self._atom_vars: dict[tuple, tk.StringVar] = {}
         self._atom_orig: dict[tuple, str] = {}
+        self._atom_impact: dict[str, tk.Text] = {}      # atom id -> impact Text widget
+        self._atom_impact_orig: dict[str, str] = {}     # atom id -> impact text on open
         self.status: ttk.Label | None = None
 
         self._build_shell()
@@ -108,6 +114,8 @@ class ResumeDataEditor:
         self._entry_orig.clear()
         self._atom_vars.clear()
         self._atom_orig.clear()
+        self._atom_impact.clear()
+        self._atom_impact_orig.clear()
 
         data = self._read()
         self.sections = {s: (data.get(s) or []) for s in ("experience", "projects", "leadership")}
@@ -167,8 +175,8 @@ class ResumeDataEditor:
             self._entry_orig[(section, idx, k)] = v.get()
             ttk.Entry(grid, textvariable=v, width=48).grid(row=i, column=1, sticky="w", pady=2)
 
-        ttk.Label(lf, text="Achievements (atoms):", style="Muted.TLabel").pack(
-            anchor="w", pady=(6, 2))
+        ttk.Label(lf, text="Achievements (atoms) — impact: one measurable result per line",
+                  style="Muted.TLabel").pack(anchor="w", pady=(6, 2))
         for atom in entry.get("achievements") or []:
             if isinstance(atom, dict):
                 self._atom_block(lf, atom)
@@ -195,8 +203,17 @@ class ResumeDataEditor:
         self._atom_vars[(aid, "angles")] = av
         self._atom_orig[(aid, "angles")] = av.get()
         ttk.Entry(fr, textvariable=av, width=62).grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Label(fr, text="impact").grid(row=2, column=0, sticky="nw")
+        imp_lines = "\n".join(str(x) for x in (atom.get("impact") or []))
+        imp = tk.Text(fr, width=62, height=2, bg=self._field_bg, fg=self._fg,
+                      insertbackground=self._fg, relief="flat", highlightthickness=1,
+                      highlightbackground=self._bg, wrap="word", font=self._font)
+        imp.insert("1.0", imp_lines)
+        imp.grid(row=2, column=1, sticky="w", padx=4, pady=(2, 0))
+        self._atom_impact[aid] = imp
+        self._atom_impact_orig[aid] = imp_lines
         ttk.Button(fr, text="Delete", command=lambda a=aid: self._delete_atom(a)).grid(
-            row=0, column=2, rowspan=2, padx=6)
+            row=0, column=2, rowspan=3, padx=6)
 
     def _readonly_block(self, data: dict) -> None:
         edu = data.get("education") or []
@@ -277,6 +294,11 @@ class ResumeDataEditor:
                     if k == "angles":
                         val = [a.strip() for a in val.split(",") if a.strip()]
                     atom_changes.setdefault(aid, {})[k] = val
+            for aid, txt in self._atom_impact.items():
+                current = txt.get("1.0", "end-1c")
+                if current != self._atom_impact_orig.get(aid, ""):
+                    atom_changes.setdefault(aid, {})["impact"] = [
+                        ln.strip() for ln in current.splitlines() if ln.strip()]
             for aid, fields in atom_changes.items():
                 master_edit.update_atom(aid, fields, self.master_path)
         except (ValueError, OSError) as exc:
@@ -297,7 +319,11 @@ class ResumeDataEditor:
     def _validate_clicked(self) -> None:
         errs = self.validate()
         if not errs:
-            messagebox.showinfo("Validate", "Looks good — no problems found.", parent=self._top())
+            messagebox.showinfo(
+                "Validate",
+                "Looks good — no problems found.\n\nChecked: name & email present, every "
+                "achievement has an id and text, and no duplicate atom ids.",
+                parent=self._top())
             self._set_status("Valid.")
         else:
             messagebox.showerror(
@@ -401,11 +427,19 @@ class ResumeDataEditor:
             row=base + 1, column=0, sticky="w", padx=8, pady=2)
         ang_v = tk.StringVar()
         ttk.Entry(win, textvariable=ang_v, width=56).grid(row=base + 1, column=1, padx=8, pady=2)
+        ttk.Label(win, text="Impact (comma-separated, optional)").grid(
+            row=base + 2, column=0, sticky="w", padx=8, pady=2)
+        imp_v = tk.StringVar()
+        ttk.Entry(win, textvariable=imp_v, width=56).grid(row=base + 2, column=1, padx=8, pady=2)
 
         def _ok():
             data = {k: v.get().strip() for k, v in field_vars.items() if v.get().strip()}
             angles = [a.strip() for a in ang_v.get().split(",") if a.strip()]
-            data["achievements"] = [{"what": what_v.get().strip(), "angles": angles}]
+            impact = [s.strip() for s in imp_v.get().split(",") if s.strip()]
+            achievement = {"what": what_v.get().strip(), "angles": angles}
+            if impact:
+                achievement["impact"] = impact
+            data["achievements"] = [achievement]
             try:
                 master_edit.append_entry(section, data, self.master_path)
             except (ValueError, OSError) as exc:
@@ -416,7 +450,7 @@ class ResumeDataEditor:
             self._set_status("Added a %s entry." % section)
 
         btns = ttk.Frame(win)
-        btns.grid(row=base + 2, column=0, columnspan=2, pady=10)
+        btns.grid(row=base + 3, column=0, columnspan=2, pady=10)
         ttk.Button(btns, text="Add", command=_ok, style="Accent.TButton").pack(side="left", padx=6)
         ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=6)
         win.wait_window(win)

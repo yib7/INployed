@@ -57,3 +57,12 @@ def test_save_persists_field_edit(root, master_tmp):
     ed._atom_vars[("a1", "what")].set("rebuilt the pipeline")
     assert ed.save() is True
     assert "rebuilt the pipeline" in master_tmp.read_text(encoding="utf-8")
+
+
+def test_atom_impact_is_editable_and_saves(root, master_tmp):
+    ed = _editor(root, master_tmp)
+    assert "a1" in ed._atom_impact            # impact is now shown/edited per atom
+    ed._atom_impact["a1"].delete("1.0", "end")
+    ed._atom_impact["a1"].insert("1.0", "cut runtime 40%")
+    assert ed.save() is True
+    assert "cut runtime 40%" in master_tmp.read_text(encoding="utf-8")

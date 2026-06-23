@@ -112,6 +112,22 @@ app.registry.mark_followed_up([jid])
 app._refresh_tracker()
 assert app.tv_tracker.item(jid, "values")[4] == "done"
 
+# status switching (the reported bug): applied -> rejected -> interviewing must
+# update the displayed Status column every time, via both entry points.
+app._apply_status_to([jid], "rejected")          # right-click "Set status" path
+assert app.tv_tracker.item(jid, "values")[0] == "rejected", app.tv_tracker.item(jid, "values")
+app.tv_tracker.selection_set(jid)                # Tracker combobox + button path
+app.track_status_var.set("interviewing")
+app._set_status_selected()
+assert app.tv_tracker.item(jid, "values")[0] == "interviewing"
+# setting a status on a not-yet-tracked job (right-click from High Score/All Jobs)
+# creates the tracker row
+app._apply_status_to(["1002"], "offer")
+assert "1002" in app.tv_tracker.get_children(), "set-status didn't add an untracked job"
+assert app.tv_tracker.item("1002", "values")[0] == "offer"
+app.registry.clear_status("1002")  # restore single-row tracker for later asserts
+app._refresh_tracker()
+
 # details pane
 app._show_details(jid)
 detail_text = app.details.get("1.0", "end")

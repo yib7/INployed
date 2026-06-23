@@ -1,8 +1,8 @@
 """Score jobs from the latest scraper run against the resume.
 
 Runs on the VM after scraper.py via run_scraper.sh.
-Stage 1: STAGE1_MODEL (default gemini-2.5-flash-lite) scores every surviving job 1-5 with a short reason.
-Stage 2: STAGE2_MODEL (default gemini-2.5-flash) gives deep analysis for jobs scoring >= STAGE2_THRESHOLD.
+Stage 1: STAGE1_MODEL (default gemini-3.1-flash-lite) scores every surviving job 1-5 with a short reason.
+Stage 2: STAGE2_MODEL (default gemini-3.5-flash) gives deep analysis for jobs scoring >= STAGE2_THRESHOLD.
 After the fresh batch, master rows whose scoring previously failed (transient
 Vertex errors) are retried, capped at RESCORE_CAP per run.
 Output: ~/<morning|evening>/linkedin_jobs_<date>_<label>_scored.csv.gz

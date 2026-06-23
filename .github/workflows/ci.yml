@@ -8,8 +8,8 @@ on:
 
 jobs:
   test:
-    # Windows runner: this is a Windows desktop app (Tkinter dashboard), so the
-    # test suite imports tkinter, which ships with the Windows Python build.
+    # Windows runner: this is a Windows desktop app (PySide6/Qt dashboard). The
+    # Qt UI tests run headless via the offscreen platform plugin (see the test step).
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,4 +28,8 @@ jobs:
         run: python -m ruff check .
 
       - name: Run tests
-        run: python -m pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen   # Qt UI tests run headless (no display on CI)
+        run: |
+          python -m pytest -q
+          python tests/smoke_qt.py

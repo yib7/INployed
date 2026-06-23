@@ -17,7 +17,7 @@ This project stands on a lot of other people's work.
 
 ## Python libraries
 pandas · google-genai · aiohttp · PyYAML · pypdf · markdownify · python-dotenv ·
-pytest · and the Python standard library (Tkinter, asyncio, sqlite3, argparse).
+PySide6 (Qt) · pytest · pytest-qt · and the Python standard library (asyncio, sqlite3, argparse).
 
 If you reuse this project, please keep this file and the upstream template
 attribution.

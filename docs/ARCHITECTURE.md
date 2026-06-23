@@ -22,11 +22,14 @@ stage 2 (flash) deep-scores the survivors. A deterministic `min_required_years`
 regex pre-filter drops over-senior roles *before* any LLM sees them (this is the
 load-bearing, heavily-tested function — see `tests/test_min_required_years.py`).
 
-### 3. Dashboard (`local/ui.py`) + résumé engine (`local/resume_tailor/`)
-Tkinter app: high-score triage, an SQLite-backed application tracker
-(`local/seen_db.py`) with follow-up nudges, a stats tab, and the **Tailor resume**
-button. Heavy operations (tailoring, prep-sheet generation) run on background
-threads and marshal status back to the UI via `root.after`, so the window never
+### 3. Dashboard (`local/app.py` + `local/qt/`) + résumé engine (`local/resume_tailor/`)
+PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
+application tracker (`local/seen_db.py`) with follow-up nudges, a stats tab, the
+Settings/Resume Data/Apply Answers editors, and the **Tailor resume** button. The
+job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pure
+data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome.py`).
+Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
+(`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes.
 
 ## The résumé engine in depth (`local/resume_tailor/`)
@@ -97,4 +100,4 @@ job (CSV row) ─► select ─► rephrase ─► verify ─► layout fit ─�
 - `tests/test_bullet_length.py` — fill floors + unicode-math conversion.
 - `tests/test_master_gaps.py` — JD-gap detection, comment-preserving write, diff.
 - `tests/test_seen_reconcile.py`, `tests/test_download_race.py` — registry + scraper edge cases.
-- `tests/smoke_ui.py` — full dashboard smoke (run directly, not under pytest).
+- `tests/smoke_qt.py` — Qt dashboard smoke (run directly with `QT_QPA_PLATFORM=offscreen`, not under pytest).

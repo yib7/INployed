@@ -177,6 +177,30 @@ def save(answers: List[Dict[str, Any]], path: Union[Path, None] = None) -> None:
         raise
 
 
+def new_id(question: str, taken: set) -> str:
+    """A unique slug id for a freshly added answer (used by the dashboard editor)."""
+    return _unique_id(_slug(question), taken)
+
+
+def restore_bytes(data: bytes, path: Union[Path, None] = None) -> None:
+    """Overwrite the store with raw bytes (the editor's "revert to opening state"),
+    backing the current file up to `<name>.bak` first."""
+    path = Path(path) if path is not None else STORE_PATH
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".answers_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        if path.exists():
+            shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
+        os.replace(tmp, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def as_standard_answers(answers: Union[List[Dict[str, Any]], None] = None) -> Dict[str, Any]:
     """Flatten the ACTIVE answers into the legacy {id: value} dict the apply
     skill's table expects. Boolean ids are coerced back to bool."""

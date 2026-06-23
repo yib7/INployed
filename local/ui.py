@@ -1008,7 +1008,11 @@ class App:
         # (add/edit/delete entries + achievement atoms, tips, validate, revert).
         self._build_resume_data_tab(nb)
 
-        # Tab 6 — Settings: user-editable options from settings.SETTINGS_SCHEMA,
+        # Tab 6 — Apply Answers: table editor over the master answer store
+        # (apply_answers.json) — add/edit/delete, fixed/open-ended, needs-review.
+        self._build_answers_tab(nb)
+
+        # Tab 7 — Settings: user-editable options from settings.SETTINGS_SCHEMA,
         # grouped by section. Save validates then writes config.json / .env.
         self._build_settings_tab(nb)
 
@@ -1783,6 +1787,18 @@ class App:
 
     def _on_resume_data_saved(self) -> None:
         self._set_status("Resume data saved (applies on the next tailor run).")
+
+    def _build_answers_tab(self, nb: ttk.Notebook) -> None:
+        """Mount the master-answer-store table editor as a dashboard tab so a user
+        can manage the screening answers the apply helper reuses across jobs."""
+        from answers_form import AnswersEditor
+
+        self.tab_answers = frame = ttk.Frame(nb)
+        nb.add(frame, text="Apply Answers")
+        self.answers_editor = AnswersEditor(frame, on_saved=self._on_answers_saved)
+
+    def _on_answers_saved(self) -> None:
+        self._set_status("Apply answers saved.")
 
     def _build_settings_tab(self, nb: ttk.Notebook) -> None:
         """Mount the shared, schema-driven config form as the Settings tab.

@@ -9,7 +9,9 @@ settings; auth is the user's existing `gcloud` login.
 """
 from __future__ import annotations
 
+import calendar as _calendar
 import tkinter as tk
+from datetime import date, timedelta
 from tkinter import messagebox, ttk
 from typing import Callable
 
@@ -18,6 +20,79 @@ import vm_schedule
 import vm_sync
 
 WEEKDAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+BLANK = "—"  # "no time picked" sentinel in the hour dropdowns
+HOUR_OPTIONS = [f"{h:02d}:00" for h in range(24)]
+MAX_TIMES = vm_schedule.MAX_TIMES_PER_DAY
+
+
+def is_future(d: date, today: date | None = None) -> bool:
+    """True only for days strictly after today — today and the past can't be a
+    meaningful 'pause until' (pausing until today is a no-op)."""
+    return d > (today or date.today())
+
+
+class DatePicker:
+    """A small stdlib month calendar popup. Today and earlier are disabled
+    (greyed); clicking a future day calls on_pick(iso) and closes."""
+
+    def __init__(self, parent: tk.Widget, on_pick: Callable[[str], None],
+                 initial: date | None = None):
+        self.on_pick = on_pick
+        self._today = date.today()
+        self.cur = (initial or self._today).replace(day=1)
+        self.day_buttons: dict[date, ttk.Button] = {}
+        self.win = tk.Toplevel(parent)
+        self.win.title("Pick a date")
+        self.win.transient(parent.winfo_toplevel())
+        try:
+            self.win.grab_set()
+        except tk.TclError:
+            pass
+        self._build()
+
+    def _build(self) -> None:
+        hdr = ttk.Frame(self.win)
+        hdr.grid(row=0, column=0, columnspan=7, sticky="ew", padx=6, pady=6)
+        ttk.Button(hdr, text="◀", width=3, command=self._prev).pack(side="left")
+        self.title_var = tk.StringVar()
+        ttk.Label(hdr, textvariable=self.title_var, anchor="center").pack(
+            side="left", expand=True, fill="x")
+        ttk.Button(hdr, text="▶", width=3, command=self._next).pack(side="left")
+        for i, wd in enumerate(("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")):
+            ttk.Label(self.win, text=wd, anchor="center", width=4).grid(
+                row=1, column=i, padx=1, pady=1)
+        self._render()
+
+    def _render(self) -> None:
+        for b in self.day_buttons.values():
+            b.destroy()
+        self.day_buttons.clear()
+        self.title_var.set(self.cur.strftime("%B %Y"))
+        cal = _calendar.Calendar(firstweekday=6)  # Sunday-first to match headers
+        row = 2
+        for week in cal.monthdatescalendar(self.cur.year, self.cur.month):
+            for col, d in enumerate(week):
+                if d.month != self.cur.month:
+                    continue  # blank cell for adjacent-month days
+                state = "normal" if is_future(d, self._today) else "disabled"
+                b = ttk.Button(self.win, text=str(d.day), width=4, state=state,
+                               command=lambda dd=d: self._choose(dd))
+                b.grid(row=row, column=col, padx=1, pady=1)
+                self.day_buttons[d] = b
+            row += 1
+
+    def _choose(self, d: date) -> None:
+        self.on_pick(d.isoformat())
+        self.win.destroy()
+
+    def _prev(self) -> None:
+        self.cur = (self.cur - timedelta(days=1)).replace(day=1)
+        self._render()
+
+    def _next(self) -> None:
+        y, m = self.cur.year, self.cur.month
+        self.cur = date(y + (m == 12), 1 if m == 12 else m + 1, 1)
+        self._render()
 
 
 class VMPanel:
@@ -43,7 +118,8 @@ class VMPanel:
         self.freq_var = tk.StringVar(value="daily")
         self.weekday_var = tk.StringVar(value="Monday")
         self.pause_date_var = tk.StringVar(value="")
-        self.pause_time_var = tk.StringVar(value="")
+        self.pause_time_var = tk.StringVar(value=BLANK)
+        self.time_vars: list[tk.StringVar] = []
         self._build()
 
     # ---- construction --------------------------------------------------------
@@ -62,13 +138,17 @@ class VMPanel:
         # --- Schedule ---------------------------------------------------------
         ttk.Label(f, text="Schedule", style="Subtitle.TLabel").grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(6, 2))
-        ttk.Label(f, text="Run times (one HH:MM per line, max 6, ≥2h apart)").grid(
+        ttk.Label(f, text="Run times (pick up to 6, ≥2h apart)").grid(
             row=3, column=0, sticky="nw", padx=(0, 10))
-        self.times_txt = tk.Text(f, width=12, height=6, wrap="none", font=self._font,
-                                 bg=self._field_bg, fg=self._fg, insertbackground=self._fg,
-                                 relief="flat", highlightthickness=1, highlightbackground="#2a3344")
-        self.times_txt.insert("1.0", "10:00\n19:00")
-        self.times_txt.grid(row=3, column=1, sticky="w")
+        times_box = ttk.Frame(f)
+        times_box.grid(row=3, column=1, sticky="w")
+        for i in range(MAX_TIMES):
+            var = tk.StringVar(value=BLANK)
+            self.time_vars.append(var)
+            var.trace_add("write", lambda *_: self._refresh_preview())
+            ttk.Combobox(times_box, textvariable=var, state="readonly", width=7,
+                         values=[BLANK, *HOUR_OPTIONS]).grid(
+                row=i % 3, column=i // 3, sticky="w", padx=(0, 8), pady=2)
 
         freq_box = ttk.Frame(f)
         freq_box.grid(row=3, column=2, sticky="nw", padx=(12, 0))
@@ -86,10 +166,10 @@ class VMPanel:
                                bg=self._field_bg, fg=self._fg, relief="flat",
                                highlightthickness=1, highlightbackground="#2a3344")
         self.preview.grid(row=4, column=1, columnspan=2, sticky="w", pady=(10, 0))
-        self._refresh_preview()
-        for w in (self.times_txt,):
-            w.bind("<KeyRelease>", lambda _e: self._refresh_preview())
+        # Refresh the preview whenever the times, frequency, OR weekday change.
         self.freq_var.trace_add("write", lambda *_: self._refresh_preview())
+        self.weekday_var.trace_add("write", lambda *_: self._refresh_preview())
+        self.set_times(["10:00", "19:00"])  # sensible default (also paints preview)
 
         sbar = ttk.Frame(f)
         sbar.grid(row=5, column=1, columnspan=2, sticky="w", pady=(8, 0))
@@ -102,10 +182,13 @@ class VMPanel:
             row=6, column=0, columnspan=3, sticky="w", pady=(16, 2))
         pbox = ttk.Frame(f)
         pbox.grid(row=7, column=0, columnspan=3, sticky="w")
-        ttk.Label(pbox, text="Until date (YYYY-MM-DD)").pack(side="left")
-        ttk.Entry(pbox, textvariable=self.pause_date_var, width=14).pack(side="left", padx=(6, 12))
-        ttk.Label(pbox, text="time (HH:MM, optional)").pack(side="left")
-        ttk.Entry(pbox, textvariable=self.pause_time_var, width=8).pack(side="left", padx=(6, 12))
+        ttk.Label(pbox, text="Until:").pack(side="left")
+        ttk.Label(pbox, textvariable=self.pause_date_var, width=12,
+                  style="Muted.TLabel").pack(side="left", padx=(6, 6))
+        ttk.Button(pbox, text="Pick date…", command=self._open_calendar).pack(side="left")
+        ttk.Label(pbox, text="time").pack(side="left", padx=(12, 0))
+        ttk.Combobox(pbox, textvariable=self.pause_time_var, state="readonly", width=7,
+                     values=[BLANK, *HOUR_OPTIONS]).pack(side="left", padx=(6, 12))
         ttk.Button(pbox, text="Pause VM", command=self.pause).pack(side="left")
         ttk.Button(pbox, text="Resume now", command=self.resume).pack(side="left", padx=(8, 0))
 
@@ -120,16 +203,23 @@ class VMPanel:
     # ---- helpers -------------------------------------------------------------
 
     def set_times(self, times: list[str]) -> None:
-        self.times_txt.delete("1.0", "end")
-        self.times_txt.insert("1.0", "\n".join(times))
+        for i, var in enumerate(self.time_vars):
+            var.set(times[i] if i < len(times) else BLANK)
         self._refresh_preview()
 
     def set_pause_inputs(self, date: str, time: str = "") -> None:
         self.pause_date_var.set(date)
-        self.pause_time_var.set(time)
+        self.pause_time_var.set(time or BLANK)
+
+    def _open_calendar(self) -> None:
+        try:
+            initial = date.fromisoformat(self.pause_date_var.get().strip())
+        except ValueError:
+            initial = None
+        DatePicker(self.frame, on_pick=self.pause_date_var.set, initial=initial)
 
     def _times(self) -> list[str]:
-        return [ln.strip() for ln in self.times_txt.get("1.0", "end").splitlines() if ln.strip()]
+        return [v.get() for v in self.time_vars if v.get() and v.get() != BLANK]
 
     def _weekday_idx(self) -> int:
         try:
@@ -142,6 +232,8 @@ class VMPanel:
                                          weekday=self._weekday_idx())
 
     def _refresh_preview(self) -> None:
+        if not hasattr(self, "preview"):
+            return  # a time var changed before the preview widget exists (during build)
         try:
             text = self.crontab_text()
         except Exception:  # noqa: BLE001 - preview is cosmetic
@@ -187,14 +279,17 @@ class VMPanel:
         self._run(t.install_crontab_cmd(cron))
 
     def pause(self) -> None:
-        date = self.pause_date_var.get().strip()
-        if not date:
-            self._notify("Pause", "Enter an 'until' date (YYYY-MM-DD).")
+        pause_date = self.pause_date_var.get().strip()
+        if not pause_date:
+            self._notify("Pause", "Pick an 'until' date first.")
             return
         t = self._require_configured()
         if not t:
             return
-        val = vm_schedule.pause_until_value(date, self.pause_time_var.get())
+        time = self.pause_time_var.get()
+        if time == BLANK:
+            time = ""  # the sentinel means "no time" -> date-only pause
+        val = vm_schedule.pause_until_value(pause_date, time)
         if not self._confirm("Pause VM", f"Pause the scraper until {val}?"):
             return
         self._run(t.set_pause_cmd(val))

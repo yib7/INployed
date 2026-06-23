@@ -39,7 +39,9 @@ from jobsdata import (
 )
 from qt import workers
 from qt.jobs_tab import JobsTab
+from qt.settings_tab import SettingsForm
 from qt.stats_tab import StatsTab
+from qt.vm_panel import VMPanel
 from qt.widgets import ScorePreview
 from seen_db import APP_STATUSES, SeenRegistry
 
@@ -108,9 +110,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tracker_tab = self._make_jobs_tab("tracker", TRACKER_COLUMNS)
         self._setup_tracker_toolbar()
         self.stats_tab = StatsTab(on_export=self._export_calibration)
+        self.settings_tab = SettingsForm(on_saved=self._on_settings_saved,
+                                         vm_panel_factory=self._make_vm_panel)
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
-                 "Tracker": self.tracker_tab, "Stats": self.stats_tab}
+                 "Tracker": self.tracker_tab, "Stats": self.stats_tab,
+                 "Settings": self.settings_tab}
         for title in TAB_TITLES:
             page = pages.get(title) or QtWidgets.QWidget()
             self._tab_widgets[title] = page
@@ -743,6 +748,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status(f"Export failed: {e}")
             return
         self._set_status(f"Calibration labels → {out}")
+
+    # ---- settings ------------------------------------------------------------
+
+    def _make_vm_panel(self, parent) -> VMPanel:
+        """Build the VM operations panel mounted inside the Settings VM section."""
+        return VMPanel(parent=parent)
+
+    def _on_settings_saved(self) -> None:
+        """Re-read the values the dashboard caches from config and refresh."""
+        self.min_score = load_min_score()
+        self.followup_days = load_followup_days()
+        self.reload_data()
 
     # ---- engine env ----------------------------------------------------------
 

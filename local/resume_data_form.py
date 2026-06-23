@@ -23,6 +23,7 @@ from typing import Callable
 
 import yaml
 
+import smoothscroll
 from resume_tailor import config, master_edit, master_validate
 
 _SECTION_FIELDS = {
@@ -260,18 +261,9 @@ class ResumeDataEditor:
         self.status.pack(side="left", padx=(12, 0))
 
     def _wire_wheel(self) -> None:
-        def _wheel(e):
-            self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-            return "break"
-
-        def _bind(w):
-            if not isinstance(w, tk.Text):
-                w.bind("<MouseWheel>", _wheel)
-            for child in w.winfo_children():
-                _bind(child)
-
-        self.canvas.bind("<MouseWheel>", _wheel)
-        _bind(self.body)
+        # Coalesce wheel bursts into one deferred scroll so a fast flick over this
+        # large form doesn't pile up synchronous repaints into a freeze.
+        smoothscroll.bind_canvas_wheel(self.canvas, self.body)
 
     # ---- actions -------------------------------------------------------------
 

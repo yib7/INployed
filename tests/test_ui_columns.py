@@ -15,30 +15,31 @@ sys.path.insert(0, str(REPO / "local"))
 
 tk = pytest.importorskip("tkinter")
 
+import jobsdata  # noqa: E402
 import ui  # noqa: E402
 
 
 def test_visible_columns_removes_hidden_keeps_order():
     cols = ["score", "deep_score", "job_title", "url"]
-    assert ui.visible_columns(cols, {"deep_score", "url"}) == ["score", "job_title"]
+    assert jobsdata.visible_columns(cols, {"deep_score", "url"}) == ["score", "job_title"]
 
 
 def test_visible_columns_never_empty():
     cols = ["score", "job_title"]
     # hiding everything falls back to showing all — a blank table is never useful
-    assert ui.visible_columns(cols, set(cols)) == cols
+    assert jobsdata.visible_columns(cols, set(cols)) == cols
 
 
 def test_load_hidden_columns_shapes_and_guards(monkeypatch):
-    monkeypatch.setattr(ui, "_load_cfg", lambda: {"hidden_columns": {
+    monkeypatch.setattr(jobsdata, "_load_cfg", lambda: {"hidden_columns": {
         "all": ["url", 123], "bad": "notalist"}})
-    out = ui.load_hidden_columns()
+    out = jobsdata.load_hidden_columns()
     assert out == {"all": ["url", "123"]}          # stringified, non-list dropped
 
 
 def test_load_hidden_columns_missing_key(monkeypatch):
-    monkeypatch.setattr(ui, "_load_cfg", lambda: {})
-    assert ui.load_hidden_columns() == {}
+    monkeypatch.setattr(jobsdata, "_load_cfg", lambda: {})
+    assert jobsdata.load_hidden_columns() == {}
 
 
 def _bare_app(root):

@@ -112,6 +112,30 @@ def test_restore_defaults_resets_widgets(root, tmp_path):
     assert form.multi["remote_types"]["Remote"].get() is False  # not in default
 
 
+def test_editable_choice_model_combobox_present(root, tmp_path):
+    form = _form(root, tmp_path)
+    assert "stage1_model" in form.vars                       # scorer model dropdown
+    assert "RESUME_TAILOR_MODEL_PRO" in form.vars            # tailor model dropdown
+
+
+def test_custom_model_value_roundtrips(root, tmp_path):
+    targets = _targets(tmp_path)
+    form = config_form.ConfigForm(tk.Frame(root), targets=targets)
+    form.vars["stage1_model"].set("gemini-9-custom")         # type a value not in the list
+    assert form.save() is True
+    assert settings.load(targets)["stage1_model"] == "gemini-9-custom"
+
+
+def test_slider_field_saves_int(root, tmp_path):
+    targets = _targets(tmp_path)
+    form = config_form.ConfigForm(tk.Frame(root), targets=targets)
+    assert "followup_days" in form.scales                    # rendered as a slider
+    form.scales["followup_days"].set(12)
+    values, errors = form.collect()
+    assert errors == {}
+    assert values["followup_days"] == 12
+
+
 def test_on_saved_callback_fires(root, tmp_path):
     fired = []
     form = config_form.ConfigForm(

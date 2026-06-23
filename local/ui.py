@@ -765,6 +765,17 @@ def populate(tv: ttk.Treeview, df: pd.DataFrame, columns: list[str],
 # --------------------------------------------------------------------------- App
 
 
+# Tabs where the bottom résumé-vs-job score preview is meaningful (a row is
+# selectable). On every other tab (Stats, Resume Data, Apply Answers, Settings)
+# it's hidden so it doesn't waste space.
+PREVIEW_TABS = ("High Score (Unseen)", "All Jobs", "Tracker")
+
+
+def _should_show_preview(tab_text: str) -> bool:
+    """True only on the job-list tabs, where a selected row has an analysis to show."""
+    return tab_text in PREVIEW_TABS
+
+
 def maximize_window(root: tk.Misc) -> None:
     """Open the window as large as the monitor so a big screen isn't wasted.
 
@@ -837,8 +848,14 @@ class App:
         self.badge_unseen.pack(side="right", padx=(0, 10))
         ttk.Separator(self.root, orient="horizontal").pack(fill="x")
 
-        self.nb = nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True, padx=12, pady=(8, 8))
+        # Notebook + score preview share a vertical paned window so the divider
+        # between them is draggable (resize the preview). The action bar sits
+        # below the paned window, always visible.
+        self.main_paned = ttk.PanedWindow(self.root, orient="vertical")
+        self.main_paned.pack(fill="both", expand=True, padx=12, pady=(8, 8))
+        self.nb = nb = ttk.Notebook(self.main_paned)
+        self.main_paned.add(nb, weight=1)
+        nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # Tab 1 — High Score (Unseen): same multi-column filter bar as All Jobs,
         # applied over the already score>=4 + unseen set.
@@ -1073,9 +1090,10 @@ class App:
         # Details pane (between the notebook and the action bar): the model's
         # stage-2 analysis — reason, strengths, gaps — plus salary/applicants
         # and a JD snippet for whichever row is selected.
-        det = ttk.Frame(self.root, style="Card.TFrame")
-        det.pack(fill="x", padx=12, pady=(2, 2), before=self.bar1)
-        # Hairline above the action bar, between the details card and the buttons.
+        det = ttk.Frame(self.main_paned, style="Card.TFrame")
+        self.details_pane = det
+        self.main_paned.add(det, weight=0)   # second pane; the sash above it resizes it
+        # Hairline above the action bar, between the paned area and the buttons.
         ttk.Separator(self.root, orient="horizontal").pack(
             fill="x", padx=12, pady=(4, 0), before=self.bar1)
         self.details = tk.Text(det, height=9, wrap="word", bg=SURFACE, fg=TEXT,
@@ -1093,6 +1111,25 @@ class App:
         self.details.tag_configure("bad", foreground=DANGER)
         self._set_details([("Select a row to see the model's analysis "
                             "(reason, strengths, gaps), salary, and a JD snippet.", "muted")])
+        self._apply_preview_visibility()  # hide the preview if we open on a non-job tab
+
+    def _on_tab_changed(self, _event=None) -> None:
+        self._apply_preview_visibility()
+
+    def _apply_preview_visibility(self) -> None:
+        """Show the score preview only on the job-list tabs; on others remove it
+        from the paned window (no wasted space, nothing to preview there)."""
+        if not hasattr(self, "main_paned") or not hasattr(self, "details_pane"):
+            return
+        try:
+            current = self.nb.tab(self.nb.select(), "text")
+        except tk.TclError:
+            current = ""
+        present = str(self.details_pane) in self.main_paned.panes()
+        if _should_show_preview(current) and not present:
+            self.main_paned.add(self.details_pane, weight=0)
+        elif not _should_show_preview(current) and present:
+            self.main_paned.forget(self.details_pane)
 
     # ------------------------------------------------------------------- data
 

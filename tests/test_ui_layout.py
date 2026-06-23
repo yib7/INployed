@@ -30,6 +30,15 @@ def test_fonts_are_bumped():
     assert ui.FONT_TITLE[1] >= 18
 
 
+def test_should_show_preview_only_on_job_tabs():
+    # SP5: the score preview belongs only on the job-list tabs.
+    assert ui._should_show_preview("High Score (Unseen)") is True
+    assert ui._should_show_preview("All Jobs") is True
+    assert ui._should_show_preview("Tracker") is True
+    for other in ("Stats", "Resume Data", "Apply Answers", "Settings", ""):
+        assert ui._should_show_preview(other) is False
+
+
 def test_maximize_window_does_not_raise(root):
     # Must degrade gracefully on any platform / headless WM (guarded fallbacks).
     top = tk.Toplevel(root)

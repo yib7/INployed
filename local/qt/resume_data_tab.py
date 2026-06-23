@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 import yaml
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 import resume_md
 import settings
@@ -76,6 +76,11 @@ class ResumeDataEditor(QtWidgets.QWidget):
         outer.addLayout(self._build_md_bar())
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
+        # Keep every field within the visible width: a long value wraps or scrolls
+        # inside its own box instead of pushing the whole form (and the Delete
+        # buttons) off the right edge of the screen.
+        self.scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         outer.addWidget(self.scroll, 1)
         self.status = QtWidgets.QLabel("")
         self.status.setProperty("muted", True)
@@ -231,6 +236,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         if lines:
             lab = QtWidgets.QLabel("\n".join(lines))
             lab.setProperty("muted", True)
+            lab.setWordWrap(True)  # a long skills line must wrap, not widen the page
             bv.addWidget(lab)
         v.addWidget(box)
 

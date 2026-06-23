@@ -1,5 +1,6 @@
 """SP7: the Qt Resume Data editor (YAML round-trip) + resume.md generator (mocked LLM)."""
 import yaml
+from PySide6 import QtCore
 
 import resume_md
 from qt import resume_data_tab as rdt
@@ -10,6 +11,15 @@ def _editor(qtbot, master_path):
     ed = ResumeDataEditor(master_path=master_path)
     qtbot.addWidget(ed)
     return ed
+
+
+def test_no_horizontal_overflow(qtbot, master_tmp):
+    # text bars (and the Delete buttons) must stay within the visible width
+    ed = _editor(qtbot, master_tmp)
+    off = QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert ed.scroll.horizontalScrollBarPolicy() == off
+    ed.reload()  # survives a rebuild
+    assert ed.scroll.horizontalScrollBarPolicy() == off
 
 
 def test_edit_basics_round_trips(qtbot, master_tmp):

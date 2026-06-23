@@ -61,6 +61,28 @@ TAB_TITLES = [
 PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 
 
+def _console_python(exe: str | None = None) -> str:
+    """The console Python to run child scripts with.
+
+    The dashboard launches under ``pythonw.exe`` (no console window), whose
+    ``sys.executable`` is ``pythonw.exe``. A child spawned with that has no real
+    stdout, so its output — and any error — vanishes. Swap to the sibling
+    ``python.exe`` so the scraper/scorer have capturable stdio.
+    """
+    exe = exe or sys.executable or "python"
+    if exe.lower().endswith("pythonw.exe"):
+        cand = exe[: -len("pythonw.exe")] + "python.exe"
+        if os.path.exists(cand):
+            return cand
+    return exe
+
+
+def _no_window_flag() -> int:
+    """CREATE_NO_WINDOW on Windows (don't flash a console for the captured child);
+    0 everywhere else."""
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Top-level window. `csv_paths` are the scored run files to load."""
 
@@ -413,14 +435,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @staticmethod
     def scraper_cmd(bounded: bool) -> list[str]:
-        cmd = [sys.executable, "scraper.py"]
+        cmd = [_console_python(), "scraper.py"]
         if bounded:
             cmd += ["--max-keywords", "1", "--limit", "5"]
         return cmd
 
     @staticmethod
     def scorer_cmd() -> list[str]:
-        return [sys.executable, "score_jobs.py"]
+        return [_console_python(), "score_jobs.py"]
+
+    @staticmethod
+    def _scrape_log_path() -> Path:
+        try:
+            APPDATA.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return APPDATA / "scrape.log"
 
     def _confirm_scrape(self) -> str | None:
         box = QtWidgets.QMessageBox(self)
@@ -449,16 +479,39 @@ class MainWindow(QtWidgets.QMainWindow):
         if not choice:
             return
         self._scraping = True
-        self._set_status("Starting scraper … (progress in the console)")
+        self._set_status(f"Starting scraper … progress in {self._scrape_log_path()}")
         workers.run_async(self, lambda: self._scrape_work(choice == "bounded"),
                           on_done=self._after_scrape, on_error=self._after_scrape_error)
 
     def _scrape_work(self, bounded: bool):
+        """Run scraper.py then score_jobs.py, streaming their output to scrape.log.
+
+        Output is captured (the dashboard runs under pythonw with no console) so a
+        failure surfaces the real error instead of a dead 'check the console'.
+        """
         repo = Path(__file__).resolve().parents[2]
-        for cmd in (self.scraper_cmd(bounded), self.scorer_cmd()):
-            proc = subprocess.Popen(cmd, cwd=str(repo))
-            if proc.wait() != 0:
-                raise RuntimeError(f"{cmd[1]} failed — check the console for the error.")
+        log_path = self._scrape_log_path()
+        with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+            for cmd in (self.scraper_cmd(bounded), self.scorer_cmd()):
+                log.write(f"\n=== {' '.join(cmd)} ===\n")
+                log.flush()
+                proc = subprocess.Popen(
+                    cmd, cwd=str(repo), stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                    errors="replace", creationflags=_no_window_flag())
+                captured: list[str] = []
+                if proc.stdout is not None:
+                    for line in proc.stdout:
+                        captured.append(line)
+                        log.write(line)
+                        log.flush()
+                rc = proc.wait()
+                if rc != 0:
+                    tail = "".join(captured).strip().splitlines()[-15:]
+                    raise RuntimeError(
+                        f"{Path(cmd[1]).name} failed (exit {rc}).\n\n"
+                        + ("\n".join(tail) if tail else "(no output captured)")
+                        + f"\n\nFull log: {log_path}")
         return True
 
     def _after_scrape(self, _result) -> None:
@@ -468,7 +521,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _after_scrape_error(self, exc) -> None:
         self._scraping = False
-        self._set_status(f"Run scraper failed: {exc}")
+        msg = str(exc)
+        self._set_status(f"Run scraper failed — {msg.splitlines()[0] if msg else exc}")
+        QtWidgets.QMessageBox.critical(self, "Run scraper", f"The run failed.\n\n{msg}")
 
     # ---- apply (open posting for review; never submits) -----------------------
 

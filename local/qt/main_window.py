@@ -39,6 +39,7 @@ from jobsdata import (
 )
 from qt import workers
 from qt.jobs_tab import JobsTab
+from qt.resume_data_tab import ResumeDataEditor
 from qt.settings_tab import SettingsForm
 from qt.stats_tab import StatsTab
 from qt.vm_panel import VMPanel
@@ -112,10 +113,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stats_tab = StatsTab(on_export=self._export_calibration)
         self.settings_tab = SettingsForm(on_saved=self._on_settings_saved,
                                          vm_panel_factory=self._make_vm_panel)
+        self.resume_data_tab = ResumeDataEditor()
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
                  "Tracker": self.tracker_tab, "Stats": self.stats_tab,
-                 "Settings": self.settings_tab}
+                 "Resume Data": self.resume_data_tab, "Settings": self.settings_tab}
         for title in TAB_TITLES:
             page = pages.get(title) or QtWidgets.QWidget()
             self._tab_widgets[title] = page
@@ -130,7 +132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.splitter.setSizes([720, 200])
         vbox.addWidget(self.splitter, 1)
         # Connect only now that self.preview exists (addTab above fires currentChanged).
-        self.tabs.currentChanged.connect(lambda _i: self._apply_preview_visibility())
+        self.tabs.currentChanged.connect(lambda _i: self._on_tab_changed())
 
         vbox.addLayout(self._build_action_bar())
         self.setStatusBar(QtWidgets.QStatusBar())
@@ -286,6 +288,11 @@ class MainWindow(QtWidgets.QMainWindow):
         return tab.selected_ids() if tab else []
 
     # ---- preview -------------------------------------------------------------
+
+    def _on_tab_changed(self) -> None:
+        self._apply_preview_visibility()
+        # vm_enabled may have changed in Settings — re-evaluate the resume.md push button.
+        self.resume_data_tab._refresh_push_state()
 
     def _apply_preview_visibility(self) -> None:
         title = self.tabs.tabText(self.tabs.currentIndex())
@@ -759,6 +766,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Re-read the values the dashboard caches from config and refresh."""
         self.min_score = load_min_score()
         self.followup_days = load_followup_days()
+        self.resume_data_tab._refresh_push_state()  # vm_enabled may have changed
         self.reload_data()
 
     # ---- engine env ----------------------------------------------------------

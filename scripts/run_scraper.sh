@@ -9,15 +9,26 @@
 # evening cron writing to the same master CSV.
 set -e
 
-# One-shot pause switch: if ~/pause_until exists and today (ET) is BEFORE the
-# YYYY-MM-DD date it contains, skip the entire run — no scrape, no scoring, no
-# API spend. Self-clears once that date arrives (the run on/after it proceeds
+# One-shot pause switch: if ~/pause_until exists and now is BEFORE the value it
+# contains, skip the entire run -- no scrape, no scoring, no API spend. The value
+# is either a date (YYYY-MM-DD) or a date+time (YYYY-MM-DD HH:MM); the comparison
+# uses matching granularity, and lexical string comparison is correct for both
+# formats. Self-clears once that moment arrives (the run on/after it proceeds
 # normally), so a weekend/vacation pause needs no manual re-enable. To pause:
-#   echo 2026-06-15 > ~/pause_until      # resumes on the 15th
+#   echo 2026-06-15 > ~/pause_until            # resumes on the 15th
+#   echo "2026-06-15 09:00" > ~/pause_until    # resumes 09:00 on the 15th
 # To cancel an active pause early:  rm ~/pause_until
-if [ -f ~/pause_until ] && [[ "$(date +%F)" < "$(cat ~/pause_until)" ]]; then
-    echo "$(date -Is) paused until $(cat ~/pause_until) — skipping run" >> ~/scraper.log
-    exit 0
+if [ -f ~/pause_until ]; then
+    PAUSE_UNTIL="$(cat ~/pause_until)"
+    if [[ "$PAUSE_UNTIL" == *" "* ]]; then
+        NOW="$(date +"%F %H:%M")"
+    else
+        NOW="$(date +%F)"
+    fi
+    if [[ "$NOW" < "$PAUSE_UNTIL" ]]; then
+        echo "$(date -Is) paused until $PAUSE_UNTIL - skipping run" >> ~/scraper.log
+        exit 0
+    fi
 fi
 
 LOCKFILE=/tmp/run_scraper.lock
@@ -56,9 +67,9 @@ fi
 cd ~
 source ~/venv/bin/activate
 
-# Ensure both run-label dirs exist so the rclone copies below never fail with
+# Ensure all run-label dirs exist so the rclone copies below never fail with
 # "directory not found" (only the current label's dir is created by scraper.py).
-mkdir -p ~/morning ~/evening
+mkdir -p ~/morning ~/afternoon ~/evening ~/night
 
 # Vertex AI auth: project is read by score_jobs.py via os.environ.
 # Cron runs with a bare environment, so these must be set here, not in .bashrc.
@@ -79,9 +90,10 @@ python ~/scraper.py >> ~/scraper.log 2>&1
 #    then retries master rows whose scoring previously failed.
 python ~/score_jobs.py >> ~/scraper.log 2>&1
 
-# 3. Sync — only the scored .csv.gz files
-rclone copy ~/morning gdrive:LinkedInJobs/morning --include "*_scored.csv.gz" --update
-rclone copy ~/evening gdrive:LinkedInJobs/evening --include "*_scored.csv.gz" --update
+# 3. Sync — only the scored .csv.gz files (one per run-label dir)
+for label in morning afternoon evening night; do
+    rclone copy ~/"$label" gdrive:LinkedInJobs/"$label" --include "*_scored.csv.gz" --update
+done
 
 # 4. Master CSV upload — runs after every scrape (morning + evening)
 gzip -c ~/linkedin_jobs_master.csv > /tmp/linkedin_jobs_master.csv.gz

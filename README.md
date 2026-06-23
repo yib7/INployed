@@ -120,6 +120,9 @@ python -m resume_tailor.master_gaps --jd-file job.txt --apply  # write (.bak mad
 ```
 
 ### Run the dashboard
+The easiest way: **double-click `Open INployed Dashboard.cmd`** in the project folder
+(right-click it → *Send to* → *Desktop (create shortcut)* for a one-click desktop icon).
+Or, from a terminal:
 ```bash
 python local/ui.py        # or double-click local/open_dashboard.pyw
 ```
@@ -240,6 +243,7 @@ and the semi-automated apply flow.
 
 ## Project layout
 ```
+Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
 scraper.py              LinkedIn scrape (Bright Data)
 score_jobs.py           two-stage Gemini relevance scorer
 scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)

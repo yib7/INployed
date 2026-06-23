@@ -81,6 +81,10 @@ assert app.tab_answers is not None, "Apply Answers tab frame missing"
 tab_labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
 assert any("Settings" in lbl for lbl in tab_labels), f"no Settings tab: {tab_labels}"
 assert any("Resume Data" in lbl for lbl in tab_labels), f"no Resume Data tab: {tab_labels}"
+# SP6: resume.md generator controls are present (model defaults to 3.5-flash);
+# push button exists (its enabled/disabled state depends on the user's VM config).
+assert app.resume_md_model.get() == "gemini-3.5-flash", app.resume_md_model.get()
+assert app.btn_push_resume_md is not None, "Push resume.md button missing"
 assert any("Apply Answers" in lbl for lbl in tab_labels), f"no Apply Answers tab: {tab_labels}"
 # VM controls now live inside Settings (no separate VM tab); the panel is still built.
 assert not any(lbl == "VM" for lbl in tab_labels), f"VM tab should be gone: {tab_labels}"

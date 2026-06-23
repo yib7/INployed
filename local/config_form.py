@@ -407,6 +407,43 @@ class ConfigForm:
                 return raw, f"{f.label}: must be a number."
         return text, None  # str / path / choice
 
+    @staticmethod
+    def _changed_summary(before: dict, values: dict) -> list[str]:
+        """Human-readable list of which fields `values` changes vs `before`, by
+        label. Secrets (only present in `values` when typed or explicitly cleared)
+        report 'updated'/'cleared' and never echo the value; multichoice/list
+        compare order-insensitively / whitespace-insensitively to avoid noise."""
+        def fmt(v):
+            s = "" if v is None else str(v)
+            return s if s != "" else "(blank)"
+
+        by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+        out: list[str] = []
+        for key, new in values.items():
+            f = by_key.get(key)
+            if f is None:
+                continue
+            if f.secret:
+                out.append(f"{f.label}: {'cleared' if str(new).strip() == '' else 'updated'}")
+                continue
+            old = before.get(key, f.default)
+            if f.type == "multichoice":
+                if set(old or []) != set(new or []):
+                    out.append(f"{f.label}: updated ({len(new or [])} selected)")
+            elif f.type == "list":
+                if [str(x).strip() for x in (old or [])] != [str(x).strip() for x in (new or [])]:
+                    out.append(f"{f.label}: updated ({len(new or [])} items)")
+            elif old != new:
+                out.append(f"{f.label}: {fmt(old)} -> {fmt(new)}")
+        return out
+
+    def _notify_saved(self, summary: list[str]) -> None:
+        if summary:
+            msg = "Settings saved. Updated:\n\n- " + "\n- ".join(summary)
+        else:
+            msg = "No changes to save - your settings are unchanged."
+        messagebox.showinfo("Settings", msg, parent=self.parent.winfo_toplevel())
+
     def save(self) -> bool:
         values, errors = self.collect()
         labels = {f.key: f.label for f in settings.SETTINGS_SCHEMA}
@@ -417,6 +454,7 @@ class ConfigForm:
                 self.status.configure(text="Not saved — see error.")
             messagebox.showerror("Settings", msg, parent=self.parent.winfo_toplevel())
             return False
+        before = settings.load(self.targets)  # pre-save state, for the change summary
         try:
             settings.save(values, self.targets)
         except (ValueError, OSError) as exc:
@@ -424,9 +462,13 @@ class ConfigForm:
                 self.status.configure(text="Save failed.")
             messagebox.showerror("Settings", str(exc), parent=self.parent.winfo_toplevel())
             return False
+        summary = self._changed_summary(before, values)
         self._refresh_secret_labels()
         if self.status:
-            self.status.configure(text="Saved.")
+            self.status.configure(text="Saved." if summary else "Saved — no changes.")
+        # Re-snapshot so a later Revert returns to this just-saved state.
+        self._opening_values = settings.load(self.targets)
+        self._notify_saved(summary)
         if self.on_saved:
             self.on_saved()
         return True

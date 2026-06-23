@@ -9,11 +9,16 @@ TclError on the 2nd+ root), so all GUI tests reuse this one. It's withdrawn
 temp dir and point `config.MASTER_YAML` at it (the real file is gitignored
 personal data), so the résumé-data editor tests never touch the user's file.
 """
+import os
 import sys
 import textwrap
 from pathlib import Path
 
 import pytest
+
+# Qt GUI tests run headless (CI has no display). Must be set before the first
+# QApplication is created anywhere in the session.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
 

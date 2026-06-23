@@ -49,7 +49,7 @@ class JobsTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        bar = QtWidgets.QHBoxLayout()
+        self._bar = bar = QtWidgets.QHBoxLayout()
         layout.addLayout(bar)
 
         self.search = QtWidgets.QLineEdit()
@@ -137,6 +137,19 @@ class JobsTab(QtWidgets.QWidget):
     def _set_column_widths(self, widths: list[int]) -> None:
         for i, w in enumerate(widths):
             self.table.setColumnWidth(i, w)
+
+    def add_toolbar_button(self, label: str, callback, accent: bool = False):
+        """Add an extra action button to the filter bar (before the count label)."""
+        b = QtWidgets.QPushButton(label)
+        b.clicked.connect(callback)
+        if accent:
+            b.setProperty("accent", True)
+        self._bar.insertWidget(self._bar.count() - 1, b)
+        return b
+
+    def add_toolbar_widget(self, widget) -> None:
+        """Mount an extra widget (e.g. a filter checkbox) before the count label."""
+        self._bar.insertWidget(self._bar.count() - 1, widget)
 
     # ---- data feed -----------------------------------------------------------
 

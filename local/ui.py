@@ -749,7 +749,7 @@ class App:
         self._hover_tags: tuple[str, ...] = ()
 
         self.root = tk.Tk()
-        self.root.title("LinkedIn Jobs — Triage")
+        self.root.title("INployed")
         self.root.geometry("1300x760")
         self.root.minsize(900, 520)
         self.root.withdraw()                  # hide while we theme it
@@ -771,8 +771,8 @@ class App:
     def _build(self) -> None:
         header = ttk.Frame(self.root)
         header.pack(fill="x", padx=16, pady=(13, 11))
-        ttk.Label(header, text="LinkedIn Jobs", style="Title.TLabel").pack(side="left")
-        ttk.Label(header, text="Triage & Apply", style="Subtitle.TLabel").pack(
+        ttk.Label(header, text="INployed", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text="Job triage & apply", style="Subtitle.TLabel").pack(
             side="left", padx=(12, 0), pady=(7, 0))
         self.lbl_header = ttk.Label(header, text="", style="Muted.TLabel")
         self.lbl_header.pack(side="right")
@@ -861,6 +861,8 @@ class App:
         self.lbl_status.pack(side="left")
 
         ttk.Button(bar1, text="Refresh", command=self.reload_data).pack(side="right", padx=4)
+        self.btn_check_setup = ttk.Button(bar1, text="Check setup", command=self._check_setup)
+        self.btn_check_setup.pack(side="right", padx=4)
         ttk.Button(bar1, text="Apply", command=self._apply_selected).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume layout…", command=self._open_resume_layout_dialog).pack(side="right", padx=4)
@@ -1775,6 +1777,31 @@ class App:
         self._set_status(f"Calibration labels → {out}")
 
     # ---- settings ----
+
+    def _check_setup(self) -> None:
+        """Lint master_experience.yaml + the apply-answer store and report clearly,
+        so a malformed file shows a friendly error instead of breaking the pipeline."""
+        from resume_tailor import master_validate
+
+        try:
+            result = master_validate.check_setup()
+        except Exception as exc:  # noqa: BLE001 - never crash the UI
+            self._log_error("check setup failed", exc)
+            messagebox.showerror("Check setup", f"Could not run checks: {exc}", parent=self.root)
+            return
+        problems: list[str] = []
+        for label, errs in (("Resume data", result.get("master", [])),
+                            ("Apply answers", result.get("answers", []))):
+            problems.extend(f"[{label}] {e}" for e in errs)
+        if not problems:
+            messagebox.showinfo(
+                "Check setup", "All good — your resume data and apply answers look valid.",
+                parent=self.root)
+            self._set_status("Setup check passed.")
+        else:
+            messagebox.showerror(
+                "Check setup", "Problems found:\n\n• " + "\n• ".join(problems), parent=self.root)
+            self._set_status(f"Setup check: {len(problems)} problem(s) — see the list.")
 
     def _build_resume_data_tab(self, nb: ttk.Notebook) -> None:
         """Mount the structured master_experience.yaml editor as a dashboard tab so

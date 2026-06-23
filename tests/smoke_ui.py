@@ -83,6 +83,10 @@ assert any("Settings" in lbl for lbl in tab_labels), f"no Settings tab: {tab_lab
 assert any("Resume Data" in lbl for lbl in tab_labels), f"no Resume Data tab: {tab_labels}"
 assert any("Apply Answers" in lbl for lbl in tab_labels), f"no Apply Answers tab: {tab_labels}"
 
+# INployed rebrand (branding only) + Check setup control
+assert "INployed" in app.root.title(), f"title not rebranded: {app.root.title()!r}"
+assert app.btn_check_setup is not None, "Check setup button missing"
+
 # High-Score ordering: same score -> fewest applicants first (1002 before 1001)
 high_ids = list(app.tv_high.get_children())
 assert high_ids[:2] == ["1002", "1001"], f"applicant sort broken: {high_ids}"

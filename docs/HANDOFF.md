@@ -1,4 +1,4 @@
-# LinkedIn Job Scraper + Scorer — Handoff Doc
+# INployed (LinkedIn Job Scraper + Scorer) — Handoff Doc
 
 _Last updated: 2026-06-12_
 

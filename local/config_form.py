@@ -56,6 +56,12 @@ SECTION_ORDER = [
     "Dashboard", "Scraper", "Scoring", "Resume", "VM (cloud scraper)",
 ]
 
+# Sections rendered with a master on/off checkbox in their header: section name ->
+# the bool Field.key that gates it. When the gate is off, the section's fields (and
+# any section extra mounted under it) collapse out of view. The VM section is off
+# by default so users with no cloud VM never see it.
+COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
+
 _SECRET_SET = "saved — blank keeps it, type to replace"
 _SECRET_UNSET = "not set"
 
@@ -74,10 +80,15 @@ class ConfigForm:
     """Builds the form into `parent` and owns its widget state."""
 
     def __init__(self, parent: tk.Widget, on_saved: Callable[[], None] | None = None,
-                 targets: dict | None = None):
+                 targets: dict | None = None,
+                 section_extras: dict[str, Callable[[ttk.Frame], tk.Widget]] | None = None):
         self.parent = parent
         self.on_saved = on_saved
         self.targets = targets  # None -> real files; tests pass a tmp mapping
+        # section name -> builder(parent)->widget, mounted inside a collapsible
+        # section under its fields (the dashboard passes the VM operations panel).
+        self.section_extras = section_extras or {}
+        self._collapse_frames: dict[str, ttk.Frame] = {}  # collapsible section bodies
 
         self.vars: dict[str, tk.Variable] = {}        # scalar widgets (entry/combo/check)
         self.texts: dict[str, tk.Text] = {}           # list fields
@@ -117,12 +128,72 @@ class ConfigForm:
 
         row = 0
         for section, fields in _ordered_sections():
+            if section in COLLAPSIBLE_SECTIONS:
+                row = self._add_collapsible_section(
+                    body, section, fields, stored, secret_set, row)
+                continue
             row = self._add_section_header(body, section, row)
             for f in fields:
                 row = self._add_field(body, f, stored.get(f.key, f.default), secret_set, row)
 
         row = self._add_buttons(body, row)
         self._wire_wheel(canvas, body)
+
+    def _add_collapsible_section(self, body: ttk.Frame, section: str,
+                                 fields: list[settings.Field], stored: dict,
+                                 secret_set: dict, row: int) -> int:
+        """Render a section whose header carries a master on/off checkbox; the rest
+        of the section (blurb, fields, and any section extra) lives in a sub-frame
+        that shows/hides live as the checkbox flips. Initial state follows storage."""
+        gate_key = COLLAPSIBLE_SECTIONS[section]
+        gate = next((f for f in fields if f.key == gate_key), None)
+
+        outer = ttk.Frame(body)
+        outer.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(14 if row else 0, 0))
+        row += 1
+        ttk.Label(outer, text=section, style="Subtitle.TLabel").grid(
+            row=0, column=0, sticky="w")
+        var = tk.BooleanVar(value=bool(stored.get(gate_key, getattr(gate, "default", False))))
+        self.vars[gate_key] = var
+        ttk.Checkbutton(outer, text=gate.label if gate else "Enable", variable=var,
+                        command=self._apply_section_visibility).grid(
+            row=0, column=1, sticky="w", padx=(12, 0))
+
+        collapse = ttk.Frame(outer)
+        collapse.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self._collapse_frames[section] = collapse
+
+        sub = 0
+        blurb = SECTION_HELP.get(section)
+        if blurb:
+            ttk.Label(collapse, text=blurb, style="Muted.TLabel", wraplength=560).grid(
+                row=sub, column=0, columnspan=2, sticky="w", pady=(2, 4))
+            sub += 1
+        for f in fields:
+            if f.key == gate_key:
+                continue  # the gate is the header checkbox, not a normal row
+            sub = self._add_field(collapse, f, stored.get(f.key, f.default), secret_set, sub)
+        builder = self.section_extras.get(section)
+        if builder is not None:
+            extra = builder(collapse)
+            if extra is not None:
+                extra.grid(row=sub, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+                sub += 1
+
+        self._apply_section_visibility()
+        return row
+
+    def _apply_section_visibility(self) -> None:
+        """Show/hide each collapsible section's body to match its master checkbox."""
+        for section, gate_key in COLLAPSIBLE_SECTIONS.items():
+            frame = self._collapse_frames.get(section)
+            var = self.vars.get(gate_key)
+            if frame is None or var is None:
+                continue
+            if bool(var.get()):
+                frame.grid()
+            else:
+                frame.grid_remove()
 
     def _add_section_header(self, body: ttk.Frame, section: str, row: int) -> int:
         ttk.Label(body, text=section, style="Subtitle.TLabel").grid(
@@ -384,5 +455,6 @@ class ConfigForm:
                 self.scales[f.key].set(int(f.default))  # command syncs the readout var
             else:
                 self.vars[f.key].set("" if f.default is None else str(f.default))
+        self._apply_section_visibility()  # a reset gate may re-hide its section
         if self.status:
             self.status.configure(text="Defaults restored — press Save to apply.")

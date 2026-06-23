@@ -104,6 +104,13 @@ def test_scraper_and_scoring_targets_registered():
     assert settings.TARGET_FILES["scoring"] == root / "scoring_config.json"
 
 
+def test_apply_section_removed_from_schema():
+    # Apply-form answers now live solely in the Apply Answers tab (apply_answers.json),
+    # so the dead "Apply" section / "apply" target must not appear in the schema.
+    assert not any(f.section == "Apply" for f in settings.SETTINGS_SCHEMA)
+    assert not any(f.target == "apply" for f in settings.SETTINGS_SCHEMA)
+
+
 def test_list_type_validate_accepts_list_of_str():
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
     assert "keywords" in by_key and by_key["keywords"].type == "list"

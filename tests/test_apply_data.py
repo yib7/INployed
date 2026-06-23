@@ -1,9 +1,12 @@
 """Tests for the apply_data.json form-prefill profile (SP4 T4.1).
 
-apply_data.write() must embed a top-level "standard_answers" object built from
-load_apply_config(), defaulting to the candidate's reality (US citizen / GC, no
-sponsorship). A repo-root apply_config.json overrides those defaults; absent, the
-hardcoded defaults apply. The review-before-submit "instructions" wording stays.
+apply_data.write() must embed a top-level "standard_answers" object built from the
+master answer store (apply_answers), defaulting to the candidate's reality (US
+citizen / GC, no sponsorship). On first run the store seeds from apply_config
+DEFAULTS and migrates a repo-root apply_config.json's overrides in once; absent
+both, the hardcoded defaults apply. The review-before-submit "instructions" wording
+stays. The write tests pin STORE_PATH to a temp path so they never read the
+developer's real apply_answers.json.
 """
 import json
 import sys
@@ -72,6 +75,8 @@ def test_load_apply_config_ignores_unreadable_file(tmp_path, monkeypatch):
 
 def test_write_embeds_standard_answers_with_citizen_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    # Hermetic: no store file -> load() seeds+migrates defaults in memory.
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
     out = apply_data.write(_JOB, tmp_path, ["bullet one", "bullet two"])
     data = json.loads(out.read_text(encoding="utf-8"))
 
@@ -90,6 +95,8 @@ def test_write_honors_apply_config_override(tmp_path, monkeypatch):
     path = tmp_path / "apply_config.json"
     path.write_text(json.dumps({"willing_to_relocate": False}), encoding="utf-8")
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", path)
+    # Hermetic: no store file -> load() migrates the apply_config override in memory.
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
     out = apply_data.write(_JOB, tmp_path, [])
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["standard_answers"]["willing_to_relocate"] is False

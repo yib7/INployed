@@ -53,7 +53,7 @@ def test_secret_box_starts_blank_and_shows_status(root, tmp_path):
     (tmp_path / ".env").write_text("BRIGHT_DATA_API_TOKEN=seeded\n", encoding="utf-8")
     form = config_form.ConfigForm(tk.Frame(root), targets=targets)
     assert form.vars["BRIGHT_DATA_API_TOKEN"].get() == ""  # never pre-filled
-    assert "configured" in form._secret_labels["BRIGHT_DATA_API_TOKEN"].cget("text")
+    assert "saved" in form._secret_labels["BRIGHT_DATA_API_TOKEN"].cget("text")
 
 
 def test_collect_omits_blank_secret(root, tmp_path):
@@ -92,7 +92,7 @@ def test_save_writes_secret_to_env_then_clears_box(root, tmp_path):
     assert form.save() is True
     assert settings.secret_status(targets)["GEMINI_API_KEYS"] is True
     assert form.vars["GEMINI_API_KEYS"].get() == ""  # box cleared after save
-    assert "configured" in form._secret_labels["GEMINI_API_KEYS"].cget("text")
+    assert "saved" in form._secret_labels["GEMINI_API_KEYS"].cget("text")
 
 
 def test_invalid_number_blocks_save(root, tmp_path, monkeypatch):

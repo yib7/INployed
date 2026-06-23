@@ -75,3 +75,15 @@ def test_needs_review_filter_keeps_rows_for_save(root, tmp_path):
     ed._apply_filter()
     # filtering only hides frames; all rows remain collectable
     assert len(ed.collect()) == len(aa.seed_defaults())
+
+
+def test_add_row_clears_needs_review_filter_so_new_row_is_visible(root, tmp_path):
+    # A new row is "active", which the needs-review filter would hide instantly —
+    # making "Add answer" look broken. Adding must drop the filter and show the row.
+    p = _store(tmp_path)
+    ed = _editor(root, p)
+    ed.filter_needs_review.set(True)
+    ed._apply_filter()
+    row = ed.add_row()
+    assert ed.filter_needs_review.get() is False
+    assert row["frame"].winfo_manager() == "pack"  # actually shown, not hidden

@@ -163,8 +163,9 @@ class VMPanel:
                      values=list(vm_schedule.FREQS)).grid(row=1, column=0, sticky="w")
         ttk.Label(freq_box, text="Weekday (weekly/biweekly)").grid(
             row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Combobox(freq_box, textvariable=self.weekday_var, state="readonly", width=12,
-                     values=list(WEEKDAYS)).grid(row=3, column=0, sticky="w")
+        self.weekday_cb = ttk.Combobox(freq_box, textvariable=self.weekday_var,
+                                       state="readonly", width=12, values=list(WEEKDAYS))
+        self.weekday_cb.grid(row=3, column=0, sticky="w")
 
         ttk.Label(f, text="crontab preview").grid(row=4, column=0, sticky="nw", padx=(0, 10),
                                                   pady=(10, 0))
@@ -173,9 +174,12 @@ class VMPanel:
                                highlightthickness=1, highlightbackground="#2a3344")
         self.preview.grid(row=4, column=1, columnspan=2, sticky="w", pady=(10, 0))
         # Refresh the preview whenever the times, frequency, OR weekday change.
-        self.freq_var.trace_add("write", lambda *_: self._refresh_preview())
+        # Frequency also toggles whether the weekday picker is active (it only
+        # applies to weekly/biweekly).
+        self.freq_var.trace_add("write", lambda *_: self._on_freq_changed())
         self.weekday_var.trace_add("write", lambda *_: self._refresh_preview())
         self.set_times(["10:00", "19:00"])  # sensible default (also paints preview)
+        self._sync_weekday_enabled()        # daily by default -> weekday greyed out
 
         sbar = ttk.Frame(f)
         sbar.grid(row=5, column=1, columnspan=2, sticky="w", pady=(8, 0))
@@ -236,6 +240,19 @@ class VMPanel:
     def crontab_text(self) -> str:
         return vm_schedule.build_crontab(self._times(), freq=self.freq_var.get(),
                                          weekday=self._weekday_idx())
+
+    def _on_freq_changed(self) -> None:
+        """Frequency changed: re-enable/disable the weekday picker, then repaint."""
+        self._sync_weekday_enabled()
+        self._refresh_preview()
+
+    def _sync_weekday_enabled(self) -> None:
+        """Weekday only matters for weekly/biweekly; on daily it's greyed out so
+        it's obvious that changing it has no effect (daily runs every day)."""
+        cb = getattr(self, "weekday_cb", None)
+        if cb is not None:
+            cb.configure(
+                state="readonly" if self.freq_var.get() in ("weekly", "biweekly") else "disabled")
 
     def _refresh_preview(self) -> None:
         if not hasattr(self, "preview"):

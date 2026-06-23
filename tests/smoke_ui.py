@@ -138,6 +138,22 @@ assert app.tv_tracker.item("1002", "values")[0] == "offer"
 app.registry.clear_status("1002")  # restore single-row tracker for later asserts
 app._refresh_tracker()
 
+# SP5: notebook + score preview share a paned window; the preview hides on
+# non-job tabs and re-appears on the job-list tabs.
+assert app.main_paned is not None, "main paned window missing"
+
+
+def _tab_id(label):
+    return next(t for t in app.nb.tabs() if app.nb.tab(t, "text") == label)
+
+
+app.nb.select(_tab_id("Settings"))
+app._apply_preview_visibility()
+assert str(app.details_pane) not in app.main_paned.panes(), "preview should hide on Settings"
+app.nb.select(_tab_id("All Jobs"))
+app._apply_preview_visibility()
+assert str(app.details_pane) in app.main_paned.panes(), "preview should show on All Jobs"
+
 # details pane
 app._show_details(jid)
 detail_text = app.details.get("1.0", "end")

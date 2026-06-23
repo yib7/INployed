@@ -99,14 +99,27 @@ class VMTarget:
             f"printf '%s' {q} | crontab - && echo CRONTAB_INSTALLED && crontab -l")
 
 
+def _norm_value(field, value):
+    """Normalize a value for change detection so semantically-equal saves don't
+    falsely flag a push: multichoice is order-insensitive (a set), and list items
+    are whitespace-insensitive (stripped). Everything else compares as-is."""
+    if field.type == "multichoice":
+        return frozenset(value) if isinstance(value, list) else value
+    if field.type == "list":
+        return tuple(str(v).strip() for v in value) if isinstance(value, list) else value
+    return value
+
+
 def changed_vm_files(before: dict, after: dict) -> set[str]:
-    """Remote filenames whose owning settings changed between two settings dicts.
-    Only settings backed by a VM file (search/scoring targets) count — local-only
-    settings (config target) never trigger a VM push."""
+    """Remote filenames whose owning settings *meaningfully* changed between two
+    settings dicts. Only settings backed by a VM file (search/scoring targets)
+    count — local-only settings (config target) never trigger a VM push — and the
+    comparison is value-semantic (see `_norm_value`), so re-saving the same values
+    (e.g. re-picking the same model, or a reordered multichoice) does not flag."""
     changed: set[str] = set()
     for f in settings.SETTINGS_SCHEMA:
         remote = TARGET_REMOTE_FILE.get(f.target)
-        if remote and before.get(f.key) != after.get(f.key):
+        if remote and _norm_value(f, before.get(f.key)) != _norm_value(f, after.get(f.key)):
             changed.add(remote)
     return changed
 

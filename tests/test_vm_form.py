@@ -104,6 +104,37 @@ def test_run_times_are_hour_dropdowns(root):
     assert p._times() == ["08:00", "20:00"]
 
 
+def test_six_times_make_six_crontab_lines(root):
+    p = _panel(root)
+    p.set_times(["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"])  # 6, all >=2h apart
+    assert len(p.crontab_text().splitlines()) == 6                       # one line per run
+    lines = [ln for ln in p.preview.get("1.0", "end").splitlines() if ln.strip()]
+    assert len(lines) == 6
+
+
+def test_preview_rebuilds_not_appends(root):
+    p = _panel(root)
+    p.set_times(["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"])  # 6 lines
+    p.set_times(["10:00", "19:00"])                                      # now only 2
+    lines = [ln for ln in p.preview.get("1.0", "end").splitlines() if ln.strip()]
+    assert len(lines) == 2                                               # replaced, not appended
+
+
+def test_run_slots_are_numbered(root):
+    from tkinter import ttk
+    p = _panel(root)
+    texts = []
+
+    def walk(w):
+        for c in w.winfo_children():
+            if isinstance(c, ttk.Label):
+                texts.append(str(c.cget("text")))
+            walk(c)
+
+    walk(p.frame)
+    assert "Run 1" in texts and "Run 6" in texts   # all six slots clearly labelled
+
+
 def test_time_dropdown_change_updates_preview(root):
     p = _panel(root)
     p.set_times([])

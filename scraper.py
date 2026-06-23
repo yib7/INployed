@@ -8,6 +8,8 @@ from pathlib import Path
 import aiohttp
 import pandas as pd
 
+from run_labels import RUN_LABELS, label_for_hour
+
 # Optional: load a local .env so credentials live outside the repo. The VM path
 # sets these via run_scraper.sh exports, so a missing python-dotenv is fine.
 try:
@@ -146,7 +148,7 @@ def load_search_config() -> dict:
 
 
 def get_run_label() -> str:
-    return "morning" if datetime.now().hour < 14 else "evening"
+    return label_for_hour(datetime.now().hour)
 
 
 def load_previous_ids() -> list[str]:
@@ -444,7 +446,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--label",
-        choices=("morning", "evening"),
+        choices=RUN_LABELS,
         help="Force the run label (default: derived from the current hour).",
     )
     parser.add_argument(

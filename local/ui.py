@@ -54,6 +54,7 @@ from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 import settings  # noqa: E402  (central user-settings layer)
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic  # noqa: E402
 from seen_db import APP_STATUSES, SeenRegistry  # noqa: E402
+from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
 
 
 APPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "linkedin_watcher"
@@ -470,7 +471,7 @@ def extraction_dates_from_runs(paths: list[Path]) -> dict[str, str]:
     seen_dirs: set[Path] = set()
     for p in paths:
         parent = Path(p).resolve().parent
-        for sub in ("morning", "evening"):
+        for sub in RUN_LABELS:
             d = parent / sub
             if d in seen_dirs or not d.exists():
                 continue
@@ -624,7 +625,7 @@ def gdrive_root_dir(csv_paths: list[Path]) -> Path | None:
         return Path(root)
     for p in csv_paths:
         parent = Path(p).resolve().parent
-        if parent.name in ("morning", "evening"):
+        if parent.name in RUN_LABELS:
             parent = parent.parent
         if parent.exists():
             return parent
@@ -855,7 +856,7 @@ class App:
         ttk.Label(hbar, text="Time:").pack(side="left")
         self.runlabel_h_var = tk.StringVar(value="All")
         hb_t = ttk.Combobox(hbar, textvariable=self.runlabel_h_var, state="readonly",
-                            width=8, values=["All", "morning", "evening"])
+                            width=10, values=["All", *RUN_LABELS])
         hb_t.pack(side="left", padx=(4, 12))
         hb_t.bind("<<ComboboxSelected>>", lambda *_: self._apply_filters_high())
 
@@ -951,7 +952,7 @@ class App:
         ttk.Label(fbar, text="Time:").pack(side="left")
         self.runlabel_var = tk.StringVar(value="All")
         cb_t = ttk.Combobox(fbar, textvariable=self.runlabel_var, state="readonly",
-                            width=8, values=["All", "morning", "evening"])
+                            width=10, values=["All", *RUN_LABELS])
         cb_t.pack(side="left", padx=(4, 12))
         cb_t.bind("<<ComboboxSelected>>", lambda *_: self._apply_filters())
 

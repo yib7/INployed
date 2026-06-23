@@ -406,3 +406,62 @@ def filter_high_unseen(df: pd.DataFrame, min_score: int = 4) -> pd.DataFrame:
         ["__score_num", "__appl_num", "__deep_num"], ascending=[False, True, False]
     )
     return out.drop(columns=["__score_num", "__deep_num", "__appl_num"])
+
+
+def sort_query(view: pd.DataFrame) -> pd.DataFrame:
+    """Default listing order: most-recent extracted day first, then highest score,
+    then highest deep_score. (A header click in the table re-sorts on top of this.)"""
+    if view.empty:
+        return view
+    keys: list[str] = []
+    asc: list[bool] = []
+    tmp = view
+    if "extracted_date" in tmp.columns:
+        tmp = tmp.assign(__d=tmp["extracted_date"].astype(str))
+        keys.append("__d")
+        asc.append(False)
+    if "score" in tmp.columns:
+        tmp = tmp.assign(__s=pd.to_numeric(tmp["score"], errors="coerce").fillna(-1))
+        keys.append("__s")
+        asc.append(False)
+    if "deep_score" in tmp.columns:
+        tmp = tmp.assign(__ds=pd.to_numeric(tmp["deep_score"], errors="coerce").fillna(-1))
+        keys.append("__ds")
+        asc.append(False)
+    if keys:
+        tmp = tmp.sort_values(keys, ascending=asc, kind="stable")
+        tmp = tmp.drop(columns=["__d", "__s", "__ds"], errors="ignore")
+    return tmp
+
+
+def filter_and_sort(base: pd.DataFrame, search: str, minscore: str, day: str,
+                    time_: str, reco: str, easy: bool = False,
+                    search_column: str | None = None) -> pd.DataFrame:
+    """Apply the shared multi-column filters (AND) + default sort to a base set.
+    search_column: a column id to restrict the text search to; None/"All" = all."""
+    view = base
+    if view.empty:
+        return view
+    if search:
+        if search_column and search_column not in ("", "All") and search_column in view.columns:
+            hay = view[search_column].fillna("").astype(str).str.lower()
+            view = view.loc[hay.str.contains(search, na=False, regex=False)]
+        elif "_search" in view.columns:
+            view = view.loc[view["_search"].str.contains(search, na=False, regex=False)]
+        else:
+            cols = [c for c in ("job_title", "company_name", "url") if c in view.columns]
+            if cols:
+                hay = view[cols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+                view = view.loc[hay.str.contains(search, na=False, regex=False)]
+    if minscore not in ("", "Any") and "score" in view.columns:
+        sc = pd.to_numeric(view["score"], errors="coerce")
+        view = view.loc[sc >= float(minscore)]
+    if day not in ("", "All") and "extracted_date" in view.columns:
+        view = view.loc[view["extracted_date"].astype(str) == day]
+    if time_ not in ("", "All") and "run_label" in view.columns:
+        view = view.loc[view["run_label"].astype(str).str.lower() == time_.lower()]
+    if reco not in ("", "All") and "recommendation" in view.columns:
+        view = view.loc[view["recommendation"].astype(str).str.lower() == reco.lower()]
+    if easy and "is_easy_apply" in view.columns:
+        view = view.loc[view["is_easy_apply"].astype(str).str.lower().isin(("true", "1", "yes"))]
+    return sort_query(view)

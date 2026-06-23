@@ -34,12 +34,24 @@ BTN_HOVER = "#2d3340"
 ROW_HAS_RESUME = "#10243a"   # a tailored resume exists / applied (blue)
 ROW_REJECTED = "#3a1418"     # rejected (red)
 ROW_DUE = "#3a2a12"          # overdue follow-up (amber)
+ROW_APPLY = "#0f271b"        # reco "apply" / offer (green tint)
+ROW_CONSIDER = "#2a2412"     # reco "consider" / interviewing (amber tint)
+
+_ROW_TINTS = {
+    "has_resume": ROW_HAS_RESUME,
+    "applied": ROW_HAS_RESUME,
+    "rejected": ROW_REJECTED,
+    "due": ROW_DUE,
+    "apply": ROW_APPLY,
+    "offer": ROW_APPLY,
+    "consider": ROW_CONSIDER,
+    "interviewing": ROW_CONSIDER,
+}
 
 
 def row_color(name: str) -> QtGui.QColor:
     """QColor for a named row tint, or an invalid QColor (no tint) if unknown."""
-    return QtGui.QColor({"has_resume": ROW_HAS_RESUME, "applied": ROW_HAS_RESUME,
-                         "rejected": ROW_REJECTED, "due": ROW_DUE}.get(name, ""))
+    return QtGui.QColor(_ROW_TINTS.get(name, ""))
 
 
 def _dark_palette() -> QtGui.QPalette:

@@ -121,6 +121,10 @@ class AnswersEditor:
         entry = entry or {"id": "", "question": "", "answer": "",
                           "kind": "open-ended", "status": "active"}
         row = self._add_row_widgets(entry)
+        # A new row defaults to "active", so the needs-review filter would hide it
+        # the instant it's added (making "Add answer" look broken). Drop the filter
+        # so the user can see and edit the row they just asked for.
+        self.filter_needs_review.set(False)
         self._apply_filter()
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(1.0)

@@ -3,12 +3,14 @@
 These are the boilerplate questions every Greenhouse/Lever/Workday application
 asks (work authorization, sponsorship, EEO self-identification, "how did you
 hear about us"). The defaults reflect the candidate's reality: a US citizen /
-green-card holder who never needs visa sponsorship. They are personal, so the
-backing file (repo-root apply_config.json) is git-ignored; absent, the defaults
-below apply unchanged.
+green-card holder who never needs visa sponsorship.
 
-apply_data.write() embeds load_apply_config() as the "standard_answers" block in
-each apply_data.json. The form-filler still leaves the final submit to the human.
+DEFAULTS is now only a SEED: on first run apply_answers.seed_defaults() turns it
+into the master answer store (apply_answers.json), and a pre-existing
+apply_config.json migrates its overrides in once. After that, the Apply Answers
+tab + apply_answers.json are the source of truth, and apply_data.write() embeds
+apply_answers.as_standard_answers() (not this file) as each apply_data.json's
+"standard_answers" block. The form-filler still leaves the final submit to the human.
 """
 from __future__ import annotations
 

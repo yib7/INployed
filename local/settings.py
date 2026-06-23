@@ -76,8 +76,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Days after applying before the tracker nudges a follow-up.", min=1, max=60),
     Field("gdrive_root", "Job data folder", "path", "", "Dashboard", "config",
           help="Folder the dashboard reads scored CSVs from."),
-    Field("mtime_stable_seconds", "File settle (seconds)", "int", 30, "Dashboard", "config",
-          help="How long a file must be unchanged before the watcher reads it.", min=1, max=600),
+    Field("mtime_stable_seconds", "Wait before opening a new file (seconds)", "int", 30,
+          "Dashboard", "config",
+          help="How long a freshly synced file must stop changing before the dashboard "
+               "opens it — stops it reading a half-downloaded file. 30 is fine for most.",
+          min=1, max=600),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
     Field("keywords", "Search keywords", "list",
@@ -88,8 +91,9 @@ SETTINGS_SCHEMA: list[Field] = [
            '"Implementation Engineer"', '"Agentic"', '"Applied AI"',
            '"Artificial Intelligence"', '"Business Analyst"'],
           "Scraper", "search",
-          help="One LinkedIn search phrase per line (quote multi-word phrases). "
-               "Each fans out to one search per remote type."),
+          help="One search phrase per line. Wrap any phrase of two or more words in "
+               '"double quotes" (e.g. "Data Scientist") so it is searched as a phrase; '
+               "single words need no quotes. Each line runs once per ticked remote type."),
     Field("remote_types", "Remote types", "multichoice", ["Hybrid", "On-site"],
           "Scraper", "search",
           help="Which workplace types to search. Each ticked type runs once per keyword.",
@@ -118,9 +122,13 @@ SETTINGS_SCHEMA: list[Field] = [
 
     # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
     Field("stage1_model", "Stage-1 model", "str", "gemini-3.1-flash-lite", "Scoring", "scoring",
-          help="Cheap model that scores every surviving job 1-5."),
+          help="Advanced: cheap model that scores every surviving job 1-5. Leave as-is "
+               "unless you know the exact model ID your account can use — a wrong name "
+               "silently breaks scoring."),
     Field("stage2_model", "Stage-2 model", "str", "gemini-3.5-flash", "Scoring", "scoring",
-          help="Deeper model used for jobs that pass the Stage-2 threshold."),
+          help="Advanced: deeper model for jobs that pass the Stage-2 threshold. Leave "
+               "as-is unless you know the exact model ID your account can use — a wrong "
+               "name silently breaks scoring."),
     Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
           help="Parallel Stage-1 LLM calls.", min=1, max=50),
     Field("stage2_concurrency", "Stage-2 concurrency", "int", 4, "Scoring", "scoring",
@@ -150,32 +158,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Tone used when generating the cover letter.",
           choices=("professional", "concise", "enthusiastic", "impactful")),
 
-    # --- Apply: boilerplate form answers written into apply_data.json's ---
-    # "standard_answers" (root-level apply_config.json, git-ignored). A browser
-    # form-filler uses these for the common questions; it never auto-submits.
-    # Defaults reflect a US citizen / GC who needs no sponsorship.
-    Field("work_authorized", "Authorized to work in the US", "bool", True, "Apply", "apply",
-          help="Are you legally authorized to work in the United States?"),
-    Field("requires_sponsorship", "Requires visa sponsorship", "bool", False, "Apply", "apply",
-          help="Will you now or in the future require sponsorship? (No for citizens/GC.)"),
-    Field("willing_to_relocate", "Willing to relocate", "bool", True, "Apply", "apply",
-          help="Default answer to relocation questions."),
-    Field("years_experience", "Years of experience", "str", "0", "Apply", "apply",
-          help="Default answer to 'years of experience' prompts."),
-    Field("authorization_statement", "Work-authorization statement", "str",
-          "Authorized to work in the United States; no visa sponsorship required.",
-          "Apply", "apply",
-          help="Free-text statement for work-authorization fields."),
-    Field("how_did_you_hear", "How did you hear about us", "str", "LinkedIn", "Apply", "apply",
-          help="Default source for 'how did you hear about this role'."),
-    Field("gender", "Gender (EEO)", "str", "Decline to self-identify", "Apply", "apply",
-          help="EEO self-identification default."),
-    Field("race_ethnicity", "Race / ethnicity (EEO)", "str", "Decline to self-identify",
-          "Apply", "apply", help="EEO self-identification default."),
-    Field("veteran_status", "Veteran status (EEO)", "str", "Decline to self-identify",
-          "Apply", "apply", help="EEO self-identification default."),
-    Field("disability_status", "Disability status (EEO)", "str", "Decline to self-identify",
-          "Apply", "apply", help="EEO self-identification default."),
+    # Apply-form answers (work auth, sponsorship, EEO, "how did you hear") are NOT
+    # configured here. They live in the richer Apply Answers tab (per-question,
+    # fixed/open-ended, needs-review), which writes apply_answers.json — the single
+    # source of truth the apply pipeline reads. apply_config.DEFAULTS only seeds
+    # that store on first run.
 
     # --- Credentials: API keys / tokens, written to the git-ignored .env -------
     # secret=True fields are masked and write-only: the stored value is never

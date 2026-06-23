@@ -33,23 +33,27 @@ import settings
 
 # One-line "what this section controls" blurbs under each section header.
 SECTION_HELP = {
-    "Credentials": "API keys and tokens. Saved to your private .env file and never shown again.",
+    "Credentials": ("API keys and tokens, saved to your private .env file and never shown again. "
+                    "Each box stays blank even when a key is saved: leave it blank to keep the saved "
+                    "key, type a new value to replace it, or tick Clear to delete it."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
     "Engine": "Which Gemini backend the resume tailor bills.",
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
     "Scraper": "What the LinkedIn scraper searches for (this drives Bright Data spend).",
-    "Scoring": "Which models score jobs, and the spend guards around them.",
+    "Scoring": ("Advanced — which models score jobs and the spend guards around them. The "
+                "defaults are tuned; changing the model names can silently break scoring, "
+                "so leave them unless you know the exact model IDs your account can use."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
-    "Apply": "Default answers the apply helper fills into application forms.",
 }
 
 # New users need credentials/connection first; show those sections at the top.
+# (Apply-form answers are edited in the richer Apply Answers tab, not here.)
 SECTION_ORDER = [
     "Credentials", "Connection & paths", "Engine",
-    "Dashboard", "Scraper", "Scoring", "Resume", "Apply",
+    "Dashboard", "Scraper", "Scoring", "Resume",
 ]
 
-_SECRET_SET = "configured — leave blank to keep"
+_SECRET_SET = "saved — blank keeps it, type to replace"
 _SECRET_UNSET = "not set"
 
 
@@ -83,6 +87,9 @@ class ConfigForm:
         self._bg = style.lookup("TFrame", "background") or "#1b2230"
         self._field_bg = style.lookup("TEntry", "fieldbackground") or "#0f1420"
         self._fg = style.lookup("TLabel", "foreground") or "#e6e9ef"
+        # tk.Text ignores the ttk theme font, so capture it and apply it explicitly
+        # below — otherwise the list box renders in Tk's default (often monospace).
+        self._font = style.lookup("TLabel", "font") or "Segoe UI 10"
 
         self._build()
 
@@ -152,7 +159,7 @@ class ConfigForm:
         if f.type == "multichoice":
             return self._multichoice_widget(parent, f, value)
         if f.type == "list":
-            txt = tk.Text(parent, width=44, height=8, wrap="none",
+            txt = tk.Text(parent, width=44, height=8, wrap="none", font=self._font,
                           bg=self._field_bg, fg=self._fg, insertbackground=self._fg,
                           relief="flat", highlightthickness=1, highlightbackground="#2a3344")
             items = value if isinstance(value, list) else []
@@ -198,7 +205,7 @@ class ConfigForm:
         self._secret_labels[f.key] = status
         clear_var = tk.BooleanVar(value=False)
         self.clear_vars[f.key] = clear_var
-        ttk.Checkbutton(frame, text="Clear", variable=clear_var).grid(
+        ttk.Checkbutton(frame, text="Clear (delete saved key)", variable=clear_var).grid(
             row=0, column=2, sticky="w", padx=(8, 0))
         return frame
 

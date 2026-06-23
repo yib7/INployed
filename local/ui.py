@@ -135,12 +135,20 @@ def open_in_chrome(url: str) -> None:
     With LINKEDIN_CHROME_ACCOUNT resolved, --profile-directory opens the URL in
     that profile's window. A profile cannot be force-switched inside an already-
     running Chrome via CLI; the resolved-Default case is the one that matters here.
+
+    `url` originates from scraped job data, so guard the subprocess: (1) only open
+    http(s) URLs — never file:/javascript:/etc. — and (2) pass the URL after a `--`
+    end-of-options marker so a value starting with '-' can't be misread as a Chrome
+    switch (Chromium argument-injection class).
     """
+    if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+        print(f"[chrome] refusing to open non-http(s) URL: {url!r}")
+        return
     launcher = _chrome_launcher()
     if launcher:
         chrome, profile = launcher
         try:
-            subprocess.Popen([chrome, f"--profile-directory={profile}", url])
+            subprocess.Popen([chrome, f"--profile-directory={profile}", "--", url])
             return
         except OSError:
             pass
@@ -571,6 +579,21 @@ _ENGINE_LABELS = {"vertex": "Engine: Vertex Gemini", "api_key": "Engine: Gemini 
 _LABEL_TO_AUTH = {v: k for k, v in _ENGINE_LABELS.items()}
 
 
+def _engine_credential_warnings(auth: str, project: str, has_api_key: bool) -> list[str]:
+    """Warn when the chosen résumé-tailor engine is missing the credential it needs.
+
+    'api_key' needs a Gemini API key; 'vertex' needs a Google Cloud project. Pure
+    (no I/O) so it can be unit-tested; returns [] when the engine has what it needs.
+    """
+    if auth == "api_key" and not has_api_key:
+        return ["Resume tailor engine is 'api_key' but no Gemini API key is saved "
+                "(Settings -> Credentials -> Gemini API key (resume tailor))."]
+    if auth == "vertex" and not str(project).strip():
+        return ["Resume tailor engine is 'vertex' but no Google Cloud project is set "
+                "(Settings -> Connection & paths -> Google Cloud project ID)."]
+    return []
+
+
 def load_min_score(default: int = 4) -> int:
     try:
         return int(_load_cfg().get("min_score", default))
@@ -865,8 +888,6 @@ class App:
         self.btn_check_setup.pack(side="right", padx=4)
         ttk.Button(bar1, text="Apply", command=self._apply_selected).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
-        ttk.Button(bar1, text="Resume layout…", command=self._open_resume_layout_dialog).pack(side="right", padx=4)
-        ttk.Button(bar1, text="Add entry…", command=self._open_add_entry_dialog).pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark all shown seen", command=self._mark_all_shown_seen,
                    style="Accent.TButton").pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark seen (selected)", command=self._mark_seen_selected,
@@ -876,15 +897,9 @@ class App:
         self.btn_tailor = ttk.Button(bar1, text="Tailor resume", command=self._tailor_selected,
                                      style="Green.TButton")
         self.btn_tailor.pack(side="right", padx=4)
-        self.engine_var = tk.StringVar(
-            value=_ENGINE_LABELS.get(_load_cfg().get("gemini_auth", "vertex"), _ENGINE_LABELS["vertex"])
-        )
-        eng_cb = ttk.Combobox(
-            bar1, textvariable=self.engine_var, state="readonly", width=24,
-            values=[_ENGINE_LABELS["vertex"], _ENGINE_LABELS["api_key"]],
-        )
-        eng_cb.bind("<<ComboboxSelected>>", lambda *_: self._on_engine_change())
-        eng_cb.pack(side="right", padx=(4, 10))
+        # The résumé-tailor engine (Vertex vs Gemini API key) and the résumé layout
+        # now live in Settings; seed the env the in-process tailor reads from the
+        # saved config here so the first tailor run uses the chosen engine.
         self._apply_auth_env()
 
         # Tab 2 — All Jobs (multi-column filter + query view)
@@ -1396,7 +1411,15 @@ class App:
         if not ids:
             self._set_status("Select tracker rows to set a status on.")
             return
-        status = self.track_status_var.get()
+        self._apply_status_to(ids, self.track_status_var.get())
+
+    def _apply_status_to(self, ids: list[str], status: str) -> None:
+        """Set `status` on each job id (creating a tracker row if needed) and refresh.
+
+        Shared by the Tracker tab's combobox + 'Set status' button and the right-click
+        'Set status' submenu, so a status can be switched from any tab in one click."""
+        if not ids:
+            return
         for jid in ids:
             row = self._row_for(jid)
             self.registry.set_status(
@@ -1593,6 +1616,15 @@ class App:
         menu.add_command(label="Open URL", command=self._open_selected_url)
         menu.add_command(label="Mark seen", command=self._mark_seen_selected)
         menu.add_command(label="Mark applied", command=self._mark_applied_selected)
+        # One-click status switching (applied / interviewing / rejected / offer) from
+        # any tab — the Tracker combobox + button is the long way round and easy to miss.
+        status_menu = tk.Menu(menu, tearoff=0, bg=SURFACE, fg=TEXT,
+                              activebackground=SEL, activeforeground="#ffffff", bd=0)
+        for st in APP_STATUSES:
+            status_menu.add_command(
+                label=st.capitalize(),
+                command=lambda s=st, ids=list(sel): self._apply_status_to(ids, s))
+        menu.add_cascade(label="Set status", menu=status_menu)
         menu.add_command(label="Open resume folder", command=self._open_resume_folder)
         if company:
             menu.add_separator()
@@ -1793,9 +1825,27 @@ class App:
         for label, errs in (("Resume data", result.get("master", [])),
                             ("Apply answers", result.get("answers", []))):
             problems.extend(f"[{label}] {e}" for e in errs)
+        # Cross-check the chosen tailor engine against its credential, so a missing
+        # key/project is caught here instead of failing cryptically at tailor time.
+        try:
+            auth = _load_cfg().get("gemini_auth", "vertex")
+            stored = settings.load()
+            project = stored.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get(
+                "GOOGLE_CLOUD_PROJECT", "")
+            has_key = settings.secret_status().get("RESUME_TAILOR_GEMINI_API_KEY", False) or bool(
+                os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
+            problems.extend(
+                f"[Engine] {w}" for w in _engine_credential_warnings(auth, project, has_key))
+        except Exception as exc:  # noqa: BLE001 - the engine check must never break the others
+            self._log_error("engine credential check failed", exc)
         if not problems:
             messagebox.showinfo(
-                "Check setup", "All good — your resume data and apply answers look valid.",
+                "Check setup",
+                "All good — no problems found.\n\nChecked your résumé data (name & email "
+                "present, every achievement has an id and text, no duplicate ids, and any "
+                "layout references point to real blocks), your saved apply answers "
+                "(each has a question, answer, and valid kind/status), and that your "
+                "résumé-tailor engine has the credential it needs.",
                 parent=self.root)
             self._set_status("Setup check passed.")
         else:
@@ -1833,21 +1883,31 @@ class App:
         config_form.ConfigForm covers every tunable — credentials, paths, the
         engine, and all dashboard/scraper/scoring/resume/apply options — in one
         scrollable form. on_saved refreshes the dashboard so a change takes effect
-        immediately and the action-bar engine selector stays in sync.
+        immediately. Résumé layout is a generated, block-by-block dialog rather than
+        a simple schema field, so it mounts here as a launcher above the form.
         """
         from config_form import ConfigForm
 
         self.tab_settings = frame = ttk.Frame(nb)
         nb.add(frame, text="Settings")
-        self.config_form = ConfigForm(frame, on_saved=self._on_settings_saved)
+
+        actions = ttk.Frame(frame)
+        actions.pack(side="top", fill="x", padx=16, pady=(12, 0))
+        ttk.Button(actions, text="Resume layout…",
+                   command=self._open_resume_layout_dialog).pack(side="left")
+        ttk.Label(actions, style="Muted.TLabel",
+                  text="Set how many lines each résumé bullet may use, per block and project.").pack(
+            side="left", padx=10)
+
+        form_holder = ttk.Frame(frame)
+        form_holder.pack(side="top", fill="both", expand=True)
+        self.config_form = ConfigForm(form_holder, on_saved=self._on_settings_saved)
 
     def _on_settings_saved(self) -> None:
-        """Re-read cached prefs and re-sync the engine selector after a save."""
+        """Re-read cached prefs and re-apply the chosen engine after a save."""
         self.min_score = load_min_score()
         self.followup_days = load_followup_days()
-        if hasattr(self, "engine_var"):
-            auth = _load_cfg().get("gemini_auth", "vertex")
-            self.engine_var.set(_ENGINE_LABELS.get(auth, _ENGINE_LABELS["vertex"]))
+        self._apply_auth_env()  # Settings -> Engine may have changed gemini_auth
         self.reload_data()
         self._set_status("Settings saved.")
 
@@ -1891,7 +1951,8 @@ class App:
     # ---- engine selector ----
 
     def _current_auth(self) -> str:
-        return _LABEL_TO_AUTH.get(self.engine_var.get(), "vertex")
+        """The résumé-tailor engine chosen in Settings -> Engine (config.json)."""
+        return _load_cfg().get("gemini_auth", "vertex")
 
     def _apply_auth_env(self) -> None:
         """Seed the env var the in-process tailor reads at call time."""
@@ -1969,107 +2030,6 @@ class App:
         ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=6)
         ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=6)
         win.wait_window(win)
-
-    def _open_add_entry_dialog(self) -> None:
-        """Append a new project / work / leadership entry to master_experience.yaml."""
-        from resume_tailor import master_edit
-
-        win = tk.Toplevel(self.root)
-        win.title("Add entry")
-        win.configure(bg=BG)
-        win.transient(self.root)
-        win.grab_set()
-
-        sec_var = tk.StringVar(value="projects")
-        field_vars: dict[str, tk.StringVar] = {}
-        ach_rows: list[dict] = []
-
-        section_fields = {
-            "projects": [("name", "Name"), ("dates", "Dates"),
-                         ("live_url", "Live URL"), ("repo", "Repo")],
-            "experience": [("org", "Org"), ("title", "Title"),
-                           ("location", "Location"), ("dates", "Dates")],
-            "leadership": [("org", "Org"), ("dates", "Dates")],
-        }
-
-        topbar = ttk.Frame(win)
-        topbar.grid(row=0, column=0, sticky="w", padx=8, pady=6)
-        ttk.Label(topbar, text="Section:").pack(side="left")
-        ttk.Combobox(topbar, textvariable=sec_var, state="readonly", width=12,
-                     values=list(section_fields)).pack(side="left", padx=6)
-
-        fields_frame = ttk.Frame(win)
-        fields_frame.grid(row=1, column=0, sticky="w", padx=8)
-        ttk.Label(win, text="Achievements").grid(row=2, column=0, sticky="w", padx=8, pady=(8, 0))
-        ach_frame = ttk.Frame(win)
-        ach_frame.grid(row=3, column=0, sticky="w", padx=8)
-
-        def _render_fields(*_):
-            for w in fields_frame.winfo_children():
-                w.destroy()
-            field_vars.clear()
-            for i, (key, label) in enumerate(section_fields[sec_var.get()]):
-                ttk.Label(fields_frame, text=label).grid(row=i, column=0, sticky="w", pady=2)
-                v = tk.StringVar()
-                field_vars[key] = v
-                ttk.Entry(fields_frame, textvariable=v, width=52).grid(row=i, column=1, padx=6, pady=2)
-
-        def _add_ach():
-            idx = len(ach_rows)
-            fr = ttk.LabelFrame(ach_frame, text=f"Achievement {idx + 1}")
-            fr.grid(row=idx, column=0, sticky="w", pady=4)
-            ttk.Label(fr, text="What").grid(row=0, column=0, sticky="w")
-            what_v = tk.StringVar()
-            ttk.Entry(fr, textvariable=what_v, width=64).grid(row=0, column=1, padx=4, pady=2)
-            ttk.Label(fr, text="Angles (comma-sep)").grid(row=1, column=0, sticky="w")
-            ang_v = tk.StringVar()
-            ttk.Entry(fr, textvariable=ang_v, width=64).grid(row=1, column=1, padx=4, pady=2)
-            ttk.Label(fr, text="Impact (one per line)").grid(row=2, column=0, sticky="nw")
-            imp_txt = tk.Text(fr, width=48, height=2)
-            imp_txt.grid(row=2, column=1, padx=4, pady=2)
-            ach_rows.append({"what": what_v, "angles": ang_v, "impact": imp_txt})
-
-        def _save():
-            section = sec_var.get()
-            data = {k: v.get().strip() for k, v in field_vars.items() if v.get().strip()}
-            achievements = []
-            for row in ach_rows:
-                what = row["what"].get().strip()
-                angles = [a.strip() for a in row["angles"].get().split(",") if a.strip()]
-                impact = [ln.strip() for ln in row["impact"].get("1.0", "end").splitlines() if ln.strip()]
-                if not what and not angles and not impact:
-                    continue  # skip a wholly-empty row
-                achievements.append({"what": what, "angles": angles, "impact": impact})
-            data["achievements"] = achievements
-            try:
-                master_edit.append_entry(section, data)
-            except ValueError as exc:
-                messagebox.showerror("Add entry", str(exc), parent=win)
-                return
-            except Exception as exc:  # noqa: BLE001 - never crash the UI
-                self._log_error("add entry failed", exc)
-                messagebox.showerror("Add entry", f"Failed: {exc}", parent=win)
-                return
-            name = data.get("name") or data.get("org") or "entry"
-            win.destroy()
-            self._set_status(f"Added {section} entry '{name}' — available on the next tailor run.")
-
-        btnbar = ttk.Frame(win)
-        btnbar.grid(row=4, column=0, sticky="w", padx=8, pady=10)
-        ttk.Button(btnbar, text="Add achievement", command=_add_ach).pack(side="left", padx=4)
-        ttk.Button(btnbar, text="Save", command=_save, style="Accent.TButton").pack(side="left", padx=8)
-        ttk.Button(btnbar, text="Cancel", command=win.destroy).pack(side="left", padx=4)
-
-        sec_var.trace_add("write", _render_fields)
-        _render_fields()
-        _add_ach()
-        win.wait_window(win)
-
-    def _on_engine_change(self) -> None:
-        auth = self._current_auth()
-        _save_cfg({"gemini_auth": auth})
-        self._apply_auth_env()
-        self._set_status(f"LLM engine: {self.engine_var.get().replace('Engine: ', '')}")
 
     # ---- resume tailor ----
 
@@ -2222,7 +2182,33 @@ class App:
         self.registry.close()
 
 
+def _enable_dpi_awareness() -> None:
+    """Render crisply on scaled Windows displays.
+
+    A non-DPI-aware Tk process is bitmap-stretched by Windows on the common 125/150%
+    laptop scaling, which makes all text look soft/blurry. Declaring per-monitor
+    awareness lets Tk draw at native resolution (sharp text) and sizes fonts to the
+    real DPI. Must run before the first Tk() call. No-op off Windows or on old builds,
+    and never fatal — DPI awareness can only be set once per process, so a second call
+    (or a missing API) is simply swallowed.
+    """
+    import ctypes
+
+    for attempt in (
+        lambda: ctypes.windll.user32.SetProcessDpiAwarenessContext(
+            ctypes.c_void_p(-4)),       # PER_MONITOR_AWARE_V2 (Win10 1703+)
+        lambda: ctypes.windll.shcore.SetProcessDpiAwareness(2),  # PER_MONITOR (Win8.1+)
+        lambda: ctypes.windll.user32.SetProcessDPIAware(),       # system DPI (Vista+)
+    ):
+        try:
+            attempt()
+            return
+        except Exception:  # noqa: BLE001 - wrong OS/old build -> try the next fallback
+            continue
+
+
 def main() -> int:
+    _enable_dpi_awareness()  # crisp text on high-DPI/scaled displays; before any Tk()
     paths = [Path(a) for a in sys.argv[1:]]
 
     lock = _UILock(UI_LOCK)

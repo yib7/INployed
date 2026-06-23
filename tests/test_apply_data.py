@@ -14,7 +14,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
-from resume_tailor import apply_config, apply_data  # noqa: E402
+from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
 
 
 _MASTER = {
@@ -94,3 +94,17 @@ def test_write_honors_apply_config_override(tmp_path, monkeypatch):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["standard_answers"]["willing_to_relocate"] is False
     assert data["standard_answers"]["requires_sponsorship"] is False
+
+
+def test_write_embeds_answer_bank_matching_standard_answers(tmp_path, monkeypatch):
+    # Hermetic: point the store at a temp file seeded from the (absent) config.
+    store = tmp_path / "apply_answers.json"
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", store)
+    apply_answers.save(apply_answers.seed_defaults(), store)
+    out = apply_data.write(_JOB, tmp_path, ["b1"])
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert isinstance(data["answer_bank"], list) and data["answer_bank"]
+    assert data["standard_answers"] == apply_answers.as_standard_answers()
+    # the rich entries carry kind/status metadata the flat dict lacks
+    assert all({"kind", "status"} <= set(e) for e in data["answer_bank"])

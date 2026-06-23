@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -24,10 +25,12 @@ import settings
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic
 from jobsdata import (
     ALL_COLUMNS,
+    APPDATA,
     HIGH_SCORE_COLUMNS,
     TRACKER_COLUMNS,
     drop_blocklisted,
     filter_high_unseen,
+    gdrive_root_dir,
     load_files,
     load_followup_days,
     load_hidden_columns,
@@ -36,8 +39,9 @@ from jobsdata import (
 )
 from qt import workers
 from qt.jobs_tab import JobsTab
+from qt.stats_tab import StatsTab
 from qt.widgets import ScorePreview
-from seen_db import SeenRegistry
+from seen_db import APP_STATUSES, SeenRegistry
 
 TAB_TITLES = [
     "High Score (Unseen)",
@@ -102,9 +106,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.high_tab = self._make_jobs_tab("high", HIGH_SCORE_COLUMNS)
         self.all_tab = self._make_jobs_tab("all", ALL_COLUMNS)
         self.tracker_tab = self._make_jobs_tab("tracker", TRACKER_COLUMNS)
+        self._setup_tracker_toolbar()
+        self.stats_tab = StatsTab(on_export=self._export_calibration)
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
-                 "Tracker": self.tracker_tab}
+                 "Tracker": self.tracker_tab, "Stats": self.stats_tab}
         for title in TAB_TITLES:
             page = pages.get(title) or QtWidgets.QWidget()
             self._tab_widgets[title] = page
@@ -151,6 +157,16 @@ class MainWindow(QtWidgets.QMainWindow):
         button("Refresh", self.reload_data)
         return bar
 
+    def _setup_tracker_toolbar(self) -> None:
+        """Tracker-only controls added to that tab's filter bar."""
+        self.tracker_due_only = QtWidgets.QCheckBox("Follow-up due only")
+        self.tracker_due_only.stateChanged.connect(lambda _s: self._refresh_tracker())
+        self.tracker_tab.add_toolbar_widget(self.tracker_due_only)
+        self.tracker_tab.add_toolbar_button("Set status", self._tracker_set_status)
+        self.tracker_tab.add_toolbar_button("Mark followed up", self._tracker_followed_up)
+        self.tracker_tab.add_toolbar_button("Interview prep", self._tracker_prep)
+        self.tracker_tab.add_toolbar_button("Remove", self._tracker_remove)
+
     # ---- data ----------------------------------------------------------------
 
     def reload_data(self) -> None:
@@ -171,6 +187,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.high_tab.set_source_df(self.df_high, resume_ids)
         self.all_tab.set_source_df(df, resume_ids)
         self._refresh_tracker()
+        self._refresh_stats()
         total = 0 if df.empty else len(df)
         self._set_status(f"{total:,} jobs · {len(self.df_high)} unseen >=4")
 
@@ -211,6 +228,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "url": r.get("url") or self._cell(row, "url"),
                 "resume": "✓" if jid in rpaths else "",
             })
+        if getattr(self, "tracker_due_only", None) is not None and self.tracker_due_only.isChecked():
+            recs = [r for r in recs if r["follow_up"] == "DUE"]
         cols = [c for c, _ in TRACKER_COLUMNS] + ["job_posting_id"]
         tdf = pd.DataFrame(recs) if recs else pd.DataFrame(columns=cols)
         self.tracker_tab.set_source_df(tdf, self._resume_ids())
@@ -512,6 +531,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "tone": cfg.get("resume_tone", "professional")}
         self._tailoring = True
         self.btn_tailor.setEnabled(False)
+        self._apply_auth_env()
         self._set_status(f"Tailoring {len(jobs)} resume(s) … (progress in the console)")
         workers.run_async(self, lambda: self._tailor_work(jobs, opts),
                           on_done=self._finish_tailor, on_error=self._finish_tailor_error)
@@ -579,6 +599,156 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(
                 self, "Check setup", "Problems found:\n\n- " + "\n- ".join(problems))
             self._set_status(f"Setup check: {len(problems)} problem(s) — see the list.")
+
+    # ---- tracker extras ------------------------------------------------------
+
+    def _tracker_set_status(self) -> None:
+        ids = self.tracker_tab.selected_ids()
+        if not ids:
+            self._set_status("Select tracker rows to set a status on.")
+            return
+        status, ok = QtWidgets.QInputDialog.getItem(
+            self, "Set status", "New status:", list(APP_STATUSES), 0, False)
+        if ok and status:
+            self._set_status_for(ids, status)
+
+    def _tracker_followed_up(self) -> None:
+        ids = self.tracker_tab.selected_ids()
+        if not ids:
+            self._set_status("Select tracker rows to mark followed up.")
+            return
+        self.registry.mark_followed_up(ids)
+        self._refresh_tracker()
+        self._set_status(f"Marked follow-up done on {len(ids)} job(s).")
+
+    def _tracker_remove(self) -> None:
+        ids = self.tracker_tab.selected_ids()
+        if not ids:
+            self._set_status("Select tracker rows to remove.")
+            return
+        if QtWidgets.QMessageBox.question(
+                self, "Remove from tracker?",
+                f"Remove {len(ids)} job(s) from the application tracker?"
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        for jid in ids:
+            self.registry.clear_status(jid)
+        self._refresh_tracker()
+        self._set_status(f"Removed {len(ids)} job(s) from the tracker.")
+
+    def _tracker_prep(self) -> None:
+        if getattr(self, "_prepping", False):
+            return
+        ids = self.tracker_tab.selected_ids() or self._selected_ids()
+        if not ids:
+            self._set_status("Select a job to generate an interview prep sheet for.")
+            return
+        job = self._job_payload(ids[0])
+        if job is None:
+            self._set_status("Job description not available — cannot build a prep sheet.")
+            return
+        resume_dir = self.registry.resume_path(ids[0])
+        self._prepping = True
+        self._apply_auth_env()
+        self._set_status(f"Generating interview prep for {job['company_name']} — "
+                         f"{job['job_title']} …")
+        workers.run_async(self, lambda: self._prep_work(job, resume_dir),
+                          on_done=self._finish_prep, on_error=self._finish_prep_error)
+
+    def _prep_work(self, job: dict, resume_dir):
+        from resume_tailor.prep import generate_prep_sheet
+        out_dir = Path(resume_dir) if resume_dir and Path(resume_dir).exists() else None
+        return generate_prep_sheet(job, out_dir)
+
+    def _finish_prep(self, path) -> None:
+        self._prepping = False
+        self._set_status(f"Interview prep ready → {path}")
+        try:
+            os.startfile(str(path))  # noqa: S606
+        except OSError:
+            pass
+
+    def _finish_prep_error(self, exc) -> None:
+        self._prepping = False
+        self._set_status(f"Interview prep FAILED — {exc}")
+
+    # ---- stats + calibration -------------------------------------------------
+
+    def _refresh_stats(self) -> None:
+        stats_df = None
+        root = gdrive_root_dir(self.csv_paths)
+        path = (root / "run_stats.csv") if root else None
+        if path and path.exists():
+            try:
+                stats_df = pd.read_csv(path)
+            except (OSError, ValueError, pd.errors.ParserError):
+                stats_df = None
+        summary = "run_stats.csv not synced yet — metrics appear after the next VM run."
+        table_df = pd.DataFrame()
+        if stats_df is not None and not stats_df.empty:
+            table_df = stats_df.iloc[::-1].reset_index(drop=True)  # newest first
+            summary = self._stats_summary(stats_df)
+        self.stats_tab.set_stats(table_df, summary, self._calibration_text())
+
+    @staticmethod
+    def _stats_summary(stats_df: pd.DataFrame) -> str:
+        last = stats_df.iloc[-1]
+        recent = stats_df.tail(7)
+        empty = pd.Series(0, index=recent.index)
+        tok = (pd.to_numeric(recent.get("prompt_tokens", empty), errors="coerce").fillna(0)
+               + pd.to_numeric(recent.get("output_tokens", empty), errors="coerce").fillna(0))
+        rows_in = pd.to_numeric(recent.get("rows_in", empty), errors="coerce").fillna(0)
+        return (f"{len(stats_df)} run(s) logged · last: {last.get('timestamp', '?')} — "
+                f"{last.get('rows_in', 0)} new, {last.get('llm_scored', 0)} scored · "
+                f"7-run avg: {rows_in.mean():.0f} new, {tok.mean():,.0f} tokens/run")
+
+    def _calibration_text(self) -> str:
+        rows = self.registry.status_rows()
+        if not rows:
+            return ("Calibration: no labels yet — use 'Mark applied' to start building the "
+                    "applied-vs-recommendation dataset (target ~100 labels).")
+        by_reco: Counter[str] = Counter()
+        for r in rows:
+            reco = self._cell(self._row_for(r["job_posting_id"]), "recommendation").strip().lower()
+            by_reco[reco if reco in ("apply", "consider", "skip") else "unscored"] += 1
+        parts = " · ".join(f"{k}: {v}" for k, v in by_reco.most_common())
+        n = len(rows)
+        note = " — enough to start tuning" if n >= 100 else f" (target ~100, at {n})"
+        return f"Calibration: {n} labeled application(s){note} · by model reco — {parts}"
+
+    def _export_calibration(self) -> None:
+        rows = self.registry.status_rows()
+        if not rows:
+            self._set_status("No tracked applications to export yet.")
+            return
+        recs = []
+        for r in rows:
+            jid = r["job_posting_id"]
+            row = self._row_for(jid)
+            recs.append({
+                "job_posting_id": jid,
+                "company": r.get("company") or self._cell(row, "company_name"),
+                "job_title": r.get("job_title") or self._cell(row, "job_title"),
+                "score": self._cell(row, "score"),
+                "deep_score": self._cell(row, "deep_score"),
+                "recommendation": self._cell(row, "recommendation"),
+                "status": r["status"],
+                "applied_date": r.get("applied_date") or "",
+                "status_date": r.get("status_date") or "",
+            })
+        out = APPDATA / "calibration_labels.csv"
+        try:
+            pd.DataFrame(recs).to_csv(out, index=False, encoding="utf-8")
+        except OSError as e:
+            self._set_status(f"Export failed: {e}")
+            return
+        self._set_status(f"Calibration labels → {out}")
+
+    # ---- engine env ----------------------------------------------------------
+
+    def _apply_auth_env(self) -> None:
+        """Seed the env var the in-process tailor reads at call time."""
+        os.environ["RESUME_TAILOR_GEMINI_AUTH"] = jobsdata._load_cfg().get("gemini_auth", "vertex")
 
     # ---- misc ----------------------------------------------------------------
 

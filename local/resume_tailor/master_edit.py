@@ -209,6 +209,40 @@ def add_atom(section: str, index: int, atom: Dict[str, Any],
     _write_doc(y, doc, target)
 
 
+def update_basics(fields: Dict[str, Any], path: Optional[Path] = None) -> None:
+    """Set fields on the top-level `basics` mapping (name/email/phone/…)."""
+    target = _path(path)
+    y, doc = _load_doc(target)
+    basics = doc.get("basics")
+    if not isinstance(basics, dict):
+        doc["basics"] = {}
+        basics = doc["basics"]
+    for k, v in fields.items():
+        basics[k] = v
+    _write_doc(y, doc, target)
+
+
+def restore_bytes(data: bytes, path: Optional[Path] = None) -> None:
+    """Overwrite the master file with raw bytes (the editor's "revert to opening
+    state"), backing up the current file to `<name>.bak` first and clearing caches."""
+    target = _path(path)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".master_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        if target.exists():
+            shutil.copy2(str(target), str(target.with_name(target.name + ".bak")))
+        os.replace(tmp, str(target))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    for fn in _CACHED:
+        fn.cache_clear()
+
+
 def _find_atom(doc: Dict[str, Any], atom_id: str):
     for sec in _SECTIONS:
         for e in doc.get(sec) or []:

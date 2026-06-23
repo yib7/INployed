@@ -74,10 +74,12 @@ ui._load_cfg = lambda: {"gdrive_root": str(root), "min_score": 4, "followup_days
 app = ui.App([master])
 assert not app.df.empty and "applicants" in app.df.columns
 
-# Settings tab exists and is wired into the notebook
+# Settings + Resume Data tabs exist and are wired into the notebook
 assert app.tab_settings is not None, "Settings tab frame missing"
+assert app.tab_resume_data is not None, "Resume Data tab frame missing"
 tab_labels = [app.nb.tab(t, "text") for t in app.nb.tabs()]
 assert any("Settings" in lbl for lbl in tab_labels), f"no Settings tab: {tab_labels}"
+assert any("Resume Data" in lbl for lbl in tab_labels), f"no Resume Data tab: {tab_labels}"
 
 # High-Score ordering: same score -> fewest applicants first (1002 before 1001)
 high_ids = list(app.tv_high.get_children())

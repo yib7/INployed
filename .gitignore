@@ -18,6 +18,7 @@ local/config.json
 search_config.json
 scoring_config.json
 apply_config.json
+apply_answers.json
 
 # ── LaTeX build artifacts ────────────────────────────────────────────────────
 *.aux

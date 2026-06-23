@@ -158,7 +158,9 @@ if ($InstallDeps) {
 Write-Step "Done. Next steps:"
 Write-Host @"
     1. Edit  resume_tailor_files/master_experience.yaml  with your real experience.
-    2. Fill any blanks in  .env  (Bright Data + Google Cloud keys).
+    2. Set your keys and options in a window:  python local/configure.pyw
+       (covers .env keys, paths, search, scoring, resume, and apply answers --
+        or fill the blanks in  .env  by hand if you prefer).
     3. Authenticate Google Cloud:  gcloud auth application-default login
     4. (Scraping) run your own pipeline:  python scraper.py   then   python score_jobs.py
        or follow docs/HANDOFF.md to run it on a GCP VM via cron.

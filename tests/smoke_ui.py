@@ -101,7 +101,11 @@ app.registry._conn.execute(
     "UPDATE app_status SET applied_date='2026-06-01', status_date='2026-06-01'")
 app.registry._conn.commit()
 app.registry.record_resume(jid, str(tmp))
+# résumé recorded -> the High Score row is tinted blue (has_resume tag)
+app._apply_filters_high()
+assert app.tv_high.item(jid, "tags")[0] == "has_resume", app.tv_high.item(jid, "tags")
 app._refresh_tracker()
+# (this row is backdated to be follow-up DUE, so its tag is "due" until cleared)
 rows = app.tv_tracker.get_children()
 assert list(rows) == [jid], f"tracker rows: {rows}"
 tvals = app.tv_tracker.item(jid, "values")
@@ -111,11 +115,14 @@ assert tvals[0] == "applied" and tvals[4] == "DUE" and tvals[10] == "✓", tvals
 app.registry.mark_followed_up([jid])
 app._refresh_tracker()
 assert app.tv_tracker.item(jid, "values")[4] == "done"
+# no longer DUE -> applied row shows its blue "applied" tag
+assert app.tv_tracker.item(jid, "tags")[0] == "applied", app.tv_tracker.item(jid, "tags")
 
 # status switching (the reported bug): applied -> rejected -> interviewing must
 # update the displayed Status column every time, via both entry points.
 app._apply_status_to([jid], "rejected")          # right-click "Set status" path
 assert app.tv_tracker.item(jid, "values")[0] == "rejected", app.tv_tracker.item(jid, "values")
+assert app.tv_tracker.item(jid, "tags")[0] == "rejected"  # rejected -> red tint
 app.tv_tracker.selection_set(jid)                # Tracker combobox + button path
 app.track_status_var.set("interviewing")
 app._set_status_selected()

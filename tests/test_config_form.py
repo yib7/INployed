@@ -112,6 +112,20 @@ def test_restore_defaults_resets_widgets(root, tmp_path):
     assert form.multi["remote_types"]["Remote"].get() is False  # not in default
 
 
+def test_revert_restores_opening_values_not_defaults(root, tmp_path):
+    # Revert must go back to how settings were when the form OPENED (session
+    # snapshot), which is different from Restore-defaults (factory).
+    targets = _targets(tmp_path)
+    (tmp_path / "config.json").write_text('{"min_score": 2}', encoding="utf-8")
+    form = config_form.ConfigForm(tk.Frame(root), targets=targets)
+    assert form.vars["min_score"].get() == "2"            # opened at the stored value
+    form.vars["min_score"].set("5")                       # user edits
+    form.multi["remote_types"]["Remote"].set(True)
+    form.revert()
+    assert form.vars["min_score"].get() == "2"            # session-open, NOT default 4
+    assert form.multi["remote_types"]["Remote"].get() is False  # back to opening set
+
+
 def test_editable_choice_model_combobox_present(root, tmp_path):
     form = _form(root, tmp_path)
     assert "stage1_model" in form.vars                       # scorer model dropdown

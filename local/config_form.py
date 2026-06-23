@@ -78,6 +78,7 @@ class ConfigForm:
 
         self.vars: dict[str, tk.Variable] = {}        # scalar widgets (entry/combo/check)
         self.texts: dict[str, tk.Text] = {}           # list fields
+        self.scales: dict[str, ttk.Scale] = {}        # slider fields (int, bounded)
         self.multi: dict[str, dict[str, tk.BooleanVar]] = {}   # multichoice -> {choice: var}
         self.clear_vars: dict[str, tk.BooleanVar] = {}         # secret -> "clear it" toggle
         self._secret_labels: dict[str, ttk.Label] = {}         # secret -> status label
@@ -139,7 +140,7 @@ class ConfigForm:
         widget.grid(row=row, column=1, sticky="w", pady=(6, 0))
         row += 1
         if f.help:
-            ttk.Label(body, text=f.help, style="Muted.TLabel", wraplength=520).grid(
+            ttk.Label(body, text=f.help, style="Muted.TLabel", wraplength=640).grid(
                 row=row, column=1, sticky="w", pady=(0, 2))
             row += 1
         return row
@@ -155,7 +156,15 @@ class ConfigForm:
             var = tk.StringVar(value=str(value))
             self.vars[f.key] = var
             return ttk.Combobox(parent, textvariable=var, state="readonly",
-                                width=26, values=list(f.choices))
+                                width=30, values=list(f.choices))
+        if f.type == "editable_choice":
+            # pick from the list OR type a custom value (state="normal").
+            var = tk.StringVar(value=str(value))
+            self.vars[f.key] = var
+            return ttk.Combobox(parent, textvariable=var, state="normal",
+                                width=32, values=list(f.choices))
+        if getattr(f, "slider", False) and f.type == "int":
+            return self._slider_widget(parent, f, value)
         if f.type == "multichoice":
             return self._multichoice_widget(parent, f, value)
         if f.type == "list":
@@ -171,7 +180,27 @@ class ConfigForm:
         # str / int / float
         var = tk.StringVar(value="" if value is None else str(value))
         self.vars[f.key] = var
-        return ttk.Entry(parent, textvariable=var, width=40 if f.type == "str" else 14)
+        return ttk.Entry(parent, textvariable=var, width=46 if f.type == "str" else 14)
+
+    def _slider_widget(self, parent: ttk.Frame, f: settings.Field, value):
+        """A bounded int rendered as a drag slider + a live numeric readout. The
+        readout is a StringVar in self.vars (so collect()/validate treat it like
+        any int field); the scale is tracked in self.scales for restore_defaults."""
+        frame = ttk.Frame(parent)
+        try:
+            cur = int(value)
+        except (TypeError, ValueError):
+            cur = int(f.default)
+        var = tk.StringVar(value=str(cur))
+        self.vars[f.key] = var
+        scale = ttk.Scale(
+            frame, from_=float(f.min), to=float(f.max), orient="horizontal", length=240,
+            command=lambda v, k=f.key: self.vars[k].set(str(int(round(float(v))))))
+        scale.set(cur)
+        self.scales[f.key] = scale
+        scale.grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, textvariable=var, width=5).grid(row=0, column=1, sticky="w", padx=(10, 0))
+        return frame
 
     def _multichoice_widget(self, parent: ttk.Frame, f: settings.Field, value):
         frame = ttk.Frame(parent)
@@ -340,6 +369,8 @@ class ConfigForm:
                 txt.insert("1.0", "\n".join(str(v) for v in items))
             elif f.type == "bool":
                 self.vars[f.key].set(bool(f.default))
+            elif getattr(f, "slider", False) and f.key in self.scales:
+                self.scales[f.key].set(int(f.default))  # command syncs the readout var
             else:
                 self.vars[f.key].set("" if f.default is None else str(f.default))
         if self.status:

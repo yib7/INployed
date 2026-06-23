@@ -29,10 +29,10 @@ _INTRO = ("Set everything up in one place. Your entries are saved to a private "
 
 def build(root: tk.Tk, targets: dict | None = None) -> ConfigForm:
     """Title the window, apply the dark theme, add a header, and mount the form."""
-    root.title("Configure - Job Discovery & Resume Pipeline")
+    root.title("Configure - INployed")
     try:
-        root.geometry("780x760")
-        root.minsize(620, 480)
+        root.geometry("940x860")
+        root.minsize(760, 560)
     except tk.TclError:
         pass
     # The theme is cosmetic; importing the dashboard just to reuse its palette is

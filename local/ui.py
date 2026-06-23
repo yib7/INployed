@@ -785,8 +785,8 @@ class App:
 
         self.root = tk.Tk()
         self.root.title("INployed")
-        self.root.geometry("1300x760")
-        self.root.minsize(900, 520)
+        self.root.geometry("1440x900")
+        self.root.minsize(1000, 640)
         self.root.withdraw()                  # hide while we theme it
         apply_theme(self.root)
 

@@ -70,6 +70,21 @@ def test_scrape_work_raises_with_captured_output_on_failure(qtbot, monkeypatch, 
     assert "BOOM bad token" in (tmp_path / "scrape.log").read_text(encoding="utf-8")
 
 
+def test_after_scrape_merges_local_run_files(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    new_file = tmp_path / "evening" / "x_scored.csv.gz"
+    monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [new_file])
+    reloaded = []
+    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    w._scraping = True
+    w._after_scrape(True)
+    assert new_file in w.csv_paths  # local scrape output now a dashboard source
+    assert reloaded and w._scraping is False
+    # idempotent: a second call must not duplicate the path
+    w._after_scrape(True)
+    assert w.csv_paths.count(new_file) == 1
+
+
 def test_after_scrape_error_shows_dialog(qtbot, monkeypatch):
     w = _win(qtbot)
     shown = {}

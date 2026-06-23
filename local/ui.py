@@ -1004,9 +1004,12 @@ class App:
         self.tv_stats.bind("<Motion>", self._on_row_motion)
         self.tv_stats.bind("<Leave>", self._clear_hover)
 
-        # Tab 5 — Settings: user-editable options from settings.SETTINGS_SCHEMA,
-        # grouped by section. SP2 only has the "Dashboard" group; SP3 will add
-        # Scraper / Scoring / Resume rows. Save validates then writes config.json.
+        # Tab 5 — Resume Data: structured editor over master_experience.yaml
+        # (add/edit/delete entries + achievement atoms, tips, validate, revert).
+        self._build_resume_data_tab(nb)
+
+        # Tab 6 — Settings: user-editable options from settings.SETTINGS_SCHEMA,
+        # grouped by section. Save validates then writes config.json / .env.
         self._build_settings_tab(nb)
 
         # Details pane (between the notebook and the action bar): the model's
@@ -1768,6 +1771,18 @@ class App:
         self._set_status(f"Calibration labels → {out}")
 
     # ---- settings ----
+
+    def _build_resume_data_tab(self, nb: ttk.Notebook) -> None:
+        """Mount the structured master_experience.yaml editor as a dashboard tab so
+        a non-technical user can edit their résumé data without opening the file."""
+        from resume_data_form import ResumeDataEditor
+
+        self.tab_resume_data = frame = ttk.Frame(nb)
+        nb.add(frame, text="Resume Data")
+        self.resume_data_editor = ResumeDataEditor(frame, on_saved=self._on_resume_data_saved)
+
+    def _on_resume_data_saved(self) -> None:
+        self._set_status("Resume data saved (applies on the next tailor run).")
 
     def _build_settings_tab(self, nb: ttk.Notebook) -> None:
         """Mount the shared, schema-driven config form as the Settings tab.

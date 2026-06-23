@@ -465,3 +465,65 @@ def filter_and_sort(base: pd.DataFrame, search: str, minscore: str, day: str,
     if easy and "is_easy_apply" in view.columns:
         view = view.loc[view["is_easy_apply"].astype(str).str.lower().isin(("true", "1", "yes"))]
     return sort_query(view)
+
+
+def job_detail_segments(row, snapshot: dict | None = None) -> list[tuple[str, str]]:
+    """The score-preview content as (text, style) segments — style in
+    {'h','muted','good','bad',''}. `row` is a pandas Series (or None); `snapshot`
+    is the tracker row dict shown when the job is no longer in the loaded data.
+    Toolkit-agnostic so the Qt preview pane and tests share one source of truth."""
+    def cell(col: str) -> str:
+        if row is None:
+            return ""
+        v = row.get(col, "")
+        return "" if pd.isna(v) else str(v)
+
+    if row is None:
+        if snapshot:
+            return [
+                (f"{snapshot.get('job_title') or '?'} — {snapshot.get('company') or '?'}\n", "h"),
+                ("No longer in the loaded data (tracker snapshot only).\n", "muted"),
+                (str(snapshot.get("url") or ""), "muted"),
+            ]
+        return []
+
+    segs: list[tuple[str, str]] = []
+    title = cell("job_title") or "?"
+    company = cell("company_name") or "?"
+    loc = cell("job_location")
+    segs.append((f"{title} — {company}" + (f"  ({loc})" if loc else "") + "\n", "h"))
+
+    meta: list[str] = []
+    for label, col in (("score", "score"), ("deep", "deep_score"),
+                       ("reco", "recommendation"), ("applicants", "applicants"),
+                       ("posted", "job_posted_date"), ("salary", "job_base_pay_range")):
+        v = cell(col).strip()
+        if col == "job_posted_date" and v:
+            v = v[:10]
+        if v:
+            meta.append(f"{label}: {v}")
+    if meta:
+        segs.append(("  ·  ".join(meta) + "\n\n", "muted"))
+
+    reason = cell("reason").strip()
+    if reason:
+        segs.append(("Reason  ", "h"))
+        segs.append((reason + "\n", ""))
+    strengths = [s.strip() for s in cell("strengths").split("|") if s.strip()]
+    if strengths:
+        segs.append(("Strengths\n", "h"))
+        segs.extend((f"  + {s}\n", "good") for s in strengths)
+    gaps = [g.strip() for g in cell("gaps").split("|") if g.strip()]
+    if gaps:
+        segs.append(("Gaps\n", "h"))
+        segs.extend((f"  - {g}\n", "bad") for g in gaps)
+
+    jd = cell("job_summary").strip()
+    if len(jd) < 40:
+        raw = cell("job_description_formatted")
+        jd = re.sub(r"<[^>]+>", " ", raw)
+        jd = re.sub(r"\s+", " ", jd).strip()
+    if jd:
+        segs.append(("\nJD snippet  ", "h"))
+        segs.append((jd[:700] + ("…" if len(jd) > 700 else ""), "muted"))
+    return segs

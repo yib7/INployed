@@ -75,3 +75,14 @@ def write(job: Dict[str, str], out_dir: Path, bullets: List[str],
     path = out_dir / "apply_data.json"
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
+    """Backfill apply_data.json for an already-tailored folder whose resume PDF
+    exists but whose apply_data.json is missing (e.g. folders tailored before
+    this file existed). Bullets are unavailable here, so resume_bullets is empty;
+    everything else (candidate, education, document paths, standard answers) is
+    rebuilt the same way write() does."""
+    folder = Path(folder)
+    has_cover = (folder / output.cover_filename()).exists()
+    return write(job, folder, [], cover_letter=has_cover)

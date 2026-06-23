@@ -52,6 +52,7 @@ except Exception:
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 
 import settings  # noqa: E402  (central user-settings layer)
+import smoothscroll  # noqa: E402  (coalesced wheel scrolling — see module docstring)
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic  # noqa: E402
 from seen_db import APP_STATUSES, SeenRegistry  # noqa: E402
 from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
@@ -708,6 +709,10 @@ def make_treeview(parent: tk.Widget, columns: list[tuple[str, int]]) -> ttk.Tree
     vsb = ttk.Scrollbar(parent, orient="vertical", command=tv.yview)
     hsb = ttk.Scrollbar(parent, orient="horizontal", command=tv.xview)
     tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+    # Coalesce wheel bursts: each table repaint is ~100 ms on a maximized window,
+    # so the default per-event scroll backs up into a multi-second freeze on a fast
+    # flick. One deferred scroll per idle keeps it responsive.
+    smoothscroll.bind_treeview_wheel(tv)
     tv.grid(row=0, column=0, sticky="nsew")
     vsb.grid(row=0, column=1, sticky="ns")
     hsb.grid(row=1, column=0, sticky="ew")

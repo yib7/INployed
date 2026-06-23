@@ -30,6 +30,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 import settings
+import smoothscroll
 
 # One-line "what this section controls" blurbs under each section header.
 SECTION_HELP = {
@@ -337,18 +338,9 @@ class ConfigForm:
         return row + 1
 
     def _wire_wheel(self, canvas: tk.Canvas, body: ttk.Frame) -> None:
-        def _wheel(e):
-            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-            return "break"
-
-        def _bind(w):
-            if not isinstance(w, tk.Text):  # let multi-line boxes scroll themselves
-                w.bind("<MouseWheel>", _wheel)
-            for child in w.winfo_children():
-                _bind(child)
-
-        canvas.bind("<MouseWheel>", _wheel)
-        _bind(body)
+        # Coalesce wheel bursts into one deferred scroll so a fast flick over this
+        # ~285-widget form doesn't pile up synchronous repaints into a freeze.
+        smoothscroll.bind_canvas_wheel(canvas, body)
 
     # ---- actions -------------------------------------------------------------
 

@@ -1,0 +1,339 @@
+"""Schema-driven configuration form — shared by the dashboard Settings tab and
+the standalone `configure.pyw` window.
+
+Renders `settings.SETTINGS_SCHEMA` grouped by section into a scrollable form:
+one labelled, explained input per Field, with the right widget per type so a
+non-technical user can't easily break things —
+
+  * choice            -> a dropdown (no free-typing a bad value)
+  * multichoice       -> a row of checkboxes (e.g. remote types)
+  * path              -> an entry with a "Browse..." button
+  * secret            -> a masked, write-only box (the saved value is never shown;
+                         leaving it blank keeps the existing value; a "Clear"
+                         checkbox unsets it)
+  * bool              -> a checkbox
+  * list              -> a multi-line box, one item per line
+  * str/int/float     -> a plain entry (numbers are range-checked on Save)
+
+Save validates via `settings.validate`/`settings.save` and reports friendly
+errors; "Restore defaults" repopulates the widgets (nothing is written until you
+press Save). An optional `on_saved` callback lets the dashboard refresh state.
+
+Theme-agnostic: widget colors are read from the active ttk style (ui.apply_theme
+sets the dark palette; the standalone launcher applies the same one), so this
+module never imports the dashboard — no circular dependency.
+"""
+from __future__ import annotations
+
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from typing import Callable
+
+import settings
+
+# One-line "what this section controls" blurbs under each section header.
+SECTION_HELP = {
+    "Credentials": "API keys and tokens. Saved to your private .env file and never shown again.",
+    "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
+    "Engine": "Which Gemini backend the resume tailor bills.",
+    "Dashboard": "How the dashboard surfaces and tracks jobs.",
+    "Scraper": "What the LinkedIn scraper searches for (this drives Bright Data spend).",
+    "Scoring": "Which models score jobs, and the spend guards around them.",
+    "Resume": "What the resume tailor generates, and how the cover letter reads.",
+    "Apply": "Default answers the apply helper fills into application forms.",
+}
+
+# New users need credentials/connection first; show those sections at the top.
+SECTION_ORDER = [
+    "Credentials", "Connection & paths", "Engine",
+    "Dashboard", "Scraper", "Scoring", "Resume", "Apply",
+]
+
+_SECRET_SET = "configured — leave blank to keep"
+_SECRET_UNSET = "not set"
+
+
+def _ordered_sections() -> list[tuple[str, list[settings.Field]]]:
+    """Group schema Fields by section, ordered by SECTION_ORDER (extras appended)."""
+    by_section: dict[str, list[settings.Field]] = {}
+    for f in settings.SETTINGS_SCHEMA:
+        by_section.setdefault(f.section, []).append(f)
+    ordered = [(s, by_section[s]) for s in SECTION_ORDER if s in by_section]
+    ordered += [(s, fs) for s, fs in by_section.items() if s not in SECTION_ORDER]
+    return ordered
+
+
+class ConfigForm:
+    """Builds the form into `parent` and owns its widget state."""
+
+    def __init__(self, parent: tk.Widget, on_saved: Callable[[], None] | None = None,
+                 targets: dict | None = None):
+        self.parent = parent
+        self.on_saved = on_saved
+        self.targets = targets  # None -> real files; tests pass a tmp mapping
+
+        self.vars: dict[str, tk.Variable] = {}        # scalar widgets (entry/combo/check)
+        self.texts: dict[str, tk.Text] = {}           # list fields
+        self.multi: dict[str, dict[str, tk.BooleanVar]] = {}   # multichoice -> {choice: var}
+        self.clear_vars: dict[str, tk.BooleanVar] = {}         # secret -> "clear it" toggle
+        self._secret_labels: dict[str, ttk.Label] = {}         # secret -> status label
+        self.status: ttk.Label | None = None
+
+        style = ttk.Style(parent)
+        self._bg = style.lookup("TFrame", "background") or "#1b2230"
+        self._field_bg = style.lookup("TEntry", "fieldbackground") or "#0f1420"
+        self._fg = style.lookup("TLabel", "foreground") or "#e6e9ef"
+
+        self._build()
+
+    # ---- construction --------------------------------------------------------
+
+    def _build(self) -> None:
+        canvas = tk.Canvas(self.parent, bg=self._bg, highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(self.parent, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        body = ttk.Frame(canvas, padding=(16, 12))
+        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(body_window, width=e.width))
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        stored = settings.load(self.targets)
+        secret_set = settings.secret_status(self.targets)
+
+        row = 0
+        for section, fields in _ordered_sections():
+            row = self._add_section_header(body, section, row)
+            for f in fields:
+                row = self._add_field(body, f, stored.get(f.key, f.default), secret_set, row)
+
+        row = self._add_buttons(body, row)
+        self._wire_wheel(canvas, body)
+
+    def _add_section_header(self, body: ttk.Frame, section: str, row: int) -> int:
+        ttk.Label(body, text=section, style="Subtitle.TLabel").grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(14 if row else 0, 0))
+        row += 1
+        blurb = SECTION_HELP.get(section)
+        if blurb:
+            ttk.Label(body, text=blurb, style="Muted.TLabel", wraplength=560).grid(
+                row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
+            row += 1
+        return row
+
+    def _add_field(self, body: ttk.Frame, f: settings.Field, value, secret_set: dict,
+                   row: int) -> int:
+        anchor = "nw" if f.type in ("list", "multichoice") else "w"
+        ttk.Label(body, text=f.label).grid(
+            row=row, column=0, sticky=anchor, padx=(8, 12), pady=(6, 0))
+        widget = self._make_widget(body, f, value, secret_set)
+        widget.grid(row=row, column=1, sticky="w", pady=(6, 0))
+        row += 1
+        if f.help:
+            ttk.Label(body, text=f.help, style="Muted.TLabel", wraplength=520).grid(
+                row=row, column=1, sticky="w", pady=(0, 2))
+            row += 1
+        return row
+
+    def _make_widget(self, parent: ttk.Frame, f: settings.Field, value, secret_set: dict):
+        if f.secret:
+            return self._secret_widget(parent, f, secret_set.get(f.key, False))
+        if f.type == "bool":
+            var = tk.BooleanVar(value=bool(value))
+            self.vars[f.key] = var
+            return ttk.Checkbutton(parent, variable=var)
+        if f.type == "choice":
+            var = tk.StringVar(value=str(value))
+            self.vars[f.key] = var
+            return ttk.Combobox(parent, textvariable=var, state="readonly",
+                                width=26, values=list(f.choices))
+        if f.type == "multichoice":
+            return self._multichoice_widget(parent, f, value)
+        if f.type == "list":
+            txt = tk.Text(parent, width=44, height=8, wrap="none",
+                          bg=self._field_bg, fg=self._fg, insertbackground=self._fg,
+                          relief="flat", highlightthickness=1, highlightbackground="#2a3344")
+            items = value if isinstance(value, list) else []
+            txt.insert("1.0", "\n".join(str(v) for v in items))
+            self.texts[f.key] = txt
+            return txt
+        if f.type == "path":
+            return self._path_widget(parent, f, value)
+        # str / int / float
+        var = tk.StringVar(value="" if value is None else str(value))
+        self.vars[f.key] = var
+        return ttk.Entry(parent, textvariable=var, width=40 if f.type == "str" else 14)
+
+    def _multichoice_widget(self, parent: ttk.Frame, f: settings.Field, value):
+        frame = ttk.Frame(parent)
+        current = set(value if isinstance(value, list) else [])
+        self.multi[f.key] = {}
+        for i, choice in enumerate(f.choices):
+            var = tk.BooleanVar(value=choice in current)
+            self.multi[f.key][choice] = var
+            ttk.Checkbutton(frame, text=choice, variable=var).grid(
+                row=0, column=i, sticky="w", padx=(0, 12))
+        return frame
+
+    def _path_widget(self, parent: ttk.Frame, f: settings.Field, value):
+        frame = ttk.Frame(parent)
+        var = tk.StringVar(value="" if value is None else str(value))
+        self.vars[f.key] = var
+        ttk.Entry(frame, textvariable=var, width=44).pack(side="left")
+        ttk.Button(frame, text="Browse…",
+                   command=lambda: self._browse(var, f.path_kind)).pack(side="left", padx=(6, 0))
+        return frame
+
+    def _secret_widget(self, parent: ttk.Frame, f: settings.Field, is_set: bool):
+        frame = ttk.Frame(parent)
+        var = tk.StringVar(value="")  # never pre-filled with the stored secret
+        self.vars[f.key] = var
+        ttk.Entry(frame, textvariable=var, width=40, show="•").grid(
+            row=0, column=0, sticky="w")
+        status = ttk.Label(frame, text=_SECRET_SET if is_set else _SECRET_UNSET,
+                           style="Muted.TLabel")
+        status.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self._secret_labels[f.key] = status
+        clear_var = tk.BooleanVar(value=False)
+        self.clear_vars[f.key] = clear_var
+        ttk.Checkbutton(frame, text="Clear", variable=clear_var).grid(
+            row=0, column=2, sticky="w", padx=(8, 0))
+        return frame
+
+    def _add_buttons(self, body: ttk.Frame, row: int) -> int:
+        btnbar = ttk.Frame(body)
+        btnbar.grid(row=row, column=0, columnspan=2, sticky="w", pady=(18, 4))
+        ttk.Button(btnbar, text="Save", command=self.save,
+                   style="Accent.TButton").pack(side="left")
+        ttk.Button(btnbar, text="Restore defaults",
+                   command=self.restore_defaults).pack(side="left", padx=(8, 0))
+        self.status = ttk.Label(btnbar, text="", style="Muted.TLabel")
+        self.status.pack(side="left", padx=(12, 0))
+        return row + 1
+
+    def _wire_wheel(self, canvas: tk.Canvas, body: ttk.Frame) -> None:
+        def _wheel(e):
+            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+            return "break"
+
+        def _bind(w):
+            if not isinstance(w, tk.Text):  # let multi-line boxes scroll themselves
+                w.bind("<MouseWheel>", _wheel)
+            for child in w.winfo_children():
+                _bind(child)
+
+        canvas.bind("<MouseWheel>", _wheel)
+        _bind(body)
+
+    # ---- actions -------------------------------------------------------------
+
+    def _browse(self, var: tk.StringVar, kind: str) -> None:
+        top = self.parent.winfo_toplevel()
+        if kind == "file":
+            chosen = filedialog.askopenfilename(parent=top, title="Select file")
+        else:
+            chosen = filedialog.askdirectory(parent=top, title="Select folder")
+        if chosen:
+            var.set(chosen)
+
+    def collect(self) -> tuple[dict, dict[str, str]]:
+        """Read the widgets into a {key: value} dict ready for settings.save, plus
+        a {key: message} dict of coercion errors. Secret boxes are included only
+        when the user typed a new value or ticked Clear (so a blank box keeps the
+        existing value)."""
+        values: dict = {}
+        errors: dict[str, str] = {}
+        for f in settings.SETTINGS_SCHEMA:
+            if f.secret:
+                typed = str(self.vars[f.key].get())
+                if self.clear_vars[f.key].get():
+                    values[f.key] = ""          # explicit unset
+                elif typed.strip():
+                    values[f.key] = typed       # new value
+                # else: omit -> existing value preserved
+                continue
+            if f.type == "multichoice":
+                values[f.key] = [c for c, v in self.multi[f.key].items() if v.get()]
+                continue
+            if f.type == "list":
+                raw = self.texts[f.key].get("1.0", "end")
+                values[f.key] = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+                continue
+            value, err = self._coerce(f, self.vars[f.key].get())
+            values[f.key] = value
+            if err:
+                errors[f.key] = err
+        return values, errors
+
+    @staticmethod
+    def _coerce(f: settings.Field, raw):
+        if f.type == "bool":
+            return bool(raw), None
+        text = str(raw).strip()
+        if f.type == "int":
+            try:
+                return int(text), None
+            except ValueError:
+                return raw, f"{f.label}: must be a whole number."
+        if f.type == "float":
+            try:
+                return float(text), None
+            except ValueError:
+                return raw, f"{f.label}: must be a number."
+        return text, None  # str / path / choice
+
+    def save(self) -> bool:
+        values, errors = self.collect()
+        labels = {f.key: f.label for f in settings.SETTINGS_SCHEMA}
+        errors.update(settings.validate(values))
+        if errors:
+            msg = "\n".join(f"{labels.get(k, k)}: {m}" for k, m in errors.items())
+            if self.status:
+                self.status.configure(text="Not saved — see error.")
+            messagebox.showerror("Settings", msg, parent=self.parent.winfo_toplevel())
+            return False
+        try:
+            settings.save(values, self.targets)
+        except (ValueError, OSError) as exc:
+            if self.status:
+                self.status.configure(text="Save failed.")
+            messagebox.showerror("Settings", str(exc), parent=self.parent.winfo_toplevel())
+            return False
+        self._refresh_secret_labels()
+        if self.status:
+            self.status.configure(text="Saved.")
+        if self.on_saved:
+            self.on_saved()
+        return True
+
+    def _refresh_secret_labels(self) -> None:
+        status = settings.secret_status(self.targets)
+        for key, label in self._secret_labels.items():
+            label.configure(text=_SECRET_SET if status.get(key) else _SECRET_UNSET)
+            self.vars[key].set("")            # clear the box after a successful save
+            self.clear_vars[key].set(False)
+
+    def restore_defaults(self) -> None:
+        """Repopulate widgets with each Field's default. Nothing is written until
+        Save. Secret boxes are left blank (a saved secret is only changed if you
+        type a new one or tick Clear)."""
+        for f in settings.SETTINGS_SCHEMA:
+            if f.secret:
+                continue
+            if f.type == "multichoice":
+                want = set(f.default if isinstance(f.default, list) else [])
+                for choice, var in self.multi[f.key].items():
+                    var.set(choice in want)
+            elif f.type == "list":
+                txt = self.texts[f.key]
+                txt.delete("1.0", "end")
+                items = f.default if isinstance(f.default, list) else []
+                txt.insert("1.0", "\n".join(str(v) for v in items))
+            elif f.type == "bool":
+                self.vars[f.key].set(bool(f.default))
+            else:
+                self.vars[f.key].set("" if f.default is None else str(f.default))
+        if self.status:
+            self.status.configure(text="Defaults restored — press Save to apply.")

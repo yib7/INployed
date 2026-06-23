@@ -3,11 +3,11 @@
 #
 #   python -m pip install -r requirements.txt
 #
-# NOT pip-installable but REQUIRED locally:
+# The Qt dashboard installs via pip (PySide6, below). NOT pip-installable but
+# REQUIRED locally:
 #   * MiKTeX — resume_tailor compiles LaTeX -> PDF and needs pdflatex on PATH
 #     (or set PDFLATEX_PATH). Install: winget install MiKTeX.MiKTeX
 #     First compile may prompt MiKTeX to fetch missing LaTeX packages — allow it.
-#   * Tkinter — ships with the python.org installer; no pip package.
 #
 # The VM has its own pin set: see requirements-vm.txt.
 

@@ -2,10 +2,11 @@
 
 Double-click any time. It resolves the synced LinkedInJobs master (or the
 latest morning/evening run files as a fallback) exactly the way the watcher
-does — so it survives a Drive drive-letter change — then opens ui.py.
+does — so it survives a Drive drive-letter change — then opens the Qt dashboard
+(local/app.py).
 
-ui.py self-deduplicates: if a dashboard is already open (e.g. one the watcher
-popped), this just tells that window to reload instead of opening a second one.
+app.py self-deduplicates: a single-instance lock means a second launch just exits
+instead of opening a duplicate window.
 """
 from __future__ import annotations
 
@@ -66,13 +67,11 @@ def _log_error(exc: BaseException) -> None:
 def _warn(message: str) -> None:
     """Pop a small message box (pythonw has no console to print to)."""
     try:
-        import tkinter as tk
-        from tkinter import messagebox
+        from PySide6 import QtWidgets
 
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showwarning("LinkedIn Jobs Dashboard", message)
-        root.destroy()
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        QtWidgets.QMessageBox.warning(None, "INployed Dashboard", message)
+        del app
     except Exception:  # noqa: BLE001 - last resort, fall back to the log
         pass
 
@@ -83,12 +82,10 @@ def main() -> int:
         _warn(err)
         return 1
     # Run the dashboard in-process: this launcher process *becomes* the UI, so
-    # closing the window cleanly ends it. ui.main() owns the single-instance
-    # lock + reload-flag handshake.
-    import ui
+    # closing the window cleanly ends it. app.main() owns the single-instance lock.
+    import app
 
-    sys.argv = [str(HERE / "ui.py")] + [str(p) for p in sources]
-    return ui.main()
+    return app.main([str(HERE / "app.py")] + [str(p) for p in sources])
 
 
 if __name__ == "__main__":

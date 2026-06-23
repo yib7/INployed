@@ -93,6 +93,51 @@ def test_push_config_scps_both_vm_files(root):
     assert "search_config.json" in pushed and "scoring_config.json" in pushed
 
 
+def test_run_times_are_hour_dropdowns(root):
+    p = _panel(root)
+    assert len(p.time_vars) == 6                       # up to 6 picks
+    assert "10:00" in vm_form.HOUR_OPTIONS and "23:00" in vm_form.HOUR_OPTIONS
+    # set via the dropdown vars round-trips through _times()
+    p.time_vars[0].set("08:00")
+    p.time_vars[1].set("20:00")
+    p.time_vars[2].set(vm_form.BLANK)                  # blank rows are ignored
+    assert p._times() == ["08:00", "20:00"]
+
+
+def test_time_dropdown_change_updates_preview(root):
+    p = _panel(root)
+    p.set_times([])
+    p.time_vars[0].set("08:00")                        # picking a time updates the preview
+    assert "0 8 * * *" in p.preview.get("1.0", "end")
+
+
+def test_weekday_change_updates_preview(root):
+    p = _panel(root)
+    p.set_times(["08:00"])
+    p.freq_var.set("weekly")
+    p.weekday_var.set("Wednesday")                     # the reported bug: must refresh now
+    assert "* * 3" in p.preview.get("1.0", "end")      # Wednesday -> cron dow 3
+
+
+def test_is_future_excludes_today_and_past():
+    from datetime import date, timedelta
+    assert vm_form.is_future(date.today() + timedelta(days=1)) is True
+    assert vm_form.is_future(date.today()) is False
+    assert vm_form.is_future(date.today() - timedelta(days=1)) is False
+
+
+def test_date_picker_disables_today_enables_future(root):
+    from datetime import date, timedelta
+    dp = vm_form.DatePicker(tk.Frame(root), on_pick=lambda s: None)
+    try:
+        assert str(dp.day_buttons[date.today()].cget("state")) == "disabled"
+        future = date.today() + timedelta(days=1)
+        if future in dp.day_buttons:  # same month
+            assert str(dp.day_buttons[future].cget("state")) == "normal"
+    finally:
+        dp.win.destroy()
+
+
 def test_unconfigured_target_blocks_actions(root):
     calls = []
     p = _panel(root, runner=lambda c: calls.append(c), confirm=lambda *a, **k: True,

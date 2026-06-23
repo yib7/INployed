@@ -189,6 +189,15 @@ class ResumeDataEditor:
                    command=lambda s=section, i=idx, nm=name: self._delete_entry(s, i, nm)).pack(
             side="right")
 
+    def _impact_text(self, parent: tk.Widget, width: int, height: int) -> tk.Text:
+        """A themed multi-line box for impact bullets. tk.Text ignores the ttk
+        theme, so the font is set explicitly to match the surrounding entries
+        (otherwise it falls back to Tk's monospace TkFixedFont)."""
+        return tk.Text(parent, width=width, height=height, bg=self._field_bg,
+                       fg=self._fg, insertbackground=self._fg, relief="flat",
+                       highlightthickness=1, highlightbackground=self._bg,
+                       wrap="word", font=self._font)
+
     def _atom_block(self, parent: ttk.Widget, atom: dict) -> None:
         aid = str(atom.get("id", ""))
         fr = ttk.Frame(parent)
@@ -205,9 +214,7 @@ class ResumeDataEditor:
         ttk.Entry(fr, textvariable=av, width=62).grid(row=1, column=1, sticky="w", padx=4)
         ttk.Label(fr, text="impact").grid(row=2, column=0, sticky="nw")
         imp_lines = "\n".join(str(x) for x in (atom.get("impact") or []))
-        imp = tk.Text(fr, width=62, height=2, bg=self._field_bg, fg=self._fg,
-                      insertbackground=self._fg, relief="flat", highlightthickness=1,
-                      highlightbackground=self._bg, wrap="word", font=self._font)
+        imp = self._impact_text(fr, width=62, height=2)
         imp.insert("1.0", imp_lines)
         imp.grid(row=2, column=1, sticky="w", padx=4, pady=(2, 0))
         self._atom_impact[aid] = imp
@@ -380,7 +387,7 @@ class ResumeDataEditor:
         ang_v = tk.StringVar()
         ttk.Entry(win, textvariable=ang_v, width=64).grid(row=1, column=1, padx=8, pady=2)
         ttk.Label(win, text="Impact (one per line)").grid(row=2, column=0, sticky="nw", padx=8, pady=2)
-        imp_txt = tk.Text(win, width=50, height=3)
+        imp_txt = self._impact_text(win, width=50, height=3)
         imp_txt.grid(row=2, column=1, padx=8, pady=2)
 
         def _ok():

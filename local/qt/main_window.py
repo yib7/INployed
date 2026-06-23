@@ -38,6 +38,7 @@ from jobsdata import (
     load_min_score,
 )
 from qt import workers
+from qt.answers_tab import AnswersEditor
 from qt.jobs_tab import JobsTab
 from qt.resume_data_tab import ResumeDataEditor
 from qt.settings_tab import SettingsForm
@@ -114,10 +115,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings_tab = SettingsForm(on_saved=self._on_settings_saved,
                                          vm_panel_factory=self._make_vm_panel)
         self.resume_data_tab = ResumeDataEditor()
+        self.answers_tab = AnswersEditor()
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
                  "Tracker": self.tracker_tab, "Stats": self.stats_tab,
-                 "Resume Data": self.resume_data_tab, "Settings": self.settings_tab}
+                 "Resume Data": self.resume_data_tab, "Apply Answers": self.answers_tab,
+                 "Settings": self.settings_tab}
         for title in TAB_TITLES:
             page = pages.get(title) or QtWidgets.QWidget()
             self._tab_widgets[title] = page

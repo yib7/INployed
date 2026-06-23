@@ -618,6 +618,32 @@ def load_followup_days(default: int = 5) -> int:
         return default
 
 
+def visible_columns(all_cols: list[str], hidden) -> list[str]:
+    """Display order with `hidden` column ids removed. Never empty — if every
+    column is hidden it falls back to showing all (a blank table is never useful).
+    Used to drive each Treeview's `displaycolumns`, the cheap way to cut per-scroll
+    repaint cost (each visible column adds ~10 ms to a maximized table repaint)."""
+    hidden = set(hidden)
+    vis = [c for c in all_cols if c not in hidden]
+    return vis or list(all_cols)
+
+
+def load_hidden_columns() -> dict[str, list[str]]:
+    """Per-table hidden column ids, persisted in config.json under 'hidden_columns'.
+    Keyed by table ('high' / 'all' / 'tracker'). Shape-checked so a hand-edited or
+    stale config can never crash the UI."""
+    raw = _load_cfg().get("hidden_columns", {})
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): [str(c) for c in v]
+            for k, v in raw.items() if isinstance(v, list)}
+
+
+def save_hidden_columns(hidden: dict[str, list[str]]) -> None:
+    """Persist the per-table hidden-column map (best-effort; never crashes the UI)."""
+    _save_cfg({"hidden_columns": hidden})
+
+
 def gdrive_root_dir(csv_paths: list[Path]) -> Path | None:
     """The synced LinkedInJobs folder: config.json's gdrive_root, else inferred
     from the loaded files' location (run files sit one level deeper)."""
@@ -806,6 +832,11 @@ class App:
         self.registry = SeenRegistry()
         self.min_score = load_min_score()
         self.followup_days = load_followup_days()
+        # Per-table hidden columns (user-toggled via each table's "Columns..."
+        # button). Fewer visible columns = cheaper per-scroll repaint.
+        self.hidden_columns = load_hidden_columns()
+        # tab key -> (full column id list, treeview); filled as tabs are built.
+        self._table_cols: dict[str, tuple[list[str], ttk.Treeview]] = {}
         self._tracked: dict[str, dict] = {}
         # Last-seen mtimes of the loaded source files, so the open window can
         # self-refresh when Drive syncs a new file even if the watcher didn't
@@ -915,12 +946,15 @@ class App:
                         command=self._apply_filters_high).pack(side="left", padx=(0, 8))
 
         ttk.Button(hbar, text="Reset", command=self._reset_filters_high).pack(side="left", padx=4)
+        ttk.Button(hbar, text="Columns...",
+                   command=lambda: self._choose_columns("high")).pack(side="left", padx=4)
         self.lbl_high = ttk.Label(hbar, text="", style="Muted.TLabel")
         self.lbl_high.pack(side="right")
 
         tv_holder_h = ttk.Frame(f1)
         tv_holder_h.pack(fill="both", expand=True)
         self.tv_high = make_treeview(tv_holder_h, HIGH_SCORE_COLUMNS)
+        self._table_cols["high"] = ([c for c, _ in HIGH_SCORE_COLUMNS], self.tv_high)
         self.tv_high.bind("<Double-1>", self._on_double_click_high)
         self.tv_high.bind("<Control-a>", self._select_all)
         self.tv_high.bind("<Control-A>", self._select_all)
@@ -1011,12 +1045,15 @@ class App:
                         command=self._apply_filters).pack(side="left", padx=(0, 8))
 
         ttk.Button(fbar, text="Reset", command=self._reset_filters).pack(side="left", padx=4)
+        ttk.Button(fbar, text="Columns...",
+                   command=lambda: self._choose_columns("all")).pack(side="left", padx=4)
         self.lbl_all = ttk.Label(fbar, text="", style="Muted.TLabel")
         self.lbl_all.pack(side="right")
 
         tv_holder = ttk.Frame(f2)
         tv_holder.pack(fill="both", expand=True)
         self.tv_all = make_treeview(tv_holder, ALL_COLUMNS)
+        self._table_cols["all"] = ([c for c, _ in ALL_COLUMNS], self.tv_all)
         self.tv_all.bind("<Double-1>", self._on_double_click_all)
         self.tv_all.bind("<Control-a>", self._select_all)
         self.tv_all.bind("<Control-A>", self._select_all)
@@ -1045,12 +1082,15 @@ class App:
         self.due_only_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(tbar, text="Follow-up due only", variable=self.due_only_var,
                         command=self._refresh_tracker).pack(side="left", padx=(8, 0))
+        ttk.Button(tbar, text="Columns...",
+                   command=lambda: self._choose_columns("tracker")).pack(side="left", padx=4)
         self.lbl_tracker = ttk.Label(tbar, text="", style="Muted.TLabel")
         self.lbl_tracker.pack(side="right")
 
         tv_holder_t = ttk.Frame(f3)
         tv_holder_t.pack(fill="both", expand=True)
         self.tv_tracker = make_treeview(tv_holder_t, TRACKER_COLUMNS)
+        self._table_cols["tracker"] = ([c for c, _ in TRACKER_COLUMNS], self.tv_tracker)
         self.tv_tracker.bind("<Double-1>", self._on_double_click_tracker)
         self.tv_tracker.bind("<Control-a>", self._select_all)
         self.tv_tracker.bind("<Control-A>", self._select_all)
@@ -1117,6 +1157,65 @@ class App:
         self._set_details([("Select a row to see the model's analysis "
                             "(reason, strengths, gaps), salary, and a JD snippet.", "muted")])
         self._apply_preview_visibility()  # hide the preview if we open on a non-job tab
+        self._apply_all_column_visibility()  # honor saved hidden-column choices
+
+    def _apply_column_visibility(self, key: str) -> None:
+        """Drive one table's `displaycolumns` from the saved hidden-column set."""
+        entry = self._table_cols.get(key)
+        if not entry:
+            return
+        cols, tv = entry
+        try:
+            tv.configure(displaycolumns=visible_columns(cols, self.hidden_columns.get(key, [])))
+        except tk.TclError:
+            pass
+
+    def _apply_all_column_visibility(self) -> None:
+        for key in self._table_cols:
+            self._apply_column_visibility(key)
+
+    def _choose_columns(self, key: str) -> None:
+        """Popup: a checkbox per column for table `key`. Unchecking a column hides
+        it (faster scrolling); choices apply live and persist to config.json."""
+        entry = self._table_cols.get(key)
+        if not entry:
+            return
+        cols, _tv = entry
+        win = tk.Toplevel(self.root)
+        win.title("Choose columns")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        ttk.Label(win, text="Show these columns. Hide some for faster scrolling —\n"
+                            "hidden data still shows in the preview below / on double-click.",
+                  style="Muted.TLabel", justify="left").pack(anchor="w", padx=14, pady=(12, 8))
+        hidden = set(self.hidden_columns.get(key, []))
+        col_vars: dict[str, tk.BooleanVar] = {}
+
+        def on_toggle() -> None:
+            if not any(v.get() for v in col_vars.values()):
+                for v in col_vars.values():  # never hide every column
+                    v.set(True)
+            self.hidden_columns[key] = [c for c in cols if not col_vars[c].get()]
+            save_hidden_columns(self.hidden_columns)
+            self._apply_column_visibility(key)
+
+        for c in cols:
+            var = tk.BooleanVar(value=c not in hidden)
+            col_vars[c] = var
+            ttk.Checkbutton(win, text=COLUMN_LABELS.get(c, c), variable=var,
+                            command=on_toggle).pack(anchor="w", padx=20, pady=1)
+
+        btns = ttk.Frame(win)
+        btns.pack(fill="x", padx=14, pady=(10, 12))
+
+        def show_all() -> None:
+            for v in col_vars.values():
+                v.set(True)
+            on_toggle()
+
+        ttk.Button(btns, text="Show all", command=show_all).pack(side="left")
+        ttk.Button(btns, text="Close", command=win.destroy,
+                   style="Accent.TButton").pack(side="right")
 
     def _on_tab_changed(self, _event=None) -> None:
         self._apply_preview_visibility()

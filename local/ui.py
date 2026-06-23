@@ -898,6 +898,7 @@ class App:
         ttk.Button(bar1, text="Refresh", command=self.reload_data).pack(side="right", padx=4)
         self.btn_check_setup = ttk.Button(bar1, text="Check setup", command=self._check_setup)
         self.btn_check_setup.pack(side="right", padx=4)
+        ttk.Button(bar1, text="Run scraper", command=self._run_scraper_dialog).pack(side="right", padx=4)
         ttk.Button(bar1, text="Apply", command=self._apply_selected).pack(side="right", padx=4)
         ttk.Button(bar1, text="Resume folder", command=self._open_resume_folder).pack(side="right", padx=4)
         ttk.Button(bar1, text="Mark all shown seen", command=self._mark_all_shown_seen,
@@ -1541,6 +1542,87 @@ class App:
             os.startfile(path)  # noqa: S606 - open the recorded folder for the user
         except OSError as e:
             self._set_status(f"Could not open {path}: {e}")
+
+    # ---- run scraper (spend-guarded; a scrape costs real Bright Data money) ----
+
+    @staticmethod
+    def _scraper_cmd(bounded: bool) -> list[str]:
+        """argv to run the scraper. Bounded = a cheap test run (1 keyword, 5
+        postings/search); full = the normal config-driven run."""
+        cmd = [sys.executable, "scraper.py"]
+        if bounded:
+            cmd += ["--max-keywords", "1", "--limit", "5"]
+        return cmd
+
+    @staticmethod
+    def _scorer_cmd() -> list[str]:
+        return [sys.executable, "score_jobs.py"]
+
+    def _confirm_scrape(self) -> "str | None":
+        """Modal 3-way confirm. Returns 'bounded', 'full', or None (cancel)."""
+        win = tk.Toplevel(self.root)
+        win.title("Run scraper")
+        win.transient(self.root)
+        win.grab_set()
+        choice = {"v": None}
+        ttk.Label(win, justify="left", wraplength=440, text=(
+            "Running the scraper collects fresh jobs from Bright Data — this "
+            "spends real money on your Bright Data account.\n\n"
+            "• Small test run: 1 keyword, 5 postings per search (cheap check).\n"
+            "• Full run: your full search config (normal daily cost).\n\n"
+            "It then scores the new jobs with Gemini and refreshes the dashboard."
+        )).pack(padx=18, pady=(16, 12))
+        bar = ttk.Frame(win)
+        bar.pack(padx=18, pady=(0, 16))
+
+        def _pick(v):
+            choice["v"] = v
+            win.destroy()
+
+        ttk.Button(bar, text="Small test run",
+                   command=lambda: _pick("bounded")).pack(side="left")
+        ttk.Button(bar, text="Full run", style="Accent.TButton",
+                   command=lambda: _pick("full")).pack(side="left", padx=8)
+        ttk.Button(bar, text="Cancel", command=lambda: _pick(None)).pack(side="left")
+        win.bind("<Escape>", lambda _e: _pick(None))
+        self.root.wait_window(win)
+        return choice["v"]
+
+    def _run_scraper_dialog(self) -> None:
+        if getattr(self, "_scraping", False):
+            self._set_status("A scrape is already running.")
+            return
+        choice = self._confirm_scrape()
+        if not choice:
+            return
+        self._scraping = True
+        self._set_status("Starting scraper …")
+        threading.Thread(target=self._scrape_worker,
+                         args=(choice == "bounded",), daemon=True).start()
+
+    def _scrape_worker(self, bounded: bool) -> None:
+        """Off the UI thread: run scraper.py then score_jobs.py, then refresh.
+        Output streams to the console the dashboard was launched from."""
+        repo = Path(__file__).resolve().parent.parent
+        try:
+            for cmd, what in ((self._scraper_cmd(bounded), "Scraping"),
+                              (self._scorer_cmd(), "Scoring")):
+                self.root.after(0, lambda w=what: self._set_status(
+                    f"{w} … (progress in the console)"))
+                proc = subprocess.Popen(cmd, cwd=str(repo))
+                if proc.wait() != 0:
+                    self.root.after(0, lambda w=what: self._set_status(
+                        f"{w} failed — check the console for the error."))
+                    return
+            self.root.after(0, self.reload_data)
+            self.root.after(0, lambda: self._set_status(
+                "Scrape + score complete — dashboard refreshed."))
+        except Exception as exc:  # noqa: BLE001 - never crash the UI
+            self._log_error("run scraper", exc)
+            self.root.after(0, lambda exc=exc: self._set_status(
+                f"Run scraper failed: {exc}"))
+        finally:
+            self._scraping = False
 
     # ---- apply (open posting for human review; never auto-submits) ----
 

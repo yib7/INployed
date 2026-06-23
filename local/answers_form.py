@@ -18,6 +18,7 @@ from tkinter import messagebox, ttk
 from pathlib import Path
 from typing import Callable
 
+import smoothscroll
 from resume_tailor import apply_answers
 
 
@@ -135,17 +136,9 @@ class AnswersEditor:
         self.rows.remove(row)
 
     def _wire_wheel(self) -> None:
-        def _wheel(e):
-            self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-            return "break"
-
-        def _bind(w):
-            w.bind("<MouseWheel>", _wheel)
-            for child in w.winfo_children():
-                _bind(child)
-
-        self.canvas.bind("<MouseWheel>", _wheel)
-        _bind(self.body)
+        # Coalesce wheel bursts into one deferred scroll so fast scrolling doesn't
+        # pile up synchronous repaints into a freeze.
+        smoothscroll.bind_canvas_wheel(self.canvas, self.body)
 
     # ---- actions -------------------------------------------------------------
 

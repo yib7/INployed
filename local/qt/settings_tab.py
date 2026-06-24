@@ -15,6 +15,7 @@ from typing import Callable
 from PySide6 import QtCore, QtWidgets
 
 import settings
+import settings_archive
 
 SECTION_HELP = {
     "Credentials": ("API keys and tokens, saved to your private .env file and never shown again. "
@@ -27,12 +28,16 @@ SECTION_HELP = {
     "Scoring": ("Advanced — which models score jobs and the spend guards around them. The "
                 "defaults are tuned; changing the model names can silently break scoring."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
+    "Settings history": ("Every Save snapshots all your settings to a dated folder so you can "
+                         "roll one back later with 'Restore from archive...' below. Snapshots "
+                         "include your saved keys and live alongside your settings on this PC."),
     "VM (cloud scraper)": ("Connect to your cloud scraper VM (GCP) so you can push config, schedule, "
                            "and pause changes to it. Uses your existing `gcloud` login — no SSH "
                            "password or key is ever stored."),
 }
 SECTION_ORDER = ["Credentials", "Connection & paths", "Engine",
-                 "Dashboard", "Scraper", "Scoring", "Resume", "VM (cloud scraper)"]
+                 "Dashboard", "Scraper", "Scoring", "Resume", "Settings history",
+                 "VM (cloud scraper)"]
 COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
 
 _SECRET_SET = "saved — blank keeps it, type to replace"
@@ -88,6 +93,9 @@ class SettingsForm(QtWidgets.QWidget):
         self._secret_status: dict[str, QtWidgets.QLabel] = {}
         self._collapse: dict[str, QtWidgets.QWidget] = {}
         self._gate_keys: dict[str, str] = {}  # gate_key -> section
+        # Secret values staged by a snapshot restore (write-only, never shown):
+        # applied on the next Save when the user leaves the masked box blank.
+        self._staged_secrets: dict[str, str] = {}
 
         self._build()
 
@@ -322,6 +330,9 @@ class SettingsForm(QtWidgets.QWidget):
         revert = QtWidgets.QPushButton("Revert changes")
         revert.clicked.connect(self.revert)
         bar.addWidget(revert)
+        archive = QtWidgets.QPushButton("Restore from archive…")
+        archive.clicked.connect(self.open_archive)
+        bar.addWidget(archive)
         restore = QtWidgets.QPushButton("Restore defaults")
         restore.clicked.connect(self.restore_defaults)
         bar.addWidget(restore)
@@ -351,6 +362,8 @@ class SettingsForm(QtWidgets.QWidget):
                     values[f.key] = ""
                 elif typed.strip():
                     values[f.key] = typed
+                elif f.key in self._staged_secrets:
+                    values[f.key] = self._staged_secrets[f.key]  # from a restored snapshot
                 continue
             if f.type == "multichoice":
                 values[f.key] = [c for c, cb in self._multi[f.key].items() if cb.isChecked()]
@@ -425,18 +438,37 @@ class SettingsForm(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Settings", str(exc))
             return False
         summary = self._changed_summary(before, values)
+        self._staged_secrets = {}  # any staged snapshot secrets were just written
+        archived = self._archive_after_save(values) if summary else False
         self._refresh_secret_labels()
         self.status.setText("Saved." if summary else "Saved — no changes.")
         self._opening_values = settings.load(self.targets)
         if summary:
+            note = "\n\nA snapshot was saved to the archive." if archived else ""
             QtWidgets.QMessageBox.information(
-                self, "Settings", "Settings saved. Updated:\n\n- " + "\n- ".join(summary))
+                self, "Settings", "Settings saved. Updated:\n\n- " + "\n- ".join(summary) + note)
         else:
             QtWidgets.QMessageBox.information(
                 self, "Settings", "No changes to save — your settings are unchanged.")
         if self.on_saved:
             self.on_saved()
         return True
+
+    def _archive_after_save(self, values: dict) -> bool:
+        """Snapshot all settings then apply the prune policy. Never raises into Save —
+        archiving is a safety net, not something that should be able to block a save."""
+        if not values.get("archive_enabled", True):
+            return False
+        try:
+            made = settings_archive.snapshot(self.targets)
+            settings_archive.prune(
+                values.get("archive_prune_mode", settings_archive.PRUNE_OFF),
+                keep=int(values.get("archive_prune_keep", 20) or 20),
+                days=int(values.get("archive_prune_days", 30) or 30),
+                targets=self.targets)
+            return made is not None
+        except OSError:
+            return False
 
     def _refresh_secret_labels(self) -> None:
         status = settings.secret_status(self.targets)
@@ -462,15 +494,128 @@ class SettingsForm(QtWidgets.QWidget):
         self._apply_section_visibility()
 
     def restore_defaults(self) -> None:
+        self._staged_secrets = {}
         self._repopulate(lambda f: f.default)
         self.status.setText("Defaults restored — press Save to apply.")
 
     def revert(self) -> None:
+        self._staged_secrets = {}
         self._repopulate(lambda f: self._opening_values.get(f.key, f.default))
         for key, clear in self._secret_clears.items():
             clear.setChecked(False)
             self._secret_edits[key].clear()
         self.status.setText("Reverted to your last-opened settings — press Save to apply.")
+
+    def open_archive(self) -> None:
+        ArchiveDialog(self).exec()
+
+    def load_from_snapshot(self, snap_path) -> None:
+        """Fill the form from a saved snapshot for review. Non-secret values land in
+        the widgets; secret values are staged (never shown) and applied on Save.
+        Nothing is written until the user clicks Save."""
+        vals = settings_archive.load_snapshot(snap_path, self.targets)
+        self._repopulate(lambda f: vals.get(f.key, f.default))
+        self._staged_secrets = settings_archive.snapshot_secrets(snap_path, self.targets)
+        for key, edit in self._secret_edits.items():
+            edit.clear()
+            self._secret_clears[key].setChecked(False)
+            if key in self._staged_secrets:
+                self._secret_status[key].setText("from archive — Save to apply")
+        self.status.setText("Loaded snapshot — review the fields, then Save to apply.")
+
+
+class ArchiveDialog(QtWidgets.QDialog):
+    """Browse saved settings snapshots: preview, load into the form, or delete one."""
+
+    def __init__(self, form: SettingsForm, parent=None):
+        super().__init__(parent or form)
+        self._form = form
+        self._snaps: list[settings_archive.Snapshot] = []
+        self.setWindowTitle("Settings archive")
+        self.resize(560, 470)
+
+        v = QtWidgets.QVBoxLayout(self)
+        intro = QtWidgets.QLabel(
+            "Saved snapshots (newest first). Load one into the form to review, then Save to apply it. "
+            "Secrets are restored too, but are never shown here.")
+        intro.setWordWrap(True)
+        intro.setProperty("muted", True)
+        v.addWidget(intro)
+
+        self.listw = QtWidgets.QListWidget()
+        self.listw.currentRowChanged.connect(self._on_select)
+        v.addWidget(self.listw, 1)
+
+        self.preview = QtWidgets.QPlainTextEdit()
+        self.preview.setReadOnly(True)
+        self.preview.setMaximumHeight(150)
+        v.addWidget(self.preview)
+
+        bar = QtWidgets.QHBoxLayout()
+        self.load_btn = QtWidgets.QPushButton("Load into form")
+        self.load_btn.setProperty("accent", True)
+        self.load_btn.clicked.connect(self._load)
+        bar.addWidget(self.load_btn)
+        self.del_btn = QtWidgets.QPushButton("Delete")
+        self.del_btn.clicked.connect(self._delete)
+        bar.addWidget(self.del_btn)
+        bar.addStretch(1)
+        close = QtWidgets.QPushButton("Close")
+        close.clicked.connect(self.reject)
+        bar.addWidget(close)
+        v.addLayout(bar)
+
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self.listw.clear()
+        self._snaps = settings_archive.list_snapshots(self._form.targets)
+        for s in self._snaps:
+            self.listw.addItem(s.label)
+        has = bool(self._snaps)
+        self.load_btn.setEnabled(has)
+        self.del_btn.setEnabled(has)
+        if has:
+            self.listw.setCurrentRow(0)
+        else:
+            self.preview.setPlainText("No snapshots yet — they're created each time you Save.")
+
+    def _current(self) -> settings_archive.Snapshot | None:
+        i = self.listw.currentRow()
+        return self._snaps[i] if 0 <= i < len(self._snaps) else None
+
+    def _on_select(self, *_) -> None:
+        s = self._current()
+        if s is None:
+            return
+        vals = settings_archive.load_snapshot(s.path, self._form.targets)
+        lines = [f"Snapshot: {s.label}", ""]
+        for f in settings.SETTINGS_SCHEMA:
+            if f.secret:
+                continue  # never preview secret values
+            val = vals.get(f.key, f.default)
+            if isinstance(val, list):
+                val = f"[{len(val)} items]"
+            lines.append(f"{f.label}: {val}")
+        self.preview.setPlainText("\n".join(lines))
+
+    def _load(self) -> None:
+        s = self._current()
+        if s is not None:
+            self._form.load_from_snapshot(s.path)
+            self.accept()
+
+    def _delete(self) -> None:
+        s = self._current()
+        if s is None:
+            return
+        if QtWidgets.QMessageBox.question(
+                self, "Delete snapshot",
+                f"Delete snapshot {s.label}? This cannot be undone."
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        settings_archive.delete_snapshot(s.path)
+        self._refresh()
 
 
 def build_config_window(targets: dict | None = None) -> QtWidgets.QWidget:

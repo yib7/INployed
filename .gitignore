@@ -47,3 +47,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Settings snapshots written on every Save. Each snapshot copies the live .env
+# (which holds secrets, per the user's "self-contained snapshots" choice), so the
+# whole archive must never be committed.
+local/settings_archive/

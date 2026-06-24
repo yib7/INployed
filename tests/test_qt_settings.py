@@ -1,7 +1,10 @@
 """SP6: the Qt settings form — widget-by-type, secret masking, save/revert, VM toggle."""
-from PySide6 import QtCore, QtGui, QtWidgets
+from datetime import datetime
 
+import envfile
 import settings
+import settings_archive
+from PySide6 import QtCore, QtGui, QtWidgets
 from qt import settings_tab as st
 from qt.settings_tab import SettingsForm, build_config_window
 
@@ -125,3 +128,70 @@ def test_build_config_window(qtbot, tmp_path):
     qtbot.addWidget(win)
     assert win.windowTitle().startswith("Configure")
     assert win.findChild(st.SettingsForm) is not None
+
+
+# --- settings archive (snapshot / restore) --------------------------------------
+
+def _quiet_info(monkeypatch):
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+
+
+def test_save_writes_a_snapshot(qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    _quiet_info(monkeypatch)
+    form._setters["min_score"](5)
+    assert form.save() is True
+    snaps = settings_archive.list_snapshots(targets)
+    assert len(snaps) == 1
+    assert settings_archive.load_snapshot(snaps[0].path, targets)["min_score"] == 5
+
+
+def test_save_skips_snapshot_when_archiving_disabled(qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    _quiet_info(monkeypatch)
+    form._setters["archive_enabled"](False)
+    form._setters["min_score"](5)
+    assert form.save() is True
+    assert settings_archive.list_snapshots(targets) == []
+
+
+def test_restore_loads_values_and_stages_secret(qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    # Build a snapshot that differs from the live state in a normal field and a secret.
+    settings.save({"min_score": 5}, targets)
+    envfile.update(targets["env"], {"GEMINI_API_KEYS": "snap-key"})
+    snap = settings_archive.snapshot(targets)
+    settings.save({"min_score": 2}, targets)
+    envfile.update(targets["env"], {"GEMINI_API_KEYS": "live-key"})
+
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    form.load_from_snapshot(snap)
+    assert form._getters["min_score"]() == "5"             # value loaded for review
+    assert form._staged_secrets["GEMINI_API_KEYS"] == "snap-key"  # secret staged, not shown
+    assert form._secret_edits["GEMINI_API_KEYS"].text() == ""     # never populates the box
+
+    _quiet_info(monkeypatch)
+    assert form.save() is True
+    assert envfile.read(targets["env"])["GEMINI_API_KEYS"] == "snap-key"  # restored on Save
+    assert settings.load(targets)["min_score"] == 5
+
+
+def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):
+    targets = _targets(tmp_path)
+    settings.save({"min_score": 5}, targets)
+    envfile.update(targets["env"], {"GEMINI_API_KEYS": "topsecret"})
+    settings_archive.snapshot(targets, when=datetime(2026, 6, 23, 10, 0, 0))
+    settings_archive.snapshot(targets, when=datetime(2026, 6, 23, 11, 0, 0))
+
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    dlg = st.ArchiveDialog(form)
+    qtbot.addWidget(dlg)
+    assert dlg.listw.count() == 2
+    assert "topsecret" not in dlg.preview.toPlainText()    # secret values never previewed

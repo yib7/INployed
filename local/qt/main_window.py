@@ -192,9 +192,13 @@ class MainWindow(QtWidgets.QMainWindow):
         button("Mark seen (selected)", self._mark_seen_selected)
         self.btn_undo_seen = button("Undo seen", self._undo_seen)
         button("Resume folder", self._open_resume_folder)
-        button("Apply", self._apply_selected)
         button("Run scraper", self._run_scraper_dialog)
         button("Check setup", self._check_setup)
+        # Apply is rightmost (and green only once the job is ready to apply to) — its
+        # ready-state is the dashboard's "this one's good to go" signal.
+        self.btn_apply = button("Apply", self._apply_selected)
+        self.btn_apply.setEnabled(False)
+        self._action_bar = bar
         self._update_seen_buttons()
         return bar
 
@@ -231,6 +235,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_stats()
         total = 0 if df.empty else len(df)
         self._set_status(f"{total:,} jobs · {len(self.df_high)} unseen >=4")
+        self._refresh_apply_button()  # a freshly tailored job may now be apply-ready
         # Sources/folder may have changed (a local scrape appended paths) — keep the
         # auto-refresh watcher pointed at the current files. No-op before setup.
         if getattr(self, "_fs_watcher", None) is not None:
@@ -389,6 +394,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_tab_changed(self) -> None:
         self._apply_preview_visibility()
+        self._refresh_apply_button()
         # vm_enabled may have changed in Settings — re-evaluate the resume.md push button.
         self.resume_data_tab._refresh_push_state()
 
@@ -399,11 +405,51 @@ class MainWindow(QtWidgets.QMainWindow):
         self._preview_shown = show
 
     def _show_preview(self, jid: str) -> None:
+        self._update_apply_button(jid)
         if not jid:
             self.preview.show_segments([])
             return
         segs = jobsdata.job_detail_segments(self._row_for(jid), self._tracked.get(jid))
         self.preview.show_segments(segs)
+
+    # ---- apply readiness (button enable + green) -----------------------------
+
+    def _apply_ready(self, jid: str) -> tuple[bool, Path | None]:
+        """A job is ready to apply to when its tailored folder holds BOTH the
+        résumé PDF and apply.md on disk. Returns (ready, folder)."""
+        if not jid:
+            return False, None
+        try:
+            path = self.registry.resume_path(jid)
+        except Exception:  # noqa: BLE001 - cosmetic; never break the view
+            return False, None
+        if not path:
+            return False, None
+        from resume_tailor import output
+        folder = Path(str(path))
+        try:
+            ok = (folder.is_dir() and (folder / output.resume_filename()).exists()
+                  and (folder / "apply.md").exists())
+        except OSError:
+            ok = False
+        return (True, folder) if ok else (False, None)
+
+    def _update_apply_button(self, jid: str) -> None:
+        btn = getattr(self, "btn_apply", None)
+        if btn is None:
+            return
+        ready, _ = self._apply_ready(jid)
+        btn.setEnabled(ready)
+        if btn.property("applyReady") != ready:
+            btn.setProperty("applyReady", ready)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _refresh_apply_button(self) -> None:
+        """Recompute the Apply button's state for the focused job of the active tab."""
+        tab = self._active_jobs_tab()
+        ids = tab.selected_ids() if tab is not None else []
+        self._update_apply_button(ids[0] if ids else "")
 
     # ---- mark seen (with undo / redo) ----------------------------------------
 

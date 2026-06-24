@@ -200,6 +200,42 @@ def test_apply_work_opens_url(qtbot, monkeypatch):
     assert opened == ["https://x/1"]
 
 
+def test_apply_button_is_rightmost(qtbot):
+    w = _win(qtbot)
+    btns = [w._action_bar.itemAt(i).widget() for i in range(w._action_bar.count())]
+    btns = [b for b in btns if isinstance(b, QtWidgets.QPushButton)]
+    assert btns[-1].text() == "Apply"
+
+
+def test_apply_button_disabled_without_resume(qtbot):
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = None
+    w._update_apply_button("123")
+    assert w.btn_apply.isEnabled() is False
+
+
+def test_apply_button_enabled_when_pdf_and_md_on_disk(qtbot, tmp_path, monkeypatch):
+    from resume_tailor import output
+    monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Cand")
+    (tmp_path / output.resume_filename()).write_bytes(b"%PDF")
+    (tmp_path / "apply.md").write_text("# sheet", encoding="utf-8")
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = str(tmp_path)
+    w._update_apply_button("123")
+    assert w.btn_apply.isEnabled() is True
+    assert w.btn_apply.property("applyReady") is True
+
+
+def test_apply_button_not_ready_when_md_missing(qtbot, tmp_path, monkeypatch):
+    from resume_tailor import output
+    monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Cand")
+    (tmp_path / output.resume_filename()).write_bytes(b"%PDF")  # PDF but no apply.md
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = str(tmp_path)
+    w._update_apply_button("123")
+    assert w.btn_apply.isEnabled() is False
+
+
 def test_tailor_work_runs_all_jobs_and_captures_failures(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     seen = []

@@ -23,6 +23,7 @@ ACCENT_HOVER = "#6ba1ff"
 ACCENT_DEEP = "#3a7bed"
 ACCENT_INK = "#0b1220"  # text on an accent fill
 GOOD = "#3fb950"      # apply / offer
+GOOD_HOVER = "#56c468"  # apply button hover (ready-state)
 AMBER = "#d29922"     # consider / interviewing
 DANGER = "#f85149"    # gaps / rejected / errors
 SEL = "#1f6feb"       # selected row
@@ -101,6 +102,9 @@ def _qss() -> str:
                   border: 0; font-weight: 600; }}
     QPushButton[accent="true"]:hover {{ background: {ACCENT_HOVER}; }}
     QPushButton[accent="true"]:pressed {{ background: {ACCENT_DEEP}; }}
+    QPushButton[applyReady="true"] {{ background: {GOOD}; color: {ACCENT_INK};
+                  border: 0; font-weight: 600; }}
+    QPushButton[applyReady="true"]:hover {{ background: {GOOD_HOVER}; }}
 
     QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QDateEdit {{
         background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER};

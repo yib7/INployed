@@ -10,8 +10,10 @@ is about *how the code is shaped and why*.
 Async Bright Data client. Triggers keyword × remote-type searches, polls the
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
 appends to a cumulative master CSV. Two cost-aware details worth remembering:
-- It excludes every job id seen in the last `EXCLUDE_WINDOW_DAYS` (Bright Data
-  bills per collected posting, so re-collecting a still-live job wastes money).
+- It excludes every job id already in the master from re-collection (Bright Data
+  bills per collected posting, so re-fetching a job we already have wastes money —
+  and a posting still live weeks later is usually stale anyway). See
+  `load_exclude_ids()`.
 - `--snapshot <id>` re-downloads an already-collected (already-billed) snapshot
   without triggering a new collection — the recovery path when a run dies after
   billing.

@@ -7,12 +7,21 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from datetime import date
 from pathlib import Path
 
 from . import assets, config
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+# Serialize directory resolution and remember every folder handed out this process
+# so two parallel tailor jobs for the SAME company+title get DISTINCT folders. The
+# résumé file isn't written until much later in tailor(), so the on-disk check alone
+# can't catch a same-batch collision — the claimed set closes that race. Per-process
+# working state (not persisted); see .autopilot/DECISIONS.md (cycle 11, SP2).
+_resolve_lock = threading.Lock()
+_claimed: set[Path] = set()
 
 
 def sanitize(name: str, *, max_len: int = 80) -> str:
@@ -50,15 +59,27 @@ def base_dir(company: str, job_title: str) -> Path:
 
 
 def resolve_dir(company: str, job_title: str) -> Path:
-    """Return the directory to write into, creating it. Dated subfolder on collision."""
+    """Return the directory to write into, creating it. Dated subfolder on collision.
+
+    A folder is "taken" if it already holds a résumé on disk OR was already handed
+    out earlier this process (the claimed set) — the latter is what keeps concurrent
+    same-company+title tailor jobs from clobbering one another. The whole
+    check-claim-mkdir runs under a lock so no two threads pick the same target."""
     base = config.OUTPUT_ROOT / sanitize(company) / sanitize(job_title)
-    target = base
-    if (base / resume_filename()).exists():
-        dated = base / date.today().isoformat()
-        target = dated
-        n = 2
-        while (target / resume_filename()).exists():
-            target = base / f"{date.today().isoformat()}-{n}"
-            n += 1
-    target.mkdir(parents=True, exist_ok=True)
+    fname = resume_filename()
+
+    def taken(d: Path) -> bool:
+        return d in _claimed or (d / fname).exists()
+
+    with _resolve_lock:
+        target = base
+        if taken(base):
+            today = date.today().isoformat()
+            target = base / today
+            n = 2
+            while taken(target):
+                target = base / f"{today}-{n}"
+                n += 1
+        _claimed.add(target)
+        target.mkdir(parents=True, exist_ok=True)
     return target

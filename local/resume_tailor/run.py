@@ -148,9 +148,13 @@ def tailor(
     prep_sheet: bool = False,
     tone: str = "professional",
     on_status: StatusFn = None,
+    reset_usage: bool = True,
 ) -> Path:
     log = on_status or _noop
-    llm.reset_usage()
+    # Parallel callers reset llm.USAGE once before fan-out and pass reset_usage=False,
+    # so concurrent jobs don't clear each other's token accounting (see DECISIONS).
+    if reset_usage:
+        llm.reset_usage()
 
     company = _field(job, "company_name") or "Unknown Company"
     job_title = _field(job, "job_title") or "Role"

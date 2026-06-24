@@ -39,7 +39,8 @@ writes happen back on the UI thread (the SQLite connection is thread-affine), an
 warning precedes very large batches. See `MainWindow._tailor_work`/`_finish_tailor`. The
 **Apply** button is the rightmost action and turns green only when the selected job has both its
 résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and swaps the bottom
-score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet, `✕` to close).
+score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet; `✕` closes, and
+**"I applied to this job"** confirms → records the job applied in the Tracker → closes).
 
 ## The résumé engine in depth (`local/resume_tailor/`)
 
@@ -86,12 +87,16 @@ precedence, so an absent file reproduces today's behavior exactly.
 fill-it-out playbook at the top (never submit; never log in / enter passwords, payment, SSN, or
 government IDs; never solve CAPTCHAs — pause and hand off; e-sign with the candidate's name +
 today's date; use `XXXXX` for a blocking required field with no answer and flag it), then candidate
-basics + structured address, education, the active standard answers, the tailored résumé highlights,
-and a hidden HTML-comment meta marker carrying the job identity for lookup. The dashboard's **Apply**
-button (and `python -m resume_tailor.apply`) resolves the folder via that marker, opens the posting
-in Chrome, and shows the Apply panel; the user pastes `apply.md` into Claude-in-Chrome to fill the
-form and **stop for human review — nothing auto-submits.** (The former `apply-to-job` skill is
-retired — its contract now lives at the top of every `apply.md`.)
+basics + structured address, education, **this job's tailored résumé as markdown** (work experience /
+projects / leadership / technical skills), the active standard answers, and a hidden HTML-comment meta
+marker carrying the job identity for lookup. The résumé sections are rendered **deterministically** by
+mirroring `render.py`'s selection + grouping — fed the tailor's own `sel` + surviving `bullets` +
+`skill_lines`, so the sheet reflects exactly the blocks on the PDF (only selected blocks; each
+surviving bullet verbatim) with **no extra LLM call**. The dashboard's **Apply** button (and
+`python -m resume_tailor.apply`) resolves the folder via that marker, opens the posting in Chrome, and
+shows the Apply panel; the user pastes `apply.md` into Claude-in-Chrome to fill the form and **stop for
+human review — nothing auto-submits.** (The former `apply-to-job` skill is retired — its contract now
+lives at the top of every `apply.md`.)
 
 ### The one-page guarantee
 `layout.py` derives a `(min, max)` character window per bullet from empirically

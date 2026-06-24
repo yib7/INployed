@@ -236,6 +236,43 @@ def test_apply_button_not_ready_when_md_missing(qtbot, tmp_path, monkeypatch):
     assert w.btn_apply.isEnabled() is False
 
 
+_APPLY_CTX = {
+    "job": {"company": "Acme", "title": "Engineer", "job_posting_id": "1"},
+    "resume_pdf": "C:/Generated/Acme/Engineer/Cand_Resume.pdf",
+    "cover_letter_pdf": "",
+    "apply_md": "# Apply sheet — Engineer @ Acme\n\nPaste me into Claude-in-Chrome.",
+    "apply_md_path": "C:/Generated/Acme/Engineer/apply.md",
+    "apply_url": "http://x/1",
+    "generated_dir": "C:/Generated/Acme/Engineer",
+}
+
+
+def test_finish_apply_opens_panel_and_hides_preview(qtbot):
+    w = _win(qtbot)
+    w.tabs.setCurrentIndex(0)  # a job tab → preview would normally show
+    w._applying = True
+    w._finish_apply_ok(dict(_APPLY_CTX))
+    assert w._apply_panel_open is True
+    assert w._preview_shown is False
+    assert "Apply sheet" in w.apply_panel.current_sheet()
+
+
+def test_close_apply_panel_restores_preview(qtbot):
+    w = _win(qtbot)
+    w.tabs.setCurrentIndex(0)
+    w._finish_apply_ok(dict(_APPLY_CTX))
+    w._close_apply_panel()
+    assert w._apply_panel_open is False
+    assert w._preview_shown is True  # restored on a job tab
+
+
+def test_copy_apply_sheet_sets_clipboard(qtbot):
+    w = _win(qtbot)
+    w._finish_apply_ok(dict(_APPLY_CTX))
+    w.apply_panel.copy_sheet()
+    assert QtWidgets.QApplication.clipboard().text() == _APPLY_CTX["apply_md"]
+
+
 def test_tailor_work_runs_all_jobs_and_captures_failures(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     seen = []

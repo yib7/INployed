@@ -40,6 +40,7 @@ from jobsdata import (
 )
 from qt import workers
 from qt.answers_tab import AnswersEditor
+from qt.apply_panel import ApplyPanel
 from qt.jobs_tab import JobsTab
 from qt.resume_data_tab import ResumeDataEditor
 from qt.settings_tab import SettingsForm
@@ -165,7 +166,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         self.splitter.setSizes([720, 200])
-        vbox.addWidget(self.splitter, 1)
+
+        # The Apply panel rides to the RIGHT of the tabs+preview column; it opens
+        # (and the preview hides) when the user clicks Apply, and closes back to the
+        # preview via its own ✕. Hidden until then.
+        self._apply_panel_open = False
+        self.apply_panel = ApplyPanel(on_close=self._close_apply_panel)
+        self.apply_panel.hide()
+        self.hsplit = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.hsplit.addWidget(self.splitter)
+        self.hsplit.addWidget(self.apply_panel)
+        self.hsplit.setStretchFactor(0, 1)
+        self.hsplit.setStretchFactor(1, 0)
+        vbox.addWidget(self.hsplit, 1)
         # Connect only now that self.preview exists (addTab above fires currentChanged).
         self.tabs.currentChanged.connect(lambda _i: self._on_tab_changed())
 
@@ -400,7 +413,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_preview_visibility(self) -> None:
         title = self.tabs.tabText(self.tabs.currentIndex())
-        show = title in PREVIEW_TABS
+        show = title in PREVIEW_TABS and not getattr(self, "_apply_panel_open", False)
         self.preview.setVisible(show)
         self._preview_shown = show
 
@@ -681,19 +694,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self._applying = False
         job = ctx.get("job") or {}
         resume_pdf = ctx.get("resume_pdf", "")
-        self._set_status(f"Application opened for {job.get('company', '?')} — "
-                         f"{job.get('title', '?')}. Review before submitting.")
+        # Open the right-side Apply panel (copyable paths + the apply sheet) and hide
+        # the bottom score preview while it's up — the ✕ on the panel restores it.
+        self.apply_panel.show_application(ctx)
+        self._apply_panel_open = True
+        self.preview.setVisible(False)
+        self._preview_shown = False
+        self.apply_panel.show()
+        sizes = self.hsplit.sizes()
+        if len(sizes) >= 2 and sizes[-1] < 50:  # first open — carve out room for the panel
+            total = sum(sizes) or 1000
+            self.hsplit.setSizes([max(420, total - 380), 380])
         if resume_pdf:
             QtWidgets.QApplication.clipboard().setText(resume_pdf)
-        body = (f"Company : {job.get('company', '?')}\n"
-                f"Role    : {job.get('title', '?')}\n"
-                f"Apply   : {ctx.get('apply_url') or '(none)'}\n\n"
-                f"Résumé PDF (copied to clipboard):\n{resume_pdf or '(missing)'}\n")
-        if ctx.get("cover_letter_pdf"):
-            body += f"\nCover letter:\n{ctx['cover_letter_pdf']}\n"
-        body += ("\nReview every field. Submission is left to you.\n"
-                 "Run the apply-to-job skill in Claude-in-Chrome to fill the form.")
-        QtWidgets.QMessageBox.information(self, "Apply — review before submitting", body)
+        self._set_status(f"Apply sheet ready for {job.get('company', '?')} — "
+                         f"{job.get('title', '?')}. Paste it into Claude-in-Chrome; "
+                         f"review before submitting.")
+
+    def _close_apply_panel(self) -> None:
+        self._apply_panel_open = False
+        self.apply_panel.hide()
+        self._apply_preview_visibility()  # restores the score preview on a job tab
 
     def _finish_apply_error(self, exc) -> None:
         self._applying = False

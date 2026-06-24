@@ -374,6 +374,25 @@ def test_finish_tailor_records_successes_and_reports(qtbot, monkeypatch, tmp_pat
     assert w._tailoring is False and reloaded == [1]
 
 
+def test_finish_tailor_opens_folder_only_when_enabled(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "reload_data", lambda: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    opened = []
+    monkeypatch.setattr(mw.os, "startfile", lambda p: opened.append(p), raising=False)
+    results = [{"id": "1", "label": "Eng @ A", "dir": tmp_path / "1", "error": None}]
+
+    # default OFF (key absent) -> the folder is NOT opened
+    monkeypatch.setattr(mw.settings, "load", lambda: {})
+    w._finish_tailor(list(results))
+    assert opened == []
+
+    # toggled ON -> the last folder opens
+    monkeypatch.setattr(mw.settings, "load", lambda: {"tailor_open_folder": True})
+    w._finish_tailor(list(results))
+    assert opened == [str(tmp_path / "1")]
+
+
 def test_tailor_warns_only_on_large_batch(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(mw.settings, "load", lambda: {})

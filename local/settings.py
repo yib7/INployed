@@ -88,6 +88,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="How long a freshly synced file must stop changing before the dashboard "
                "opens it — stops it reading a half-downloaded file. 30 is fine for most.",
           min=1, max=600),
+    Field("tailor_open_folder", "Open output folder after tailoring", "bool", False,
+          "Dashboard", "config",
+          help="When on, the tailored résumé's folder opens in File Explorer after each run. "
+               "Off (default) keeps the screen tidy when you tailor several jobs at once — reach "
+               "the folder from the Apply panel's 'Open folder' button or the path in the status bar."),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
     Field("keywords", "Search keywords", "list",

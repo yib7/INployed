@@ -171,7 +171,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # (and the preview hides) when the user clicks Apply, and closes back to the
         # preview via its own ✕. Hidden until then.
         self._apply_panel_open = False
-        self.apply_panel = ApplyPanel(on_close=self._close_apply_panel)
+        self._apply_panel_job: dict = {}
+        self.apply_panel = ApplyPanel(on_close=self._close_apply_panel,
+                                      on_applied=self._mark_applied_from_panel)
         self.apply_panel.hide()
         self.hsplit = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.hsplit.addWidget(self.splitter)
@@ -693,6 +695,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_apply_ok(self, ctx: dict) -> None:
         self._applying = False
         job = ctx.get("job") or {}
+        self._apply_panel_job = job  # for the panel's "I applied to this job" button
         resume_pdf = ctx.get("resume_pdf", "")
         # Open the right-side Apply panel (copyable paths + the apply sheet) and hide
         # the bottom score preview while it's up — the ✕ on the panel restores it.
@@ -715,6 +718,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_panel_open = False
         self.apply_panel.hide()
         self._apply_preview_visibility()  # restores the score preview on a job tab
+
+    def _mark_applied_from_panel(self) -> None:
+        """The panel's "I applied to this job" button: confirm, record the job as
+        applied in the tracker (using the panel's stored marker identity, so it works
+        even when the row isn't in the loaded data), mark it seen, and close the panel
+        — so the one button doubles as "added to tracker" and "exit"."""
+        job = getattr(self, "_apply_panel_job", None) or {}
+        jid = str(job.get("job_posting_id") or "").strip()
+        if not jid:
+            self._set_status("Couldn't identify this job to add to the tracker.")
+            return
+        title, company = job.get("title", "this job"), job.get("company", "?")
+        if QtWidgets.QMessageBox.question(
+                self, "Mark as applied?",
+                f"Add '{title}' @ {company} to your application tracker as applied?"
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self.registry.set_status(jid, "applied", company=company,
+                                 job_title=title, url=job.get("url", ""))
+        self._mark_ids_seen([jid])   # applied implies seen (matches the right-click path)
+        self._close_apply_panel()
+        self._set_status(f"Marked applied — added {company} to the tracker.")
 
     def _finish_apply_error(self, exc) -> None:
         self._applying = False

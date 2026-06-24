@@ -273,6 +273,42 @@ def test_copy_apply_sheet_sets_clipboard(qtbot):
     assert QtWidgets.QApplication.clipboard().text() == _APPLY_CTX["apply_md"]
 
 
+def test_apply_panel_applied_button_invokes_callback(qtbot):
+    from qt.apply_panel import ApplyPanel
+    called = []
+    p = ApplyPanel(on_applied=lambda: called.append(True))
+    qtbot.addWidget(p)
+    assert "applied" in p.applied_btn.text().lower()
+    p.applied_btn.click()
+    assert called == [True]
+
+
+def test_i_applied_confirm_yes_records_in_tracker_and_closes(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "reload_data", lambda: None)
+    w.id_to_path = {}
+    w.tabs.setCurrentIndex(0)
+    w._finish_apply_ok(dict(_APPLY_CTX))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    w._mark_applied_from_panel()
+    args, kwargs = w.registry.set_status.call_args
+    assert args[0] == "1" and args[1] == "applied"      # uses the panel's stored job id
+    assert kwargs.get("company") == "Acme"              # ...and its marker identity
+    assert w.registry.mark.called                        # applied implies seen
+    assert w._apply_panel_open is False                  # doubles as an exit button
+
+
+def test_i_applied_confirm_no_leaves_everything_untouched(qtbot, monkeypatch):
+    w = _win(qtbot)
+    w._finish_apply_ok(dict(_APPLY_CTX))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+    w._mark_applied_from_panel()
+    assert not w.registry.set_status.called
+    assert w._apply_panel_open is True                    # panel stays open on cancel
+
+
 def test_tailor_work_runs_all_jobs_and_captures_failures(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     seen = []

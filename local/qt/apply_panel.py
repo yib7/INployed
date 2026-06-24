@@ -17,9 +17,11 @@ from PySide6 import QtWidgets
 
 
 class ApplyPanel(QtWidgets.QWidget):
-    def __init__(self, on_close: Callable[[], None] | None = None, parent=None) -> None:
+    def __init__(self, on_close: Callable[[], None] | None = None,
+                 on_applied: Callable[[], None] | None = None, parent=None) -> None:
         super().__init__(parent)
         self._on_close = on_close or (lambda: None)
+        self._on_applied = on_applied or (lambda: None)
         self._folder: str = ""
         self.setMinimumWidth(320)
         self._build()
@@ -71,6 +73,14 @@ class ApplyPanel(QtWidgets.QWidget):
         copy.setProperty("accent", True)
         copy.clicked.connect(self.copy_sheet)
         v.addWidget(copy)
+
+        # Completion action: confirm-then-record in the tracker, and close the panel
+        # (so it doubles as the exit). Green to read as the "done with this one" step.
+        self.applied_btn = QtWidgets.QPushButton("I applied to this job")
+        self.applied_btn.setProperty("applyReady", True)
+        self.applied_btn.setToolTip("Add this job to your application tracker (applied) and close")
+        self.applied_btn.clicked.connect(lambda: self._on_applied())
+        v.addWidget(self.applied_btn)
 
     def _path_row(self, label: str):
         row = QtWidgets.QHBoxLayout()

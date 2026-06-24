@@ -1,11 +1,11 @@
-"""Tests for the apply_data.json form-prefill profile (SP4 T4.1).
+"""Tests for the self-contained apply.md sheet (cycle 12).
 
-apply_data.write() must embed a top-level "standard_answers" object built from the
-master answer store (apply_answers), defaulting to the candidate's reality (US
-citizen / GC, no sponsorship). On first run the store seeds from apply_config
-DEFAULTS and migrates a repo-root apply_config.json's overrides in once; absent
-both, the hardcoded defaults apply. The review-before-submit "instructions" wording
-stays. The write tests pin STORE_PATH to a temp path so they never read the
+apply_data.write() must render one apply.md per tailored folder: the no-submit
+fill-it-out playbook at the top, the candidate basics + structured address, the
+active standard answers (built from the apply_answers store, defaulting to the
+candidate's reality — US citizen / GC, no sponsorship), the tailored résumé
+highlights, and a hidden meta marker carrying the job identity. No apply_data.json
+is written. The write tests pin STORE_PATH to a temp path so they never read the
 developer's real apply_answers.json.
 """
 import json

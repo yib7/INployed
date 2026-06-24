@@ -253,12 +253,16 @@ its regexes. `QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py` smoke-tests th
   use it to tune the scoring prompts).
 - **Tailor artifacts:** each run writes the PDF + `resume.tex` +
   `ats_report.txt` (JD keyword coverage % and missing terms) +
-  `apply_data.json` (candidate basics/education/doc paths for form-fill).
-  With "+ cover letter", the body is grounded by a Google-Search research
-  blurb (`research.py`, small per-query Vertex cost; falls back to JD-only).
-- **Browser-assisted apply:** open the job's apply page in Chrome and ask
-  Claude-in-Chrome to prefill the form from the job's `apply_data.json` +
-  resume PDF. **Always review before submitting** — nothing auto-submits.
+  `apply.md` (a self-contained apply sheet — candidate basics/education/standard
+  answers + structured address/résumé highlights, with the fill-it-out
+  instructions at the top). With "+ cover letter", the body is grounded by a
+  Google-Search research blurb (`research.py`, small per-query Vertex cost; falls
+  back to JD-only).
+- **Browser-assisted apply:** the dashboard's **Apply** button (green only once a
+  job has its résumé PDF + `apply.md`) opens the posting in Chrome and pops a
+  right-side Apply panel with copyable doc paths + the apply sheet. Paste the
+  apply sheet into Claude-in-Chrome to fill the form. **Always review before
+  submitting** — nothing auto-submits.
 - **Python deps:** pinned in `requirements.txt` (local) / `requirements-vm.txt`
   (VM). **MiKTeX is required locally** (pdflatex on PATH, or set
   `PDFLATEX_PATH`) for resume/cover-letter compilation:

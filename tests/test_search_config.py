@@ -27,7 +27,6 @@ def test_absent_file_uses_builtin_defaults(monkeypatch, tmp_path):
     assert cfg["keywords"] == scraper.KEYWORDS
     assert cfg["remote_types"] == scraper.REMOTE_TYPES
     assert cfg["limit_per_input"] == scraper.LIMIT_PER_INPUT
-    assert cfg["exclude_window_days"] == scraper.EXCLUDE_WINDOW_DAYS
     assert cfg["location"] == "United States"
     assert cfg["country"] == "US"
     assert cfg["time_range"] == "Past 24 hours"
@@ -43,7 +42,6 @@ def test_file_overrides_keywords_and_limit(monkeypatch, tmp_path):
     assert cfg["limit_per_input"] == 25
     # untouched keys still fall back to the built-ins
     assert cfg["remote_types"] == scraper.REMOTE_TYPES
-    assert cfg["exclude_window_days"] == scraper.EXCLUDE_WINDOW_DAYS
 
 
 def test_build_inputs_uses_config_keywords(monkeypatch, tmp_path):

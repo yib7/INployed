@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -59,6 +60,11 @@ TAB_TITLES = [
 
 # Tabs where a selected row has an analysis worth previewing.
 PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
+
+# Tailoring is parallel (all selected at once). Above this many, warn first — a big
+# fan-out means that many simultaneous Gemini calls + pdflatex processes (API limits /
+# local load). Below it, just go. See .autopilot/DECISIONS.md (cycle 11, SP3).
+PARALLEL_WARN_THRESHOLD = 5
 
 
 def _console_python(exe: str | None = None) -> str:
@@ -652,6 +658,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- tailor --------------------------------------------------------------
 
+    def _confirm_large_tailor(self, n: int) -> bool:
+        """Warn before fanning out a big parallel batch (separate method so it's
+        trivially testable). Returns True to proceed."""
+        return QtWidgets.QMessageBox.question(
+            self, "Tailor many resumes at once?",
+            f"About to tailor {n} resumes in parallel — they run at the same time, each "
+            f"making its own Gemini calls and launching pdflatex. Large batches can hit API "
+            f"limits or strain your PC. Continue?"
+        ) == QtWidgets.QMessageBox.StandardButton.Yes
+
     def _tailor_selected(self) -> None:
         if getattr(self, "_tailoring", False):
             return
@@ -662,6 +678,8 @@ class MainWindow(QtWidgets.QMainWindow):
         jobs = [j for j in (self._job_payload(i) for i in ids) if j]
         if not jobs:
             self._set_status("Could not find job data for the selection.")
+            return
+        if len(jobs) > PARALLEL_WARN_THRESHOLD and not self._confirm_large_tailor(len(jobs)):
             return
         cfg = settings.load()
         cover = QtWidgets.QMessageBox.question(
@@ -674,32 +692,71 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tailoring = True
         self.btn_tailor.setEnabled(False)
         self._apply_auth_env()
-        self._set_status(f"Tailoring {len(jobs)} resume(s) … (progress in the console)")
+        plural = "resume" if len(jobs) == 1 else "resumes in parallel"
+        self._set_status(f"Tailoring {len(jobs)} {plural} … (progress in the console)")
         workers.run_async(self, lambda: self._tailor_work(jobs, opts),
                           on_done=self._finish_tailor, on_error=self._finish_tailor_error)
 
-    def _tailor_work(self, jobs: list[dict], opts: dict):
+    def _tailor_work(self, jobs: list[dict], opts: dict) -> list[dict]:
+        """Tailor every selected job CONCURRENTLY (all at once) on a thread pool, and
+        return a per-job outcome list. No registry/SQLite writes happen here — those
+        are done back on the UI thread in `_finish_tailor` (the registry connection is
+        thread-affine and concurrent writes would contend). Per-job exceptions are
+        captured so one failure never sinks the rest of the batch."""
+        from resume_tailor import assets, llm
         from resume_tailor import tailor as tailor_resume
-        last_dir = None
-        for job in jobs:
-            last_dir = tailor_resume(job, cover_letter=opts["cover_letter"],
-                                     ats_report=opts["ats_report"], prep_sheet=opts["prep_sheet"],
-                                     tone=opts["tone"])
-            if last_dir and job.get("job_posting_id"):
-                try:
-                    with SeenRegistry() as reg:
-                        reg.record_resume(job["job_posting_id"], str(last_dir))
-                except Exception:  # noqa: BLE001 - bookkeeping only
-                    pass
-        return last_dir
 
-    def _finish_tailor(self, out_dir) -> None:
+        # Pre-warm the shared lru_caches once so N threads don't each re-parse the YAML
+        # / re-extract the example PDF (and so there's no cold-cache race). Best-effort:
+        # tailor() will surface any real loading error per job.
+        for warm in (assets.load_master, assets.atoms_by_id, assets.blocks,
+                     assets.template_head, assets.example_text):
+            try:
+                warm()
+            except Exception:  # noqa: BLE001 - pre-warm only
+                pass
+        llm.reset_usage()  # once for the whole batch; jobs pass reset_usage=False
+
+        def one(job: dict) -> dict:
+            label = f'{job.get("job_title") or "Role"} @ {job.get("company_name") or "?"}'
+            try:
+                out = tailor_resume(job, cover_letter=opts["cover_letter"],
+                                    ats_report=opts["ats_report"], prep_sheet=opts["prep_sheet"],
+                                    tone=opts["tone"], reset_usage=False)
+                return {"id": job.get("job_posting_id"), "label": label, "dir": out, "error": None}
+            except Exception as exc:  # noqa: BLE001 - capture per-job; report in the summary
+                return {"id": job.get("job_posting_id"), "label": label, "dir": None,
+                        "error": str(exc)}
+
+        with ThreadPoolExecutor(max_workers=max(1, len(jobs))) as pool:
+            return list(pool.map(one, jobs))
+
+    def _finish_tailor(self, results: list[dict]) -> None:
         self._tailoring = False
         self.btn_tailor.setEnabled(True)
-        if out_dir:
-            self._set_status(f"Resume(s) ready → {out_dir}")
+        results = results or []
+        oks = [r for r in results if r.get("dir")]
+        fails = [r for r in results if not r.get("dir")]
+        # Registry writes on the UI thread (this slot runs there) — no cross-thread SQLite.
+        for r in oks:
+            if r.get("id"):
+                try:
+                    self.registry.record_resume(r["id"], str(r["dir"]))
+                except Exception:  # noqa: BLE001 - bookkeeping only
+                    pass
+        total = len(results)
+        if fails:
+            lines = "\n".join(f"  - {r['label']}: {r['error']}" for r in fails)
+            QtWidgets.QMessageBox.warning(
+                self, "Tailor resume",
+                f"Tailored {len(oks)} of {total} resume(s).\n\nFailed:\n{lines}")
+            self._set_status(f"Tailored {len(oks)} of {total}; {len(fails)} failed (see dialog).")
+        elif oks:
+            self._set_status(f"Resume(s) ready ({len(oks)}).")
+        last = oks[-1]["dir"] if oks else None
+        if last:
             try:
-                os.startfile(str(out_dir))  # noqa: S606
+                os.startfile(str(last))  # noqa: S606
             except OSError:
                 pass
         self.reload_data()
@@ -707,6 +764,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_tailor_error(self, exc) -> None:
         self._tailoring = False
         self.btn_tailor.setEnabled(True)
+        QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {exc}")
         self._set_status(f"Tailor failed: {exc}")
 
     # ---- check setup ---------------------------------------------------------

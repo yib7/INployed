@@ -127,8 +127,10 @@ Or, from a terminal:
 python local/app.py       # or double-click local/open_dashboard.pyw
 ```
 High-score triage, an application tracker with follow-up nudges, run stats, and the
-**Tailor resume** button (runs in the background so the UI stays responsive). The window
-opens **maximized** to use the whole screen.
+**Tailor resume** button (runs in the background so the UI stays responsive). Select
+several jobs and it tailors them **all at once, in parallel** — a single failure is
+reported without sinking the rest, and a quick warning appears before very large batches.
+The window opens **maximized** to use the whole screen.
 
 Selecting a job opens a **score preview** at the bottom — the model's reasoning,
 strengths, and gaps for that posting. It appears only on the job-list tabs (**High

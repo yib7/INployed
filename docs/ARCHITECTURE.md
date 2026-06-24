@@ -32,7 +32,11 @@ job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pur
 data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome.py`).
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
-freezes.
+freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
+`ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads genuinely
+overlap); per-job failures are captured and reported in one aggregate dialog, registry
+writes happen back on the UI thread (the SQLite connection is thread-affine), and a
+warning precedes very large batches. See `MainWindow._tailor_work`/`_finish_tailor`.
 
 ## The résumé engine in depth (`local/resume_tailor/`)
 
@@ -42,7 +46,8 @@ bullet must be traceable to a fact ("atom") the user actually wrote in
 
 | Module | Role |
 |--------|------|
-| `config.py` | Paths + model tiers (flash-lite / flash / pro), all env-overridable. |
+| `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. |
+| `llm.py` | The single Gemini transport (`call()` → `_call_gemini`). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff — so a hung call can't stall a tailor run. |
 | `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config) and the LaTeX preamble. |
 | `compose.py` | The LLM stages: `select` → `rephrase` → `verify` → `compress_skills`, plus the constrained `rephrase_fix`/`refit`/`shrink` fix-ups. |
 | `layout.py` | The hard layout spec: per-bullet printed-line budgets and fill floors (single-line ≥75%, multi-line last line ≥50%), all calibrated to the template. |

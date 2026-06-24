@@ -68,10 +68,23 @@ def test_reconcile_only_promotes(tmp_path):
     reg.close()
 
 
+def test_unmark_reverses_mark(tmp_path):
+    """unmark is the inverse of mark: it removes ids so they un-see on reload
+    (the 'Undo seen' path), and is a no-op for ids that were never marked."""
+    reg = SeenRegistry(tmp_path / "seen.db")
+    reg.mark(["1", "2", "3"])
+    removed = reg.unmark(["2", "3"])
+    assert removed == 2
+    assert reg.all_ids() == {"1"}
+    assert reg.unmark(["nope"]) == 0  # absent id -> nothing removed
+    reg.close()
+
+
 if __name__ == "__main__":
     import tempfile
 
     for fn in (test_marked_seen_survives_fresh_master,
-               test_empty_registry_never_unsees, test_reconcile_only_promotes):
+               test_empty_registry_never_unsees, test_reconcile_only_promotes,
+               test_unmark_reverses_mark):
         fn(Path(tempfile.mkdtemp()))
     print("SEEN RECONCILE TESTS OK")

@@ -46,7 +46,7 @@ class Field:
     choices: tuple = ()
     min: float | None = None
     max: float | None = None
-    secret: bool = False        # mask in UI; never displayed/echoed; blank-on-save keeps existing
+    secret: bool = False        # a credential: shown from the local .env, writes the box as-is
     path_kind: str = "dir"      # for type=="path": "dir" picks a folder, "file" picks a file
     optional: bool = False      # UI hint: blank is fine (no value needed to run)
     slider: bool = False        # UI hint: render a bounded int as a drag slider (needs min+max)
@@ -193,9 +193,9 @@ SETTINGS_SCHEMA: list[Field] = [
     # that store on first run.
 
     # --- Credentials: API keys / tokens, written to the git-ignored .env -------
-    # secret=True fields are masked and write-only: the stored value is never
-    # shown; saving with the box blank keeps the existing value. Field.key is the
-    # exact environment-variable name the pipeline reads.
+    # secret=True fields show their saved value in the GUI (read straight from the
+    # local .env) and write whatever the box holds — clearing it removes the key.
+    # Field.key is the exact environment-variable name the pipeline reads.
     Field("BRIGHT_DATA_API_TOKEN", "Bright Data API token", "str", "",
           "Credentials", "env", secret=True, optional=True,
           help="Needed to run the scraper. Bright Data dashboard - Account settings - API tokens."),

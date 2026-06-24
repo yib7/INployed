@@ -148,6 +148,21 @@ class VMPanel(QtWidgets.QWidget):
             combo.setCurrentText(times[i] if i < len(times) else BLANK)
         self._refresh_preview()
 
+    def revert(self) -> None:
+        """Reset the schedule and pause editors to their initial state.
+
+        The Settings form's 'Revert changes' calls this so the VM section rolls
+        back alongside the rest of the form. The panel never loads live VM state,
+        so 'initial' is the default it constructs with.
+        """
+        self.freq.setCurrentIndex(0)
+        self.weekday.setCurrentText("Monday")
+        self.pause_time.setCurrentText(BLANK)
+        tomorrow = date.today() + timedelta(days=1)
+        self.pause_date.setDate(QtCore.QDate(tomorrow.year, tomorrow.month, tomorrow.day))
+        self.set_times(["10:00", "19:00"])  # also refreshes the crontab preview
+        self._sync_weekday_enabled()
+
     def _times(self) -> list[str]:
         return [c.currentText() for c in self.time_combos
                 if c.currentText() and c.currentText() != BLANK]

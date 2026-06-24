@@ -74,6 +74,18 @@ class SeenRegistry:
         self._conn.commit()
         return cur.rowcount
 
+    def unmark(self, job_posting_ids: list[str]) -> int:
+        """Remove ids from the seen set (the inverse of mark). Used to undo a
+        mark-seen click: the job returns to the unseen views on the next reload."""
+        if not job_posting_ids:
+            return 0
+        cur = self._conn.executemany(
+            "DELETE FROM seen WHERE job_posting_id = ?",
+            [(str(i),) for i in job_posting_ids],
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def all_ids(self) -> set[str]:
         cur = self._conn.execute("SELECT job_posting_id FROM seen")
         return {row[0] for row in cur.fetchall()}

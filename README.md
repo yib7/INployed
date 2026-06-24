@@ -171,8 +171,9 @@ the project has, grouped and explained, so a non-technical user can set things u
 without touching a file:
 
 - **Credentials:** Bright Data token + dataset, the Gemini API-key pool, and the
-  résumé-tailor API key. These are **masked, write-only** boxes — a saved key is
-  never shown again; leave a box blank to keep it, or tick *Clear* to remove it.
+  résumé-tailor API key. Each box shows its saved value (read straight from your
+  local `.env`) so you can check it without opening the file — edit to change it,
+  clear it to remove the key, or tick *Hide* to mask it from onlookers.
 - **Connection & paths:** Google Cloud project + location, your name (for résumé
   filenames), the résumé output folder and `pdflatex` path (with **Browse…**
   buttons), and which Chrome profile to open links in.

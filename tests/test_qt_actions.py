@@ -129,6 +129,53 @@ def test_set_status_for_calls_registry(qtbot):
     assert w.registry.set_status.called
 
 
+def test_set_status_applied_also_marks_seen(qtbot, monkeypatch):
+    # 'applied' via the right-click menu must also mark the job seen (what the old
+    # 'Mark applied' button did) — non-'applied' statuses must not.
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "reload_data", lambda: None)
+    w.id_to_path = {}
+    w._set_status_for(["1"], "applied")
+    assert w.registry.set_status.called and w.registry.mark.called
+    w.registry.mark.reset_mock()
+    w._set_status_for(["2"], "rejected")
+    assert not w.registry.mark.called
+
+
+def test_seen_undo_then_redo(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "reload_data", lambda: None)
+    w.id_to_path = {}
+    assert not w.btn_undo_seen.isEnabled() and not w.btn_redo_seen.isEnabled()
+    w._mark_ids_seen(["1", "2"])
+    assert w._seen_undo == [["1", "2"]] and w._seen_redo == []
+    assert w.btn_undo_seen.isEnabled()
+    w._undo_seen()
+    w.registry.unmark.assert_called_once_with(["1", "2"])  # the seen rows are removed
+    assert w._seen_undo == [] and w._seen_redo == [["1", "2"]]
+    assert w.btn_redo_seen.isEnabled()
+    w._redo_seen()
+    assert w._seen_undo == [["1", "2"]] and w._seen_redo == []
+
+
+def test_on_fs_change_schedules_debounced_reload(qtbot, monkeypatch):
+    w = _win(qtbot)
+    called = []
+    monkeypatch.setattr(w, "reload_data", lambda: called.append(True))
+    w._on_fs_change("whatever")
+    assert w._reload_timer.isActive()   # a burst of events coalesces into one reload
+    w._auto_reload()
+    assert called
+
+
+def test_fs_watcher_watches_source_files(qtbot, tmp_path):
+    f = tmp_path / "run_scored.csv.gz"
+    f.write_bytes(b"not really gzip")  # load skips it; the watcher still arms on it
+    w = MainWindow(csv_paths=[f], registry=_fake_registry())
+    qtbot.addWidget(w)
+    assert str(f) in set(w._fs_watcher.files())
+
+
 def test_apply_work_opens_url(qtbot, monkeypatch):
     w = _win(qtbot)
     import resume_tailor.apply as apply_mod

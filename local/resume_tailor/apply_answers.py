@@ -6,7 +6,9 @@ entry carries metadata the dashboard and the apply skill both use:
     {"id", "question", "answer",
      "kind":   "fixed" | "open-ended",       # fixed = never altered (auth, EEO);
                                               # open-ended = lightly adaptable per job
-     "status": "active" | "needs-review"}     # needs-review = seen but no good answer yet
+     "status": "active"}                      # always active — the needs-review status was
+                                              # retired in cycle 13 (validate() still tolerates
+                                              # a legacy value so an old store loads)
 
 `answer` is always stored as a string (keeps the dashboard table editor simple);
 the three legacy boolean keys are coerced back to bool only in
@@ -34,6 +36,9 @@ REPO_ROOT = PKG_DIR.parent.parent                  # scrape_data
 STORE_PATH = REPO_ROOT / "apply_answers.json"
 
 KINDS = ("fixed", "open-ended")
+# "needs-review" is retired (cycle 13) — the editor only ever writes "active". It
+# stays accepted here so an old store that still carries it loads without erroring;
+# such a row migrates to "active" the next time the editor saves.
 STATUSES = ("active", "needs-review")
 
 # The legacy booleans — coerced back to bool when flattened for the skill.
@@ -73,10 +78,6 @@ def _to_answer_str(entry_id: str, value: Any) -> str:
 
 def _truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"true", "yes", "1"}
-
-
-def _norm(text: str) -> str:
-    return " ".join(str(text).lower().split())
 
 
 def _slug(text: str) -> str:
@@ -242,34 +243,3 @@ def as_standard_answers(answers: Union[List[Dict[str, Any]], None] = None) -> Di
     return out
 
 
-def append_needs_review(items: List[Union[str, Dict[str, Any]]],
-                        path: Union[Path, None] = None) -> List[Dict[str, Any]]:
-    """Append captured questions as needs-review entries (dedupe by normalized
-    question text), persist, and return the updated store. `items` may be plain
-    question strings or {"question", "answer"?} dicts."""
-    path = Path(path) if path is not None else STORE_PATH
-    answers = load(path)
-    seen = {_norm(e.get("question", "")) for e in answers}
-    taken = {e.get("id") for e in answers}
-    for item in items:
-        if isinstance(item, str):
-            question, answer = item, ""
-        else:
-            question, answer = item.get("question", ""), item.get("answer", "")
-        if not str(question).strip():
-            continue
-        norm = _norm(question)
-        if norm in seen:
-            continue
-        seen.add(norm)
-        new_id = _unique_id(_slug(question), taken)
-        taken.add(new_id)
-        answers.append({
-            "id": new_id,
-            "question": str(question).strip(),
-            "answer": str(answer),
-            "kind": "open-ended",
-            "status": "needs-review",
-        })
-    save(answers, path)
-    return answers

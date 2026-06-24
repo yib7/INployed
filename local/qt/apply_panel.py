@@ -23,6 +23,7 @@ class ApplyPanel(QtWidgets.QWidget):
         self._on_close = on_close or (lambda: None)
         self._on_applied = on_applied or (lambda: None)
         self._folder: str = ""
+        self._raw_md: str = ""   # the apply.md source — rendered in the viewer, copied verbatim
         self.setMinimumWidth(320)
         self._build()
 
@@ -65,9 +66,12 @@ class ApplyPanel(QtWidgets.QWidget):
         sheet_label = QtWidgets.QLabel("Apply sheet (apply.md)")
         sheet_label.setProperty("muted", True)
         v.addWidget(sheet_label)
-        self._sheet = QtWidgets.QPlainTextEdit()
-        self._sheet.setReadOnly(True)
-        self._sheet.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+        # Rendered markdown viewer (nice to read). The clipboard still gets the raw
+        # markdown source via copy_sheet() — see self._raw_md. Read-only by default;
+        # don't follow links (this is a static preview, not a browser).
+        self._sheet = QtWidgets.QTextBrowser()
+        self._sheet.setOpenLinks(False)
+        self._sheet.setOpenExternalLinks(False)
         v.addWidget(self._sheet, 1)
 
         copy = QtWidgets.QPushButton("Copy apply sheet")
@@ -113,7 +117,8 @@ class ApplyPanel(QtWidgets.QWidget):
         self._set_row_visible(self._cover_row, bool(cover))
         self._open_btn.setEnabled(bool(self._folder))
 
-        self._sheet.setPlainText(ctx.get("apply_md", "") or "")
+        self._raw_md = ctx.get("apply_md", "") or ""
+        self._sheet.setMarkdown(self._raw_md)
 
     @staticmethod
     def _set_row_visible(row: QtWidgets.QHBoxLayout, visible: bool) -> None:
@@ -125,10 +130,10 @@ class ApplyPanel(QtWidgets.QWidget):
     # ---- actions -------------------------------------------------------------
 
     def current_sheet(self) -> str:
-        return self._sheet.toPlainText()
+        return self._raw_md
 
     def copy_sheet(self) -> None:
-        self._copy_text(self._sheet.toPlainText())
+        self._copy_text(self._raw_md)
 
     @staticmethod
     def _copy_text(text: str) -> None:

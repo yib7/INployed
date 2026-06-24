@@ -273,6 +273,20 @@ def test_copy_apply_sheet_sets_clipboard(qtbot):
     assert QtWidgets.QApplication.clipboard().text() == _APPLY_CTX["apply_md"]
 
 
+def test_apply_sheet_preview_renders_markdown_keeps_raw_copy(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    raw = "# Heading One\n\nSome **bold** body text.\n\n<!-- inployed-apply-meta: {} -->"
+    p.show_application({"apply_md": raw})
+    # the viewer RENDERS markdown — its plain text drops the #/** syntax characters...
+    rendered = p._sheet.toPlainText()
+    assert "Heading One" in rendered and "bold body text" in rendered
+    assert "#" not in rendered and "**" not in rendered
+    # ...but the clipboard / current_sheet keep the RAW markdown source verbatim.
+    assert p.current_sheet() == raw
+
+
 def test_apply_panel_applied_button_invokes_callback(qtbot):
     from qt.apply_panel import ApplyPanel
     called = []

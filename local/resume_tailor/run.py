@@ -231,7 +231,8 @@ def tailor(
                 log(f"interview prep skipped ({exc})")
 
         try:
-            apply_data.write(job, out_dir, list(final_bullets.values()), cover_letter)
+            apply_data.write(job, out_dir, sel=sel, bullets=final_bullets,
+                             skill_lines=skill_lines, cover_letter=cover_letter)
             log("apply.md written (self-contained apply sheet)")
         except Exception as exc:  # noqa: BLE001 - advisory artifact, never fatal
             log(f"apply sheet skipped ({exc})")

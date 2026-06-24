@@ -242,8 +242,8 @@ its regexes. `QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py` smoke-tests th
   (`job_num_applicants`) — the freshest apply window floats to the top.
 - **Details pane:** selecting any row shows the model's stage-2 analysis
   (reason / strengths / gaps), salary range, applicant count, and a JD snippet.
-- **Application tracker:** "Mark applied" (button or right-click) records the
-  job in `seen.db` and marks it seen. The Tracker tab manages status
+- **Application tracker:** right-click a job → **Set status → applied** records
+  the job in `seen.db` and marks it seen. The Tracker tab manages status
   (applied → interviewing / rejected / offer), shows **follow-up DUE** when an
   application is ≥ `followup_days` old with no follow-up, links each row to its
   tailored-resume folder, and has the **Interview prep** button (one flash call
@@ -345,8 +345,10 @@ If Vertex calls start failing with permission/region errors, the working config 
 
 - **Dashboard didn't pop:** no new unseen ≥4 jobs (by design). Force-open via the
   manual command in §5. Check `watcher.log`.
-- **Dashboard shows stale data:** Drive hasn't synced yet, or the open instance
-  needs a Refresh. New master from the VM lands at `E:\My Drive\LinkedInJobs\…`.
+- **Dashboard shows stale data:** Drive hasn't synced yet. The dashboard
+  auto-reloads when it sees the file change, but some Drive setups (streaming
+  mode) don't emit file events — hit **Refresh** to force a reload. New master
+  from the VM lands at `E:\My Drive\LinkedInJobs\…`.
 - **Vertex 403 (ACCESS_TOKEN_SCOPE_INSUFFICIENT):** VM scope — see §7.
 - **Vertex 404 (model not found):** region — set `GOOGLE_CLOUD_LOCATION=global`.
 - **Cron didn't fire:** confirm `CRON_TZ` + `timedatectl` shows America/New_York.

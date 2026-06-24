@@ -22,9 +22,10 @@ def _targets(tmp_path):
 def test_renders_widgets_by_type(qtbot, tmp_path):
     form = SettingsForm(targets=_targets(tmp_path))
     qtbot.addWidget(form)
-    # secret -> masked write-only line
+    # secret -> visible line (value read from the local .env) with a Hide toggle
     assert "GEMINI_API_KEYS" in form._secret_edits
-    assert form._secret_edits["GEMINI_API_KEYS"].echoMode() == QtWidgets.QLineEdit.EchoMode.Password
+    assert form._secret_edits["GEMINI_API_KEYS"].echoMode() == QtWidgets.QLineEdit.EchoMode.Normal
+    assert "GEMINI_API_KEYS" in form._secret_hides
     # list + multichoice rendered into their containers
     assert "keywords" in form._lists
     assert "remote_types" in form._multi
@@ -59,18 +60,37 @@ def test_editable_choice_field_has_popup_filter(qtbot, tmp_path):
     assert combo.findChild(st._PopupOnClick) is not None
 
 
-def test_secret_collect_blank_keeps_typed_clears(qtbot, tmp_path):
-    form = SettingsForm(targets=_targets(tmp_path))
+def test_secret_box_shows_saved_value(qtbot, tmp_path):
+    targets = _targets(tmp_path)
+    envfile.update(targets["env"], {"GEMINI_API_KEYS": "saved-key"})
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    # the saved value is shown straight from the local .env (no need to open it)
+    assert form._secret_edits["GEMINI_API_KEYS"].text() == "saved-key"
+
+
+def test_secret_collect_writes_box_as_is(qtbot, tmp_path):
+    targets = _targets(tmp_path)
+    envfile.update(targets["env"], {"GEMINI_API_KEYS": "saved-key"})
+    form = SettingsForm(targets=targets)
     qtbot.addWidget(form)
     values, _ = form.collect()
-    assert "GEMINI_API_KEYS" not in values            # blank -> omitted (keeps existing)
+    assert values["GEMINI_API_KEYS"] == "saved-key"   # unchanged box -> writes the saved value
     form._secret_edits["GEMINI_API_KEYS"].setText("new-key")
     values, _ = form.collect()
-    assert values["GEMINI_API_KEYS"] == "new-key"     # typed -> written
+    assert values["GEMINI_API_KEYS"] == "new-key"     # edited -> written
     form._secret_edits["GEMINI_API_KEYS"].clear()
-    form._secret_clears["GEMINI_API_KEYS"].setChecked(True)
     values, _ = form.collect()
-    assert values["GEMINI_API_KEYS"] == ""            # clear -> explicit unset
+    assert values["GEMINI_API_KEYS"] == ""            # cleared box -> removes the key
+
+
+def test_secret_hide_toggle_masks_box(qtbot, tmp_path):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    edit = form._secret_edits["GEMINI_API_KEYS"]
+    assert edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Normal
+    form._secret_hides["GEMINI_API_KEYS"].setChecked(True)
+    assert edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
 
 
 def test_changed_summary_hides_secret_value():
@@ -123,6 +143,18 @@ def test_vm_section_collapses_with_toggle(qtbot, tmp_path):
     assert not container.isHidden()                   # section body now visible
 
 
+def test_revert_resets_vm_panel(qtbot, tmp_path):
+    from qt.vm_panel import VMPanel
+    form = SettingsForm(targets=_targets(tmp_path),
+                        vm_panel_factory=lambda parent: VMPanel(parent=parent))
+    qtbot.addWidget(form)
+    assert form._vm_panel is not None
+    form._vm_panel.set_times(["08:00"])
+    assert form._vm_panel._times() == ["08:00"]
+    form.revert()
+    assert form._vm_panel._times() == ["10:00", "19:00"]  # back to its initial schedule
+
+
 def test_build_config_window(qtbot, tmp_path):
     win = build_config_window(targets=_targets(tmp_path))
     qtbot.addWidget(win)
@@ -160,7 +192,7 @@ def test_save_skips_snapshot_when_archiving_disabled(qtbot, tmp_path, monkeypatc
     assert settings_archive.list_snapshots(targets) == []
 
 
-def test_restore_loads_values_and_stages_secret(qtbot, tmp_path, monkeypatch):
+def test_restore_loads_values_and_shows_secret(qtbot, tmp_path, monkeypatch):
     targets = _targets(tmp_path)
     # Build a snapshot that differs from the live state in a normal field and a secret.
     settings.save({"min_score": 5}, targets)
@@ -172,9 +204,8 @@ def test_restore_loads_values_and_stages_secret(qtbot, tmp_path, monkeypatch):
     form = SettingsForm(targets=targets)
     qtbot.addWidget(form)
     form.load_from_snapshot(snap)
-    assert form._getters["min_score"]() == "5"             # value loaded for review
-    assert form._staged_secrets["GEMINI_API_KEYS"] == "snap-key"  # secret staged, not shown
-    assert form._secret_edits["GEMINI_API_KEYS"].text() == ""     # never populates the box
+    assert form._getters["min_score"]() == "5"                       # value loaded for review
+    assert form._secret_edits["GEMINI_API_KEYS"].text() == "snap-key"  # snapshot secret shown
 
     _quiet_info(monkeypatch)
     assert form.save() is True

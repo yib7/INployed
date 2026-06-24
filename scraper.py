@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import aiohttp
@@ -40,9 +40,6 @@ LIMIT_PER_INPUT = 100
 POLL_INTERVAL = 10
 MAX_WAIT_MINUTES = 30
 MAX_POLL_FAILURES = 5
-# Bright Data bills at collection, so every re-collected posting costs money.
-# Exclude every master id scraped within this window (still-live postings).
-EXCLUDE_WINDOW_DAYS = 14
 
 OUTPUT_DIR = Path(__file__).parent
 PREVIOUS_IDS_FILE = OUTPUT_DIR / "last_run_job_ids.json"
@@ -138,7 +135,6 @@ def load_search_config() -> dict:
         "keywords": raw.get("keywords", KEYWORDS),
         "remote_types": raw.get("remote_types", REMOTE_TYPES),
         "limit_per_input": raw.get("limit_per_input", LIMIT_PER_INPUT),
-        "exclude_window_days": raw.get("exclude_window_days", EXCLUDE_WINDOW_DAYS),
         "location": raw.get("location", BASE_FILTERS["location"]),
         "country": raw.get("country", BASE_FILTERS["country"]),
         "time_range": raw.get("time_range", BASE_FILTERS["time_range"]),
@@ -159,24 +155,21 @@ def load_previous_ids() -> list[str]:
 
 
 def load_exclude_ids() -> list[str]:
-    """All master ids scraped in the last EXCLUDE_WINDOW_DAYS (plus legacy rows
-    without an extracted_date). Excluding only the previous run's ids meant any
-    still-live posting from >= 2 runs ago was re-collected — and re-billed —
-    every time it matched a keyword. Falls back to the last-run JSON if the
-    master is missing/unreadable."""
-    exclude_window_days = load_search_config()["exclude_window_days"]
+    """Every job id ever recorded in the master — a hard no-repeat guard. Bright
+    Data bills per collection, so re-fetching a posting we already have is pure
+    wasted spend; and a listing still open long enough to fall outside any
+    recent-only window is usually stale anyway (forgotten, flooded with
+    applicants, or fake), so there's no upside to re-collecting it. We therefore
+    exclude the whole master, not a rolling window. Falls back to the last-run
+    JSON if the master is missing/unreadable."""
     if MASTER_CSV.exists():
         try:
             df = pd.read_csv(
                 MASTER_CSV,
-                usecols=lambda c: c in ("job_posting_id", "extracted_date"),
+                usecols=lambda c: c == "job_posting_id",
                 dtype=str,
             )
             if "job_posting_id" in df.columns and not df.empty:
-                if "extracted_date" in df.columns:
-                    cutoff = (datetime.now() - timedelta(days=exclude_window_days)).strftime("%Y-%m-%d")
-                    dates = df["extracted_date"].fillna("")
-                    df = df[(dates == "") | (dates >= cutoff)]
                 ids = df["job_posting_id"].dropna().astype(str).unique().tolist()
                 if ids:
                     return ids
@@ -377,7 +370,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
         if snapshot_id is None:
             # Normal path: trigger a fresh (billed) collection and wait for it.
             exclude_ids = load_exclude_ids()
-            print(f"Run: {run_label} | Excluding {len(exclude_ids)} recently-seen job IDs")
+            print(f"Run: {run_label} | Excluding {len(exclude_ids)} already-scraped job IDs")
             inputs = build_inputs(exclude_ids, max_keywords=max_keywords)
             payload = {"input": inputs}
             n_keywords = len(cfg["keywords"])

@@ -43,3 +43,19 @@ def test_max_keywords_larger_than_list_is_safe():
 def test_exclude_ids_threaded_into_each_input():
     inputs = scraper.build_inputs(["123", "456"], max_keywords=1)
     assert all(i["jobs_to_not_include"] == ["123", "456"] for i in inputs)
+
+
+def test_load_exclude_ids_returns_every_master_id(monkeypatch, tmp_path):
+    # Hard cost guard: an already-scraped posting must NEVER be re-collected or
+    # re-billed, no matter how long ago it was scraped. load_exclude_ids returns
+    # every master id — years-old, recent, and undated alike — not just a window.
+    master = tmp_path / "linkedin_jobs_master.csv"
+    master.write_text(
+        "job_posting_id,extracted_date\n"
+        "old,2020-01-01\n"
+        "recent,2026-06-23\n"
+        "undated,\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scraper, "MASTER_CSV", master)
+    assert set(scraper.load_exclude_ids()) == {"old", "recent", "undated"}

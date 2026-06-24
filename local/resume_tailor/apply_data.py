@@ -1,15 +1,17 @@
 """Write a self-contained apply.md next to each tailored resume.
 
 This is the human-and-Claude-readable "apply sheet" the user pastes into
-Claude-in-Chrome to fill out a job application. It carries, at the top, the
-fill-it-out playbook (the contract a form-filler must follow — never submit,
-never log in, e-sign with the candidate's name + today's date, flag blocking
-unknowns), then the candidate basics + mailing address, education, THIS JOB'S
-TAILORED RÉSUMÉ translated into markdown (Work experience / Projects / Leadership
-/ Technical skills), the reusable standard answers (work auth / EEO /
-how-did-you-hear), and an electronic-signature section. A hidden HTML-comment meta
-marker at the foot carries the job identity for machine lookup (invisible in
-rendered markdown).
+Claude-in-Chrome to fill out a job application. It is a **fallback** for portals
+that DON'T auto-fill the form from an uploaded résumé — so it lists no files to
+upload; it carries the data needed to type the fields in by hand. It opens with a
+"when to use this sheet" note, then the fill-it-out playbook (the contract a
+form-filler must follow — never submit, never log in, e-sign with the candidate's
+name + today's date, flag blocking unknowns), then the candidate basics + mailing
+address, education, THIS JOB'S TAILORED RÉSUMÉ translated into markdown (Work
+experience / Projects / Leadership / Technical skills), the reusable standard
+answers (work auth / EEO / how-did-you-hear), and an electronic-signature section.
+A hidden HTML-comment meta marker at the foot carries the job identity for machine
+lookup (invisible in rendered markdown).
 
 The résumé sections are built **deterministically** from the data the tailor
 already computed — the selection (`sel`), the bullets that survived one-page
@@ -26,7 +28,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import apply_answers, apply_config, assets, output
+from . import apply_answers, apply_config, assets
 
 # Structured mailing-address answer ids — rendered in the Address section and
 # excluded from the generic Standard-answers list (so they aren't shown twice).
@@ -49,7 +51,6 @@ Work through the form page by page, all the way to the end.
 - **Never log in, create an account, or enter a password, payment info, SSN, or any government ID.
   Never solve a CAPTCHA.** At any login / account / verification-code / CAPTCHA wall, stop, say
   exactly what is needed, and wait for the human to clear it — then continue.
-- **Upload the résumé PDF** listed under Documents (and the cover letter if one is listed).
 - Use the **Standard answers** verbatim for work-authorization / sponsorship / EEO / "how did you
   hear" questions. For "describe your experience"-type boxes, paraphrase the **Work experience /
   Projects** bullets below — never invent salaries, dates, or essay answers.
@@ -293,8 +294,8 @@ def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
     return "".join(out)
 
 
-def build_markdown(master: Dict[str, Any], job: Dict[str, str], resume_pdf: Path,
-                   cover_pdf: Path | None, answers: List[Dict[str, Any]], *,
+def build_markdown(master: Dict[str, Any], job: Dict[str, str],
+                   answers: List[Dict[str, Any]], *,
                    sel: Optional[Dict[str, Any]] = None,
                    bullets: Optional[Dict[str, str]] = None,
                    skill_lines: Optional[List[Dict[str, str]]] = None) -> str:
@@ -308,16 +309,17 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str], resume_pdf: Path
 
     parts: List[str] = []
     parts.append(f"# Apply sheet — {title} @ {company}\n")
+    parts.append(f"Generated {date.today().isoformat()}.\n")
+
+    parts.append("\n## When to use this sheet\n")
     parts.append(
-        f"Generated {date.today().isoformat()}. **Paste this entire sheet into "
-        f"Claude-in-Chrome** to fill out the application, then review and submit it yourself.\n"
+        "Most application portals **auto-fill the form from your uploaded résumé** — when that works "
+        "you don't need this sheet; just upload your résumé and fix anything the parser got wrong. "
+        "Use this sheet only when a portal **doesn't** auto-fill from your résumé and you have to fill "
+        "the fields **by hand**. **Paste this entire sheet into Claude-in-Chrome** to fill those "
+        "fields, then review and submit it yourself.\n"
     )
     parts.append("\n" + PLAYBOOK + "\n")
-
-    parts.append("\n## Documents (upload these)\n")
-    parts.append(_kv("Résumé PDF", f"`{resume_pdf}`", always=True))
-    if cover_pdf is not None:
-        parts.append(_kv("Cover letter PDF", f"`{cover_pdf}`"))
 
     parts.append("\n## Candidate\n")
     parts.append(_kv("Name", basics.get("name", ""), always=True))
@@ -343,8 +345,7 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str], resume_pdf: Path
 def write(job: Dict[str, str], out_dir: Path, *,
           sel: Optional[Dict[str, Any]] = None,
           bullets: Optional[Dict[str, str]] = None,
-          skill_lines: Optional[List[Dict[str, str]]] = None,
-          cover_letter: bool = False) -> Path:
+          skill_lines: Optional[List[Dict[str, str]]] = None) -> Path:
     """Write a self-contained apply.md into out_dir and return its path.
 
     `sel` / `bullets` / `skill_lines` are the tailor's own selection + surviving
@@ -352,12 +353,8 @@ def write(job: Dict[str, str], out_dir: Path, *,
     Omit them (CLI / backfill) and the sheet carries a re-tailor note instead.
     """
     master = assets.load_master()
-    resume_pdf = out_dir / output.resume_filename()
-    cover_pdf = out_dir / output.cover_filename()
-    cover = cover_pdf if (cover_letter and cover_pdf.exists()) else None
-
     answers = apply_answers.load()
-    md = build_markdown(master, job, resume_pdf, cover, answers,
+    md = build_markdown(master, job, answers,
                         sel=sel, bullets=bullets, skill_lines=skill_lines)
     path = out_dir / "apply.md"
     path.write_text(md, encoding="utf-8")
@@ -369,6 +366,4 @@ def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
     whose apply.md is missing (e.g. folders tailored before this format). The
     selection/bullets are unavailable here, so the résumé sections carry a re-tailor
     note; everything else is rebuilt the same way write() does."""
-    folder = Path(folder)
-    has_cover = (folder / output.cover_filename()).exists()
-    return write(job, folder, cover_letter=has_cover)
+    return write(job, Path(folder))

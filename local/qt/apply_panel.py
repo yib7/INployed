@@ -45,8 +45,9 @@ class ApplyPanel(QtWidgets.QWidget):
         v.addLayout(top)
 
         hint = QtWidgets.QLabel(
-            "Paste the apply sheet into Claude-in-Chrome to fill the form — it stops before "
-            "the final Submit. Review every field and submit it yourself.")
+            "For portals that don't auto-fill from your résumé upload: paste the apply sheet into "
+            "Claude-in-Chrome to fill the fields by hand — it stops before the final Submit. Review "
+            "every field and submit it yourself.")
         hint.setProperty("muted", True)
         hint.setWordWrap(True)
         v.addWidget(hint)

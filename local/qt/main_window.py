@@ -849,7 +849,9 @@ class MainWindow(QtWidgets.QMainWindow):
         elif oks:
             self._set_status(f"Resume(s) ready ({len(oks)}).")
         last = oks[-1]["dir"] if oks else None
-        if last:
+        # Only open File Explorer when the user opted in — off by default so a
+        # multi-job batch doesn't spawn a window per résumé (Settings → Dashboard).
+        if last and settings.load().get("tailor_open_folder", False):
             try:
                 os.startfile(str(last))  # noqa: S606
             except OSError:

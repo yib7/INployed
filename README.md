@@ -108,7 +108,7 @@ python -m resume_tailor.run --job-id <job_posting_id> --cover-letter
 ```
 Output (in `~/Downloads/Generated_Resumes/<Company>/<Title>/`): a one-page PDF, its
 `.tex` source, `ats_report.txt` (keyword coverage), an optional cover letter, and
-`apply_data.json` (form-prefill profile).
+`apply.md` (a self-contained apply sheet you paste into Claude-in-Chrome).
 
 ### Find skills you forgot to list
 The JD-gap helper surfaces skills a posting wants that aren't yet in your master
@@ -241,31 +241,29 @@ off). *(Generating makes a Gemini API call; the push runs `gcloud` — both only
 click, each after a confirm.)*
 
 ### Apply to a job (semi-automated, in Chrome)
-Every tailored résumé folder gets an `apply_data.json` (candidate basics, education,
-document paths, tailored bullets, a flat `standard_answers` block, and the full
-`answer_bank` — your reusable screening answers). To apply:
+Every tailored résumé folder gets a self-contained **`apply.md`** apply sheet: the
+fill-it-out instructions at the top, then your candidate basics + structured address,
+education, the active standard answers, and the tailored résumé highlights. To apply:
 
 1. Tailor the résumé for the job (the **Tailor resume** button).
-2. Click **Apply** in the dashboard — it opens the posting in Chrome and copies the
-   résumé PDF path to your clipboard. *(This only opens the posting; it does not start
-   Claude — see the next step.)*
+2. Click **Apply** in the dashboard. The Apply button is **green only once the job has
+   both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
+   swaps the bottom score preview for a right-side **Apply panel** with the copyable
+   résumé / cover-letter paths and the full apply sheet (with a **Copy apply sheet**
+   button). The `✕` closes the panel and brings the score preview back.
 3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome
-   extension connected**, tell Claude to run the **apply-to-job** skill. It reads
-   `apply_data.json` and fills the Greenhouse / Lever / Ashby / Workday / generic form
-   **page by page, advancing to the next page until the final Submit screen — then stops
-   for you to review and send.**
+   extension connected**, paste the apply sheet into the chat and let Claude fill the
+   Greenhouse / Lever / Ashby / Workday / generic form **page by page until the final
+   Submit screen — then it stops for you to review and send.**
 
-> **Why "nothing happens" if you tried it on Google:** apply-to-job is a *Claude* skill,
-> not a Google/Gemini feature. It only runs inside Claude with the Chrome extension; you
-> trigger it by asking Claude, after tailoring the résumé so `apply_data.json` exists.
-
-**What it will and won't do (safety):** it fills every field it can and flags the rest;
-it **never logs in, never creates accounts, never enters passwords or email verification
-codes, never solves CAPTCHAs, and never clicks the final submit.** When it hits a login /
-account / verification / CAPTCHA wall it pauses and asks you to do that one step, then
-resumes. Any question it can't answer is captured as a **needs-review** entry you can
-finish in the **Apply Answers** tab — where you also mark answers *fixed* (never changed)
-or *open-ended* (the skill may adapt them per job).
+**What it will and won't do (safety):** the sheet's instructions tell the form-filler to
+fill every field it can and flag the rest; it **never logs in, never creates accounts,
+never enters passwords / payment / SSN / government IDs, never solves CAPTCHAs, and never
+clicks the final submit.** At a login / account / verification / CAPTCHA wall it pauses and
+asks you to do that one step, then resumes. Where the form asks for an electronic signature
+it types your name + today's date; a required field with no answer gets a `XXXXX`
+placeholder it flags for you. Manage your reusable answers (including address) in the
+**Apply Answers** tab — mark each *fixed* (never changed) or *open-ended* (adaptable per job).
 
 CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
 

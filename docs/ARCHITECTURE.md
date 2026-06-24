@@ -36,7 +36,10 @@ freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
 `ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads genuinely
 overlap); per-job failures are captured and reported in one aggregate dialog, registry
 writes happen back on the UI thread (the SQLite connection is thread-affine), and a
-warning precedes very large batches. See `MainWindow._tailor_work`/`_finish_tailor`.
+warning precedes very large batches. See `MainWindow._tailor_work`/`_finish_tailor`. The
+**Apply** button is the rightmost action and turns green only when the selected job has both its
+résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and swaps the bottom
+score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet, `✕` to close).
 
 ## The résumé engine in depth (`local/resume_tailor/`)
 
@@ -56,10 +59,10 @@ bullet must be traceable to a fact ("atom") the user actually wrote in
 | `latexutil.py` | Escaping, emphasis stripping, date formatting, unicode-math → LaTeX. |
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report. |
-| `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, form-prefill JSON. |
+| `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are now config-driven, default-preserving. |
-| `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder, build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO). |
+| `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder (by the `apply.md` meta marker), build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO, structured address). |
 
 ### Why it's config-driven
 `compose.py`/`layout.py`/`render.py` deliberately hardcode **no employer names**.
@@ -78,13 +81,17 @@ Apply) inside a scrollable canvas. `load`/`save` read and atomically write (with
 import `local/`; they read their own JSON with **env-override > file > built-in-default**
 precedence, so an absent file reproduces today's behavior exactly.
 
-## Apply automation (`apply.py` + the `apply-to-job` skill)
-`apply_data.write` drops an `apply_data.json` next to each tailored résumé (candidate
-basics, education, doc paths, tailored bullets, and a `standard_answers` block). The
-dashboard's **Apply** button (and `python -m resume_tailor.apply`) resolves that folder,
-opens the posting in Chrome, and surfaces the context; the `.claude/skills/apply-to-job`
-playbook drives Claude-in-Chrome to fill the form and **stop for human review — it
-never auto-submits.**
+## Apply automation (`apply.py` + the `apply.md` apply sheet)
+`apply_data.write` drops a single self-contained `apply.md` next to each tailored résumé: the
+fill-it-out playbook at the top (never submit; never log in / enter passwords, payment, SSN, or
+government IDs; never solve CAPTCHAs — pause and hand off; e-sign with the candidate's name +
+today's date; use `XXXXX` for a blocking required field with no answer and flag it), then candidate
+basics + structured address, education, the active standard answers, the tailored résumé highlights,
+and a hidden HTML-comment meta marker carrying the job identity for lookup. The dashboard's **Apply**
+button (and `python -m resume_tailor.apply`) resolves the folder via that marker, opens the posting
+in Chrome, and shows the Apply panel; the user pastes `apply.md` into Claude-in-Chrome to fill the
+form and **stop for human review — nothing auto-submits.** (The former `apply-to-job` skill is
+retired — its contract now lives at the top of every `apply.md`.)
 
 ### The one-page guarantee
 `layout.py` derives a `(min, max)` character window per bullet from empirically
@@ -98,7 +105,7 @@ and shrinks until it fits one page.
 master_experience.yaml ──┐
                          ▼
 job (CSV row) ─► select ─► rephrase ─► verify ─► layout fit ─► render ─► pdflatex ─► PDF
-                                                                    └► ATS report, cover letter, prep, apply_data
+                                                                    └► ATS report, cover letter, prep, apply.md
 ```
 
 ## Where the tests live

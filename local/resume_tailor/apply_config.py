@@ -8,9 +8,10 @@ green-card holder who never needs visa sponsorship.
 DEFAULTS is now only a SEED: on first run apply_answers.seed_defaults() turns it
 into the master answer store (apply_answers.json), and a pre-existing
 apply_config.json migrates its overrides in once. After that, the Apply Answers
-tab + apply_answers.json are the source of truth, and apply_data.write() embeds
-apply_answers.as_standard_answers() (not this file) as each apply_data.json's
-"standard_answers" block. The form-filler still leaves the final submit to the human.
+tab + apply_answers.json are the source of truth, and apply_data.write() renders
+the active answers (this file's keys, incl. the structured address) into each
+job's self-contained apply.md sheet. The form-filler still leaves the final
+submit to the human.
 """
 from __future__ import annotations
 

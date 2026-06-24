@@ -243,14 +243,20 @@ click, each after a confirm.)*
 ### Apply to a job (semi-automated, in Chrome)
 Every tailored résumé folder gets a self-contained **`apply.md`** apply sheet: the
 fill-it-out instructions at the top, then your candidate basics + structured address,
-education, the active standard answers, and the tailored résumé highlights. To apply:
+education, **this job's tailored résumé translated into markdown** (the work experience,
+projects, leadership, and skills that actually landed on the PDF — company names, titles,
+dates, and every bullet, so Claude can fill the structured employment fields), and the
+active standard answers. It's built from the tailoring run's own output, so it mirrors the
+PDF exactly with no extra AI call. To apply:
 
 1. Tailor the résumé for the job (the **Tailor resume** button).
 2. Click **Apply** in the dashboard. The Apply button is **green only once the job has
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
    swaps the bottom score preview for a right-side **Apply panel** with the copyable
    résumé / cover-letter paths and the full apply sheet (with a **Copy apply sheet**
-   button). The `✕` closes the panel and brings the score preview back.
+   button). The `✕` closes the panel and brings the score preview back; **"I applied to
+   this job"** confirms, adds the job to your Tracker as *applied*, and closes the panel
+   (the right-click → *Set status → applied* still works too).
 3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome
    extension connected**, paste the apply sheet into the chat and let Claude fill the
    Greenhouse / Lever / Ashby / Workday / generic form **page by page until the final
@@ -263,7 +269,8 @@ clicks the final submit.** At a login / account / verification / CAPTCHA wall it
 asks you to do that one step, then resumes. Where the form asks for an electronic signature
 it types your name + today's date; a required field with no answer gets a `XXXXX`
 placeholder it flags for you. Manage your reusable answers (including address) in the
-**Apply Answers** tab — mark each *fixed* (never changed) or *open-ended* (adaptable per job).
+**Apply Answers** tab — add your own, and mark each *fixed* (never changed) or *open-ended*
+(adaptable per job).
 
 CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
 

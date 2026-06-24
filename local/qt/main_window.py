@@ -259,7 +259,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_tracker(self) -> None:
         rows = self.registry.status_rows()
         self._tracked = {r["job_posting_id"]: r for r in rows}
-        rpaths = set(self.registry.resume_paths())
+        rpaths = self._resume_ids()   # tracker ✓ also follows on-disk existence
         today = date.today()
         recs: list[dict] = []
         for r in rows:
@@ -300,8 +300,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tracker_tab.set_source_df(tdf, self._resume_ids())
 
     def _resume_ids(self) -> frozenset:
+        # Only ids whose tailored folder still EXISTS on disk are tinted blue, so a
+        # folder deleted by hand drops its tint on the next reload (jobsdata keeps
+        # the registry row — the tint returns if the folder comes back).
         try:
-            return frozenset(self.registry.resume_paths())
+            return frozenset(jobsdata.live_resume_ids(self.registry.resume_paths()))
         except Exception:  # noqa: BLE001 - cosmetic; never break the view
             return frozenset()
 

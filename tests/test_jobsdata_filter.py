@@ -49,3 +49,25 @@ def test_search_column_precomputed():
 def test_min_score_filter():
     out = jobsdata.filter_and_sort(_df(), "", "5", "All", "All", "All", False, None)
     assert list(out["company_name"]) == ["Acme"]   # only the score-5 row
+
+
+# --- live_resume_ids: the blue "tailored" tint follows on-disk folder existence ---
+
+def test_live_resume_ids_keeps_only_existing_folders(tmp_path):
+    live_dir = tmp_path / "have"
+    live_dir.mkdir()
+    paths = {"1": str(live_dir), "2": str(tmp_path / "deleted"),
+             "3": "", "4": None}
+    assert jobsdata.live_resume_ids(paths) == {"1"}   # only the folder that exists
+
+
+def test_live_resume_ids_excludes_a_file_path(tmp_path):
+    # a recorded path that is a FILE, not a directory, is not a live tailored folder.
+    f = tmp_path / "not_a_dir.pdf"
+    f.write_bytes(b"%PDF")
+    assert jobsdata.live_resume_ids({"9": str(f)}) == set()
+
+
+def test_live_resume_ids_handles_empty_or_non_dict():
+    assert jobsdata.live_resume_ids({}) == set()
+    assert jobsdata.live_resume_ids(set()) == set()   # tolerant of a non-mapping

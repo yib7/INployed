@@ -85,3 +85,46 @@ def test_load_absent_file_seeds_and_migrates(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
     loaded = aa.load(tmp_path / "missing_answers.json")
     assert {e["id"] for e in loaded} == set(apply_config.DEFAULTS)
+
+
+# --- cycle 12: structured address fields -------------------------------------
+
+_ADDRESS_IDS = ("address_street", "address_city", "address_state",
+                "address_zip", "address_country")
+
+
+def test_defaults_include_structured_address():
+    for key in _ADDRESS_IDS:
+        assert key in apply_config.DEFAULTS
+    assert apply_config.DEFAULTS["address_country"] == "United States"
+    # the rest start blank for the user to fill
+    assert apply_config.DEFAULTS["address_street"] == ""
+
+
+def test_seed_defaults_address_is_open_ended():
+    seeded = {e["id"]: e for e in aa.seed_defaults()}
+    for key in _ADDRESS_IDS:
+        assert seeded[key]["kind"] == "open-ended"
+        assert seeded[key]["question"]  # has a human-readable label
+    assert aa.as_standard_answers(aa.seed_defaults())["address_country"] == "United States"
+
+
+def test_load_stays_pure_no_merge(tmp_path):
+    # plain load() returns EXACTLY the stored entries (the editor round-trip relies on this)
+    old = [e for e in aa.seed_defaults() if e["id"] not in _ADDRESS_IDS]
+    p = tmp_path / "apply_answers.json"
+    aa.save(old, p)
+    assert aa.load(p) == old
+
+
+def test_load_with_defaults_merges_missing_address(tmp_path):
+    # an OLD store saved before address existed (seed minus the address ids)
+    old = [e for e in aa.seed_defaults() if e["id"] not in _ADDRESS_IDS]
+    p = tmp_path / "apply_answers.json"
+    aa.save(old, p)
+    loaded = {e["id"]: e for e in aa.load_with_defaults(p)}
+    for key in _ADDRESS_IDS:
+        assert key in loaded, f"{key} should be merged in by load_with_defaults"
+        assert loaded[key]["status"] == "active"
+    # custom/existing entries are preserved
+    assert "how_did_you_hear" in loaded

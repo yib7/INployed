@@ -59,6 +59,29 @@ def test_add_row_and_validate(qtbot, tmp_path):
     assert ed.validate() == []                  # a complete row is valid
 
 
+def test_default_store_editor_shows_full_standard_set(qtbot, tmp_path, monkeypatch):
+    # The live tab (no explicit store_path) merges in any missing seeded defaults
+    # (e.g. the new address_* fields) so the user can fill them.
+    store = tmp_path / "apply_answers.json"
+    _seed(store, [{"id": "how_did_you_hear", "question": "How?", "answer": "LinkedIn",
+                   "kind": "open-ended", "status": "active"}])
+    monkeypatch.setattr(apply_answers, "STORE_PATH", store)
+    ed = AnswersEditor()  # no store_path -> live default store, merges defaults
+    qtbot.addWidget(ed)
+    ids = {r["id"] for r in ed.rows}
+    assert "address_street" in ids and "address_country" in ids
+
+
+def test_explicit_store_editor_is_exact(qtbot, tmp_path):
+    # An explicit store_path (tests/tools) is loaded verbatim — no default merge.
+    store = tmp_path / "apply_answers.json"
+    _seed(store, [{"id": "only", "question": "Q", "answer": "a",
+                   "kind": "fixed", "status": "active"}])
+    ed = AnswersEditor(store_path=store)
+    qtbot.addWidget(ed)
+    assert len(ed.rows) == 1
+
+
 def test_revert_restores_snapshot(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
     _seed(store, [{"id": "q1", "question": "Q", "answer": "orig",

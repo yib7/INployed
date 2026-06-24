@@ -4,11 +4,19 @@ This is the human-and-Claude-readable "apply sheet" the user pastes into
 Claude-in-Chrome to fill out a job application. It carries, at the top, the
 fill-it-out playbook (the contract a form-filler must follow — never submit,
 never log in, e-sign with the candidate's name + today's date, flag blocking
-unknowns), then the candidate basics + mailing address, education, the reusable
-standard answers (work auth / EEO / how-did-you-hear), the tailored résumé
-highlights, and an electronic-signature section. A hidden HTML-comment meta
+unknowns), then the candidate basics + mailing address, education, THIS JOB'S
+TAILORED RÉSUMÉ translated into markdown (Work experience / Projects / Leadership
+/ Technical skills), the reusable standard answers (work auth / EEO /
+how-did-you-hear), and an electronic-signature section. A hidden HTML-comment meta
 marker at the foot carries the job identity for machine lookup (invisible in
-rendered markdown). Replaces the old apply_data.json — nothing here ever submits.
+rendered markdown).
+
+The résumé sections are built **deterministically** from the data the tailor
+already computed — the selection (`sel`), the bullets that survived one-page
+enforcement (`bullets`, keyed by group key), and the compressed `skill_lines` —
+so the apply sheet mirrors the PDF exactly and needs **no extra LLM call**. Only
+the blocks the tailor selected for this job appear (mirroring render.py's grouping).
+Replaces the old apply_data.json — nothing here ever submits.
 """
 from __future__ import annotations
 
@@ -16,7 +24,7 @@ import json
 import re
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from . import apply_answers, apply_config, assets, output
 
@@ -43,14 +51,15 @@ Work through the form page by page, all the way to the end.
   exactly what is needed, and wait for the human to clear it — then continue.
 - **Upload the résumé PDF** listed under Documents (and the cover letter if one is listed).
 - Use the **Standard answers** verbatim for work-authorization / sponsorship / EEO / "how did you
-  hear" questions. For "describe your experience"-type boxes, paraphrase the **Résumé highlights** —
-  never invent salaries, dates, or essay answers.
+  hear" questions. For "describe your experience"-type boxes, paraphrase the **Work experience /
+  Projects** bullets below — never invent salaries, dates, or essay answers.
 - **Electronic signature:** where the form asks you to sign, type the candidate's full name as the
   signature and use **today's date** (the day you are applying). Signing is not submitting — still
   stop before the final Submit.
 - **If a REQUIRED field has no answer in this sheet and blocks progress:** enter `XXXXX` (or pick a
   clearly-neutral default option), and add that field to a **"Needs review"** list you report back
-  in chat so the human can fix it before submitting. Leave optional unknowns blank.
+  in chat so the human can fix it before submitting. Leave optional unknowns blank, but
+  note them for review too.
 - At the end, report: what you filled, what still needs the human (placeholders, walls, blanks), and
   any new questions the form asked that aren't covered here."""
 
@@ -133,6 +142,136 @@ def _education_lines(education: List[Dict[str, Any]]) -> str:
     return "".join(out)
 
 
+# --- this job's tailored résumé, mirrored deterministically into markdown ------
+
+def _exp_meta(master: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {e.get("org"): {"name": e.get("org"), "title": e.get("title"),
+                           "location": e.get("location"), "dates": e.get("dates")}
+            for e in (master.get("experience", []) or [])}
+
+
+def _proj_meta(master: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {p.get("name"): {"name": p.get("name"), "dates": p.get("dates"),
+                            "live_url": p.get("live_url"), "repo": p.get("repo")}
+            for p in (master.get("projects", []) or [])}
+
+
+def _lead_meta(master: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {ld.get("org"): {"name": ld.get("org"), "title": ld.get("title"),
+                            "location": ld.get("location"), "dates": ld.get("dates")}
+            for ld in (master.get("leadership", []) or [])}
+
+
+def _grouped_bullets(entry: Dict[str, Any], bullets: Dict[str, str]) -> List[str]:
+    """Surviving bullet texts for one block's groups, in selection order — mirrors
+    render._group_bullets (a group whose bullet was trimmed away on one-page
+    enforcement, i.e. absent from `bullets`, is skipped)."""
+    out: List[str] = []
+    for ids in entry.get("groups", []) or []:
+        gk = "+".join(ids)
+        if gk in bullets:
+            text = str(bullets[gk]).strip()
+            if text:
+                out.append(text)
+    return out
+
+
+def _entry_header(primary: str, extras: List[Any]) -> str:
+    """`**primary** — extra · extra` (extras are the factual title/location/dates)."""
+    bits = [str(x).strip() for x in extras if str(x or "").strip()]
+    head = f"**{str(primary).strip()}**"
+    if bits:
+        head += " — " + " · ".join(bits)
+    return head
+
+
+def _entry_block(header: str, items: List[str], note: str = "") -> str:
+    lines = header + ("\n" + note if note else "")
+    body = "\n".join(f"- {b}" for b in items)
+    return f"{lines}\n\n{body}\n\n"
+
+
+def _experience_md(entries: List[Dict[str, Any]], meta: Dict[str, Dict[str, Any]],
+                   bullets: Dict[str, str]) -> str:
+    out: List[str] = []
+    for entry in entries:
+        b = meta.get(entry.get("name"))
+        items = _grouped_bullets(entry, bullets)
+        if not b or not items:
+            continue
+        header = _entry_header(b["name"], [b.get("title"), b.get("location"), b.get("dates")])
+        out.append(_entry_block(header, items))
+    if not out:
+        return ""
+    return "## Work experience\n\n" + "".join(out)
+
+
+def _projects_md(entries: List[Dict[str, Any]], meta: Dict[str, Dict[str, Any]],
+                 bullets: Dict[str, str]) -> str:
+    out: List[str] = []
+    for entry in entries:
+        b = meta.get(entry.get("name"))
+        items = _grouped_bullets(entry, bullets)
+        if not b or not items:
+            continue
+        header = _entry_header(b["name"], [b.get("dates")])
+        link_bits = [str(b.get("live_url") or "").strip(), str(b.get("repo") or "").strip()]
+        link = " · ".join(x for x in link_bits if x)
+        note = f"*{link}*" if link else ""
+        out.append(_entry_block(header, items, note=note))
+    if not out:
+        return ""
+    return "## Projects\n\n" + "".join(out)
+
+
+def _leadership_md(entries: List[Dict[str, Any]], meta: Dict[str, Dict[str, Any]],
+                   bullets: Dict[str, str]) -> str:
+    out: List[str] = []
+    for entry in entries:
+        b = meta.get(entry.get("name"))
+        items = _grouped_bullets(entry, bullets)
+        if not b or not items:
+            continue
+        header = _entry_header(b["name"], [b.get("title"), b.get("location"), b.get("dates")])
+        out.append(_entry_block(header, items))
+    if not out:
+        return ""
+    return "## Leadership\n\n" + "".join(out)
+
+
+def _skills_md(skill_lines: Optional[List[Dict[str, str]]]) -> str:
+    rows: List[str] = []
+    for ln in skill_lines or []:
+        label = str(ln.get("label", "")).strip()
+        items = str(ln.get("items", "")).strip()
+        if not (label or items):
+            continue
+        rows.append(f"- **{label}:** {items}" if label else f"- {items}")
+    if not rows:
+        return ""
+    return "## Technical skills\n" + "\n".join(rows) + "\n"
+
+
+def _resume_lines(master: Dict[str, Any], sel: Optional[Dict[str, Any]],
+                  bullets: Optional[Dict[str, str]],
+                  skill_lines: Optional[List[Dict[str, str]]]) -> str:
+    """This job's tailored résumé as markdown (Work experience / Projects /
+    Leadership / Technical skills), built from the selection + surviving bullets.
+    A note stands in when no tailoring data is available (CLI / backfill)."""
+    sel = sel or {}
+    bullets = bullets or {}
+    parts = [
+        _experience_md(sel.get("experience", []) or [], _exp_meta(master), bullets),
+        _projects_md(sel.get("projects", []) or [], _proj_meta(master), bullets),
+        _leadership_md(sel.get("leadership", []) or [], _lead_meta(master), bullets),
+        _skills_md(skill_lines),
+    ]
+    body = "".join(p for p in parts if p)
+    if not body:
+        return "## Résumé\n_(Re-tailor this job to embed the résumé contents here.)_\n"
+    return body
+
+
 def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
     out = ["## Standard answers\n"]
     for e in answers:
@@ -154,19 +293,11 @@ def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
     return "".join(out)
 
 
-def _highlight_lines(bullets: List[str]) -> str:
-    out = ["## Résumé highlights (paraphrase for \"describe your experience\" fields)\n"]
-    clean = [b.strip() for b in (bullets or []) if str(b).strip()]
-    if clean:
-        out.extend(f"- {b}\n" for b in clean)
-    else:
-        out.append("- (re-tailor this job to include résumé highlights)\n")
-    return "".join(out)
-
-
 def build_markdown(master: Dict[str, Any], job: Dict[str, str], resume_pdf: Path,
-                   cover_pdf: Path | None, bullets: List[str],
-                   answers: List[Dict[str, Any]]) -> str:
+                   cover_pdf: Path | None, answers: List[Dict[str, Any]], *,
+                   sel: Optional[Dict[str, Any]] = None,
+                   bullets: Optional[Dict[str, str]] = None,
+                   skill_lines: Optional[List[Dict[str, str]]] = None) -> str:
     """Assemble the full apply.md text (pure function — easily testable)."""
     basics = master.get("basics", {}) or {}
     education = master.get("education", []) or []
@@ -198,8 +329,8 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str], resume_pdf: Path
 
     parts.append("\n" + _address_lines(flat))
     parts.append("\n" + _education_lines(education))
+    parts.append("\n" + _resume_lines(master, sel, bullets, skill_lines))
     parts.append("\n" + _standard_answer_lines(answers))
-    parts.append("\n" + _highlight_lines(bullets))
 
     parts.append("\n## Electronic signature (use at the end, where the form asks — do not submit)\n")
     parts.append(_kv("Signature (type)", basics.get("name", ""), always=True))
@@ -209,16 +340,25 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str], resume_pdf: Path
     return "".join(parts)
 
 
-def write(job: Dict[str, str], out_dir: Path, bullets: List[str],
+def write(job: Dict[str, str], out_dir: Path, *,
+          sel: Optional[Dict[str, Any]] = None,
+          bullets: Optional[Dict[str, str]] = None,
+          skill_lines: Optional[List[Dict[str, str]]] = None,
           cover_letter: bool = False) -> Path:
-    """Write a self-contained apply.md into out_dir and return its path."""
+    """Write a self-contained apply.md into out_dir and return its path.
+
+    `sel` / `bullets` / `skill_lines` are the tailor's own selection + surviving
+    bullets + compressed skills; when present the résumé sections mirror the PDF.
+    Omit them (CLI / backfill) and the sheet carries a re-tailor note instead.
+    """
     master = assets.load_master()
     resume_pdf = out_dir / output.resume_filename()
     cover_pdf = out_dir / output.cover_filename()
     cover = cover_pdf if (cover_letter and cover_pdf.exists()) else None
 
     answers = apply_answers.load()
-    md = build_markdown(master, job, resume_pdf, cover, bullets, answers)
+    md = build_markdown(master, job, resume_pdf, cover, answers,
+                        sel=sel, bullets=bullets, skill_lines=skill_lines)
     path = out_dir / "apply.md"
     path.write_text(md, encoding="utf-8")
     return path
@@ -226,9 +366,9 @@ def write(job: Dict[str, str], out_dir: Path, bullets: List[str],
 
 def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
     """Backfill apply.md for an already-tailored folder whose résumé PDF exists but
-    whose apply.md is missing (e.g. folders tailored before this format). Bullets are
-    unavailable here, so résumé highlights are empty; everything else is rebuilt the
-    same way write() does."""
+    whose apply.md is missing (e.g. folders tailored before this format). The
+    selection/bullets are unavailable here, so the résumé sections carry a re-tailor
+    note; everything else is rebuilt the same way write() does."""
     folder = Path(folder)
     has_cover = (folder / output.cover_filename()).exists()
-    return write(job, folder, [], cover_letter=has_cover)
+    return write(job, folder, cover_letter=has_cover)

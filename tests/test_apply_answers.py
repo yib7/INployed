@@ -1,10 +1,11 @@
 """Tests for local/resume_tailor/apply_answers.py — the master answer store.
 
-The store is the reusable bank of screening-question answers the apply skill
-consumes. Each entry is tagged fixed/open-ended and active/needs-review. These
-tests pin: seeding from the legacy defaults, flattening active answers back into
-the exact legacy `standard_answers` shape, validation, atomic save with `.bak`,
-migration of an existing apply_config.json, and dedupe of captured questions.
+The store is the reusable bank of screening-question answers the apply sheet
+consumes. Each entry is tagged fixed/open-ended; every entry is `active` (the
+needs-review status was retired in cycle 13, but `validate()` still tolerates it
+so an old store loads). These tests pin: seeding from the legacy defaults,
+flattening active answers back into the exact legacy `standard_answers` shape,
+validation, atomic save with `.bak`, and migration of an existing apply_config.json.
 """
 import json
 import sys
@@ -62,15 +63,18 @@ def test_save_rejects_invalid(tmp_path):
         raise AssertionError("save should reject an invalid store")
 
 
-def test_append_needs_review_dedupes(tmp_path):
-    p = tmp_path / "apply_answers.json"
-    aa.save(aa.seed_defaults(), p)
-    aa.append_needs_review(["Why do you want to work here?"], p)
-    aa.append_needs_review(["why do you WANT to work here?  "], p)  # same, normalized
-    nr = [e for e in aa.load(p) if e["status"] == "needs-review"]
-    assert len(nr) == 1
-    assert nr[0]["kind"] == "open-ended"
-    assert nr[0]["answer"] == ""
+def test_append_needs_review_is_retired():
+    # cycle 13: the auto-flagging helper (only the retired apply-to-job skill used
+    # it) is gone — answers are added manually now.
+    assert not hasattr(aa, "append_needs_review")
+
+
+def test_validate_tolerates_legacy_needs_review():
+    # the needs-review status is retired from the UI, but an old store that still
+    # carries it must still load + validate (it migrates to active on next save).
+    legacy = [{"id": "x", "question": "q", "answer": "a", "kind": "open-ended",
+               "status": "needs-review"}]
+    assert aa.validate(legacy) == []
 
 
 def test_migrate_applies_overrides(tmp_path, monkeypatch):

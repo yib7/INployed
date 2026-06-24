@@ -1,4 +1,9 @@
-"""SP8: the Qt Apply Answers editor — load/collect round-trip, filter, validate, revert."""
+"""The Qt Apply Answers editor — load/collect round-trip, validate, revert.
+
+Cycle 13 retired the needs-review status: the editor has no status dropdown and no
+needs-review filter; every row is saved active. A legacy needs-review entry still
+loads and round-trips to active.
+"""
 from qt.answers_tab import AnswersEditor
 from resume_tailor import apply_answers
 
@@ -35,18 +40,24 @@ def test_save_persists(qtbot, tmp_path, monkeypatch):
     assert any(e["answer"] == "Authorized" for e in reloaded)
 
 
-def test_needs_review_filter_hides_but_never_drops(qtbot, tmp_path):
+def test_editor_has_no_needs_review_controls(qtbot, tmp_path):
     store = tmp_path / "apply_answers.json"
-    _seed(store, [
-        {"id": "a", "question": "Q active", "answer": "x", "kind": "fixed", "status": "active"},
-        {"id": "b", "question": "Q review", "answer": "y", "kind": "open-ended",
-         "status": "needs-review"},
-    ])
+    _seed(store, [{"id": "a", "question": "Q", "answer": "x",
+                   "kind": "fixed", "status": "active"}])
     ed = _editor(qtbot, store)
-    ed.filter_check.setChecked(True)            # show needs-review only
-    hidden = [r for r in ed.rows if r["frame"].isHidden()]
-    assert len(hidden) == 1                      # the active row is hidden
-    assert len(ed.collect()) == 2               # ...but filter never drops on collect
+    assert not hasattr(ed, "filter_check")       # no needs-review filter
+    assert "status" not in ed.rows[0]            # no per-row status dropdown
+    assert all(e["status"] == "active" for e in ed.collect())
+
+
+def test_collect_migrates_legacy_needs_review_to_active(qtbot, tmp_path):
+    store = tmp_path / "apply_answers.json"
+    _seed(store, [{"id": "b", "question": "Q review", "answer": "y",
+                   "kind": "open-ended", "status": "needs-review"}])
+    ed = _editor(qtbot, store)
+    assert len(ed.rows) == 1                      # the legacy row still loads
+    out = ed.collect()
+    assert out[0]["status"] == "active"          # ...and is migrated to active
 
 
 def test_add_row_and_validate(qtbot, tmp_path):

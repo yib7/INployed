@@ -1,11 +1,10 @@
 """The Apply Answers editor (Qt): manage the master answer store from the dashboard.
 
 A table over `apply_answers.json`: one row per screening-question answer (question,
-answer, kind fixed/open-ended, status active/needs-review). Add / edit / delete,
-filter to the needs-review items the apply skill flagged. Save validates via
+answer, kind fixed/open-ended). Add / edit / delete. Save validates via
 `apply_answers.validate` and backs up to `.bak`; "Revert to opening state" restores
-the snapshot taken when the editor opened. The needs-review filter only hides rows
-— it never drops them on save.
+the snapshot taken when the editor opened. Every row is saved active — the
+needs-review status (and its filter) was retired in cycle 13.
 """
 from __future__ import annotations
 
@@ -48,14 +47,10 @@ class AnswersEditor(QtWidgets.QWidget):
         blurb.setProperty("muted", True)
         blurb.setWordWrap(True)
         top.addWidget(blurb, 1)
-        self.filter_check = QtWidgets.QCheckBox("Show needs-review only")
-        self.filter_check.stateChanged.connect(self._apply_filter)
-        top.addWidget(self.filter_check)
         v.addLayout(top)
 
         header = QtWidgets.QHBoxLayout()
-        for text, stretch in (("Question", 5), ("Answer", 4), ("Kind", 1),
-                              ("Status", 1), ("", 1)):
+        for text, stretch in (("Question", 5), ("Answer", 4), ("Kind", 1), ("", 1)):
             lab = QtWidgets.QLabel(text)
             lab.setProperty("muted", True)
             header.addWidget(lab, stretch)
@@ -96,7 +91,6 @@ class AnswersEditor(QtWidgets.QWidget):
         loader = apply_answers.load_with_defaults if self._merge_defaults else apply_answers.load
         for entry in loader(self.store_path):
             self._add_row_widgets(entry)
-        self._apply_filter()
 
     def _add_row_widgets(self, entry: dict) -> dict:
         frame = QtWidgets.QWidget()
@@ -107,17 +101,13 @@ class AnswersEditor(QtWidgets.QWidget):
         kind = QtWidgets.QComboBox()
         kind.addItems(list(apply_answers.KINDS))
         kind.setCurrentText(str(entry.get("kind", "open-ended")))
-        status = QtWidgets.QComboBox()
-        status.addItems(list(apply_answers.STATUSES))
-        status.setCurrentText(str(entry.get("status", "active")))
         delete = QtWidgets.QPushButton("Delete")
         h.addWidget(question, 5)
         h.addWidget(answer, 4)
         h.addWidget(kind, 1)
-        h.addWidget(status, 1)
         h.addWidget(delete, 1)
         row = {"id": str(entry.get("id", "")), "question": question, "answer": answer,
-               "kind": kind, "status": status, "frame": frame}
+               "kind": kind, "frame": frame}
         delete.clicked.connect(lambda _=False, r=row: self._delete_row(r))
         self._rows_box.insertWidget(self._rows_box.count() - 1, frame)  # before the stretch
         self.rows.append(row)
@@ -127,10 +117,6 @@ class AnswersEditor(QtWidgets.QWidget):
         entry = entry or {"id": "", "question": "", "answer": "",
                           "kind": "open-ended", "status": "active"}
         row = self._add_row_widgets(entry)
-        # A new row defaults to "active", so the needs-review filter would hide it
-        # the instant it's added — drop the filter so the user sees what they added.
-        self.filter_check.setChecked(False)
-        self._apply_filter()
         return row
 
     def _delete_row(self, row: dict) -> None:
@@ -139,12 +125,6 @@ class AnswersEditor(QtWidgets.QWidget):
             self.rows.remove(row)
 
     # ---- actions -------------------------------------------------------------
-
-    def _apply_filter(self, *_):
-        only_nr = self.filter_check.isChecked()
-        for row in self.rows:
-            show = (not only_nr) or row["status"].currentText() == "needs-review"
-            row["frame"].setVisible(show)
 
     def collect(self) -> list[dict]:
         out: list[dict] = []
@@ -159,7 +139,7 @@ class AnswersEditor(QtWidgets.QWidget):
                 rid = apply_answers.new_id(question or rid, taken)
             taken.add(rid)
             out.append({"id": rid, "question": question, "answer": answer,
-                        "kind": row["kind"].currentText(), "status": row["status"].currentText()})
+                        "kind": row["kind"].currentText(), "status": "active"})
         return out
 
     def validate(self) -> list[str]:

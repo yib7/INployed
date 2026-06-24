@@ -22,6 +22,10 @@ class AnswersEditor(QtWidgets.QWidget):
                  store_path: Path | None = None, parent=None):
         super().__init__(parent)
         self.on_saved = on_saved
+        # The live tab (no explicit path) always offers the complete standard set
+        # (so newly-added defaults like the address fields appear). Tests/tools that
+        # pass an explicit store_path get an exact read of that file.
+        self._merge_defaults = store_path is None
         self.store_path = Path(store_path) if store_path is not None else apply_answers.STORE_PATH
         self.snapshot = self.store_path.read_bytes() if self.store_path.exists() else b""
         self.rows: list[dict] = []
@@ -89,7 +93,8 @@ class AnswersEditor(QtWidgets.QWidget):
         for row in self.rows:
             row["frame"].setParent(None)
         self.rows.clear()
-        for entry in apply_answers.load(self.store_path):
+        loader = apply_answers.load_with_defaults if self._merge_defaults else apply_answers.load
+        for entry in loader(self.store_path):
             self._add_row_widgets(entry)
         self._apply_filter()
 

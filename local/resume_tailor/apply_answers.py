@@ -57,6 +57,11 @@ _QUESTIONS = {
     "veteran_status": "Veteran status (EEO self-identification).",
     "disability_status": "Disability status (EEO self-identification).",
     "how_did_you_hear": "How did you hear about us?",
+    "address_street": "Street address (line 1).",
+    "address_city": "City.",
+    "address_state": "State / province.",
+    "address_zip": "ZIP / postal code.",
+    "address_country": "Country.",
 }
 
 
@@ -112,9 +117,23 @@ def migrate_from_apply_config(answers: List[Dict[str, Any]]) -> List[Dict[str, A
     return answers
 
 
+def _merge_missing_seeds(answers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Append any seeded-default entry whose id isn't already in `answers`, so a
+    store saved before a new default existed (e.g. the cycle-12 address_* fields)
+    gains it on load — the Apply Answers tab then shows it without a manual reset.
+    A default the user intentionally deleted would also reappear (default value,
+    active); accepted to keep the standard set complete."""
+    have = {e.get("id") for e in answers}
+    for seed in seed_defaults():
+        if seed["id"] not in have:
+            answers.append(seed)
+    return answers
+
+
 def load(path: Union[Path, None] = None) -> List[Dict[str, Any]]:
-    """Stored answers if the file exists, else the seeded+migrated defaults (in
-    memory; not written)."""
+    """Stored answers EXACTLY as saved if the file exists, else the seeded+migrated
+    defaults (in memory; not written). Pure read — consumers that want the full
+    standard set merged in (the Apply Answers tab) call `load_with_defaults`."""
     path = Path(path) if path is not None else STORE_PATH
     if path.exists():
         try:
@@ -125,6 +144,13 @@ def load(path: Union[Path, None] = None) -> List[Dict[str, Any]]:
             return data["answers"]
         return migrate_from_apply_config(seed_defaults())
     return migrate_from_apply_config(seed_defaults())
+
+
+def load_with_defaults(path: Union[Path, None] = None) -> List[Dict[str, Any]]:
+    """`load()` plus any seeded-default entry the store is missing (e.g. the
+    cycle-12 address_* fields), so the Apply Answers tab always offers the complete
+    standard set without a manual reset. Not used by the pure machine consumers."""
+    return _merge_missing_seeds(load(path))
 
 
 def validate(answers: List[Dict[str, Any]]) -> List[str]:

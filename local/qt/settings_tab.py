@@ -2,11 +2,11 @@
 
 Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
-checkboxes / multiline list / path+Browse / masked write-only secret / entry), a
-muted "(filename)" storage tag, a collapsible VM section gated by a master
-checkbox, and Save / Revert changes / Restore defaults. Save validates via
-`settings.validate`/`settings.save`, reports a changed-field summary, and never
-echoes a secret. Mirrors the old Tk `config_form.ConfigForm` behavior.
+checkboxes / multiline list / path+Browse / credential (shown, with a Hide
+toggle) / entry), a muted "(filename)" storage tag, a collapsible VM section
+gated by a master checkbox, and Save / Revert changes / Restore from archive /
+Restore defaults. Save validates via `settings.validate`/`settings.save`, reports
+a changed-field summary, and never echoes a secret value into that summary.
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ import settings
 import settings_archive
 
 SECTION_HELP = {
-    "Credentials": ("API keys and tokens, saved to your private .env file and never shown again. "
-                    "Each box stays blank even when a key is saved: leave it blank to keep the saved "
-                    "key, type a new value to replace it, or tick Clear to delete it."),
+    "Credentials": ("API keys and tokens, saved to your private .env file on this PC. The saved "
+                    "value is shown here so you can check it without opening the file — edit it to "
+                    "change it, clear the box to remove it, or tick Hide to mask it from view."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
     "Engine": "Which Gemini backend the resume tailor bills.",
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
@@ -39,9 +39,6 @@ SECTION_ORDER = ["Credentials", "Connection & paths", "Engine",
                  "Dashboard", "Scraper", "Scoring", "Resume", "Settings history",
                  "VM (cloud scraper)"]
 COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
-
-_SECRET_SET = "saved — blank keeps it, type to replace"
-_SECRET_UNSET = "not set"
 
 
 class _PopupOnClick(QtCore.QObject):
@@ -89,13 +86,10 @@ class SettingsForm(QtWidgets.QWidget):
         self._multi: dict[str, dict[str, QtWidgets.QCheckBox]] = {}
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
-        self._secret_clears: dict[str, QtWidgets.QCheckBox] = {}
-        self._secret_status: dict[str, QtWidgets.QLabel] = {}
+        self._secret_hides: dict[str, QtWidgets.QCheckBox] = {}
         self._collapse: dict[str, QtWidgets.QWidget] = {}
         self._gate_keys: dict[str, str] = {}  # gate_key -> section
-        # Secret values staged by a snapshot restore (write-only, never shown):
-        # applied on the next Save when the user leaves the masked box blank.
-        self._staged_secrets: dict[str, str] = {}
+        self._vm_panel: QtWidgets.QWidget | None = None  # the VM ops panel, if mounted
 
         self._build()
 
@@ -113,19 +107,18 @@ class SettingsForm(QtWidgets.QWidget):
         scroll.setWidget(body)
 
         stored = settings.load(self.targets)
-        secret_set = settings.secret_status(self.targets)
         self._opening_values = dict(stored)
 
         for section, fields in _ordered_sections():
             if section in COLLAPSIBLE_SECTIONS:
-                self._add_collapsible_section(section, fields, stored, secret_set)
+                self._add_collapsible_section(section, fields, stored)
             else:
-                self._add_section(section, fields, stored, secret_set)
+                self._add_section(section, fields, stored)
 
         self._add_buttons()
         self._body.addStretch(1)
 
-    def _add_section(self, section, fields, stored, secret_set, into=None):
+    def _add_section(self, section, fields, stored, into=None):
         box = into if into is not None else self._body
         head = QtWidgets.QLabel(section)
         head.setProperty("heading", True)
@@ -140,9 +133,9 @@ class SettingsForm(QtWidgets.QWidget):
         form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         box.addLayout(form)
         for f in fields:
-            self._add_field(form, f, stored.get(f.key, f.default), secret_set)
+            self._add_field(form, f, stored.get(f.key, f.default))
 
-    def _add_collapsible_section(self, section, fields, stored, secret_set):
+    def _add_collapsible_section(self, section, fields, stored):
         gate_key = COLLAPSIBLE_SECTIONS[section]
         gate = next((f for f in fields if f.key == gate_key), None)
         self._gate_keys[gate_key] = section
@@ -177,11 +170,12 @@ class SettingsForm(QtWidgets.QWidget):
         for f in fields:
             if f.key == gate_key:
                 continue
-            self._add_field(form, f, stored.get(f.key, f.default), secret_set)
+            self._add_field(form, f, stored.get(f.key, f.default))
         if self._vm_factory is not None:
             extra = self._vm_factory(container)
             if extra is not None:
                 cbox.addWidget(extra)
+                self._vm_panel = extra  # so Revert changes can reset it too
         self._apply_section_visibility()
 
     def _apply_section_visibility(self, *_):
@@ -200,8 +194,8 @@ class SettingsForm(QtWidgets.QWidget):
         h.addWidget(tag)
         return cell
 
-    def _add_field(self, form: QtWidgets.QFormLayout, f, value, secret_set):
-        widget = self._make_widget(f, value, secret_set)
+    def _add_field(self, form: QtWidgets.QFormLayout, f, value):
+        widget = self._make_widget(f, value)
         form.addRow(self._label_cell(f), widget)
         if f.help:
             help_lab = QtWidgets.QLabel(f.help)
@@ -209,9 +203,9 @@ class SettingsForm(QtWidgets.QWidget):
             help_lab.setWordWrap(True)
             form.addRow("", help_lab)
 
-    def _make_widget(self, f, value, secret_set):
+    def _make_widget(self, f, value):
         if f.secret:
-            return self._secret_widget(f, secret_set.get(f.key, False))
+            return self._secret_widget(f, value)
         if f.type == "bool":
             cb = QtWidgets.QCheckBox()
             cb.setChecked(bool(value))
@@ -303,22 +297,24 @@ class SettingsForm(QtWidgets.QWidget):
         self._setters[f.key] = lambda v, e=edit: e.setText("" if v is None else str(v))
         return cell
 
-    def _secret_widget(self, f, is_set):
+    def _secret_widget(self, f, value):
+        """A secret field shows its saved value in plain text (it comes straight
+        from the local .env — nothing leaves this PC). Edit it to change it, clear
+        the box to remove the key, or tick Hide to mask it from onlookers."""
         cell = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(cell)
         h.setContentsMargins(0, 0, 0, 0)
-        edit = QtWidgets.QLineEdit()
-        edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        edit.setPlaceholderText("blank keeps the saved value")
+        edit = QtWidgets.QLineEdit("" if value is None else str(value))
+        edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Normal)
+        edit.setPlaceholderText("not set")
         h.addWidget(edit, 1)
-        status = QtWidgets.QLabel(_SECRET_SET if is_set else _SECRET_UNSET)
-        status.setProperty("muted", True)
-        h.addWidget(status)
-        clear = QtWidgets.QCheckBox("Clear")
-        h.addWidget(clear)
+        hide = QtWidgets.QCheckBox("Hide")
+        hide.toggled.connect(lambda on, e=edit: e.setEchoMode(
+            QtWidgets.QLineEdit.EchoMode.Password if on
+            else QtWidgets.QLineEdit.EchoMode.Normal))
+        h.addWidget(hide)
         self._secret_edits[f.key] = edit
-        self._secret_status[f.key] = status
-        self._secret_clears[f.key] = clear
+        self._secret_hides[f.key] = hide
         return cell
 
     def _add_buttons(self):
@@ -357,13 +353,9 @@ class SettingsForm(QtWidgets.QWidget):
         errors: dict[str, str] = {}
         for f in settings.SETTINGS_SCHEMA:
             if f.secret:
-                typed = self._secret_edits[f.key].text()
-                if self._secret_clears[f.key].isChecked():
-                    values[f.key] = ""
-                elif typed.strip():
-                    values[f.key] = typed
-                elif f.key in self._staged_secrets:
-                    values[f.key] = self._staged_secrets[f.key]  # from a restored snapshot
+                # The box shows the saved value, so whatever it holds is the truth:
+                # write it as-is (an empty box clears the key).
+                values[f.key] = self._secret_edits[f.key].text()
                 continue
             if f.type == "multichoice":
                 values[f.key] = [c for c, cb in self._multi[f.key].items() if cb.isChecked()]
@@ -407,10 +399,12 @@ class SettingsForm(QtWidgets.QWidget):
             f = by_key.get(key)
             if f is None:
                 continue
-            if f.secret:
-                out.append(f"{f.label}: {'cleared' if str(new).strip() == '' else 'updated'}")
-                continue
             old = before.get(key, f.default)
+            if f.secret:
+                # never echo a secret value — report only that it changed
+                if str(old) != str(new):
+                    out.append(f"{f.label}: {'cleared' if str(new).strip() == '' else 'updated'}")
+                continue
             if f.type == "multichoice":
                 if set(old or []) != set(new or []):
                     out.append(f"{f.label}: updated ({len(new or [])} selected)")
@@ -438,11 +432,10 @@ class SettingsForm(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Settings", str(exc))
             return False
         summary = self._changed_summary(before, values)
-        self._staged_secrets = {}  # any staged snapshot secrets were just written
         archived = self._archive_after_save(values) if summary else False
-        self._refresh_secret_labels()
-        self.status.setText("Saved." if summary else "Saved — no changes.")
         self._opening_values = settings.load(self.targets)
+        self._sync_secret_boxes(self._opening_values)  # reflect the canonical stored values
+        self.status.setText("Saved." if summary else "Saved — no changes.")
         if summary:
             note = "\n\nA snapshot was saved to the archive." if archived else ""
             QtWidgets.QMessageBox.information(
@@ -470,12 +463,12 @@ class SettingsForm(QtWidgets.QWidget):
         except OSError:
             return False
 
-    def _refresh_secret_labels(self) -> None:
-        status = settings.secret_status(self.targets)
-        for key, label in self._secret_status.items():
-            label.setText(_SECRET_SET if status.get(key) else _SECRET_UNSET)
-            self._secret_edits[key].clear()
-            self._secret_clears[key].setChecked(False)
+    def _sync_secret_boxes(self, values_now: dict) -> None:
+        """Set each secret box to its current stored value and un-hide it."""
+        for key, edit in self._secret_edits.items():
+            v = values_now.get(key, "")
+            edit.setText("" if v is None else str(v))
+            self._secret_hides[key].setChecked(False)
 
     def _repopulate(self, value_for: Callable[[settings.Field], object]) -> None:
         for f in settings.SETTINGS_SCHEMA:
@@ -494,33 +487,33 @@ class SettingsForm(QtWidgets.QWidget):
         self._apply_section_visibility()
 
     def restore_defaults(self) -> None:
-        self._staged_secrets = {}
+        # Defaults reset the tunables but never wipe saved keys — leave secrets as-is.
         self._repopulate(lambda f: f.default)
+        if self._vm_panel is not None:
+            self._vm_panel.revert()
         self.status.setText("Defaults restored — press Save to apply.")
 
     def revert(self) -> None:
-        self._staged_secrets = {}
         self._repopulate(lambda f: self._opening_values.get(f.key, f.default))
-        for key, clear in self._secret_clears.items():
-            clear.setChecked(False)
-            self._secret_edits[key].clear()
+        self._sync_secret_boxes(self._opening_values)
+        if self._vm_panel is not None:
+            self._vm_panel.revert()
         self.status.setText("Reverted to your last-opened settings — press Save to apply.")
 
     def open_archive(self) -> None:
         ArchiveDialog(self).exec()
 
     def load_from_snapshot(self, snap_path) -> None:
-        """Fill the form from a saved snapshot for review. Non-secret values land in
-        the widgets; secret values are staged (never shown) and applied on Save.
-        Nothing is written until the user clicks Save."""
+        """Fill the form from a saved snapshot for review. Nothing is written until
+        the user clicks Save. A snapshot only carries the secrets it actually had,
+        so a key the snapshot didn't include is left at its current value."""
         vals = settings_archive.load_snapshot(snap_path, self.targets)
         self._repopulate(lambda f: vals.get(f.key, f.default))
-        self._staged_secrets = settings_archive.snapshot_secrets(snap_path, self.targets)
+        snap_secrets = settings_archive.snapshot_secrets(snap_path, self.targets)
         for key, edit in self._secret_edits.items():
-            edit.clear()
-            self._secret_clears[key].setChecked(False)
-            if key in self._staged_secrets:
-                self._secret_status[key].setText("from archive — Save to apply")
+            self._secret_hides[key].setChecked(False)
+            if key in snap_secrets:
+                edit.setText(snap_secrets[key])
         self.status.setText("Loaded snapshot — review the fields, then Save to apply.")
 
 

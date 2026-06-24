@@ -102,9 +102,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._row_by_id: dict[str, int] = {}
         self._url_by_id: dict[str, str] = {}
         self._tracked: dict[str, dict] = {}
+        # Undo/redo stacks for mark-seen: each entry is the list of ids a single
+        # mark-seen action newly added, so undo reverts exactly that action.
+        self._seen_undo: list[list[str]] = []
+        self._seen_redo: list[list[str]] = []
 
         self._build()
         self.reload_data()
+        self._setup_fs_watcher()
         self._apply_preview_visibility()
 
     # ---- construction --------------------------------------------------------
@@ -164,8 +169,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_action_bar(self) -> QtWidgets.QHBoxLayout:
         bar = QtWidgets.QHBoxLayout()
-        tip = QtWidgets.QLabel("Ctrl/Shift-click for multiple · double-click opens · "
-                               "right-click for status / block")
+        tip = QtWidgets.QLabel("Ctrl/Shift-click for multiple · Ctrl+A selects all · "
+                               "double-click opens · right-click for status (incl. applied) / block")
         tip.setProperty("muted", True)
         bar.addWidget(tip)
         bar.addStretch(1)
@@ -179,14 +184,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return b
 
         self.btn_tailor = button("Tailor resume", self._tailor_selected, accent=True)
-        button("Mark applied", self._mark_applied_selected)
         button("Mark seen (selected)", self._mark_seen_selected)
-        button("Mark all shown seen", self._mark_all_shown_seen)
+        self.btn_undo_seen = button("Undo seen", self._undo_seen)
+        self.btn_redo_seen = button("Redo seen", self._redo_seen)
         button("Resume folder", self._open_resume_folder)
         button("Apply", self._apply_selected)
         button("Run scraper", self._run_scraper_dialog)
         button("Check setup", self._check_setup)
         button("Refresh", self.reload_data)
+        self._update_seen_buttons()
         return bar
 
     def _setup_tracker_toolbar(self) -> None:
@@ -222,6 +228,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_stats()
         total = 0 if df.empty else len(df)
         self._set_status(f"{total:,} jobs · {len(self.df_high)} unseen >=4")
+        # Sources/folder may have changed (a local scrape appended paths) — keep the
+        # auto-refresh watcher pointed at the current files. No-op before setup.
+        if getattr(self, "_fs_watcher", None) is not None:
+            self._rearm_watcher()
 
     def _refresh_tracker(self) -> None:
         rows = self.registry.status_rows()
@@ -271,6 +281,44 @@ class MainWindow(QtWidgets.QMainWindow):
             return frozenset(self.registry.resume_paths())
         except Exception:  # noqa: BLE001 - cosmetic; never break the view
             return frozenset()
+
+    # ---- auto-refresh on file change -----------------------------------------
+
+    def _setup_fs_watcher(self) -> None:
+        """Watch the source CSVs and their folder so the dashboard reloads itself
+        when Drive (or a local scrape/score) updates them — no manual Refresh
+        needed. Best-effort: some setups (e.g. Drive streaming mode) don't emit
+        file events, so the Refresh button stays as a reliable fallback."""
+        self._fs_watcher = QtCore.QFileSystemWatcher(self)
+        self._reload_timer = QtCore.QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.setInterval(1500)  # debounce a burst of sync writes
+        self._reload_timer.timeout.connect(self._auto_reload)
+        self._fs_watcher.fileChanged.connect(self._on_fs_change)
+        self._fs_watcher.directoryChanged.connect(self._on_fs_change)
+        self._rearm_watcher()
+
+    def _rearm_watcher(self) -> None:
+        """Re-point the watcher at the current files + folder. Needed after every
+        load because an atomic replace (how Drive/score writes land) drops the old
+        path from the watch list."""
+        w = self._fs_watcher
+        if w.files():
+            w.removePaths(w.files())
+        if w.directories():
+            w.removePaths(w.directories())
+        paths = [str(p) for p in self.csv_paths if Path(p).exists()]
+        root = gdrive_root_dir(self.csv_paths)
+        if root and root.exists():
+            paths.append(str(root))
+        if paths:
+            w.addPaths(paths)
+
+    def _on_fs_change(self, _path: str) -> None:
+        self._reload_timer.start()  # coalesce a flurry of events into one reload
+
+    def _auto_reload(self) -> None:
+        self.reload_data()
 
     # ---- row helpers ---------------------------------------------------------
 
@@ -332,12 +380,10 @@ class MainWindow(QtWidgets.QMainWindow):
         segs = jobsdata.job_detail_segments(self._row_for(jid), self._tracked.get(jid))
         self.preview.show_segments(segs)
 
-    # ---- mark seen / applied -------------------------------------------------
+    # ---- mark seen (with undo / redo) ----------------------------------------
 
-    def _mark_ids_seen(self, ids: list[str]) -> None:
-        if not ids:
-            return
-        self.registry.mark(ids)
+    def _write_is_seen(self, ids: list[str], value: str) -> None:
+        """Set is_seen=`value` for `ids` in whichever source CSV(s) hold them."""
         idset = set(ids)
         for path in {self.id_to_path[i] for i in ids if i in self.id_to_path}:
             try:
@@ -345,10 +391,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 df["job_posting_id"] = df["job_posting_id"].astype(str)
                 mask = df["job_posting_id"].isin(idset)
                 if mask.any():
-                    df.loc[mask, "is_seen"] = "yes"
+                    df.loc[mask, "is_seen"] = value
                     write_csv_gz_atomic(df, path)
             except (OSError, ValueError):
                 pass
+
+    def _mark_ids_seen(self, ids: list[str], *, record_undo: bool = True) -> None:
+        if not ids:
+            return
+        already = self.registry.all_ids()
+        new_ids = [i for i in ids if i not in already]  # only the ones this click adds
+        self.registry.mark(ids)
+        self._write_is_seen(ids, "yes")
+        if record_undo and new_ids:
+            self._seen_undo.append(new_ids)
+            self._seen_redo.clear()
+            self._update_seen_buttons()
         self.reload_data()
 
     def _mark_seen_selected(self) -> None:
@@ -359,34 +417,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self._mark_ids_seen(ids)
         self._set_status(f"Marked {len(ids)} job(s) as seen.")
 
-    def _mark_all_shown_seen(self) -> None:
-        tab = self._active_jobs_tab()
-        if not tab:
+    def _undo_seen(self) -> None:
+        if not self._seen_undo:
+            self._set_status("Nothing to undo.")
             return
-        ids = [jid for jid in (tab.model.job_id(r) for r in range(tab.model.rowCount())) if jid]
-        if not ids:
-            self._set_status("Nothing shown to mark.")
-            return
-        if QtWidgets.QMessageBox.question(
-                self, "Mark all as seen?",
-                f"Mark all {len(ids)} currently shown jobs as seen?"
-        ) != QtWidgets.QMessageBox.StandardButton.Yes:
-            return
-        self._mark_ids_seen(ids)
-        self._set_status(f"Marked all {len(ids)} shown job(s) as seen.")
+        ids = self._seen_undo.pop()
+        self.registry.unmark(ids)
+        self._write_is_seen(ids, "no")
+        self._seen_redo.append(ids)
+        self._update_seen_buttons()
+        self.reload_data()
+        self._set_status(f"Undid 'seen' on {len(ids)} job(s).")
 
-    def _mark_applied_selected(self) -> None:
-        ids = self._selected_ids()
-        if not ids:
-            self._set_status("Select one or more rows to mark applied.")
+    def _redo_seen(self) -> None:
+        if not self._seen_redo:
+            self._set_status("Nothing to redo.")
             return
-        for jid in ids:
-            row = self._row_for(jid)
-            self.registry.set_status(jid, "applied", company=self._cell(row, "company_name"),
-                                     job_title=self._cell(row, "job_title"),
-                                     url=self._cell(row, "url"))
-        self._mark_ids_seen(ids)
-        self._set_status(f"Marked {len(ids)} job(s) as applied — see the Tracker tab.")
+        ids = self._seen_redo.pop()
+        self.registry.mark(ids)
+        self._write_is_seen(ids, "yes")
+        self._seen_undo.append(ids)
+        self._update_seen_buttons()
+        self.reload_data()
+        self._set_status(f"Redid 'seen' on {len(ids)} job(s).")
+
+    def _update_seen_buttons(self) -> None:
+        self.btn_undo_seen.setEnabled(bool(self._seen_undo))
+        self.btn_redo_seen.setEnabled(bool(self._seen_redo))
 
     # ---- context-menu callbacks ----------------------------------------------
 
@@ -401,7 +458,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.registry.set_status(jid, status, company=self._cell(row, "company_name"),
                                      job_title=self._cell(row, "job_title"),
                                      url=self._cell(row, "url"))
-        self._refresh_tracker()
+        if status == "applied":
+            # Applying to a job means you've triaged it — also mark it seen (this
+            # is what the old 'Mark applied' button did) and reload via that path.
+            self._mark_ids_seen(ids)
+        else:
+            self._refresh_tracker()
         self._set_status(f"Set {len(ids)} job(s) to '{status}'.")
 
     def _block_company(self, company: str) -> None:
@@ -781,8 +843,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _calibration_text(self) -> str:
         rows = self.registry.status_rows()
         if not rows:
-            return ("Calibration: no labels yet — use 'Mark applied' to start building the "
-                    "applied-vs-recommendation dataset (target ~100 labels).")
+            return ("Calibration: no labels yet — right-click a job -> Set status -> applied to "
+                    "start building the applied-vs-recommendation dataset (target ~100 labels).")
         by_reco: Counter[str] = Counter()
         for r in rows:
             reco = self._cell(self._row_for(r["job_posting_id"]), "recommendation").strip().lower()

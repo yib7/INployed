@@ -11,7 +11,7 @@ from qt.main_window import PREVIEW_TABS, TAB_TITLES, MainWindow
 
 def _fake_registry():
     reg = MagicMock()
-    reg.resume_paths.return_value = set()
+    reg.resume_paths.return_value = {}
     reg.status_rows.return_value = []
     return reg
 
@@ -271,6 +271,17 @@ def test_copy_apply_sheet_sets_clipboard(qtbot):
     w._finish_apply_ok(dict(_APPLY_CTX))
     w.apply_panel.copy_sheet()
     assert QtWidgets.QApplication.clipboard().text() == _APPLY_CTX["apply_md"]
+
+
+def test_resume_ids_drops_folders_deleted_from_disk(qtbot, tmp_path):
+    # The blue "tailored" tint follows on-disk existence: a recorded folder that
+    # was deleted by hand no longer counts, while one still present does.
+    w = _win(qtbot)
+    live = tmp_path / "kept"
+    live.mkdir()
+    w.registry.resume_paths.return_value = {"1": str(live),
+                                            "2": str(tmp_path / "gone")}
+    assert w._resume_ids() == frozenset({"1"})   # "2" is gone -> tint cleared
 
 
 def test_apply_sheet_preview_renders_markdown_keeps_raw_copy(qtbot):

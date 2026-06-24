@@ -330,6 +330,26 @@ def load_followup_days(default: int = 5) -> int:
         return default
 
 
+def live_resume_ids(resume_paths) -> set[str]:
+    """Job ids whose recorded tailored-résumé folder still EXISTS on disk.
+
+    The blue "tailored" row tint and the tracker's résumé ✓ derive from this, so
+    deleting a folder by hand clears them on the next reload. Non-destructive: the
+    registry row is left intact, so the tint returns if the folder reappears (e.g.
+    a remounted drive). `resume_paths` is the registry's {job_posting_id: folder}
+    map; "exists" means the recorded path is a directory right now.
+    """
+    items = resume_paths.items() if isinstance(resume_paths, dict) else []
+    live: set[str] = set()
+    for jid, path in items:
+        try:
+            if path and Path(str(path)).is_dir():
+                live.add(str(jid))
+        except OSError:
+            pass
+    return live
+
+
 def visible_columns(all_cols: list[str], hidden) -> list[str]:
     """Display order with `hidden` column ids removed. Never empty — if every
     column is hidden it falls back to showing all (a blank table is never useful)."""

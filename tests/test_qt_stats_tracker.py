@@ -13,7 +13,7 @@ from qt.stats_tab import StatsTab
 
 def _fake_registry(status_rows=None):
     reg = MagicMock()
-    reg.resume_paths.return_value = set()
+    reg.resume_paths.return_value = {}
     reg.status_rows.return_value = status_rows or []
     return reg
 

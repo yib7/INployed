@@ -346,9 +346,9 @@ If Vertex calls start failing with permission/region errors, the working config 
 - **Dashboard didn't pop:** no new unseen ≥4 jobs (by design). Force-open via the
   manual command in §5. Check `watcher.log`.
 - **Dashboard shows stale data:** Drive hasn't synced yet. The dashboard
-  auto-reloads when it sees the file change, but some Drive setups (streaming
-  mode) don't emit file events — hit **Refresh** to force a reload. New master
-  from the VM lands at `E:\My Drive\LinkedInJobs\…`.
+  auto-reloads itself — instantly when the OS emits a file event, and within ~15s
+  via an mtime poll otherwise (e.g. Drive streaming mode), so no manual refresh is
+  needed. New master from the VM lands at `E:\My Drive\LinkedInJobs\…`.
 - **Vertex 403 (ACCESS_TOKEN_SCOPE_INSUFFICIENT):** VM scope — see §7.
 - **Vertex 404 (model not found):** region — set `GOOGLE_CLOUD_LOCATION=global`.
 - **Cron didn't fire:** confirm `CRON_TZ` + `timedatectl` shows America/New_York.

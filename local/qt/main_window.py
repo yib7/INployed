@@ -102,10 +102,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._row_by_id: dict[str, int] = {}
         self._url_by_id: dict[str, str] = {}
         self._tracked: dict[str, dict] = {}
-        # Undo/redo stacks for mark-seen: each entry is the list of ids a single
+        # Undo stack for mark-seen: each entry is the list of ids a single
         # mark-seen action newly added, so undo reverts exactly that action.
         self._seen_undo: list[list[str]] = []
-        self._seen_redo: list[list[str]] = []
 
         self._build()
         self.reload_data()
@@ -186,12 +185,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tailor = button("Tailor resume", self._tailor_selected, accent=True)
         button("Mark seen (selected)", self._mark_seen_selected)
         self.btn_undo_seen = button("Undo seen", self._undo_seen)
-        self.btn_redo_seen = button("Redo seen", self._redo_seen)
         button("Resume folder", self._open_resume_folder)
         button("Apply", self._apply_selected)
         button("Run scraper", self._run_scraper_dialog)
         button("Check setup", self._check_setup)
-        button("Refresh", self.reload_data)
         self._update_seen_buttons()
         return bar
 
@@ -285,10 +282,11 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- auto-refresh on file change -----------------------------------------
 
     def _setup_fs_watcher(self) -> None:
-        """Watch the source CSVs and their folder so the dashboard reloads itself
-        when Drive (or a local scrape/score) updates them — no manual Refresh
-        needed. Best-effort: some setups (e.g. Drive streaming mode) don't emit
-        file events, so the Refresh button stays as a reliable fallback."""
+        """Refresh the dashboard automatically when its source CSVs change — there
+        is no manual Refresh button. A QFileSystemWatcher reacts instantly when the
+        OS emits file events (Drive mirror mode, a local scrape); a slower mtime
+        poll is the fallback for setups that emit none (Drive streaming mode), so
+        the dashboard always catches up on its own."""
         self._fs_watcher = QtCore.QFileSystemWatcher(self)
         self._reload_timer = QtCore.QTimer(self)
         self._reload_timer.setSingleShot(True)
@@ -296,12 +294,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._reload_timer.timeout.connect(self._auto_reload)
         self._fs_watcher.fileChanged.connect(self._on_fs_change)
         self._fs_watcher.directoryChanged.connect(self._on_fs_change)
+        self._poll_timer = QtCore.QTimer(self)
+        self._poll_timer.setInterval(15000)  # fallback when no file events arrive
+        self._poll_timer.timeout.connect(self._poll_for_changes)
+        self._poll_timer.start()
         self._rearm_watcher()
 
     def _rearm_watcher(self) -> None:
-        """Re-point the watcher at the current files + folder. Needed after every
-        load because an atomic replace (how Drive/score writes land) drops the old
-        path from the watch list."""
+        """Re-point the watcher at the current files + folder and re-snapshot their
+        signature. Needed after every load because an atomic replace (how Drive/
+        score writes land) drops the old path from the watch list."""
         w = self._fs_watcher
         if w.files():
             w.removePaths(w.files())
@@ -313,6 +315,23 @@ class MainWindow(QtWidgets.QMainWindow):
             paths.append(str(root))
         if paths:
             w.addPaths(paths)
+        self._source_sig = self._current_sig()
+
+    def _current_sig(self) -> tuple:
+        """A cheap (path, mtime, size) signature of the source files, so the poll
+        fallback reloads only when something actually changed on disk."""
+        sig = []
+        for p in self.csv_paths:
+            try:
+                st = os.stat(p)
+                sig.append((str(p), st.st_mtime_ns, st.st_size))
+            except OSError:
+                continue
+        return tuple(sig)
+
+    def _poll_for_changes(self) -> None:
+        if self._current_sig() != self._source_sig:
+            self.reload_data()  # re-snapshots the signature via _rearm_watcher
 
     def _on_fs_change(self, _path: str) -> None:
         self._reload_timer.start()  # coalesce a flurry of events into one reload
@@ -405,7 +424,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._write_is_seen(ids, "yes")
         if record_undo and new_ids:
             self._seen_undo.append(new_ids)
-            self._seen_redo.clear()
             self._update_seen_buttons()
         self.reload_data()
 
@@ -424,26 +442,12 @@ class MainWindow(QtWidgets.QMainWindow):
         ids = self._seen_undo.pop()
         self.registry.unmark(ids)
         self._write_is_seen(ids, "no")
-        self._seen_redo.append(ids)
         self._update_seen_buttons()
         self.reload_data()
         self._set_status(f"Undid 'seen' on {len(ids)} job(s).")
 
-    def _redo_seen(self) -> None:
-        if not self._seen_redo:
-            self._set_status("Nothing to redo.")
-            return
-        ids = self._seen_redo.pop()
-        self.registry.mark(ids)
-        self._write_is_seen(ids, "yes")
-        self._seen_undo.append(ids)
-        self._update_seen_buttons()
-        self.reload_data()
-        self._set_status(f"Redid 'seen' on {len(ids)} job(s).")
-
     def _update_seen_buttons(self) -> None:
         self.btn_undo_seen.setEnabled(bool(self._seen_undo))
-        self.btn_redo_seen.setEnabled(bool(self._seen_redo))
 
     # ---- context-menu callbacks ----------------------------------------------
 

@@ -142,20 +142,18 @@ def test_set_status_applied_also_marks_seen(qtbot, monkeypatch):
     assert not w.registry.mark.called
 
 
-def test_seen_undo_then_redo(qtbot, monkeypatch):
+def test_seen_undo(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(w, "reload_data", lambda: None)
     w.id_to_path = {}
-    assert not w.btn_undo_seen.isEnabled() and not w.btn_redo_seen.isEnabled()
+    assert not w.btn_undo_seen.isEnabled()
     w._mark_ids_seen(["1", "2"])
-    assert w._seen_undo == [["1", "2"]] and w._seen_redo == []
+    assert w._seen_undo == [["1", "2"]]
     assert w.btn_undo_seen.isEnabled()
     w._undo_seen()
     w.registry.unmark.assert_called_once_with(["1", "2"])  # the seen rows are removed
-    assert w._seen_undo == [] and w._seen_redo == [["1", "2"]]
-    assert w.btn_redo_seen.isEnabled()
-    w._redo_seen()
-    assert w._seen_undo == [["1", "2"]] and w._seen_redo == []
+    assert w._seen_undo == []
+    assert not w.btn_undo_seen.isEnabled()
 
 
 def test_on_fs_change_schedules_debounced_reload(qtbot, monkeypatch):
@@ -174,6 +172,19 @@ def test_fs_watcher_watches_source_files(qtbot, tmp_path):
     w = MainWindow(csv_paths=[f], registry=_fake_registry())
     qtbot.addWidget(w)
     assert str(f) in set(w._fs_watcher.files())
+
+
+def test_poll_reloads_only_when_sources_change(qtbot, monkeypatch):
+    # The poll is the fallback for setups that emit no file events: it reloads
+    # only when the on-disk signature drifts, so there's no need for a Refresh button.
+    w = _win(qtbot)
+    called = []
+    monkeypatch.setattr(w, "reload_data", lambda: called.append(True))
+    w._poll_for_changes()
+    assert not called                 # signature unchanged -> no reload
+    w._source_sig = ("stale",)        # a source changed on disk
+    w._poll_for_changes()
+    assert called
 
 
 def test_apply_work_opens_url(qtbot, monkeypatch):

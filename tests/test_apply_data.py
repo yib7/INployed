@@ -47,6 +47,7 @@ def test_load_apply_config_defaults_when_absent(tmp_path, monkeypatch):
     assert cfg["how_did_you_hear"] == "LinkedIn"
     assert cfg["gender"] == "Decline to self-identify"
     assert cfg["disability_status"] == "Decline to self-identify"
+    assert cfg["address_country"] == "United States"
     assert "no visa sponsorship" in cfg["authorization_statement"].lower()
 
 
@@ -71,47 +72,76 @@ def test_load_apply_config_ignores_unreadable_file(tmp_path, monkeypatch):
     assert cfg["work_authorized"] is True
 
 
-# --- apply_data.write embeds standard_answers --------------------------------
+# --- apply_data.write produces a self-contained apply.md ---------------------
 
-def test_write_embeds_standard_answers_with_citizen_defaults(tmp_path, monkeypatch):
+def test_write_creates_apply_md_not_json(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
     # Hermetic: no store file -> load() seeds+migrates defaults in memory.
     monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
     out = apply_data.write(_JOB, tmp_path, ["bullet one", "bullet two"])
-    data = json.loads(out.read_text(encoding="utf-8"))
 
-    assert "standard_answers" in data
-    sa = data["standard_answers"]
-    assert sa["work_authorized"] is True
-    assert sa["requires_sponsorship"] is False
-    assert sa["willing_to_relocate"] is True
-    # review-before-submit wording preserved
-    assert "review-before-submit" in data["instructions"].lower()
-    assert data["job"]["url"] == "https://example.com/job/42"
-    assert data["resume_bullets"] == ["bullet one", "bullet two"]
+    assert out.name == "apply.md"
+    assert out.exists()
+    assert not (tmp_path / "apply_data.json").exists()  # JSON is gone
+
+    text = out.read_text(encoding="utf-8")
+    assert "Test Person" in text and "t@example.com" in text      # candidate
+    assert "Uni" in text                                          # education
+    assert "bullet one" in text and "bullet two" in text         # résumé highlights
 
 
-def test_write_honors_apply_config_override(tmp_path, monkeypatch):
-    path = tmp_path / "apply_config.json"
-    path.write_text(json.dumps({"willing_to_relocate": False}), encoding="utf-8")
-    monkeypatch.setattr(apply_config, "APPLY_CONFIG", path)
-    # Hermetic: no store file -> load() migrates the apply_config override in memory.
-    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
-    out = apply_data.write(_JOB, tmp_path, [])
-    data = json.loads(out.read_text(encoding="utf-8"))
-    assert data["standard_answers"]["willing_to_relocate"] is False
-    assert data["standard_answers"]["requires_sponsorship"] is False
-
-
-def test_write_embeds_answer_bank_matching_standard_answers(tmp_path, monkeypatch):
-    # Hermetic: point the store at a temp file seeded from the (absent) config.
-    store = tmp_path / "apply_answers.json"
+def test_write_embeds_no_submit_playbook(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    text = apply_data.write(_JOB, tmp_path, []).read_text(encoding="utf-8").lower()
+    assert "never" in text and "submit" in text          # never-submit contract
+    assert "electronic signature" in text                # sign with name + date
+    assert "xxxxx" in text                               # placeholder-for-blocking-required
+    assert "captcha" in text and "password" in text      # safety walls preserved
+
+
+def test_write_marker_roundtrips_job_identity(tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    text = apply_data.write(_JOB, tmp_path, []).read_text(encoding="utf-8")
+    meta = apply_data.parse_marker(text)
+    assert meta["job_posting_id"] == "42"
+    assert meta["url"] == "https://example.com/job/42"
+    assert meta["company"] == "Acme"
+
+
+def test_write_includes_structured_address(tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    store = tmp_path / "apply_answers.json"
     monkeypatch.setattr(apply_answers, "STORE_PATH", store)
-    apply_answers.save(apply_answers.seed_defaults(), store)
-    out = apply_data.write(_JOB, tmp_path, ["b1"])
-    data = json.loads(out.read_text(encoding="utf-8"))
-    assert isinstance(data["answer_bank"], list) and data["answer_bank"]
-    assert data["standard_answers"] == apply_answers.as_standard_answers()
-    # the rich entries carry kind/status metadata the flat dict lacks
-    assert all({"kind", "status"} <= set(e) for e in data["answer_bank"])
+    ans = apply_answers.seed_defaults()
+    by = {e["id"]: e for e in ans}
+    by["address_street"]["answer"] = "1 Main St"
+    by["address_city"]["answer"] = "Boston"
+    by["address_state"]["answer"] = "MA"
+    by["address_zip"]["answer"] = "02100"
+    apply_answers.save(ans, store)
+    text = apply_data.write(_JOB, tmp_path, []).read_text(encoding="utf-8")
+    for part in ("1 Main St", "Boston", "MA", "02100", "United States"):
+        assert part in text
+
+
+def test_write_standard_answers_render_bools_and_exclude_address(tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    text = apply_data.write(_JOB, tmp_path, []).read_text(encoding="utf-8")
+    assert "Yes" in text and "No" in text                 # work auth Yes / sponsorship No
+    # address questions are NOT repeated in the Standard-answers section
+    assert "Street address (line 1)." not in text
+
+
+def test_write_cover_line_only_when_pdf_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    # absent: cover_letter requested but no PDF on disk -> no cover line
+    text = apply_data.write(_JOB, tmp_path, [], cover_letter=True).read_text(encoding="utf-8")
+    assert "Cover letter" not in text
+    # present: the cover PDF exists -> its path is listed
+    (tmp_path / apply_data.output.cover_filename()).write_bytes(b"%PDF cover")
+    text = apply_data.write(_JOB, tmp_path, [], cover_letter=True).read_text(encoding="utf-8")
+    assert "Cover letter" in text and apply_data.output.cover_filename() in text

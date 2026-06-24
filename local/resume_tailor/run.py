@@ -232,9 +232,9 @@ def tailor(
 
         try:
             apply_data.write(job, out_dir, list(final_bullets.values()), cover_letter)
-            log("apply_data.json written (form-prefill profile)")
+            log("apply.md written (self-contained apply sheet)")
         except Exception as exc:  # noqa: BLE001 - advisory artifact, never fatal
-            log(f"apply data skipped ({exc})")
+            log(f"apply sheet skipped ({exc})")
 
     log(f"done -> {out_dir}")
     log("token usage: " + llm.usage_summary())

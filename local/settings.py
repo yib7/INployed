@@ -168,6 +168,24 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Tone used when generating the cover letter.",
           choices=("professional", "concise", "enthusiastic", "impactful")),
 
+    # --- Settings history: snapshot every Save so settings can be rolled back ---
+    # All four live in local/config.json. Snapshots copy every settings file
+    # (including the secret-bearing .env) into a git-ignored settings_archive/.
+    Field("archive_enabled", "Snapshot settings on every Save", "bool", True,
+          "Settings history", "config",
+          help="When on, each Save copies all your settings into a dated folder so you can "
+               "roll back later via 'Restore from archive...'. Turn off to stop snapshotting."),
+    Field("archive_prune_mode", "Old-snapshot cleanup", "choice", "Keep everything",
+          "Settings history", "config",
+          choices=("Keep everything", "Keep newest N", "Delete older than N days"),
+          help="How to stop snapshots piling up. 'Keep everything' never deletes (the default)."),
+    Field("archive_prune_keep", "Snapshots to keep (newest N)", "int", 20,
+          "Settings history", "config", min=1, max=1000,
+          help="With 'Keep newest N': how many of the most recent snapshots to keep."),
+    Field("archive_prune_days", "Delete snapshots older than (days)", "int", 30,
+          "Settings history", "config", min=1, max=3650,
+          help="With 'Delete older than N days': snapshots older than this are removed on Save."),
+
     # Apply-form answers (work auth, sponsorship, EEO, "how did you hear") are NOT
     # configured here. They live in the richer Apply Answers tab (per-question,
     # fixed/open-ended, needs-review), which writes apply_answers.json — the single

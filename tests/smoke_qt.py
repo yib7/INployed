@@ -22,7 +22,7 @@ def main() -> int:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     apply_theme(app)
     reg = MagicMock()
-    reg.resume_paths.return_value = set()
+    reg.resume_paths.return_value = {}
     reg.status_rows.return_value = []
     win = MainWindow(csv_paths=[], registry=reg)
     assert win.tab_count() == len(TAB_TITLES), win.tab_count()

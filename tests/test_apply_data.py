@@ -20,7 +20,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
-from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
+from resume_tailor import apply_answers, apply_config, apply_data, output  # noqa: E402
 
 
 _MASTER = {
@@ -166,12 +166,22 @@ def test_write_standard_answers_render_bools_and_exclude_address(tmp_path):
     assert "Street address (line 1)." not in text         # address not repeated here
 
 
-def test_write_cover_line_only_when_pdf_present(tmp_path):
-    text = apply_data.write(_JOB, tmp_path, cover_letter=True).read_text(encoding="utf-8")
-    assert "Cover letter" not in text
-    (tmp_path / apply_data.output.cover_filename()).write_bytes(b"%PDF cover")
-    text = apply_data.write(_JOB, tmp_path, cover_letter=True).read_text(encoding="utf-8")
-    assert "Cover letter" in text and apply_data.output.cover_filename() in text
+def test_write_has_no_documents_or_upload_language(tmp_path):
+    # apply.md is for portals that DON'T auto-fill from a résumé upload, so it no
+    # longer carries a Documents section or any directive to upload files.
+    text = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                            skill_lines=_SKILLS).read_text(encoding="utf-8")
+    assert "## Documents" not in text                  # the upload section is gone
+    assert "Upload the résumé PDF" not in text         # the upload directive is gone
+    assert output.resume_filename() not in text        # no document path is listed in the sheet
+    assert "## Work experience" in text                # ...but the résumé itself still renders
+
+
+def test_write_explains_when_to_use_as_fallback(tmp_path):
+    text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
+    assert "When to use this sheet" in text            # purpose is spelled out
+    low = text.lower()
+    assert "auto-fill" in low and "by hand" in low     # fallback framing: normal=auto-fill, this=by hand
 
 
 # --- résumé sections mirror this job's tailored résumé (deterministic) --------
@@ -230,7 +240,6 @@ def test_write_without_selection_renders_note_not_crash(tmp_path):
 
 
 def test_write_from_folder_backfills_without_resume_sections(tmp_path):
-    (tmp_path / apply_data.output.resume_filename()).write_bytes(b"%PDF")
     out = apply_data.write_from_folder(tmp_path, _JOB)
     assert out.name == "apply.md"
     text = out.read_text(encoding="utf-8")

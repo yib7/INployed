@@ -202,20 +202,24 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("BRIGHT_DATA_DATASET_ID", "Bright Data dataset ID", "str", "",
           "Credentials", "env", optional=True,
           help="The id of your LinkedIn-jobs dataset in Bright Data (not secret - an identifier)."),
-    Field("GEMINI_API_KEYS", "Gemini API key pool", "str", "",
+    Field("GEMINI_API_KEYS", "Gemini API keys (job scorer)", "str", "",
           "Credentials", "env", secret=True, optional=True,
-          help="Comma-separated Gemini API keys for the scorer (no spaces). Get keys at "
-               "aistudio.google.com. Leave blank to use your Google Cloud project instead."),
+          help="Powers the JOB SCORER, which rates every scraped job. A pool of one or more keys, "
+               "comma-separated with no spaces, that it rotates through to spread rate limits. This "
+               "is SEPARATE from the resume-tailor key below. Get keys at aistudio.google.com; leave "
+               "blank to score with your Google Cloud project instead."),
     Field("RESUME_TAILOR_GEMINI_API_KEY", "Gemini API key (resume tailor)", "str", "",
           "Credentials", "env", secret=True, optional=True,
-          help="Single Gemini API key for the resume tailor when the engine is set to "
-               "'api_key'. Only needed if you don't have a Google Cloud project."),
+          help="Powers the RESUME TAILOR only, and only when its engine (below) is set to 'api_key'. "
+               "A SINGLE key, kept separate from the scorer's pool above so the two can use different "
+               "accounts or quotas. Leave blank if the tailor uses your Google Cloud project "
+               "(engine 'vertex')."),
 
     # --- Connection & paths: non-secret identity / locations, also in .env -----
     Field("GOOGLE_CLOUD_PROJECT", "Google Cloud project ID", "str", "",
           "Connection & paths", "env", optional=True,
           help="Project with Vertex AI enabled (for Gemini scoring + tailoring). Leave blank "
-               "if you score with the Gemini API key pool above."),
+               "if you use the Gemini API keys (job scorer) above instead."),
     Field("GOOGLE_CLOUD_LOCATION", "Google Cloud location", "choice", "global",
           "Connection & paths", "env",
           help="Vertex AI region. 'global' works for most users.",

@@ -200,15 +200,71 @@ def test_apply_work_opens_url(qtbot, monkeypatch):
     assert opened == ["https://x/1"]
 
 
-def test_tailor_work_calls_tailor(qtbot, monkeypatch):
+def test_tailor_work_runs_all_jobs_and_captures_failures(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
-    calls = []
-    monkeypatch.setattr("resume_tailor.tailor",
-                        lambda job, **k: (calls.append(job) or "outdir"), raising=False)
-    out = w._tailor_work([{"job_posting_id": "1", "company_name": "A", "job_title": "T"}],
-                         {"cover_letter": False, "ats_report": True, "prep_sheet": False,
-                          "tone": "professional"})
-    assert out == "outdir" and calls
+    seen = []
+
+    def fake_tailor(job, **k):
+        seen.append(job["job_posting_id"])
+        if job["job_posting_id"] == "2":
+            raise RuntimeError("boom-2")
+        return tmp_path / job["job_posting_id"]
+
+    monkeypatch.setattr("resume_tailor.tailor", fake_tailor, raising=False)
+    jobs = [{"job_posting_id": str(i), "company_name": "C", "job_title": "T"} for i in (1, 2, 3)]
+    results = w._tailor_work(jobs, {"cover_letter": False, "ats_report": True,
+                                    "prep_sheet": False, "tone": "professional"})
+    assert sorted(seen) == ["1", "2", "3"]            # every job attempted (in parallel)
+    by_id = {r["id"]: r for r in results}
+    assert by_id["1"]["dir"] and by_id["1"]["error"] is None
+    assert by_id["2"]["dir"] is None and "boom-2" in by_id["2"]["error"]   # failure captured
+    assert by_id["3"]["dir"]
+
+
+def test_finish_tailor_records_successes_and_reports(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.os, "startfile", lambda *_: None, raising=False)
+    reloaded = []
+    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(1))
+    shown = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.setdefault("text", a[2])))
+    w._tailoring = True
+    results = [
+        {"id": "1", "label": "Eng @ A", "dir": tmp_path / "1", "error": None},
+        {"id": "2", "label": "Eng @ B", "dir": None, "error": "boom"},
+    ]
+    w._finish_tailor(results)
+    w.registry.record_resume.assert_called_once_with("1", str(tmp_path / "1"))   # success only
+    assert "1 of 2" in shown["text"] and "boom" in shown["text"]                 # failure surfaced
+    assert w._tailoring is False and reloaded == [1]
+
+
+def test_tailor_warns_only_on_large_batch(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.settings, "load", lambda: {})
+    monkeypatch.setattr(w, "_apply_auth_env", lambda: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+    launched = []
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None: launched.append(fn))
+    confirms = []
+    monkeypatch.setattr(w, "_confirm_large_tailor",
+                        lambda n: confirms.append(n) or False)   # user cancels
+    monkeypatch.setattr(w, "_job_payload",
+                        lambda i: {"job_posting_id": i, "company_name": "C", "job_title": "T"})
+
+    # large batch -> warned, cancelled (nothing launched)
+    monkeypatch.setattr(w, "_selected_ids", lambda: [str(i) for i in range(6)])
+    w._tailor_selected()
+    assert confirms == [6] and launched == []
+
+    # small batch -> no warning, launches
+    confirms.clear()
+    monkeypatch.setattr(w, "_selected_ids", lambda: ["1", "2", "3"])
+    w._tailor_selected()
+    assert confirms == [] and len(launched) == 1
 
 
 def test_run_scraper_dialog_runs_worker(qtbot, monkeypatch):

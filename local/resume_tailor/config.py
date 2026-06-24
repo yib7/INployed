@@ -141,3 +141,24 @@ def gemini_auth() -> str:
 def model_for(tier: str) -> str:
     """Concrete Gemini model id for a tier token."""
     return _GEMINI_TIERS.get(tier, MODEL_FLASH)
+
+
+def tailor_timeout_schedule() -> list[int]:
+    """Per-attempt Gemini-call timeouts in seconds, escalating. Default 60/120/180.
+
+    Each entry is one attempt's timeout; on a timeout the next (longer) value is
+    tried, and after the last the call fails with a timeout error. So the list
+    length is also the max number of attempts. Override with
+    RESUME_TAILOR_TIMEOUTS='60,120,180'; garbage / non-positive / empty falls back
+    to the default. Not a Settings GUI field on purpose — a value a non-technical
+    user could set to 0 is a footgun (see DECISIONS); power users still get the env."""
+    raw = os.getenv("RESUME_TAILOR_TIMEOUTS", "")
+    if raw.strip():
+        try:
+            vals = [int(x.strip()) for x in raw.split(",") if x.strip()]
+        except ValueError:
+            vals = []
+        vals = [v for v in vals if v > 0]
+        if vals:
+            return vals
+    return [60, 120, 180]

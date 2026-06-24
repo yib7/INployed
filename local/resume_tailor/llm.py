@@ -80,6 +80,75 @@ def call(
     )
 
 
+def _check_creds() -> None:
+    """Fail fast (no retries) when the selected auth mode has no usable credentials."""
+    if config.gemini_auth() == "api_key":
+        if not os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"):
+            raise LLMError("RESUME_TAILOR_GEMINI_API_KEY not set (gemini_auth=api_key).")
+    elif not config.GCP_PROJECT:
+        raise LLMError("Vertex auth selected but GOOGLE_CLOUD_PROJECT is not set.")
+
+
+def _is_timeout(exc: Optional[BaseException]) -> bool:
+    """True if exc — or anything in its cause/context chain — is a network/HTTP
+    timeout (httpx ReadTimeout/ConnectTimeout, a wrapped SDK deadline, etc.).
+    Errs toward True (a stray 'timeout' in the message just means we escalate the
+    timeout rather than do the short transient backoff)."""
+    seen: set[int] = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if "timeout" in type(cur).__name__.lower():
+            return True
+        msg = str(cur).lower()
+        if "timed out" in msg or "deadline exceeded" in msg or "timeout" in msg:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+def _build_client(timeout_s: float):
+    """A genai client whose HTTP requests time out after `timeout_s` seconds.
+    Rebuilt per attempt so each retry can use a longer timeout (the SDK takes the
+    timeout in MILLISECONDS via HttpOptions)."""
+    from google import genai
+    from google.genai import types
+
+    http_options = types.HttpOptions(timeout=int(timeout_s * 1000))
+    if config.gemini_auth() == "api_key":
+        return genai.Client(api_key=os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"),
+                            http_options=http_options)
+    return genai.Client(vertexai=True, project=config.GCP_PROJECT,
+                        location=config.GCP_LOCATION, http_options=http_options)
+
+
+def _invoke(
+    system: str,
+    user: str,
+    model: str,
+    *,
+    json_out: bool,
+    temperature: float,
+    max_output_tokens: Optional[int],
+    tools: Optional[list],
+    timeout_s: float,
+):
+    """One raw `generate_content` with a bounded timeout. Returns the SDK response
+    (the caller extracts text / usage). Split out so the retry/escalation logic in
+    `_call_gemini` is unit-testable without a real Gemini call."""
+    from google.genai import types
+
+    client = _build_client(timeout_s)
+    cfg = types.GenerateContentConfig(
+        system_instruction=system,
+        temperature=temperature,
+        response_mime_type="application/json" if json_out else None,
+        max_output_tokens=max_output_tokens,
+        tools=tools,
+    )
+    return client.models.generate_content(model=model, contents=user, config=cfg)
+
+
 def _call_gemini(
     system: str,
     user: str,
@@ -90,31 +159,22 @@ def _call_gemini(
     max_output_tokens: Optional[int] = None,
     tools: Optional[list] = None,
 ) -> Any:
-    from google import genai
-    from google.genai import types
-
-    if config.gemini_auth() == "api_key":
-        api_key = os.environ.get("RESUME_TAILOR_GEMINI_API_KEY")
-        if not api_key:
-            raise LLMError("RESUME_TAILOR_GEMINI_API_KEY not set (gemini_auth=api_key).")
-        client = genai.Client(api_key=api_key)
-    else:
-        if not config.GCP_PROJECT:
-            raise LLMError("Vertex auth selected but GOOGLE_CLOUD_PROJECT is not set.")
-        client = genai.Client(vertexai=True, project=config.GCP_PROJECT, location=config.GCP_LOCATION)
-
-    cfg = types.GenerateContentConfig(
-        system_instruction=system,
-        temperature=temperature,
-        response_mime_type="application/json" if json_out else None,
-        max_output_tokens=max_output_tokens,
-        tools=tools,
-    )
-    
+    """Run one Gemini generation with a per-call timeout that ESCALATES across
+    attempts (config.tailor_timeout_schedule(), default 60->120->180s). A timeout
+    retries on the next, longer timeout; 429/quota and other transients keep the
+    prior backoff. After the schedule is exhausted, raise a clear LLMError —
+    timeout-specific when the last failure was a timeout."""
+    _check_creds()
+    schedule = config.tailor_timeout_schedule()
     last_err: Optional[Exception] = None
-    for attempt in range(4):
+    timed_out = False
+    for attempt, timeout_s in enumerate(schedule):
         try:
-            resp = client.models.generate_content(model=model, contents=user, config=cfg)
+            resp = _invoke(
+                system, user, model,
+                json_out=json_out, temperature=temperature,
+                max_output_tokens=max_output_tokens, tools=tools, timeout_s=timeout_s,
+            )
             text = resp.text or ""
             if not text.strip():
                 raise LLMError("empty response")
@@ -127,11 +187,20 @@ def _call_gemini(
             return _extract_json(text) if json_out else text.strip()
         except Exception as exc:  # noqa: BLE001
             last_err = exc
+            if _is_timeout(exc):
+                timed_out = True
+                continue  # escalate to the next (longer) timeout — no sleep
+            timed_out = False
             err_str = str(exc).lower()
             if "429" in err_str or "quota" in err_str:
                 time.sleep(60)
             else:
                 time.sleep(1.5 * (attempt + 1))
+    if timed_out:
+        raise LLMError(
+            f"Gemini call timed out after {len(schedule)} attempts "
+            f"(last timeout {schedule[-1]}s, model {model}): {last_err}"
+        )
     raise LLMError(f"Gemini call failed after retries ({model}): {last_err}")
 
 

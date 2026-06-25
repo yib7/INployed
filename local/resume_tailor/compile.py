@@ -40,6 +40,7 @@ def compile_tex(tex_path: Path, work_dir: Path) -> CompileResult:
         config.PDFLATEX_PATH,
         "-interaction=nonstopmode",
         "-halt-on-error",
+        "-no-shell-escape",   # defense-in-depth: never let a .tex run shell commands (\write18)
         f"-output-directory={work_dir.as_posix()}",
         tex_path.name,
     ]

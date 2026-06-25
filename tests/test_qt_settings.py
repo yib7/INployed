@@ -177,6 +177,23 @@ def test_collapsible_section_toggles_body(qtbot):
     assert not sec.is_collapsed() and toggles == [True, False]
 
 
+def test_collapsible_section_subtitle_stays_visible_when_collapsed(qtbot):
+    # Cycle 17 SP3: a tagline next to the header tells you what a collapsed section is for.
+    from qt.widgets import CollapsibleSection
+    sec = CollapsibleSection("Demo", subtitle="short hint", collapsed=True)
+    qtbot.addWidget(sec)
+    assert sec.is_collapsed()
+    assert sec._subtitle.text() == "short hint"
+    assert not sec._subtitle.isHidden()      # tagline visible even when collapsed
+
+
+def test_every_settings_section_has_a_tagline(qtbot, tmp_path):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    for section, sec in form._section_widgets.items():
+        assert sec._subtitle.text().strip(), f"{section} is missing a tagline"
+
+
 def test_sections_are_collapsible_and_persist(qtbot, tmp_path):
     saved = {}
     form = SettingsForm(targets=_targets(tmp_path), collapsed_sections=[],

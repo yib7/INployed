@@ -19,7 +19,7 @@ _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 # so two parallel tailor jobs for the SAME company+title get DISTINCT folders. The
 # résumé file isn't written until much later in tailor(), so the on-disk check alone
 # can't catch a same-batch collision — the claimed set closes that race. Per-process
-# working state (not persisted).
+# working state, not persisted across runs.
 _resolve_lock = threading.Lock()
 _claimed: set[Path] = set()
 

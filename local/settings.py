@@ -1,6 +1,6 @@
 """Central settings layer: a single source of truth for user-editable options.
 
-The dashboard (ui.py) and the watcher both read local/config.json. This module
+The dashboard and the watcher both read local/config.json. This module
 describes WHICH keys are user-tunable (SETTINGS_SCHEMA) and provides safe
 load/validate/save that:
 

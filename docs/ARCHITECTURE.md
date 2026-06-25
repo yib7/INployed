@@ -36,11 +36,21 @@ freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
 `ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads genuinely
 overlap); per-job failures are captured and reported in one aggregate dialog, registry
 writes happen back on the UI thread (the SQLite connection is thread-affine), and a
-warning precedes very large batches. See `MainWindow._tailor_work`/`_finish_tailor`. The
+warning precedes very large batches. Tailoring streams live per-job progress to the status bar
+via a `MainWindow.tailor_progress` Qt signal (the engine's `on_status` callback, queued cross-thread
+from the pool workers). See `MainWindow._tailor_work`/`_finish_tailor`. The
 **Apply** button is the rightmost action and turns green only when the selected job has both its
 résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and swaps the bottom
 score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet; `✕` closes, and
 **"I applied to this job"** confirms → records the job applied in the Tracker → closes).
+
+A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
+`seen.db` (`SeenRegistry.export_to` via SQLite `VACUUM INTO`; `import_from` merges — newer
+`status_date` wins, earliest `applied_date` kept, seen unioned). The Stats tab shows a fresh/stale
+**pipeline badge** (`jobsdata.run_staleness` + the `stale_after_hours` setting). The Resume Data tab
+warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.resume_md_stale`,
+mtime compare) with a one-click Regenerate. With zero jobs loaded the High Score tab shows a
+first-run get-started hint (`JobsTab.set_empty_widget`).
 
 ## The résumé engine in depth (`local/resume_tailor/`)
 

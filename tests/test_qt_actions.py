@@ -65,6 +65,23 @@ def test_zoom_changes_scale_clamps_and_persists(qtbot, monkeypatch):
     assert w._ui_scale_pct == 70
 
 
+def _tracker_button_texts(tab):
+    bar = tab._bar
+    return [bar.itemAt(i).widget().text()
+            for i in range(bar.count())
+            if isinstance(bar.itemAt(i).widget(), QtWidgets.QPushButton)]
+
+
+def test_tracker_toolbar_has_no_set_status_button(qtbot):
+    # Cycle 16 SP3: Set status removed from the toolbar (right-click status covers it).
+    w = _win(qtbot)
+    texts = _tracker_button_texts(w.tracker_tab)
+    assert "Set status" not in texts
+    assert "Mark followed up" in texts             # the other tracker actions remain
+    assert not hasattr(w, "_tracker_set_status")   # the dead handler is gone
+    assert hasattr(w.tracker_tab, "apply_status")  # right-click status path intact
+
+
 class _FakeProc:
     def __init__(self, lines, rc):
         self.stdout = iter(lines)

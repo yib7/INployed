@@ -136,8 +136,13 @@ to use the whole screen. On a brand-new setup with no jobs yet, the High Score t
 short **get-started** panel (Open Settings · Run scraper · Set up Resume Data) instead of a
 blank table. Each job tab keeps a tidy filter bar — a search box plus a **Filters** button
 that holds min-score / day / time / recommendation / Easy-Apply (on the Tracker, also
-*Follow-up due only*), and shows how many are active. Under each table is a small **color
-legend** for the row tints. You can size the whole interface to your display from the
+*Follow-up due only*), and shows how many are active. Each tab keys its rows to what
+matters there: **High Score** tints by recommendation + tailored-résumé (green apply ·
+blue résumé ready · yellow consider · plain "don't consider"), the **Tracker** tints by
+application status + follow-up (blue applied · orange follow-up due · pink follow-up sent ·
+yellow interviewing · green offer · red rejected), and **All Jobs** stays an untinted plain
+list. A small **color legend** under each table (except All Jobs) spells the meanings out.
+You can size the whole interface to your display from the
 **Interface size** control at the bottom of the window — a slider with `−` / `+` buttons
 (10% steps, 50–200%); your choice is remembered.
 

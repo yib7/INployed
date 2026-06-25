@@ -58,8 +58,13 @@ sizes the whole UI via `theme.set_scale`, driven by a status-bar **Interface siz
 10% steps, 50–200%; `MainWindow._apply_scale`). The scale changes the application **font only** — the
 stylesheet is scale-independent and applied once — so scaling is instant (re-polishing every widget on
 each change was the old lag). Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
-only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge, and shows
-a compact `ColorLegend` of the row tints under the table. An app-wide **wheel guard**
+only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge. Row
+tints are **tab-specific** (`JobsTableModel(mode=...)` keyed off `table_key`): High Score keys the
+recommendation + tailored-résumé (green apply / blue résumé-ready / yellow consider / untinted
+"don't consider"), the Tracker keys the application status + follow-up state (blue applied / orange
+follow-up due / pink follow-up sent / yellow interviewing / green offer / red rejected), and All Jobs
+is a deliberately untinted plain list. Each tinted tab shows a matching `ColorLegend`
+(`jobs_tab.legend_items_for`) under its table; All Jobs has none. An app-wide **wheel guard**
 (`qt/wheelguard.py`) stops a stray scroll from editing a combo/spin/slider — regardless of focus, so the
 editable model dropdowns can't be scroll-edited. Settings sections are **collapsible**
 (`qt/widgets.py:CollapsibleSection`) with always-visible taglines, and the fold state persists to `config.json`.

@@ -30,9 +30,12 @@ _BACKGROUND = QtCore.Qt.ItemDataRole.BackgroundRole
 
 
 class JobsTableModel(QtCore.QAbstractTableModel):
-    def __init__(self, columns, parent=None):
+    def __init__(self, columns, mode="high", parent=None):
         super().__init__(parent)
         self._columns = list(columns)
+        # Tinting mode, one per tab: "high"/unseen keys recommendation + resume;
+        # "tracker" keys application status + follow-up; "all" is never tinted.
+        self._mode = mode
         self._col_lists: list[list[str]] = []
         self._ids: list[str] = []
         self._tags: list[str] = []
@@ -61,23 +64,53 @@ class JobsTableModel(QtCore.QAbstractTableModel):
                          if "follow_up" in df.columns else [""] * n)
             rids = set(resume_ids)
             self._tags = [
-                self._row_tag(self._ids[i], recos[i], statuses[i], followups[i], rids)
+                self._row_tag(self._mode, self._ids[i], recos[i], statuses[i],
+                              followups[i], rids)
                 for i in range(n)
             ]
         self.endResetModel()
 
     @staticmethod
-    def _row_tag(jid: str, reco: str, status: str, followup: str, resume_ids: set) -> str:
-        """The row's color tag. Tracker status wins; then an overdue follow-up; then
-        a tailored resume; then the recommendation; else no tint (alternating stripe)."""
-        if status in ("applied", "interviewing", "offer", "rejected"):
-            if status != "rejected" and followup and "due" in followup.lower():
-                return "due"
-            return status
+    def _row_tag(mode: str, jid: str, reco: str, status: str, followup: str,
+                 resume_ids: set) -> str:
+        """The row's color tag, by tab.
+
+        - "all": never tinted — a plain list to scan every job.
+        - "tracker": application status + follow-up state (see `_tracker_tag`).
+        - "high"/unseen (default): a tailored resume wins, then the
+          recommendation; a "skip" reco is the untinted "don't consider" default.
+        """
+        if mode == "all":
+            return ""
+        if mode == "tracker":
+            return JobsTableModel._tracker_tag(status, followup)
         if jid and jid in resume_ids:
             return "has_resume"
-        if reco in ("apply", "consider", "skip"):
-            return reco
+        if reco == "apply":
+            return "apply"
+        if reco == "consider":
+            return "consider"
+        return ""
+
+    @staticmethod
+    def _tracker_tag(status: str, followup: str) -> str:
+        """Tracker row color. Terminal outcomes win (rejected -> red, offer ->
+        green); then the follow-up state (sent -> pending pink, due -> followup
+        orange); then the in-flight status (interviewing -> yellow, applied ->
+        blue); else no tint."""
+        f = (followup or "").strip().lower()
+        if status == "rejected":
+            return "rejected"
+        if status == "offer":
+            return "offer"
+        if f == "done":
+            return "pending"
+        if f == "due":
+            return "followup"
+        if status == "interviewing":
+            return "interviewing"
+        if status == "applied":
+            return "applied"
         return ""
 
     # ---- Qt model interface --------------------------------------------------

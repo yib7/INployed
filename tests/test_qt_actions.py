@@ -70,6 +70,36 @@ def test_scale_bar_nudges_clamp_and_persist(qtbot, monkeypatch):
     assert not hasattr(w, "_zoom")
 
 
+def test_scale_bar_and_restart_live_in_one_bottom_action_bar(qtbot):
+    # The interface-size control + Restart belong to the single bottom action bar
+    # (one panel), not a separate status-bar strip.
+    w = _win(qtbot)
+    bar = w._action_bar
+    bar_widgets = [bar.itemAt(i).widget() for i in range(bar.count())]
+    scale_holder = w._scale_slider.parentWidget()
+    assert scale_holder in bar_widgets                     # scale lives in the action bar
+    texts = [x.text() for x in bar_widgets if isinstance(x, QtWidgets.QPushButton)]
+    assert "Restart" in texts and "Tailor resume" in texts  # one bar holds both
+    # the steppers use plain ASCII - / + symbols
+    step_texts = {b.text() for b in scale_holder.findChildren(QtWidgets.QPushButton)}
+    assert "-" in step_texts and "+" in step_texts
+
+
+def test_restart_button_requests_relaunch_only_on_confirm(qtbot, monkeypatch):
+    w = _win(qtbot)
+    assert w._restart_requested is False
+    # decline -> nothing happens
+    monkeypatch.setattr(mw.QtWidgets.QMessageBox, "question",
+                        lambda *a, **k: mw.QtWidgets.QMessageBox.StandardButton.No)
+    w._restart_app()
+    assert w._restart_requested is False
+    # confirm -> flag set (app.main relaunches once this process exits + frees the lock)
+    monkeypatch.setattr(mw.QtWidgets.QMessageBox, "question",
+                        lambda *a, **k: mw.QtWidgets.QMessageBox.StandardButton.Yes)
+    w._restart_app()
+    assert w._restart_requested is True
+
+
 def _tracker_button_texts(tab):
     bar = tab._bar
     return [bar.itemAt(i).widget().text()
@@ -257,10 +287,15 @@ def test_apply_work_opens_url(qtbot, monkeypatch):
 
 
 def test_apply_button_is_rightmost(qtbot):
+    # Apply is the last of the job-action buttons. A separator then the utility
+    # cluster (interface size + Restart) follows it in the same bottom bar.
     w = _win(qtbot)
-    btns = [w._action_bar.itemAt(i).widget() for i in range(w._action_bar.count())]
-    btns = [b for b in btns if isinstance(b, QtWidgets.QPushButton)]
-    assert btns[-1].text() == "Apply"
+    items = [w._action_bar.itemAt(i).widget() for i in range(w._action_bar.count())]
+    # the VLine separator is a plain QFrame (QLabel also subclasses QFrame, so match
+    # the exact type) that splits the job actions from the utility cluster.
+    sep_idx = next(i for i, x in enumerate(items) if type(x) is QtWidgets.QFrame)
+    action_btns = [b for b in items[:sep_idx] if isinstance(b, QtWidgets.QPushButton)]
+    assert action_btns[-1].text() == "Apply"
 
 
 def test_apply_button_disabled_without_resume(qtbot):

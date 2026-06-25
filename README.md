@@ -130,7 +130,11 @@ High-score triage, an application tracker with follow-up nudges, run stats, and 
 **Tailor resume** button (runs in the background so the UI stays responsive). Select
 several jobs and it tailors them **all at once, in parallel** — a single failure is
 reported without sinking the rest, and a quick warning appears before very large batches.
-The window opens **maximized** to use the whole screen.
+Tailoring streams **live progress in the status bar** (`Tailoring (2/3 done): … rephrasing
+bullets`) so a multi-minute run is never a silent freeze. The window opens **maximized**
+to use the whole screen. On a brand-new setup with no jobs yet, the High Score tab shows a
+short **get-started** panel (Open Settings · Run scraper · Set up Resume Data) instead of a
+blank table.
 
 Selecting a job opens a **score preview** at the bottom — the model's reasoning,
 strengths, and gaps for that posting. It appears only on the job-list tabs (**High
@@ -145,6 +149,14 @@ to mark it applied / interviewing / rejected / offer from any tab. A **Run
 scraper** button (top action bar) kicks off a fresh scrape + score on demand —
 it asks first (a *small test run* or a *full run*) because a scrape costs real
 Bright Data money.
+
+The **Tracker** tab has **Export tracker… / Import tracker…** buttons — your whole
+application history (seen-state, statuses, and tailored-résumé links) lives in a local
+SQLite file, so export a backup and import it on another machine. Import **merges** (a
+more recent status wins; nothing is deleted). The **Stats** tab shows a **freshness
+badge** — green when the latest pipeline run is recent, amber *"the cloud scraper may
+have failed"* once it's older than the **Flag data as stale after (hours)** setting
+(default 36) — so a broken cron run doesn't go unnoticed.
 
 ### Get fresh jobs
 - **From the dashboard:** click **Run scraper** and choose a *small test run* or a
@@ -231,7 +243,10 @@ appear.
 
 ### Keep the scorer's résumé in sync (`resume.md`)
 The scorer matches every job against `resume.md`. When you edit your **Resume Data**
-(the master experience file), regenerate `resume.md` so the two stay in step: on the
+(the master experience file), regenerate `resume.md` so the two stay in step. The
+**Resume Data** tab shows an **amber warning banner** whenever `resume.md` is older than
+your data (so the scorer isn't quietly matching against a stale résumé), with a one-click
+**Regenerate resume.md**. To regenerate: on the
 **Resume Data** tab, pick a model (`gemini-3.5-flash` by default — or 3.1 flash-lite /
 3.1 pro) and click **Generate from my data**. It uses Gemini to rebuild `resume.md`
 **faithfully — selecting and rephrasing your data, never inventing.** You **review (and

@@ -1,4 +1,4 @@
-"""Small JSON helpers shared by the dashboard (ui.py) and the watcher.
+"""Small JSON helpers shared by the dashboard (local/qt) and the watcher.
 
 Both write local/config.json from separate processes; a naked write_text can
 leave a half-written file or have one writer clobber the other mid write. An

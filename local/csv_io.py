@@ -1,4 +1,4 @@
-"""Shared CSV.gz read/reconcile/write helpers used by watcher.py and ui.py.
+"""Shared CSV.gz read/reconcile/write helpers used by watcher.py and the dashboard (local/qt).
 
 Reconcile = re-apply the local seen registry onto a freshly-synced CSV
 so the is_seen column always reflects locally-tracked state.

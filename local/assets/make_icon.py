@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-# Palette mirrors local/ui.py.
+# Palette mirrors local/qt/theme.py.
 SURFACE = (24, 29, 39)      # #181d27 tile
 BORDER = (43, 51, 64)       # #2b3340
 ACCENT = (56, 189, 248)     # #38bdf8 sky (selected/triaged row)

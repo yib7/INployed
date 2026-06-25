@@ -14,8 +14,10 @@ from typing import Callable
 
 from PySide6 import QtCore, QtWidgets
 
+import jobsdata
 import settings
 import settings_archive
+from qt.widgets import CollapsibleSection
 
 SECTION_HELP = {
     "Credentials": ("API keys and tokens, saved to your private .env file on this PC. The saved "
@@ -75,6 +77,8 @@ def _ordered_sections() -> list[tuple[str, list[settings.Field]]]:
 class SettingsForm(QtWidgets.QWidget):
     def __init__(self, on_saved: Callable[[], None] | None = None, targets: dict | None = None,
                  vm_panel_factory: Callable[[QtWidgets.QWidget], QtWidgets.QWidget] | None = None,
+                 collapsed_sections: list[str] | None = None,
+                 save_collapsed: Callable[[list[str]], None] | None = None,
                  parent=None):
         super().__init__(parent)
         self.on_saved = on_saved
@@ -87,9 +91,15 @@ class SettingsForm(QtWidgets.QWidget):
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._secret_hides: dict[str, QtWidgets.QCheckBox] = {}
-        self._collapse: dict[str, QtWidgets.QWidget] = {}
+        self._collapse: dict[str, QtWidgets.QWidget] = {}  # gate-section -> gated sub-container (VM)
         self._gate_keys: dict[str, str] = {}  # gate_key -> section
         self._vm_panel: QtWidgets.QWidget | None = None  # the VM ops panel, if mounted
+
+        # Collapsible-section state: which sections start folded, and where to persist it.
+        self._section_widgets: dict[str, CollapsibleSection] = {}
+        self._collapsed: set[str] = set(
+            jobsdata.load_collapsed_sections() if collapsed_sections is None else collapsed_sections)
+        self._save_collapsed = save_collapsed or jobsdata.save_collapsed_sections
 
         self._build()
 
@@ -110,53 +120,61 @@ class SettingsForm(QtWidgets.QWidget):
         self._opening_values = dict(stored)
 
         for section, fields in _ordered_sections():
+            sec = CollapsibleSection(
+                section, collapsed=section in self._collapsed,
+                on_toggled=lambda c, s=section: self._on_section_toggled(s, c))
+            self._section_widgets[section] = sec
+            self._body.addWidget(sec)
             if section in COLLAPSIBLE_SECTIONS:
-                self._add_collapsible_section(section, fields, stored)
+                self._fill_gated_section(sec, section, fields, stored)
             else:
-                self._add_section(section, fields, stored)
+                self._fill_section(sec, section, fields, stored)
 
         self._add_buttons()
         self._body.addStretch(1)
 
-    def _add_section(self, section, fields, stored, into=None):
-        box = into if into is not None else self._body
-        head = QtWidgets.QLabel(section)
-        head.setProperty("heading", True)
-        box.addWidget(head)
+    def _on_section_toggled(self, section: str, collapsed: bool) -> None:
+        if collapsed:
+            self._collapsed.add(section)
+        else:
+            self._collapsed.discard(section)
+        try:
+            self._save_collapsed(sorted(self._collapsed))
+        except OSError:
+            pass  # persisting the fold state must never break the form
+
+    def _fill_section(self, sec: CollapsibleSection, section, fields, stored):
         blurb = SECTION_HELP.get(section)
         if blurb:
             lab = QtWidgets.QLabel(blurb)
             lab.setProperty("muted", True)
             lab.setWordWrap(True)
-            box.addWidget(lab)
+            sec.add_widget(lab)
         form = QtWidgets.QFormLayout()
         form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        box.addLayout(form)
+        sec.add_layout(form)
         for f in fields:
             self._add_field(form, f, stored.get(f.key, f.default))
 
-    def _add_collapsible_section(self, section, fields, stored):
+    def _fill_gated_section(self, sec: CollapsibleSection, section, fields, stored):
+        """A collapsible section whose body is ALSO gated by a master checkbox
+        (the VM section): collapse hides the header's body; the checkbox hides the
+        settings within. Both behaviours coexist."""
         gate_key = COLLAPSIBLE_SECTIONS[section]
         gate = next((f for f in fields if f.key == gate_key), None)
         self._gate_keys[gate_key] = section
 
-        header = QtWidgets.QHBoxLayout()
-        head = QtWidgets.QLabel(section)
-        head.setProperty("heading", True)
-        header.addWidget(head)
         check = QtWidgets.QCheckBox(gate.label if gate else "Enable")
         check.setChecked(bool(stored.get(gate_key, getattr(gate, "default", False))))
         check.toggled.connect(self._apply_section_visibility)
-        header.addWidget(check)
-        header.addStretch(1)
-        self._body.addLayout(header)
+        sec.add_widget(check)
         self._getters[gate_key] = lambda c=check: c.isChecked()
         self._setters[gate_key] = lambda v, c=check: c.setChecked(bool(v))
 
         container = QtWidgets.QWidget()
         cbox = QtWidgets.QVBoxLayout(container)
         cbox.setContentsMargins(0, 0, 0, 0)
-        self._body.addWidget(container)
+        sec.add_widget(container)
         self._collapse[section] = container
 
         blurb = SECTION_HELP.get(section)

@@ -34,6 +34,7 @@ class JobsTab(QtWidgets.QWidget):
         self._save_hidden = save_hidden or (lambda key, hidden: None)
         self._base = pd.DataFrame()
         self._resume_ids = frozenset()
+        self._empty_widget = None
 
         self.model = JobsTableModel(self.col_ids)
         self.proxy = QtCore.QSortFilterProxyModel(self)
@@ -151,6 +152,21 @@ class JobsTab(QtWidgets.QWidget):
         """Mount an extra widget (e.g. a filter checkbox) before the count label."""
         self._bar.insertWidget(self._bar.count() - 1, widget)
 
+    def set_empty_widget(self, widget) -> None:
+        """Show `widget` (e.g. a first-run hint) in place of the table whenever
+        there is NO underlying data. Filters hiding every row do not count — the
+        table (with its '0 of N shown') stays visible then."""
+        self._empty_widget = widget
+        self.layout().addWidget(widget, 1)
+        self._update_empty_state()
+
+    def _update_empty_state(self) -> None:
+        if self._empty_widget is None:
+            return
+        empty = self._base is None or self._base.empty
+        self._empty_widget.setVisible(empty)
+        self.table.setVisible(not empty)
+
     # ---- data feed -----------------------------------------------------------
 
     def set_source_df(self, df: pd.DataFrame | None, resume_ids=frozenset()) -> None:
@@ -172,6 +188,7 @@ class JobsTab(QtWidgets.QWidget):
         self.model.set_dataframe(view, self._resume_ids)
         total = 0 if self._base is None or self._base.empty else len(self._base)
         self.count_label.setText(f"{len(view)} of {total} shown")
+        self._update_empty_state()
 
     def reset_filters(self) -> None:
         self.search.clear()

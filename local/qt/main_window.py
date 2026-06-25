@@ -139,6 +139,45 @@ class MainWindow(QtWidgets.QMainWindow):
             save_hidden=self._save_hidden,
         )
 
+    def _build_empty_hint(self) -> QtWidgets.QWidget:
+        """First-run hint shown on the High Score tab when no jobs are loaded yet."""
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+        v.addStretch(1)
+        title = QtWidgets.QLabel("No jobs yet")
+        title.setProperty("heading", True)
+        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(title)
+        msg = QtWidgets.QLabel(
+            "Get started in three steps: set your keys and folders in Settings, run "
+            "the scraper to fetch and score jobs, then add your résumé data so jobs "
+            "are matched to you.")
+        msg.setWordWrap(True)
+        msg.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        msg.setProperty("muted", True)
+        v.addWidget(msg)
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+        b_settings = QtWidgets.QPushButton("Open Settings")
+        b_settings.clicked.connect(lambda: self._show_tab("Settings"))
+        row.addWidget(b_settings)
+        b_scrape = QtWidgets.QPushButton("Run scraper")
+        b_scrape.setProperty("accent", True)
+        b_scrape.clicked.connect(self._run_scraper_dialog)
+        row.addWidget(b_scrape)
+        b_resume = QtWidgets.QPushButton("Set up Resume Data")
+        b_resume.clicked.connect(lambda: self._show_tab("Resume Data"))
+        row.addWidget(b_resume)
+        row.addStretch(1)
+        v.addLayout(row)
+        v.addStretch(1)
+        return w
+
+    def _show_tab(self, title: str) -> None:
+        page = self._tab_widgets.get(title)
+        if page is not None:
+            self.tabs.setCurrentWidget(page)
+
     def _build(self) -> None:
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -166,6 +205,8 @@ class MainWindow(QtWidgets.QMainWindow):
             page = pages.get(title) or QtWidgets.QWidget()
             self._tab_widgets[title] = page
             self.tabs.addTab(page, title)
+
+        self.high_tab.set_empty_widget(self._build_empty_hint())
 
         self.preview = ScorePreview()
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)

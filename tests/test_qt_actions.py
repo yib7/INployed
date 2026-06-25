@@ -512,7 +512,7 @@ def test_tailor_selected_status_drops_console_wording(qtbot, monkeypatch):
 
 def test_finish_tailor_records_successes_and_reports(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
-    monkeypatch.setattr(mw.os, "startfile", lambda *_: None, raising=False)
+    monkeypatch.setattr(mw.osopen, "open_path", lambda *_: None)
     reloaded = []
     monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(1))
     shown = {}
@@ -534,7 +534,7 @@ def test_finish_tailor_opens_folder_only_when_enabled(qtbot, monkeypatch, tmp_pa
     monkeypatch.setattr(w, "reload_data", lambda: None)
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning", staticmethod(lambda *a, **k: None))
     opened = []
-    monkeypatch.setattr(mw.os, "startfile", lambda p: opened.append(p), raising=False)
+    monkeypatch.setattr(mw.osopen, "open_path", lambda p: opened.append(str(p)))
     results = [{"id": "1", "label": "Eng @ A", "dir": tmp_path / "1", "error": None}]
 
     # default OFF (key absent) -> the folder is NOT opened

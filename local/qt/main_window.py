@@ -23,6 +23,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import chrome
 import jobsdata
+import osopen
 import settings
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic
 from jobsdata import (
@@ -724,7 +725,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status("No tailored resume recorded — use 'Tailor resume' first.")
             return
         try:
-            os.startfile(path)  # noqa: S606
+            osopen.open_path(path)
         except OSError as e:
             self._set_status(f"Could not open {path}: {e}")
 
@@ -1025,11 +1026,11 @@ class MainWindow(QtWidgets.QMainWindow):
         elif oks:
             self._set_status(f"Resume(s) ready ({len(oks)}).")
         last = oks[-1]["dir"] if oks else None
-        # Only open File Explorer when the user opted in — off by default so a
+        # Only open the file manager when the user opted in — off by default so a
         # multi-job batch doesn't spawn a window per résumé (Settings → Dashboard).
         if last and settings.load().get("tailor_open_folder", False):
             try:
-                os.startfile(str(last))  # noqa: S606
+                osopen.open_path(last)
             except OSError:
                 pass
         self.reload_data()
@@ -1165,7 +1166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._prepping = False
         self._set_status(f"Interview prep ready → {path}")
         try:
-            os.startfile(str(path))  # noqa: S606
+            osopen.open_path(path)
         except OSError:
             pass
 

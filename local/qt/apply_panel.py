@@ -9,11 +9,12 @@ button hides the panel and restores the score preview. Nothing here submits.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict
 
 from PySide6 import QtWidgets
+
+import osopen
 
 
 class ApplyPanel(QtWidgets.QWidget):
@@ -151,7 +152,7 @@ class ApplyPanel(QtWidgets.QWidget):
         folder = self._folder
         if folder and Path(folder).exists():
             try:
-                os.startfile(folder)  # noqa: S606
+                osopen.open_path(folder)
             except OSError:
                 pass
 

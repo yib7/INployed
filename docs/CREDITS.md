@@ -10,10 +10,10 @@ This project stands on a lot of other people's work.
   pipeline fills them from `master_experience.yaml`.
 
 ## Services & APIs
-- **Google Gemini** via **Vertex AI** — job relevance scoring and résumé composition.
-- **Bright Data** — LinkedIn job dataset collection.
-- **Google Drive** + **rclone** — syncing scraped results from the VM to the desktop.
-- **MiKTeX** (`pdflatex`) — LaTeX to PDF compilation.
+- **Google Gemini** via **Vertex AI**: job relevance scoring and résumé composition.
+- **Bright Data**: LinkedIn job dataset collection.
+- **Google Drive** + **rclone**: syncing scraped results from the VM to the desktop.
+- **MiKTeX** (`pdflatex`): LaTeX to PDF compilation.
 
 ## Python libraries
 pandas · google-genai · aiohttp · PyYAML · pypdf · markdownify · python-dotenv ·

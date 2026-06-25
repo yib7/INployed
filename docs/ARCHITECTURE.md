@@ -55,8 +55,9 @@ first-run get-started hint (`JobsTab.set_empty_widget`).
 
 A few **readability** affordances: one persisted **interface scale** (`ui_scale_pct` in `config.json`)
 sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control (slider + `-`/`+`,
-10% steps, 50–200%; `MainWindow._apply_scale`) that lives — together with the action buttons and a
-**Restart** button — in a single bottom bar (`_build_action_bar`). `set_scale` bumps the application
+10% steps, 75–150%; `MainWindow._apply_scale`) — or the **Ctrl +/-/0** shortcuts
+(`_setup_zoom_shortcuts`) — that lives, together with the action buttons and a
+**Restart** button, in a single bottom bar (`_build_action_bar`). `set_scale` bumps the application
 **font** and then pushes it onto each live widget (`app.allWidgets()`): a global stylesheet pins each
 widget's font at polish time, so `app.setFont()` alone shows the change only after a restart, and
 re-applying the stylesheet to force it synchronously re-polishes *every* widget (hidden tabs included) —

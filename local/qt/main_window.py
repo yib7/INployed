@@ -19,7 +19,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import chrome
 import jobsdata
@@ -197,8 +197,8 @@ class MainWindow(QtWidgets.QMainWindow):
         minus.clicked.connect(lambda: self._nudge_scale(-10))
         h.addWidget(minus)
         self._scale_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self._scale_slider.setMinimum(50)
-        self._scale_slider.setMaximum(200)
+        self._scale_slider.setMinimum(75)
+        self._scale_slider.setMaximum(150)
         self._scale_slider.setSingleStep(10)
         self._scale_slider.setPageStep(10)
         self._scale_slider.setFixedWidth(140)
@@ -222,7 +222,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_scale_slider(self, value: int) -> None:
         # Snap to 10% steps, show the live %, and apply after a brief settle.
-        snapped = max(50, min(200, round(value / 10) * 10))
+        snapped = max(75, min(150, round(value / 10) * 10))
         if snapped != value:
             self._scale_slider.blockSignals(True)
             self._scale_slider.setValue(snapped)
@@ -236,7 +236,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_scale(self, pct: int) -> None:
         """Clamp to [50, 200], re-scale the live UI (font only — fast), sync the bar,
         and persist the choice via jobsdata."""
-        pct = max(50, min(200, int(pct)))
+        pct = max(75, min(150, int(pct)))
         self._ui_scale_pct = pct
         theme.set_scale(QtWidgets.QApplication.instance(), pct / 100.0)
         if hasattr(self, "_scale_slider"):
@@ -259,6 +259,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._restart_requested = True
         self.close()
+
+    def _setup_zoom_shortcuts(self) -> None:
+        """Ctrl++ / Ctrl+- step the interface size by 10%; Ctrl+0 resets to 100%.
+        They drive the same `_apply_scale` as the bottom bar. Several +/- spellings
+        are bound because the zoom-in key needs Shift on many layouts."""
+        def shortcut(seq, slot):
+            QtGui.QShortcut(QtGui.QKeySequence(seq), self, activated=slot)
+
+        for seq in ("Ctrl++", "Ctrl+="):           # zoom in (= shares the + key)
+            shortcut(seq, lambda: self._nudge_scale(10))
+        shortcut("Ctrl+-", lambda: self._nudge_scale(-10))   # zoom out
+        shortcut("Ctrl+0", lambda: self._apply_scale(100))   # reset
 
     def _build(self) -> None:
         central = QtWidgets.QWidget()
@@ -316,6 +328,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.currentChanged.connect(lambda _i: self._on_tab_changed())
 
         vbox.addLayout(self._build_action_bar())
+        self._setup_zoom_shortcuts()  # Ctrl +/-/0 mirror the bottom scale bar
         # The status bar is just the transient message line now (the interface-size
         # control moved up into the single bottom action bar).
         self.setStatusBar(QtWidgets.QStatusBar())

@@ -55,19 +55,29 @@ def test_scale_bar_nudges_clamp_and_persist(qtbot, monkeypatch):
     assert saved.get("pct") == 120                 # persisted as an int via jobsdata
 
     w._apply_scale(9999)        # clamp high
-    assert w._ui_scale_pct == 200
-    w._apply_scale(1)           # clamp low (cycle 17 floor = 50)
-    assert w._ui_scale_pct == 50
+    assert w._ui_scale_pct == 150
+    w._apply_scale(1)           # clamp low (floor = 75)
+    assert w._ui_scale_pct == 75
 
     w._apply_scale(100)
     w._nudge_scale(10)
     assert w._ui_scale_pct == 110               # + button steps 10
     w._nudge_scale(-60)
-    assert w._ui_scale_pct == 50                # 50 floor
+    assert w._ui_scale_pct == 75                # 75 floor
 
-    # the slider spans 50-200 in 10% steps; the Ctrl-zoom shortcuts are gone
-    assert w._scale_slider.minimum() == 50 and w._scale_slider.maximum() == 200
-    assert not hasattr(w, "_zoom")
+    # the slider spans 75-150 in 10% steps
+    assert w._scale_slider.minimum() == 75 and w._scale_slider.maximum() == 150
+
+
+def test_ctrl_zoom_shortcuts_drive_scale(qtbot):
+    # Ctrl++ / Ctrl+- step the size by 10%, Ctrl+0 resets to 100% — same _apply_scale
+    # as the bottom bar.
+    from PySide6 import QtGui
+    w = _win(qtbot)
+    seqs = {sc.key().toString() for sc in w.findChildren(QtGui.QShortcut)}
+    assert "Ctrl+-" in seqs
+    assert "Ctrl++" in seqs or "Ctrl+=" in seqs   # zoom-in key (+ usually needs shift)
+    assert "Ctrl+0" in seqs                       # reset to 100%
 
 
 def test_scale_bar_and_restart_live_in_one_bottom_action_bar(qtbot):

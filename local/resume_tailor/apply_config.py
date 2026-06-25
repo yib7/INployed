@@ -24,8 +24,8 @@ PKG_DIR = Path(__file__).resolve().parent          # local/resume_tailor
 REPO_ROOT = PKG_DIR.parent.parent                  # scrape_data
 APPLY_CONFIG = REPO_ROOT / "apply_config.json"
 
-# The candidate is a US citizen / green-card holder — never filter or answer as
-# if sponsorship were needed (see MEMORY: work_authorization).
+# The candidate is a US citizen / green-card holder, so no visa sponsorship is
+# ever needed; these defaults must never answer as if it were.
 DEFAULTS: Dict[str, Any] = {
     "work_authorized": True,
     "requires_sponsorship": False,

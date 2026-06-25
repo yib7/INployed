@@ -2,6 +2,7 @@
 import pandas as pd
 from PySide6 import QtCore, QtWidgets
 
+from qt import theme
 from qt.jobs_model import SORT_ROLE, JobsTableModel
 from qt.jobs_tab import JobsTab
 
@@ -144,6 +145,20 @@ def test_empty_widget_toggles_with_data(qtbot):
     tab.search.setText("nomatchxyz")
     tab._apply_filters()
     assert hint.isHidden() and not tab.table.isHidden()
+
+
+def test_color_legend_present_with_uniform_meanings(qtbot):
+    # Cycle 17 SP4: every job tab carries a compact color legend for the row tints.
+    tab = JobsTab("high", COLS)
+    qtbot.addWidget(tab)
+    legend = tab._legend
+    texts = " ".join(legend.labels()).lower()
+    assert "rejected" in texts
+    assert "apply" in texts and "offer" in texts
+    assert "tailored" in texts or "applied" in texts
+    # red is the negative action, mapped to the rejected row tint
+    reds = [c for c, t in legend.items if "reject" in t.lower()]
+    assert reds == [theme.ROW_REJECTED]
 
 
 def test_tab_double_click_opens_url(qtbot):

@@ -14,7 +14,9 @@ from PySide6 import QtCore, QtWidgets
 
 import jobsdata
 from jobsdata import COLUMN_LABELS, LABEL_TO_COLUMN
+from qt import theme
 from qt.jobs_model import SORT_ROLE, JobsTableModel
+from qt.widgets import ColorLegend
 from seen_db import APP_STATUSES
 from vm_schedule import RUN_LABELS
 
@@ -123,6 +125,15 @@ class JobsTab(QtWidgets.QWidget):
         self._set_column_widths(columns_with_widths(self.table_key, self.col_ids))
         layout.addWidget(self.table, 1)
 
+        # Compact, uniform key for the row tints (same legend on every job tab).
+        self._legend = ColorLegend([
+            (theme.ROW_HAS_RESUME, "Tailored / applied"),
+            (theme.ROW_APPLY, "Apply / offer"),
+            (theme.ROW_CONSIDER, "Consider / interviewing / follow-up due"),
+            (theme.ROW_REJECTED, "Rejected"),
+        ])
+        layout.addWidget(self._legend)
+
         self._debounce = QtCore.QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(200)
@@ -204,6 +215,7 @@ class JobsTab(QtWidgets.QWidget):
         empty = self._base is None or self._base.empty
         self._empty_widget.setVisible(empty)
         self.table.setVisible(not empty)
+        self._legend.setVisible(not empty)  # hide the row-color key when there's no table
 
     # ---- data feed -----------------------------------------------------------
 

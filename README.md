@@ -134,7 +134,10 @@ Tailoring streams **live progress in the status bar** (`Tailoring (2/3 done): �
 bullets`) so a multi-minute run is never a silent freeze. The window opens **maximized**
 to use the whole screen. On a brand-new setup with no jobs yet, the High Score tab shows a
 short **get-started** panel (Open Settings · Run scraper · Set up Resume Data) instead of a
-blank table.
+blank table. Each job tab keeps a tidy filter bar — a search box plus a **Filters** button
+that holds min-score / day / time / recommendation / Easy-Apply (and shows how many are
+active). You can size the whole interface to your display, too: **Ctrl +** / **Ctrl -** zoom
+live, **Ctrl 0** resets, or pick **Interface size** (Small / Medium / Large) on the Settings tab.
 
 Selecting a job opens a **score preview** at the bottom — the model's reasoning,
 strengths, and gaps for that posting. It appears only on the job-list tabs (**High
@@ -183,7 +186,8 @@ python local/configure.pyw   # standalone window (great for first-time setup)
 ```
 …or open the dashboard and click the **Settings** tab. Both edit every tunable
 the project has, grouped and explained, so a non-technical user can set things up
-without touching a file:
+without touching a file. Each section has a **collapsible header**, so you can fold
+away the parts you're not editing and tackle one group at a time:
 
 - **Credentials:** Bright Data token + dataset, the Gemini API-key pool, and the
   résumé-tailor API key. Each box shows its saved value (read straight from your
@@ -275,7 +279,8 @@ the tailoring run's own output, so it mirrors the PDF exactly with no extra AI c
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
    swaps the bottom score preview for a right-side **Apply panel** with the copyable
    résumé / cover-letter paths and the apply sheet **rendered as formatted markdown** (the
-   **Copy apply sheet** button still copies the raw markdown source). The `✕` closes the
+   **Copy apply sheet** button still copies the raw markdown source). An **Expand ⤢** button
+   opens the sheet in a large, resizable window for easier reading. The `✕` closes the
    panel and brings the score preview back; **"I applied to this job"** confirms, adds the
    job to your Tracker as *applied*, and closes the panel (the right-click → *Set status →
    applied* still works too).

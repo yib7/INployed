@@ -46,7 +46,7 @@ LOCK_PATH = APPDATA / "watcher.lock"
 RELOAD_FLAG = APPDATA / "reload.flag"
 
 CONFIG_PATH = HERE / "config.json"
-UI_PATH = HERE / "ui.py"
+UI_PATH = HERE / "app.py"   # the Qt dashboard entry point (was the deleted ui.py)
 
 
 # --------------------------------------------------------------------------- logging

@@ -247,10 +247,14 @@ its regexes. `QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py` smoke-tests th
   (applied → interviewing / rejected / offer), shows **follow-up DUE** when an
   application is ≥ `followup_days` old with no follow-up, links each row to its
   tailored-resume folder, and has the **Interview prep** button (one flash call
-  → `interview_prep.md`). The Stats tab shows the applied-vs-recommendation
+  → `interview_prep.md`). `seen.db` lives only in `%LOCALAPPDATA%\linkedin_watcher\`,
+  so the Tracker tab's **Export tracker… / Import tracker…** buttons back it up and
+  restore it on another machine (import **merges** — newer status wins, nothing is
+  deleted). The Stats tab shows the applied-vs-recommendation
   calibration readout; **Export calibration CSV** writes
   `%LOCALAPPDATA%\linkedin_watcher\calibration_labels.csv` (at ~100 labels,
-  use it to tune the scoring prompts).
+  use it to tune the scoring prompts). The Stats tab also flags the pipeline as
+  **stale** when the newest run is older than `stale_after_hours` (default 36).
 - **Tailor artifacts:** each run writes the PDF + `resume.tex` +
   `ats_report.txt` (JD keyword coverage % and missing terms) +
   `apply.md` (a self-contained apply sheet — a **fallback for portals that don't

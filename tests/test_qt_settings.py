@@ -162,6 +162,56 @@ def test_build_config_window(qtbot, tmp_path):
     assert win.findChild(st.SettingsForm) is not None
 
 
+# --- collapsible sections (cycle 16 SP4) ----------------------------------------
+
+def test_collapsible_section_toggles_body(qtbot):
+    from qt.widgets import CollapsibleSection
+    toggles = []
+    sec = CollapsibleSection("Demo", on_toggled=toggles.append)
+    qtbot.addWidget(sec)
+    sec.add_widget(QtWidgets.QLabel("x"))
+    assert not sec.is_collapsed()
+    sec._on_header_clicked()
+    assert sec.is_collapsed() and toggles == [True]
+    sec._on_header_clicked()
+    assert not sec.is_collapsed() and toggles == [True, False]
+
+
+def test_sections_are_collapsible_and_persist(qtbot, tmp_path):
+    saved = {}
+    form = SettingsForm(targets=_targets(tmp_path), collapsed_sections=[],
+                        save_collapsed=lambda s: saved.__setitem__("v", list(s)))
+    qtbot.addWidget(form)
+    sec = form._section_widgets["Scraper"]
+    assert not sec.is_collapsed()                 # default expanded
+    sec._on_header_clicked()                      # collapse it
+    assert sec.is_collapsed()
+    assert "Scraper" in saved["v"]                # persisted via the callback
+
+    form2 = SettingsForm(targets=_targets(tmp_path), collapsed_sections=saved["v"])
+    qtbot.addWidget(form2)
+    assert form2._section_widgets["Scraper"].is_collapsed()       # restored collapsed
+    assert not form2._section_widgets["Dashboard"].is_collapsed()  # others expanded
+
+
+def test_collapsed_section_still_saves_its_fields(qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    form = SettingsForm(targets=targets, collapsed_sections=["Dashboard"])
+    qtbot.addWidget(form)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    form._setters["min_score"](5)                 # field in a collapsed section
+    assert form.save() is True
+    assert settings.load(targets)["min_score"] == 5
+
+
+def test_load_save_collapsed_sections_roundtrip(tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    assert jobsdata.load_collapsed_sections() == []
+    jobsdata.save_collapsed_sections(["Scraper", "Scoring"])
+    assert jobsdata.load_collapsed_sections() == ["Scraper", "Scoring"]
+
+
 # --- settings archive (snapshot / restore) --------------------------------------
 
 def _quiet_info(monkeypatch):

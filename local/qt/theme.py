@@ -157,6 +157,9 @@ def _qss(scale: float = 1.0) -> str:
 
     QLabel[muted="true"] {{ color: {MUTED}; }}
     QLabel[heading="true"] {{ color: {TEXT}; font-size: {heading_px}px; font-weight: 600; }}
+    QToolButton[sectionHeader="true"] {{ color: {TEXT}; font-weight: 600; border: 0;
+        padding: 6px 2px; text-align: left; }}
+    QToolButton[sectionHeader="true"]:hover {{ color: {ACCENT}; }}
 
     QSplitter::handle {{ background: {BORDER}; }}
     QSplitter::handle:horizontal {{ width: 4px; }}

@@ -253,17 +253,20 @@ its regexes. `QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py` smoke-tests th
   use it to tune the scoring prompts).
 - **Tailor artifacts:** each run writes the PDF + `resume.tex` +
   `ats_report.txt` (JD keyword coverage % and missing terms) +
-  `apply.md` (a self-contained apply sheet — candidate basics/education/standard
-  answers + structured address, plus this job's tailored résumé translated into
-  markdown (work experience/projects/leadership/skills, mirrored from the run's
-  own output — no extra AI call), with the fill-it-out instructions at the top).
+  `apply.md` (a self-contained apply sheet — a **fallback for portals that don't
+  auto-fill from your résumé upload**, so it lists no files to upload: candidate
+  basics/education/standard answers + structured address, plus this job's tailored
+  résumé translated into markdown (work experience/projects/leadership/skills,
+  mirrored from the run's own output — no extra AI call), with a "when to use this
+  sheet" note + the fill-it-out instructions at the top).
   With "+ cover letter", the body is grounded by a
   Google-Search research blurb (`research.py`, small per-query Vertex cost; falls
   back to JD-only).
 - **Browser-assisted apply:** the dashboard's **Apply** button (green only once a
   job has its résumé PDF + `apply.md`) opens the posting in Chrome and pops a
-  right-side Apply panel with copyable doc paths + the apply sheet. Paste the
-  apply sheet into Claude-in-Chrome to fill the form. When done, **"I applied to
+  right-side Apply panel with copyable doc paths + the apply sheet **rendered as
+  markdown** (Copy apply sheet still copies the raw source). Paste the apply sheet
+  into Claude-in-Chrome to fill the fields by hand. When done, **"I applied to
   this job"** (confirm) records it in the Tracker and closes the panel. **Always
   review before submitting** — nothing auto-submits.
 - **Python deps:** pinned in `requirements.txt` (local) / `requirements-vm.txt`

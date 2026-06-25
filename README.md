@@ -137,8 +137,9 @@ strengths, and gaps for that posting. It appears only on the job-list tabs (**Hi
 Score / All Jobs / Tracker**) and hides itself elsewhere; **drag the divider above it**
 to make it taller or shorter.
 
-At-a-glance colors: a job you've already tailored a résumé for is tinted **blue**
-in the High Score / All Jobs lists, and in the **Tracker** an *applied* job is
+At-a-glance colors: a job whose tailored-résumé folder still exists on disk is
+tinted **blue** in the High Score / All Jobs lists — delete the folder and the
+tint clears on the next refresh — and in the **Tracker** an *applied* job is
 **blue** and a *rejected* one is **red**. Right-click any job → **Set status →**
 to mark it applied / interviewing / rejected / offer from any tab. A **Run
 scraper** button (top action bar) kicks off a fresh scrape + score on demand —
@@ -241,22 +242,28 @@ off). *(Generating makes a Gemini API call; the push runs `gcloud` — both only
 click, each after a confirm.)*
 
 ### Apply to a job (semi-automated, in Chrome)
-Every tailored résumé folder gets a self-contained **`apply.md`** apply sheet: the
-fill-it-out instructions at the top, then your candidate basics + structured address,
-education, **this job's tailored résumé translated into markdown** (the work experience,
-projects, leadership, and skills that actually landed on the PDF — company names, titles,
-dates, and every bullet, so Claude can fill the structured employment fields), and the
-active standard answers. It's built from the tailoring run's own output, so it mirrors the
-PDF exactly with no extra AI call. To apply:
+Every tailored résumé folder gets a self-contained **`apply.md`** apply sheet. It's a
+**fallback for application portals that don't auto-fill the form from your uploaded
+résumé** — when a portal parses your résumé upload into its own fields you don't need it;
+use it to fill the fields **by hand** when that doesn't work. It opens with a "when to use
+this sheet" note and the fill-it-out instructions, then your candidate basics + structured
+address, education, **this job's tailored résumé translated into markdown** (the work
+experience, projects, leadership, and skills that actually landed on the PDF — company
+names, titles, dates, and every bullet, so Claude can fill the structured employment
+fields), and the active standard answers. It lists **no files to upload**; it's built from
+the tailoring run's own output, so it mirrors the PDF exactly with no extra AI call. To apply:
 
-1. Tailor the résumé for the job (the **Tailor resume** button).
+1. Tailor the résumé for the job (the **Tailor resume** button). Tailoring no longer pops
+   open File Explorer by default — flip **Settings → Open output folder after tailoring**
+   on if you want that.
 2. Click **Apply** in the dashboard. The Apply button is **green only once the job has
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
    swaps the bottom score preview for a right-side **Apply panel** with the copyable
-   résumé / cover-letter paths and the full apply sheet (with a **Copy apply sheet**
-   button). The `✕` closes the panel and brings the score preview back; **"I applied to
-   this job"** confirms, adds the job to your Tracker as *applied*, and closes the panel
-   (the right-click → *Set status → applied* still works too).
+   résumé / cover-letter paths and the apply sheet **rendered as formatted markdown** (the
+   **Copy apply sheet** button still copies the raw markdown source). The `✕` closes the
+   panel and brings the score preview back; **"I applied to this job"** confirms, adds the
+   job to your Tracker as *applied*, and closes the panel (the right-click → *Set status →
+   applied* still works too).
 3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome
    extension connected**, paste the apply sheet into the chat and let Claude fill the
    Greenhouse / Lever / Ashby / Workday / generic form **page by page until the final

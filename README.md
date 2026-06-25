@@ -27,6 +27,17 @@ It is three cooperating pieces:
 
 ---
 
+## Demo
+
+![Animated tour of the dashboard: the High Score tab ranks scraped jobs by a two-stage LLM relevance score with apply / consider / tailored color tints, then the Tracker tab follows each application through applied, interviewing, offer, and rejected.](docs/demo.gif)
+
+The **High Score** tab ranks every scraped posting by a two-stage Gemini relevance
+score and color-codes the recommendation; the **Tracker** follows each application
+from applied through interviewing, offer, or rejected. *(Shown with representative
+sample data.)*
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -350,12 +361,12 @@ QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py   # Qt dashboard smoke test
 ```
 
 ## Screenshots
-![The triage dashboard showing high-score jobs with LLM relevance scores, deep scores, and apply/consider recommendations](docs/dashboard.png)
+![The High Score tab showing scored jobs with LLM relevance scores, deep scores, apply/consider/tailored color tints, and a recommendation legend (representative sample data)](docs/dashboard.png)
 
 The **High Score** tab surfaces only unseen postings scoring ≥4, ordered by score then
 fewest applicants (the freshest apply window first). Selecting a row shows the model's
-full analysis (reason, strengths, gaps, salary); the bottom bar drives résumé tailoring
-and the semi-automated apply flow.
+full analysis (reason, strengths, gaps); the bottom bar drives résumé tailoring and the
+semi-automated apply flow. *(Shown with representative sample data.)*
 
 ## Project layout
 ```

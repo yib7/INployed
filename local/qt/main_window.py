@@ -15,7 +15,7 @@ import sys
 import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -1045,10 +1045,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 stats_df = None
         summary = "run_stats.csv not synced yet — metrics appear after the next VM run."
         table_df = pd.DataFrame()
+        newest = None
         if stats_df is not None and not stats_df.empty:
             table_df = stats_df.iloc[::-1].reset_index(drop=True)  # newest first
             summary = self._stats_summary(stats_df)
+            try:
+                newest = datetime.fromisoformat(
+                    str(stats_df.iloc[-1].get("timestamp", "")).strip())
+            except ValueError:
+                newest = None
         self.stats_tab.set_stats(table_df, summary, self._calibration_text())
+        threshold = int(settings.load().get("stale_after_hours", 36) or 36)
+        state, age = jobsdata.run_staleness(newest, datetime.now(), threshold)
+        self.stats_tab.set_freshness(state, age)
 
     @staticmethod
     def _stats_summary(stats_df: pd.DataFrame) -> str:

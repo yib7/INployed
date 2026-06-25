@@ -93,6 +93,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="When on, the tailored résumé's folder opens in File Explorer after each run. "
                "Off (default) keeps the screen tidy when you tailor several jobs at once — reach "
                "the folder from the Apply panel's 'Open folder' button or the path in the status bar."),
+    Field("stale_after_hours", "Flag data as stale after (hours)", "int", 36,
+          "Dashboard", "config",
+          help="The Stats tab warns that the pipeline may have failed when the newest run is "
+               "older than this. The cloud scraper runs a few times a day, so 36h means a missed "
+               "day stands out.", min=6, max=336),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
     Field("keywords", "Search keywords", "list",

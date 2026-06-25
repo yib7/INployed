@@ -272,6 +272,15 @@ def test_tailor_open_folder_is_a_dashboard_bool_defaulting_off(tmp_path):
     assert settings.validate({"tailor_open_folder": True}) == {}
 
 
+def test_stale_after_hours_is_a_dashboard_int_default_36(tmp_path):
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["stale_after_hours"]
+    assert f.type == "int" and f.target == "config"
+    assert f.section == "Dashboard"
+    assert f.default == 36
+    assert settings.load(_targets(tmp_path))["stale_after_hours"] == 36
+    assert settings.validate({"stale_after_hours": 48}) == {}
+
+
 def test_vm_enabled_defaults_false(tmp_path):
     assert settings.load(_targets(tmp_path))["vm_enabled"] is False
 

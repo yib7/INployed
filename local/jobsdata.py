@@ -394,6 +394,19 @@ def blocklist_path(csv_paths: list[Path]) -> Path | None:
     return (root / "company_blocklist.txt") if root else None
 
 
+def run_staleness(newest_run, now, threshold_hours) -> tuple[str, float]:
+    """Classify how fresh the latest pipeline run is.
+
+    `newest_run` is the most recent run's datetime (None when nothing has run
+    yet), `now` is the current datetime. Returns `(state, age_hours)` where state
+    is "fresh" when the newest run is within `threshold_hours` and "stale"
+    otherwise (also "stale", with infinite age, when there is no run at all)."""
+    if newest_run is None:
+        return ("stale", float("inf"))
+    age = (now - newest_run).total_seconds() / 3600.0
+    return (("fresh" if age <= threshold_hours else "stale"), age)
+
+
 def load_local_blocklist(csv_paths: list[Path]) -> list[str]:
     """Companies blocked from the UI. The file lives in the synced Drive folder
     so run_scraper.sh pulls it down for scraper.py on every VM run."""

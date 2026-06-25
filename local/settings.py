@@ -98,6 +98,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="The Stats tab warns that the pipeline may have failed when the newest run is "
                "older than this. The cloud scraper runs a few times a day, so 36h means a missed "
                "day stands out.", min=6, max=336),
+    Field("ui_scale_pct", "Interface size (zoom %)", "editable_choice", "100",
+          "Dashboard", "config", choices=("90", "100", "120"),
+          help="Overall size of the dashboard, for tuning it to your display. 90 = small, "
+               "100 = default, 120 = large; you can also type any percent (70-200). Tip: press "
+               "Ctrl + and Ctrl - in the app to zoom live, and Ctrl 0 to reset."),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
     Field("keywords", "Search keywords", "list",
@@ -410,6 +415,16 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
             bad = [v for v in value if v not in f.choices]
             if bad:
                 errors[key] = f"Not allowed: {', '.join(bad)}."
+        elif key == "ui_scale_pct":
+            # An editable percent: any string is type-OK, but it must parse to a
+            # number in the supported zoom range so a bad value can't be saved.
+            try:
+                pct = float(value)
+            except (TypeError, ValueError):
+                errors[key] = "Must be a number (percent)."
+            else:
+                if not 70 <= pct <= 200:
+                    errors[key] = "Must be between 70 and 200."
     return errors
 
 

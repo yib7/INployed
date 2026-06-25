@@ -74,6 +74,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.addLayout(self._build_md_bar())
+        outer.addWidget(self._build_stale_banner())
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         # Keep every field within the visible width: a long value wraps or scrolls
@@ -105,6 +106,35 @@ class ResumeDataEditor(QtWidgets.QWidget):
         bar.addStretch(1)
         self._refresh_push_state()
         return bar
+
+    def _build_stale_banner(self) -> QtWidgets.QWidget:
+        """A warning shown when resume.md has drifted behind the master YAML —
+        the scorer would otherwise keep matching against an out-of-date résumé."""
+        from qt import theme
+        frame = QtWidgets.QFrame()
+        frame.setStyleSheet(
+            f"QFrame {{ border: 1px solid {theme.AMBER}; border-radius: 6px; }}"
+            f"QLabel {{ color: {theme.AMBER}; border: none; }}")
+        row = QtWidgets.QHBoxLayout(frame)
+        row.setContentsMargins(8, 6, 8, 6)
+        msg = QtWidgets.QLabel(
+            "resume.md is older than your Resume Data — the job scorer is matching "
+            "against an out-of-date résumé. Regenerate to bring it in sync.")
+        msg.setWordWrap(True)
+        row.addWidget(msg, 1)
+        self.stale_regen_btn = QtWidgets.QPushButton("Regenerate resume.md")
+        self.stale_regen_btn.clicked.connect(self._generate)
+        row.addWidget(self.stale_regen_btn)
+        self.stale_banner = frame
+        return frame
+
+    def _refresh_stale_banner(self) -> None:
+        self.stale_banner.setVisible(
+            resume_md.resume_md_stale(master_path=self.master_path))
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        self._refresh_stale_banner()
 
     def reload(self) -> None:
         self._basics_edits.clear()
@@ -138,6 +168,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._buttons(v)
         v.addStretch(1)
         self.scroll.setWidget(body)
+        self._refresh_stale_banner()  # editing the master can change drift state
 
     def _basics_block(self, v, basics: dict) -> None:
         box = QtWidgets.QGroupBox("Your details (basics)")
@@ -480,6 +511,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "resume.md", f"Could not write resume.md:\n\n{exc}")
             return
         self._set_status("resume.md updated (old version saved to resume.md.bak).")
+        self._refresh_stale_banner()  # now back in sync -> hide the warning
 
     def _push_resume_md(self) -> None:
         import vm_sync

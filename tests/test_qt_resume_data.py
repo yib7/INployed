@@ -71,6 +71,24 @@ def test_resume_md_write_backs_up(qtbot, master_tmp, tmp_path, monkeypatch):
     assert (tmp_path / "resume.md.bak").read_text(encoding="utf-8") == "OLD\n"
 
 
+def test_stale_banner_follows_staleness(qtbot, master_tmp, monkeypatch):
+    ed = _editor(qtbot, master_tmp)
+    monkeypatch.setattr(resume_md, "resume_md_stale", lambda **k: True)
+    ed._refresh_stale_banner()
+    assert not ed.stale_banner.isHidden()   # visible when resume.md has drifted
+    monkeypatch.setattr(resume_md, "resume_md_stale", lambda **k: False)
+    ed._refresh_stale_banner()
+    assert ed.stale_banner.isHidden()       # hidden once in sync
+
+
+def test_stale_banner_regenerate_calls_generate(qtbot, master_tmp, monkeypatch):
+    ed = _editor(qtbot, master_tmp)
+    called = []
+    monkeypatch.setattr(ed, "_generate", lambda: called.append(True))
+    ed.stale_regen_btn.click()
+    assert called == [True]
+
+
 def test_push_button_disabled_unless_vm_on(qtbot, master_tmp, monkeypatch):
     ed = _editor(qtbot, master_tmp)
     monkeypatch.setattr(rdt.settings, "load", lambda *a, **k: {"vm_enabled": False})

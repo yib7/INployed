@@ -34,6 +34,30 @@ def test_stats_tab_set_stats(qtbot):
     assert "Calibration" in tab.calibration.text()
 
 
+def test_stats_freshness_badge_fresh(qtbot):
+    tab = StatsTab()
+    qtbot.addWidget(tab)
+    tab.set_freshness("fresh", 4.0)
+    assert "Fresh" in tab.badge.text() and not tab.badge.isHidden()
+
+
+def test_stats_freshness_badge_stale(qtbot):
+    tab = StatsTab()
+    qtbot.addWidget(tab)
+    tab.set_freshness("stale", 50.0)
+    assert "Stale" in tab.badge.text()
+
+
+def test_refresh_stats_updates_freshness_badge(qtbot, monkeypatch):
+    w = _win(qtbot)
+    captured = {}
+    monkeypatch.setattr(w.stats_tab, "set_freshness",
+                        lambda state, age: captured.update(state=state, age=age))
+    w._refresh_stats()
+    # csv_paths=[] -> no run_stats -> no run -> stale
+    assert captured["state"] == "stale"
+
+
 def test_stats_summary_text(qtbot):
     w = _win(qtbot)
     df = pd.DataFrame([

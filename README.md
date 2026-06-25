@@ -307,9 +307,9 @@ the tailoring run's own output, so it mirrors the PDF exactly with no extra AI c
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
    swaps the bottom score preview for a right-side **Apply panel** with the copyable
    résumé / cover-letter paths and the apply sheet **rendered as formatted markdown** (the
-   **Copy apply sheet** button still copies the raw markdown source). An **Expand ⤢** button
-   opens the sheet in a large, resizable window for easier reading. The `✕` closes the
-   panel and brings the score preview back; **"I applied to this job"** confirms, adds the
+   **Copy apply sheet** button still copies the raw markdown source). An **Expand** button
+   opens the sheet in a large, resizable window for easier reading. Closing the panel brings
+   the score preview back; **"I applied to this job"** confirms, adds the
    job to your Tracker as *applied*, and closes the panel (the right-click → *Set status →
    applied* still works too).
 3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome

@@ -341,7 +341,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """Tracker-only controls added to that tab's filter bar."""
         self.tracker_due_only = QtWidgets.QCheckBox("Follow-up due only")
         self.tracker_due_only.stateChanged.connect(lambda _s: self._refresh_tracker())
-        self.tracker_tab.add_toolbar_widget(self.tracker_due_only)
+        # It's a filter, so it lives in the Filters popup (and counts toward the badge).
+        self.tracker_tab.add_filter_row(
+            self.tracker_due_only, is_active=self.tracker_due_only.isChecked)
         # Set status lives on the right-click menu (it was redundant as a button here).
         self.tracker_tab.add_toolbar_button("Mark followed up", self._tracker_followed_up)
         self.tracker_tab.add_toolbar_button("Interview prep", self._tracker_prep)

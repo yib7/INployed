@@ -35,6 +35,7 @@ class JobsTab(QtWidgets.QWidget):
         self._base = pd.DataFrame()
         self._resume_ids = frozenset()
         self._empty_widget = None
+        self._extra_filter_active: list = []  # predicates from add_filter_row, for the badge
 
         self.model = JobsTableModel(self.col_ids)
         self.proxy = QtCore.QSortFilterProxyModel(self)
@@ -135,13 +136,22 @@ class JobsTab(QtWidgets.QWidget):
         self._filters_btn.clicked.connect(self._toggle_filters_popup)
 
         self._filters_popup = QtWidgets.QWidget(self, QtCore.Qt.WindowType.Popup)
-        form = QtWidgets.QFormLayout(self._filters_popup)
-        form.addRow("Min score:", self.minscore)
-        form.addRow("Day:", self.day)
-        form.addRow("Time:", self.time)
-        form.addRow("Reco:", self.reco)
-        form.addRow("", self.easy)
+        self._filters_form = QtWidgets.QFormLayout(self._filters_popup)
+        self._filters_form.addRow("Min score:", self.minscore)
+        self._filters_form.addRow("Day:", self.day)
+        self._filters_form.addRow("Time:", self.time)
+        self._filters_form.addRow("Reco:", self.reco)
+        self._filters_form.addRow("", self.easy)
         self._filters_popup.hide()
+
+    def add_filter_row(self, widget, *, label: str = "", is_active=None) -> None:
+        """Mount an extra control inside the Filters popup (e.g. the Tracker's
+        Follow-up-due checkbox). If `is_active` (a 0-arg callable -> bool) is given,
+        it counts toward the active-filter badge."""
+        self._filters_form.addRow(label, widget)
+        if is_active is not None:
+            self._extra_filter_active.append(is_active)
+        self._update_filters_label()
 
     def _toggle_filters_popup(self) -> None:
         if self._filters_popup.isVisible():
@@ -153,12 +163,15 @@ class JobsTab(QtWidgets.QWidget):
         self._filters_popup.show()
 
     def _active_filter_count(self) -> int:
-        """How many of the five discovery filters are set away from their default."""
-        return int(self.minscore.currentText() != "Any") + \
+        """How many filters are set away from their default — the five discovery
+        filters plus any extra rows added via add_filter_row (e.g. Follow-up due)."""
+        n = int(self.minscore.currentText() != "Any") + \
             int(self.day.currentText() != "All") + \
             int(self.time.currentText() != "All") + \
             int(self.reco.currentText() != "All") + \
             int(self.easy.isChecked())
+        n += sum(1 for predicate in self._extra_filter_active if predicate())
+        return n
 
     def _update_filters_label(self) -> None:
         n = self._active_filter_count()
@@ -176,10 +189,6 @@ class JobsTab(QtWidgets.QWidget):
             b.setProperty("accent", True)
         self._bar.insertWidget(self._bar.count() - 1, b)
         return b
-
-    def add_toolbar_widget(self, widget) -> None:
-        """Mount an extra widget (e.g. a filter checkbox) before the count label."""
-        self._bar.insertWidget(self._bar.count() - 1, widget)
 
     def set_empty_widget(self, widget) -> None:
         """Show `widget` (e.g. a first-run hint) in place of the table whenever

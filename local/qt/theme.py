@@ -9,6 +9,15 @@ from __future__ import annotations
 
 from PySide6 import QtGui, QtWidgets
 
+# --- interface scaling -----------------------------------------------------
+# One factor drives the whole UI: the base font's point size and the QSS heading
+# size. Qt sizes widgets to their font, so scaling the font scales the dashboard.
+# The Interface-size setting / the Ctrl zoom keys pass a scale in [MIN, MAX].
+BASE_FONT_PT = 10.0
+BASE_HEADING_PX = 16
+MIN_SCALE = 0.7
+MAX_SCALE = 2.0
+
 # --- palette ---------------------------------------------------------------
 BG = "#0d1117"        # window background (deepest)
 SURFACE = "#161b22"   # base: panels, inputs, table body
@@ -80,7 +89,8 @@ def _dark_palette() -> QtGui.QPalette:
     return p
 
 
-def _qss() -> str:
+def _qss(scale: float = 1.0) -> str:
+    heading_px = round(BASE_HEADING_PX * scale)
     return f"""
     QWidget {{ background: {BG}; color: {TEXT}; }}
     QToolTip {{ background: {SURFACE2}; color: {TEXT}; border: 1px solid {BORDER};
@@ -146,7 +156,7 @@ def _qss() -> str:
         color: {MUTED}; }}
 
     QLabel[muted="true"] {{ color: {MUTED}; }}
-    QLabel[heading="true"] {{ color: {TEXT}; font-size: 16px; font-weight: 600; }}
+    QLabel[heading="true"] {{ color: {TEXT}; font-size: {heading_px}px; font-weight: 600; }}
 
     QSplitter::handle {{ background: {BORDER}; }}
     QSplitter::handle:horizontal {{ width: 4px; }}
@@ -170,10 +180,27 @@ def _qss() -> str:
     """
 
 
-def apply_theme(app: QtWidgets.QApplication) -> None:
-    """Apply the Fusion base style, the dark palette, and the QSS polish."""
+def _clamp_scale(scale: float) -> float:
+    try:
+        s = float(scale)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(MIN_SCALE, min(MAX_SCALE, s))
+
+
+def apply_theme(app: QtWidgets.QApplication, scale: float = 1.0) -> None:
+    """Apply the Fusion base style, the dark palette, and the scaled QSS polish."""
     app.setStyle("Fusion")
     app.setPalette(_dark_palette())
-    font = QtGui.QFont("Segoe UI", 10)
+    set_scale(app, scale)
+
+
+def set_scale(app: QtWidgets.QApplication, scale: float) -> None:
+    """Re-scale the whole UI off one factor: the base font's point size and the QSS
+    heading size. Safe to call live — re-applies the stylesheet so existing widgets
+    re-polish. `scale` is clamped to [MIN_SCALE, MAX_SCALE]."""
+    scale = _clamp_scale(scale)
+    font = QtGui.QFont("Segoe UI")
+    font.setPointSizeF(BASE_FONT_PT * scale)
     app.setFont(font)
-    app.setStyleSheet(_qss())
+    app.setStyleSheet(_qss(scale))

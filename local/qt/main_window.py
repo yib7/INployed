@@ -19,7 +19,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import chrome
 import jobsdata
@@ -39,7 +39,7 @@ from jobsdata import (
     load_local_blocklist,
     load_min_score,
 )
-from qt import workers
+from qt import theme, workers
 from qt.answers_tab import AnswersEditor
 from qt.apply_panel import ApplyPanel
 from qt.jobs_tab import JobsTab
@@ -91,6 +91,14 @@ def _no_window_flag() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _read_scale_pct() -> int:
+    """The saved interface scale percent (ui_scale_pct), defaulting to 100."""
+    try:
+        return int(round(float(settings.load().get("ui_scale_pct", 100) or 100)))
+    except (TypeError, ValueError):
+        return 100
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Top-level window. `csv_paths` are the scored run files to load."""
 
@@ -119,9 +127,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Undo stack for mark-seen: each entry is the list of ids a single
         # mark-seen action newly added, so undo reverts exactly that action.
         self._seen_undo: list[list[str]] = []
+        self._ui_scale_pct = _read_scale_pct()
         self.tailor_progress.connect(self._set_status)
 
         self._build()
+        self._setup_zoom_shortcuts()
         self.reload_data()
         self._setup_fs_watcher()
         self._apply_preview_visibility()
@@ -177,6 +187,30 @@ class MainWindow(QtWidgets.QMainWindow):
         page = self._tab_widgets.get(title)
         if page is not None:
             self.tabs.setCurrentWidget(page)
+
+    # ---- interface scaling (Ctrl +/-/0) --------------------------------------
+
+    def _setup_zoom_shortcuts(self) -> None:
+        """Live zoom: Ctrl + / Ctrl - step the interface scale, Ctrl 0 resets it.
+        (The Interface-size dropdown in Settings sets the same persisted value.)"""
+        for seq in ("Ctrl++", "Ctrl+="):  # '=' is the unshifted '+' key
+            QtGui.QShortcut(QtGui.QKeySequence(seq), self, activated=lambda: self._zoom(10))
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+-"), self, activated=lambda: self._zoom(-10))
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+0"), self, activated=lambda: self._apply_scale(100))
+
+    def _apply_scale(self, pct: int) -> None:
+        """Clamp to [70, 200], re-scale the live UI, and persist the choice."""
+        pct = max(70, min(200, int(pct)))
+        self._ui_scale_pct = pct
+        theme.set_scale(QtWidgets.QApplication.instance(), pct / 100.0)
+        try:
+            settings.save({"ui_scale_pct": str(pct)})
+        except (ValueError, OSError):
+            pass  # a failed persist must never break live zoom
+        self._set_status(f"Interface size: {pct}%")
+
+    def _zoom(self, delta: int) -> None:
+        self._apply_scale(self._ui_scale_pct + delta)
 
     def _build(self) -> None:
         central = QtWidgets.QWidget()

@@ -40,6 +40,31 @@ def test_console_python_swaps_pythonw_for_python(monkeypatch):
     assert mw._console_python(r"C:\Py\python.exe").lower().endswith("python.exe")
 
 
+def test_zoom_changes_scale_clamps_and_persists(qtbot, monkeypatch):
+    # Cycle 16 SP1: Ctrl-zoom drives one persisted scale, clamped to [70, 200].
+    w = _win(qtbot)
+    saved = {}
+    monkeypatch.setattr(mw.settings, "save", lambda vals, *a, **k: saved.update(vals))
+    scaled = {}
+    monkeypatch.setattr(mw.theme, "set_scale", lambda app, s: scaled.__setitem__("s", s))
+
+    w._apply_scale(120)
+    assert w._ui_scale_pct == 120
+    assert scaled["s"] == pytest.approx(1.2)
+    assert saved.get("ui_scale_pct") == "120"  # persisted as the editable-choice string
+
+    w._apply_scale(9999)        # clamp high
+    assert w._ui_scale_pct == 200
+    w._apply_scale(1)           # clamp low
+    assert w._ui_scale_pct == 70
+
+    w._apply_scale(100)
+    w._zoom(10)
+    assert w._ui_scale_pct == 110
+    w._zoom(-50)                # 60 -> clamped back up to 70
+    assert w._ui_scale_pct == 70
+
+
 class _FakeProc:
     def __init__(self, lines, rc):
         self.stdout = iter(lines)

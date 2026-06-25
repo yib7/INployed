@@ -27,10 +27,20 @@ except Exception:
 
 from PySide6 import QtWidgets  # noqa: E402
 
+import settings  # noqa: E402
 from jobsdata import UI_LOCK, _UILock  # noqa: E402
 from qt import wheelguard  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
 from qt.theme import apply_theme  # noqa: E402
+
+
+def _startup_scale() -> float:
+    """The saved interface scale as a factor (ui_scale_pct/100), defaulting to 1.0."""
+    try:
+        pct = float(settings.load().get("ui_scale_pct", 100) or 100)
+    except (TypeError, ValueError):
+        pct = 100.0
+    return pct / 100.0
 
 
 def build_app(argv: list[str] | None = None) -> QtWidgets.QApplication:
@@ -38,7 +48,7 @@ def build_app(argv: list[str] | None = None) -> QtWidgets.QApplication:
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication(argv if argv is not None else sys.argv)
-    apply_theme(app)
+    apply_theme(app, scale=_startup_scale())
     wheelguard.install(app)  # wheel-over must not silently edit combos/spins/sliders
     return app
 

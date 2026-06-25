@@ -28,20 +28,10 @@ def test_load_returns_defaults_when_file_absent(tmp_path):
     assert values["mtime_stable_seconds"] == 30
 
 
-def test_ui_scale_pct_is_a_dashboard_editable_choice_default_100():
-    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["ui_scale_pct"]
-    assert f.section == "Dashboard"
-    assert f.type == "editable_choice"
-    assert f.default == "100"
-    assert "100" in f.choices  # the presets include the default
-
-
-def test_ui_scale_pct_validates_numeric_range():
-    assert settings.validate({"ui_scale_pct": "100"}) == {}
-    assert settings.validate({"ui_scale_pct": "120"}) == {}
-    assert "ui_scale_pct" in settings.validate({"ui_scale_pct": "999"})   # too big
-    assert "ui_scale_pct" in settings.validate({"ui_scale_pct": "50"})    # too small
-    assert "ui_scale_pct" in settings.validate({"ui_scale_pct": "abc"})   # not a number
+def test_ui_scale_pct_is_not_a_settings_field():
+    # Cycle 17: scaling moved to the bottom bar; ui_scale_pct is persisted via
+    # jobsdata (config.json), not the settings schema.
+    assert "ui_scale_pct" not in {f.key for f in settings.SETTINGS_SCHEMA}
 
 
 def test_save_then_load_roundtrips_changed_value(tmp_path):

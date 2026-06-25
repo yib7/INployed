@@ -40,29 +40,34 @@ def test_console_python_swaps_pythonw_for_python(monkeypatch):
     assert mw._console_python(r"C:\Py\python.exe").lower().endswith("python.exe")
 
 
-def test_zoom_changes_scale_clamps_and_persists(qtbot, monkeypatch):
-    # Cycle 16 SP1: Ctrl-zoom drives one persisted scale, clamped to [70, 200].
+def test_scale_bar_nudges_clamp_and_persist(qtbot, monkeypatch):
+    # Cycle 17 SP1: the bottom scale bar drives one persisted scale, 10% steps,
+    # clamped to [50, 200], persisted via jobsdata (not the settings schema).
     w = _win(qtbot)
     saved = {}
-    monkeypatch.setattr(mw.settings, "save", lambda vals, *a, **k: saved.update(vals))
+    monkeypatch.setattr(mw.jobsdata, "save_ui_scale_pct", lambda p: saved.__setitem__("pct", p))
     scaled = {}
     monkeypatch.setattr(mw.theme, "set_scale", lambda app, s: scaled.__setitem__("s", s))
 
     w._apply_scale(120)
     assert w._ui_scale_pct == 120
     assert scaled["s"] == pytest.approx(1.2)
-    assert saved.get("ui_scale_pct") == "120"  # persisted as the editable-choice string
+    assert saved.get("pct") == 120                 # persisted as an int via jobsdata
 
     w._apply_scale(9999)        # clamp high
     assert w._ui_scale_pct == 200
-    w._apply_scale(1)           # clamp low
-    assert w._ui_scale_pct == 70
+    w._apply_scale(1)           # clamp low (cycle 17 floor = 50)
+    assert w._ui_scale_pct == 50
 
     w._apply_scale(100)
-    w._zoom(10)
-    assert w._ui_scale_pct == 110
-    w._zoom(-50)                # 60 -> clamped back up to 70
-    assert w._ui_scale_pct == 70
+    w._nudge_scale(10)
+    assert w._ui_scale_pct == 110               # + button steps 10
+    w._nudge_scale(-60)
+    assert w._ui_scale_pct == 50                # 50 floor
+
+    # the slider spans 50-200 in 10% steps; the Ctrl-zoom shortcuts are gone
+    assert w._scale_slider.minimum() == 50 and w._scale_slider.maximum() == 200
+    assert not hasattr(w, "_zoom")
 
 
 def _tracker_button_texts(tab):

@@ -212,6 +212,18 @@ def test_load_save_collapsed_sections_roundtrip(tmp_path, monkeypatch):
     assert jobsdata.load_collapsed_sections() == ["Scraper", "Scoring"]
 
 
+def test_load_save_ui_scale_pct_roundtrip_and_clamp(tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    assert jobsdata.load_ui_scale_pct() == 100          # default
+    jobsdata.save_ui_scale_pct(130)
+    assert jobsdata.load_ui_scale_pct() == 130
+    jobsdata.save_ui_scale_pct(9999)                    # clamped on save
+    assert jobsdata.load_ui_scale_pct() == 200
+    jobsdata.save_ui_scale_pct(10)
+    assert jobsdata.load_ui_scale_pct() == 50
+
+
 # --- settings archive (snapshot / restore) --------------------------------------
 
 def _quiet_info(monkeypatch):

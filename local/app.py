@@ -27,8 +27,7 @@ except Exception:
 
 from PySide6 import QtWidgets  # noqa: E402
 
-import settings  # noqa: E402
-from jobsdata import UI_LOCK, _UILock  # noqa: E402
+from jobsdata import UI_LOCK, _UILock, load_ui_scale_pct  # noqa: E402
 from qt import wheelguard  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
 from qt.theme import apply_theme  # noqa: E402
@@ -36,11 +35,7 @@ from qt.theme import apply_theme  # noqa: E402
 
 def _startup_scale() -> float:
     """The saved interface scale as a factor (ui_scale_pct/100), defaulting to 1.0."""
-    try:
-        pct = float(settings.load().get("ui_scale_pct", 100) or 100)
-    except (TypeError, ValueError):
-        pct = 100.0
-    return pct / 100.0
+    return load_ui_scale_pct() / 100.0
 
 
 def build_app(argv: list[str] | None = None) -> QtWidgets.QApplication:

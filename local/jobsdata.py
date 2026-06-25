@@ -374,6 +374,18 @@ def save_hidden_columns(hidden: dict[str, list[str]]) -> None:
     _save_cfg({"hidden_columns": hidden})
 
 
+def load_collapsed_sections() -> list[str]:
+    """Settings sections the user has collapsed, persisted in config.json under
+    'settings_collapsed'. Shape-checked so a stale/hand-edited config can't crash."""
+    raw = _load_cfg().get("settings_collapsed", [])
+    return [str(s) for s in raw] if isinstance(raw, list) else []
+
+
+def save_collapsed_sections(sections) -> None:
+    """Persist the collapsed Settings sections (best-effort; never crashes the UI)."""
+    _save_cfg({"settings_collapsed": [str(s) for s in sections]})
+
+
 def gdrive_root_dir(csv_paths: list[Path]) -> Path | None:
     """The synced LinkedInJobs folder: config.json's gdrive_root, else inferred
     from the loaded files' location (run files sit one level deeper)."""

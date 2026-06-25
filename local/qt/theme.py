@@ -197,10 +197,11 @@ def _clamp_scale(scale: float) -> float:
 
 
 def apply_theme(app: QtWidgets.QApplication, scale: float = 1.0) -> None:
-    """Apply the Fusion base style + dark palette, then the interface scale (which
-    also applies the static QSS polish)."""
+    """Apply the Fusion base style + dark palette + the static QSS polish (once),
+    then the interface scale."""
     app.setStyle("Fusion")
     app.setPalette(_dark_palette())
+    app.setStyleSheet(_qss())
     set_scale(app, scale)
 
 
@@ -208,15 +209,18 @@ def set_scale(app: QtWidgets.QApplication, scale: float) -> None:
     """Re-scale the whole UI off one factor — the application font's point size
     (`BASE_FONT_PT * scale`).
 
-    A global stylesheet pins each widget's font at polish time, so changing only
-    the app font doesn't reach widgets already on screen (the size used to change
-    only after a restart). Re-applying the *static* stylesheet re-polishes the live
-    widgets so they adopt the new font at once. The QSS is scale-independent, so
-    this is just a re-polish — callers debounce it, so it never becomes the per-tick
-    lag it was when the stylesheet itself was rebuilt on every change. `scale` is
+    A global stylesheet pins each widget's font at polish time, so `app.setFont()`
+    alone doesn't reach widgets already on screen (the size used to change only after
+    a restart). Earlier this was forced through by re-applying the stylesheet, but
+    that synchronously re-polishes *every* widget (all hidden tabs included) — the
+    lag. Instead we push the new font straight onto each live widget: that only marks
+    them dirty, so Qt defers the actual relayout to the visible ones and never
+    re-runs the QSS cascade. Live AND cheap. The stylesheet is untouched (its
+    heading/section font-weight rules still merge over the new font). `scale` is
     clamped to [MIN_SCALE, MAX_SCALE]."""
     scale = _clamp_scale(scale)
     font = QtGui.QFont("Segoe UI")
     font.setPointSizeF(BASE_FONT_PT * scale)
-    app.setFont(font)
-    app.setStyleSheet(_qss())
+    app.setFont(font)  # the default for any widgets created later (dialogs, popups)
+    for w in app.allWidgets():
+        w.setFont(font)  # override the stylesheet-pinned font on existing widgets

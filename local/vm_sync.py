@@ -1,6 +1,6 @@
 """Push config / schedule / pause to the cloud scraper VM via the user's gcloud.
 
-Design constraints (see .autopilot/AUTONOMY.md):
+Design constraints:
   * NO secrets stored or read here — VM access uses the user's existing `gcloud`
     login. Only NON-secret connection identifiers (instance/zone/project/user/
     remote dir/gcloud path) are read, from the git-ignored .env via settings.

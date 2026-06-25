@@ -164,5 +164,5 @@ Write-Host @"
     3. Authenticate Google Cloud:  gcloud auth application-default login
     4. (Scraping) run your own pipeline:  python scraper.py   then   python score_jobs.py
        or follow docs/HANDOFF.md to run it on a GCP VM via cron.
-    5. (Dashboard) launch:  python local/ui.py   (or local/open_dashboard.pyw)
+    5. (Dashboard) launch:  python local/app.py   (or local/open_dashboard.pyw)
 "@ -ForegroundColor Gray

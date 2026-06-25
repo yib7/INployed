@@ -1,13 +1,12 @@
 """Shared pytest fixtures.
 
-`root` is a single, **session-scoped** Tk interpreter shared by every GUI test.
-Creating more than one Tk() per process is flaky on Windows (intermittent
-TclError on the 2nd+ root), so all GUI tests reuse this one. It's withdrawn
-(never shown) and destroyed at the end of the session.
-
 `master_tmp` / `master_tmp_broken` write a synthetic master_experience.yaml to a
 temp dir and point `config.MASTER_YAML` at it (the real file is gitignored
 personal data), so the résumé-data editor tests never touch the user's file.
+
+`_drain_qt_widgets` (autouse) destroys widgets after every test so the single
+shared QApplication never accumulates leaked ones — see the fixture for why that
+matters (it's the difference between a 4-minute suite and a CI hang).
 """
 import os
 import sys
@@ -88,3 +87,32 @@ def master_tmp_broken(tmp_path, monkeypatch):
     yield p
     for fn in cached:
         fn.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _drain_qt_widgets():
+    """Destroy widgets after each test so the shared QApplication doesn't leak them.
+
+    pytest-qt closes widgets but their actual destruction is deferred (deleteLater),
+    and nothing drains that queue between tests. Across the hundreds of Qt tests in
+    this suite the closed-but-alive widgets pile up — and theme.apply_theme /
+    set_scale iterate `app.allWidgets()` while setStyleSheet re-polishes *every*
+    widget, so those whole-application operations grow O(accumulated) until a test
+    effectively hangs. It's timing-dependent (the victim test shifts run to run),
+    which is exactly how it slipped through locally yet hung CI for hours. Closing
+    top-level widgets and flushing the DeferredDelete queue after every test keeps
+    `allWidgets()` bounded, making the suite both fast and deterministic. A no-op for
+    the non-Qt tests (no QApplication exists)."""
+    yield
+    try:
+        from PySide6 import QtCore, QtWidgets
+    except ImportError:
+        return
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return
+    for w in app.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    app.processEvents()

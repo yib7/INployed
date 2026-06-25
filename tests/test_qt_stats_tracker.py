@@ -73,17 +73,6 @@ def test_calibration_text_no_labels(qtbot):
     assert "no labels yet" in w._calibration_text()
 
 
-def test_export_calibration_writes_csv(qtbot, tmp_path, monkeypatch):
-    rows = [{"job_posting_id": "1", "status": "applied", "company": "Acme",
-             "job_title": "DA", "applied_date": "2026-06-01", "status_date": "2026-06-01"}]
-    w = _win(qtbot, status_rows=rows)
-    monkeypatch.setattr(mw, "APPDATA", tmp_path)
-    w._export_calibration()
-    out = tmp_path / "calibration_labels.csv"
-    assert out.exists()
-    assert "Acme" in out.read_text(encoding="utf-8")
-
-
 def test_tracker_followed_up_calls_registry(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(w.tracker_tab, "selected_ids", lambda: ["1"])

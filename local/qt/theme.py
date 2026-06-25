@@ -42,21 +42,26 @@ BTN = "#21262d"       # secondary button
 BTN_HOVER = "#2d3340"
 
 # Per-row tints for the jobs tables (used by JobsTableModel BackgroundRole).
-ROW_HAS_RESUME = "#10243a"   # a tailored resume exists / applied (blue)
+# The meaning of a tint is now tab-specific (see jobs_model._row_tag): on the
+# High Score tab they key the recommendation + tailored-resume; on the Tracker
+# they key the application status + follow-up state.
+ROW_HAS_RESUME = "#10243a"   # tailored resume ready / applied (blue)
 ROW_REJECTED = "#3a1418"     # rejected (red)
-ROW_DUE = "#3a2a12"          # overdue follow-up (amber)
-ROW_APPLY = "#0f271b"        # reco "apply" / offer (green tint)
-ROW_CONSIDER = "#2a2412"     # reco "consider" / interviewing (amber tint)
+ROW_APPLY = "#0f271b"        # reco "apply" / offer (green)
+ROW_CONSIDER = "#2a2412"     # reco "consider" / interviewing (yellow)
+ROW_FOLLOWUP = "#3a2410"     # follow-up due (orange)
+ROW_PENDING = "#33162b"      # follow-up sent, awaiting reply (pink)
 
 _ROW_TINTS = {
     "has_resume": ROW_HAS_RESUME,
     "applied": ROW_HAS_RESUME,
     "rejected": ROW_REJECTED,
-    "due": ROW_DUE,
     "apply": ROW_APPLY,
     "offer": ROW_APPLY,
     "consider": ROW_CONSIDER,
     "interviewing": ROW_CONSIDER,
+    "followup": ROW_FOLLOWUP,
+    "pending": ROW_PENDING,
 }
 
 

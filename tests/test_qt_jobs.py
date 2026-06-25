@@ -36,13 +36,53 @@ def test_model_shape_and_display(qapp):
 
 
 def test_model_background_role_tags(qapp):
+    # Default mode ("high"/unseen): tailored-resume wins, then recommendation;
+    # a "skip" reco is the untinted "don't consider" default.
     m = JobsTableModel(COL_IDS)
     m.set_dataframe(_df(), resume_ids={"2"})
     bg = m.data(m.index(1, 0), QtCore.Qt.ItemDataRole.BackgroundRole)
     assert bg is not None and bg.isValid()          # id 2 has a resume -> tinted
     assert m.row_tag(1) == "has_resume"
     assert m.row_tag(0) == "apply"                   # id 1 reco apply -> apply tint
-    assert m.row_tag(2) == "skip"
+    assert m.row_tag(2) == ""                        # skip -> default (no tint)
+
+
+def test_all_mode_is_untinted(qapp):
+    # The All Jobs tab is a plain list: no row gets a color tag.
+    m = JobsTableModel(COL_IDS, mode="all")
+    m.set_dataframe(_df(), resume_ids={"1", "2", "3"})
+    assert [m.row_tag(i) for i in range(3)] == ["", "", ""]
+    bg = m.data(m.index(0, 0), QtCore.Qt.ItemDataRole.BackgroundRole)
+    assert bg is None
+
+
+def _tracker_df():
+    # status x follow_up combinations the tracker feeds the model.
+    return pd.DataFrame([
+        {"job_posting_id": "a", "status": "applied", "follow_up": "",
+         "job_title": "A", "company_name": "Co", "url": "u"},
+        {"job_posting_id": "b", "status": "applied", "follow_up": "DUE",
+         "job_title": "B", "company_name": "Co", "url": "u"},
+        {"job_posting_id": "c", "status": "applied", "follow_up": "done",
+         "job_title": "C", "company_name": "Co", "url": "u"},
+        {"job_posting_id": "d", "status": "interviewing", "follow_up": "",
+         "job_title": "D", "company_name": "Co", "url": "u"},
+        {"job_posting_id": "e", "status": "offer", "follow_up": "done",
+         "job_title": "E", "company_name": "Co", "url": "u"},
+        {"job_posting_id": "f", "status": "rejected", "follow_up": "",
+         "job_title": "F", "company_name": "Co", "url": "u"},
+    ])
+
+
+def test_tracker_mode_status_and_followup_tags(qapp):
+    cols = ["status", "follow_up", "job_title", "company_name", "url"]
+    m = JobsTableModel(cols, mode="tracker")
+    m.set_dataframe(_tracker_df())
+    tags = [m.row_tag(i) for i in range(6)]
+    assert tags == ["applied", "followup", "pending", "interviewing", "offer", "rejected"]
+    # the two new tints resolve to real colors
+    assert theme.row_color("followup").isValid()     # follow-up due -> orange
+    assert theme.row_color("pending").isValid()      # follow-up sent -> pink
 
 
 def test_proxy_numeric_sort(qapp):
@@ -147,18 +187,38 @@ def test_empty_widget_toggles_with_data(qtbot):
     assert hint.isHidden() and not tab.table.isHidden()
 
 
-def test_color_legend_present_with_uniform_meanings(qtbot):
-    # Cycle 17 SP4: every job tab carries a compact color legend for the row tints.
+def test_high_tab_legend_matches_reco_and_resume(qtbot):
+    # High Score (Unseen): yellow=consider, blue=tailored/resume, green=apply,
+    # default=don't consider. No tracker-only meanings (rejected/offer) here.
     tab = JobsTab("high", COLS)
     qtbot.addWidget(tab)
     legend = tab._legend
     texts = " ".join(legend.labels()).lower()
-    assert "rejected" in texts
-    assert "apply" in texts and "offer" in texts
-    assert "tailored" in texts or "applied" in texts
-    # red is the negative action, mapped to the rejected row tint
-    reds = [c for c, t in legend.items if "reject" in t.lower()]
-    assert reds == [theme.ROW_REJECTED]
+    assert "consider" in texts and "apply" in texts and "tailored" in texts
+    assert "rejected" not in texts and "offer" not in texts
+    by_color = {c: t.lower() for c, t in legend.items}
+    assert "consider" in by_color[theme.ROW_CONSIDER]
+    assert "apply" in by_color[theme.ROW_APPLY]
+
+
+def test_all_tab_has_no_legend(qtbot):
+    # All Jobs is a plain list — no color legend (and no row tint, see model test).
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    assert tab._legend is None
+
+
+def test_tracker_tab_legend_covers_status_and_followups(qtbot):
+    tab = JobsTab("tracker", COLS)
+    qtbot.addWidget(tab)
+    legend = tab._legend
+    by_color = {c: t.lower() for c, t in legend.items}
+    assert "applied" in by_color[theme.ROW_HAS_RESUME]
+    assert "offer" in by_color[theme.ROW_APPLY]
+    assert "interview" in by_color[theme.ROW_CONSIDER]
+    assert "reject" in by_color[theme.ROW_REJECTED]
+    assert "follow-up due" in by_color[theme.ROW_FOLLOWUP]
+    assert "follow-up sent" in by_color[theme.ROW_PENDING]
 
 
 def test_tab_double_click_opens_url(qtbot):

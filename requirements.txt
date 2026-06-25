@@ -29,3 +29,5 @@ aiohttp==3.14.1
 # dev / tests (python -m pytest tests/ -v)
 pytest==9.0.3
 pytest-qt==4.5.0       # qtbot fixtures for the Qt UI tests (offscreen, no display)
+pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a thread dump,
+                       # never burns runner hours (see the Run tests step in ci.yml)

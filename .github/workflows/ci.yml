@@ -31,5 +31,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen   # Qt UI tests run headless (no display on CI)
         run: |
-          python -m pytest -q
+          # --timeout: a hung test fails fast with a thread dump instead of burning
+          # the 6-hour job ceiling (the suite itself runs in well under a minute).
+          python -m pytest -q --timeout=120 --timeout-method=thread
           python tests/smoke_qt.py

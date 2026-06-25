@@ -447,3 +447,52 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
                         staticmethod(lambda *a, **k: shown.setdefault("info", True)))
     w._check_setup()
     assert shown.get("info")
+
+
+def test_export_tracker_writes_via_registry(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    dest = tmp_path / "backup.db"
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(dest), "")))
+    w._export_tracker()
+    w.registry.export_to.assert_called_once_with(dest)
+
+
+def test_export_tracker_cancel_is_noop(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: ("", "")))
+    w._export_tracker()
+    assert not w.registry.export_to.called
+
+
+def test_import_tracker_merges_and_reloads(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    src = tmp_path / "backup.db"
+    src.write_bytes(b"x")
+    w.registry.import_from.return_value = {"seen": 3, "status": 2, "resume_paths": 1}
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(src), "")))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    info = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: info.setdefault("text", a[2])))
+    refreshed = []
+    monkeypatch.setattr(w, "_refresh_tracker", lambda: refreshed.append(True))
+    w._import_tracker()
+    w.registry.import_from.assert_called_once_with(src)
+    assert refreshed == [True]
+    assert "3" in info["text"]  # counts surfaced
+
+
+def test_import_tracker_decline_is_noop(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    src = tmp_path / "backup.db"
+    src.write_bytes(b"x")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(src), "")))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+    w._import_tracker()
+    assert not w.registry.import_from.called

@@ -39,7 +39,7 @@ class JobsTab(QtWidgets.QWidget):
         self._empty_widget = None
         self._extra_filter_active: list = []  # predicates from add_filter_row, for the badge
 
-        self.model = JobsTableModel(self.col_ids)
+        self.model = JobsTableModel(self.col_ids, mode=table_key)
         self.proxy = QtCore.QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
         self.proxy.setSortRole(SORT_ROLE)
@@ -125,14 +125,12 @@ class JobsTab(QtWidgets.QWidget):
         self._set_column_widths(columns_with_widths(self.table_key, self.col_ids))
         layout.addWidget(self.table, 1)
 
-        # Compact, uniform key for the row tints (same legend on every job tab).
-        self._legend = ColorLegend([
-            (theme.ROW_HAS_RESUME, "Tailored / applied"),
-            (theme.ROW_APPLY, "Apply / offer"),
-            (theme.ROW_CONSIDER, "Consider / interviewing / follow-up due"),
-            (theme.ROW_REJECTED, "Rejected"),
-        ])
-        layout.addWidget(self._legend)
+        # A compact, tab-specific key for the row tints. The All Jobs tab is a
+        # plain list (no tint) so it carries no legend.
+        items = legend_items_for(self.table_key)
+        self._legend = ColorLegend(items) if items else None
+        if self._legend is not None:
+            layout.addWidget(self._legend)
 
         self._debounce = QtCore.QTimer(self)
         self._debounce.setSingleShot(True)
@@ -215,7 +213,8 @@ class JobsTab(QtWidgets.QWidget):
         empty = self._base is None or self._base.empty
         self._empty_widget.setVisible(empty)
         self.table.setVisible(not empty)
-        self._legend.setVisible(not empty)  # hide the row-color key when there's no table
+        if self._legend is not None:
+            self._legend.setVisible(not empty)  # hide the row-color key with the table
 
     # ---- data feed -----------------------------------------------------------
 
@@ -360,6 +359,32 @@ class JobsTab(QtWidgets.QWidget):
             self.block_company(ids[0])
         elif chosen in status_acts:
             self.apply_status(ids, status_acts[chosen])
+
+
+def legend_items_for(table_key: str):
+    """The row-color key for a tab, or None for a tab that isn't tinted.
+
+    - "all": None — a plain list to just scan every job.
+    - "tracker": application status + follow-up state.
+    - "high"/unseen (default): recommendation + tailored-resume.
+    """
+    if table_key == "all":
+        return None
+    if table_key == "tracker":
+        return [
+            (theme.ROW_HAS_RESUME, "Applied"),
+            (theme.ROW_FOLLOWUP, "Follow-up due"),
+            (theme.ROW_PENDING, "Follow-up sent (awaiting reply)"),
+            (theme.ROW_CONSIDER, "Interviewing"),
+            (theme.ROW_APPLY, "Offer"),
+            (theme.ROW_REJECTED, "Rejected"),
+        ]
+    return [
+        (theme.ROW_APPLY, "Apply"),
+        (theme.ROW_HAS_RESUME, "Tailored (resume ready)"),
+        (theme.ROW_CONSIDER, "Consider"),
+        (theme.SURFACE, "Don't consider"),
+    ]
 
 
 def columns_with_widths(table_key: str, col_ids: list[str]) -> list[int]:

@@ -25,7 +25,7 @@ class CollapsibleSection(QtWidgets.QWidget):
     from the `sectionHeader` QSS property.
     """
 
-    def __init__(self, title: str, *, collapsed: bool = False,
+    def __init__(self, title: str, *, subtitle: str = "", collapsed: bool = False,
                  on_toggled: Callable[[bool], None] | None = None, parent=None) -> None:
         super().__init__(parent)
         self.title = title
@@ -34,15 +34,23 @@ class CollapsibleSection(QtWidgets.QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(2)
 
+        # Header row: the toggle button + an always-visible muted tagline, so a
+        # collapsed section still tells you what it's for.
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
         self._header = QtWidgets.QToolButton()
         self._header.setText(title)
         self._header.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._header.setAutoRaise(True)
         self._header.setProperty("sectionHeader", True)
-        self._header.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
-                                   QtWidgets.QSizePolicy.Policy.Fixed)
         self._header.clicked.connect(self._on_header_clicked)
-        outer.addWidget(self._header)
+        header_row.addWidget(self._header)
+        self._subtitle = QtWidgets.QLabel(subtitle)
+        self._subtitle.setProperty("muted", True)
+        self._subtitle.setVisible(bool(subtitle))
+        header_row.addWidget(self._subtitle)
+        header_row.addStretch(1)
+        outer.addLayout(header_row)
 
         self._body = QtWidgets.QWidget()
         self._body_layout = QtWidgets.QVBoxLayout(self._body)

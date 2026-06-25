@@ -40,6 +40,20 @@ SECTION_HELP = {
 SECTION_ORDER = ["Credentials", "Connection & paths", "Engine",
                  "Dashboard", "Scraper", "Scoring", "Resume", "Settings history",
                  "VM (cloud scraper)"]
+
+# Short one-liners shown next to each section header — always visible, even when the
+# section is collapsed, so a user knows what to expand without clicking through.
+SECTION_TAGLINE = {
+    "Credentials": "API keys & tokens",
+    "Connection & paths": "Project, your name, file locations",
+    "Engine": "Which Gemini backend the tailor bills",
+    "Dashboard": "How jobs are surfaced & tracked",
+    "Scraper": "What LinkedIn search to run",
+    "Scoring": "Models & spend guards (advanced)",
+    "Resume": "Cover letter & artifact toggles",
+    "Settings history": "Snapshot & restore your settings",
+    "VM (cloud scraper)": "Manage the cloud scraper VM",
+}
 COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
 
 
@@ -121,7 +135,8 @@ class SettingsForm(QtWidgets.QWidget):
 
         for section, fields in _ordered_sections():
             sec = CollapsibleSection(
-                section, collapsed=section in self._collapsed,
+                section, subtitle=SECTION_TAGLINE.get(section, ""),
+                collapsed=section in self._collapsed,
                 on_toggled=lambda c, s=section: self._on_section_toggled(s, c))
             self._section_widgets[section] = sec
             self._body.addWidget(sec)

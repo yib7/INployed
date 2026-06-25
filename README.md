@@ -2,7 +2,7 @@
 
 > Job discovery & résumé tailoring, end to end.
 
-[![CI](https://github.com/yib7/resume_tailor_helper/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/resume_tailor_helper/actions/workflows/ci.yml)
+[![CI](https://github.com/yib7/INployed/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/INployed/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.14-blue.svg)
 
@@ -55,6 +55,13 @@ Plain-text view and full operator details live in **[HANDOFF.md](docs/HANDOFF.md
   compiles LaTeX to PDF. (Set `PDFLATEX_PATH` if it isn't on `PATH`.)
 - **A Google Cloud project** with Vertex AI enabled (for Gemini scoring + tailoring).
 - *(Optional, for scraping your own jobs)* a **Bright Data** account + LinkedIn dataset.
+
+> **Platform:** Windows is the primary target — the `Open INployed Dashboard.cmd`
+> launcher, the `setup.ps1` wizard, and the optional Task Scheduler / GCP-VM
+> automation are Windows-first. The dashboard and résumé engine themselves are
+> cross-platform Python + Qt, so on **macOS / Linux** you can install the deps with
+> `pip` and run `python local/app.py` directly (use MacTeX / TeX Live for `pdflatex`
+> instead of MiKTeX).
 
 ### 2. One-command setup
 ```powershell

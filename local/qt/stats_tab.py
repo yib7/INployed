@@ -19,6 +19,11 @@ class StatsTab(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
 
+        self.badge = QtWidgets.QLabel("")
+        self.badge.setWordWrap(True)
+        self.badge.hide()
+        v.addWidget(self.badge)
+
         self.summary = QtWidgets.QLabel("")
         self.summary.setWordWrap(True)
         v.addWidget(self.summary)
@@ -49,3 +54,25 @@ class StatsTab(QtWidgets.QWidget):
         self.model.set_dataframe(df)
         self.summary.setText(summary)
         self.calibration.setText(calibration)
+
+    def set_freshness(self, state: str, age_hours: float) -> None:
+        """Show a fresh/stale badge for the latest pipeline run."""
+        from qt import theme
+        if state == "fresh":
+            self.badge.setText(f"● Fresh — last run {_human_age(age_hours)}")
+            color = theme.GOOD
+        else:
+            when = "never" if age_hours == float("inf") else _human_age(age_hours)
+            self.badge.setText(
+                f"● Stale — last run {when}; the cloud scraper may have failed")
+            color = theme.AMBER
+        self.badge.setStyleSheet(f"color: {color}; font-weight: 600;")
+        self.badge.show()
+
+
+def _human_age(hours: float) -> str:
+    if hours < 1:
+        return "under an hour ago"
+    if hours < 48:
+        return f"{hours:.0f}h ago"
+    return f"{hours / 24:.0f}d ago"

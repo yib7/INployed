@@ -41,7 +41,8 @@ via a `MainWindow.tailor_progress` Qt signal (the engine's `on_status` callback,
 from the pool workers). See `MainWindow._tailor_work`/`_finish_tailor`. The
 **Apply** button is the rightmost action and turns green only when the selected job has both its
 résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and swaps the bottom
-score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet; `✕` closes, and
+score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet, with an
+**Expand** button that pops it into a large resizable reader; `✕` closes, and
 **"I applied to this job"** confirms → records the job applied in the Tracker → closes).
 
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
@@ -51,6 +52,14 @@ A few **durability/visibility** affordances: the Tracker tab can **Export / Impo
 warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.resume_md_stale`,
 mtime compare) with a one-click Regenerate. With zero jobs loaded the High Score tab shows a
 first-run get-started hint (`JobsTab.set_empty_widget`).
+
+A few **readability** affordances: one persisted **interface scale** (`ui_scale_pct`) drives the
+whole UI via `theme.set_scale` — a Small/Medium/Large dropdown in Settings plus live `Ctrl +/-/0`
+zoom (`MainWindow._apply_scale`). Each job tab folds its five discovery filters into a single
+**Filters** popup with an active-count badge (`JobsTab._build_filters_popup`). An app-wide
+**wheel guard** (`qt/wheelguard.py`) stops a stray scroll from editing a combo/spin/slider —
+regardless of focus, so the editable model dropdowns can't be scroll-edited. Settings sections are
+**collapsible** (`qt/widgets.py:CollapsibleSection`), with the fold state persisted to `config.json`.
 
 ## The résumé engine in depth (`local/resume_tailor/`)
 

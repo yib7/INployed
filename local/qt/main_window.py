@@ -120,6 +120,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # mark-seen action newly added, so undo reverts exactly that action.
         self._seen_undo: list[list[str]] = []
         self._ui_scale_pct = jobsdata.load_ui_scale_pct()
+        self._restart_requested = False  # app.main() relaunches when this is set
         self.tailor_progress.connect(self._set_status)
 
         self._build()
@@ -182,14 +183,15 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- interface scaling (bottom scale bar) --------------------------------
 
     def _build_scale_bar(self) -> QtWidgets.QWidget:
-        """The persistent 'Interface size' control in the status bar: −/+ buttons
-        (10% steps) and a slider (50-200%). All drive `_apply_scale`."""
+        """The persistent 'Interface size' control (part of the bottom action bar):
+        -/+ buttons (10% steps) and a slider (50-200%). All drive `_apply_scale`,
+        which re-scales the live UI immediately."""
         bar = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(bar)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)
         h.addWidget(QtWidgets.QLabel("Interface size:"))
-        minus = QtWidgets.QPushButton("−")  # minus sign
+        minus = QtWidgets.QPushButton("-")
         minus.setFixedWidth(26)
         minus.setToolTip("Smaller (-10%)")
         minus.clicked.connect(lambda: self._nudge_scale(-10))
@@ -247,6 +249,17 @@ class MainWindow(QtWidgets.QMainWindow):
         except OSError:
             pass  # a failed persist must never break live scaling
 
+    def _restart_app(self) -> None:
+        """Close and reopen the dashboard. We only flag the intent and close the
+        window here; `app.main()` relaunches a fresh process once this one has fully
+        exited, so the single-instance lock is released before the new one starts."""
+        resp = QtWidgets.QMessageBox.question(
+            self, "Restart INployed", "Close and reopen the dashboard now?")
+        if resp != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._restart_requested = True
+        self.close()
+
     def _build(self) -> None:
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -303,9 +316,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.currentChanged.connect(lambda _i: self._on_tab_changed())
 
         vbox.addLayout(self._build_action_bar())
+        # The status bar is just the transient message line now (the interface-size
+        # control moved up into the single bottom action bar).
         self.setStatusBar(QtWidgets.QStatusBar())
-        # Persistent interface-size control, pinned to the right of the status bar.
-        self.statusBar().addPermanentWidget(self._build_scale_bar())
 
     def _build_action_bar(self) -> QtWidgets.QHBoxLayout:
         bar = QtWidgets.QHBoxLayout()
@@ -333,6 +346,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # ready-state is the dashboard's "this one's good to go" signal.
         self.btn_apply = button("Apply", self._apply_selected)
         self.btn_apply.setEnabled(False)
+
+        # One bottom panel: the interface-size control and a Restart button ride in
+        # the same bar as the actions (they used to be a separate status-bar strip).
+        sep = QtWidgets.QFrame()
+        sep.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        sep.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
+        bar.addWidget(sep)
+        bar.addWidget(self._build_scale_bar())
+        self.btn_restart = button("Restart", self._restart_app)
+        self.btn_restart.setToolTip("Close and reopen the dashboard")
+
         self._action_bar = bar
         self._update_seen_buttons()
         return bar

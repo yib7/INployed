@@ -93,6 +93,37 @@ _EMPTY = (f'<span style="color:{theme.MUTED}">Select a job to see its '
           f'score breakdown, strengths, gaps, and a JD snippet.</span>')
 
 
+class ColorLegend(QtWidgets.QWidget):
+    """A thin horizontal key: a small color swatch + muted label per `(color, text)`.
+
+    Used under the job tables to explain the row tints. `items` is a list of
+    `(hex_color, label)` (the caller passes the `theme.ROW_*` tints) so the swatches
+    match exactly what users see in the rows.
+    """
+
+    def __init__(self, items, parent=None) -> None:
+        super().__init__(parent)
+        self.items = list(items)
+        self._labels: list[str] = []
+        h = QtWidgets.QHBoxLayout(self)
+        h.setContentsMargins(2, 2, 2, 2)
+        h.setSpacing(14)
+        for color, text in self.items:
+            swatch = QtWidgets.QLabel()
+            swatch.setFixedSize(13, 13)
+            swatch.setStyleSheet(
+                f"background: {color}; border: 1px solid {theme.BORDER}; border-radius: 3px;")
+            label = QtWidgets.QLabel(text)
+            label.setProperty("muted", True)
+            self._labels.append(text)
+            h.addWidget(swatch)
+            h.addWidget(label)
+        h.addStretch(1)
+
+    def labels(self) -> list[str]:
+        return list(self._labels)
+
+
 class ScorePreview(QtWidgets.QTextBrowser):
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -135,9 +135,11 @@ bullets`) so a multi-minute run is never a silent freeze. The window opens **max
 to use the whole screen. On a brand-new setup with no jobs yet, the High Score tab shows a
 short **get-started** panel (Open Settings · Run scraper · Set up Resume Data) instead of a
 blank table. Each job tab keeps a tidy filter bar — a search box plus a **Filters** button
-that holds min-score / day / time / recommendation / Easy-Apply (and shows how many are
-active). You can size the whole interface to your display, too: **Ctrl +** / **Ctrl -** zoom
-live, **Ctrl 0** resets, or pick **Interface size** (Small / Medium / Large) on the Settings tab.
+that holds min-score / day / time / recommendation / Easy-Apply (on the Tracker, also
+*Follow-up due only*), and shows how many are active. Under each table is a small **color
+legend** for the row tints. You can size the whole interface to your display from the
+**Interface size** control at the bottom of the window — a slider with `−` / `+` buttons
+(10% steps, 50–200%); your choice is remembered.
 
 Selecting a job opens a **score preview** at the bottom — the model's reasoning,
 strengths, and gaps for that posting. It appears only on the job-list tabs (**High
@@ -186,8 +188,9 @@ python local/configure.pyw   # standalone window (great for first-time setup)
 ```
 …or open the dashboard and click the **Settings** tab. Both edit every tunable
 the project has, grouped and explained, so a non-technical user can set things up
-without touching a file. Each section has a **collapsible header**, so you can fold
-away the parts you're not editing and tackle one group at a time:
+without touching a file. Each section has a **collapsible header** with a one-line
+tagline, so you can fold away the parts you're not editing — the tagline still tells
+you what each collapsed section is for — and tackle one group at a time:
 
 - **Credentials:** Bright Data token + dataset, the Gemini API-key pool, and the
   résumé-tailor API key. Each box shows its saved value (read straight from your

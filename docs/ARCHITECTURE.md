@@ -53,13 +53,16 @@ warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.r
 mtime compare) with a one-click Regenerate. With zero jobs loaded the High Score tab shows a
 first-run get-started hint (`JobsTab.set_empty_widget`).
 
-A few **readability** affordances: one persisted **interface scale** (`ui_scale_pct`) drives the
-whole UI via `theme.set_scale` — a Small/Medium/Large dropdown in Settings plus live `Ctrl +/-/0`
-zoom (`MainWindow._apply_scale`). Each job tab folds its five discovery filters into a single
-**Filters** popup with an active-count badge (`JobsTab._build_filters_popup`). An app-wide
-**wheel guard** (`qt/wheelguard.py`) stops a stray scroll from editing a combo/spin/slider —
-regardless of focus, so the editable model dropdowns can't be scroll-edited. Settings sections are
-**collapsible** (`qt/widgets.py:CollapsibleSection`), with the fold state persisted to `config.json`.
+A few **readability** affordances: one persisted **interface scale** (`ui_scale_pct` in `config.json`)
+sizes the whole UI via `theme.set_scale`, driven by a status-bar **Interface size** bar (slider + `−`/`+`,
+10% steps, 50–200%; `MainWindow._apply_scale`). The scale changes the application **font only** — the
+stylesheet is scale-independent and applied once — so scaling is instant (re-polishing every widget on
+each change was the old lag). Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
+only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge, and shows
+a compact `ColorLegend` of the row tints under the table. An app-wide **wheel guard**
+(`qt/wheelguard.py`) stops a stray scroll from editing a combo/spin/slider — regardless of focus, so the
+editable model dropdowns can't be scroll-edited. Settings sections are **collapsible**
+(`qt/widgets.py:CollapsibleSection`) with always-visible taglines, and the fold state persists to `config.json`.
 
 ## The résumé engine in depth (`local/resume_tailor/`)
 

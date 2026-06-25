@@ -16,8 +16,8 @@ from PySide6 import QtGui, QtWidgets
 # so a scale change never re-applies it — re-polishing every widget was the lag.
 # The bottom scale bar passes a scale in [MIN_SCALE, MAX_SCALE].
 BASE_FONT_PT = 10.0
-MIN_SCALE = 0.5
-MAX_SCALE = 2.0
+MIN_SCALE = 0.75
+MAX_SCALE = 1.5
 
 # --- palette ---------------------------------------------------------------
 BG = "#0d1117"        # window background (deepest)

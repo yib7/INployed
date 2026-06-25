@@ -8,10 +8,12 @@ the Gemini-model dropdown to a different model, or nudges a spend-guard slider.
 The old Tk ``ttk`` widgets never did this, so the port regressed it.
 
 Installed once on the ``QApplication`` (see ``install``), this guard swallows
-wheel events on those controls when they are *not* focused and forwards the wheel
-to the nearest scroll area, so the page scrolls instead of the control changing.
-To change a value on purpose you click the control first (giving it focus), or
-use its dropdown / arrows.
+wheel events on those controls and forwards the wheel to the nearest scroll area,
+so the page scrolls instead of the control changing. It does this *regardless of
+focus*: a control that keeps focus after a click (e.g. an editable model dropdown)
+must NOT get scroll-edited when the user is merely scrolling past it. To change a
+value on purpose, open the dropdown (or type into an editable combo / use the
+arrow keys while it has focus) — a wheel never edits it.
 
 An *editable* ``QComboBox`` (the Gemini model selectors) delivers the wheel to
 its inner ``QLineEdit``, not the combo itself, and an application event filter
@@ -47,32 +49,23 @@ def _guarded_control(w: QtWidgets.QWidget) -> QtWidgets.QWidget | None:
     return None
 
 
-def _has_focus(ctrl: QtWidgets.QWidget) -> bool:
-    """True if the control (or its inner editor, e.g. an editable combo's line edit)
-    holds keyboard focus — i.e. the user is deliberately interacting with it."""
-    if ctrl.hasFocus():
-        return True
-    focused = QtWidgets.QApplication.focusWidget()
-    return focused is not None and ctrl.isAncestorOf(focused)
-
-
 class WheelGuard(QtCore.QObject):
-    """Application event filter that neutralizes wheel-over on unfocused controls."""
+    """Application event filter that stops a wheel-over from editing a control."""
 
     def eventFilter(self, obj, event):  # noqa: N802 - Qt override name
         if event.type() != QtCore.QEvent.Type.Wheel or not isinstance(obj, QtWidgets.QWidget):
             return False
         ctrl = _guarded_control(obj)
-        if ctrl is None or _has_focus(ctrl):
-            return False  # not a guarded control, or focused -> deliberate, allow it
-        # An open dropdown must keep the wheel so the popup list scrolls.
+        if ctrl is None:
+            return False  # not a guarded control -> leave it (e.g. a text area scrolls itself)
+        # An OPEN dropdown must keep the wheel so the popup list scrolls.
         if isinstance(ctrl, QtWidgets.QComboBox) and ctrl.view().isVisible():
             return False
         sa = _scroll_ancestor(ctrl)
         if sa is not None:
             # Let the wheel scroll the surrounding page instead of the control.
             QtWidgets.QApplication.sendEvent(sa.viewport(), event)
-        return True  # never let an unfocused control eat the wheel
+        return True  # never let the control eat the wheel — even when it has focus
 
 
 def install(app: QtWidgets.QApplication) -> WheelGuard:

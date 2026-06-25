@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -93,6 +94,12 @@ def _no_window_flag() -> int:
 class MainWindow(QtWidgets.QMainWindow):
     """Top-level window. `csv_paths` are the scored run files to load."""
 
+    # Tailoring progress, streamed from the worker + thread-pool threads to the UI
+    # status bar. A Qt signal so a cross-thread emit is queued onto the UI thread
+    # (the ThreadPoolExecutor workers are plain threads — direct widget calls from
+    # them would be unsafe).
+    tailor_progress = QtCore.Signal(str)
+
     def __init__(self, csv_paths: list[Path] | None = None, registry=None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -112,6 +119,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Undo stack for mark-seen: each entry is the list of ids a single
         # mark-seen action newly added, so undo reverts exactly that action.
         self._seen_undo: list[list[str]] = []
+        self.tailor_progress.connect(self._set_status)
 
         self._build()
         self.reload_data()
@@ -790,7 +798,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tailor.setEnabled(False)
         self._apply_auth_env()
         plural = "resume" if len(jobs) == 1 else "resumes in parallel"
-        self._set_status(f"Tailoring {len(jobs)} {plural} … (progress in the console)")
+        self._set_status(f"Tailoring {len(jobs)} {plural} …")
         workers.run_async(self, lambda: self._tailor_work(jobs, opts),
                           on_done=self._finish_tailor, on_error=self._finish_tailor_error)
 
@@ -814,18 +822,33 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
         llm.reset_usage()  # once for the whole batch; jobs pass reset_usage=False
 
+        n = len(jobs)
+        done_lock = threading.Lock()
+        done = 0
+
+        def report(label: str, msg: str) -> None:
+            # Cross-thread-safe: queued onto the UI thread by the Qt signal.
+            self.tailor_progress.emit(f"Tailoring ({done}/{n} done): {label} — {msg}")
+
         def one(job: dict) -> dict:
+            nonlocal done
             label = f'{job.get("job_title") or "Role"} @ {job.get("company_name") or "?"}'
             try:
                 out = tailor_resume(job, cover_letter=opts["cover_letter"],
                                     ats_report=opts["ats_report"], prep_sheet=opts["prep_sheet"],
-                                    tone=opts["tone"], reset_usage=False)
-                return {"id": job.get("job_posting_id"), "label": label, "dir": out, "error": None}
+                                    tone=opts["tone"], reset_usage=False,
+                                    on_status=lambda m, lbl=label: report(lbl, m))
+                result = {"id": job.get("job_posting_id"), "label": label,
+                          "dir": out, "error": None}
             except Exception as exc:  # noqa: BLE001 - capture per-job; report in the summary
-                return {"id": job.get("job_posting_id"), "label": label, "dir": None,
-                        "error": str(exc)}
+                result = {"id": job.get("job_posting_id"), "label": label,
+                          "dir": None, "error": str(exc)}
+            with done_lock:
+                done += 1
+            self.tailor_progress.emit(f"Tailoring ({done}/{n} done): {label} finished")
+            return result
 
-        with ThreadPoolExecutor(max_workers=max(1, len(jobs))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, n)) as pool:
             return list(pool.map(one, jobs))
 
     def _finish_tailor(self, results: list[dict]) -> None:

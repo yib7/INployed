@@ -57,10 +57,12 @@ A few **readability** affordances: one persisted **interface scale** (`ui_scale_
 sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control (slider + `-`/`+`,
 10% steps, 50–200%; `MainWindow._apply_scale`) that lives — together with the action buttons and a
 **Restart** button — in a single bottom bar (`_build_action_bar`). `set_scale` bumps the application
-**font** and re-applies the *static, scale-independent* stylesheet to re-polish the live widgets:
-without that re-polish a global stylesheet pins each widget's font and the change shows only after a
-restart, but because the stylesheet itself never changes and the slider is debounced, the one-shot
-re-polish is cheap (rebuilding the stylesheet on *every* tick was the old lag). **Restart**
+**font** and then pushes it onto each live widget (`app.allWidgets()`): a global stylesheet pins each
+widget's font at polish time, so `app.setFont()` alone shows the change only after a restart, and
+re-applying the stylesheet to force it synchronously re-polishes *every* widget (hidden tabs included) —
+that was the lag. Setting the font per-widget only marks them dirty, so Qt defers the relayout to the
+visible ones and never re-runs the QSS cascade — live and cheap (the stylesheet is left untouched; its
+heading font-weight rules still merge over the new font). **Restart**
 (`MainWindow._restart_app`) flags the intent and closes the window; `app.main` relaunches a fresh
 process after the single-instance lock is released. Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
 only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge. Row

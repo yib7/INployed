@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -40,19 +40,23 @@ def test_qss_is_static_with_no_pinned_font_size(qtbot):
     assert "QLabel[heading" in qss           # the heading rule still exists (weight only)
 
 
-def test_set_scale_repolishes_so_change_is_live(qtbot):
-    # Live-scaling fix: a global stylesheet pins each widget's font at polish time,
-    # so a bare app.setFont() only reaches widgets created later (the size used to
-    # change only after a restart). set_scale re-applies the static stylesheet to
-    # re-polish the widgets already on screen.
+def test_set_scale_overrides_pinned_widget_fonts_live(qtbot):
+    # Live-scaling fix (fast path): a global stylesheet pins each widget's font, so a
+    # bare app.setFont() can't override an explicitly-set widget font — which is why
+    # the size used to change only after a restart. set_scale pushes the new font onto
+    # the live widgets so it updates at once, WITHOUT the global stylesheet re-polish
+    # that caused the lag (so the stylesheet is left untouched).
     app = _app()
     try:
-        app.setStyleSheet("")                # clear, then prove set_scale restores it
-        theme.set_scale(app, 1.3)
-        assert app.styleSheet() == theme._qss()  # re-applied -> live widgets re-polish
-        assert app.styleSheet() != ""
+        before = app.styleSheet()
+        w = QtWidgets.QLabel("x")
+        qtbot.addWidget(w)
+        w.setFont(QtGui.QFont("Segoe UI", 10))    # simulate the stylesheet's font pin
+        theme.set_scale(app, 1.8)
+        assert w.font().pointSizeF() == pytest.approx(theme.BASE_FONT_PT * 1.8)
+        assert app.styleSheet() == before         # not re-applied -> no re-polish lag
     finally:
-        theme.apply_theme(app)               # restore theme + scale 1.0
+        theme.set_scale(app, 1.0)
 
 
 def test_set_scale_clamps_extremes(qtbot):

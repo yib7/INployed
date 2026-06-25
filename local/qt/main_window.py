@@ -48,7 +48,7 @@ from qt.settings_tab import SettingsForm
 from qt.stats_tab import StatsTab
 from qt.vm_panel import VMPanel
 from qt.widgets import ScorePreview
-from seen_db import APP_STATUSES, SeenRegistry
+from seen_db import SeenRegistry
 
 TAB_TITLES = [
     "High Score (Unseen)",
@@ -305,7 +305,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tracker_due_only = QtWidgets.QCheckBox("Follow-up due only")
         self.tracker_due_only.stateChanged.connect(lambda _s: self._refresh_tracker())
         self.tracker_tab.add_toolbar_widget(self.tracker_due_only)
-        self.tracker_tab.add_toolbar_button("Set status", self._tracker_set_status)
+        # Set status lives on the right-click menu (it was redundant as a button here).
         self.tracker_tab.add_toolbar_button("Mark followed up", self._tracker_followed_up)
         self.tracker_tab.add_toolbar_button("Interview prep", self._tracker_prep)
         self.tracker_tab.add_toolbar_button("Remove", self._tracker_remove)
@@ -998,16 +998,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status(f"Setup check: {len(problems)} problem(s) — see the list.")
 
     # ---- tracker extras ------------------------------------------------------
-
-    def _tracker_set_status(self) -> None:
-        ids = self.tracker_tab.selected_ids()
-        if not ids:
-            self._set_status("Select tracker rows to set a status on.")
-            return
-        status, ok = QtWidgets.QInputDialog.getItem(
-            self, "Set status", "New status:", list(APP_STATUSES), 0, False)
-        if ok and status:
-            self._set_status_for(ids, status)
 
     def _tracker_followed_up(self) -> None:
         ids = self.tracker_tab.selected_ids()

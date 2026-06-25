@@ -485,6 +485,25 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     assert shown.get("info")
 
 
+def test_first_run_hint_visible_without_data(qtbot):
+    w = _win(qtbot)   # csv_paths=[] -> no jobs loaded
+    assert not w.high_tab._empty_widget.isHidden()
+    assert w.high_tab.table.isHidden()
+
+
+def test_first_run_hint_buttons_navigate(qtbot, monkeypatch):
+    w = _win(qtbot)
+    ran = []
+    monkeypatch.setattr(w, "_run_scraper_dialog", lambda: ran.append("scrape"))
+    btns = {b.text(): b for b in w.high_tab._empty_widget.findChildren(QtWidgets.QPushButton)}
+    btns["Run scraper"].click()
+    assert ran == ["scrape"]
+    btns["Open Settings"].click()
+    assert w.tabs.currentWidget() is w._tab_widgets["Settings"]
+    btns["Set up Resume Data"].click()
+    assert w.tabs.currentWidget() is w._tab_widgets["Resume Data"]
+
+
 def test_export_tracker_writes_via_registry(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     dest = tmp_path / "backup.db"

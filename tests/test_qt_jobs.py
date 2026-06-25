@@ -1,6 +1,6 @@
 """SP3: the jobs model + proxy + JobsTab (filter, sort, column toggle, coloring, actions)."""
 import pandas as pd
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets
 
 from qt.jobs_model import SORT_ROLE, JobsTableModel
 from qt.jobs_tab import JobsTab
@@ -90,6 +90,21 @@ def test_tab_never_hides_every_column(qtbot):
     for c in tab.col_ids:
         tab.set_column_hidden(c, True)
     assert any(not tab.table.isColumnHidden(i) for i in range(len(tab.col_ids)))
+
+
+def test_empty_widget_toggles_with_data(qtbot):
+    tab = JobsTab("high", COLS)
+    qtbot.addWidget(tab)
+    hint = QtWidgets.QWidget()
+    tab.set_empty_widget(hint)
+    tab.set_source_df(pd.DataFrame())            # no data -> hint shown, table hidden
+    assert not hint.isHidden() and tab.table.isHidden()
+    tab.set_source_df(_df())                     # data -> table shown, hint hidden
+    assert hint.isHidden() and not tab.table.isHidden()
+    # filters hiding every row is NOT the empty state (data still exists)
+    tab.search.setText("nomatchxyz")
+    tab._apply_filters()
+    assert hint.isHidden() and not tab.table.isHidden()
 
 
 def test_tab_double_click_opens_url(qtbot):

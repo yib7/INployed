@@ -87,6 +87,15 @@ def test_tracker_toolbar_has_no_set_status_button(qtbot):
     assert hasattr(w.tracker_tab, "apply_status")  # right-click status path intact
 
 
+def test_tracker_followup_lives_in_filters_popup(qtbot):
+    # Cycle 17 SP2: Follow-up due only moved off the bar into the Filters popup.
+    w = _win(qtbot)
+    tab = w.tracker_tab
+    assert w.tracker_due_only.parentWidget() is tab._filters_popup
+    bar_widgets = [tab._bar.itemAt(i).widget() for i in range(tab._bar.count())]
+    assert w.tracker_due_only not in bar_widgets
+
+
 class _FakeProc:
     def __init__(self, lines, rc):
         self.stdout = iter(lines)

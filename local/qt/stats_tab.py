@@ -13,9 +13,8 @@ from qt.jobs_model import JobsTableModel
 
 
 class StatsTab(QtWidgets.QWidget):
-    def __init__(self, on_export=None, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._on_export = on_export or (lambda: None)
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
 
@@ -38,17 +37,11 @@ class StatsTab(QtWidgets.QWidget):
             self.table.setColumnWidth(i, w)
         v.addWidget(self.table, 1)
 
+        # A passive readout of the applied-vs-recommendation labels (no export).
         self.calibration = QtWidgets.QLabel("")
         self.calibration.setWordWrap(True)
         self.calibration.setProperty("muted", True)
         v.addWidget(self.calibration)
-
-        bar = QtWidgets.QHBoxLayout()
-        bar.addStretch(1)
-        export = QtWidgets.QPushButton("Export calibration CSV")
-        export.clicked.connect(lambda: self._on_export())
-        bar.addWidget(export)
-        v.addLayout(bar)
 
     def set_stats(self, df: pd.DataFrame, summary: str, calibration: str) -> None:
         self.model.set_dataframe(df)

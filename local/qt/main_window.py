@@ -225,7 +225,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.all_tab = self._make_jobs_tab("all", ALL_COLUMNS)
         self.tracker_tab = self._make_jobs_tab("tracker", TRACKER_COLUMNS)
         self._setup_tracker_toolbar()
-        self.stats_tab = StatsTab(on_export=self._export_calibration)
+        self.stats_tab = StatsTab()
         self.settings_tab = SettingsForm(on_saved=self._on_settings_saved,
                                          vm_panel_factory=self._make_vm_panel)
         self.resume_data_tab = ResumeDataEditor()
@@ -1149,34 +1149,6 @@ class MainWindow(QtWidgets.QMainWindow):
         n = len(rows)
         note = " — enough to start tuning" if n >= 100 else f" (target ~100, at {n})"
         return f"Calibration: {n} labeled application(s){note} · by model reco — {parts}"
-
-    def _export_calibration(self) -> None:
-        rows = self.registry.status_rows()
-        if not rows:
-            self._set_status("No tracked applications to export yet.")
-            return
-        recs = []
-        for r in rows:
-            jid = r["job_posting_id"]
-            row = self._row_for(jid)
-            recs.append({
-                "job_posting_id": jid,
-                "company": r.get("company") or self._cell(row, "company_name"),
-                "job_title": r.get("job_title") or self._cell(row, "job_title"),
-                "score": self._cell(row, "score"),
-                "deep_score": self._cell(row, "deep_score"),
-                "recommendation": self._cell(row, "recommendation"),
-                "status": r["status"],
-                "applied_date": r.get("applied_date") or "",
-                "status_date": r.get("status_date") or "",
-            })
-        out = APPDATA / "calibration_labels.csv"
-        try:
-            pd.DataFrame(recs).to_csv(out, index=False, encoding="utf-8")
-        except OSError as e:
-            self._set_status(f"Export failed: {e}")
-            return
-        self._set_status(f"Calibration labels → {out}")
 
     # ---- settings ------------------------------------------------------------
 

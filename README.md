@@ -29,12 +29,14 @@ It is three cooperating pieces:
 
 ## Demo
 
-![Animated tour of the dashboard: the High Score tab ranks scraped jobs by a two-stage LLM relevance score with apply / consider / tailored color tints, then the Tracker tab follows each application through applied, interviewing, offer, and rejected.](docs/demo.gif)
+![Animated tour of the dashboard: the High Score tab ranks scraped jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Resume Data tab holds the select-and-rephrase source of truth; and the Apply panel shows the self-contained apply sheet.](docs/demo.gif)
 
-The **High Score** tab ranks every scraped posting by a two-stage Gemini relevance
-score and color-codes the recommendation; the **Tracker** follows each application
-from applied through interviewing, offer, or rejected. *(Shown with representative
-sample data.)*
+A tour of the full loop: **High Score** ranks every scraped posting by a two-stage
+Gemini relevance score and color-codes the recommendation; selecting a job opens its
+**score breakdown** (reason, strengths, gaps); the **Tracker** follows each application
+from applied through interviewing, offer, or rejected; the **Resume Data** tab is the
+select-and-rephrase source of truth the tailor draws from; and the **Apply** panel
+produces a self-contained apply sheet. *(Shown with representative sample data.)*
 
 ---
 
@@ -43,18 +45,16 @@ sample data.)*
 ```mermaid
 flowchart TD
     subgraph Cloud["GCP VM (cron, twice daily)"]
-        A[scraper.py<br/>Bright Data API] --> B[score_jobs.py<br/>2-stage Gemini scorer]
+        A["scraper.py<br/>Bright Data API"] --> B["score_jobs.py<br/>2-stage Gemini scorer"]
     end
-    B -->|scored CSVs| C[(Google Drive)]
-    C -->|Drive desktop sync| D[Local LinkedInJobs folder]
+    B -->|scored CSVs| C[("Google Drive")]
+    C -->|Drive desktop sync| D["Local LinkedInJobs folder"]
     subgraph Desktop["Windows PC"]
-        D --> E[app.py dashboard (Qt)<br/>triage / tracker / stats]
-        E -->|Tailor resume| F[resume_tailor/<br/>select - rephrase - verify - LaTeX]
-        F --> G[Tailored PDF + cover letter<br/>+ ATS report + prep sheet]
+        D --> E["app.py dashboard (Qt)<br/>triage / tracker / stats"]
+        E -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - verify - LaTeX"]
+        F --> G["Tailored PDF + cover letter<br/>+ ATS report + prep sheet"]
     end
 ```
-
-Plain-text view and full operator details live in **[HANDOFF.md](docs/HANDOFF.md)**.
 
 ---
 
@@ -92,9 +92,10 @@ python -m pip install -r requirements.txt
 gcloud auth application-default login
 ```
 
-**Prefer a GUI to editing `.env` by hand?** Once dependencies are installed, run
-`python local/configure.pyw` for a window that sets your keys, paths, and every
-other option — see [Configure everything from one window](#configure-everything-from-one-window-no-file-editing).
+**Prefer a GUI to editing `.env` by hand?** Once dependencies are installed, launch
+the dashboard (`python local/app.py`) and open the **Settings** tab — one window that
+sets your keys, paths, and every other option. See
+[Configure everything from the Settings tab](#configure-everything-from-the-settings-tab-no-file-editing).
 
 ### 3. Tell the tool about you
 Your experience lives in **`resume_tailor_files/master_experience.yaml`** — the single
@@ -202,18 +203,14 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
   collected posting, so the full keyword list (the VM default) can collect
   thousands. Use the caps for a quick check.
 - **Hands-off (recommended for daily use):** run that pair on a small GCP VM via
-  cron and sync results to Google Drive — full instructions in
-  [HANDOFF.md](docs/HANDOFF.md).
+  cron and sync results to Google Drive, then drive the schedule, pauses, and config
+  pushes from the dashboard's **Settings → VM (cloud scraper)** section (below).
 
-### Configure everything from one window (no file editing)
-There are two ways into the **same** config form — pick whichever suits you:
-
-```powershell
-python local/configure.pyw   # standalone window (great for first-time setup)
-```
-…or open the dashboard and click the **Settings** tab. Both edit every tunable
-the project has, grouped and explained, so a non-technical user can set things up
-without touching a file. Each section has a **collapsible header** with a one-line
+### Configure everything from the Settings tab (no file editing)
+Open the dashboard (`python local/app.py`) and click the **Settings** tab — one
+schema-driven form that edits every tunable the project has, grouped and explained,
+so a non-technical user can set things up without touching a file. Each section has a
+**collapsible header** with a one-line
 tagline, so you can fold away the parts you're not editing — the tagline still tells
 you what each collapsed section is for — and tackle one group at a time:
 
@@ -248,8 +245,8 @@ are written atomically (with a `.bak`) to your git-ignored `.env`,
 falls back to built-in defaults — so the VM keeps running unchanged.
 
 ### Manage the VM from the dashboard
-If you run the scraper + scorer on a GCP VM (see [HANDOFF.md](docs/HANDOFF.md)),
-the dashboard drives it without SSH-by-hand — there's **no separate VM tab**. In
+If you run the scraper + scorer on a GCP VM, the dashboard drives it without
+SSH-by-hand — there's **no separate VM tab**. In
 **Settings**, turn on **Enable VM features** (off by default) and fill the VM
 section (instance, zone, project, Linux user); these non-secret identifiers are
 saved to your git-ignored `.env`. Authentication is your existing
@@ -380,13 +377,12 @@ local/app.py            PySide6/Qt dashboard entry point (triage / tracker / sta
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
 local/chrome.py         open job/resume links in the configured Chrome profile
-local/configure.py      standalone config GUI (settings.py schema + qt/settings_tab.py)
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders + settings->VM change detection
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
-docs/                   ARCHITECTURE (code tour), HANDOFF (operator guide), CREDITS
+docs/                   ARCHITECTURE (code tour), CREDITS (attribution)
 ```
 
 ## License

@@ -6,7 +6,7 @@ import settings
 import settings_archive
 from PySide6 import QtCore, QtGui, QtWidgets
 from qt import settings_tab as st
-from qt.settings_tab import SettingsForm, build_config_window
+from qt.settings_tab import SettingsForm
 
 
 def _targets(tmp_path):
@@ -153,13 +153,6 @@ def test_revert_resets_vm_panel(qtbot, tmp_path):
     assert form._vm_panel._times() == ["08:00"]
     form.revert()
     assert form._vm_panel._times() == ["10:00", "19:00"]  # back to its initial schedule
-
-
-def test_build_config_window(qtbot, tmp_path):
-    win = build_config_window(targets=_targets(tmp_path))
-    qtbot.addWidget(win)
-    assert win.windowTitle().startswith("Configure")
-    assert win.findChild(st.SettingsForm) is not None
 
 
 # --- collapsible sections (cycle 16 SP4) ----------------------------------------

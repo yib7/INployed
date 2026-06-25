@@ -7,9 +7,8 @@ Design constraints:
   * Pure argv builders + a thin `run_cmd` runner. The build/tests never execute a
     real gcloud command; the dashboard runs them only on an explicit user click.
 
-`gcloud compute ssh/scp` is the transport (matches docs/HANDOFF.md), so the user
-authenticates once with `gcloud auth login` and nothing here ever sees a password
-or key.
+`gcloud compute ssh/scp` is the transport, so the user authenticates once with
+`gcloud auth login` and nothing here ever sees a password or key.
 """
 from __future__ import annotations
 

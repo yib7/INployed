@@ -1,8 +1,7 @@
 # Codebase explainer
 
 A guided tour of how the pieces fit together — written for someone (you, later)
-reopening this repo cold. Operator/runbook details live in `HANDOFF.md`; this doc
-is about *how the code is shaped and why*.
+reopening this repo cold. This doc is about *how the code is shaped and why*.
 
 ## The three subsystems
 
@@ -143,11 +142,12 @@ bullet outside its window, and `compile.enforce_one_page` drops the weakest bull
 and shrinks until it fits one page.
 
 ## Data flow, end to end
-```
-master_experience.yaml ──┐
-                         ▼
-job (CSV row) ─► select ─► rephrase ─► verify ─► layout fit ─► render ─► pdflatex ─► PDF
-                                                                    └► ATS report, cover letter, prep, apply.md
+```mermaid
+flowchart LR
+    JOB["job (CSV row)"] --> SEL["select"]
+    YAML["master_experience.yaml<br/>(your atoms)"] --> SEL
+    SEL --> REP["rephrase"] --> VER["verify"] --> FIT["layout fit"] --> REN["render"] --> TEX["pdflatex"] --> PDF["one-page PDF"]
+    PDF -.-> EXTRAS["+ ATS report, cover letter,<br/>prep sheet, apply.md"]
 ```
 
 ## Where the tests live

@@ -73,6 +73,30 @@ def test_tab_min_score_filter(qtbot):
     assert tab.model.rowCount() == 2
 
 
+def test_discovery_filters_live_in_popup(qtbot):
+    # Cycle 16 SP3: Min score / Day / Time / Reco / Easy moved into a Filters popup.
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    for w in (tab.minscore, tab.day, tab.time, tab.reco, tab.easy):
+        assert w.parentWidget() is tab._filters_popup
+    # filtering from inside the popup still narrows the table
+    tab.set_source_df(_df())
+    tab.minscore.setCurrentText("4")
+    assert tab.model.rowCount() == 2
+
+
+def test_filters_button_shows_active_count(qtbot):
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    assert tab._filters_btn.text() == "Filters"
+    tab.minscore.setCurrentText("4")
+    tab.reco.setCurrentText("apply")
+    assert "(2)" in tab._filters_btn.text()       # badge counts the active filters
+    tab.reset_filters()
+    assert tab._filters_btn.text() == "Filters"
+
+
 def test_tab_column_toggle_hides_and_persists(qtbot):
     saved = {}
     tab = JobsTab("all", COLS, save_hidden=lambda k, h: saved.__setitem__(k, h))

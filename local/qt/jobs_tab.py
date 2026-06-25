@@ -67,33 +67,25 @@ class JobsTab(QtWidgets.QWidget):
         bar.addWidget(QtWidgets.QLabel("In:"))
         bar.addWidget(self.search_col)
 
+        # The five discovery filters (Min score / Day / Time / Reco / Easy Apply)
+        # live in a single "Filters" popup so the bar stays readable. The widgets
+        # and their signals are unchanged — only their parent moves into the popup.
         self.minscore = QtWidgets.QComboBox()
         self.minscore.addItems(["Any", "1", "2", "3", "4", "5"])
         self.minscore.currentIndexChanged.connect(self._apply_filters)
-        bar.addWidget(QtWidgets.QLabel("Min score:"))
-        bar.addWidget(self.minscore)
-
         self.day = QtWidgets.QComboBox()
         self.day.addItem("All")
         self.day.currentIndexChanged.connect(self._apply_filters)
-        bar.addWidget(QtWidgets.QLabel("Day:"))
-        bar.addWidget(self.day)
-
         self.time = QtWidgets.QComboBox()
         self.time.addItems(["All", *RUN_LABELS])
         self.time.currentIndexChanged.connect(self._apply_filters)
-        bar.addWidget(QtWidgets.QLabel("Time:"))
-        bar.addWidget(self.time)
-
         self.reco = QtWidgets.QComboBox()
         self.reco.addItems(["All", "apply", "consider", "skip"])
         self.reco.currentIndexChanged.connect(self._apply_filters)
-        bar.addWidget(QtWidgets.QLabel("Reco:"))
-        bar.addWidget(self.reco)
-
         self.easy = QtWidgets.QCheckBox("Easy Apply")
         self.easy.stateChanged.connect(self._apply_filters)
-        bar.addWidget(self.easy)
+        self._build_filters_popup()
+        bar.addWidget(self._filters_btn)
 
         reset = QtWidgets.QPushButton("Reset")
         reset.clicked.connect(self.reset_filters)
@@ -134,6 +126,43 @@ class JobsTab(QtWidgets.QWidget):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(200)
         self._debounce.timeout.connect(self._apply_filters)
+
+    def _build_filters_popup(self) -> None:
+        """A 'Filters' button that reveals the five discovery filters in a small
+        floating panel, so the bar shows only Search / In / Filters / Reset / Columns."""
+        self._filters_btn = QtWidgets.QPushButton("Filters")
+        self._filters_btn.setToolTip("Min score, day, time, recommendation, Easy Apply")
+        self._filters_btn.clicked.connect(self._toggle_filters_popup)
+
+        self._filters_popup = QtWidgets.QWidget(self, QtCore.Qt.WindowType.Popup)
+        form = QtWidgets.QFormLayout(self._filters_popup)
+        form.addRow("Min score:", self.minscore)
+        form.addRow("Day:", self.day)
+        form.addRow("Time:", self.time)
+        form.addRow("Reco:", self.reco)
+        form.addRow("", self.easy)
+        self._filters_popup.hide()
+
+    def _toggle_filters_popup(self) -> None:
+        if self._filters_popup.isVisible():
+            self._filters_popup.hide()
+            return
+        self._filters_popup.adjustSize()
+        self._filters_popup.move(
+            self._filters_btn.mapToGlobal(QtCore.QPoint(0, self._filters_btn.height())))
+        self._filters_popup.show()
+
+    def _active_filter_count(self) -> int:
+        """How many of the five discovery filters are set away from their default."""
+        return int(self.minscore.currentText() != "Any") + \
+            int(self.day.currentText() != "All") + \
+            int(self.time.currentText() != "All") + \
+            int(self.reco.currentText() != "All") + \
+            int(self.easy.isChecked())
+
+    def _update_filters_label(self) -> None:
+        n = self._active_filter_count()
+        self._filters_btn.setText(f"Filters ({n})" if n else "Filters")
 
     def _set_column_widths(self, widths: list[int]) -> None:
         for i, w in enumerate(widths):
@@ -188,6 +217,7 @@ class JobsTab(QtWidgets.QWidget):
         self.model.set_dataframe(view, self._resume_ids)
         total = 0 if self._base is None or self._base.empty else len(self._base)
         self.count_label.setText(f"{len(view)} of {total} shown")
+        self._update_filters_label()
         self._update_empty_state()
 
     def reset_filters(self) -> None:

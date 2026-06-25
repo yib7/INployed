@@ -164,6 +164,94 @@ class SeenRegistry:
         cur = self._conn.execute("SELECT job_posting_id, path FROM resume_paths")
         return {row[0]: row[1] for row in cur.fetchall()}
 
+    # ---- backup / restore ----------------------------------------------------
+
+    def export_to(self, dest: Path | str) -> Path:
+        """Write a self-contained snapshot of the whole registry to `dest`.
+
+        Uses SQLite `VACUUM INTO`, which makes a transactionally-consistent copy
+        straight off the live connection (no need to close it). `VACUUM INTO`
+        refuses to overwrite, so an existing destination is removed first."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            dest.unlink()
+        self._conn.commit()  # no VACUUM inside an open transaction
+        self._conn.execute("VACUUM INTO ?", (str(dest),))
+        return dest
+
+    def import_from(self, src: Path | str, *, mode: str = "merge") -> dict[str, int]:
+        """Merge a backup created by `export_to` into this registry.
+
+        Never replaces — a restore can't wipe newer local progress:
+          seen          : set union (INSERT OR IGNORE).
+          app_status    : per id, the row with the later `status_date` wins;
+                          `applied_date` is the earliest non-null of the two;
+                          `followed_up_at` the latest non-null; snapshot fields
+                          keep the existing value when set, else take the backup's.
+          resume_paths  : keep the current path if present, else take the backup's.
+        Returns {"seen": n, "status": n, "resume_paths": n} rows added/updated."""
+        if mode != "merge":
+            raise ValueError(f"unsupported import mode {mode!r} (only 'merge')")
+        src = Path(src)
+        if not src.exists():
+            raise FileNotFoundError(src)
+        counts = {"seen": 0, "status": 0, "resume_paths": 0}
+        conn = self._conn
+        conn.execute("ATTACH DATABASE ? AS bak", (str(src),))
+        try:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO seen (job_posting_id, marked_at)"
+                " SELECT job_posting_id, marked_at FROM bak.seen"
+            )
+            counts["seen"] = cur.rowcount
+
+            bak_rows = conn.execute(
+                "SELECT job_posting_id, status, status_date, applied_date,"
+                "       followed_up_at, company, job_title, url FROM bak.app_status"
+            ).fetchall()
+            for (jid, status, sdate, applied, follow, company, title, url) in bak_rows:
+                ex = conn.execute(
+                    "SELECT status, status_date, applied_date, followed_up_at,"
+                    "       company, job_title, url FROM app_status"
+                    " WHERE job_posting_id = ?", (jid,)
+                ).fetchone()
+                if ex is None:
+                    conn.execute(
+                        "INSERT INTO app_status (job_posting_id, status, status_date,"
+                        " applied_date, followed_up_at, company, job_title, url)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (jid, status, sdate, applied, follow, company, title, url),
+                    )
+                else:
+                    ex_status, ex_sdate, ex_applied, ex_follow, ex_co, ex_title, ex_url = ex
+                    if (sdate or "") > (ex_sdate or ""):
+                        new_status, new_sdate = status, sdate
+                    else:
+                        new_status, new_sdate = ex_status, ex_sdate
+                    applied_opts = [d for d in (applied, ex_applied) if d]
+                    new_applied = min(applied_opts) if applied_opts else None
+                    follow_opts = [d for d in (follow, ex_follow) if d]
+                    new_follow = max(follow_opts) if follow_opts else None
+                    conn.execute(
+                        "UPDATE app_status SET status=?, status_date=?, applied_date=?,"
+                        " followed_up_at=?, company=?, job_title=?, url=?"
+                        " WHERE job_posting_id=?",
+                        (new_status, new_sdate, new_applied, new_follow,
+                         ex_co or company, ex_title or title, ex_url or url, jid),
+                    )
+                counts["status"] += 1
+
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO resume_paths (job_posting_id, path, created_at)"
+                " SELECT job_posting_id, path, created_at FROM bak.resume_paths"
+            )
+            counts["resume_paths"] = cur.rowcount
+            conn.commit()
+        finally:
+            conn.execute("DETACH DATABASE bak")
+        return counts
+
     def close(self) -> None:
         self._conn.close()
 

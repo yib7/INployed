@@ -226,6 +226,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tracker_tab.add_toolbar_button("Mark followed up", self._tracker_followed_up)
         self.tracker_tab.add_toolbar_button("Interview prep", self._tracker_prep)
         self.tracker_tab.add_toolbar_button("Remove", self._tracker_remove)
+        self.tracker_tab.add_toolbar_button("Export tracker…", self._export_tracker)
+        self.tracker_tab.add_toolbar_button("Import tracker…", self._import_tracker)
 
     # ---- data ----------------------------------------------------------------
 
@@ -932,6 +934,44 @@ class MainWindow(QtWidgets.QMainWindow):
             self.registry.clear_status(jid)
         self._refresh_tracker()
         self._set_status(f"Removed {len(ids)} job(s) from the tracker.")
+
+    def _export_tracker(self) -> None:
+        """Save a backup of the whole tracker DB (seen + statuses + résumé links)."""
+        default = APPDATA / f"inployed-tracker-{date.today():%Y%m%d}.db"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export tracker", str(default), "SQLite database (*.db)")
+        if not path:
+            return
+        try:
+            dest = self.registry.export_to(Path(path))
+        except Exception as e:  # noqa: BLE001 - surface any backup failure to the user
+            self._set_status(f"Export failed: {e}")
+            return
+        self._set_status(f"Tracker exported → {dest}")
+
+    def _import_tracker(self) -> None:
+        """Merge a previously exported tracker backup into the current one."""
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Import tracker", str(APPDATA),
+            "SQLite database (*.db);;All files (*)")
+        if not path:
+            return
+        if QtWidgets.QMessageBox.question(
+                self, "Import tracker?",
+                "Merge this backup into your current tracker? Existing entries are "
+                "kept (a more recent status wins) and nothing is deleted."
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        try:
+            counts = self.registry.import_from(Path(path))
+        except Exception as e:  # noqa: BLE001 - surface any restore failure to the user
+            self._set_status(f"Import failed: {e}")
+            return
+        self._refresh_tracker()
+        QtWidgets.QMessageBox.information(
+            self, "Tracker imported",
+            f"Merged {counts['status']} tracked application(s), {counts['seen']} "
+            f"seen id(s), and {counts['resume_paths']} résumé link(s).")
 
     def _tracker_prep(self) -> None:
         if getattr(self, "_prepping", False):

@@ -2,7 +2,7 @@
 
 min_required_years() is load-bearing and regex-driven: it decides which jobs
 get scrapped before any LLM sees them. The semantics it must keep (see the
-function docstring + HANDOFF §4):
+function docstring in score_jobs.py):
 
   * a RANGE ("1-3 years", "1 to 3 years") or open-ended "N+ years" is a
     requirement ON SIGHT and contributes its LOWER bound;

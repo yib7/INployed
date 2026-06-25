@@ -388,21 +388,21 @@ def save_collapsed_sections(sections) -> None:
 
 def load_ui_scale_pct() -> int:
     """The saved interface scale percent (config.json `ui_scale_pct`), default 100,
-    clamped to the supported 50-200 range so a stale/hand-edited value can't break it."""
+    clamped to the supported 75-150 range so a stale/hand-edited value can't break it."""
     try:
         pct = int(round(float(_load_cfg().get("ui_scale_pct", 100) or 100)))
     except (TypeError, ValueError):
         pct = 100
-    return max(50, min(200, pct))
+    return max(75, min(150, pct))
 
 
 def save_ui_scale_pct(pct: int) -> None:
-    """Persist the interface scale percent (clamped 50-200; best-effort)."""
+    """Persist the interface scale percent (clamped 75-150; best-effort)."""
     try:
         pct = int(pct)
     except (TypeError, ValueError):
         pct = 100
-    _save_cfg({"ui_scale_pct": max(50, min(200, pct))})
+    _save_cfg({"ui_scale_pct": max(75, min(150, pct))})
 
 
 def gdrive_root_dir(csv_paths: list[Path]) -> Path | None:

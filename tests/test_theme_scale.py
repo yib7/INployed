@@ -52,8 +52,8 @@ def test_set_scale_overrides_pinned_widget_fonts_live(qtbot):
         w = QtWidgets.QLabel("x")
         qtbot.addWidget(w)
         w.setFont(QtGui.QFont("Segoe UI", 10))    # simulate the stylesheet's font pin
-        theme.set_scale(app, 1.8)
-        assert w.font().pointSizeF() == pytest.approx(theme.BASE_FONT_PT * 1.8)
+        theme.set_scale(app, 1.4)                 # within [MIN_SCALE, MAX_SCALE]
+        assert w.font().pointSizeF() == pytest.approx(theme.BASE_FONT_PT * 1.4)
         assert app.styleSheet() == before         # not re-applied -> no re-polish lag
     finally:
         theme.set_scale(app, 1.0)
@@ -62,8 +62,8 @@ def test_set_scale_overrides_pinned_widget_fonts_live(qtbot):
 def test_set_scale_clamps_extremes(qtbot):
     app = _app()
     try:
-        assert theme.MIN_SCALE == 0.5        # cycle 17 lowered the floor to 50%
-        assert theme.MAX_SCALE == 2.0
+        assert theme.MIN_SCALE == 0.75       # interface size floor = 75%
+        assert theme.MAX_SCALE == 1.5        # interface size ceiling = 150%
         theme.set_scale(app, 99.0)
         assert app.font().pointSizeF() == pytest.approx(theme.BASE_FONT_PT * theme.MAX_SCALE)
         theme.set_scale(app, 0.01)

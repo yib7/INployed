@@ -144,8 +144,9 @@ yellow interviewing · green offer · red rejected), and **All Jobs** stays an u
 list. A small **color legend** under each table (except All Jobs) spells the meanings out.
 The actions, the interface-size control, and a **Restart** button all share **one bottom
 bar**. You can size the whole interface to your display from the **Interface size** control —
-a slider with `-` / `+` buttons (10% steps, 50–200%); the change applies **immediately** and
-your choice is remembered. **Restart** closes and reopens the dashboard.
+a slider with `-` / `+` buttons (10% steps, 75–150%), or with **Ctrl +** / **Ctrl -** (and
+**Ctrl 0** to reset to 100%); the change applies **immediately** and your choice is remembered.
+**Restart** closes and reopens the dashboard.
 
 Selecting a job opens a **score preview** at the bottom — the model's reasoning,
 strengths, and gaps for that posting. It appears only on the job-list tabs (**High

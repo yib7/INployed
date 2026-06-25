@@ -10,12 +10,13 @@ from __future__ import annotations
 from PySide6 import QtGui, QtWidgets
 
 # --- interface scaling -----------------------------------------------------
-# One factor drives the whole UI: the base font's point size and the QSS heading
-# size. Qt sizes widgets to their font, so scaling the font scales the dashboard.
-# The Interface-size setting / the Ctrl zoom keys pass a scale in [MIN, MAX].
+# One factor drives the whole UI: the application font's point size. Qt sizes
+# widgets to their font, so scaling the font scales the dashboard. The stylesheet
+# is deliberately scale-INDEPENDENT (headings scale via the font, not a pinned px)
+# so a scale change never re-applies it — re-polishing every widget was the lag.
+# The bottom scale bar passes a scale in [MIN_SCALE, MAX_SCALE].
 BASE_FONT_PT = 10.0
-BASE_HEADING_PX = 16
-MIN_SCALE = 0.7
+MIN_SCALE = 0.5
 MAX_SCALE = 2.0
 
 # --- palette ---------------------------------------------------------------
@@ -89,8 +90,7 @@ def _dark_palette() -> QtGui.QPalette:
     return p
 
 
-def _qss(scale: float = 1.0) -> str:
-    heading_px = round(BASE_HEADING_PX * scale)
+def _qss() -> str:
     return f"""
     QWidget {{ background: {BG}; color: {TEXT}; }}
     QToolTip {{ background: {SURFACE2}; color: {TEXT}; border: 1px solid {BORDER};
@@ -156,7 +156,7 @@ def _qss(scale: float = 1.0) -> str:
         color: {MUTED}; }}
 
     QLabel[muted="true"] {{ color: {MUTED}; }}
-    QLabel[heading="true"] {{ color: {TEXT}; font-size: {heading_px}px; font-weight: 600; }}
+    QLabel[heading="true"] {{ color: {TEXT}; font-weight: 600; }}
     QToolButton[sectionHeader="true"] {{ color: {TEXT}; font-weight: 600; border: 0;
         padding: 6px 2px; text-align: left; }}
     QToolButton[sectionHeader="true"]:hover {{ color: {ACCENT}; }}
@@ -192,18 +192,20 @@ def _clamp_scale(scale: float) -> float:
 
 
 def apply_theme(app: QtWidgets.QApplication, scale: float = 1.0) -> None:
-    """Apply the Fusion base style, the dark palette, and the scaled QSS polish."""
+    """Apply the Fusion base style, the dark palette, and the (static) QSS polish,
+    then set the interface scale. The stylesheet is applied once here, never again
+    on a scale change."""
     app.setStyle("Fusion")
     app.setPalette(_dark_palette())
+    app.setStyleSheet(_qss())
     set_scale(app, scale)
 
 
 def set_scale(app: QtWidgets.QApplication, scale: float) -> None:
-    """Re-scale the whole UI off one factor: the base font's point size and the QSS
-    heading size. Safe to call live — re-applies the stylesheet so existing widgets
-    re-polish. `scale` is clamped to [MIN_SCALE, MAX_SCALE]."""
+    """Re-scale the whole UI by setting ONLY the application font's point size
+    (`10*scale`). Cheap and safe to call live — it does NOT re-apply the global
+    stylesheet (that re-polish was the lag). `scale` is clamped to [MIN_SCALE, MAX_SCALE]."""
     scale = _clamp_scale(scale)
     font = QtGui.QFont("Segoe UI")
     font.setPointSizeF(BASE_FONT_PT * scale)
     app.setFont(font)
-    app.setStyleSheet(_qss(scale))

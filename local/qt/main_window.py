@@ -19,7 +19,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 import chrome
 import jobsdata
@@ -91,14 +91,6 @@ def _no_window_flag() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def _read_scale_pct() -> int:
-    """The saved interface scale percent (ui_scale_pct), defaulting to 100."""
-    try:
-        return int(round(float(settings.load().get("ui_scale_pct", 100) or 100)))
-    except (TypeError, ValueError):
-        return 100
-
-
 class MainWindow(QtWidgets.QMainWindow):
     """Top-level window. `csv_paths` are the scored run files to load."""
 
@@ -127,11 +119,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Undo stack for mark-seen: each entry is the list of ids a single
         # mark-seen action newly added, so undo reverts exactly that action.
         self._seen_undo: list[list[str]] = []
-        self._ui_scale_pct = _read_scale_pct()
+        self._ui_scale_pct = jobsdata.load_ui_scale_pct()
         self.tailor_progress.connect(self._set_status)
 
         self._build()
-        self._setup_zoom_shortcuts()
         self.reload_data()
         self._setup_fs_watcher()
         self._apply_preview_visibility()
@@ -188,29 +179,73 @@ class MainWindow(QtWidgets.QMainWindow):
         if page is not None:
             self.tabs.setCurrentWidget(page)
 
-    # ---- interface scaling (Ctrl +/-/0) --------------------------------------
+    # ---- interface scaling (bottom scale bar) --------------------------------
 
-    def _setup_zoom_shortcuts(self) -> None:
-        """Live zoom: Ctrl + / Ctrl - step the interface scale, Ctrl 0 resets it.
-        (The Interface-size dropdown in Settings sets the same persisted value.)"""
-        for seq in ("Ctrl++", "Ctrl+="):  # '=' is the unshifted '+' key
-            QtGui.QShortcut(QtGui.QKeySequence(seq), self, activated=lambda: self._zoom(10))
-        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+-"), self, activated=lambda: self._zoom(-10))
-        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+0"), self, activated=lambda: self._apply_scale(100))
+    def _build_scale_bar(self) -> QtWidgets.QWidget:
+        """The persistent 'Interface size' control in the status bar: −/+ buttons
+        (10% steps) and a slider (50-200%). All drive `_apply_scale`."""
+        bar = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(bar)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        h.addWidget(QtWidgets.QLabel("Interface size:"))
+        minus = QtWidgets.QPushButton("−")  # minus sign
+        minus.setFixedWidth(26)
+        minus.setToolTip("Smaller (-10%)")
+        minus.clicked.connect(lambda: self._nudge_scale(-10))
+        h.addWidget(minus)
+        self._scale_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._scale_slider.setMinimum(50)
+        self._scale_slider.setMaximum(200)
+        self._scale_slider.setSingleStep(10)
+        self._scale_slider.setPageStep(10)
+        self._scale_slider.setFixedWidth(140)
+        self._scale_slider.setValue(self._ui_scale_pct)
+        self._scale_slider.valueChanged.connect(self._on_scale_slider)
+        h.addWidget(self._scale_slider)
+        plus = QtWidgets.QPushButton("+")
+        plus.setFixedWidth(26)
+        plus.setToolTip("Larger (+10%)")
+        plus.clicked.connect(lambda: self._nudge_scale(10))
+        h.addWidget(plus)
+        self._scale_readout = QtWidgets.QLabel(f"{self._ui_scale_pct}%")
+        self._scale_readout.setMinimumWidth(38)
+        h.addWidget(self._scale_readout)
+        # A short debounce so dragging the slider stays smooth (apply once it settles).
+        self._scale_debounce = QtCore.QTimer(self)
+        self._scale_debounce.setSingleShot(True)
+        self._scale_debounce.setInterval(60)
+        self._scale_debounce.timeout.connect(lambda: self._apply_scale(self._scale_slider.value()))
+        return bar
+
+    def _on_scale_slider(self, value: int) -> None:
+        # Snap to 10% steps, show the live %, and apply after a brief settle.
+        snapped = max(50, min(200, round(value / 10) * 10))
+        if snapped != value:
+            self._scale_slider.blockSignals(True)
+            self._scale_slider.setValue(snapped)
+            self._scale_slider.blockSignals(False)
+        self._scale_readout.setText(f"{snapped}%")
+        self._scale_debounce.start()
+
+    def _nudge_scale(self, delta: int) -> None:
+        self._apply_scale(self._ui_scale_pct + delta)
 
     def _apply_scale(self, pct: int) -> None:
-        """Clamp to [70, 200], re-scale the live UI, and persist the choice."""
-        pct = max(70, min(200, int(pct)))
+        """Clamp to [50, 200], re-scale the live UI (font only — fast), sync the bar,
+        and persist the choice via jobsdata."""
+        pct = max(50, min(200, int(pct)))
         self._ui_scale_pct = pct
         theme.set_scale(QtWidgets.QApplication.instance(), pct / 100.0)
+        if hasattr(self, "_scale_slider"):
+            self._scale_slider.blockSignals(True)
+            self._scale_slider.setValue(pct)
+            self._scale_slider.blockSignals(False)
+            self._scale_readout.setText(f"{pct}%")
         try:
-            settings.save({"ui_scale_pct": str(pct)})
-        except (ValueError, OSError):
-            pass  # a failed persist must never break live zoom
-        self._set_status(f"Interface size: {pct}%")
-
-    def _zoom(self, delta: int) -> None:
-        self._apply_scale(self._ui_scale_pct + delta)
+            jobsdata.save_ui_scale_pct(pct)
+        except OSError:
+            pass  # a failed persist must never break live scaling
 
     def _build(self) -> None:
         central = QtWidgets.QWidget()
@@ -269,6 +304,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         vbox.addLayout(self._build_action_bar())
         self.setStatusBar(QtWidgets.QStatusBar())
+        # Persistent interface-size control, pinned to the right of the status bar.
+        self.statusBar().addPermanentWidget(self._build_scale_bar())
 
     def _build_action_bar(self) -> QtWidgets.QHBoxLayout:
         bar = QtWidgets.QHBoxLayout()

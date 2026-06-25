@@ -355,6 +355,42 @@ def test_tailor_work_runs_all_jobs_and_captures_failures(qtbot, monkeypatch, tmp
     assert by_id["3"]["dir"]
 
 
+def test_tailor_work_streams_progress(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    captured = {}
+
+    def fake_tailor(job, **k):
+        captured["on_status"] = k.get("on_status")
+        return tmp_path / job["job_posting_id"]
+
+    monkeypatch.setattr("resume_tailor.tailor", fake_tailor, raising=False)
+    jobs = [{"job_posting_id": "1", "company_name": "Acme", "job_title": "Eng"}]
+    w._tailor_work(jobs, {"cover_letter": False, "ats_report": True,
+                          "prep_sheet": False, "tone": "professional"})
+    # the engine is handed a live progress callback, not the no-op default
+    assert callable(captured["on_status"])
+    # invoking it (same thread -> direct slot) updates the status bar with a real
+    # progress line, never the old misleading "console" wording
+    captured["on_status"]("selecting evidence")
+    msg = w.statusBar().currentMessage()
+    assert "console" not in msg
+    assert "Tailoring" in msg and "done" in msg and "selecting evidence" in msg
+
+
+def test_tailor_selected_status_drops_console_wording(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.settings, "load", lambda: {})
+    monkeypatch.setattr(w, "_apply_auth_env", lambda: None)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+    monkeypatch.setattr(mw.workers, "run_async", lambda *a, **k: None)
+    monkeypatch.setattr(w, "_job_payload",
+                        lambda i: {"job_posting_id": i, "company_name": "C", "job_title": "T"})
+    monkeypatch.setattr(w, "_selected_ids", lambda: ["1"])
+    w._tailor_selected()
+    assert "console" not in w.statusBar().currentMessage()
+
+
 def test_finish_tailor_records_successes_and_reports(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     monkeypatch.setattr(mw.os, "startfile", lambda *_: None, raising=False)

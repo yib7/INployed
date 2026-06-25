@@ -42,7 +42,7 @@ from the pool workers). See `MainWindow._tailor_work`/`_finish_tailor`. The
 **Apply** button is the rightmost action and turns green only when the selected job has both its
 résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and swaps the bottom
 score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet, with an
-**Expand** button that pops it into a large resizable reader; `✕` closes, and
+**Expand** button that pops it into a large resizable reader; the close button dismisses it, and
 **"I applied to this job"** confirms → records the job applied in the Tracker → closes).
 
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole

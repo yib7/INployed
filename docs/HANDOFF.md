@@ -7,7 +7,7 @@ jobs (Bright Data), scores them against a resume (Gemini via Vertex AI), uploads
 results to Google Drive, and a Windows watcher pops a dashboard of the best unseen
 matches.
 
-> ## ⚠️ About credentials in this doc
+> ## About credentials in this doc
 > This file intentionally contains **NO private keys, API tokens, or passwords**.
 > Putting secrets in a handoff doc is a security risk (docs get shared, emailed,
 > synced to Drive, committed to git — one leak = full compromise).
@@ -84,7 +84,7 @@ gcloud config list               # shows project/account
 gcloud compute instances list    # shows scraper-vm + status + zone
 ```
 
-### ⚠️ Login gotchas (these have bitten us)
+### Login gotchas (these have bitten us)
 - **Always** `clouduser@scraper-vm`. A bare `scraper-vm:` or omitting the user
   defaults to an empty orphan account (no home dir — none of the code/data).
 - **scp uses a bare colon, no `~/`:**

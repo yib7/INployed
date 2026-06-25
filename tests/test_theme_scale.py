@@ -33,11 +33,26 @@ def test_set_scale_sets_app_font_pointsize(qtbot):
 
 
 def test_qss_is_static_with_no_pinned_font_size(qtbot):
-    # Cycle 17 lag fix: nothing in the stylesheet depends on scale, so a scale change
-    # never re-applies it (a full re-polish was the lag). _qss() takes no scale arg.
+    # The stylesheet is scale-INDEPENDENT (headings scale via the app font, not a
+    # pinned px) so re-applying it costs nothing extra. _qss() takes no scale arg.
     qss = theme._qss()
     assert "font-size" not in qss            # headings scale via the app font instead
     assert "QLabel[heading" in qss           # the heading rule still exists (weight only)
+
+
+def test_set_scale_repolishes_so_change_is_live(qtbot):
+    # Live-scaling fix: a global stylesheet pins each widget's font at polish time,
+    # so a bare app.setFont() only reaches widgets created later (the size used to
+    # change only after a restart). set_scale re-applies the static stylesheet to
+    # re-polish the widgets already on screen.
+    app = _app()
+    try:
+        app.setStyleSheet("")                # clear, then prove set_scale restores it
+        theme.set_scale(app, 1.3)
+        assert app.styleSheet() == theme._qss()  # re-applied -> live widgets re-polish
+        assert app.styleSheet() != ""
+    finally:
+        theme.apply_theme(app)               # restore theme + scale 1.0
 
 
 def test_set_scale_clamps_extremes(qtbot):

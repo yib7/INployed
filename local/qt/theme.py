@@ -45,12 +45,12 @@ BTN_HOVER = "#2d3340"
 # The meaning of a tint is now tab-specific (see jobs_model._row_tag): on the
 # High Score tab they key the recommendation + tailored-resume; on the Tracker
 # they key the application status + follow-up state.
-ROW_HAS_RESUME = "#10243a"   # tailored resume ready / applied (blue)
-ROW_REJECTED = "#3a1418"     # rejected (red)
-ROW_APPLY = "#0f271b"        # reco "apply" / offer (green)
-ROW_CONSIDER = "#2a2412"     # reco "consider" / interviewing (yellow)
-ROW_FOLLOWUP = "#3a2410"     # follow-up due (orange)
-ROW_PENDING = "#33162b"      # follow-up sent, awaiting reply (pink)
+ROW_HAS_RESUME = "#1b3f63"   # tailored resume ready / applied (blue)
+ROW_REJECTED = "#5e1f26"     # rejected (red)
+ROW_APPLY = "#18482f"        # reco "apply" / offer (green)
+ROW_CONSIDER = "#4a3d16"     # reco "consider" / interviewing (yellow)
+ROW_FOLLOWUP = "#623813"     # follow-up due (orange)
+ROW_PENDING = "#592046"      # follow-up sent, awaiting reply (pink)
 
 _ROW_TINTS = {
     "has_resume": ROW_HAS_RESUME,
@@ -197,20 +197,26 @@ def _clamp_scale(scale: float) -> float:
 
 
 def apply_theme(app: QtWidgets.QApplication, scale: float = 1.0) -> None:
-    """Apply the Fusion base style, the dark palette, and the (static) QSS polish,
-    then set the interface scale. The stylesheet is applied once here, never again
-    on a scale change."""
+    """Apply the Fusion base style + dark palette, then the interface scale (which
+    also applies the static QSS polish)."""
     app.setStyle("Fusion")
     app.setPalette(_dark_palette())
-    app.setStyleSheet(_qss())
     set_scale(app, scale)
 
 
 def set_scale(app: QtWidgets.QApplication, scale: float) -> None:
-    """Re-scale the whole UI by setting ONLY the application font's point size
-    (`10*scale`). Cheap and safe to call live — it does NOT re-apply the global
-    stylesheet (that re-polish was the lag). `scale` is clamped to [MIN_SCALE, MAX_SCALE]."""
+    """Re-scale the whole UI off one factor — the application font's point size
+    (`BASE_FONT_PT * scale`).
+
+    A global stylesheet pins each widget's font at polish time, so changing only
+    the app font doesn't reach widgets already on screen (the size used to change
+    only after a restart). Re-applying the *static* stylesheet re-polishes the live
+    widgets so they adopt the new font at once. The QSS is scale-independent, so
+    this is just a re-polish — callers debounce it, so it never becomes the per-tick
+    lag it was when the stylesheet itself was rebuilt on every change. `scale` is
+    clamped to [MIN_SCALE, MAX_SCALE]."""
     scale = _clamp_scale(scale)
     font = QtGui.QFont("Segoe UI")
     font.setPointSizeF(BASE_FONT_PT * scale)
     app.setFont(font)
+    app.setStyleSheet(_qss())

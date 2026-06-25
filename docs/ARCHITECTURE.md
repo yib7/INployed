@@ -54,10 +54,15 @@ mtime compare) with a one-click Regenerate. With zero jobs loaded the High Score
 first-run get-started hint (`JobsTab.set_empty_widget`).
 
 A few **readability** affordances: one persisted **interface scale** (`ui_scale_pct` in `config.json`)
-sizes the whole UI via `theme.set_scale`, driven by a status-bar **Interface size** bar (slider + `−`/`+`,
-10% steps, 50–200%; `MainWindow._apply_scale`). The scale changes the application **font only** — the
-stylesheet is scale-independent and applied once — so scaling is instant (re-polishing every widget on
-each change was the old lag). Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
+sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control (slider + `-`/`+`,
+10% steps, 50–200%; `MainWindow._apply_scale`) that lives — together with the action buttons and a
+**Restart** button — in a single bottom bar (`_build_action_bar`). `set_scale` bumps the application
+**font** and re-applies the *static, scale-independent* stylesheet to re-polish the live widgets:
+without that re-polish a global stylesheet pins each widget's font and the change shows only after a
+restart, but because the stylesheet itself never changes and the slider is debounced, the one-shot
+re-polish is cheap (rebuilding the stylesheet on *every* tick was the old lag). **Restart**
+(`MainWindow._restart_app`) flags the intent and closes the window; `app.main` relaunches a fresh
+process after the single-instance lock is released. Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
 only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge. Row
 tints are **tab-specific** (`JobsTableModel(mode=...)` keyed off `table_key`): High Score keys the
 recommendation + tailored-résumé (green apply / blue résumé-ready / yellow consider / untinted

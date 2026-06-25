@@ -58,12 +58,21 @@ def main(argv: list[str] | None = None) -> int:
         QtWidgets.QMessageBox.information(
             None, "INployed", "The dashboard is already running.")
         return 0
+    win = None
+    rc = 0
     try:
         win = MainWindow(csv_paths)
         win.showMaximized()
-        return app.exec()
+        rc = app.exec()
     finally:
         lock.release()
+    # The Restart button asks for a relaunch: the lock is now released, so a fresh
+    # process can take it. Spawn it detached and let this one exit.
+    if win is not None and getattr(win, "_restart_requested", False):
+        import subprocess
+        subprocess.Popen([sys.executable, *sys.argv])
+        return 0
+    return rc
 
 
 if __name__ == "__main__":

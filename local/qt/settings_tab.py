@@ -642,22 +642,3 @@ class ArchiveDialog(QtWidgets.QDialog):
             return
         settings_archive.delete_snapshot(s.path)
         self._refresh()
-
-
-def build_config_window(targets: dict | None = None) -> QtWidgets.QWidget:
-    """A standalone window hosting the settings form (for `configure`)."""
-    win = QtWidgets.QWidget()
-    win.setWindowTitle("Configure — INployed")
-    win.resize(940, 860)
-    v = QtWidgets.QVBoxLayout(win)
-    title = QtWidgets.QLabel("Configuration")
-    title.setProperty("heading", True)
-    v.addWidget(title)
-    intro = QtWidgets.QLabel(
-        "Set everything up in one place. Entries save to a private .env file and the config files "
-        "beside it — the dashboard and the scraper read them on their next run.")
-    intro.setProperty("muted", True)
-    intro.setWordWrap(True)
-    v.addWidget(intro)
-    v.addWidget(SettingsForm(targets=targets), 1)
-    return win

@@ -20,7 +20,7 @@ ruamel.yaml==0.18.6
 python-dotenv==1.2.2   # auto-loads .env so secrets stay out of the repo
 tzdata==2025.2         # IANA tz database for zoneinfo on Windows (Pacific RPD reset)
 
-# desktop UI (local dashboard + standalone config window); abi3 wheels run on Python 3.14
+# desktop UI (local dashboard); abi3 wheels run on Python 3.14
 PySide6==6.11.1
 
 # only needed to run scraper.py locally (it normally runs on the VM)

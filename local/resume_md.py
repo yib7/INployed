@@ -69,6 +69,23 @@ location, dates, honors if present.>
 """
 
 
+def resume_md_stale(master_path: Path | None = None,
+                    resume_md_path: Path | None = None) -> bool:
+    """True when `resume.md` is missing or older than `master_experience.yaml`.
+
+    The scorer matches every job against `resume.md`, but the Resume Data editor
+    edits the master YAML; if the user edits the YAML and forgets to regenerate,
+    `resume.md` silently drifts and scoring degrades. Returns False when the master
+    doesn't exist (nothing to compare against)."""
+    master = Path(master_path) if master_path is not None else MASTER_YAML_PATH
+    md = Path(resume_md_path) if resume_md_path is not None else RESUME_MD_PATH
+    if not master.exists():
+        return False
+    if not md.exists():
+        return True
+    return md.stat().st_mtime < master.stat().st_mtime
+
+
 def build_prompt(yaml_text: str) -> str:
     """The user-message prompt: the structure guide + the candidate's YAML."""
     return (

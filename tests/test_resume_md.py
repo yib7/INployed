@@ -62,6 +62,45 @@ def test_resume_md_path_is_repo_root():
     assert resume_md.RESUME_MD_PATH == REPO / "resume.md"
 
 
+def _age(path, mtime):
+    import os
+    os.utime(path, (mtime, mtime))
+
+
+def test_resume_md_stale_when_md_older_than_master(tmp_path):
+    master = tmp_path / "master_experience.yaml"
+    md = tmp_path / "resume.md"
+    md.write_text("old\n", encoding="utf-8")
+    master.write_text("basics: {}\n", encoding="utf-8")
+    _age(md, 1000)
+    _age(master, 2000)   # master edited after resume.md -> drift
+    assert resume_md.resume_md_stale(master_path=master, resume_md_path=md) is True
+
+
+def test_resume_md_fresh_when_md_newer(tmp_path):
+    master = tmp_path / "master_experience.yaml"
+    md = tmp_path / "resume.md"
+    master.write_text("basics: {}\n", encoding="utf-8")
+    md.write_text("new\n", encoding="utf-8")
+    _age(master, 1000)
+    _age(md, 2000)       # regenerated after the last edit -> in sync
+    assert resume_md.resume_md_stale(master_path=master, resume_md_path=md) is False
+
+
+def test_resume_md_stale_when_md_missing(tmp_path):
+    master = tmp_path / "master_experience.yaml"
+    master.write_text("basics: {}\n", encoding="utf-8")
+    md = tmp_path / "resume.md"   # never generated
+    assert resume_md.resume_md_stale(master_path=master, resume_md_path=md) is True
+
+
+def test_resume_md_not_stale_when_master_absent(tmp_path):
+    master = tmp_path / "master_experience.yaml"  # nothing to compare against
+    md = tmp_path / "resume.md"
+    md.write_text("x\n", encoding="utf-8")
+    assert resume_md.resume_md_stale(master_path=master, resume_md_path=md) is False
+
+
 def test_push_argv_targets_resume_md_on_vm():
     import vm_sync
     t = vm_sync.VMTarget(instance="vm", zone="z", user="u", remote_dir="~")

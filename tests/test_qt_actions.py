@@ -340,6 +340,24 @@ def test_apply_sheet_preview_renders_markdown_keeps_raw_copy(qtbot):
     assert p.current_sheet() == raw
 
 
+def test_apply_sheet_pop_out_shows_sheet_and_copies(qtbot):
+    # Cycle 16 SP6: an Expand button opens the apply sheet in a large window.
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    assert "Expand" in p._expand_btn.text()
+    raw = "# Big Heading\n\nReadable **body** text."
+    p.show_application({"apply_md": raw})
+    p._pop_out()
+    assert p._popout is not None and p._popout.isVisible()
+    viewer = p._popout.findChild(QtWidgets.QTextBrowser)
+    rendered = viewer.toPlainText()
+    assert "Big Heading" in rendered and "body text" in rendered  # rendered markdown
+    QtWidgets.QApplication.clipboard().setText("")
+    p.copy_sheet()
+    assert QtWidgets.QApplication.clipboard().text() == raw        # copy keeps raw md
+
+
 def test_apply_panel_applied_button_invokes_callback(qtbot):
     from qt.apply_panel import ApplyPanel
     called = []

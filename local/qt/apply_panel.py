@@ -24,6 +24,7 @@ class ApplyPanel(QtWidgets.QWidget):
         self._on_applied = on_applied or (lambda: None)
         self._folder: str = ""
         self._raw_md: str = ""   # the apply.md source — rendered in the viewer, copied verbatim
+        self._popout: QtWidgets.QDialog | None = None  # the Expand reader, kept alive
         self.setMinimumWidth(320)
         self._build()
 
@@ -63,9 +64,16 @@ class ApplyPanel(QtWidgets.QWidget):
         self._open_btn.clicked.connect(self._open_folder)
         v.addWidget(self._open_btn)
 
+        sheet_row = QtWidgets.QHBoxLayout()
         sheet_label = QtWidgets.QLabel("Apply sheet (apply.md)")
         sheet_label.setProperty("muted", True)
-        v.addWidget(sheet_label)
+        sheet_row.addWidget(sheet_label)
+        sheet_row.addStretch(1)
+        self._expand_btn = QtWidgets.QPushButton("Expand ⤢")
+        self._expand_btn.setToolTip("Open the apply sheet in a larger, resizable window")
+        self._expand_btn.clicked.connect(self._pop_out)
+        sheet_row.addWidget(self._expand_btn)
+        v.addLayout(sheet_row)
         # Rendered markdown viewer (nice to read). The clipboard still gets the raw
         # markdown source via copy_sheet() — see self._raw_md. Read-only by default;
         # don't follow links (this is a static preview, not a browser).
@@ -146,3 +154,30 @@ class ApplyPanel(QtWidgets.QWidget):
                 os.startfile(folder)  # noqa: S606
             except OSError:
                 pass
+
+    def _pop_out(self) -> QtWidgets.QDialog:
+        """Open the apply sheet in a large, resizable, non-modal reader — the same
+        rendered markdown as the side panel, with its own Copy. The compact panel
+        is unchanged; this just gives more room to read without scrunching."""
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle(self._title.text() or "Apply sheet")
+        dlg.resize(720, 800)
+        lay = QtWidgets.QVBoxLayout(dlg)
+        viewer = QtWidgets.QTextBrowser()
+        viewer.setOpenLinks(False)
+        viewer.setOpenExternalLinks(False)
+        viewer.setMarkdown(self._raw_md)
+        lay.addWidget(viewer, 1)
+        bar = QtWidgets.QHBoxLayout()
+        bar.addStretch(1)
+        copy = QtWidgets.QPushButton("Copy apply sheet")
+        copy.setProperty("accent", True)
+        copy.clicked.connect(self.copy_sheet)   # clipboard gets the RAW md, as elsewhere
+        bar.addWidget(copy)
+        close = QtWidgets.QPushButton("Close")
+        close.clicked.connect(dlg.close)
+        bar.addWidget(close)
+        lay.addLayout(bar)
+        self._popout = dlg   # keep a reference so the window isn't garbage-collected
+        dlg.show()
+        return dlg

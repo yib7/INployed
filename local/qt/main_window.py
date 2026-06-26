@@ -44,6 +44,7 @@ from qt import theme, workers
 from qt.answers_tab import AnswersEditor
 from qt.apply_panel import ApplyPanel
 from qt.jobs_tab import JobsTab
+from qt.manual_add_dialog import ManualAddDialog
 from qt.resume_data_tab import ResumeDataEditor
 from qt.settings_tab import SettingsForm
 from qt.stats_tab import StatsTab
@@ -286,6 +287,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.all_tab = self._make_jobs_tab("all", ALL_COLUMNS)
         self.tracker_tab = self._make_jobs_tab("tracker", TRACKER_COLUMNS)
         self._setup_tracker_toolbar()
+        # "Add job by hand" lives on the discovery tabs (High Score / All Jobs):
+        # a job added there is scored + tailored exactly like a scraped one.
+        self.high_tab.add_toolbar_button("Add job by hand", self._add_manual_job_dialog)
+        self.all_tab.add_toolbar_button("Add job by hand", self._add_manual_job_dialog)
         self.stats_tab = StatsTab()
         self.settings_tab = SettingsForm(on_saved=self._on_settings_saved,
                                          vm_panel_factory=self._make_vm_panel)
@@ -828,6 +833,70 @@ class MainWindow(QtWidgets.QMainWindow):
         msg = str(exc)
         self._set_status(f"Run scraper failed — {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.critical(self, "Run scraper", f"The run failed.\n\n{msg}")
+
+    # ---- add a job by hand (no scraper) --------------------------------------
+
+    def _add_manual_job_dialog(self) -> None:
+        """Open the manual-entry form, then run parse->score->tailor->append off-thread.
+
+        Reuses the exact scoring (score_jobs) + tailoring (resume_tailor) pipelines a
+        scraped job goes through; only the input differs (a paste/URL, not Bright
+        Data). The heavy work runs on a worker thread so the window never freezes."""
+        if getattr(self, "_manual_adding", False):
+            self._set_status("A manual add is already running.")
+            return
+        dlg = ManualAddDialog(self)
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        vals = dlg.values()
+        cfg = settings.load()
+        cover = QtWidgets.QMessageBox.question(
+            self, "Cover letter", "Also generate a cover letter for this job?"
+        ) == QtWidgets.QMessageBox.StandardButton.Yes
+        opts = {"cover_letter": cover, "ats_report": bool(cfg.get("tailor_ats_report", True)),
+                "prep_sheet": bool(cfg.get("tailor_prep_sheet", False)),
+                "tone": cfg.get("resume_tone", "professional")}
+        self._manual_adding = True
+        self._apply_auth_env()
+        self._set_status("Adding job — scoring + tailoring …")
+        workers.run_async(self, lambda: self._manual_add_work(vals, opts),
+                          on_done=self._finish_manual_add, on_error=self._finish_manual_add_error)
+
+    def _manual_add_work(self, vals: dict, opts: dict) -> dict:
+        """Worker body: the toolkit-agnostic manual_add pipeline. The LLM/scraper
+        seams default to the real implementations (mockable in tests)."""
+        import manual_add
+        return manual_add.add_manual_job(
+            jd_text=vals.get("jd_text", ""), url=vals.get("url", ""),
+            company=vals.get("company", ""), title=vals.get("title", ""),
+            tailor_opts=opts, on_status=self.tailor_progress.emit)
+
+    def _finish_manual_add(self, result: dict) -> None:
+        self._manual_adding = False
+        result = result or {}
+        rec = result.get("record") or {}
+        if result.get("resume_dir") and rec.get("job_posting_id"):
+            try:
+                self.registry.record_resume(rec["job_posting_id"], str(result["resume_dir"]))
+            except Exception:  # noqa: BLE001 - bookkeeping only
+                pass
+        # Fold the manual scored gz into the sources so the new job appears now and
+        # survives a restart — same bridge a local scrape gets.
+        for p in jobsdata.local_run_files():
+            if p not in self.csv_paths:
+                self.csv_paths.append(p)
+        self.reload_data()
+        title = rec.get("job_title", "job")
+        company = rec.get("company_name", "")
+        score = rec.get("score", "")
+        tailored = "tailored" if result.get("resume_dir") else "added (tailor later)"
+        self._set_status(f"Manual job {tailored}: {title} @ {company} (score {score}).")
+
+    def _finish_manual_add_error(self, exc) -> None:
+        self._manual_adding = False
+        msg = str(exc)
+        self._set_status(f"Add job failed — {msg.splitlines()[0] if msg else exc}")
+        QtWidgets.QMessageBox.warning(self, "Add a job by hand", f"Could not add the job.\n\n{msg}")
 
     # ---- apply (open posting for review; never submits) -----------------------
 

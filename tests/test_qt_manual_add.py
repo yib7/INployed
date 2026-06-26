@@ -6,7 +6,6 @@ call happens.
 """
 from unittest.mock import MagicMock
 
-import pytest
 from PySide6 import QtWidgets
 
 import manual_add

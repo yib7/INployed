@@ -162,6 +162,7 @@ def _qss() -> str:
 
     QLabel[muted="true"] {{ color: {MUTED}; }}
     QLabel[heading="true"] {{ color: {TEXT}; font-weight: 600; }}
+    QLabel[warn="true"] {{ color: {AMBER}; }}
     QToolButton[sectionHeader="true"] {{ color: {TEXT}; font-weight: 600; border: 0;
         padding: 6px 2px; text-align: left; }}
     QToolButton[sectionHeader="true"]:hover {{ color: {ACCENT}; }}

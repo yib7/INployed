@@ -28,6 +28,29 @@ def test_load_returns_defaults_when_file_absent(tmp_path):
     assert values["mtime_stable_seconds"] == 30
 
 
+def test_projects_max_is_a_resume_setting():
+    f = next(f for f in settings.SETTINGS_SCHEMA if f.key == "projects_max")
+    assert f.section == "Resume" and f.target == "config"
+    assert f.type == "int" and f.default == 3
+    assert f.min == 1 and f.max == 6 and f.slider is True
+    assert f.warn_above == 4 and f.warn_text  # one-page caution wired up
+
+
+def test_projects_max_validation_bounds():
+    assert settings.validate({"projects_max": 4}) == {}        # in range
+    assert "projects_max" in settings.validate({"projects_max": 7})  # over the cap
+    assert "projects_max" in settings.validate({"projects_max": 0})  # under the floor
+
+
+def test_projects_max_roundtrips(tmp_path):
+    targets = _targets(tmp_path)
+    values = settings.load(targets)
+    assert values["projects_max"] == 3        # default
+    values["projects_max"] = 4
+    settings.save(values, targets)
+    assert settings.load(targets)["projects_max"] == 4
+
+
 def test_ui_scale_pct_is_not_a_settings_field():
     # Cycle 17: scaling moved to the bottom bar; ui_scale_pct is persisted via
     # jobsdata (config.json), not the settings schema.

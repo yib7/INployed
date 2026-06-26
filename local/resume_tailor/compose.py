@@ -328,10 +328,10 @@ def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
 
 
 def _cap_projects(clean: Dict[str, Any]) -> None:
-    """Keep the top PROJECTS_MAX projects (strength-ordered by select) and cap each to
-    its per-project bullet count (config.project_targets) when set, else the global
-    PROJECT_BULLETS_MAX. Projects are never force-injected, only trimmed."""
-    projects = clean.get("projects", [])[:config.PROJECTS_MAX]
+    """Keep the top config.projects_max() projects (strength-ordered by select) and cap
+    each to its per-project bullet count (config.project_targets) when set, else the
+    global PROJECT_BULLETS_MAX. Projects are never force-injected, only trimmed."""
+    projects = clean.get("projects", [])[:config.projects_max()]
     for entry in projects:
         targets = config.project_targets(entry["name"])
         cap = len(targets) if targets else config.PROJECT_BULLETS_MAX

@@ -41,6 +41,39 @@ def test_block_targets_bad_shape_falls_back(monkeypatch):
 def test_constants_present():
     assert config.MAX_LINE_CHARS == 100
     assert config.PROJECTS_MAX == 3 and config.PROJECT_BULLETS_MAX == 2
+    assert config.PROJECTS_MAX_LIMIT == 6
+
+
+def test_projects_max_default(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.projects_max() == config.PROJECTS_MAX  # 3 when nothing is set
+
+
+def test_projects_max_from_config_json(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_max": 4})
+    assert config.projects_max() == 4
+
+
+def test_projects_max_clamped_to_limit(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_max": 99})
+    assert config.projects_max() == config.PROJECTS_MAX_LIMIT
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_max": 0})
+    assert config.projects_max() == 1
+
+
+def test_projects_max_bad_value_falls_back(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_max": "lots"})
+    assert config.projects_max() == config.PROJECTS_MAX
+
+
+def test_projects_max_env_overrides_config(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_PROJECTS_MAX", "5")
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_max": 2})
+    assert config.projects_max() == 5
 
 
 from resume_tailor import compose  # noqa: E402
@@ -67,11 +100,21 @@ def _fake_sel():
 
 
 def test_cap_projects_limits_count_and_bullets(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
     monkeypatch.setattr(config, "_config_json", lambda: {})
     sel = _fake_sel()
     compose._cap_projects(sel)
     assert len(sel["projects"]) == config.PROJECTS_MAX           # 4 -> 3
     assert len(sel["projects"][0]["groups"]) == config.PROJECT_BULLETS_MAX  # 3 -> 2
+
+
+def test_cap_projects_honors_configured_max(monkeypatch):
+    # With the dashboard cap raised to 4, all four projects are kept (not trimmed to 3).
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_max": 4})
+    sel = _fake_sel()
+    compose._cap_projects(sel)
+    assert len(sel["projects"]) == 4
 
 
 def test_bullet_line_targets_maps_each_bullet(monkeypatch):

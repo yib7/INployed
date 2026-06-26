@@ -44,6 +44,7 @@ COLUMN_LABELS = {
     "job_location": "Location", "url": "URL", "job_posted_date": "Posted",
     "status": "Status", "status_date": "Updated", "applied_date": "Applied",
     "days": "Days", "follow_up": "Follow-up", "resume": "Resume",
+    "source": "Source",
     "timestamp": "When", "input_csv": "Input file", "rows_in": "Rows",
     "filtered_out": "Filtered", "llm_scored": "Scored", "llm_errors": "Errors",
     "stage2_done": "Stage 2", "rescore_attempted": "Rescore try",
@@ -263,6 +264,15 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
     return combined, id_to_path
 
 
+# Where manually-added jobs (dashboard "Add job by hand") are persisted, both as
+# the canonical master row and as a dashboard-loadable scored gz so the job shows
+# up immediately and survives a restart — the same bridge local_run_files() gives
+# a local scrape, since there is no "manual" RUN_LABEL folder for it to land in.
+MASTER_CSV = REPO_ROOT / "linkedin_jobs_master.csv"
+MANUAL_DIR = REPO_ROOT / "manual"
+MANUAL_SCORED = MANUAL_DIR / "manual_jobs_scored.csv.gz"
+
+
 def local_run_files(base: Path | None = None) -> list[Path]:
     """Scored run files produced by a LOCAL scrape, newest-last per label.
 
@@ -271,7 +281,8 @@ def local_run_files(base: Path | None = None) -> list[Path]:
     gap; locally nothing does. The dashboard merges these into its sources so a
     local "Run scraper" shows up immediately and survives a restart, with or
     without a VM/Drive setup. `load_files` dedupes by job_posting_id, so a job that
-    is also in the Drive master is not double-counted.
+    is also in the Drive master is not double-counted. Manually-added jobs live in a
+    sibling `manual/` file (no RUN_LABEL folder fits them) and are merged in too.
     """
     base = Path(base) if base is not None else REPO_ROOT
     out: list[Path] = []
@@ -279,7 +290,80 @@ def local_run_files(base: Path | None = None) -> list[Path]:
         d = base / label
         if d.is_dir():
             out.extend(sorted(d.glob("*_scored.csv.gz")))
+    manual = base / "manual" / "manual_jobs_scored.csv.gz"
+    if manual.exists():
+        out.append(manual)
     return out
+
+
+# Score/scrape columns that should land in the persisted manual row so it carries
+# the same signal a scraped+scored row does. (job_posting_id is the dedup key.)
+_MANUAL_PERSIST_COLS = [
+    "url", "job_title", "company_name", "job_location", "job_summary",
+    "job_posted_date", "run_label", "extracted_date", "source",
+    "score", "reason", "deep_score", "strengths", "gaps", "recommendation",
+    "filter_junk_title", "filter_too_many_years", "filtered_out", "is_seen",
+]
+
+
+def _append_dedup_csv(record: dict, path: Path, *, compression=None) -> bool:
+    """Append one job record to a CSV, deduping on job_posting_id (keep="first").
+
+    Mirrors scraper.append_to_master: cast the id to str before deduping so a
+    re-read int id never silently keeps a duplicate. Returns True when the record
+    was newly added (False when an existing row with the same id already won).
+    """
+    jid = str(record.get("job_posting_id", "")).strip()
+    if not jid:
+        return False
+    new_df = pd.DataFrame([record])
+    new_df["job_posting_id"] = new_df["job_posting_id"].astype(str)
+    if path.exists():
+        try:
+            existing = pd.read_csv(path, dtype={"job_posting_id": str},
+                                   compression=compression)
+        except (OSError, ValueError):
+            existing = pd.DataFrame()
+    else:
+        existing = pd.DataFrame()
+    already = (not existing.empty and "job_posting_id" in existing.columns
+               and jid in set(existing["job_posting_id"].astype(str)))
+    combined = pd.concat([existing, new_df], ignore_index=True) if not existing.empty else new_df
+    combined["job_posting_id"] = combined["job_posting_id"].astype(str)
+    combined = combined.drop_duplicates(subset=["job_posting_id"], keep="first")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(path, index=False, encoding="utf-8", compression=compression)
+    return not already
+
+
+def append_manual_job(record: dict, *, master_csv: Path | None = None) -> bool:
+    """Persist a manually-added (already-scored) job, same schema/dedup as scraped.
+
+    Writes two places, both deduped on job_posting_id so re-adding the same job is a
+    no-op:
+      1. the canonical master store (`linkedin_jobs_master.csv`) — the cumulative
+         record scraper.py / score_jobs.py own, so the manual job is a first-class
+         master row marked source="manual";
+      2. a dashboard-loadable `manual/manual_jobs_scored.csv.gz` (picked up by
+         `local_run_files()`) so the job appears in the UI immediately and across
+         restarts, the same bridge a local scrape gets.
+    Returns True when the job was newly added to the master (False if a duplicate).
+    """
+    row = {c: record.get(c, "") for c in (["job_posting_id"] + _MANUAL_PERSIST_COLS)
+           if c in record or c == "job_posting_id"}
+    # Carry the full JD into the master so re-scoring/tailoring works off it later.
+    if record.get("job_description_formatted"):
+        row["job_description_formatted"] = record["job_description_formatted"]
+    master = Path(master_csv) if master_csv is not None else MASTER_CSV
+    added = _append_dedup_csv(row, master, compression=None)
+    # The gz copy never carries the raw JD (the scored run files don't either).
+    gz_row = {k: v for k, v in row.items() if k != "job_description_formatted"}
+    manual_gz = (master.parent / "manual" / "manual_jobs_scored.csv.gz")
+    try:
+        _append_dedup_csv(gz_row, manual_gz, compression="gzip")
+    except OSError:
+        pass  # the canonical master append is what matters; the gz is a convenience
+    return added
 
 
 def _load_cfg() -> dict:

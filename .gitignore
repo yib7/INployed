@@ -19,6 +19,8 @@ apply_answers.json
 *.log
 *.synctex.gz
 *.out
+# Throwaway SP9 render preview (no-LLM verification artifact; safe to delete)
+resume_tailor_files/SP9_preview.*
 
 # ── Generated / runtime data ─────────────────────────────────────────────────
 # seen.db = SQLite application tracker; *.csv covers the scraped job data

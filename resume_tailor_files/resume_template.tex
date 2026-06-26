@@ -54,6 +54,15 @@
 \end{tabular*}\vspace{-7pt}
 }
 
+% One-line work-experience header: bold title, company, location all left-aligned
+% on a single row, with dates right-aligned (used by render.py _experience()).
+\newcommand{\resumeSubheadingOneLine}[4]{
+\vspace{-2pt}\item
+\begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\textbf{#1}, #2, #3 & \textit{\small #4} \\
+\end{tabular*}\vspace{-7pt}
+}
+
 \newcommand{\resumeSubSubheading}[2]{
 \item
 \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}

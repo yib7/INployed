@@ -105,9 +105,9 @@ def _experience(sel: dict, bullets: Dict[str, str]) -> str:
         if not b or not items:
             continue
         out.append(
-            f"\\resumeSubheading\n"
-            f"{{{to_latex(b.get('title',''))}}}{{{fmt_dates(b.get('dates',''))}}}\n"
-            f"{{{to_latex(b.get('name',''))}}}{{{to_latex(b.get('location',''))}}}\n"
+            f"\\resumeSubheadingOneLine\n"
+            f"{{{to_latex(b.get('title',''))}}}{{{to_latex(b.get('name',''))}}}"
+            f"{{{to_latex(b.get('location',''))}}}{{{fmt_dates(b.get('dates',''))}}}\n"
             + _bullet_list(items)
         )
     if not out:
@@ -125,8 +125,16 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         if not b or not items:
             continue
         name = to_latex(b.get("name", ""))
+        # Right slot: a clickable github link when the project has a github repo
+        # (academic projects without a github URL get an empty slot, as before).
+        repo = (b.get("repo") or "").strip()
+        if "github.com" in repo:
+            href = to_latex(f"https://{repo}")
+            link = f"\\href{{{href}}}{{{to_latex(repo)}}}"
+        else:
+            link = ""
         out.append(
-            f"\\resumeProjectHeading\n{{\\textbf{{{name}}}}}{{}}\n" + _bullet_list(items)
+            f"\\resumeProjectHeading\n{{\\textbf{{{name}}}}}{{{link}}}\n" + _bullet_list(items)
         )
     if not out:
         return ""

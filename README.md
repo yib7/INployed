@@ -108,9 +108,9 @@ shows the structure if you prefer the file.)
 
 The Resume Data tab also has a collapsible **Resume Layout** editor for fine-tuning how
 many bullets each section/project gets and how long each one runs. Give a section or
-project a comma-separated list of per-bullet printed-line counts — e.g. `2, 2, 1` means
-three bullets sized 2 / 2 / 1 lines (each 1–3, up to 5 bullets) — and the one-page
-tailor honors it. A master **"Apply custom bullet layout"** checkbox turns the whole
+project a comma-separated list of per-bullet printed-line counts. For example,
+`2, 2, 1` means three bullets sized 2 / 2 / 1 lines (each 1 to 3, up to 5 bullets),
+and the one-page tailor honors it. A master **"Apply custom bullet layout"** checkbox turns the whole
 feature on or off: unchecked, the engine uses its built-in defaults but your saved
 targets are kept, so you can **A/B test** whether your custom layout helps or hurts your
 résumés without throwing the configuration away.

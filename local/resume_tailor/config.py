@@ -84,8 +84,20 @@ PROJECT_BULLETS_MAX = int(os.getenv("RESUME_TAILOR_PROJECT_BULLETS_MAX", "2"))
 PROJECT_BULLET_LINES = int(os.getenv("RESUME_TAILOR_PROJECT_BULLET_LINES", "2"))
 
 
+def resume_layout_enabled() -> bool:
+    """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
+    Defaults True when absent, so existing configs keep applying their saved targets.
+    When False, `resume_layout()`/`project_layout()` report empty so the engine falls
+    back to its built-in defaults WITHOUT the saved targets being deleted -- a quick
+    A/B test of custom-vs-default layout."""
+    return _config_json().get("resume_layout_enabled", True) is not False
+
+
 def resume_layout() -> dict:
-    """Raw {block: {'line_targets': [...]}} from config.json ({} when absent/bad)."""
+    """Raw {block: {'line_targets': [...]}} from config.json ({} when absent/bad or
+    when the master toggle is off)."""
+    if not resume_layout_enabled():
+        return {}
     val = _config_json().get("resume_layout")
     return val if isinstance(val, dict) else {}
 
@@ -107,7 +119,10 @@ def block_targets(name: str) -> list[int]:
 
 
 def project_layout() -> dict:
-    """Raw {project_name: {'line_targets': [...]}} from config.json ({} when absent/bad)."""
+    """Raw {project_name: {'line_targets': [...]}} from config.json ({} when absent/bad
+    or when the master toggle is off)."""
+    if not resume_layout_enabled():
+        return {}
     val = _config_json().get("project_layout")
     return val if isinstance(val, dict) else {}
 

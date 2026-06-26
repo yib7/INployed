@@ -405,6 +405,42 @@ def save_ui_scale_pct(pct: int) -> None:
     _save_cfg({"ui_scale_pct": max(75, min(150, pct))})
 
 
+# --- resume layout (per-bullet line targets, edited from the Resume Data tab) ----
+# Two maps in config.json, both read by resume_tailor/config.py:
+#   resume_layout  : {section_block: {"line_targets": [int, ...]}}  (experience/leadership)
+#   project_layout : {project_name:  {"line_targets": [int, ...]}}
+# `resume_layout_enabled` is the master on/off so the user can A/B test the custom
+# layout against the engine defaults WITHOUT deleting the saved targets.
+
+def load_resume_layout_enabled() -> bool:
+    """Master toggle for the custom bullet layout (default True when absent)."""
+    return _load_cfg().get("resume_layout_enabled", True) is not False
+
+
+def save_resume_layout_enabled(enabled: bool) -> None:
+    _save_cfg({"resume_layout_enabled": bool(enabled)})
+
+
+def load_resume_layout() -> dict:
+    """{block: {'line_targets': [...]}} from config.json ({} when absent/bad)."""
+    val = _load_cfg().get("resume_layout")
+    return val if isinstance(val, dict) else {}
+
+
+def save_resume_layout(layout: dict) -> None:
+    _save_cfg({"resume_layout": dict(layout)})
+
+
+def load_project_layout() -> dict:
+    """{project: {'line_targets': [...]}} from config.json ({} when absent/bad)."""
+    val = _load_cfg().get("project_layout")
+    return val if isinstance(val, dict) else {}
+
+
+def save_project_layout(layout: dict) -> None:
+    _save_cfg({"project_layout": dict(layout)})
+
+
 def gdrive_root_dir(csv_paths: list[Path]) -> Path | None:
     """The synced LinkedInJobs folder: config.json's gdrive_root, else inferred
     from the loaded files' location (run files sit one level deeper)."""

@@ -234,6 +234,27 @@ def test_load_save_ui_scale_pct_roundtrip_and_clamp(tmp_path, monkeypatch):
     assert jobsdata.load_ui_scale_pct() == 75           # 75 floor
 
 
+def test_load_save_resume_layout_enabled_roundtrip(tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    assert jobsdata.load_resume_layout_enabled() is True   # default on (absent = enabled)
+    jobsdata.save_resume_layout_enabled(False)
+    assert jobsdata.load_resume_layout_enabled() is False
+    jobsdata.save_resume_layout_enabled(True)
+    assert jobsdata.load_resume_layout_enabled() is True
+
+
+def test_load_save_layout_maps_roundtrip(tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    assert jobsdata.load_resume_layout() == {}
+    assert jobsdata.load_project_layout() == {}
+    jobsdata.save_resume_layout({"Example Corp": {"line_targets": [2, 1]}})
+    jobsdata.save_project_layout({"ProjOne": {"line_targets": [3, 2, 1]}})
+    assert jobsdata.load_resume_layout() == {"Example Corp": {"line_targets": [2, 1]}}
+    assert jobsdata.load_project_layout() == {"ProjOne": {"line_targets": [3, 2, 1]}}
+
+
 # --- settings archive (snapshot / restore) --------------------------------------
 
 def _quiet_info(monkeypatch):

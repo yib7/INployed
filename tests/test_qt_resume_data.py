@@ -89,6 +89,44 @@ def test_stale_banner_regenerate_calls_generate(qtbot, master_tmp, monkeypatch):
     assert called == [True]
 
 
+def test_resume_layout_section_lists_master_entries(qtbot, master_tmp, tmp_path, monkeypatch):
+    # Rows are derived from the master so their names match what the engine looks up:
+    # experience/leadership by org, projects by name (fixture: "Example Corp" / "ProjX").
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    ed = _editor(qtbot, master_tmp)
+    assert "Example Corp" in ed._layout_section_edits
+    assert "ProjX" in ed._layout_project_edits
+
+
+def test_resume_layout_toggle_persists(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    ed = _editor(qtbot, master_tmp)
+    assert ed._layout_enabled_cb.isChecked() is True          # default on
+    ed._layout_enabled_cb.setChecked(False)                   # toggling saves immediately
+    assert jobsdata.load_resume_layout_enabled() is False
+
+
+def test_resume_layout_save_writes_both_maps(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    ed = _editor(qtbot, master_tmp)
+    ed._layout_section_edits["Example Corp"].setText("2, 1")
+    ed._layout_project_edits["ProjX"].setText("3, 2, 1")
+    ed._save_layout()
+    assert jobsdata.load_resume_layout() == {"Example Corp": {"line_targets": [2, 1]}}
+    assert jobsdata.load_project_layout() == {"ProjX": {"line_targets": [3, 2, 1]}}
+
+
+def test_resume_layout_prefills_saved_targets(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    jobsdata.save_project_layout({"ProjX": {"line_targets": [3, 1]}})
+    ed = _editor(qtbot, master_tmp)
+    assert ed._layout_project_edits["ProjX"].text().replace(" ", "") == "3,1"
+
+
 def test_push_button_disabled_unless_vm_on(qtbot, master_tmp, monkeypatch):
     ed = _editor(qtbot, master_tmp)
     monkeypatch.setattr(rdt.settings, "load", lambda *a, **k: {"vm_enabled": False})

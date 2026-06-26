@@ -17,9 +17,11 @@ from typing import Callable
 import yaml
 from PySide6 import QtCore, QtWidgets
 
+import jobsdata
 import resume_md
 import settings
 from qt import workers
+from qt.widgets import CollapsibleSection
 from resume_tailor import config, master_edit, master_validate
 
 _SECTION_FIELDS = {
@@ -34,6 +36,18 @@ _BASICS_FIELDS = [("name", "Name"), ("email", "Email"), ("phone", "Phone"),
 _TIPS = ("Tips: store FACTS as atoms (what / how / scope / impact), not finished sentences — the "
          "tailor re-angles them per job. Quantify everything. Add 'angles' tags so an atom matches "
          "a job's keywords. Hold MORE than fits one page; the pipeline SELECTS, never invents.")
+
+
+def _parse_targets(text: str) -> list[int]:
+    """Parse a 'Resume Layout' targets box ('2, 2, 1' or '2 2 1') into [2, 2, 1].
+    Non-integer tokens are dropped; the engine clamps values/length on read."""
+    out: list[int] = []
+    for tok in text.replace(",", " ").split():
+        try:
+            out.append(int(tok))
+        except ValueError:
+            continue
+    return out
 
 
 class ResumeDataEditor(QtWidgets.QWidget):
@@ -52,6 +66,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_orig: dict[tuple, str] = {}
         self._atom_impact: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._atom_impact_orig: dict[str, str] = {}
+        self._layout_section_edits: dict[str, QtWidgets.QLineEdit] = {}
+        self._layout_project_edits: dict[str, QtWidgets.QLineEdit] = {}
 
         self._build_shell()
         self.reload()
@@ -145,6 +161,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_orig.clear()
         self._atom_impact.clear()
         self._atom_impact_orig.clear()
+        self._layout_section_edits.clear()
+        self._layout_project_edits.clear()
 
         body = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(body)
@@ -164,6 +182,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._basics_block(v, data.get("basics") or {})
         for sec in ("experience", "projects", "leadership"):
             self._section_block(v, sec, data.get(sec) or [])
+        self._layout_block(v, data)
         self._readonly_block(v, data)
         self._buttons(v)
         v.addStretch(1)
@@ -270,6 +289,107 @@ class ResumeDataEditor(QtWidgets.QWidget):
             lab.setWordWrap(True)  # a long skills line must wrap, not widen the page
             bv.addWidget(lab)
         v.addWidget(box)
+
+    def _layout_block(self, v, data: dict) -> None:
+        """The 'Resume Layout' editor: per-bullet line targets for each section/project,
+        backed by config.json's `resume_layout` / `project_layout` (the same maps the
+        tailor engine reads). A master checkbox toggles whether the engine applies them
+        at all, so custom-vs-default layout can be A/B tested without losing the targets.
+        Row names are taken from the master so they match what the engine looks up."""
+        section = CollapsibleSection(
+            "Resume Layout (bullet sizing)",
+            subtitle="per-section / per-project line targets — toggle to A/B test",
+            collapsed=True)
+
+        self._layout_enabled_cb = QtWidgets.QCheckBox("Apply custom bullet layout")
+        self._layout_enabled_cb.setChecked(jobsdata.load_resume_layout_enabled())
+        self._layout_enabled_cb.toggled.connect(self._on_layout_toggled)  # after setChecked
+        section.add_widget(self._layout_enabled_cb)
+
+        help_lbl = QtWidgets.QLabel(
+            'Each box is a comma-separated list of bullet line-counts, e.g. "2, 2, 1" = '
+            "three bullets sized 2 / 2 / 1 printed lines (each 1-3, up to 5 bullets). Leave "
+            "a box blank to let the engine choose. Unchecking the box above keeps these "
+            "saved but makes the engine use its built-in defaults.")
+        help_lbl.setWordWrap(True)
+        help_lbl.setProperty("muted", True)
+        section.add_widget(help_lbl)
+
+        cfg_sections = jobsdata.load_resume_layout()
+        cfg_projects = jobsdata.load_project_layout()
+
+        sec_names: list[str] = []
+        for s in ("experience", "leadership"):
+            for e in data.get(s) or []:
+                if isinstance(e, dict):
+                    nm = str(e.get(_NAME_KEY[s], "") or "").strip()
+                    if nm and nm not in sec_names:
+                        sec_names.append(nm)
+        for nm in cfg_sections:                       # keep stale config keys editable/clearable
+            if nm not in sec_names:
+                sec_names.append(nm)
+        section.add_widget(self._layout_group(
+            "Sections (experience / leadership)", sec_names, cfg_sections,
+            self._layout_section_edits))
+
+        proj_names: list[str] = []
+        for e in data.get("projects") or []:
+            if isinstance(e, dict):
+                nm = str(e.get("name", "") or "").strip()
+                if nm and nm not in proj_names:
+                    proj_names.append(nm)
+        for nm in cfg_projects:
+            if nm not in proj_names:
+                proj_names.append(nm)
+        section.add_widget(self._layout_group(
+            "Projects", proj_names, cfg_projects, self._layout_project_edits))
+
+        save = QtWidgets.QPushButton("Save layout")
+        save.clicked.connect(self._save_layout)
+        section.add_widget(save)
+
+        v.addWidget(section)
+
+    def _layout_group(self, title: str, names: list, cfg: dict,
+                      store: dict) -> QtWidgets.QGroupBox:
+        box = QtWidgets.QGroupBox(title)
+        form = QtWidgets.QFormLayout(box)
+        if not names:
+            none = QtWidgets.QLabel("(no entries yet)")
+            none.setProperty("muted", True)
+            form.addRow(none)
+        for nm in names:
+            spec = cfg.get(nm) if isinstance(cfg, dict) else None
+            targets = spec.get("line_targets") if isinstance(spec, dict) else None
+            text = (", ".join(str(t) for t in targets)
+                    if isinstance(targets, (list, tuple)) else "")
+            edit = QtWidgets.QLineEdit(text)
+            edit.setPlaceholderText("e.g. 2, 2, 1")
+            store[nm] = edit
+            form.addRow(nm, edit)
+        return box
+
+    def _on_layout_toggled(self, checked: bool) -> None:
+        jobsdata.save_resume_layout_enabled(bool(checked))
+        self._set_status("Custom bullet layout ON."
+                         if checked else "Custom bullet layout OFF (engine defaults).")
+
+    def _save_layout(self) -> None:
+        sec_map = self._gather_layout(self._layout_section_edits)
+        proj_map = self._gather_layout(self._layout_project_edits)
+        jobsdata.save_resume_layout(sec_map)
+        jobsdata.save_project_layout(proj_map)
+        self._set_status(
+            f"Layout saved ({len(sec_map)} section(s), {len(proj_map)} project(s)).")
+
+    @staticmethod
+    def _gather_layout(store: dict) -> dict:
+        out: dict = {}
+        for nm, edit in store.items():
+            targets = _parse_targets(edit.text())
+            if targets:
+                out[nm] = {"line_targets": targets}
+        return out
 
     def _buttons(self, v) -> None:
         bar = QtWidgets.QHBoxLayout()

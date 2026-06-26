@@ -254,3 +254,34 @@ def test_bullet_line_targets_project_fallback(synthetic_master, monkeypatch):
            "projects": [{"name": "ProjOne", "groups": [["a1"], ["a2"]]}]}
     targets = compose.bullet_line_targets(sel)
     assert sorted(targets.values()) == [2, 2]
+
+
+# --- master on/off toggle for the custom layout ----------------------------------
+
+def test_resume_layout_enabled_defaults_true_when_absent(monkeypatch):
+    # Absent flag = enabled, so existing configs keep their behavior.
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.resume_layout_enabled() is True
+
+
+def test_disabled_toggle_ignores_both_layout_maps(monkeypatch):
+    # With the toggle OFF the engine ignores BOTH layout maps and uses its
+    # built-in defaults -- the saved targets stay on disk but don't apply.
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "resume_layout_enabled": False,
+        "resume_layout": {"Example Corp": {"line_targets": [1, 1]}},
+        "project_layout": {"ProjOne": {"line_targets": [3, 2, 1]}}})
+    assert config.resume_layout_enabled() is False
+    assert config.resume_layout() == {}
+    assert config.project_layout() == {}
+    assert config.block_targets("Example Corp") == config.DEFAULT_LINE_TARGETS
+    assert config.project_targets("ProjOne") is None
+
+
+def test_enabled_toggle_reads_both_layout_maps(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "resume_layout_enabled": True,
+        "resume_layout": {"Example Corp": {"line_targets": [1, 1]}},
+        "project_layout": {"ProjOne": {"line_targets": [3, 2, 1]}}})
+    assert config.block_targets("Example Corp") == [1, 1]
+    assert config.project_targets("ProjOne") == [3, 2, 1]

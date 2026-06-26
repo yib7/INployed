@@ -79,9 +79,35 @@ def _config_json() -> dict:
 # the soft length hint in rephrase and the deterministic trim cap (lines * MAX_LINE_CHARS).
 MAX_LINE_CHARS = int(os.getenv("RESUME_TAILOR_MAX_LINE_CHARS", "100"))
 DEFAULT_LINE_TARGETS = [2, 2, 2]
-PROJECTS_MAX = int(os.getenv("RESUME_TAILOR_PROJECTS_MAX", "3"))
+PROJECTS_MAX = int(os.getenv("RESUME_TAILOR_PROJECTS_MAX", "3"))  # built-in default / fallback
+PROJECTS_MAX_LIMIT = 6  # hard ceiling for the configurable cap: the resume is one page.
 PROJECT_BULLETS_MAX = int(os.getenv("RESUME_TAILOR_PROJECT_BULLETS_MAX", "2"))
 PROJECT_BULLET_LINES = int(os.getenv("RESUME_TAILOR_PROJECT_BULLET_LINES", "2"))
+
+
+def _clamp_projects(n: int) -> int:
+    """Keep a projects cap in 1..PROJECTS_MAX_LIMIT so a bad value can't blow up the
+    one-page layout (0 projects, or 50)."""
+    return max(1, min(PROJECTS_MAX_LIMIT, n))
+
+
+def projects_max() -> int:
+    """Effective cap on how many projects the tailored resume lists.
+
+    Resolved live (not frozen at import) so the dashboard's Resume setting takes
+    effect without a restart. Precedence: RESUME_TAILOR_PROJECTS_MAX env var >
+    config.json 'projects_max' (the GUI value) > the built-in default PROJECTS_MAX.
+    Always clamped to 1..PROJECTS_MAX_LIMIT."""
+    env = os.getenv("RESUME_TAILOR_PROJECTS_MAX")
+    if env is not None and str(env).strip():
+        try:
+            return _clamp_projects(int(env))
+        except ValueError:
+            pass
+    try:
+        return _clamp_projects(int(_config_json().get("projects_max")))
+    except (TypeError, ValueError):
+        return _clamp_projects(PROJECTS_MAX)
 
 
 def resume_layout_enabled() -> bool:

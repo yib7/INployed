@@ -50,7 +50,7 @@ SECTION_TAGLINE = {
     "Dashboard": "How jobs are surfaced & tracked",
     "Scraper": "What LinkedIn search to run",
     "Scoring": "Models & spend guards (advanced)",
-    "Resume": "Cover letter & artifact toggles",
+    "Resume": "Projects shown, cover letter & artifacts",
     "Settings history": "Snapshot & restore your settings",
     "VM (cloud scraper)": "Manage the cloud scraper VM",
 }
@@ -105,6 +105,7 @@ class SettingsForm(QtWidgets.QWidget):
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._secret_hides: dict[str, QtWidgets.QCheckBox] = {}
+        self._warns: dict[str, QtWidgets.QLabel] = {}  # slider warn labels, keyed by field
         self._collapse: dict[str, QtWidgets.QWidget] = {}  # gate-section -> gated sub-container (VM)
         self._gate_keys: dict[str, str] = {}  # gate_key -> section
         self._vm_panel: QtWidgets.QWidget | None = None  # the VM ops panel, if mounted
@@ -285,7 +286,11 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _slider_widget(self, f, value):
         cell = QtWidgets.QWidget()
-        h = QtWidgets.QHBoxLayout(cell)
+        col = QtWidgets.QVBoxLayout(cell)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(3)
+        row = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
         slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         slider.setMinimum(int(f.min))
@@ -299,9 +304,25 @@ class SettingsForm(QtWidgets.QWidget):
         slider.setFixedWidth(220)
         h.addWidget(slider)
         h.addWidget(readout)
+        h.addStretch(1)
+        col.addWidget(row)
         self._getters[f.key] = lambda s=slider: str(s.value())
         self._setters[f.key] = lambda v, s=slider: s.setValue(int(v) if str(v).strip() else int(f.default))
+        if getattr(f, "warn_above", None) is not None:
+            self._attach_slider_warning(col, slider, f)
         return cell
+
+    def _attach_slider_warning(self, col, slider, f):
+        """Show f.warn_text under the slider whenever its value exceeds f.warn_above —
+        a live, amber caution (used by the one-page projects cap)."""
+        warn = QtWidgets.QLabel(f.warn_text or "")
+        warn.setWordWrap(True)
+        warn.setProperty("warn", True)
+        col.addWidget(warn)
+        threshold = float(f.warn_above)
+        warn.setVisible(slider.value() > threshold)
+        slider.valueChanged.connect(lambda v, lab=warn: lab.setVisible(v > threshold))
+        self._warns[f.key] = warn
 
     def _multichoice_widget(self, f, value):
         cell = QtWidgets.QWidget()

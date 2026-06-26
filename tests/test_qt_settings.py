@@ -133,6 +133,20 @@ def test_restore_defaults(qtbot, tmp_path):
     assert form._getters["location"]() == default
 
 
+def test_projects_max_slider_warns_when_pushed_high(qtbot, tmp_path):
+    # The one-page caution under "Max projects on resume" hides at safe values and
+    # shows once the user drags the cap above the warn threshold (4).
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    warn = form._warns["projects_max"]
+    form._setters["projects_max"](3)
+    assert warn.isHidden()           # default / safe -> no warning
+    form._setters["projects_max"](6)
+    assert not warn.isHidden()       # cranked up -> one-page warning appears
+    form._setters["projects_max"](4)
+    assert warn.isHidden()           # back to a value that usually fits -> hidden again
+
+
 def test_vm_section_collapses_with_toggle(qtbot, tmp_path):
     form = SettingsForm(targets=_targets(tmp_path),
                         vm_panel_factory=lambda parent: QtWidgets.QLabel("vm", parent))

@@ -142,3 +142,15 @@ def test_push_button_disabled_unless_vm_on(qtbot, master_tmp, monkeypatch):
     monkeypatch.setattr(vm_sync.VMTarget, "from_env", staticmethod(lambda *a, **k: _T()))
     ed._refresh_push_state()
     assert ed.btn_push_md.isEnabled()
+
+
+def test_push_outcome_distinguishes_success_and_failure():
+    # scp returns a CompletedProcess (it doesn't raise on failure), so a non-zero
+    # return code must be reported as a failure — not silently treated as success.
+    import types
+    ok = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    bad = types.SimpleNamespace(returncode=1, stdout="",
+                                stderr="pscp: unable to open ~/resume.md")
+    assert ResumeDataEditor._push_outcome(ok) == (True, "resume.md pushed to the VM.")
+    failed, msg = ResumeDataEditor._push_outcome(bad)
+    assert failed is False and "unable to open" in msg

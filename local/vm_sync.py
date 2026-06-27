@@ -80,7 +80,15 @@ class VMTarget:
                 *self._common_flags(), f"--command={remote_command}"]
 
     def build_scp_cmd(self, local_path: str, remote_rel: str) -> list[str]:
-        dest = f"{self._host()}:{self.remote_dir.rstrip('/')}/{remote_rel}"
+        # A bare *relative* remote path resolves against the SSH login's home dir
+        # on both OpenSSH scp and Windows pscp. An explicit "~" does NOT: pscp
+        # (which gcloud uses on Windows) tries to open a literal "~/..." path and
+        # fails with "unable to open ~/<file>", silently breaking the push. So
+        # "~" / "." / "" all mean "the home dir" and emit a relative dest; only a
+        # real directory keeps its prefix.
+        base = self.remote_dir.rstrip("/")
+        dest = (f"{self._host()}:{remote_rel}" if base in ("", "~", ".")
+                else f"{self._host()}:{base}/{remote_rel}")
         return [self.gcloud, "compute", "scp", str(local_path), dest,
                 *self._common_flags()]
 

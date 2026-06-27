@@ -648,8 +648,32 @@ class ResumeDataEditor(QtWidgets.QWidget):
                 self, "Push resume.md", f"Copy resume.md to {target.user}@{target.instance}?"
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
+        self._set_status("Pushing resume.md to VM …")
         workers.run_async(
             self, lambda: vm_sync.run_cmd(
                 target.build_scp_cmd(str(resume_md.RESUME_MD_PATH), "resume.md")),
-            on_done=lambda _r: self._set_status("resume.md pushed to VM."),
-            on_error=lambda e: self._set_status(f"resume.md push failed: {e}"))
+            on_done=self._push_md_finished,
+            on_error=self._push_md_launch_error)
+
+    @staticmethod
+    def _push_outcome(res) -> tuple[bool, str]:
+        """Decide success/failure from the scp result. `scp` does NOT raise on a
+        non-zero exit (e.g. pscp can't reach the host / open the path), so the
+        return code — not the mere absence of an exception — is what tells us the
+        file actually landed. Returns (ok, message)."""
+        ok = getattr(res, "returncode", 0) == 0
+        out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()
+        if ok:
+            return True, "resume.md pushed to the VM."
+        return False, "Push failed.\n\n" + (out[:1200] or "gcloud returned a non-zero exit code.")
+
+    def _push_md_finished(self, res) -> None:
+        ok, msg = self._push_outcome(res)
+        self._set_status("resume.md pushed to VM." if ok else "resume.md push failed.")
+        (QtWidgets.QMessageBox.information if ok
+         else QtWidgets.QMessageBox.critical)(self, "Push resume.md", msg)
+
+    def _push_md_launch_error(self, exc) -> None:
+        self._set_status("resume.md push failed.")
+        QtWidgets.QMessageBox.critical(
+            self, "Push resume.md", f"Push failed to launch:\n\n{exc}")

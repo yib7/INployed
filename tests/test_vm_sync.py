@@ -40,10 +40,19 @@ def test_build_ssh_cmd():
 
 
 def test_build_scp_cmd_dest_path():
+    # remote_dir "~" must NOT be sent literally: Windows pscp can't open a
+    # "~/..." path, so a home-dir push uses a bare relative dest.
     cmd = _target().build_scp_cmd("/local/search_config.json", "search_config.json")
     assert cmd[:3] == ["gcloud", "compute", "scp"]
     assert "/local/search_config.json" in cmd
-    assert "yib@scraper-vm:~/search_config.json" in cmd
+    assert "yib@scraper-vm:search_config.json" in cmd
+    assert "yib@scraper-vm:~/search_config.json" not in cmd
+
+
+def test_build_scp_cmd_custom_dir_keeps_prefix():
+    t = vm_sync.VMTarget(instance="scraper-vm", zone="z", user="yib", remote_dir="/opt/scraper/")
+    cmd = t.build_scp_cmd("/local/x.json", "x.json")
+    assert "yib@scraper-vm:/opt/scraper/x.json" in cmd
 
 
 def test_set_pause_and_resume_and_crontab_are_ssh():

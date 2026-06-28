@@ -82,6 +82,8 @@ def offline_tailor(monkeypatch, tmp_path):
 
     monkeypatch.setattr(run_mod, "pdflatex_available", lambda: True)
     monkeypatch.setattr(run_mod.compose, "select", lambda *a, **k: sel)
+    monkeypatch.setattr(run_mod.compose, "inject_verbatim", lambda *a, **k: {})
+    monkeypatch.setattr(run_mod.compose, "block_briefs", lambda *a, **k: {})
     monkeypatch.setattr(run_mod, "_resolve_bullets", lambda *a, **k: dict(bullets))
     monkeypatch.setattr(run_mod, "_trim_to_caps", lambda *a, **k: None)
     monkeypatch.setattr(run_mod.compose, "compress_skills", lambda *a, **k: ["Python"])

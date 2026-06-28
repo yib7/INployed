@@ -59,9 +59,11 @@ def _job_description_text(job: Dict[str, str]) -> str:
     return ""
 
 
-def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], None]) -> Dict[str, str]:
-    """Rephrase selected groups. Skip the anti-inflation gate to reduce LLM calls."""
-    bullets = compose.rephrase(jd, job_title, sel)
+def _resolve_bullets(jd: str, job_title: str, sel: dict, log: Callable[[str], None],
+                     briefs: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Rephrase selected groups, block-grouped with their cohesion briefs. Skip the
+    anti-inflation gate to reduce LLM calls."""
+    bullets = compose.rephrase(jd, job_title, sel, briefs=briefs)
     log(f"rephrased {len(bullets)} bullet(s).")
     return bullets
 
@@ -135,6 +137,8 @@ def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:
     left as-is — we never pad, which would mean inventing facts."""
     targets = compose.bullet_line_targets(sel)
     for gk, text in list(bullets.items()):
+        if compose.is_verbatim_gkey(gk):
+            continue  # the user's exact bullets are rendered as typed, never trimmed
         cap = targets.get(gk, config.PROJECT_BULLET_LINES) * config.MAX_LINE_CHARS
         if len(text.strip()) > cap:
             bullets[gk] = _word_trim(text, cap)
@@ -169,9 +173,19 @@ def tailor(
     if not sel.get("experience"):
         raise RuntimeError("Selection returned no experience — aborting (check the JD/model).")
 
-    bullets = _resolve_bullets(jd, job_title, sel, log)
-    if not bullets:
+    # Per-block "don't tailor": swap selected verbatim blocks to the user's exact
+    # bullets BEFORE rephrase, so the LLM never sees (or rewrites) them.
+    verbatim = compose.inject_verbatim(sel)
+    # One cheap batched call: a cohesion brief per (non-verbatim) block so its bullets
+    # read as one story instead of glued-together atoms.
+    log("framing each block for cohesion…")
+    briefs = compose.block_briefs(jd, job_title, sel)
+    bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
+    if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived verification.")
+    if verbatim:
+        bullets.update(verbatim)
+        log(f"using {len(verbatim)} verbatim bullet(s) (untailored, as typed).")
 
     _trim_to_caps(sel, bullets)
 

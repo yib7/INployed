@@ -20,7 +20,7 @@ from typing import Dict, List
 
 # ── Calibrated column capacities ─────────────────────────────────────────────
 SKILL_CPL = int(os.getenv("RESUME_TAILOR_SKILL_CPL", "105"))  # technical-skills line
-MIN_FILL = float(os.getenv("RESUME_TAILOR_MIN_LINE_FILL", "0.5"))  # trailing line floor for skills
+MIN_FILL = float(os.getenv("RESUME_TAILOR_MIN_LINE_FILL", "0.7"))  # trailing line floor for skills
 _SAFETY = 2  # keep a couple chars off the wrap boundary
 
 # ── The strict spec ──────────────────────────────────────────────────────────
@@ -30,22 +30,25 @@ _SAFETY = 2  # keep a couple chars off the wrap boundary
 # plan_leadership_lines).
 LEADERSHIP_ENTRY_LINES = 2
 
-# Technical Skills: 3 fixed category lines, total 3-4 printed lines. Languages
-# must carry at least MIN_LANGUAGES items; every line must be "robust" (filled to
-# at least its min-char floor, backfilled from the pool if the model under-picks).
+# Technical Skills: 4 fixed category lines (Languages / Frameworks / Developer
+# Tools / Libraries), ~4 printed lines total. Languages must carry at least
+# MIN_LANGUAGES items; every line must be "robust" (filled to at least its
+# min-char floor, backfilled from the pool if the model under-picks).
 MIN_LANGUAGES = 4
 # (label, target_printed_lines, item-char cap, item-char floor)
 #   caps/floors are on the ITEMS text only; the bold label width is folded in via
 #   SKILL_LABEL_WIDTH so the printed-line math stays honest.
 SKILL_LABEL_WIDTH = {
     "Languages": 12,                 # "Languages: "
-    "Tools & Infrastructure": 25,    # "Tools & Infrastructure: "
-    "Libraries & Frameworks": 25,    # "Libraries & Frameworks: "
+    "Frameworks": 13,                # "Frameworks: "
+    "Developer Tools": 18,           # "Developer Tools: "
+    "Libraries": 12,                 # "Libraries: "
 }
 SKILL_LINE_TARGET = {
     "Languages": 1,
-    "Tools & Infrastructure": 1,
-    "Libraries & Frameworks": 2,     # the one allowed to wrap -> 4 lines total
+    "Frameworks": 1,
+    "Developer Tools": 1,
+    "Libraries": 1,
 }
 
 

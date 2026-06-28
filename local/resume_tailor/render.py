@@ -31,7 +31,7 @@ def _header(basics: dict) -> str:
         "\\begin{center}\n"
         f"\\textbf{{\\Huge \\scshape {name}}} \\\\ \\vspace{{1pt}}\n"
         f"{contact}\n"
-        "\\end{center}\n\n\n"
+        "\\end{center}\n\\vspace{-10pt}\n\n"
     )
 
 
@@ -125,12 +125,10 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         if not b or not items:
             continue
         name = to_latex(b.get("name", ""))
-        # Right slot: a clickable github link when the project has a github repo
-        # (academic projects without a github URL get an empty slot, as before).
         repo = (b.get("repo") or "").strip()
         if "github.com" in repo:
             href = to_latex(f"https://{repo}")
-            link = f"\\href{{{href}}}{{{to_latex(repo)}}}"
+            link = f"\\href{{{href}}}{{\\textit{{View on GitHub}}}}"
         else:
             link = ""
         out.append(

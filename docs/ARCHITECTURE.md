@@ -5,8 +5,8 @@ reopening this repo cold. This doc is about *how the code is shaped and why*.
 
 ## The three subsystems
 
-### 1. Scrape (`scraper.py`)
-Async Bright Data client. Triggers keyword × remote-type searches, polls the
+### 1. Job discovery (`scraper.py`)
+The discovery step is an async Bright Data client. Triggers keyword × remote-type searches, polls the
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
 appends to a cumulative master CSV. Two cost-aware details worth remembering:
 - It excludes every job id already in the master from re-collection (Bright Data

@@ -68,6 +68,12 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_impact_orig: dict[str, str] = {}
         self._layout_section_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._layout_project_edits: dict[str, QtWidgets.QLineEdit] = {}
+        # B8: stale custom-layout rows (name no longer in the master) — (kind, name,
+        # row-widget, form) so a per-row ✕ or the "Remove stale entries" button can
+        # drop them from the saved map without a full tab rebuild.
+        self._stale_layout_rows: list = []
+        # C: per-block "don't tailor" verbatim editors, {block_name: (checkbox, editor)}.
+        self._verbatim_edits: dict = {}
 
         self._build_shell()
         self.reload()
@@ -163,6 +169,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         self._atom_impact_orig.clear()
         self._layout_section_edits.clear()
         self._layout_project_edits.clear()
+        self._verbatim_edits.clear()
 
         body = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(body)
@@ -228,22 +235,89 @@ class ResumeDataEditor(QtWidgets.QWidget):
             self._entry_orig[(section, idx, k)] = edit.text()
             form.addRow(label, edit)
         bv.addLayout(form)
+
+        # C: per-block "don't tailor". When checked, this block renders the user's
+        # EXACT bullets (LLM bypassed); the atom editors are hidden and a simple
+        # bulleted editor takes over, prefilled from the saved verbatim bullets.
+        saved_vb = jobsdata.load_verbatim_blocks().get(name) or []
+        vb_cb = QtWidgets.QCheckBox("Don't tailor — use my exact bullets")
+        vb_cb.setToolTip("Render this block's bullets exactly as you type them, "
+                         "skipping the LLM tailoring for it.")
+        vb_cb.setChecked(bool(saved_vb))
+        bv.addWidget(vb_cb)
+
+        # (A) normal atom editors, grouped so they can be hidden in verbatim mode.
+        atoms_holder = QtWidgets.QWidget()
+        ah = QtWidgets.QVBoxLayout(atoms_holder)
+        ah.setContentsMargins(0, 0, 0, 0)
         cap = QtWidgets.QLabel("Achievements (atoms) — impact: one measurable result per line")
         cap.setProperty("muted", True)
-        bv.addWidget(cap)
+        ah.addWidget(cap)
         for atom in entry.get("achievements") or []:
             if isinstance(atom, dict):
-                self._atom_block(bv, atom)
-        bar = QtWidgets.QHBoxLayout()
+                self._atom_block(ah, atom)
+        abar = QtWidgets.QHBoxLayout()
         add_a = QtWidgets.QPushButton("+ Add achievement")
         add_a.clicked.connect(lambda _=False, s=section, i=idx: self._add_atom_dialog(s, i))
-        bar.addWidget(add_a)
+        abar.addWidget(add_a)
+        abar.addStretch(1)
+        ah.addLayout(abar)
+        bv.addWidget(atoms_holder)
+
+        # (B) verbatim bulleted editor + live "• " preview that mirrors the résumé.
+        vb_holder = QtWidgets.QWidget()
+        vh = QtWidgets.QVBoxLayout(vb_holder)
+        vh.setContentsMargins(0, 0, 0, 0)
+        vh_cap = QtWidgets.QLabel("Your exact bullets — one per line; rendered on the résumé as typed:")
+        vh_cap.setProperty("muted", True)
+        vh_cap.setWordWrap(True)
+        vh.addWidget(vh_cap)
+        vb_edit = QtWidgets.QPlainTextEdit("\n".join(str(b) for b in saved_vb))
+        vb_edit.setPlaceholderText("One bullet per line, e.g.\n"
+                                   "Led a team of 5 to ship X\nBuilt Y, cutting Z by 30%")
+        vb_edit.setMinimumHeight(110)
+        vh.addWidget(vb_edit)
+        preview = QtWidgets.QLabel()
+        preview.setProperty("muted", True)
+        preview.setWordWrap(True)
+        vh.addWidget(preview)
+        bv.addWidget(vb_holder)
+
+        def _refresh_preview() -> None:
+            lines = [ln.strip() for ln in vb_edit.toPlainText().splitlines() if ln.strip()]
+            preview.setText("\n".join(f"•  {ln}" for ln in lines) or "(no bullets yet)")
+
+        vb_edit.textChanged.connect(_refresh_preview)
+        _refresh_preview()
+
+        def _apply_mode(checked: bool) -> None:
+            atoms_holder.setVisible(not checked)
+            vb_holder.setVisible(checked)
+
+        vb_cb.toggled.connect(_apply_mode)
+        _apply_mode(vb_cb.isChecked())
+        self._verbatim_edits[name] = (vb_cb, vb_edit)
+
+        bar = QtWidgets.QHBoxLayout()
         bar.addStretch(1)
         dele = QtWidgets.QPushButton("Delete entry")
         dele.clicked.connect(lambda _=False, s=section, i=idx, nm=name: self._delete_entry(s, i, nm))
         bar.addWidget(dele)
         bv.addLayout(bar)
         v.addWidget(box)
+
+    def _gather_verbatim(self) -> dict:
+        """Verbatim blocks to persist: keep saved keys for blocks not shown, and for
+        each shown block set its non-empty lines when 'don't tailor' is checked, else
+        drop it (revert to normal tailoring)."""
+        out = dict(jobsdata.load_verbatim_blocks())
+        for name, (cb, edit) in self._verbatim_edits.items():
+            lines = [ln.strip() for ln in edit.toPlainText().splitlines() if ln.strip()]
+            if cb.isChecked() and lines:
+                out[name] = lines
+            else:
+                out.pop(name, None)
+        return out
 
     def _atom_block(self, bv, atom: dict) -> None:
         aid = str(atom.get("id", ""))
@@ -301,10 +375,15 @@ class ResumeDataEditor(QtWidgets.QWidget):
             subtitle="per-section / per-project line targets — toggle to A/B test",
             collapsed=True)
 
+        self._stale_layout_rows = []  # rebuilt fresh on each reload
+
         self._layout_enabled_cb = QtWidgets.QCheckBox("Apply custom bullet layout")
         self._layout_enabled_cb.setChecked(jobsdata.load_resume_layout_enabled())
         self._layout_enabled_cb.toggled.connect(self._on_layout_toggled)  # after setChecked
         section.add_widget(self._layout_enabled_cb)
+
+        # B2: project count + at-most/exactly-N mode (moved here from Settings).
+        section.add_widget(self._projects_control())
 
         help_lbl = QtWidgets.QLabel(
             'Each box is a comma-separated list of bullet line-counts, e.g. "2, 2, 1" = '
@@ -318,40 +397,96 @@ class ResumeDataEditor(QtWidgets.QWidget):
         cfg_sections = jobsdata.load_resume_layout()
         cfg_projects = jobsdata.load_project_layout()
 
-        sec_names: list[str] = []
+        sec_live: list[str] = []
         for s in ("experience", "leadership"):
             for e in data.get(s) or []:
                 if isinstance(e, dict):
                     nm = str(e.get(_NAME_KEY[s], "") or "").strip()
-                    if nm and nm not in sec_names:
-                        sec_names.append(nm)
+                    if nm and nm not in sec_live:
+                        sec_live.append(nm)
+        sec_names = list(sec_live)
         for nm in cfg_sections:                       # keep stale config keys editable/clearable
             if nm not in sec_names:
                 sec_names.append(nm)
         section.add_widget(self._layout_group(
             "Sections (experience / leadership)", sec_names, cfg_sections,
-            self._layout_section_edits))
+            self._layout_section_edits, set(sec_live), "section"))
 
-        proj_names: list[str] = []
+        proj_live: list[str] = []
         for e in data.get("projects") or []:
             if isinstance(e, dict):
                 nm = str(e.get("name", "") or "").strip()
-                if nm and nm not in proj_names:
-                    proj_names.append(nm)
+                if nm and nm not in proj_live:
+                    proj_live.append(nm)
+        proj_names = list(proj_live)
         for nm in cfg_projects:
             if nm not in proj_names:
                 proj_names.append(nm)
         section.add_widget(self._layout_group(
-            "Projects", proj_names, cfg_projects, self._layout_project_edits))
+            "Projects", proj_names, cfg_projects, self._layout_project_edits,
+            set(proj_live), "project"))
 
+        bar = QtWidgets.QHBoxLayout()
         save = QtWidgets.QPushButton("Save layout")
         save.clicked.connect(self._save_layout)
-        section.add_widget(save)
+        bar.addWidget(save)
+        self._remove_stale_btn = QtWidgets.QPushButton("Remove stale entries")
+        self._remove_stale_btn.setToolTip(
+            "Drop every layout row whose name is no longer in your résumé data.")
+        self._remove_stale_btn.clicked.connect(self._remove_stale_layout)
+        self._remove_stale_btn.setEnabled(bool(self._stale_layout_rows))
+        bar.addWidget(self._remove_stale_btn)
+        bar.addStretch(1)
+        holder = QtWidgets.QWidget()
+        holder.setLayout(bar)
+        section.add_widget(holder)
 
         v.addWidget(section)
 
-    def _layout_group(self, title: str, names: list, cfg: dict,
-                      store: dict) -> QtWidgets.QGroupBox:
+    def _projects_control(self) -> QtWidgets.QGroupBox:
+        """Spinbox (1-6) + 'At most N' / 'Exactly N' radio for how many projects the
+        tailored resume lists. Persisted via jobsdata.save_projects_count on Save layout."""
+        n, mode = jobsdata.load_projects_count()
+        box = QtWidgets.QGroupBox("Projects on the résumé")
+        form = QtWidgets.QFormLayout(box)
+
+        self._projects_count_spin = QtWidgets.QSpinBox()
+        self._projects_count_spin.setRange(1, 6)
+        self._projects_count_spin.setValue(n)
+        form.addRow("How many projects", self._projects_count_spin)
+
+        self._projects_mode_max = QtWidgets.QRadioButton("At most this many")
+        self._projects_mode_exact = QtWidgets.QRadioButton("Exactly this many")
+        (self._projects_mode_exact if mode == "exact" else self._projects_mode_max).setChecked(True)
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.addWidget(self._projects_mode_max)
+        mode_row.addWidget(self._projects_mode_exact)
+        mode_row.addStretch(1)
+        mode_holder = QtWidgets.QWidget()
+        mode_holder.setLayout(mode_row)
+        form.addRow("Mode", mode_holder)
+
+        mode_help = QtWidgets.QLabel(
+            "At most N: list up to N of your strongest projects, dropping the weakest to "
+            "hold one page. Exactly N: always keep N projects (when you have that many), "
+            "trimming bullets instead of dropping a whole project.")
+        mode_help.setWordWrap(True)
+        mode_help.setProperty("muted", True)
+        form.addRow(mode_help)
+
+        self._projects_warn = QtWidgets.QLabel(
+            "More than 4 projects rarely fits one page cleanly — the tailor may shrink "
+            "bullets or (in 'at most' mode) drop your weakest projects to hold one page.")
+        self._projects_warn.setWordWrap(True)
+        self._projects_warn.setProperty("warn", True)
+        self._projects_warn.setVisible(self._projects_count_spin.value() > 4)
+        self._projects_count_spin.valueChanged.connect(
+            lambda val: self._projects_warn.setVisible(val > 4))
+        form.addRow(self._projects_warn)
+        return box
+
+    def _layout_group(self, title: str, names: list, cfg: dict, store: dict,
+                      live_names: set, kind: str) -> QtWidgets.QGroupBox:
         box = QtWidgets.QGroupBox(title)
         form = QtWidgets.QFormLayout(box)
         if not names:
@@ -366,8 +501,51 @@ class ResumeDataEditor(QtWidgets.QWidget):
             edit = QtWidgets.QLineEdit(text)
             edit.setPlaceholderText("e.g. 2, 2, 1")
             store[nm] = edit
-            form.addRow(nm, edit)
+            if nm in live_names:
+                form.addRow(nm, edit)
+                continue
+            # B8: stale row (no longer in the master) — mark it and give it a ✕ button.
+            field = QtWidgets.QWidget()
+            hl = QtWidgets.QHBoxLayout(field)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.addWidget(edit, 1)
+            drop = QtWidgets.QToolButton()
+            drop.setText("✕")
+            drop.setToolTip("Remove this stale entry (no longer in your résumé data)")
+            hl.addWidget(drop)
+            label = f"{nm}  (removed from résumé data)"
+            form.addRow(label, field)
+            self._stale_layout_rows.append((kind, nm, field, form))
+            drop.clicked.connect(
+                lambda _=False, k=kind, n=nm, w=field, f=form: self._delete_stale_layout(k, n, w, f))
         return box
+
+    def _delete_stale_layout(self, kind: str, nm: str, row: QtWidgets.QWidget,
+                             form: QtWidgets.QFormLayout) -> None:
+        """Drop one stale layout key from the saved map and remove its row, without a
+        full tab rebuild (so in-progress atom edits are untouched)."""
+        loader = jobsdata.load_resume_layout if kind == "section" else jobsdata.load_project_layout
+        saver = jobsdata.save_resume_layout if kind == "section" else jobsdata.save_project_layout
+        m = loader()
+        m.pop(nm, None)
+        saver(m)
+        store = self._layout_section_edits if kind == "section" else self._layout_project_edits
+        store.pop(nm, None)
+        form.removeRow(row)  # removes both the label and the field widget
+        self._stale_layout_rows = [r for r in self._stale_layout_rows if not (r[0] == kind and r[1] == nm)]
+        if hasattr(self, "_remove_stale_btn"):
+            self._remove_stale_btn.setEnabled(bool(self._stale_layout_rows))
+        self._set_status(f"Removed stale layout entry '{nm}'.")
+
+    def _remove_stale_layout(self) -> None:
+        """Drop every stale layout row at once."""
+        if not self._stale_layout_rows:
+            self._set_status("No stale layout entries to remove.")
+            return
+        n = len(self._stale_layout_rows)
+        for kind, nm, row, form in list(self._stale_layout_rows):
+            self._delete_stale_layout(kind, nm, row, form)
+        self._set_status(f"Removed {n} stale layout entr{'y' if n == 1 else 'ies'}.")
 
     def _on_layout_toggled(self, checked: bool) -> None:
         jobsdata.save_resume_layout_enabled(bool(checked))
@@ -379,8 +557,14 @@ class ResumeDataEditor(QtWidgets.QWidget):
         proj_map = self._gather_layout(self._layout_project_edits)
         jobsdata.save_resume_layout(sec_map)
         jobsdata.save_project_layout(proj_map)
+        if hasattr(self, "_projects_count_spin"):
+            mode = "exact" if self._projects_mode_exact.isChecked() else "max"
+            jobsdata.save_projects_count(self._projects_count_spin.value(), mode)
+            count_msg = f"{self._projects_count_spin.value()} project(s) [{mode}]; "
+        else:
+            count_msg = ""
         self._set_status(
-            f"Layout saved ({len(sec_map)} section(s), {len(proj_map)} project(s)).")
+            f"Layout saved ({count_msg}{len(sec_map)} section(s), {len(proj_map)} project(s)).")
 
     @staticmethod
     def _gather_layout(store: dict) -> dict:
@@ -443,6 +627,10 @@ class ResumeDataEditor(QtWidgets.QWidget):
             self._set_status("Save failed.")
             QtWidgets.QMessageBox.critical(self, "Résumé data", str(exc))
             return False
+
+        # Per-block "don't tailor" bullets live in config.json (separate from the
+        # master YAML the edits above wrote); persist them before the rebuild.
+        jobsdata.save_verbatim_blocks(self._gather_verbatim())
 
         errs = self.validate()
         self.reload()

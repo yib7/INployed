@@ -2,7 +2,7 @@
 
 select()          flash : choose blocks + ordered bullet GROUPS (by atom id) + skill focus
 rephrase()        pro   : one bullet per GROUP, faithfully fusing only that group's atoms
-compress_skills() flash : exactly 3 fixed-label lines drawn from the taxonomy
+compress_skills() flash : exactly 4 fixed-label lines drawn from the taxonomy
 verify()          flash : anti-inflation gate — each bullet vs the UNION of its group's atoms
 rephrase_fix()    flash : regenerate a flagged bullet once, fixing the cited problems
 
@@ -17,7 +17,8 @@ carries its source atom ids so the verifier and a human can trace it.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Tuple
+from math import ceil
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import assets, config, layout
 from .llm import call
@@ -136,13 +137,54 @@ def _experience_guidance() -> str:
     return "\n".join(lines)
 
 
+# ── verbatim ("don't tailor — use my exact bullets") ─────────────────────────
+# A block the user marked verbatim has its groups replaced (after _normalize_selection)
+# with synthetic single-bullet groups whose id is "__verbatim__/<block>/<i>". These
+# carry the user's EXACT text: they're excluded from rephrase/cohesion/verify/trim and
+# rendered as typed (render._group_bullets just reads the bullets dict by gkey).
+_VERBATIM_PREFIX = "__verbatim__"
+
+
+def is_verbatim_gkey(gk: str) -> bool:
+    return isinstance(gk, str) and gk.startswith(_VERBATIM_PREFIX)
+
+
+def inject_verbatim(sel: Dict[str, Any]) -> Dict[str, str]:
+    """Replace the groups of any SELECTED verbatim block with one synthetic group per
+    user bullet, and return {gkey: exact_text}. Mutates `sel`; call AFTER select()
+    (i.e. after _normalize_selection) so the atom-based fixed-count/resize logic is
+    untouched. A block only renders verbatim if it is in the selection (experience and
+    leadership are required, so always are; a project must have been selected)."""
+    vb = config.verbatim_blocks()
+    out: Dict[str, str] = {}
+    if not vb:
+        return out
+    for sec in ("experience", "projects", "leadership"):
+        for entry in sel.get(sec, []):
+            bullets = vb.get(entry.get("name"))
+            if not bullets:
+                continue
+            groups: List[List[str]] = []
+            for i, text in enumerate(bullets):
+                gk = f"{_VERBATIM_PREFIX}/{entry['name']}/{i}"
+                groups.append([gk])
+                out[gk] = text
+            entry["groups"] = groups
+    return out
+
+
 def group_map(sel: Dict[str, Any]) -> Dict[str, List[str]]:
-    """Ordered {gkey: [atom_ids]} across experience -> projects -> leadership."""
+    """Ordered {gkey: [atom_ids]} across experience -> projects -> leadership.
+    Verbatim groups are excluded — they carry the user's exact text, not atoms, so the
+    LLM stages (rephrase/verify) must never see them."""
     gm: "Dict[str, List[str]]" = {}
     for sec in ("experience", "projects", "leadership"):
         for entry in sel.get(sec, []):
             for ids in entry.get("groups", []):
-                gm[_gkey(ids)] = ids
+                gk = _gkey(ids)
+                if is_verbatim_gkey(gk):
+                    continue
+                gm[gk] = ids
     return gm
 
 
@@ -180,7 +222,7 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         "dense line (e.g. an accuracy gain + the cost cut). Prefer single-atom groups "
         "unless fusing clearly improves density. Bias toward the most JD-relevant evidence. "
         "In the SAME pass, also select the candidate's technical skills "
-        "into exactly three lines (Languages / Tools & Infrastructure / Libraries & Frameworks): "
+        "into exactly four lines (Languages / Frameworks / Developer Tools / Libraries): "
         "only skills present in each line's pool. STRATEGY: first lock in every skill the JD "
         "explicitly mentions or strongly implies; then fill remaining slots with complementary "
         "skills that a strong candidate in this role would also have — adjacent languages, "
@@ -210,15 +252,16 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
 
 SKILL POOLS (for the "skills" output only — pick each line's items only from its pool; Languages must have AT LEAST 4 (aim ~6-8), ~7-10 for the others — JD matches first, then complementary skills that show breadth):
 Languages: {json.dumps(pools["Languages"], ensure_ascii=False)}
-Tools & Infrastructure: {json.dumps(pools["Tools & Infrastructure"], ensure_ascii=False)}
-Libraries & Frameworks: {json.dumps(pools["Libraries & Frameworks"], ensure_ascii=False)}
+Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
+Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
+Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
 Selection guidance — the resume template has FIXED sections; fill them to one full page (~14-18 bullets):
 - Work Experience (use the block names exactly as listed in the catalog above):
 {exp_guidance}
 - Projects: include ALL available projects, ORDERED STRONGEST-FIRST for THIS job. Give the strongest ~2-3 groups and weaker ones ~1 group.
 - Leadership: ALWAYS include EVERY leadership entry. {lead_guidance}
-- Line density rule: every bullet must fill at least half its printed line. Never write a bullet so short it leaves more than half the line blank — fuse atoms or pick denser content instead.
+- Line density rule: every bullet must fill at least 70% of its printed line. Never write a bullet so short it leaves more than ~30% of the line blank — fuse atoms or pick denser content instead.
 - Within a block, order groups by relevance to THIS job.
 
 Return ONLY JSON (use the real block names + atom ids from the catalog; groups is a list of lists of atom ids):
@@ -229,7 +272,7 @@ Return ONLY JSON (use the real block names + atom ids from the catalog; groups i
   "projects":   [{{"name": "<project name>", "groups": [["<atom_id>"], ["<atom_id>", "<atom_id>"]]}}],
   "leadership": [{{"name": "<leadership org>", "groups": [["<atom_id>"]]}}],
   "skill_focus": "one of: ml_research | backend_platform | data_analytics | general",
-  "skills": {{"Languages": "Python, SQL, R", "Tools & Infrastructure": "...", "Libraries & Frameworks": "..."}},
+  "skills": {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}},
   "rationale": "1-2 sentences (incl. why projects are ordered as they are)"
 }}
 
@@ -399,23 +442,112 @@ def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
 
 # ── Stage 2: rephrase ────────────────────────────────────────────────────────
 def _length_hint(target_lines: int) -> str:
-    cap = target_lines * config.MAX_LINE_CHARS
+    """A soft floor + hard ceiling for one bullet. The ceiling is the trim cap
+    (target_lines * MAX_LINE_CHARS); the floor keeps the bullet from sitting
+    stubby — a single-line bullet should fill >=85% of its line, and a wrapping
+    bullet's last line should fill >=70% (so floor = ((n-1)+0.70)*cap_per_line)."""
+    per_line = config.MAX_LINE_CHARS
+    cap = target_lines * per_line
+    if target_lines <= 1:
+        floor = ceil(0.85 * per_line)
+    else:
+        floor = ceil(((target_lines - 1) + 0.70) * per_line)
     unit = "line" if target_lines == 1 else "lines"
-    return f"about {target_lines} {unit} (<= {cap} characters)"
+    return (f"about {target_lines} {unit} ({floor}-{cap} characters; aim to fill "
+            f"the line(s), never exceed {cap})")
 
 
-def rephrase(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:
-    """Return {gkey: bullet_text} — one bullet per selected group. Each bullet gets
-    a soft length hint from its per-bullet line target; final length is enforced
-    deterministically later (run._trim_to_caps), so this is guidance, not a gate."""
+def _blocks_in_order(sel: Dict[str, Any]) -> List[Tuple[str, List[str]]]:
+    """[(block_name, [gkey, ...]), ...] for non-verbatim groups, in selection order
+    (experience -> projects -> leadership). The grouping rephrase/cohesion key off."""
+    gm = group_map(sel)  # excludes verbatim
+    order: List[str] = []
+    by_block: Dict[str, List[str]] = {}
+    for sec in ("experience", "projects", "leadership"):
+        for entry in sel.get(sec, []):
+            name = entry.get("name", "")
+            for ids in entry.get("groups", []):
+                gk = _gkey(ids)
+                if gk not in gm:  # verbatim
+                    continue
+                if name not in by_block:
+                    by_block[name] = []
+                    order.append(name)
+                by_block[name].append(gk)
+    return [(name, by_block[name]) for name in order]
+
+
+def block_briefs(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:
+    """One cheap batched call: a 1-2 sentence framing brief per non-verbatim block,
+    derived ONLY from that block's selected atoms. The brief is a cohesion aid for
+    rephrase (how the block's bullets should share framing / progress, and—when the
+    block's purpose isn't self-evident—what high-level context the lead bullet should
+    establish). It is NEVER a source of new facts. Returns {block_name: brief}; {} on
+    any failure (cohesion is advisory, never fatal)."""
+    gm = group_map(sel)
+    blocks: List[Dict[str, Any]] = []
+    for name, gkeys in _blocks_in_order(sel):
+        atoms: List[Dict[str, Any]] = []
+        for gk in gkeys:
+            atoms.extend(_atom_payload(a) for a in gm[gk])
+        if atoms:
+            blocks.append({"block": name, "atoms": atoms})
+    if not blocks:
+        return {}
+    system = (
+        "You frame resume blocks for cohesion. For each block (one job, project, or "
+        "leadership entry), write a 1-2 sentence BRIEF describing how its bullets should "
+        "read together: the shared theme, the logical order, and — if the block's purpose "
+        "is not obvious from the atoms — the high-level context the FIRST bullet should "
+        "establish (e.g. what a project is at a glance). Derive the brief ONLY from the "
+        "given atoms; never introduce a fact, tool, metric, or claim not present in them. "
+        "The brief guides phrasing only; it is not itself a bullet."
+    )
+    user = f"""TARGET JOB: {job_title}
+
+JOB DESCRIPTION (for emphasis only — never a source of new facts):
+{jd[:2000]}
+
+BLOCKS (each holds the atoms selected for one resume entry):
+{json.dumps(blocks, ensure_ascii=False, indent=1)}
+
+Return ONLY JSON: {{"briefs": [{{"block": "<block name>", "brief": "<1-2 sentences>"}}, ...]}}"""
+    try:
+        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.2)
+    except Exception:  # noqa: BLE001 - cohesion is advisory; fall back to no briefs
+        return {}
+    names = {b["block"] for b in blocks}
+    result: Dict[str, str] = {}
+    for b in out.get("briefs", []) or []:
+        name, brief = b.get("block"), (b.get("brief") or "").strip()
+        if name in names and brief:
+            result[name] = brief
+    return result
+
+
+def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
+             briefs: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Return {gkey: bullet_text} — one bullet per selected group. The payload is
+    grouped BY BLOCK and each block carries its optional cohesion `brief`, so the
+    block's bullets read as one story (shared framing, no redundancy, logical
+    progression) instead of glued-together atoms. Each bullet still gets a soft length
+    hint; final length is enforced deterministically later (run._trim_to_caps)."""
+    briefs = briefs or {}
     gm = group_map(sel)
     targets = bullet_line_targets(sel)
-    payload = []
-    for gk, ids in gm.items():
-        item: Dict[str, Any] = {"gkey": gk, "atoms": {a: _atom_payload(a) for a in ids}}
+
+    def _item(gk: str) -> Dict[str, Any]:
+        it: Dict[str, Any] = {"gkey": gk, "atoms": {a: _atom_payload(a) for a in gm[gk]}}
         if gk in targets:
-            item["length_target"] = _length_hint(targets[gk])
-        payload.append(item)
+            it["length_target"] = _length_hint(targets[gk])
+        return it
+
+    payload = []
+    for name, gkeys in _blocks_in_order(sel):
+        block_entry: Dict[str, Any] = {"block": name, "bullets": [_item(gk) for gk in gkeys]}
+        if briefs.get(name):
+            block_entry["brief"] = briefs[name]
+        payload.append(block_entry)
     verbs = _CORE_VERBS
     example = assets.example_text()[:1200]
     system = (
@@ -423,6 +555,13 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:
         "Each group is one bullet: if it has multiple atoms, FUSE them into a single dense "
         "line that states only what those atoms say. You are a translator turning structured "
         "facts into one polished line, not a writer inventing content.\n" + _PRINCIPLE + "\n"
+        "COHESION: the bullets are grouped BY BLOCK (one job / project / leadership entry). "
+        "Within a block, make the bullets read as ONE coherent story — shared framing and "
+        "tense, no two bullets making the same point, ordered so they build logically. When "
+        "a block carries a 'brief', follow its framing/ordering; if the brief says the block's "
+        "purpose isn't obvious, let the FIRST bullet establish that context using ONLY grounded "
+        "atom facts. NEVER move a fact from one group's atoms into another bullet — each bullet "
+        "still re-phrases ONLY its own group's atoms.\n"
         "STYLE: past tense, no first-person pronouns, no markdown, no LaTeX, NO bold or "
         "italics. One sentence (a fused group may run to ~2 clauses). Each bullet MUST be a "
         "COMPLETE sentence that ends naturally WITHIN its own character budget (the "
@@ -432,10 +571,10 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:
         "verb from the provided list that matches the atom's real ownership. Numbers exactly "
         "as written. Write 'greater than or equal to' style comparisons with the symbols "
         ">= and <= (they are converted to proper math notation later).\n"
-        "SPACE: a bullet that fits on ONE printed line should fill at least ~75% of it — "
+        "SPACE: a bullet that fits on ONE printed line should fill at least ~85% of it — "
         "never leave a stubby half-empty line (fold in more grounded detail from the atoms "
         "or fuse, but NEVER invent facts to pad). A bullet that wraps to multiple lines may "
-        "let its last line run shorter (down to ~50% full)."
+        "let its last line run shorter, but it should still be at least ~70% full."
     )
     user = f"""TARGET JOB: {job_title}
 
@@ -448,7 +587,8 @@ ACTION VERBS (open each bullet with one of these; match the atom's real ownershi
 STYLE EXEMPLAR (match this voice, length and density — NEVER copy its facts):
 {example}
 
-GROUPS (write exactly ONE bullet per gkey, re-phrasing ONLY the atoms in that group):
+BLOCKS (write exactly ONE bullet per gkey, re-phrasing ONLY that group's atoms; make
+each block's bullets cohere per its 'brief' when present):
 {json.dumps(payload, ensure_ascii=False, indent=1)}
 
 LENGTH (hard ceiling): each bullet's "length_target" gives a character cap. Write a
@@ -489,16 +629,17 @@ Return ONLY JSON: {{"text": "<corrected bullet>"}}"""
     return (out.get("text") or "").strip()
 
 
-# ── Stage 3: skills (exactly 3 fixed categories) ─────────────────────────────
+# ── Stage 3: skills (exactly 4 fixed categories) ─────────────────────────────
 _SKILL_BUCKETS = (
     ("Languages", ("languages",)),
-    ("Tools & Infrastructure", ("developer_tools",)),
-    ("Libraries & Frameworks", ("frameworks", "libraries")),
+    ("Frameworks", ("frameworks",)),
+    ("Developer Tools", ("developer_tools",)),
+    ("Libraries", ("libraries",)),
 )
 # Per-line item-char caps/floors are derived in layout.py from the calibrated
-# skills-column width so the section lands at 3-4 printed lines (Libraries may
-# wrap to a 2nd) and no line sits >half empty. Languages also carries a hard
-# minimum item count (layout.MIN_LANGUAGES).
+# skills-column width so the section lands at ~4 printed lines (one line may
+# wrap to a 2nd) and no line sits below its fill floor. Languages also carries a
+# hard minimum item count (layout.MIN_LANGUAGES).
 
 
 def _pool(skills: Dict[str, Any], keys: Tuple[str, ...]) -> List[str]:
@@ -509,15 +650,15 @@ def _pool(skills: Dict[str, Any], keys: Tuple[str, ...]) -> List[str]:
 
 
 def _skill_pools() -> Dict[str, List[str]]:
-    """The three fixed skill lines mapped to their candidate-skill pools."""
+    """The four fixed skill lines mapped to their candidate-skill pools."""
     skills = assets.load_master().get("skills", {})
     return {label: _pool(skills, keys) for label, keys in _SKILL_BUCKETS}
 
 
 def _finalize_skill_lines(out: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Backfill each line from its pool so it is robust (>=4 languages, no
-    >half-empty line), then cap it to its printed-line budget. Always returns all
-    three lines, filled, regardless of how little the model selected."""
+    """Backfill each line from its pool so it is robust (>=4 languages, each line
+    filled to its floor), then cap it to its printed-line budget. Always returns
+    all four lines, filled, regardless of how little the model selected."""
     caps = layout.skill_caps()
     floors = layout.skill_floors()
     pools = _skill_pools()
@@ -573,7 +714,7 @@ def _cap_items(items: str, max_chars: int) -> str:
 
 
 def compress_skills(jd: str, job_title: str, sel: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Resolve the 3 fixed skill lines.
+    """Resolve the 4 fixed skill lines.
 
     Reuses the skills chosen by select() in the same pass when present; only falls
     back to a dedicated flash call if that selection is missing/empty.
@@ -587,8 +728,8 @@ def compress_skills(jd: str, job_title: str, sel: Dict[str, Any]) -> List[Dict[s
     skill_focus = sel.get("skill_focus", "general") if isinstance(sel, dict) else "general"
     pools = _skill_pools()
     system = (
-        "Select the candidate's technical skills into EXACTLY THREE fixed lines: "
-        "'Languages', 'Tools & Infrastructure', 'Libraries & Frameworks'. "
+        "Select the candidate's technical skills into EXACTLY FOUR fixed lines: "
+        "'Languages', 'Frameworks', 'Developer Tools', 'Libraries'. "
         "Selection only — only include skills present in that line's pool. "
         "STRATEGY: first lock in every skill the JD explicitly mentions or strongly implies; "
         "then fill remaining slots with complementary skills a strong candidate in this role "
@@ -606,14 +747,15 @@ JOB DESCRIPTION:
 
 POOLS (pick each line's items only from its pool):
 Languages: {json.dumps(pools["Languages"], ensure_ascii=False)}
-Tools & Infrastructure: {json.dumps(pools["Tools & Infrastructure"], ensure_ascii=False)}
-Libraries & Frameworks: {json.dumps(pools["Libraries & Frameworks"], ensure_ascii=False)}
+Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
+Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
+Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
 Rules:
 - Languages must have AT LEAST 4 items (aim ~6-8); ~7-10 for the others. JD-matching skills first, then adjacent/complementary skills that add signal.
 - Avoid obscure niche items that recruiters won't recognise. Lead with the items this JOB cares about most.
 
-Return ONLY JSON: {{"Languages": "Python, SQL, R", "Tools & Infrastructure": "...", "Libraries & Frameworks": "..."}}"""
+Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}}"""
     try:
         out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
     except Exception:

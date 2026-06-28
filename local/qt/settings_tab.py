@@ -26,20 +26,28 @@ SECTION_HELP = {
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
     "Engine": "Which Gemini backend the resume tailor bills.",
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
-    "Scraper": "What the LinkedIn scraper searches for (this drives Bright Data spend).",
+    "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     "Scoring": ("Advanced — which models score jobs and the spend guards around them. The "
                 "defaults are tuned; changing the model names can silently break scoring."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
     "Settings history": ("Every Save snapshots all your settings to a dated folder so you can "
                          "roll one back later with 'Restore from archive...' below. Snapshots "
                          "include your saved keys and live alongside your settings on this PC."),
-    "VM (cloud scraper)": ("Connect to your cloud scraper VM (GCP) so you can push config, schedule, "
-                           "and pause changes to it. Uses your existing `gcloud` login — no SSH "
-                           "password or key is ever stored."),
+    "VM (cloud scraper)": ("Connect to your cloud job-discovery VM (GCP) so you can push config, "
+                           "schedule, and pause changes to it. Uses your existing `gcloud` login — "
+                           "no SSH password or key is ever stored."),
 }
 SECTION_ORDER = ["Credentials", "Connection & paths", "Engine",
                  "Dashboard", "Scraper", "Scoring", "Resume", "Settings history",
                  "VM (cloud scraper)"]
+
+# Friendlier section headers shown in the UI. The dict KEYS above stay the canonical
+# section names (they must match settings.Field.section); this only changes the
+# visible title so the dashboard reads as a "job discovery" tool.
+SECTION_DISPLAY = {
+    "Scraper": "Job discovery",
+    "VM (cloud scraper)": "VM (cloud job discovery)",
+}
 
 # Short one-liners shown next to each section header — always visible, even when the
 # section is collapsed, so a user knows what to expand without clicking through.
@@ -48,11 +56,11 @@ SECTION_TAGLINE = {
     "Connection & paths": "Project, your name, file locations",
     "Engine": "Which Gemini backend the tailor bills",
     "Dashboard": "How jobs are surfaced & tracked",
-    "Scraper": "What LinkedIn search to run",
+    "Scraper": "What job searches to run",
     "Scoring": "Models & spend guards (advanced)",
     "Resume": "Projects shown, cover letter & artifacts",
     "Settings history": "Snapshot & restore your settings",
-    "VM (cloud scraper)": "Manage the cloud scraper VM",
+    "VM (cloud scraper)": "Manage the cloud job-discovery VM",
 }
 COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
 
@@ -136,7 +144,8 @@ class SettingsForm(QtWidgets.QWidget):
 
         for section, fields in _ordered_sections():
             sec = CollapsibleSection(
-                section, subtitle=SECTION_TAGLINE.get(section, ""),
+                SECTION_DISPLAY.get(section, section),
+                subtitle=SECTION_TAGLINE.get(section, ""),
                 collapsed=section in self._collapsed,
                 on_toggled=lambda c, s=section: self._on_section_toggled(s, c))
             self._section_widgets[section] = sec

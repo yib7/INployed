@@ -153,6 +153,25 @@ def test_add_manual_job_dedupes_on_readd(tmp_path):
     assert len(pd.read_csv(master)) == 1
 
 
+def test_add_manual_job_just_score_skips_tailor(tmp_path):
+    """do_tailor=False scores + appends but never calls the tailor (no cover letter)."""
+    master = tmp_path / "linkedin_jobs_master.csv"
+    called = []
+
+    def should_not_run(job, **k):
+        called.append(True)
+        return tmp_path
+
+    res = manual_add.add_manual_job(
+        jd_text=_JD, url="https://x/1", do_tailor=False, pool=FakePool(),
+        resume="r", tailor_fn=should_not_run, master_csv=master)
+    assert called == []                         # tailoring skipped entirely
+    assert res["resume_dir"] is None
+    assert res["appended"] is True
+    assert res["record"]["score"] == 5          # still scored against the résumé
+    assert pd.read_csv(master).iloc[0]["source"] == "manual"
+
+
 def test_add_manual_job_survives_tailor_failure(tmp_path):
     """A tailor failure must not lose the job — it's still scored + appended."""
     master = tmp_path / "linkedin_jobs_master.csv"
@@ -257,3 +276,76 @@ def test_local_run_files_includes_manual(tmp_path):
         f, index=False, compression="gzip")
     files = jobsdata.local_run_files(base=tmp_path)
     assert f in files
+
+
+# ── delete / update / master_row + removed-jobs filter (item 10) ──────────────
+
+def _seed(master, jid, **over):
+    rec = {"job_posting_id": jid, "url": f"https://x/{jid}", "job_title": "T",
+           "company_name": "C", "source": "manual", "score": 5,
+           "job_description_formatted": "full JD text with enough length here " * 3}
+    rec.update(over)
+    jobsdata.append_manual_job(rec, master_csv=master)
+
+
+def test_delete_jobs_removes_everywhere_and_persists(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)   # isolate config.json
+    master = tmp_path / "linkedin_jobs_master.csv"
+    _seed(master, "manual-del1")
+    _seed(master, "manual-keep2")
+    n = jobsdata.delete_jobs(["manual-del1"], master_csv=master)
+    assert n == 1
+    ids = set(pd.read_csv(master, dtype={"job_posting_id": str})["job_posting_id"])
+    assert ids == {"manual-keep2"}                    # dropped from the master
+    assert jobsdata.load_removed_jobs() == {"manual-del1"}   # remembered as removed
+    gz = master.parent / "manual" / "manual_jobs_scored.csv.gz"
+    gids = set(pd.read_csv(gz, dtype={"job_posting_id": str},
+                           compression="gzip")["job_posting_id"])
+    assert gids == {"manual-keep2"}                   # and from the gz bridge
+
+
+def test_load_files_hides_removed_jobs(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    f = tmp_path / "manual" / "manual_jobs_scored.csv.gz"
+    f.parent.mkdir(parents=True)
+    pd.DataFrame([{"job_posting_id": "manual-a", "job_title": "A"},
+                  {"job_posting_id": "manual-b", "job_title": "B"}]).to_csv(
+        f, index=False, compression="gzip")
+    jobsdata._save_removed_jobs({"manual-a"})
+    df, _ = jobsdata.load_files([f])
+    assert set(df["job_posting_id"]) == {"manual-b"}  # removed id filtered out at load
+
+
+def test_update_manual_job_replaces_row_keeps_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    master = tmp_path / "linkedin_jobs_master.csv"
+    _seed(master, "manual-e", url="https://old", job_title="Old", company_name="OldCo")
+    rec = {"job_posting_id": "manual-e", "url": "https://new", "job_title": "New",
+           "company_name": "NewCo", "source": "manual", "score": 5,
+           "job_description_formatted": "full JD text with enough length here " * 3}
+    jobsdata.update_manual_job(rec, old_id="manual-e", master_csv=master)
+    m = pd.read_csv(master, dtype={"job_posting_id": str})
+    assert list(m["job_posting_id"]) == ["manual-e"]  # one row, id stable
+    assert m.iloc[0]["job_title"] == "New" and m.iloc[0]["company_name"] == "NewCo"
+    assert m.iloc[0]["url"] == "https://new"
+
+
+def test_update_manual_job_unremoves_previously_deleted(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    master = tmp_path / "linkedin_jobs_master.csv"
+    jobsdata._save_removed_jobs({"manual-e"})
+    jobsdata.update_manual_job(
+        {"job_posting_id": "manual-e", "job_title": "Re", "company_name": "C",
+         "source": "manual", "job_description_formatted": "JD text long enough here " * 3},
+        old_id="manual-e", master_csv=master)
+    assert "manual-e" not in jobsdata.load_removed_jobs()   # editing resurrects it
+
+
+def test_master_row_returns_full_row_or_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    master = tmp_path / "linkedin_jobs_master.csv"
+    _seed(master, "manual-m", job_title="DA", company_name="Acme")
+    row = jobsdata.master_row("manual-m", master_csv=master)
+    assert row and row["job_title"] == "DA" and row["company_name"] == "Acme"
+    assert "full jd text" in str(row["job_description_formatted"]).lower()
+    assert jobsdata.master_row("nope", master_csv=master) is None

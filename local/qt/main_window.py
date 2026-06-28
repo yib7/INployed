@@ -139,6 +139,8 @@ class MainWindow(QtWidgets.QMainWindow):
             on_set_status=self._set_status_for,
             on_block=self._block_company,
             on_selection=self._show_preview,
+            on_delete=self._delete_jobs,
+            on_edit=self._edit_manual_job,
             hidden_columns=self.hidden_columns,
             save_hidden=self._save_hidden,
         )
@@ -153,8 +155,8 @@ class MainWindow(QtWidgets.QMainWindow):
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
         msg = QtWidgets.QLabel(
-            "Get started in three steps: set your keys and folders in Settings, run "
-            "the scraper to fetch and score jobs, then add your résumé data so jobs "
+            "Get started in three steps: set your keys and folders in Settings, find "
+            "new jobs to fetch and score them, then add your résumé data so jobs "
             "are matched to you.")
         msg.setWordWrap(True)
         msg.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -165,7 +167,7 @@ class MainWindow(QtWidgets.QMainWindow):
         b_settings = QtWidgets.QPushButton("Open Settings")
         b_settings.clicked.connect(lambda: self._show_tab("Settings"))
         row.addWidget(b_settings)
-        b_scrape = QtWidgets.QPushButton("Run scraper")
+        b_scrape = QtWidgets.QPushButton("Find new jobs")
         b_scrape.setProperty("accent", True)
         b_scrape.clicked.connect(self._run_scraper_dialog)
         row.addWidget(b_scrape)
@@ -359,7 +361,7 @@ class MainWindow(QtWidgets.QMainWindow):
         button("Mark seen (selected)", self._mark_seen_selected)
         self.btn_undo_seen = button("Undo seen", self._undo_seen)
         button("Resume folder", self._open_resume_folder)
-        button("Run scraper", self._run_scraper_dialog)
+        button("Find new jobs", self._run_scraper_dialog)
         button("Check setup", self._check_setup)
         # Apply is rightmost (and green only once the job is ready to apply to) — its
         # ready-state is the dashboard's "this one's good to go" signal.
@@ -714,7 +716,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status(f"Could not block {company}: {exc}")
             return
         self.reload_data()
-        self._set_status(f"Blocked {company} — hidden now and skipped on the next scrape.")
+        self._set_status(f"Blocked {company} — hidden now and skipped on the next job search.")
 
     def _save_hidden(self, key: str, hidden: list[str]) -> None:
         self.hidden_columns[key] = list(hidden)
@@ -757,12 +759,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _confirm_scrape(self) -> str | None:
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Run scraper")
+        box.setWindowTitle("Find new jobs")
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
-        box.setText("Running the scraper collects fresh jobs from Bright Data — this spends real "
-                    "money.\n\n- Small test run: 1 keyword, 5 postings/search (cheap check).\n"
-                    "- Full run: your full search config (normal daily cost).\n\nIt then scores "
-                    "the new jobs and refreshes the dashboard.")
+        box.setText("Finding new jobs collects fresh postings through the discovery service — this "
+                    "spends real money / API credits.\n\n- Small test run: 1 keyword, 5 postings/search "
+                    "(cheap check).\n- Full run: your full search config (normal daily cost).\n\nIt then "
+                    "scores the new jobs and refreshes the dashboard.")
         small = box.addButton("Small test run", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         full = box.addButton("Full run", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Cancel", QtWidgets.QMessageBox.ButtonRole.RejectRole)
@@ -776,13 +778,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _run_scraper_dialog(self) -> None:
         if getattr(self, "_scraping", False):
-            self._set_status("A scrape is already running.")
+            self._set_status("A job search is already running.")
             return
         choice = self._confirm_scrape()
         if not choice:
             return
         self._scraping = True
-        self._set_status(f"Starting scraper … progress in {self._scrape_log_path()}")
+        self._set_status(f"Finding new jobs … progress in {self._scrape_log_path()}")
         workers.run_async(self, lambda: self._scrape_work(choice == "bounded"),
                           on_done=self._after_scrape, on_error=self._after_scrape_error)
 
@@ -826,13 +828,13 @@ class MainWindow(QtWidgets.QMainWindow):
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
         self.reload_data()
-        self._set_status("Scrape + score complete — dashboard refreshed.")
+        self._set_status("Job search + score complete — dashboard refreshed.")
 
     def _after_scrape_error(self, exc) -> None:
         self._scraping = False
         msg = str(exc)
-        self._set_status(f"Run scraper failed — {msg.splitlines()[0] if msg else exc}")
-        QtWidgets.QMessageBox.critical(self, "Run scraper", f"The run failed.\n\n{msg}")
+        self._set_status(f"Find new jobs failed — {msg.splitlines()[0] if msg else exc}")
+        QtWidgets.QMessageBox.critical(self, "Find new jobs", f"The run failed.\n\n{msg}")
 
     # ---- add a job by hand (no scraper) --------------------------------------
 
@@ -849,27 +851,35 @@ class MainWindow(QtWidgets.QMainWindow):
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         vals = dlg.values()
+        do_tailor = bool(vals.get("do_tailor"))
         cfg = settings.load()
-        cover = QtWidgets.QMessageBox.question(
-            self, "Cover letter", "Also generate a cover letter for this job?"
-        ) == QtWidgets.QMessageBox.StandardButton.Yes
+        # The cover-letter prompt only makes sense when we're tailoring; a "just score"
+        # add never tailors, so never ask.
+        cover = False
+        if do_tailor:
+            cover = QtWidgets.QMessageBox.question(
+                self, "Cover letter", "Also generate a cover letter for this job?"
+            ) == QtWidgets.QMessageBox.StandardButton.Yes
         opts = {"cover_letter": cover, "ats_report": bool(cfg.get("tailor_ats_report", True)),
                 "prep_sheet": bool(cfg.get("tailor_prep_sheet", False)),
                 "tone": cfg.get("resume_tone", "professional")}
         self._manual_adding = True
         self._apply_auth_env()
-        self._set_status("Adding job — scoring + tailoring …")
-        workers.run_async(self, lambda: self._manual_add_work(vals, opts),
+        self._set_status("Adding job — scoring + tailoring …" if do_tailor
+                         else "Adding job — scoring …")
+        workers.run_async(self, lambda: self._manual_add_work(vals, opts, do_tailor),
                           on_done=self._finish_manual_add, on_error=self._finish_manual_add_error)
 
-    def _manual_add_work(self, vals: dict, opts: dict) -> dict:
+    def _manual_add_work(self, vals: dict, opts: dict, do_tailor: bool = True) -> dict:
         """Worker body: the toolkit-agnostic manual_add pipeline. The LLM/scraper
         seams default to the real implementations (mockable in tests)."""
         import manual_add
-        return manual_add.add_manual_job(
+        res = manual_add.add_manual_job(
             jd_text=vals.get("jd_text", ""), url=vals.get("url", ""),
             company=vals.get("company", ""), title=vals.get("title", ""),
-            tailor_opts=opts, on_status=self.tailor_progress.emit)
+            do_tailor=do_tailor, tailor_opts=opts, on_status=self.tailor_progress.emit)
+        res["requested_tailor"] = do_tailor  # so the finish status can distinguish skip vs fail
+        return res
 
     def _finish_manual_add(self, result: dict) -> None:
         self._manual_adding = False
@@ -889,7 +899,12 @@ class MainWindow(QtWidgets.QMainWindow):
         title = rec.get("job_title", "job")
         company = rec.get("company_name", "")
         score = rec.get("score", "")
-        tailored = "tailored" if result.get("resume_dir") else "added (tailor later)"
+        if result.get("resume_dir"):
+            tailored = "tailored"
+        elif result.get("requested_tailor"):
+            tailored = "added (tailor later)"     # tailoring was attempted but failed
+        else:
+            tailored = "scored (not tailored)"    # "just score" — never tailored
         self._set_status(f"Manual job {tailored}: {title} @ {company} (score {score}).")
 
     def _finish_manual_add_error(self, exc) -> None:
@@ -897,6 +912,60 @@ class MainWindow(QtWidgets.QMainWindow):
         msg = str(exc)
         self._set_status(f"Add job failed — {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.warning(self, "Add a job by hand", f"Could not add the job.\n\n{msg}")
+
+    # ---- delete / edit job entries -------------------------------------------
+
+    def _delete_jobs(self, ids) -> None:
+        """Permanently remove the selected job(s) from the dataset (confirm first)."""
+        ids = [str(i) for i in (ids or []) if str(i).strip()]
+        if not ids:
+            return
+        if QtWidgets.QMessageBox.question(
+                self, "Delete job(s)?",
+                f"Permanently remove {len(ids)} job(s) from your dataset? This can't be undone."
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        n = jobsdata.delete_jobs(ids)
+        for jid in ids:
+            try:
+                self.registry.clear_status(jid)  # drop any tracker status/résumé link too
+            except Exception:  # noqa: BLE001 - bookkeeping only
+                pass
+        self.reload_data()
+        self._set_status(f"Deleted {n} job(s).")
+
+    def _edit_manual_job(self, jid) -> None:
+        """Field-fix a manually-added job (URL/title/company/JD) via the manual-add
+        form in edit mode. Does not re-score/re-tailor — preserves the job's id and
+        score so its tracker status and résumé link survive the edit."""
+        jid = str(jid or "")
+        if not jid:
+            return
+        row = jobsdata.master_row(jid) or {}
+        initial = {
+            "url": str(row.get("url", "") or ""),
+            "title": str(row.get("job_title", "") or ""),
+            "company": str(row.get("company_name", "") or ""),
+            "jd_text": str(row.get("job_description_formatted", "")
+                           or row.get("job_summary", "") or ""),
+        }
+        dlg = ManualAddDialog(self, edit_mode=True, initial=initial)
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        vals = dlg.values()
+        record = dict(row)
+        record["job_posting_id"] = jid            # identity is stable across an edit
+        record["url"] = vals["url"]
+        record["job_title"] = vals["title"]
+        record["company_name"] = vals["company"]
+        if vals["jd_text"]:
+            record["job_description_formatted"] = vals["jd_text"]
+            record["job_summary"] = vals["jd_text"][:1000]
+        record.setdefault("source", "manual")
+        record.setdefault("run_label", "manual")
+        jobsdata.update_manual_job(record, old_id=jid)
+        self.reload_data()
+        self._set_status(f"Updated job: {vals['title']} @ {vals['company']}.")
 
     # ---- apply (open posting for review; never submits) -----------------------
 

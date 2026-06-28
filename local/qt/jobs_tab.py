@@ -23,8 +23,8 @@ from vm_schedule import RUN_LABELS
 
 class JobsTab(QtWidgets.QWidget):
     def __init__(self, table_key: str, columns, *, on_open_url=None, on_set_status=None,
-                 on_block=None, on_selection=None, hidden_columns=None, save_hidden=None,
-                 parent=None):
+                 on_block=None, on_selection=None, on_delete=None, on_edit=None,
+                 hidden_columns=None, save_hidden=None, parent=None):
         super().__init__(parent)
         self.table_key = table_key
         self.col_ids = [c for c, _ in columns]
@@ -32,6 +32,8 @@ class JobsTab(QtWidgets.QWidget):
         self._on_set_status = on_set_status or (lambda ids, status: None)
         self._on_block = on_block or (lambda company: None)
         self._on_selection = on_selection or (lambda jid: None)
+        self._on_delete = on_delete or (lambda ids: None)
+        self._on_edit = on_edit or (lambda jid: None)
         self._hidden: set[str] = set((hidden_columns or {}).get(table_key, []))
         self._save_hidden = save_hidden or (lambda key, hidden: None)
         self._base = pd.DataFrame()
@@ -340,6 +342,15 @@ class JobsTab(QtWidgets.QWidget):
         rows = self._base.loc[self._base["job_posting_id"].astype(str) == str(jid), "company_name"]
         return str(rows.iloc[0]) if len(rows) else ""
 
+    @staticmethod
+    def _is_manual(jid: str) -> bool:
+        """A manually-added job (its id carries the 'manual-' prefix)."""
+        try:
+            from manual_add import is_manual_id
+            return is_manual_id(jid)
+        except Exception:  # noqa: BLE001 - fall back to the documented prefix
+            return str(jid).startswith("manual-")
+
     def _context_menu(self, pos) -> None:
         ids = self._ids_at(pos)
         if not ids:
@@ -350,6 +361,10 @@ class JobsTab(QtWidgets.QWidget):
         status_acts = {status_menu.addAction(st): st for st in APP_STATUSES}
         menu.addSeparator()
         block_act = menu.addAction("Block company")
+        # Edit only for a single manually-added row (field-fix); Delete for any row(s).
+        edit_act = (menu.addAction("Edit job…")
+                    if len(ids) == 1 and self._is_manual(ids[0]) else None)
+        del_act = menu.addAction("Delete job" + ("s" if len(ids) > 1 else ""))
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if chosen is None:
             return
@@ -357,6 +372,10 @@ class JobsTab(QtWidgets.QWidget):
             self._on_open_url(ids[0])
         elif chosen is block_act:
             self.block_company(ids[0])
+        elif edit_act is not None and chosen is edit_act:
+            self._on_edit(ids[0])
+        elif chosen is del_act:
+            self._on_delete(ids)
         elif chosen in status_acts:
             self.apply_status(ids, status_acts[chosen])
 

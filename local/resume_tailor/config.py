@@ -77,7 +77,7 @@ def _config_json() -> dict:
 # as {block_name: {"line_targets": [int, ...]}}. The list length is the bullet
 # count for that block; each int is that bullet's printed-line target, which drives
 # the soft length hint in rephrase and the deterministic trim cap (lines * MAX_LINE_CHARS).
-MAX_LINE_CHARS = int(os.getenv("RESUME_TAILOR_MAX_LINE_CHARS", "100"))
+MAX_LINE_CHARS = int(os.getenv("RESUME_TAILOR_MAX_LINE_CHARS", "125"))
 DEFAULT_LINE_TARGETS = [2, 2, 2]
 PROJECTS_MAX = int(os.getenv("RESUME_TAILOR_PROJECTS_MAX", "3"))  # built-in default / fallback
 PROJECTS_MAX_LIMIT = 6  # hard ceiling for the configurable cap: the resume is one page.
@@ -108,6 +108,23 @@ def projects_max() -> int:
         return _clamp_projects(int(_config_json().get("projects_max")))
     except (TypeError, ValueError):
         return _clamp_projects(PROJECTS_MAX)
+
+
+def projects_mode() -> str:
+    """How projects_max() is applied during one-page enforcement:
+
+      'max'   -> at most N projects; the weakest project bullets (and, if needed,
+                 whole projects) are dropped to hold one page.
+      'exact' -> keep exactly N projects (when that many are available): one-page
+                 enforcement may trim a project's extra bullets but never drops a
+                 project's LAST bullet, so the count holds (best-effort if it still
+                 overflows a page).
+
+    Precedence: RESUME_TAILOR_PROJECTS_MODE env var > config.json 'projects_mode'
+    (the GUI value) > 'max'. Anything other than 'exact' resolves to 'max'."""
+    val = os.getenv("RESUME_TAILOR_PROJECTS_MODE") or _config_json().get("projects_mode")
+    val = val.strip().lower() if isinstance(val, str) else "max"
+    return "exact" if val == "exact" else "max"
 
 
 def resume_layout_enabled() -> bool:
@@ -142,6 +159,24 @@ def block_targets(name: str) -> list[int]:
         except (TypeError, ValueError):
             return list(DEFAULT_LINE_TARGETS)
     return out or list(DEFAULT_LINE_TARGETS)
+
+
+def verbatim_blocks() -> dict:
+    """{block_name: [bullet, ...]} for blocks the user marked 'don't tailor — use my
+    exact bullets'. A block with a non-empty list renders those exact bullets and the
+    LLM is bypassed for it; an empty/absent list means normal tailoring. Returns
+    sanitized {name: [non-empty str, ...]} ({} when absent/bad). NOT gated by the
+    resume_layout master toggle — verbatim is an explicit per-block override."""
+    val = _config_json().get("verbatim_blocks")
+    if not isinstance(val, dict):
+        return {}
+    out: dict = {}
+    for name, bullets in val.items():
+        if isinstance(bullets, (list, tuple)):
+            clean = [str(b).strip() for b in bullets if str(b).strip()]
+            if clean:
+                out[str(name)] = clean
+    return out
 
 
 def project_layout() -> dict:

@@ -127,6 +127,70 @@ def test_resume_layout_prefills_saved_targets(qtbot, master_tmp, tmp_path, monke
     assert ed._layout_project_edits["ProjX"].text().replace(" ", "") == "3,1"
 
 
+def test_projects_count_control_loads_and_saves(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    jobsdata.save_projects_count(5, "exact")
+    ed = _editor(qtbot, master_tmp)
+    assert ed._projects_count_spin.value() == 5
+    assert ed._projects_mode_exact.isChecked()
+    ed._projects_count_spin.setValue(2)
+    ed._projects_mode_max.setChecked(True)
+    ed._save_layout()
+    assert jobsdata.load_projects_count() == (2, "max")
+
+
+def test_projects_count_warning_shows_above_four(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    ed = _editor(qtbot, master_tmp)
+    ed._projects_count_spin.setValue(3)
+    assert ed._projects_warn.isHidden()       # safe value -> no one-page warning
+    ed._projects_count_spin.setValue(6)
+    assert not ed._projects_warn.isHidden()    # cranked up -> warning appears
+
+
+def test_stale_layout_entry_can_be_removed(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    # "Ghost Project" is not in the master -> it is a stale custom-layout row.
+    jobsdata.save_project_layout({"ProjX": {"line_targets": [2]},
+                                  "Ghost Project": {"line_targets": [1]}})
+    ed = _editor(qtbot, master_tmp)
+    assert any(r[1] == "Ghost Project" for r in ed._stale_layout_rows)
+    assert ed._remove_stale_btn.isEnabled()
+    ed._remove_stale_layout()
+    assert jobsdata.load_project_layout() == {"ProjX": {"line_targets": [2]}}
+    assert ed._stale_layout_rows == []
+
+
+def test_verbatim_block_toggle_and_save(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    ed = _editor(qtbot, master_tmp)
+    assert "Example Corp" in ed._verbatim_edits         # experience block has the toggle
+    cb, edit = ed._verbatim_edits["Example Corp"]
+    assert cb.isChecked() is False                       # default: tailored
+    cb.setChecked(True)
+    edit.setPlainText("My exact bullet one\n   \nMy exact bullet two")  # blank line dropped
+    ed.save()
+    assert jobsdata.load_verbatim_blocks() == {
+        "Example Corp": ["My exact bullet one", "My exact bullet two"]}
+
+
+def test_verbatim_block_prefills_and_unchecking_reverts(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    jobsdata.save_verbatim_blocks({"Example Corp": ["Saved bullet"]})
+    ed = _editor(qtbot, master_tmp)
+    cb, edit = ed._verbatim_edits["Example Corp"]
+    assert cb.isChecked() is True                        # prefilled from saved verbatim
+    assert edit.toPlainText() == "Saved bullet"
+    cb.setChecked(False)                                 # off -> revert to normal tailoring
+    ed.save()
+    assert "Example Corp" not in jobsdata.load_verbatim_blocks()
+
+
 def test_push_button_disabled_unless_vm_on(qtbot, master_tmp, monkeypatch):
     ed = _editor(qtbot, master_tmp)
     monkeypatch.setattr(rdt.settings, "load", lambda *a, **k: {"vm_enabled": False})

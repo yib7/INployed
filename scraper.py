@@ -44,6 +44,10 @@ MAX_POLL_FAILURES = 5
 OUTPUT_DIR = Path(__file__).parent
 PREVIOUS_IDS_FILE = OUTPUT_DIR / "last_run_job_ids.json"
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
+# Job ids collected on ANOTHER machine and pushed here (e.g. a manual local scrape
+# syncs its ids up to the VM) so a scheduled run never re-collects — and re-bills —
+# what was just pulled. Unioned into load_exclude_ids() on top of this host's master.
+EXTERNAL_EXCLUDE_FILE = OUTPUT_DIR / "external_exclude_ids.json"
 
 # Spammy aggregator companies to drop entirely — from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
@@ -154,14 +158,9 @@ def load_previous_ids() -> list[str]:
         return json.load(f)
 
 
-def load_exclude_ids() -> list[str]:
-    """Every job id ever recorded in the master — a hard no-repeat guard. Bright
-    Data bills per collection, so re-fetching a posting we already have is pure
-    wasted spend; and a listing still open long enough to fall outside any
-    recent-only window is usually stale anyway (forgotten, flooded with
-    applicants, or fake), so there's no upside to re-collecting it. We therefore
-    exclude the whole master, not a rolling window. Falls back to the last-run
-    JSON if the master is missing/unreadable."""
+def _master_ids() -> list[str]:
+    """Every job id recorded in this host's master (or the last-run JSON if the
+    master is missing/unreadable)."""
     if MASTER_CSV.exists():
         try:
             df = pd.read_csv(
@@ -178,9 +177,50 @@ def load_exclude_ids() -> list[str]:
     return load_previous_ids()
 
 
+def load_external_exclude_ids() -> list[str]:
+    """Ids pushed from another machine (EXTERNAL_EXCLUDE_FILE), [] if absent/unreadable."""
+    if not EXTERNAL_EXCLUDE_FILE.exists():
+        return []
+    try:
+        with open(EXTERNAL_EXCLUDE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [str(x) for x in data] if isinstance(data, list) else []
+    except (OSError, ValueError) as e:
+        print(f"Could not read {EXTERNAL_EXCLUDE_FILE.name} ({e}); ignoring external excludes")
+        return []
+
+
+def load_exclude_ids() -> list[str]:
+    """Every job id this host knows to skip — a hard no-repeat guard. Bright Data
+    bills per collection, so re-fetching a posting we already have is pure wasted
+    spend; and a listing open long enough to fall outside any recent-only window is
+    usually stale anyway, so there's no upside to re-collecting it. We exclude the
+    whole master, UNIONED with external_exclude_ids.json (ids collected on another
+    machine — e.g. a manual local run — and pushed here so a scheduled VM run skips
+    them). Falls back to the last-run JSON when the master is missing/unreadable."""
+    ids = list(_master_ids())
+    seen = set(ids)
+    for jid in load_external_exclude_ids():
+        if jid not in seen:
+            ids.append(jid)
+            seen.add(jid)
+    return ids
+
+
 def save_current_ids(ids: list[str]) -> None:
     with open(PREVIOUS_IDS_FILE, "w", encoding="utf-8") as f:
         json.dump(ids, f)
+
+
+def write_external_exclude_ids(path: Path | None = None) -> Path:
+    """Dump this host's full known exclude set (load_exclude_ids) to a JSON file for
+    pushing to the VM, whose scraper unions it into its own load_exclude_ids(). Pushing
+    the whole set each time is idempotent + monotonic, so a prior run's ids can't slip
+    through. Returns the written path."""
+    target = path or EXTERNAL_EXCLUDE_FILE
+    with open(target, "w", encoding="utf-8") as f:
+        json.dump(load_exclude_ids(), f)
+    return target
 
 
 DROP_PREFIXES = ("discovery_input.", "input.", "base_salary", "job_poster")

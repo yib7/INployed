@@ -62,6 +62,35 @@ def test_set_pause_and_resume_and_crontab_are_ssh():
     assert "crontab -" in t.install_crontab_cmd("0 10 * * * ~/run_scraper.sh")[-1]
 
 
+def test_push_exclude_ids_cmd_targets_remote_file():
+    # The seen-id file lands at the VM home (relative dest for "~", same as configs).
+    cmd = _target().push_exclude_ids_cmd("/local/external_exclude_ids.json")
+    assert cmd[:3] == ["gcloud", "compute", "scp"]
+    assert "/local/external_exclude_ids.json" in cmd
+    assert "yib@scraper-vm:external_exclude_ids.json" in cmd
+    assert "yib@scraper-vm:~/external_exclude_ids.json" not in cmd
+
+
+def test_sync_exclude_ids_returns_none_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(vm_sync, "run_cmd", lambda cmd: (_ for _ in ()).throw(
+        AssertionError("run_cmd must not be called when the VM is unconfigured")))
+    unconfigured = vm_sync.VMTarget(instance="", zone="", user="")
+    assert vm_sync.sync_exclude_ids_to_vm(unconfigured, "/local/x.json") is None
+
+
+def test_sync_exclude_ids_runs_scp_when_configured(monkeypatch):
+    seen = {}
+
+    def _run(cmd):
+        seen["cmd"] = cmd
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vm_sync, "run_cmd", _run)
+    res = vm_sync.sync_exclude_ids_to_vm(_target(), "/local/external_exclude_ids.json")
+    assert res.returncode == 0
+    assert seen["cmd"] == _target().push_exclude_ids_cmd("/local/external_exclude_ids.json")
+
+
 def test_changed_vm_files_flags_scoring_not_local_config():
     before = {"stage2_threshold": 4, "keywords": ['"a"'], "min_score": 4}
     after = {"stage2_threshold": 5, "keywords": ['"a"'], "min_score": 3}

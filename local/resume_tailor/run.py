@@ -183,6 +183,10 @@ def tailor(
     bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived verification.")
+    # Guarantee every tailored bullet opens with a DISTINCT action verb — none reused, none
+    # colliding with a verbatim block's opener (verbatim text is reserved, never modified).
+    reserved = frozenset(compose.leading_verb(t) for t in verbatim.values())
+    compose.dedupe_leading_verbs(bullets, compose.group_map(sel), jd, reserved=reserved)
     if verbatim:
         bullets.update(verbatim)
         log(f"using {len(verbatim)} verbatim bullet(s) (untailored, as typed).")

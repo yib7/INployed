@@ -102,3 +102,109 @@ def test_rephrase_prompt_carries_categorized_palette_and_no_reuse_rule(monkeypat
     blob = (captured["system"] + captured["user"]).lower()
     assert "distinct" in blob                                   # the uniqueness instruction
     assert "reuse" in blob or "never repeat" in blob
+
+
+# --- SP2: leading_verb + reverb + dedupe_leading_verbs --------------------------
+
+SMALL_PALETTE = {"Technical Skills": ["Built", "Designed", "Engineered", "Automated", "Refactored"]}
+
+
+def test_leading_verb_normalizes_first_token():
+    assert compose.leading_verb("Built A.") == "built"
+    assert compose.leading_verb("Engineered, a pipeline") == "engineered"   # trailing comma
+    assert compose.leading_verb("   Led   the team") == "led"               # leading space
+    assert compose.leading_verb("Co-developed a tool") == "co-developed"    # inner hyphen kept
+    assert compose.leading_verb("") == ""
+    assert compose.leading_verb("   ") == ""
+
+
+def test_reverb_prompts_with_used_verbs_and_returns_text(monkeypatch):
+    monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
+    monkeypatch.setattr(compose.assets, "active_verbs", lambda: SMALL_PALETTE)
+    captured = {}
+
+    def fake_call(system, user, tier, **kw):
+        captured["system"] = system
+        captured["user"] = user
+        captured["tier"] = tier
+        return {"text": "Designed a low-latency pipeline."}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    out = compose.reverb("jd text", ["a1"], "Built a low-latency pipeline.", {"built"})
+    assert out == "Designed a low-latency pipeline."
+    assert captured["tier"] == config.TIER_FLASH_LITE
+    assert "built" in captured["user"].lower()                  # the taken verb is forbidden
+    assert "Designed" in captured["user"]                       # palette offered
+
+
+def _gm(bullets):
+    return {gk: gk.split("+") for gk in bullets}
+
+
+def test_dedupe_keeps_distinct_openers_without_calling_reverb(monkeypatch):
+    monkeypatch.setattr(compose.assets, "active_verbs", lambda: SMALL_PALETTE)
+    monkeypatch.setattr(compose, "reverb",
+                        lambda *a, **k: pytest.fail("reverb must not run when all distinct"))
+    bullets = {"a1": "Built A.", "b1": "Designed B."}
+    out = compose.dedupe_leading_verbs(dict(bullets), _gm(bullets), "jd")
+    assert out == bullets                                       # unchanged
+
+
+def test_dedupe_reroll_resolves_a_collision(monkeypatch):
+    monkeypatch.setattr(compose.assets, "active_verbs", lambda: SMALL_PALETTE)
+    calls = {"n": 0}
+
+    def fake_reverb(jd, ids, text, used):
+        calls["n"] += 1
+        return "Engineered the second thing."                  # an unused opener
+
+    monkeypatch.setattr(compose, "reverb", fake_reverb)
+    bullets = {"a1": "Built first.", "b1": "Built second."}    # collision on "built"
+    out = compose.dedupe_leading_verbs(dict(bullets), _gm(bullets), "jd")
+    assert out["a1"] == "Built first."                          # first occurrence keeps its verb
+    assert out["b1"] == "Engineered the second thing."
+    assert calls["n"] == 1
+    verbs = [compose.leading_verb(t) for t in out.values()]
+    assert len(set(verbs)) == len(verbs)                        # all distinct
+
+
+def test_dedupe_backstop_when_model_keeps_colliding(monkeypatch):
+    monkeypatch.setattr(compose.assets, "active_verbs", lambda: SMALL_PALETTE)
+    # A stubborn model: the re-roll ALSO starts with "Built" -> deterministic swap must win.
+    monkeypatch.setattr(compose, "reverb", lambda *a, **k: "Built it again, stubbornly.")
+    bullets = {"a1": "Built one.", "b1": "Built two."}
+    out = compose.dedupe_leading_verbs(dict(bullets), _gm(bullets), "jd")
+    verbs = [compose.leading_verb(t) for t in out.values()]
+    assert len(set(verbs)) == 2                                 # guaranteed distinct
+    assert out["a1"] == "Built one."                            # first kept
+    # b1 got an in-category unused verb spliced in, body preserved.
+    assert compose.leading_verb(out["b1"]) in {"designed", "engineered", "automated", "refactored"}
+    assert out["b1"].endswith("two.")
+
+
+def test_dedupe_avoids_reserved_verbatim_verbs(monkeypatch):
+    monkeypatch.setattr(compose.assets, "active_verbs", lambda: SMALL_PALETTE)
+    monkeypatch.setattr(compose, "reverb", lambda *a, **k: "")   # force the backstop
+    bullets = {"a1": "Built a service."}
+    out = compose.dedupe_leading_verbs(dict(bullets), _gm(bullets), "jd",
+                                       reserved=frozenset({"built"}))
+    assert compose.leading_verb(out["a1"]) != "built"           # reserved opener avoided
+    assert out["a1"].endswith("a service.")
+
+
+def test_dedupe_skips_verbatim_gkeys(monkeypatch):
+    monkeypatch.setattr(compose.assets, "active_verbs", lambda: SMALL_PALETTE)
+    monkeypatch.setattr(compose, "reverb", lambda *a, **k: "Designed tailored.")
+    vk = compose._VERBATIM_PREFIX + "/Globex/0"
+    bullets = {"a1": "Built tailored.", vk: "Built verbatim, untouched."}
+    out = compose.dedupe_leading_verbs(dict(bullets), {"a1": ["a1"]}, "jd")
+    assert out[vk] == "Built verbatim, untouched."             # verbatim never modified
+
+
+def test_dedupe_guarantees_all_distinct_even_if_model_never_helps(monkeypatch):
+    monkeypatch.setattr(compose.assets, "active_verbs", lambda: SMALL_PALETTE)
+    monkeypatch.setattr(compose, "reverb", lambda *a, **k: "Built yet again.")
+    bullets = {f"g{i}": "Built thing %d." % i for i in range(4)}   # 4 collisions, 5-verb palette
+    out = compose.dedupe_leading_verbs(dict(bullets), _gm(bullets), "jd")
+    verbs = [compose.leading_verb(t) for t in out.values()]
+    assert len(set(verbs)) == len(verbs)                        # zero reuse, guaranteed

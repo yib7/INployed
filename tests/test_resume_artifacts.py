@@ -152,6 +152,35 @@ def test_defaults_reproduce_today_behaviour(offline_tailor):
     assert offline_tailor["apply"] == 1   # apply_data always written
 
 
+def test_tailor_dedupes_leading_verbs_with_verbatim_reserved(offline_tailor, monkeypatch):
+    """run.tailor runs the no-reuse guarantee on the tailored bullets, seeding the reserved
+    set from the verbatim blocks' openers (which it must not modify). Real dedupe, no network
+    (reverb stubbed empty -> the deterministic in-category backstop fires)."""
+    colliding = {"a1": "Built one.", "b1": "Built two."}
+    monkeypatch.setattr(run_mod, "_resolve_bullets", lambda *a, **k: dict(colliding))
+    monkeypatch.setattr(run_mod.compose, "inject_verbatim",
+                        lambda *a, **k: {"__verbatim__/V/0": "Engineered exact words."})
+    monkeypatch.setattr(run_mod.compose, "reverb", lambda *a, **k: "")   # force backstop, no LLM
+
+    captured = {}
+    real = run_mod.compose.dedupe_leading_verbs
+
+    def spy(bullets, gm, jd, *, reserved=frozenset()):
+        captured["reserved"] = set(reserved)
+        captured["in"] = dict(bullets)
+        out = real(bullets, gm, jd, reserved=reserved)
+        captured["out"] = dict(out)
+        return out
+
+    monkeypatch.setattr(run_mod.compose, "dedupe_leading_verbs", spy)
+    run_mod.tailor(_JOB)
+    assert "engineered" in captured["reserved"]          # the verbatim opener is reserved
+    assert captured["in"] == colliding                   # only the tailored bullets are deduped
+    verbs = [run_mod.compose.leading_verb(t) for t in captured["out"].values()]
+    assert verbs[0] == "built" and verbs[1] != "built"   # first kept, second made distinct
+    assert "engineered" not in verbs                     # never collides with the reserved opener
+
+
 def test_ats_report_false_skips_write_report(offline_tailor):
     run_mod.tailor(_JOB, ats_report=False)
     assert offline_tailor["ats"] == 0

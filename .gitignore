@@ -29,6 +29,7 @@ seen.db
 *.csv
 *.csv.gz
 last_run_job_ids.json
+external_exclude_ids.json
 score_state.json
 company_blocklist.txt
 

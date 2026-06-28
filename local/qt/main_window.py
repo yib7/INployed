@@ -817,7 +817,45 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"{Path(cmd[1]).name} failed (exit {rc}).\n\n"
                         + ("\n".join(tail) if tail else "(no output captured)")
                         + f"\n\nFull log: {log_path}")
+            # Both steps succeeded: push the freshly-collected ids to the VM (if
+            # configured) so its next scheduled run doesn't re-collect — and re-bill —
+            # what this run just pulled. Best-effort: never fail the scrape over a sync.
+            self._push_seen_ids_to_vm(log)
         return True
+
+    @staticmethod
+    def _push_seen_ids_to_vm(log) -> None:
+        """Best-effort post-scrape sync: write this host's exclude-id set and scp it
+        to the VM when one is configured. Any failure (no VM, gcloud error, file error)
+        is logged to scrape.log and swallowed — the scrape result is unaffected."""
+        try:
+            repo = Path(__file__).resolve().parents[2]
+            if str(repo) not in sys.path:
+                sys.path.insert(0, str(repo))
+            import scraper
+            import vm_sync
+            target = vm_sync.VMTarget.from_env()
+            if not target.configured():
+                log.write("\n=== VM seen-id sync: no VM configured, skipped ===\n")
+                log.flush()
+                return
+            path = scraper.write_external_exclude_ids()
+            log.write(f"\n=== VM seen-id sync: pushing {path.name} to VM ===\n")
+            log.flush()
+            res = vm_sync.sync_exclude_ids_to_vm(target, path)
+            if res is not None and res.returncode == 0:
+                log.write("VM seen-id sync: OK\n")
+            else:
+                rc = getattr(res, "returncode", "n/a")
+                err = (getattr(res, "stderr", "") or getattr(res, "stdout", "")).strip()
+                log.write(f"VM seen-id sync: FAILED (exit {rc}) {err}\n")
+            log.flush()
+        except Exception as e:  # noqa: BLE001 - sync is best-effort, never fail the scrape
+            try:
+                log.write(f"\n=== VM seen-id sync: error ({e}) — scrape unaffected ===\n")
+                log.flush()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _after_scrape(self, _result) -> None:
         self._scraping = False

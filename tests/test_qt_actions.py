@@ -1,4 +1,5 @@
 """SP4: score preview visibility + the worker-backed job actions (mocked backends)."""
+import types
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -670,3 +671,48 @@ def test_import_tracker_decline_is_noop(qtbot, monkeypatch, tmp_path):
                         staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
     w._import_tracker()
     assert not w.registry.import_from.called
+
+
+# ── SP2: post-scrape seen-id sync to the VM (best-effort, never fails the scrape) ──
+def _capture_log():
+    logs = []
+    return logs, types.SimpleNamespace(write=logs.append, flush=lambda: None)
+
+
+def test_push_seen_ids_to_vm_skips_when_no_vm(monkeypatch):
+    import vm_sync
+    monkeypatch.setattr(vm_sync.VMTarget, "from_env",
+                        classmethod(lambda cls, targets=None: vm_sync.VMTarget()))  # unconfigured
+    logs, log = _capture_log()
+    MainWindow._push_seen_ids_to_vm(log)
+    assert any("no VM configured" in s for s in logs)
+
+
+def test_push_seen_ids_to_vm_pushes_when_configured(monkeypatch, tmp_path):
+    import scraper
+    import vm_sync
+    cfg = vm_sync.VMTarget(instance="vm", zone="z", user="u")
+    monkeypatch.setattr(vm_sync.VMTarget, "from_env",
+                        classmethod(lambda cls, targets=None: cfg))
+    path = tmp_path / "external_exclude_ids.json"
+    monkeypatch.setattr(scraper, "write_external_exclude_ids", lambda: path)
+    seen = {}
+
+    def _sync(target, p):
+        seen["p"] = p
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(vm_sync, "sync_exclude_ids_to_vm", _sync)
+    logs, log = _capture_log()
+    MainWindow._push_seen_ids_to_vm(log)
+    assert seen["p"] == path
+    assert any("OK" in s for s in logs)
+
+
+def test_push_seen_ids_to_vm_swallows_errors(monkeypatch):
+    import vm_sync
+    monkeypatch.setattr(vm_sync.VMTarget, "from_env",
+                        classmethod(lambda cls, targets=None: (_ for _ in ()).throw(RuntimeError("boom"))))
+    logs, log = _capture_log()
+    MainWindow._push_seen_ids_to_vm(log)        # must NOT raise
+    assert any("scrape unaffected" in s for s in logs)

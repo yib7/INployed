@@ -15,12 +15,10 @@ by run._trim_to_caps (measures with len(text.strip()), cap = target_lines * conf
 from __future__ import annotations
 
 import os
-from math import ceil
 from typing import Dict, List
 
 # ── Calibrated column capacities ─────────────────────────────────────────────
 SKILL_CPL = int(os.getenv("RESUME_TAILOR_SKILL_CPL", "105"))  # technical-skills line
-MIN_FILL = float(os.getenv("RESUME_TAILOR_MIN_LINE_FILL", "0.7"))  # trailing line floor for skills
 _SAFETY = 2  # keep a couple chars off the wrap boundary
 
 # ── The strict spec ──────────────────────────────────────────────────────────
@@ -31,13 +29,28 @@ _SAFETY = 2  # keep a couple chars off the wrap boundary
 LEADERSHIP_ENTRY_LINES = 2
 
 # Technical Skills: 4 fixed category lines (Languages / Frameworks / Developer
-# Tools / Libraries), ~4 printed lines total. Languages must carry at least
-# MIN_LANGUAGES items; every line must be "robust" (filled to at least its
-# min-char floor, backfilled from the pool if the model under-picks).
-MIN_LANGUAGES = 4
-# (label, target_printed_lines, item-char cap, item-char floor)
-#   caps/floors are on the ITEMS text only; the bold label width is folded in via
-#   SKILL_LABEL_WIDTH so the printed-line math stays honest.
+# Tools / Libraries), ~4 printed lines total. Each line lists the best N most
+# JD-relevant skills (the LLM ranks; `_finalize_skill_lines` takes the top N,
+# completing from the pool when the model under-returns, then trims to one
+# printed line). A pool with fewer than N skills contributes all of them. There
+# is NO fill floor: the line width (skill_caps) is a hard ceiling, not a target —
+# a short list of relevant skills stays short rather than being padded.
+def skill_targets() -> Dict[str, int]:
+    """Best-N item count per category. Override via
+    RESUME_TAILOR_SKILL_TARGETS="Languages=7,Frameworks=7,Developer Tools=10,Libraries=10"."""
+    targets = {"Languages": 7, "Frameworks": 7, "Developer Tools": 10, "Libraries": 10}
+    for part in os.getenv("RESUME_TAILOR_SKILL_TARGETS", "").split(","):
+        key, sep, val = part.partition("=")
+        if sep:
+            try:
+                targets[key.strip()] = int(val.strip())
+            except ValueError:
+                pass
+    return targets
+
+
+# (label -> target_printed_lines)  the bold label width is folded into the item-char
+#   cap via SKILL_LABEL_WIDTH so the printed-line math stays honest.
 SKILL_LABEL_WIDTH = {
     "Languages": 12,                 # "Languages: "
     "Frameworks": 13,                # "Frameworks: "
@@ -58,20 +71,12 @@ def _label_w(label: str) -> int:
 
 # ── Skills line math ─────────────────────────────────────────────────────────
 def skill_caps() -> Dict[str, int]:
-    """Max ITEMS chars per category so each line hits its printed-line target."""
+    """Max ITEMS chars per category — the one-printed-line hard ceiling. A line is
+    trimmed from the tail (least-relevant skills) until it fits; never padded up."""
     caps: Dict[str, int] = {}
     for label, tgt in SKILL_LINE_TARGET.items():
         caps[label] = tgt * SKILL_CPL - _label_w(label) - _SAFETY
     return caps
-
-
-def skill_floors() -> Dict[str, int]:
-    """Min ITEMS chars per category so no skills line sits >half empty ('robust')."""
-    floors: Dict[str, int] = {}
-    for label, tgt in SKILL_LINE_TARGET.items():
-        # floor = fill the last target line at least MIN_FILL, minus the label width
-        floors[label] = max(0, ceil((tgt - 1 + MIN_FILL) * SKILL_CPL) - _label_w(label))
-    return floors
 
 
 # ── Bullet-count planning for the fixed blocks ───────────────────────────────

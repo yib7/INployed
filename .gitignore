@@ -1,7 +1,7 @@
 # ── Secrets / credentials ────────────────────────────────────────────────────
 .env
 # Backups written next to atomically-saved configs (.env.bak holds secrets;
-# config.json.bak etc. mirror git-ignored configs) — never commit them.
+# config.json.bak etc. mirror git-ignored configs); never commit them.
 *.bak
 
 # ── Personal / user-supplied content (commit the *.example templates instead) ─
@@ -19,8 +19,6 @@ apply_answers.json
 *.log
 *.synctex.gz
 *.out
-# Throwaway SP9 render preview (no-LLM verification artifact; safe to delete)
-resume_tailor_files/SP9_preview.*
 
 # ── Generated / runtime data ─────────────────────────────────────────────────
 # seen.db = SQLite application tracker; *.csv covers the scraped job data

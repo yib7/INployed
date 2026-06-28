@@ -45,7 +45,7 @@ class VMPanel(QtWidgets.QWidget):
     def _build(self) -> None:
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(0, 8, 0, 0)
-        head = QtWidgets.QLabel("Cloud scraper VM")
+        head = QtWidgets.QLabel("Cloud job-discovery VM")
         head.setProperty("heading", True)
         v.addWidget(head)
         t = self._target_factory()
@@ -238,7 +238,7 @@ class VMPanel(QtWidgets.QWidget):
         if time == BLANK:
             time = ""
         val = vm_schedule.pause_until_value(pause_date, time)
-        if not self._confirm("Pause VM", f"Pause the scraper until {val}?"):
+        if not self._confirm("Pause VM", f"Pause job discovery until {val}?"):
             return
         self._run(t.set_pause_cmd(val))
 

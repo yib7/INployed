@@ -63,17 +63,25 @@ def page_count(pdf_path: Path) -> int:
         return len(PdfReader(fh).pages)
 
 
-def _drop_weakest_group(sel: dict, bullets: Dict[str, str]) -> Optional[str]:
+def _drop_weakest_group(sel: dict, bullets: Dict[str, str],
+                        keep_projects: bool = False) -> Optional[str]:
     """Remove the weakest project bullet so the page can actually shrink.
 
     Projects are ordered strongest-first by select(), so trim from the bottom:
     prefer the last group of the last project that still has more than one
     bullet; if every project is down to one, drop the last project's only
-    bullet. Experience and leadership are never touched. Returns the dropped
-    gkey, or None when there is nothing left to drop.
+    bullet (which removes that project from the render). Experience and
+    leadership are never touched. Returns the dropped gkey, or None when there
+    is nothing left to drop.
+
+    When `keep_projects` is True ('exact' projects mode) only the first pass
+    runs: a project's LAST remaining bullet is never dropped, so no project
+    vanishes and the project count holds (best-effort if the page still spills).
     """
     projects = sel.get("projects", [])
-    passes = (lambda live: len(live) > 1, lambda live: bool(live))
+    passes = [lambda live: len(live) > 1]
+    if not keep_projects:
+        passes.append(lambda live: bool(live))
     for keep_one in passes:
         for entry in reversed(projects):
             live = [
@@ -95,7 +103,15 @@ def enforce_one_page(
     work_dir: Path,
     jd: str = "",
     on_status: Optional[Callable[[str], None]] = None,
+    keep_projects: Optional[bool] = None,
 ) -> Tuple[CompileResult, Dict[str, str], str]:
+    """Render -> compile -> drop the weakest project bullet, looping until the
+    resume is one page. `keep_projects` controls the drop policy; when left as
+    None it resolves from config.projects_mode() ('exact' -> keep every project).
+    """
+    if keep_projects is None:
+        keep_projects = config.projects_mode() == "exact"
+
     def log(msg: str) -> None:
         if on_status:
             on_status(msg)
@@ -112,7 +128,7 @@ def enforce_one_page(
         log(f"compiled to {pages} page(s)")
         if pages <= config.PAGE_LIMIT:
             return result, cur, tex
-        dropped = _drop_weakest_group(sel, cur)
+        dropped = _drop_weakest_group(sel, cur, keep_projects)
         if not dropped:
             log("over one page but nothing left to drop — returning best effort")
             return result, cur, tex

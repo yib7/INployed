@@ -38,6 +38,23 @@ class FakePool:
         return {"free_calls": len(self.calls), "vertex_calls": 0}
 
 
+def test_stage1_template_ignores_geography_and_workauth():
+    """A1: Stage 1 must explicitly ignore location/relocation/work-auth so JD text
+    can't implicitly dock onsite/relocation roles."""
+    t = sj.STAGE1_TEMPLATE.lower()
+    assert "ignore completely" in t
+    for kw in ("relocat", "onsite", "remote", "time zone", "work authorization"):
+        assert kw in t, kw
+
+
+def test_stage2_template_excludes_location_and_workauth_gaps():
+    """A1: Stage 2 must not list location/relocation/work-auth as a gap."""
+    t = sj.STAGE2_TEMPLATE.lower()
+    assert "never list location" in t
+    for kw in ("relocat", "work authorization", "sponsorship"):
+        assert kw in t, kw
+
+
 def test_score_stage1_success():
     pool = FakePool({"JD-TEXT": 5})
     out = asyncio.run(sj.score_stage1(pool, asyncio.Semaphore(1), "resume", "J1", "JD-TEXT here"))

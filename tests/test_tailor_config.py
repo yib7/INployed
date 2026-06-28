@@ -160,7 +160,7 @@ def test_header_and_education_render_from_yaml(synthetic_master):
     assert "State University" in tex
     assert "3.7 GPA" in tex
     assert "B.S. in Computer Science with a Concentration in AI/ML, Minor in Math" in tex
-    assert "Honors:" in tex
+    assert "Awards \\& Honors:" in tex
     # the preamble is reused; no other person's data leaks in
     assert "\\begin{document}" in tex
 

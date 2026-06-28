@@ -67,7 +67,7 @@ def _education(edu: List[dict]) -> str:
         )
         honors = e.get("honors") or []
         if honors:
-            row += "\n\\item \\small{\\textbf{Honors:} " \
+            row += "\n\\item \\small{\\textbf{Awards \\& Honors:} " \
                    + "; ".join(to_latex(str(h)) for h in honors) + "}"
         rows.append(row)
     return ("%-----------EDUCATION-----------\n\\section{Education}\n"

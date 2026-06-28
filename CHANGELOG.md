@@ -6,6 +6,19 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-06-28
+
+Bug fix: per-project résumé bullet counts are honored.
+
+### Fixed
+- A project's configured per-project bullet count (set in Resume Layout) was treated as a ceiling
+  rather than a target: a project the selector under-filled stayed short even when the page had room,
+  because only experience and leadership blocks were padded up to their configured counts. A project
+  with a configured layout is now padded up to its exact count (as well as trimmed down to it) from the
+  project's own unused atoms, and the selection prompt names each project's target count. One-page
+  enforcement still trims a padded bullet back on overflow; unconfigured projects keep their cap-only
+  behavior.
+
 ## [1.1.0] - 2026-06-28
 
 Post-1.0 résumé-tailoring quality work: distinct leading verbs, width-aware layout, best-N skills.
@@ -47,6 +60,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/yib7/INployed/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/yib7/INployed/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/yib7/INployed/releases/tag/v1.0.0

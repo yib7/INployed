@@ -85,3 +85,41 @@ def test_trim_to_caps_uses_width_not_char_count(monkeypatch):
     rt_run._trim_to_caps(sel, bullets)
     assert measure.line_count(bullets[gk]) <= 2
     assert len(bullets[gk]) < len(THREE_LINE)
+
+
+# --- skills line width (bold label + items) ------------------------------------
+# Verbatim from the same real PDF; this Developer Tools line rendered on ONE line.
+DT_ITEMS = "LLM APIs (Gemini/OpenAI/Claude), AWS, S3, Docker, Kafka, PostgreSQL, Redis, ChromaDB"
+
+
+def test_text_width_bold_is_wider_than_regular():
+    assert measure.text_width("Developer Tools", bold=True) > measure.text_width("Developer Tools")
+
+
+def test_skill_line_capacity_defaults_to_body_column():
+    # Skills share the body text column AND font size (validated against the real PDF),
+    # so by default the one-line capacity is identical.
+    assert measure.SKILL_LINE_CAPACITY == measure.BODY_LINE_CAPACITY
+
+
+def test_real_skill_line_fits_one_line():
+    assert measure.skill_line_width("Developer Tools", DT_ITEMS) <= measure.SKILL_LINE_CAPACITY
+
+
+def test_overlong_skill_line_overflows():
+    too_long = DT_ITEMS + ", " + DT_ITEMS                    # clearly more than one line
+    assert measure.skill_line_width("Developer Tools", too_long) > measure.SKILL_LINE_CAPACITY
+
+
+def test_cap_items_drops_tail_to_fit_one_line_by_width(monkeypatch):
+    # Capacity set to exactly the width of "Languages: Python, SQL" -> the next item overflows.
+    cap = measure.skill_line_width("Languages", "Python, SQL")
+    monkeypatch.setattr(compose.measure, "SKILL_LINE_CAPACITY", cap)
+    out = compose._cap_items("Languages", "Python, SQL, JavaScript, TypeScript")
+    assert out == "Python, SQL"
+
+
+def test_cap_items_keeps_at_least_the_first_token(monkeypatch):
+    # Even a single wide token that overflows is kept (a line is never emptied).
+    monkeypatch.setattr(compose.measure, "SKILL_LINE_CAPACITY", 1)
+    assert compose._cap_items("Languages", "Python, SQL") == "Python"

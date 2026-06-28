@@ -255,18 +255,20 @@ def test_complete_to_count_preserves_merged_token_and_skips_its_components():
 
 
 def test_finalize_skill_lines_drops_bottom_to_fit_one_line(monkeypatch):
-    """SP1: when the chosen items overflow one printed line, the least-relevant tail
-    is dropped until they fit — never padded, never wrapped."""
+    """SP1 + width measurement: when the chosen items overflow one printed line (by real
+    rendered glyph width, not char count), the least-relevant tail is dropped until they
+    fit — never padded, never wrapped."""
     monkeypatch.setattr(compose, "_skill_pools", lambda: {
         "Languages": [], "Frameworks": [], "Developer Tools": [], "Libraries": []})
     monkeypatch.setattr(compose.layout, "skill_targets", lambda: {
         "Languages": 7, "Frameworks": 0, "Developer Tools": 0, "Libraries": 0})
-    monkeypatch.setattr(compose.layout, "skill_caps", lambda: {
-        "Languages": 14, "Frameworks": 0, "Developer Tools": 0, "Libraries": 0})
+    # Capacity = exactly the rendered width of "Languages: Python, SQL" -> next item overflows.
+    cap = compose.measure.skill_line_width("Languages", "Python, SQL")
+    monkeypatch.setattr(compose.measure, "SKILL_LINE_CAPACITY", cap)
     out = {"Languages": "Python, SQL, JavaScript, TypeScript"}
     lines = compose._finalize_skill_lines(out)
     by = {ln["label"]: ln["items"] for ln in lines}
-    assert by["Languages"] == "Python, SQL"               # ", JavaScript" would exceed 14 -> dropped
+    assert by["Languages"] == "Python, SQL"               # ", JavaScript" would overflow -> dropped
     assert "Frameworks" not in by                          # empty pool + no items -> no line
 
 

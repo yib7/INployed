@@ -31,16 +31,45 @@ _CHAR_W = {
     "p": 500, "q": 500, "r": 333, "s": 389, "t": 278, "u": 500, "v": 500, "w": 722,
     "x": 500, "y": 500, "z": 444, "{": 480, "|": 200, "}": 480, "~": 541,
 }
+# Times-BOLD AFM advance widths (1/1000 em) — used for the bold skills-category label.
+_CHAR_W_BOLD = {
+    " ": 250, "!": 333, '"': 555, "#": 500, "$": 500, "%": 1000, "&": 833, "'": 278,
+    "(": 333, ")": 333, "*": 500, "+": 570, ",": 250, "-": 333, ".": 250, "/": 278,
+    "0": 500, "1": 500, "2": 500, "3": 500, "4": 500, "5": 500, "6": 500, "7": 500,
+    "8": 500, "9": 500, ":": 333, ";": 333, "<": 570, "=": 570, ">": 570, "?": 500,
+    "@": 930, "A": 722, "B": 667, "C": 722, "D": 722, "E": 667, "F": 611, "G": 778,
+    "H": 778, "I": 389, "J": 500, "K": 778, "L": 667, "M": 944, "N": 722, "O": 778,
+    "P": 611, "Q": 778, "R": 722, "S": 556, "T": 667, "U": 722, "V": 722, "W": 1000,
+    "X": 722, "Y": 722, "Z": 667, "[": 333, "\\": 278, "]": 333, "^": 581, "_": 500,
+    "`": 333, "a": 500, "b": 556, "c": 444, "d": 556, "e": 444, "f": 333, "g": 500,
+    "h": 556, "i": 278, "j": 333, "k": 556, "l": 278, "m": 833, "n": 556, "o": 500,
+    "p": 556, "q": 556, "r": 444, "s": 389, "t": 333, "u": 556, "v": 500, "w": 722,
+    "x": 500, "y": 500, "z": 444, "{": 394, "|": 220, "}": 394, "~": 520,
+}
 # A typical mid-width glyph for anything outside the table (accented letters, symbols).
 _DEFAULT_W = 500
+_DEFAULT_W_BOLD = 556
 
 # Body text-column capacity in the same 1/1000-em units (calibrated; see module docstring).
 BODY_LINE_CAPACITY = int(os.getenv("RESUME_TAILOR_BODY_LINE_CAPACITY", "53464"))
+# A skills line shares the body text column AND font size (verified against the real PDF:
+# both 9.96pt at the same x indent), so its one-line capacity is identical by default.
+SKILL_LINE_CAPACITY = int(os.getenv("RESUME_TAILOR_SKILL_LINE_CAPACITY", str(BODY_LINE_CAPACITY)))
 
 
-def text_width(s: str) -> int:
-    """Advance width of a string in 1/1000-em units (sum of per-glyph widths)."""
+def text_width(s: str, bold: bool = False) -> int:
+    """Advance width of a string in 1/1000-em units (sum of per-glyph widths). `bold`
+    uses the Times-Bold metrics (the skills-category label is rendered bold)."""
+    if bold:
+        return sum(_CHAR_W_BOLD.get(c, _DEFAULT_W_BOLD) for c in s)
     return sum(_CHAR_W.get(c, _DEFAULT_W) for c in s)
+
+
+def skill_line_width(label: str, items: str) -> int:
+    """Rendered width of one skills line: the bold category label + ': ' + the regular
+    item list (matches render._skills: ``\\textbf{label}{: } items``). Compared against
+    SKILL_LINE_CAPACITY to decide, by real width, whether a tech-stack item must be cut."""
+    return text_width(label, bold=True) + text_width(": " + items)
 
 
 def line_count(text: str, capacity: int | None = None) -> int:

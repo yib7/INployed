@@ -20,7 +20,7 @@ import json
 from math import ceil
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import assets, config, layout
+from . import assets, config, layout, measure
 from .llm import call
 
 _PRINCIPLE = (
@@ -753,8 +753,9 @@ _SKILL_BUCKETS = (
 # Each line shows the best-N most JD-relevant skills (layout.skill_targets():
 # Languages 7, Frameworks 7, Developer Tools 10, Libraries 10). The model ranks;
 # _finalize_skill_lines takes the top N, completes from the pool if the model
-# under-returns, and trims from the tail to the one-printed-line cap
-# (layout.skill_caps()). No fill floor — a short list of relevant skills stays short.
+# under-returns, and trims from the tail until the rendered line fits ONE printed line
+# by real glyph width (measure.skill_line_width / SKILL_LINE_CAPACITY). No fill floor —
+# a short list of relevant skills stays short.
 
 
 def _pool(skills: Dict[str, Any], keys: Tuple[str, ...]) -> List[str]:
@@ -775,14 +776,13 @@ def _finalize_skill_lines(out: Dict[str, Any]) -> List[Dict[str, str]]:
     complete from the pool up to the target if it under-returned, then trim from the
     tail (least relevant) to the one-printed-line cap. No fill floor — a short list
     of relevant skills stays short. Always returns the four labeled lines."""
-    caps = layout.skill_caps()
     targets = layout.skill_targets()
     pools = _skill_pools()
     lines: List[Dict[str, str]] = []
     for label, _keys in _SKILL_BUCKETS:
         picked = _complete_to_count(out.get(label) or "", pools.get(label, []),
                                     targets.get(label, 0))
-        items = _cap_items(", ".join(picked), caps[label])
+        items = _cap_items(label, ", ".join(picked))
         if items:
             lines.append({"label": label, "items": items})
     return lines
@@ -825,17 +825,17 @@ def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
     return picked
 
 
-def _cap_items(items: str, max_chars: int) -> str:
-    """Keep whole comma-separated tokens up to max_chars (never cut mid-token)."""
+def _cap_items(label: str, items: str) -> str:
+    """Keep whole comma-separated tokens while the rendered skills line (bold label +
+    items) fits ONE printed line by real glyph width (measure.skill_line_width) — never
+    cut mid-token, never wrap. The first token is always kept (a line is never emptied),
+    so a lone over-wide token still renders rather than vanishing."""
     toks = [t.strip() for t in items.split(",") if t.strip()]
     kept: List[str] = []
-    total = 0
     for t in toks:
-        add = len(t) + (2 if kept else 0)
-        if kept and total + add > max_chars:
+        if kept and measure.skill_line_width(label, ", ".join(kept + [t])) > measure.SKILL_LINE_CAPACITY:
             break
         kept.append(t)
-        total += add
     return ", ".join(kept)
 
 

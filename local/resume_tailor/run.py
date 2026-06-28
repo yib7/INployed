@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from . import apply_data, ats, compose, config, coverletter, llm, output, research
+from . import apply_data, ats, compose, config, coverletter, llm, measure, output, research
 from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
@@ -130,18 +130,40 @@ def _word_trim(text: str, max_visible: int) -> str:
     return _strip_dangling(trimmed) or trimmed
 
 
+def _fit_to_lines(text: str, target_lines: int) -> str:
+    """Width-aware trim: shorten a bullet until it renders within `target_lines` printed
+    lines, measured by real glyph widths (measure.line_count) — not a flat char count, so
+    a wide-word bullet that the char cap missed ('...cross-encoder reranking...') is caught.
+    Numbers are front-loaded, so the overflow tail trims safely; under-length is left as-is
+    (never padded). The clean cut reuses _word_trim's clause/word-boundary + dangling
+    handling, so we never end mid-clause on a connective."""
+    text = text.strip()
+    if measure.line_count(text) <= target_lines:
+        return text
+    # Longest character prefix that still renders within the target (line_count is
+    # monotonic in length), then clean-cut at a word/clause boundary at or below it.
+    lo, hi = 1, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if measure.line_count(text[:mid]) <= target_lines:
+            lo = mid
+        else:
+            hi = mid - 1
+    return _word_trim(text, lo + 1)
+
+
 def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:
-    """Deterministically word-trim each bullet to its per-bullet char cap
-    (target_lines * config.MAX_LINE_CHARS). Over-length is trimmed at a word
-    boundary (numbers are front-loaded, so the tail trims safely); under-length is
-    left as-is — we never pad, which would mean inventing facts."""
+    """Deterministically trim each bullet to its per-bullet printed-line target
+    (config.block_targets / project_targets, else config.PROJECT_BULLET_LINES), measured
+    by real rendered width (measure.line_count). Over-length is trimmed at a word boundary
+    (numbers are front-loaded, so the tail trims safely); under-length is left as-is — we
+    never pad, which would mean inventing facts."""
     targets = compose.bullet_line_targets(sel)
     for gk, text in list(bullets.items()):
         if compose.is_verbatim_gkey(gk):
             continue  # the user's exact bullets are rendered as typed, never trimmed
-        cap = targets.get(gk, config.PROJECT_BULLET_LINES) * config.MAX_LINE_CHARS
-        if len(text.strip()) > cap:
-            bullets[gk] = _word_trim(text, cap)
+        target_lines = targets.get(gk, config.PROJECT_BULLET_LINES)
+        bullets[gk] = _fit_to_lines(text, target_lines)
 
 
 def tailor(

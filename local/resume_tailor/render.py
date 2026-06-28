@@ -126,13 +126,15 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
             continue
         name = to_latex(b.get("name", ""))
         repo = (b.get("repo") or "").strip()
+        # Link sits inline after the name as " | Link" (italic), mirroring the Work
+        # Experience header; empty (no trailing pipe) when the project has no repo.
         if "github.com" in repo:
             href = to_latex(f"https://{repo}")
-            link = f"\\href{{{href}}}{{\\textit{{View on GitHub}}}}"
+            link = f" $|$ \\href{{{href}}}{{\\textit{{Link}}}}"
         else:
             link = ""
         out.append(
-            f"\\resumeProjectHeading\n{{\\textbf{{{name}}}}}{{{link}}}\n" + _bullet_list(items)
+            f"\\resumeProjectHeadingInline\n{{{name}}}{{{link}}}\n" + _bullet_list(items)
         )
     if not out:
         return ""

@@ -78,11 +78,21 @@
 \end{tabular*}\vspace{-7pt}
 }
 
-% --- PROJECTS + LEADERSHIP header (one row: name / link or dates) ---
+% --- LEADERSHIP header (one row: name left, dates right) ---
 \newcommand{\resumeProjectHeading}[2]{
 \vspace{-3pt}\item
 \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize#1 & \resumeHeaderSize#2 \\
+\end{tabular*}\vspace{-7pt}
+}
+
+% --- PROJECTS header (one line: bold name | link, all left-aligned) ---
+% #1 = project name (bolded here); #2 = the " | <link>" suffix (link italicized by
+% the renderer), or empty for a project with no link.
+\newcommand{\resumeProjectHeadingInline}[2]{
+\vspace{-3pt}\item
+\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\resumeHeaderSize\textbf{#1}#2 & \\
 \end{tabular*}\vspace{-7pt}
 }
 

@@ -17,7 +17,8 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
-from resume_tailor import assets, compose, config, output, render  # noqa: E402
+from resume_tailor import assets, compose, config, measure, output, render  # noqa: E402
+from resume_tailor import run as rt_run  # noqa: E402
 
 _CACHED = (
     assets.load_master, assets.tailor_config, assets.atoms_by_id,
@@ -376,3 +377,172 @@ def test_enabled_toggle_reads_both_layout_maps(monkeypatch):
         "project_layout": {"ProjOne": {"line_targets": [3, 2, 1]}}})
     assert config.block_targets("Example Corp") == [1, 1]
     assert config.project_targets("ProjOne") == [3, 2, 1]
+
+
+# --- fill underfull bullets from unused SAME-block atoms --------------------------
+# When a tailored bullet renders shorter than its configured line target and the page
+# has room, fold ONE detail from an unused atom in the SAME block in to fill it. Never
+# fabricates: a bullet whose block has no spare atom is left exactly as-is. Implemented
+# as group-augmentation (append the borrowed id to the group, re-key the bullet) so
+# render / targets / trace all key off the same atom ids.
+
+def _fake_bullets(*pairs):
+    """Build a compose.call stub returning {"bullets":[{gkey,text}, ...]} verbatim."""
+    def _call(system, user, tier, **kw):
+        return {"bullets": [{"gkey": gk, "text": txt} for gk, txt in pairs]}
+    return _call
+
+
+def test_fill_underfull_fuses_unused_block_atom(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})   # ProjTwo unconfigured -> 2-line target
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    bullets = {"p2a": "Built an app."}                        # stubby -> underfull at 2 lines
+    longer = "Built an app, folding in a second grounded detail to fill out the line nicely."
+    monkeypatch.setattr(compose, "call", _fake_bullets(("p2a", longer)))
+    out = compose.fill_underfull("a long job description " * 8, "Engineer", sel, bullets)
+    # the group gained the first spare atom (p2b) and the bullet was re-keyed
+    assert sel["projects"][0]["groups"] == [["p2a", "p2b"]]
+    assert "p2a" not in out
+    assert out["p2a+p2b"] == longer
+
+
+def test_fill_underfull_skips_block_with_no_spare_atom(synthetic_master, monkeypatch):
+    # ProjOne has a single atom (p1): no spare in-block -> bullet left as-is, NO LLM call.
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+
+    def boom(*a, **k):
+        raise AssertionError("the LLM must not be called when there is no spare atom")
+
+    monkeypatch.setattr(compose, "call", boom)
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjOne", "groups": [["p1"]]}]}
+    bullets = {"p1": "Built an app."}
+    out = compose.fill_underfull("jd", "Engineer", sel, bullets)
+    assert out == {"p1": "Built an app."}
+    assert sel["projects"][0]["groups"] == [["p1"]]
+
+
+def test_fill_underfull_skips_already_full_bullet(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+
+    def boom(*a, **k):
+        raise AssertionError("a full bullet must not be sent to the LLM")
+
+    monkeypatch.setattr(compose, "call", boom)
+    full = ("word " * 80).strip()                            # width well past the 2-line floor
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    bullets = {"p2a": full}
+    out = compose.fill_underfull("jd", "Engineer", sel, bullets)
+    assert out == {"p2a": full}
+    assert sel["projects"][0]["groups"] == [["p2a"]]
+
+
+def test_fill_underfull_skips_group_at_max_atoms(synthetic_master, monkeypatch):
+    # A group already fusing 3 atoms is never extended, even if stubby.
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+
+    def boom(*a, **k):
+        raise AssertionError("a 3-atom group must not be extended")
+
+    monkeypatch.setattr(compose, "call", boom)
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a", "p2b", "p2c"]]}]}
+    bullets = {"p2a+p2b+p2c": "Built an app."}
+    out = compose.fill_underfull("jd", "Engineer", sel, bullets)
+    assert out == {"p2a+p2b+p2c": "Built an app."}
+    assert sel["projects"][0]["groups"] == [["p2a", "p2b", "p2c"]]
+
+
+def test_fill_underfull_never_folds_one_atom_into_two_bullets(synthetic_master, monkeypatch):
+    # Two underfull bullets in one block must borrow DIFFERENT spare atoms.
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"], ["p2b"]]}]}
+    bullets = {"p2a": "Built an app.", "p2b": "Made a tool."}
+    monkeypatch.setattr(compose, "call", _fake_bullets(
+        ("p2a", "Built an app, with one more grounded detail to fill out the printed line."),
+        ("p2b", "Made a tool, with one more grounded detail to fill out the printed line."),
+    ))
+    compose.fill_underfull("jd", "Engineer", sel, bullets)
+    groups = sel["projects"][0]["groups"]
+    assert groups[0] == ["p2a", "p2c"]                       # first spare
+    assert groups[1] == ["p2b", "p2d"]                       # a DIFFERENT spare
+    assert "p2a+p2c" in bullets and "p2b+p2d" in bullets
+
+
+def test_fill_underfull_leaves_bullet_when_model_returns_unchanged(synthetic_master, monkeypatch):
+    # The model declined to fold anything in (returned identical text) -> bullet + group
+    # untouched and the spare atom is released (stays unused).
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    bullets = {"p2a": "Built an app."}
+    monkeypatch.setattr(compose, "call", _fake_bullets(("p2a", "Built an app.")))
+    out = compose.fill_underfull("jd", "Engineer", sel, bullets)
+    assert out == {"p2a": "Built an app."}
+    assert sel["projects"][0]["groups"] == [["p2a"]]
+
+
+def test_fill_underfull_best_effort_on_llm_failure(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+
+    def boom(*a, **k):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(compose, "call", boom)
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    bullets = {"p2a": "Built an app."}
+    out = compose.fill_underfull("jd", "Engineer", sel, bullets)
+    assert out == {"p2a": "Built an app."}                   # advisory: unchanged on failure
+    assert sel["projects"][0]["groups"] == [["p2a"]]
+
+
+def test_fill_then_trim_keeps_within_line_target(synthetic_master, monkeypatch):
+    # An overshoot from the fill pass is trimmed back to the bullet's line target.
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    bullets = {"p2a": "Built an app."}
+    overshoot = "Built an app " + "with a great many extra grounded words " * 10
+    monkeypatch.setattr(compose, "call", _fake_bullets(("p2a", overshoot)))
+    compose.fill_underfull("jd", "Engineer", sel, bullets)
+    rt_run._trim_to_caps(sel, bullets)
+    assert "p2a+p2b" in bullets
+    assert measure.line_count(bullets["p2a+p2b"]) <= 2
+
+
+def test_fill_underfull_skips_verbatim_bullets(synthetic_master, monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+
+    def boom(*a, **k):
+        raise AssertionError("verbatim bullets must never be touched")
+
+    monkeypatch.setattr(compose, "call", boom)
+    gk = "__verbatim__/ProjTwo/0"
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [[gk]]}]}
+    bullets = {gk: "Short verbatim bullet."}
+    out = compose.fill_underfull("jd", "Engineer", sel, bullets)
+    assert out == {gk: "Short verbatim bullet."}
+
+
+# --- config gate: RESUME_TAILOR_FILL_UNDERFULL ----------------------------------
+
+def test_fill_underfull_enabled_default_true(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_FILL_UNDERFULL", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.fill_underfull_enabled() is True
+
+
+def test_fill_underfull_enabled_env_off(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_FILL_UNDERFULL", "0")
+    assert config.fill_underfull_enabled() is False
+
+
+def test_fill_underfull_enabled_config_off(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_FILL_UNDERFULL", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"fill_underfull": False})
+    assert config.fill_underfull_enabled() is False

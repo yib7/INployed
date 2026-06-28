@@ -130,6 +130,18 @@ def projects_mode() -> str:
     return "exact" if val == "exact" else "max"
 
 
+def fill_underfull_enabled() -> bool:
+    """Whether the underfull-bullet fill pass runs (compose.fill_underfull): when a tailored
+    bullet renders shorter than its configured line target, fold ONE detail from an unused atom
+    in the SAME block in to fill it. It never fabricates -- a bullet whose block has no spare
+    atom is left exactly as-is. Defaults ON. Precedence: RESUME_TAILOR_FILL_UNDERFULL env >
+    config.json 'fill_underfull' > True."""
+    env = os.getenv("RESUME_TAILOR_FILL_UNDERFULL")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return _config_json().get("fill_underfull", True) is not False
+
+
 def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.

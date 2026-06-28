@@ -3,6 +3,7 @@ No LLM, no UI."""
 import inspect
 import shutil
 import sys
+from math import ceil
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,7 @@ def test_block_targets_bad_shape_falls_back(monkeypatch):
 
 
 def test_constants_present():
-    assert config.MAX_LINE_CHARS == 100
+    assert config.MAX_LINE_CHARS == 125
     assert config.PROJECTS_MAX == 3 and config.PROJECT_BULLETS_MAX == 2
     assert config.PROJECTS_MAX_LIMIT == 6
 
@@ -74,6 +75,30 @@ def test_projects_max_env_overrides_config(monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_PROJECTS_MAX", "5")
     monkeypatch.setattr(config, "_config_json", lambda: {"projects_max": 2})
     assert config.projects_max() == 5
+
+
+def test_projects_mode_default_is_max(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MODE", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.projects_mode() == "max"
+
+
+def test_projects_mode_from_config_json(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MODE", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_mode": "exact"})
+    assert config.projects_mode() == "exact"
+
+
+def test_projects_mode_bad_value_falls_back_to_max(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MODE", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_mode": "weird"})
+    assert config.projects_mode() == "max"
+
+
+def test_projects_mode_env_overrides_config(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_PROJECTS_MODE", "exact")
+    monkeypatch.setattr(config, "_config_json", lambda: {"projects_mode": "max"})
+    assert config.projects_mode() == "exact"
 
 
 from resume_tailor import compose  # noqa: E402
@@ -153,9 +178,46 @@ def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
     assert len(octus["groups"]) == len(config.DEFAULT_LINE_TARGETS)  # must be 3
 
 
-def test_length_hint_is_plain_lines():
-    assert compose._length_hint(1) == "about 1 line (<= 100 characters)"
-    assert compose._length_hint(2) == "about 2 lines (<= 200 characters)"
+def test_length_hint_has_floor_and_ceiling():
+    """A3: the hint now carries a soft floor (>=85% single-line, >=70% last line of
+    a multi-line bullet) plus the hard ceiling = target_lines * MAX_LINE_CHARS."""
+    per = config.MAX_LINE_CHARS
+    h1 = compose._length_hint(1)
+    assert str(per) in h1                       # ceiling = one line
+    assert str(ceil(0.85 * per)) in h1          # single-line floor >=85%
+    h2 = compose._length_hint(2)
+    assert str(2 * per) in h2                    # ceiling = two lines
+    assert str(ceil((1 + 0.70) * per)) in h2    # multi-line last-line floor >=70%
+
+
+def test_select_uses_four_skill_pools_no_keyerror(monkeypatch):
+    """A2: select() builds its prompt from the 4 skill-pool keys; the old 3-bucket
+    references would KeyError before the LLM is even called."""
+    captured = {}
+
+    def fake_call(system, user, tier, **kw):
+        captured["system"] = system
+        captured["user"] = user
+        return {"experience": [], "projects": [], "leadership": [],
+                "skill_focus": "general", "skills": {}, "rationale": ""}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    compose.select("Build data pipelines in Python and SQL.", "Data Analyst", "ACME")
+    for label in ("Languages:", "Frameworks:", "Developer Tools:", "Libraries:"):
+        assert label in captured["user"]
+    assert "Tools & Infrastructure" not in captured["user"]
+    assert "Libraries & Frameworks" not in captured["user"]
+    assert "exactly four lines" in captured["system"]
+
+
+def test_compress_skills_returns_four_labeled_lines():
+    """A2: the preselected-skills path returns all 4 fixed lines, each non-empty."""
+    pre = {"skills": {"Languages": "Python, SQL", "Frameworks": "Flask",
+                      "Developer Tools": "Git", "Libraries": "NumPy"}}
+    lines = compose.compress_skills("jd", "Data Analyst", pre)
+    assert [ln["label"] for ln in lines] == [
+        "Languages", "Frameworks", "Developer Tools", "Libraries"]
+    assert all(ln["items"].strip() for ln in lines)
 
 
 def test_rephrase_dropped_budgets_param():
@@ -222,6 +284,121 @@ def test_trim_to_caps_leaves_short_bullets(monkeypatch):
     assert bullets[gk] == short  # under cap (2 lines = 200) -> untouched, never padded
 
 
+def test_verbatim_blocks_reader_sanitizes(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {"verbatim_blocks": {
+        "Globex": ["Did a thing", "  ", "Did another"],   # blanks dropped
+        "Empty": [],                                        # empty list dropped
+        "Bad": "nope",                                      # non-list dropped
+    }})
+    assert config.verbatim_blocks() == {"Globex": ["Did a thing", "Did another"]}
+
+
+def test_inject_verbatim_replaces_groups_and_excludes_from_group_map(monkeypatch):
+    monkeypatch.setattr(config, "verbatim_blocks",
+                        lambda: {"Globex": ["My exact bullet one", "My exact bullet two"]})
+    sel = {
+        "experience": [{"name": "Globex", "groups": [["a1"], ["a2"]]},
+                       {"name": "Initech", "groups": [["b1"]]}],
+        "projects": [], "leadership": [],
+    }
+    verbatim = compose.inject_verbatim(sel)
+    gks = [compose._gkey(ids) for ids in sel["experience"][0]["groups"]]
+    assert all(compose.is_verbatim_gkey(gk) for gk in gks)          # Globex groups -> verbatim
+    assert set(verbatim.values()) == {"My exact bullet one", "My exact bullet two"}
+    assert all(compose.is_verbatim_gkey(gk) for gk in verbatim)
+    gm = compose.group_map(sel)
+    assert compose._gkey(["b1"]) in gm                              # Initech still tailored
+    assert not any(compose.is_verbatim_gkey(gk) for gk in gm)       # verbatim excluded from LLM
+
+
+def test_inject_verbatim_noop_without_config(monkeypatch):
+    monkeypatch.setattr(config, "verbatim_blocks", lambda: {})
+    sel = {"experience": [{"name": "Globex", "groups": [["a1"]]}],
+           "projects": [], "leadership": []}
+    assert compose.inject_verbatim(sel) == {}
+    assert sel["experience"][0]["groups"] == [["a1"]]              # untouched
+
+
+def test_trim_to_caps_never_trims_verbatim(monkeypatch):
+    monkeypatch.setattr(config, "verbatim_blocks", lambda: {"RHA": ["x" * 400]})
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"resume_layout": {"RHA": {"line_targets": [1]}}})
+    sel = {"experience": [], "leadership": [{"name": "RHA", "groups": [["d1"]]}],
+           "projects": []}
+    verbatim = compose.inject_verbatim(sel)
+    gk = next(iter(verbatim))
+    bullets = dict(verbatim)
+    rt_run._trim_to_caps(sel, bullets)
+    assert bullets[gk] == "x" * 400                                # exact text, never trimmed
+
+
+def test_block_briefs_one_batched_call_per_block(monkeypatch):
+    monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
+    seen = {"calls": 0}
+
+    def fake_call(system, user, tier, **kw):
+        seen["calls"] += 1
+        seen["tier"] = tier
+        return {"briefs": [{"block": "Globex", "brief": "Backend platform work."},
+                           {"block": "Bogus", "brief": "ignored — not a block"}]}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    sel = {"experience": [{"name": "Globex", "groups": [["a1"], ["a2"]]}],
+           "projects": [], "leadership": []}
+    out = compose.block_briefs("jd", "Engineer", sel)
+    assert out == {"Globex": "Backend platform work."}   # unknown block names dropped
+    assert seen["calls"] == 1                             # ONE batched call
+    assert seen["tier"] == config.TIER_FLASH_LITE         # cheapest tier
+
+
+def test_block_briefs_swallows_call_failure(monkeypatch):
+    monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": "x"})
+
+    def boom(*a, **k):
+        raise RuntimeError("no creds")
+
+    monkeypatch.setattr(compose, "call", boom)
+    sel = {"experience": [{"name": "Globex", "groups": [["a1"]]}],
+           "projects": [], "leadership": []}
+    assert compose.block_briefs("jd", "Eng", sel) == {}   # advisory: never fatal
+
+
+def test_rephrase_groups_by_block_and_threads_brief(monkeypatch):
+    monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
+    monkeypatch.setattr(compose, "_block_of",
+                        lambda a: "Globex" if a.startswith("a") else "P1")
+    monkeypatch.setattr(compose.assets, "example_text", lambda: "exemplar voice")
+    captured = {}
+
+    def fake_call(system, user, tier, **kw):
+        captured["system"] = system
+        captured["user"] = user
+        return {"bullets": [{"gkey": "a1", "text": "Built A."},
+                            {"gkey": "a2+a3", "text": "Fused A2/A3."},
+                            {"gkey": "e1", "text": "Made P1."}]}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    sel = {"experience": [{"name": "Globex", "groups": [["a1"], ["a2", "a3"]]}],
+           "projects": [{"name": "P1", "groups": [["e1"]]}], "leadership": []}
+    briefs = {"Globex": "Platform reliability story.", "P1": "An ML side project."}
+    out = compose.rephrase("jd", "Eng", sel, briefs=briefs)
+    assert out == {"a1": "Built A.", "a2+a3": "Fused A2/A3.", "e1": "Made P1."}
+    assert "Platform reliability story." in captured["user"]   # briefs threaded in
+    assert "An ML side project." in captured["user"]
+    assert "COHESION" in captured["system"]                    # cohesion instruction present
+
+
+def test_rephrase_backward_compatible_without_briefs(monkeypatch):
+    monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
+    monkeypatch.setattr(compose, "_block_of", lambda a: "Globex")
+    monkeypatch.setattr(compose.assets, "example_text", lambda: "exemplar")
+    monkeypatch.setattr(compose, "call",
+                        lambda *a, **k: {"bullets": [{"gkey": "a1", "text": "Built A."}]})
+    sel = {"experience": [{"name": "Globex", "groups": [["a1"]]}],
+           "projects": [], "leadership": []}
+    assert compose.rephrase("jd", "Eng", sel) == {"a1": "Built A."}   # briefs optional
+
+
 def test_refit_and_body_math_removed():
     assert not hasattr(compose, "refit")
     assert not hasattr(compose, "layout_budgets")
@@ -229,6 +406,51 @@ def test_refit_and_body_math_removed():
     from resume_tailor import layout
     assert not hasattr(layout, "body_line_budget")
     assert not hasattr(layout, "body_fits")
+
+
+def test_drop_weakest_keep_projects_never_empties_a_project():
+    """B2 exact mode: only multi-bullet projects are trimmed; a project's last
+    bullet is never dropped, so no project vanishes and the count holds."""
+    from resume_tailor import compile as rt_compile
+    sel = {"projects": [
+        {"name": "P1", "groups": [["e1"], ["e2"]]},
+        {"name": "P2", "groups": [["f1"]]},  # single bullet — must survive
+    ]}
+    bullets = {"e1": "x", "e2": "y", "f1": "z"}
+    assert rt_compile._drop_weakest_group(sel, bullets, keep_projects=True) == "e2"
+    # nothing else can go without emptying a project -> None, count preserved
+    assert rt_compile._drop_weakest_group(sel, bullets, keep_projects=True) is None
+    assert set(bullets) == {"e1", "f1"}
+
+
+def test_drop_weakest_max_mode_can_drop_a_whole_project():
+    """Default (at-most) mode may drop a project's only bullet to fit one page."""
+    from resume_tailor import compile as rt_compile
+    sel = {"projects": [{"name": "P1", "groups": [["e1"]]}]}
+    bullets = {"e1": "x"}
+    assert rt_compile._drop_weakest_group(sel, bullets, keep_projects=False) == "e1"
+    assert bullets == {}
+
+
+def test_enforce_one_page_resolves_keep_projects_from_config(tmp_path, monkeypatch):
+    """enforce_one_page derives keep_projects from config.projects_mode() when the
+    caller doesn't pass it (exact -> keep_projects True)."""
+    from resume_tailor import compile as rt_compile
+    monkeypatch.setattr(config, "projects_mode", lambda: "exact")
+    monkeypatch.setattr(rt_compile.render, "render", lambda *a, **k: "TEX")
+    monkeypatch.setattr(rt_compile, "compile_tex",
+                        lambda tex_path, work_dir: rt_compile.CompileResult(True, tex_path, ""))
+    monkeypatch.setattr(rt_compile, "page_count", lambda p: 2)  # always "too long"
+    seen = {}
+
+    def fake_drop(sel, bullets, keep_projects=False):
+        seen["keep"] = keep_projects
+        return None  # stop the loop immediately (best-effort)
+
+    monkeypatch.setattr(rt_compile, "_drop_weakest_group", fake_drop)
+    rt_compile.enforce_one_page({"projects": []}, {"g": "x"}, [],
+                                tmp_path / "r.tex", tmp_path)
+    assert seen["keep"] is True
 
 
 @pytest.mark.skipif(shutil.which("pdflatex") is None, reason="pdflatex not installed")
@@ -247,8 +469,9 @@ def test_enforce_one_page_drops_until_one_page(tmp_path, monkeypatch):
     # Deliberately bloated bullets to force >1 page.
     bullets = {gk: ("Engineered a large multi-stage system " * 6).strip() + "." for gk in gm}
     skills = [{"label": "Languages", "items": "Python, SQL"},
-              {"label": "Tools & Infrastructure", "items": "Git, Docker"},
-              {"label": "Libraries & Frameworks", "items": "Pandas, NumPy"}]
+              {"label": "Frameworks", "items": "Flask, Django"},
+              {"label": "Developer Tools", "items": "Git, Docker"},
+              {"label": "Libraries", "items": "Pandas, NumPy"}]
     res, final, _tex = rt_compile.enforce_one_page(
         sel, bullets, skills, tmp_path / "r.tex", tmp_path, jd="x" * 50)
     assert res.ok

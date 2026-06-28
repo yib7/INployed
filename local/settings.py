@@ -162,19 +162,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Roles requiring at least this many years of experience are filtered out.",
           min=0, max=20, slider=True),
 
-    # --- Resume: how many projects, artifact toggles + cover-letter tone (config.json) ---
-    # Per-bullet line budgets / required sections stay where they already are: the
-    # "Resume layout…" button (project line targets) and the master_experience
-    # yaml `tailor:` block. Here: the project count cap, artifact toggles, and tone.
-    Field("projects_max", "Max projects on resume", "int", 3, "Resume", "config",
-          help="How many projects the tailored resume lists. The resume is held to ONE "
-               "page, so more projects means less room per item: 3 is the safe default, "
-               "4 usually still fits, and 5-6 risks shrinking text or spilling onto a "
-               "second page (the tailor then drops the weakest items to stay one page). "
-               "Raise it only if your other sections are short.",
-          min=1, max=6, slider=True, warn_above=4,
-          warn_text="More than 4 projects rarely fits one page cleanly — the tailor may "
-                    "shrink bullets or drop your weakest projects to hold a single page."),
+    # --- Resume: artifact toggles + cover-letter tone (config.json) ---
+    # Layout controls live in the Resume Data tab's "Resume Layout (bullet sizing)"
+    # section: per-bullet line budgets AND the project count + at-most/exactly-N
+    # mode (jobsdata.save_projects_count). Required sections come from the
+    # master_experience yaml `tailor:` block. Here: artifact toggles and tone only.
     Field("tailor_cover_letter", "Generate cover letter", "bool", False, "Resume", "config",
           help="When tailoring, also generate a cover letter PDF."),
     Field("tailor_ats_report", "Write ATS report", "bool", True, "Resume", "config",

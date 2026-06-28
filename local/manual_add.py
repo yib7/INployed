@@ -222,6 +222,7 @@ def add_manual_job(
     url: str = "",
     company: str = "",
     title: str = "",
+    do_tailor: bool = True,
     tailor_opts: Optional[Dict[str, Any]] = None,
     pool: Any = None,
     pool_factory: Optional[Callable[[], Any]] = None,
@@ -234,8 +235,13 @@ def add_manual_job(
     """Full manual-add flow. Returns {record, resume_dir, appended}.
 
     record       the scored job record (source="manual") appended to the master
-    resume_dir   the tailored-résumé output folder (Path) or None on tailor failure
+    resume_dir   the tailored-résumé output folder (Path), or None when tailoring
+                 was skipped (do_tailor=False) or failed
     appended     True when the record landed in the master CSV (False if a dup)
+
+    `do_tailor` False = "just score": score the résumé against the job and append it
+    to the dataset, skipping the tailor pass entirely (so it never fails on a thin
+    record, and no cover letter is generated).
 
     Seams (all default to the real implementations, overridden in tests):
       pool / pool_factory  the Gemini scoring client (score_jobs pool)
@@ -261,22 +267,25 @@ def add_manual_job(
     record = score_record(record, pool=pool, pool_factory=pool_factory, resume=resume)
 
     resume_dir: Optional[Path] = None
-    try:
-        log(f"tailoring résumé for {record.get('job_title')} @ {record.get('company_name')}…")
-        if tailor_fn is None:
-            from resume_tailor.run import tailor as tailor_fn  # noqa: PLW0127
-        out = tailor_fn(
-            record,
-            cover_letter=bool(tailor_opts.get("cover_letter", False)),
-            ats_report=bool(tailor_opts.get("ats_report", True)),
-            prep_sheet=bool(tailor_opts.get("prep_sheet", False)),
-            tone=tailor_opts.get("tone", "professional"),
-            on_status=log,
-        )
-        resume_dir = Path(out) if out else None
-        record["resume"] = str(resume_dir) if resume_dir else ""
-    except Exception as exc:  # noqa: BLE001 - tailoring is best-effort; the job is still added
-        log(f"tailoring failed ({exc}); the job is still added — tailor it later.")
+    if not do_tailor:
+        log("scored only (tailoring skipped).")
+    else:
+        try:
+            log(f"tailoring résumé for {record.get('job_title')} @ {record.get('company_name')}…")
+            if tailor_fn is None:
+                from resume_tailor.run import tailor as tailor_fn  # noqa: PLW0127
+            out = tailor_fn(
+                record,
+                cover_letter=bool(tailor_opts.get("cover_letter", False)),
+                ats_report=bool(tailor_opts.get("ats_report", True)),
+                prep_sheet=bool(tailor_opts.get("prep_sheet", False)),
+                tone=tailor_opts.get("tone", "professional"),
+                on_status=log,
+            )
+            resume_dir = Path(out) if out else None
+            record["resume"] = str(resume_dir) if resume_dir else ""
+        except Exception as exc:  # noqa: BLE001 - tailoring is best-effort; the job is still added
+            log(f"tailoring failed ({exc}); the job is still added — tailor it later.")
 
     log("appending to the master jobs list…")
     import jobsdata

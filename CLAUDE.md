@@ -10,3 +10,5 @@ INployed: a Job Discovery & Résumé-Tailoring Pipeline. Three subsystems: `scra
 - The résumé engine's rule is **select and re-phrase, never invent**: every bullet traces to an
   atom the user wrote in `resume_tailor_files/master_experience.yaml`.
 - Tests: `QT_QPA_PLATFORM=offscreen python -m pytest`; dashboard smoke: `python tests/smoke_qt.py`.
+- Autopilot runs: the autonomy contract is `.autopilot/AUTONOMY.md` (short) — quote its two hard-stops
+  in every subagent brief and reference the file for the rest.

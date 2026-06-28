@@ -105,4 +105,6 @@ def test_push_argv_targets_resume_md_on_vm():
     import vm_sync
     t = vm_sync.VMTarget(instance="vm", zone="z", user="u", remote_dir="~")
     argv = t.build_scp_cmd(str(resume_md.RESUME_MD_PATH), "resume.md")
-    assert any(a.endswith(":~/resume.md") for a in argv)   # remote dest is ~/resume.md
+    # remote_dir "~" sends a bare relative dest (pscp can't open a literal "~/" path).
+    assert any(a.endswith(":resume.md") for a in argv)
+    assert not any(a.endswith(":~/resume.md") for a in argv)

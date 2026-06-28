@@ -246,6 +246,9 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
         return pd.DataFrame(), {}
     combined = pd.concat(frames, ignore_index=True)
     combined = combined.drop_duplicates(subset=["job_posting_id"], keep="last")
+    removed = load_removed_jobs()  # user-deleted ids stay hidden even if Drive still has them
+    if removed:
+        combined = combined[~combined["job_posting_id"].astype(str).isin(removed)]
     combined = add_extracted_date(combined, extraction_dates_from_runs(paths))
     # Display-friendly applicant count (Bright Data's job_num_applicants): used
     # to prioritize the apply window — fewer applicants = better odds.
@@ -364,6 +367,90 @@ def append_manual_job(record: dict, *, master_csv: Path | None = None) -> bool:
     except OSError:
         pass  # the canonical master append is what matters; the gz is a convenience
     return added
+
+
+def _drop_ids_from_csv(path: Path, ids: set[str]) -> None:
+    """Rewrite a (optionally gz) CSV dropping rows whose job_posting_id is in `ids`.
+    No-op when the file is missing, unreadable, idless, or unaffected."""
+    if not path.exists() or not ids:
+        return
+    compression = "gzip" if path.suffix == ".gz" else None
+    try:
+        df = pd.read_csv(path, dtype={"job_posting_id": str}, compression=compression)
+    except (OSError, ValueError):
+        return
+    if "job_posting_id" not in df.columns:
+        return
+    keep = df[~df["job_posting_id"].astype(str).isin(ids)]
+    if len(keep) == len(df):
+        return  # this file held none of the targets
+    keep.to_csv(path, index=False, encoding="utf-8", compression=compression)
+
+
+def load_removed_jobs() -> set[str]:
+    """Job ids the user deleted from the dashboard (config.json 'removed_jobs').
+
+    `load_files` filters these out so a row that still lives in the Drive-synced
+    master (which the dashboard can't rewrite) stays gone in the UI until the next
+    sync physically removes it. Local writable stores are also rewritten on delete."""
+    val = _load_cfg().get("removed_jobs")
+    return {str(x) for x in val} if isinstance(val, (list, tuple, set)) else set()
+
+
+def _save_removed_jobs(ids: set[str]) -> None:
+    _save_cfg({"removed_jobs": sorted(str(i) for i in ids)})
+
+
+def delete_jobs(ids, *, master_csv: Path | None = None) -> int:
+    """Remove jobs from the LOCAL writable stores and remember them as removed.
+
+    Rewrites the local master + manual gz + local run files dropping these ids, then
+    records them in config.json 'removed_jobs' so a Drive-only copy also disappears
+    from the UI. Tracker status is cleared by the caller (the UI's seen registry).
+    Returns the count of distinct ids targeted."""
+    ids = {str(i).strip() for i in (ids or []) if str(i).strip()}
+    if not ids:
+        return 0
+    master = Path(master_csv) if master_csv is not None else MASTER_CSV
+    for p in [master, *local_run_files(master.parent)]:
+        _drop_ids_from_csv(p, ids)
+    _save_removed_jobs(load_removed_jobs() | ids)
+    return len(ids)
+
+
+def master_row(jid, *, master_csv: Path | None = None) -> dict | None:
+    """The full master-CSV row for a job id (incl. job_description_formatted) or None.
+    Used to prefill the edit dialog with the stored fields + JD."""
+    master = Path(master_csv) if master_csv is not None else MASTER_CSV
+    if not master.exists():
+        return None
+    try:
+        df = pd.read_csv(master, dtype={"job_posting_id": str})
+    except (OSError, ValueError):
+        return None
+    if "job_posting_id" not in df.columns:
+        return None
+    hit = df[df["job_posting_id"].astype(str) == str(jid)]
+    if hit.empty:
+        return None
+    row = hit.iloc[0].to_dict()
+    return {k: ("" if (isinstance(v, float) and pd.isna(v)) else v) for k, v in row.items()}
+
+
+def update_manual_job(record: dict, *, old_id=None, master_csv: Path | None = None) -> bool:
+    """Field-fix an existing manual job: drop the old row(s) everywhere, then
+    re-append the edited record (since `_append_dedup_csv` keeps 'first'). Editing
+    also un-removes a previously-deleted id. Does NOT re-score/re-tailor — those stay
+    on the existing buttons. Returns append result (True when it lands fresh)."""
+    master = Path(master_csv) if master_csv is not None else MASTER_CSV
+    drop = {str(d).strip() for d in (old_id, record.get("job_posting_id")) if str(d or "").strip()}
+    if drop:
+        for p in [master, *local_run_files(master.parent)]:
+            _drop_ids_from_csv(p, drop)
+        rem = load_removed_jobs() - drop  # editing resurrects a previously-removed id
+        if rem != load_removed_jobs():
+            _save_removed_jobs(rem)
+    return append_manual_job(record, master_csv=master_csv)
 
 
 def _load_cfg() -> dict:
@@ -523,6 +610,49 @@ def load_project_layout() -> dict:
 
 def save_project_layout(layout: dict) -> None:
     _save_cfg({"project_layout": dict(layout)})
+
+
+def load_verbatim_blocks() -> dict:
+    """{block_name: [bullet, ...]} from config.json — blocks the user marked
+    'don't tailor; use my exact bullets'. A non-empty list means that block renders
+    verbatim (the résumé engine bypasses the LLM for it). {} when absent/bad."""
+    val = _load_cfg().get("verbatim_blocks")
+    return val if isinstance(val, dict) else {}
+
+
+def save_verbatim_blocks(blocks: dict) -> None:
+    _save_cfg({"verbatim_blocks": dict(blocks)})
+
+
+# How many projects the tailored resume lists, and whether that's a ceiling or an
+# exact target. Read by resume_tailor/config.py (projects_max() / projects_mode()).
+# 6 mirrors resume_tailor.config.PROJECTS_MAX_LIMIT (the resume is one page).
+_PROJECTS_MAX_LIMIT = 6
+
+
+def load_projects_count() -> tuple[int, str]:
+    """(count, mode) from config.json. count clamped 1.._PROJECTS_MAX_LIMIT
+    (default 3); mode is 'max' or 'exact' (default 'max')."""
+    cfg = _load_cfg()
+    try:
+        n = int(cfg.get("projects_max"))
+    except (TypeError, ValueError):
+        n = 3
+    n = max(1, min(_PROJECTS_MAX_LIMIT, n))
+    mode = cfg.get("projects_mode")
+    mode = mode if mode in ("max", "exact") else "max"
+    return n, mode
+
+
+def save_projects_count(n: int, mode: str) -> None:
+    """Persist the project count cap + mode (clamped/normalized; best-effort)."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 3
+    n = max(1, min(_PROJECTS_MAX_LIMIT, n))
+    mode = "exact" if str(mode).lower() == "exact" else "max"
+    _save_cfg({"projects_max": n, "projects_mode": mode})
 
 
 def gdrive_root_dir(csv_paths: list[Path]) -> Path | None:

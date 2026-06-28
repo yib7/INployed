@@ -12,7 +12,7 @@ ever inventing a fact about you.
 
 It is three cooperating pieces:
 
-1. **Scraper** (`scraper.py`): pulls fresh LinkedIn postings via the Bright Data API.
+1. **Job discovery** (`scraper.py`): pulls in fresh job postings to evaluate.
 2. **Scorer** (`score_jobs.py`): a two-stage Gemini relevance filter that ranks each
    job against your background, so you only look at the ~5% worth your time.
 3. **Desktop dashboard** (`local/app.py`): a Windows PySide6/Qt app for triage, an
@@ -21,17 +21,17 @@ It is three cooperating pieces:
    ATS keyword report, and interview-prep sheet for the selected job.
 
 > **Why it's interesting (the engineering, not the hustle):** a scheduled cloud
-> scraper feeding a tiered LLM scorer, syncing to a desktop app with an automated
-> LaTeX generation engine whose guiding rule is **select-and-rephrase, never
-> invent**. Every résumé bullet is traceable to a fact you actually provided.
+> job-discovery step feeding a tiered LLM scorer, syncing to a desktop app with an
+> automated LaTeX generation engine whose guiding rule is **select-and-rephrase,
+> never invent**. Every résumé bullet is traceable to a fact you actually provided.
 
 ---
 
 ## Demo
 
-![Animated tour of the dashboard: the High Score tab ranks scraped jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Resume Data tab holds the select-and-rephrase source of truth; and the Apply panel shows the self-contained apply sheet.](docs/demo.gif)
+![Animated tour of the dashboard: the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Resume Data tab holds the select-and-rephrase source of truth; and the Apply panel shows the self-contained apply sheet.](docs/demo.gif)
 
-A tour of the full loop: **High Score** ranks every scraped posting by a two-stage
+A tour of the full loop: **High Score** ranks every discovered posting by a two-stage
 Gemini relevance score and color-codes the recommendation; selecting a job opens its
 **score breakdown** (reason, strengths, gaps); the **Tracker** follows each application
 from applied through interviewing, offer, or rejected; the **Resume Data** tab is the
@@ -45,10 +45,10 @@ produces a self-contained apply sheet. *(Shown with representative sample data.)
 ```mermaid
 flowchart TD
     subgraph Cloud["GCP VM (cron, twice daily)"]
-        A["scraper.py<br/>Bright Data API"] --> B["score_jobs.py<br/>2-stage Gemini scorer"]
+        A["scraper.py<br/>job discovery"] --> B["score_jobs.py<br/>2-stage Gemini scorer"]
     end
     B -->|scored CSVs| C[("Google Drive")]
-    C -->|Drive desktop sync| D["Local LinkedInJobs folder"]
+    C -->|Drive desktop sync| D["Local synced jobs folder"]
     subgraph Desktop["Windows PC"]
         D --> E["app.py dashboard (Qt)<br/>triage / tracker / stats"]
         E -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - verify - LaTeX"]
@@ -165,7 +165,7 @@ reported without sinking the rest, and a quick warning appears before very large
 Tailoring streams **live progress in the status bar** (`Tailoring (2/3 done): … rephrasing
 bullets`) so a multi-minute run is never a silent freeze. The window opens **maximized**
 to use the whole screen. On a brand-new setup with no jobs yet, the High Score tab shows a
-short **get-started** panel (Open Settings · Run scraper · Set up Resume Data) instead of a
+short **get-started** panel (Open Settings · Find new jobs · Set up Resume Data) instead of a
 blank table.
 
 Each job tab keeps a tidy filter bar: a search box plus a **Filters** button that holds
@@ -192,21 +192,22 @@ At-a-glance colors: a job whose tailored-résumé folder still exists on disk is
 tinted **blue** in the High Score / All Jobs lists (delete the folder and the
 tint clears on the next refresh), and in the **Tracker** an *applied* job is
 **blue** and a *rejected* one is **red**. Right-click any job → **Set status →**
-to mark it applied / interviewing / rejected / offer from any tab. A **Run
-scraper** button (top action bar) kicks off a fresh scrape + score on demand. It
-asks first (a *small test run* or a *full run*) because a scrape costs real
-Bright Data money.
+to mark it applied / interviewing / rejected / offer from any tab. Right-click also
+offers **Delete job** (any row) and **Edit job…** (for jobs you added by hand). A
+**Find new jobs** button (top action bar) kicks off a fresh discovery + score on
+demand. It asks first (a *small test run* or a *full run*) because finding jobs costs
+real money / API credits.
 
 The **Tracker** tab has **Export tracker… / Import tracker…** buttons. Your whole
 application history (seen-state, statuses, and tailored-résumé links) lives in a local
 SQLite file, so export a backup and import it on another machine. Import **merges** (a
 more recent status wins; nothing is deleted). The **Stats** tab shows a **freshness
-badge**: green when the latest pipeline run is recent, amber *"the cloud scraper may
+badge**: green when the latest pipeline run is recent, amber *"the cloud job search may
 have failed"* once it's older than the **Flag data as stale after (hours)** setting
 (default 36), so a broken cron run doesn't go unnoticed.
 
 ### Get fresh jobs
-- **From the dashboard:** click **Run scraper** and choose a *small test run* or a
+- **From the dashboard:** click **Find new jobs** and choose a *small test run* or a
   *full run*. It runs `scraper.py` then `score_jobs.py` in the background and
   refreshes the view when done.
 - **On-demand (local CLI):** run your own pipeline, then open the dashboard:
@@ -215,12 +216,12 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
   python scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
   python score_jobs.py                           # needs Vertex AI / ADC (auto-loads .env locally)
   ```
-  `--max-keywords N` / `--limit N` cap a run's cost: Bright Data bills per
+  `--max-keywords N` / `--limit N` cap a run's cost: the discovery service bills per
   collected posting, so the full keyword list (the VM default) can collect
   thousands. Use the caps for a quick check.
 - **Hands-off (recommended for daily use):** run that pair on a small GCP VM via
   cron and sync results to Google Drive, then drive the schedule, pauses, and config
-  pushes from the dashboard's **Settings → VM (cloud scraper)** section (below).
+  pushes from the dashboard's **Settings → VM (cloud job discovery)** section (below).
 
 ### Configure everything from the Settings tab (no file editing)
 Open the dashboard (`python local/app.py`) and click the **Settings** tab: one
@@ -238,13 +239,13 @@ one group at a time:
   filenames), the résumé output folder and `pdflatex` path (with **Browse…**
   buttons), and which Chrome profile to open links in.
 - **Engine:** which Gemini backend the tailor bills (Vertex project vs API key).
-- **Dashboard / Scraper / Scoring / Résumé:** scores, follow-up days, search
+- **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
   keywords, remote types, spend caps, artifact toggles, and more.
 - **Models:** the scorer's two stages **and** all three résumé-tailor stages
   (fast / standard / deep) are **editable dropdowns** of the recent Gemini 3.x
   models; pick one or type a custom id.
-- **VM (cloud scraper):** an **Enable VM features** master toggle (off by default)
-  plus the non-secret connection details for your GCP scraper VM (instance, zone,
+- **VM (cloud job discovery):** an **Enable VM features** master toggle (off by default)
+  plus the non-secret connection details for your GCP job-discovery VM (instance, zone,
   project, Linux user). Off hides the whole VM area and silences VM prompts; turn
   it on to reveal the controls (see *Manage the VM* below).
 
@@ -262,7 +263,7 @@ Edits are written atomically (with a `.bak`) to your git-ignored `.env`,
 falls back to built-in defaults, so the VM keeps running unchanged.
 
 ### Manage the VM from the dashboard
-If you run the scraper + scorer on a GCP VM, the dashboard drives it without
+If you run discovery + scoring on a GCP VM, the dashboard drives it without
 SSH-by-hand; there's **no separate VM tab**. In
 **Settings**, turn on **Enable VM features** (off by default) and fill the VM
 section (instance, zone, project, Linux user); these non-secret identifiers are
@@ -275,7 +276,7 @@ then appear at the bottom of Settings, letting you:
   its **own** `crontab` line in a live preview, and on **Apply schedule to VM** it's
   installed over `gcloud compute ssh`.
   Each run is labelled by time of day: **morning / afternoon / evening / night**.
-- **Pause:** set an *until* date (optionally a time) and **Pause VM**: the scraper
+- **Pause:** set an *until* date (optionally a time) and **Pause VM**: discovery
   skips every run until then, then resumes on its own (no API spend while paused).
   **Resume now** clears it.
 - **Push config to VM:** copy your current `search_config.json` / `scoring_config.json`
@@ -387,10 +388,10 @@ semi-automated apply flow. *(Shown with representative sample data.)*
 ## Project layout
 ```
 Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
-scraper.py              LinkedIn scrape (Bright Data)
+scraper.py              job discovery (fetches + normalizes postings)
 score_jobs.py           two-stage Gemini relevance scorer
 run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
-scripts/run_scraper.sh  VM cron orchestration (scrape -> score -> Drive)
+scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
 scripts/setup.ps1       Fast/Long setup wizard
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)

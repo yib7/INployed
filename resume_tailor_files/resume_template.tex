@@ -1,16 +1,24 @@
 \documentclass[letterpaper,11pt]{article}
 
-\usepackage{latexsym}
+
 \usepackage[empty]{fullpage}
 \usepackage{titlesec}
-\usepackage{marvosym}
+
 \usepackage[usenames,dvipsnames]{color}
-\usepackage{verbatim}
+
 \usepackage{enumitem}
-\usepackage[hidelinks]{hyperref}
+\usepackage{hyperref}
+\definecolor{LinkColor}{rgb}{0, 0.2, 0.6}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=LinkColor,
+    filecolor=LinkColor,
+    urlcolor=LinkColor,
+}
 \usepackage{fancyhdr}
 \usepackage[english]{babel}
-\usepackage{tabularx}
+
+\usepackage{newtxtext,newtxmath}  % Times New Roman font
 \input{glyphtounicode}
 
 \pagestyle{fancy}
@@ -34,56 +42,56 @@
 
 % Sections formatting
 \titleformat{\section}{
-\vspace{-4pt}\scshape\raggedright\large
+\vspace{-5pt}\scshape\raggedright\large
 }{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
 
 % Ensure that generate pdf is machine readable/ATS parsable
 \pdfgentounicode=1
 
-% Custom commands
+%% ===================== CUSTOM COMMANDS =====================
+
+% --- FONT SIZE CONTROL ---
+\newcommand{\resumeHeaderSize}{\fontsize{10.5pt}{11.5pt}\selectfont}
+\newcommand{\resumeBulletSize}{\fontsize{10pt}{11pt}\selectfont}
+
+% --- BULLET POINTS (all sections) ---
 \newcommand{\resumeItem}[1]{
-\item\small{
-{#1 \vspace{-2pt}}
+\item\resumeBulletSize{
+{#1\vspace{-2pt}}
 }
 }
+
+% --- EDUCATION header (two rows: school+GPA / degree+location) ---
 \newcommand{\resumeSubheading}[4]{
-\vspace{-2pt}\item
-\begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
-\textbf{#1} & #2 \\
-\textit{\small#3} & \textit{\small #4} \\
+\vspace{-3pt}\item
+\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\resumeHeaderSize\textbf{#1} & \resumeHeaderSize#2 \\
+\resumeHeaderSize\textit{#3} & \resumeHeaderSize\textit{#4} \\
 \end{tabular*}\vspace{-7pt}
 }
 
-% One-line work-experience header: bold title, company, location all left-aligned
-% on a single row, with dates right-aligned (used by render.py _experience()).
+% --- WORK EXPERIENCE header (one line: title|company left, location|dates right) ---
 \newcommand{\resumeSubheadingOneLine}[4]{
-\vspace{-2pt}\item
-\begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
-\textbf{#1}, #2, #3 & \textit{\small #4} \\
+\vspace{-3pt}\item
+\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\resumeHeaderSize\textbf{#1} $|$ \textit{#2} $|$ #3 & \resumeHeaderSize #4 \\
 \end{tabular*}\vspace{-7pt}
 }
 
-\newcommand{\resumeSubSubheading}[2]{
-\item
-\begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
-\textit{\small#1} & \textit{\small #2} \\
-\end{tabular*}\vspace{-7pt}
-}
-
+% --- PROJECTS + LEADERSHIP header (one row: name / link or dates) ---
 \newcommand{\resumeProjectHeading}[2]{
-\item
-\begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
-\small#1 & #2 \\
+\vspace{-3pt}\item
+\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\resumeHeaderSize#1 & \resumeHeaderSize#2 \\
 \end{tabular*}\vspace{-7pt}
 }
-
-\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
 
 \renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
 
-\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+% --- LIST WRAPPERS ---
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0in, label={}]}
 \newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
-\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=0.15in, itemsep=4pt, parsep=0pt]}
 \newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
 
 

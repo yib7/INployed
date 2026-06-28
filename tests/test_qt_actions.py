@@ -615,7 +615,7 @@ def test_first_run_hint_buttons_navigate(qtbot, monkeypatch):
     ran = []
     monkeypatch.setattr(w, "_run_scraper_dialog", lambda: ran.append("scrape"))
     btns = {b.text(): b for b in w.high_tab._empty_widget.findChildren(QtWidgets.QPushButton)}
-    btns["Run scraper"].click()
+    btns["Find new jobs"].click()
     assert ran == ["scrape"]
     btns["Open Settings"].click()
     assert w.tabs.currentWidget() is w._tab_widgets["Settings"]

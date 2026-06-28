@@ -57,7 +57,7 @@ class StatsTab(QtWidgets.QWidget):
         else:
             when = "never" if age_hours == float("inf") else _human_age(age_hours)
             self.badge.setText(
-                f"● Stale — last run {when}; the cloud scraper may have failed")
+                f"● Stale — last run {when}; the cloud job search may have failed")
             color = theme.AMBER
         self.badge.setStyleSheet(f"color: {color}; font-weight: 600;")
         self.badge.show()

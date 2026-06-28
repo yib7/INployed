@@ -6,7 +6,9 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
-Post-1.0 résumé-tailoring quality work (on the `resume-tailor-improvements` branch).
+## [1.1.0] - 2026-06-28
+
+Post-1.0 résumé-tailoring quality work: distinct leading verbs, width-aware layout, best-N skills.
 
 ### Added
 - Categorized action-verb palette sourced from `resume_tailor_files/active_words.md` (558 verbs
@@ -45,5 +47,6 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/yib7/INployed/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/yib7/INployed/releases/tag/v1.0.0

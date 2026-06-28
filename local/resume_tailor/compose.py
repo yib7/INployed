@@ -641,6 +641,108 @@ Return ONLY JSON: {{"text": "<corrected bullet>"}}"""
     return (out.get("text") or "").strip()
 
 
+# ── Stage 2b: unique leading verbs (no opener reused across the resume) ───────
+# Punctuation stripped from the EDGES of a leading token (an inner hyphen in
+# "Co-developed" is kept). The palette verbs are capitalized past-tense; matching is
+# case-insensitive on this normalized form.
+_EDGE_PUNCT = " \t\n\r\"'`()[]{}.,;:!?"
+
+
+def leading_verb(text: str) -> str:
+    """The bullet's opening verb, normalized for comparison: the first whitespace token,
+    edge-punctuation-stripped and lowercased. '' for an empty/blank bullet."""
+    toks = (text or "").split()
+    if not toks:
+        return ""
+    return toks[0].strip(_EDGE_PUNCT).lower()
+
+
+def _pick_unused_verb(palette: Dict[str, List[str]], current: str, used) -> str:
+    """First palette verb whose lowercase isn't in `used`, preferring the category that
+    holds the colliding `current` verb (so the swap stays semantically near), then any
+    category. '' only if the entire palette is exhausted."""
+    cl = (current or "").lower()
+    home = [items for items in palette.values() if any(v.lower() == cl for v in items)]
+    for items in home + list(palette.values()):
+        for v in items:
+            if v.lower() not in used:
+                return v
+    return ""
+
+
+def _swap_leading_verb(text: str, repl: str) -> str:
+    """Replace the bullet's first word with `repl`, preserving the rest verbatim."""
+    parts = (text or "").strip().split(None, 1)
+    rest = parts[1] if len(parts) > 1 else ""
+    return f"{repl} {rest}".strip()
+
+
+def reverb(jd: str, ids: List[str], bad_text: str, used) -> str:
+    """Regenerate ONE bullet so it opens with a fresh action verb NOT in `used`, keeping
+    every fact/number. Deterministic, cheapest tier — the re-roll arm of dedupe_leading_verbs."""
+    atoms = {a: _atom_payload(a) for a in ids}
+    palette = _render_verb_palette(assets.active_verbs())
+    taken = ", ".join(sorted(used)) or "(none)"
+    system = (
+        "Rewrite ONE resume bullet so it OPENS WITH A DIFFERENT action verb, keeping every "
+        "fact and number identical. " + _PRINCIPLE + "\n"
+        "Choose a category-appropriate opening verb from the list that is NOT already used; "
+        "do not inflate ownership. Plain text, past tense, no pronouns, no markup, <= ~300 chars."
+    )
+    user = f"""ATOMS (the only allowed source of facts):
+{json.dumps(atoms, ensure_ascii=False, indent=1)}
+
+JOB CONTEXT (emphasis only): {jd[:1500]}
+
+ALREADY-USED LEADING VERBS (do NOT start the bullet with any of these): {taken}
+
+ACTION VERBS (grouped by category; choose an UNUSED one that fits the atom's ownership):
+{palette}
+
+PREVIOUS BULLET (keep the same facts; only change the opening verb): {bad_text}
+
+Return ONLY JSON: {{"text": "<rewritten bullet>"}}"""
+    out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
+    return (out.get("text") or "").strip()
+
+
+def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: str,
+                         *, reserved=frozenset()) -> Dict[str, str]:
+    """Guarantee every tailored bullet opens with a DISTINCT action verb — none reused, none
+    colliding with `reserved` (the openers of verbatim bullets, which are never modified).
+
+    First occurrence of a verb keeps it. A collision is re-rolled once via the LLM (`reverb`,
+    constrained to an unused opener); if that still collides or fails, a deterministic
+    in-category swap from `active_verbs()` makes the opener unique. Verbatim gkeys are skipped.
+    Mutates and returns `bullets`."""
+    used = {v for v in (reserved or ()) if v}
+    palette = assets.active_verbs()
+    for gk, text in list(bullets.items()):
+        if is_verbatim_gkey(gk):
+            continue
+        v = leading_verb(text)
+        if v and v not in used:
+            used.add(v)
+            continue
+        ids = gm.get(gk) or gk.split("+")
+        try:
+            new = reverb(jd, ids, text, used)
+        except Exception:  # noqa: BLE001 - re-roll is best-effort; the swap below guarantees uniqueness
+            new = ""
+        nv = leading_verb(new)
+        if new and nv and nv not in used:
+            bullets[gk] = new
+            used.add(nv)
+            continue
+        repl = _pick_unused_verb(palette, v, used)
+        if repl:
+            bullets[gk] = _swap_leading_verb(text, repl)
+            used.add(repl.lower())
+        elif v:
+            used.add(v)  # palette exhausted (pathological) — keep as-is, record the verb
+    return bullets
+
+
 # ── Stage 3: skills (exactly 4 fixed categories) ─────────────────────────────
 _SKILL_BUCKETS = (
     ("Languages", ("languages",)),
@@ -798,11 +900,13 @@ def shrink(jd: str, bullets: Dict[str, str], pages: int) -> Dict[str, str]:
     system = (
         "Shorten resume bullets so the resume fits on one page. Keep EVERY number, "
         "metric, tool, and claim — only cut filler words, adjectives, and redundant "
-        "clauses. Never add anything. Plain text, no markup. " + _PRINCIPLE
+        "clauses. Never add anything. Keep each bullet's OPENING VERB unchanged (the "
+        "openers are unique across the resume). Plain text, no markup. " + _PRINCIPLE
     )
     user = (
         f"The resume is {pages} pages; it must be 1. Tighten each bullet by ~20-30%% "
-        "without losing any fact or number.\n\nBULLETS:\n"
+        "without losing any fact or number, and keep its first word (the action verb) "
+        "exactly as given.\n\nBULLETS:\n"
         + json.dumps([{"gkey": k, "text": v} for k, v in bullets.items()], ensure_ascii=False, indent=1)
         + '\n\nReturn ONLY JSON: {"bullets": [{"gkey": "...", "text": "..."}, ...]}'
     )

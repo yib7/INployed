@@ -215,6 +215,14 @@ def tailor(
 
     _trim_to_caps(sel, bullets)
 
+    # Grow any bullet that rendered shorter than its configured line target by folding in one
+    # detail from an unused SAME-block atom (never fabricates — a no-op when there's no spare
+    # material), then re-trim the (over)filled bullets back to a clean line boundary.
+    if config.fill_underfull_enabled():
+        log("filling underfull bullets from spare atoms…")
+        compose.fill_underfull(jd, job_title, sel, bullets)
+        _trim_to_caps(sel, bullets)
+
     log("compressing skills…")
     skill_lines = compose.compress_skills(jd, job_title, sel)
 

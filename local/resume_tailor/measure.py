@@ -15,6 +15,7 @@ bullet's real line count. It is env-overridable for a customized template font/g
 from __future__ import annotations
 
 import os
+from math import ceil
 
 # Times-Roman AFM advance widths, units = 1/1000 em.
 _CHAR_W = {
@@ -91,3 +92,30 @@ def line_count(text: str, capacity: int | None = None) -> int:
             n += 1
             cur = ww
     return n
+
+
+# Minimum fraction of a printed line a bullet should fill to count as "full": a single-line
+# bullet should fill >=FULL_LINE_FILL of its one line; a multi-line bullet's last line may run
+# shorter but should still reach >=LAST_LINE_FILL into it. Shared by the rephrase length hint
+# (compose._length_hint) and underfull detection (is_underfull) so the two never drift.
+FULL_LINE_FILL = 0.90
+LAST_LINE_FILL = 0.75
+
+
+def fill_floor_width(target_lines: int, capacity: int | None = None) -> int:
+    """Minimum acceptable total advance width (1/1000-em units) for a bullet with a
+    `target_lines` printed-line budget: a 1-line bullet must reach FULL_LINE_FILL of its
+    line; a multi-line bullet must reach LAST_LINE_FILL into its last line — i.e.
+    ((target_lines - 1) + LAST_LINE_FILL) * capacity. The em-unit twin of
+    compose._length_hint's character floor; below this a bullet is considered underfull."""
+    cap = BODY_LINE_CAPACITY if capacity is None else capacity
+    if target_lines <= 1:
+        return ceil(FULL_LINE_FILL * cap)
+    return ceil(((target_lines - 1) + LAST_LINE_FILL) * cap)
+
+
+def is_underfull(text: str, target_lines: int, capacity: int | None = None) -> bool:
+    """True when `text`'s rendered width falls below its line budget's fill floor, so the
+    engine may try to fold in more grounded detail (compose.fill_underfull). Width-aware
+    (real glyph widths), the mirror of the over-length check line_count() drives."""
+    return text_width(text) < fill_floor_width(target_lines, capacity)

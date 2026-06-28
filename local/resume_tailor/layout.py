@@ -18,7 +18,7 @@ import os
 from typing import Dict, List
 
 # ── Calibrated column capacities ─────────────────────────────────────────────
-SKILL_CPL = int(os.getenv("RESUME_TAILOR_SKILL_CPL", "105"))  # technical-skills line
+SKILL_CPL = int(os.getenv("RESUME_TAILOR_SKILL_CPL", "131"))  # technical-skills line
 _SAFETY = 2  # keep a couple chars off the wrap boundary
 
 # ── The strict spec ──────────────────────────────────────────────────────────

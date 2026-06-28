@@ -29,6 +29,11 @@ TARGET_REMOTE_FILE = {
     "scoring": "scoring_config.json",
 }
 
+# Seen/exclude id set pushed to the VM after a manual local scrape so its next
+# scheduled run skips the ids this machine just collected. The VM's scraper unions
+# this file into load_exclude_ids() (same dir convention as the config files above).
+EXCLUDE_REMOTE_FILE = "external_exclude_ids.json"
+
 # VM connection identifiers (all NON-secret), read from the .env via settings.
 VM_KEYS = ("VM_GCLOUD_PATH", "VM_INSTANCE", "VM_ZONE", "VM_PROJECT", "VM_USER",
            "VM_REMOTE_DIR")
@@ -109,6 +114,11 @@ class VMTarget:
         return self.build_ssh_cmd(
             f"printf '%s' {q} | crontab - && echo CRONTAB_INSTALLED && crontab -l")
 
+    def push_exclude_ids_cmd(self, local_path: str) -> list[str]:
+        """scp argv that uploads the seen/exclude id file to the VM, where the
+        scraper unions it into load_exclude_ids()."""
+        return self.build_scp_cmd(local_path, EXCLUDE_REMOTE_FILE)
+
 
 def _norm_value(field, value):
     """Normalize a value for change detection so semantically-equal saves don't
@@ -176,3 +186,12 @@ def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
     user click in the dashboard — never during the build or tests (mocked).
     `launch_argv` makes the bare `gcloud` name launch on Windows."""
     return subprocess.run(launch_argv(cmd), capture_output=True, text=True, timeout=300)
+
+
+def sync_exclude_ids_to_vm(target: VMTarget, local_path) -> subprocess.CompletedProcess | None:
+    """Push the seen/exclude id set to the VM so its next scheduled scrape skips the
+    ids this machine just collected. Returns None when the VM isn't configured. The
+    caller treats this as best-effort — a sync failure must never block a local scrape."""
+    if not target.configured():
+        return None
+    return run_cmd(target.push_exclude_ids_cmd(str(local_path)))

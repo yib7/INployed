@@ -40,7 +40,7 @@ def test_block_targets_bad_shape_falls_back(monkeypatch):
 
 
 def test_constants_present():
-    assert config.MAX_LINE_CHARS == 125
+    assert config.MAX_LINE_CHARS == 130
     assert config.PROJECTS_MAX == 3 and config.PROJECT_BULLETS_MAX == 2
     assert config.PROJECTS_MAX_LIMIT == 6
 
@@ -179,15 +179,15 @@ def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
 
 
 def test_length_hint_has_floor_and_ceiling():
-    """A3: the hint now carries a soft floor (>=85% single-line, >=70% last line of
+    """A3: the hint now carries a soft floor (>=90% single-line, >=75% last line of
     a multi-line bullet) plus the hard ceiling = target_lines * MAX_LINE_CHARS."""
     per = config.MAX_LINE_CHARS
     h1 = compose._length_hint(1)
     assert str(per) in h1                       # ceiling = one line
-    assert str(ceil(0.85 * per)) in h1          # single-line floor >=85%
+    assert str(ceil(0.90 * per)) in h1          # single-line floor >=90%
     h2 = compose._length_hint(2)
     assert str(2 * per) in h2                    # ceiling = two lines
-    assert str(ceil((1 + 0.70) * per)) in h2    # multi-line last-line floor >=70%
+    assert str(ceil((1 + 0.75) * per)) in h2    # multi-line last-line floor >=75%
 
 
 def test_select_uses_four_skill_pools_no_keyerror(monkeypatch):
@@ -211,13 +211,63 @@ def test_select_uses_four_skill_pools_no_keyerror(monkeypatch):
 
 
 def test_compress_skills_returns_four_labeled_lines():
-    """A2: the preselected-skills path returns all 4 fixed lines, each non-empty."""
+    """A2: the preselected-skills path returns all 4 fixed lines, each non-empty and
+    within its best-N target count."""
     pre = {"skills": {"Languages": "Python, SQL", "Frameworks": "Flask",
                       "Developer Tools": "Git", "Libraries": "NumPy"}}
     lines = compose.compress_skills("jd", "Data Analyst", pre)
     assert [ln["label"] for ln in lines] == [
         "Languages", "Frameworks", "Developer Tools", "Libraries"]
     assert all(ln["items"].strip() for ln in lines)
+    targets = compose.layout.skill_targets()
+    for ln in lines:                                   # never exceed best-N per line
+        assert len(ln["items"].split(", ")) <= targets[ln["label"]]
+
+
+def test_complete_to_count_keeps_model_order_then_completes_from_pool():
+    """SP1: the model's relevance order leads; the pool completes up to the target."""
+    pool = ["Python", "SQL", "C", "Java", "R", "Go", "Rust", "Kotlin"]
+    assert compose._complete_to_count("Go, Python", pool, 5) == [
+        "Go", "Python", "SQL", "C", "Java"]                # model 2 first, then pool order
+
+
+def test_complete_to_count_caps_at_target():
+    pool = ["Python", "SQL", "C", "Java", "R", "Go", "Rust", "Kotlin", "Scala", "Perl"]
+    out = compose._complete_to_count(", ".join(pool), pool, 7)
+    assert out == pool[:7]                                 # 10 available -> top 7 only
+
+
+def test_complete_to_count_pool_smaller_than_target_takes_all_no_padding():
+    """A short pool yields a short line — NO floor padding (the killed behavior)."""
+    assert compose._complete_to_count("Python, SQL", ["Python", "SQL"], 7) == ["Python", "SQL"]
+
+
+def test_complete_to_count_single_char_skills_not_falsely_skipped():
+    """'C'/'R' must not be dropped as substrings of 'JavaScript' during completion."""
+    out = compose._complete_to_count("JavaScript", ["JavaScript", "C", "R", "Python"], 4)
+    assert out == ["JavaScript", "C", "R", "Python"]
+
+
+def test_complete_to_count_preserves_merged_token_and_skips_its_components():
+    pool = ["Gemini", "OpenAI", "Claude", "Git", "Docker"]
+    out = compose._complete_to_count("Gemini/OpenAI/Claude API", pool, 3)
+    assert out == ["Gemini/OpenAI/Claude API", "Git", "Docker"]   # components skipped
+
+
+def test_finalize_skill_lines_drops_bottom_to_fit_one_line(monkeypatch):
+    """SP1: when the chosen items overflow one printed line, the least-relevant tail
+    is dropped until they fit — never padded, never wrapped."""
+    monkeypatch.setattr(compose, "_skill_pools", lambda: {
+        "Languages": [], "Frameworks": [], "Developer Tools": [], "Libraries": []})
+    monkeypatch.setattr(compose.layout, "skill_targets", lambda: {
+        "Languages": 7, "Frameworks": 0, "Developer Tools": 0, "Libraries": 0})
+    monkeypatch.setattr(compose.layout, "skill_caps", lambda: {
+        "Languages": 14, "Frameworks": 0, "Developer Tools": 0, "Libraries": 0})
+    out = {"Languages": "Python, SQL, JavaScript, TypeScript"}
+    lines = compose._finalize_skill_lines(out)
+    by = {ln["label"]: ln["items"] for ln in lines}
+    assert by["Languages"] == "Python, SQL"               # ", JavaScript" would exceed 14 -> dropped
+    assert "Frameworks" not in by                          # empty pool + no items -> no line
 
 
 def test_rephrase_dropped_budgets_param():

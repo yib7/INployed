@@ -221,17 +221,17 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         "atoms only when they describe the SAME achievement and read naturally as a single "
         "dense line (e.g. an accuracy gain + the cost cut). Prefer single-atom groups "
         "unless fusing clearly improves density. Bias toward the most JD-relevant evidence. "
-        "In the SAME pass, also select the candidate's technical skills "
-        "into exactly four lines (Languages / Frameworks / Developer Tools / Libraries): "
-        "only skills present in each line's pool. STRATEGY: first lock in every skill the JD "
-        "explicitly mentions or strongly implies; then fill remaining slots with complementary "
-        "skills that a strong candidate in this role would also have — adjacent languages, "
-        "transferable tools, or broadly valued skills (e.g. Python on a Java role, SQL on a "
-        "backend role). Goal: show depth in the asked stack AND breadth beyond it, without "
-        "padding with unrelated filler. Avoid obscure niche items that add no signal. "
-        "Most JD-relevant items first. Preserve any '(conceptual)' / '(from scratch)' "
-        "qualifiers verbatim. You MAY merge closely-related API entries into one compact token "
-        "(e.g. 'Gemini/OpenAI/Claude API').\n"
+        "In the SAME pass, also select the candidate's technical skills into exactly four "
+        "lines (Languages / Frameworks / Developer Tools / Libraries): only skills present in "
+        "each line's pool. RANK each line's pool by relevance to THIS job and return the BEST "
+        "few, most-relevant FIRST. Aim for ~7 Languages, ~7 Frameworks, ~10 Developer Tools, "
+        "~10 Libraries; if a pool has fewer than that, just return all of it. Lead with every "
+        "skill the JD explicitly mentions or strongly implies, then the strongest complementary "
+        "skills a candidate in this role would have (adjacent languages, transferable tools). "
+        "Do NOT pad with weak/unrelated filler just to reach the count — a few sharp, relevant "
+        "skills beat a long list. Preserve any '(conceptual)' / '(from scratch)' qualifiers "
+        "verbatim. You MAY merge closely-related API entries into one compact token (e.g. "
+        "'Gemini/OpenAI/Claude API').\n"
         + _PRINCIPLE
     )
     pools = _skill_pools()
@@ -250,7 +250,7 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
     user = f"""ATOM CATALOG (choose atom ids from here only; an atom belongs to the block it is listed under):
 {_catalog()}
 
-SKILL POOLS (for the "skills" output only — pick each line's items only from its pool; Languages must have AT LEAST 4 (aim ~6-8), ~7-10 for the others — JD matches first, then complementary skills that show breadth):
+SKILL POOLS (for the "skills" output only — pick each line's items only from its pool, ranked most-relevant-first; aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool — JD matches first, then complementary skills; don't pad to hit the count):
 Languages: {json.dumps(pools["Languages"], ensure_ascii=False)}
 Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
 Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
@@ -444,14 +444,14 @@ def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:
 def _length_hint(target_lines: int) -> str:
     """A soft floor + hard ceiling for one bullet. The ceiling is the trim cap
     (target_lines * MAX_LINE_CHARS); the floor keeps the bullet from sitting
-    stubby — a single-line bullet should fill >=85% of its line, and a wrapping
-    bullet's last line should fill >=70% (so floor = ((n-1)+0.70)*cap_per_line)."""
+    stubby — a single-line bullet should fill >=90% of its line, and a wrapping
+    bullet's last line should fill >=75% (so floor = ((n-1)+0.75)*cap_per_line)."""
     per_line = config.MAX_LINE_CHARS
     cap = target_lines * per_line
     if target_lines <= 1:
-        floor = ceil(0.85 * per_line)
+        floor = ceil(0.90 * per_line)
     else:
-        floor = ceil(((target_lines - 1) + 0.70) * per_line)
+        floor = ceil(((target_lines - 1) + 0.75) * per_line)
     unit = "line" if target_lines == 1 else "lines"
     return (f"about {target_lines} {unit} ({floor}-{cap} characters; aim to fill "
             f"the line(s), never exceed {cap})")
@@ -571,10 +571,10 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
         "verb from the provided list that matches the atom's real ownership. Numbers exactly "
         "as written. Write 'greater than or equal to' style comparisons with the symbols "
         ">= and <= (they are converted to proper math notation later).\n"
-        "SPACE: a bullet that fits on ONE printed line should fill at least ~85% of it — "
+        "SPACE: a bullet that fits on ONE printed line should fill at least ~90% of it — "
         "never leave a stubby half-empty line (fold in more grounded detail from the atoms "
         "or fuse, but NEVER invent facts to pad). A bullet that wraps to multiple lines may "
-        "let its last line run shorter, but it should still be at least ~70% full."
+        "let its last line run shorter, but it should still be at least ~75% full."
     )
     user = f"""TARGET JOB: {job_title}
 
@@ -636,10 +636,11 @@ _SKILL_BUCKETS = (
     ("Developer Tools", ("developer_tools",)),
     ("Libraries", ("libraries",)),
 )
-# Per-line item-char caps/floors are derived in layout.py from the calibrated
-# skills-column width so the section lands at ~4 printed lines (one line may
-# wrap to a 2nd) and no line sits below its fill floor. Languages also carries a
-# hard minimum item count (layout.MIN_LANGUAGES).
+# Each line shows the best-N most JD-relevant skills (layout.skill_targets():
+# Languages 7, Frameworks 7, Developer Tools 10, Libraries 10). The model ranks;
+# _finalize_skill_lines takes the top N, completes from the pool if the model
+# under-returns, and trims from the tail to the one-printed-line cap
+# (layout.skill_caps()). No fill floor — a short list of relevant skills stays short.
 
 
 def _pool(skills: Dict[str, Any], keys: Tuple[str, ...]) -> List[str]:
@@ -656,47 +657,58 @@ def _skill_pools() -> Dict[str, List[str]]:
 
 
 def _finalize_skill_lines(out: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Backfill each line from its pool so it is robust (>=4 languages, each line
-    filled to its floor), then cap it to its printed-line budget. Always returns
-    all four lines, filled, regardless of how little the model selected."""
+    """Resolve the best-N skills per line: take the model's relevance-ranked picks,
+    complete from the pool up to the target if it under-returned, then trim from the
+    tail (least relevant) to the one-printed-line cap. No fill floor — a short list
+    of relevant skills stays short. Always returns the four labeled lines."""
     caps = layout.skill_caps()
-    floors = layout.skill_floors()
+    targets = layout.skill_targets()
     pools = _skill_pools()
     lines: List[Dict[str, str]] = []
     for label, _keys in _SKILL_BUCKETS:
-        items = (out.get(label) or "").strip()
-        min_items = layout.MIN_LANGUAGES if label == "Languages" else 0
-        items = _backfill_skills(items, pools.get(label, []), caps[label],
-                                 floors[label], min_items)
-        items = _cap_items(items, caps[label])
+        picked = _complete_to_count(out.get(label) or "", pools.get(label, []),
+                                    targets.get(label, 0))
+        items = _cap_items(", ".join(picked), caps[label])
         if items:
             lines.append({"label": label, "items": items})
     return lines
 
 
-def _backfill_skills(items: str, pool: List[str], cap: int, floor: int,
-                     min_items: int) -> str:
-    """Append still-unused pool skills (in pool order) until the line has at least
-    `min_items` items AND fills its floor of characters — without overflowing `cap`
-    once the minimum is met. Guarantees a robust, non-empty line even if the model
-    under-selected (or returned nothing)."""
-    toks = [t.strip() for t in items.split(",") if t.strip()]
-    seen = {t.lower() for t in toks}
-
-    def clen(ts: List[str]) -> int:
-        return sum(len(t) for t in ts) + 2 * max(0, len(ts) - 1)
-
-    for cand in pool:
-        if len(toks) >= min_items and clen(toks) >= floor:
-            break
-        if cand.lower() in seen:
-            continue
-        would = clen(toks) + len(cand) + (2 if toks else 0)
-        if would > cap and len(toks) >= min_items:
-            continue  # don't blow the cap once the hard minimum is satisfied
-        toks.append(cand)
-        seen.add(cand.lower())
-    return ", ".join(toks)
+def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
+    """Best-N selection for one skills line. Start from the model's items in its
+    relevance order (kept verbatim — merged tokens like 'Gemini/OpenAI/Claude API'
+    and '(conceptual)' qualifiers are preserved); if it returned fewer than
+    `target`, append still-unused pool skills in pool order (the least-relevant
+    tail) until the line has min(target, len(pool)) items; then cap the count at
+    `target`. No char floor — the printed-line cap (applied later) is the only size
+    limit, so a genuinely short list is never padded to fill the line."""
+    picked: List[str] = []
+    seen = set()
+    for tok in (t.strip() for t in items.split(",")):
+        if tok and tok.lower() not in seen:
+            picked.append(tok)
+            seen.add(tok.lower())
+    if target > 0:
+        # atoms already shown: each picked token plus its "/"- and space-delimited
+        # parts, so completing the line never re-adds a skill already inside a merged
+        # token ('Gemini' in 'Gemini/OpenAI/Claude API') — while single-char skills
+        # like 'C'/'R' are NOT falsely matched as substrings of 'JavaScript'.
+        present = set()
+        for p in picked:
+            pl = p.lower()
+            present.add(pl)
+            present.update(pl.replace("/", " ").split())
+        for cand in pool:
+            if len(picked) >= target:
+                break
+            cl = cand.lower()
+            if cl in present:
+                continue
+            picked.append(cand)
+            present.add(cl)
+            present.update(cl.replace("/", " ").split())
+        picked = picked[:target]
+    return picked
 
 
 def _cap_items(items: str, max_chars: int) -> str:
@@ -731,14 +743,14 @@ def compress_skills(jd: str, job_title: str, sel: Dict[str, Any]) -> List[Dict[s
         "Select the candidate's technical skills into EXACTLY FOUR fixed lines: "
         "'Languages', 'Frameworks', 'Developer Tools', 'Libraries'. "
         "Selection only — only include skills present in that line's pool. "
-        "STRATEGY: first lock in every skill the JD explicitly mentions or strongly implies; "
-        "then fill remaining slots with complementary skills a strong candidate in this role "
-        "would also have — adjacent languages, transferable tools, broadly valued skills "
-        "(e.g. Python on a Java role, SQL on a backend role). Show depth in the asked stack "
-        "AND breadth beyond it, without padding with unrelated filler. "
-        "You MAY merge closely-related API entries into one compact token (e.g. 'Gemini/OpenAI/Claude API'). "
-        "Preserve confidence qualifiers like '(conceptual)' / '(from scratch)' verbatim. "
-        "Put the most JD-relevant items first."
+        "RANK each line's pool by relevance to THIS job and return the BEST few, most-relevant "
+        "FIRST: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of "
+        "a smaller pool. Lead with every skill the JD explicitly mentions or strongly implies, "
+        "then the strongest complementary skills (adjacent languages, transferable tools). Do "
+        "NOT pad with weak/unrelated filler to reach the count — a few sharp skills beat a long "
+        "list. You MAY merge closely-related API entries into one compact token (e.g. "
+        "'Gemini/OpenAI/Claude API'). Preserve confidence qualifiers like '(conceptual)' / "
+        "'(from scratch)' verbatim."
     )
     user = f"""TARGET JOB: {job_title}  (focus hint: {skill_focus})
 
@@ -752,8 +764,8 @@ Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
 Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
 Rules:
-- Languages must have AT LEAST 4 items (aim ~6-8); ~7-10 for the others. JD-matching skills first, then adjacent/complementary skills that add signal.
-- Avoid obscure niche items that recruiters won't recognise. Lead with the items this JOB cares about most.
+- Return each line ranked most-relevant-first: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries — or all of a smaller pool. JD-matching skills first, then adjacent/complementary skills that add signal.
+- Don't pad to hit the count with obscure or unrelated items — a few sharp, relevant skills beat a long list. Lead with the items this JOB cares about most.
 
 Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}}"""
     try:

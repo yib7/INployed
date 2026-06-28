@@ -87,6 +87,42 @@ def test_trim_to_caps_uses_width_not_char_count(monkeypatch):
     assert len(bullets[gk]) < len(THREE_LINE)
 
 
+# --- underfull detection (fill_floor_width / is_underfull) ---------------------
+
+def test_fill_floor_width_monotonic_in_target():
+    assert measure.fill_floor_width(1) < measure.fill_floor_width(2) < measure.fill_floor_width(3)
+
+
+def test_fill_floor_width_single_line_is_ninety_percent():
+    from math import ceil
+    assert measure.fill_floor_width(1) == ceil(0.90 * measure.BODY_LINE_CAPACITY)
+
+
+def test_fill_floor_width_multiline_reaches_into_last_line():
+    from math import ceil
+    # A 2-line bullet must reach >=75% into its second line: (1 + 0.75) * capacity.
+    assert measure.fill_floor_width(2) == ceil(1.75 * measure.BODY_LINE_CAPACITY)
+
+
+def test_is_underfull_true_for_stubby_bullet():
+    assert measure.is_underfull("Built a small tool", 2) is True
+
+
+def test_is_underfull_false_once_width_passes_floor():
+    # A wide string whose advance width exceeds the 1-line floor is not underfull at target 1.
+    text = "wide " * 80
+    assert measure.text_width(text) >= measure.fill_floor_width(1)
+    assert measure.is_underfull(text, 1) is False
+
+
+def test_is_underfull_keys_off_fill_floor_width():
+    target = 2
+    big = "wide " * 80
+    assert measure.text_width(big) >= measure.fill_floor_width(target)
+    assert measure.is_underfull(big, target) is False
+    assert measure.is_underfull("x", target) is True
+
+
 # --- skills line width (bold label + items) ------------------------------------
 # Verbatim from the same real PDF; this Developer Tools line rendered on ONE line.
 DT_ITEMS = "LLM APIs (Gemini/OpenAI/Claude), AWS, S3, Docker, Kafka, PostgreSQL, Redis, ChromaDB"

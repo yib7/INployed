@@ -6,6 +6,16 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Underfull-bullet fill: when a tailored bullet renders shorter than its configured line
+  target and the page has room, the engine now folds one concrete detail from an unused atom
+  in the SAME block into that bullet (re-phrasing the group) so it fills toward its target,
+  instead of leaving the line half-empty. It is strictly grounded -- the extra detail can only
+  come from a real atom in the same entry, and a bullet whose block has no spare atom is left
+  exactly as-is, so it never fabricates. Runs as one extra flash call only when a bullet is
+  actually underfull with spare material; one-page enforcement stays the backstop. Toggle with
+  `RESUME_TAILOR_FILL_UNDERFULL` (default on).
+
 ## [1.1.2] - 2026-06-28
 
 ### Changed

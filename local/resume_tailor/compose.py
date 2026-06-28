@@ -489,9 +489,9 @@ def _length_hint(target_lines: int) -> str:
     per_line = config.MAX_LINE_CHARS
     cap = target_lines * per_line
     if target_lines <= 1:
-        floor = ceil(0.90 * per_line)
+        floor = ceil(measure.FULL_LINE_FILL * per_line)
     else:
-        floor = ceil(((target_lines - 1) + 0.75) * per_line)
+        floor = ceil(((target_lines - 1) + measure.LAST_LINE_FILL) * per_line)
     unit = "line" if target_lines == 1 else "lines"
     return (f"about {target_lines} {unit} ({floor}-{cap} characters; aim to fill "
             f"the line(s), never exceed {cap})")
@@ -773,6 +773,105 @@ def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: 
             used.add(repl.lower())
         elif v:
             used.add(v)  # palette exhausted (pathological) — keep as-is, record the verb
+    return bullets
+
+
+# ── Stage 2c: fill underfull bullets from unused SAME-block atoms ─────────────
+def fill_underfull(jd: str, job_title: str, sel: Dict[str, Any],
+                   bullets: Dict[str, str]) -> Dict[str, str]:
+    """Grow each UNDERFULL tailored bullet toward its configured line target by fusing in one
+    UNUSED atom from the SAME block, then re-phrasing it. Strictly grounded: the folded detail
+    can come ONLY from a real atom in the same entry, so it can never fabricate; a bullet whose
+    block has no spare atom (or that is already full, or whose group already fuses 3 atoms) is
+    left exactly as-is. One batched flash call over only the underfull bullets (often none).
+
+    Implemented as group-augmentation: a committed fill appends the borrowed id to that group in
+    `sel` and re-keys `bullets[old_gk] -> bullets[new_gk]`, so render / bullet_line_targets /
+    one-page drop / fact-trace all key off the same atom ids and the borrowed atom becomes
+    genuinely "used". Mutates `sel` and `bullets`; returns `bullets`. Best-effort: any failure
+    leaves `bullets` unchanged (advisory, never fatal -- like block_briefs / shrink)."""
+    targets = bullet_line_targets(sel)
+    used: set[str] = {
+        aid
+        for sec in ("experience", "projects", "leadership")
+        for e in sel.get(sec, [])
+        for g in e["groups"]
+        for aid in g
+    }
+    candidates: List[Dict[str, Any]] = []
+    for sec in ("experience", "projects", "leadership"):
+        for entry in sel.get(sec, []):
+            name = entry["name"]
+            for gi, ids in enumerate(entry["groups"]):
+                gk = _gkey(ids)
+                if gk not in bullets or is_verbatim_gkey(gk) or len(ids) >= 3:
+                    continue
+                target = targets.get(gk, config.PROJECT_BULLET_LINES)
+                if not measure.is_underfull(bullets[gk], target):
+                    continue
+                spare = next((a for a in _block_atoms(sec, name)
+                              if a not in used and atom_material_len([a]) > 0), None)
+                if not spare:
+                    continue
+                used.add(spare)  # reserve so two bullets never borrow the same atom
+                candidates.append({"entry": entry, "gi": gi, "ids": ids,
+                                   "gk": gk, "spare": spare, "target": target})
+    if not candidates:
+        return bullets  # nothing underfull with spare material -> leave everything as-is
+
+    payload = [
+        {
+            "gkey": c["gk"],
+            "current_text": bullets[c["gk"]],
+            "length_target": _length_hint(c["target"]),
+            "atoms": {a: _atom_payload(a) for a in (c["ids"] + [c["spare"]])},
+        }
+        for c in candidates
+    ]
+    system = (
+        "You lengthen UNDERFULL resume bullets that left their printed line half-empty. For "
+        "each bullet you get its CURRENT text plus its group's atoms WITH ONE EXTRA atom "
+        "appended. Keep EVERY existing fact, number, and the OPENING VERB exactly as written, "
+        "and fold in ONE concrete detail drawn ONLY from the newly-added atom so the line fills "
+        "toward its 'length_target'. You MAY slightly overshoot the target (it is trimmed back "
+        "deterministically). If nothing in the extra atom fits naturally, return the bullet "
+        "UNCHANGED -- never pad with filler.\n" + _PRINCIPLE
+    )
+    user = f"""TARGET JOB: {job_title}
+
+JOB DESCRIPTION (for emphasis only -- never a source of new facts):
+{jd[:2000]}
+
+BULLETS TO LENGTHEN (re-phrase each to fill its line using its own atoms PLUS the one extra
+atom; keep all existing facts and the opening verb; return the text UNCHANGED if the extra
+atom adds nothing that fits):
+{json.dumps(payload, ensure_ascii=False, indent=1)}
+
+Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<lengthened or unchanged bullet>"}}, ...]}}"""
+    try:
+        out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.2)
+    except Exception:  # noqa: BLE001 - fill is advisory; leave bullets unchanged on any failure
+        return bullets
+
+    new_text: Dict[str, str] = {}
+    seen = {c["gk"] for c in candidates}
+    for b in out.get("bullets", []) or []:
+        gk, text = b.get("gkey"), (b.get("text") or "").strip()
+        if gk in seen and text:
+            new_text[gk] = text
+
+    for c in candidates:
+        gk = c["gk"]
+        text = new_text.get(gk, "")
+        # Commit only when the model actually folded the extra atom in (text changed). An
+        # unchanged / blank return means the atom added nothing, so leave the bullet and let
+        # the spare atom stay unused.
+        if not text or text == bullets[gk].strip():
+            continue
+        new_ids = c["ids"] + [c["spare"]]
+        c["entry"]["groups"][c["gi"]] = new_ids
+        bullets.pop(gk, None)
+        bullets[_gkey(new_ids)] = text
     return bullets
 
 

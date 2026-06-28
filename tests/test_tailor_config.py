@@ -65,6 +65,13 @@ _MASTER = textwrap.dedent("""
         dates: "2024-01 / 2024-05"
         achievements:
           - {id: p1, what: "built an app", angles: [llm]}
+      - name: ProjTwo
+        dates: "2024-06 / 2024-09"
+        achievements:
+          - {id: p2a, what: "atom a", angles: [llm]}
+          - {id: p2b, what: "atom b", angles: [llm]}
+          - {id: p2c, what: "atom c", angles: [llm]}
+          - {id: p2d, what: "atom d", angles: [llm]}
     leadership:
       - org: Club A
         dates: "2023-09 / 2024-05"
@@ -235,6 +242,90 @@ def test_cap_projects_falls_back_to_global(synthetic_master, monkeypatch):
     clean = {"projects": [{"name": "ProjOne", "groups": [["a"], ["b"], ["c"]]}]}
     compose._cap_projects(clean)
     assert len(clean["projects"][0]["groups"]) == 2
+
+
+# --- projects honor their configured count: pad UP, not just cap (cycle 24) -------
+
+def test_cap_projects_pads_configured_project_up_from_unused_atoms(synthetic_master, monkeypatch):
+    # ProjTwo has 4 atoms; configured for 3 bullets but select() returned only 1 group.
+    # _cap_projects must pad it UP to 3 from its OWN unused atoms (like experience does),
+    # not leave it short — even though the page has room.
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjTwo": {"line_targets": [2, 2, 1]}}})  # 3 bullets
+    clean = {"experience": [], "leadership": [],
+             "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    compose._cap_projects(clean)
+    groups = clean["projects"][0]["groups"]
+    assert len(groups) == 3                              # padded 1 -> 3
+    flat = [a for g in groups for a in g]
+    assert flat[0] == "p2a"                              # original group kept, first, in order
+    assert set(flat) <= {"p2a", "p2b", "p2c", "p2d"}     # padded only from ProjTwo's own atoms
+    assert len(flat) == len(set(flat))                   # no atom reused
+
+
+def test_cap_projects_preserves_fused_group_when_padding(synthetic_master, monkeypatch):
+    # A fused (multi-atom) group select() chose is preserved intact; padding only
+    # appends single-atom groups around it (singles=False semantics).
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjTwo": {"line_targets": [2, 2, 1]}}})  # 3 bullets
+    clean = {"experience": [], "leadership": [],
+             "projects": [{"name": "ProjTwo", "groups": [["p2a", "p2b"]]}]}
+    compose._cap_projects(clean)
+    groups = clean["projects"][0]["groups"]
+    assert len(groups) == 3
+    assert groups[0] == ["p2a", "p2b"]                   # fused group untouched
+    assert all(len(g) == 1 for g in groups[1:])          # padding added singles
+
+
+def test_cap_projects_unconfigured_project_not_padded(synthetic_master, monkeypatch):
+    # No per-project layout -> cap-only behavior, unchanged: a short project is NOT
+    # padded up (the engine only pads projects the user explicitly configured).
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr(config, "PROJECT_BULLETS_MAX", 2)
+    clean = {"experience": [], "leadership": [],
+             "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    compose._cap_projects(clean)
+    assert clean["projects"][0]["groups"] == [["p2a"]]   # untouched, never padded
+
+
+def test_cap_projects_best_effort_when_atoms_exhausted(synthetic_master, monkeypatch):
+    # ProjOne has only 1 atom but is configured for 3 bullets: padding is best-effort
+    # from the project's OWN atoms, so it stays at 1 group (no crash, no foreign atoms).
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjOne": {"line_targets": [2, 2, 1]}}})  # 3 bullets
+    clean = {"experience": [], "leadership": [],
+             "projects": [{"name": "ProjOne", "groups": [["p1"]]}]}
+    compose._cap_projects(clean)
+    assert clean["projects"][0]["groups"] == [["p1"]]    # only its own atom; nothing borrowed
+
+
+def test_project_guidance_names_each_project_and_count(synthetic_master, monkeypatch):
+    # The select() prompt guidance lists every project with its target bullet count:
+    # configured projects use config.project_targets; unconfigured use the global default.
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjTwo": {"line_targets": [2, 2, 1]}}})  # 3
+    monkeypatch.setattr(config, "PROJECT_BULLETS_MAX", 2)
+    g = compose._project_guidance()
+    assert "ProjTwo" in g and "3 bullet group" in g       # configured count
+    assert "ProjOne" in g and "2 bullet group" in g       # unconfigured -> global default
+
+
+def test_select_prompt_includes_project_guidance(synthetic_master, monkeypatch):
+    # select() feeds the per-project guidance into its prompt and drops the old blanket
+    # "weaker ones ~1 group" instruction that caused configured projects to under-fill.
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"ProjTwo": {"line_targets": [2, 2, 1]}}})
+    captured = {}
+
+    def fake_call(system, user, tier, **kw):
+        captured["user"] = user
+        return {"experience": [], "projects": [], "leadership": [],
+                "skill_focus": "general", "skills": {}, "rationale": ""}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    compose.select("Build data pipelines.", "Data Analyst", "ACME")
+    assert "ProjTwo" in captured["user"] and "bullet group" in captured["user"]
+    assert "weaker ones ~1 group" not in captured["user"]
 
 
 def test_bullet_line_targets_honors_per_project(synthetic_master, monkeypatch):

@@ -6,6 +6,8 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-28
+
 ### Added
 - Underfull-bullet fill: when a tailored bullet renders shorter than its configured line
   target and the page has room, the engine now folds one concrete detail from an unused atom
@@ -77,7 +79,8 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/yib7/INployed/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/yib7/INployed/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/yib7/INployed/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/yib7/INployed/compare/v1.0.0...v1.1.0

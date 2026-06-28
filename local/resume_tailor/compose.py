@@ -144,6 +144,22 @@ def _experience_guidance() -> str:
     return "\n".join(lines)
 
 
+def _project_guidance() -> str:
+    """Per-project selection guidance for select(), generated from the config so it
+    honors each project's configured bullet count instead of defaulting weaker projects
+    to one group. A project with a custom layout (`config.project_targets`) uses that
+    count; an unconfigured project uses the global `PROJECT_BULLETS_MAX`. The engine
+    pads/trims to this count deterministically downstream (`_cap_projects`); telling the
+    model up front makes it pick that many relevant atoms in strength order."""
+    lines: List[str] = []
+    for b in assets.blocks().get("projects", []):
+        name = b["name"]
+        targets = config.project_targets(name)
+        n = len(targets) if targets else config.PROJECT_BULLETS_MAX
+        lines.append(f"  - {name}: aim for {n} bullet group(s), densest / most JD-relevant first.")
+    return "\n".join(lines)
+
+
 # ── verbatim ("don't tailor — use my exact bullets") ─────────────────────────
 # A block the user marked verbatim has its groups replaced (after _normalize_selection)
 # with synthetic single-bullet groups whose id is "__verbatim__/<block>/<i>". These
@@ -243,6 +259,7 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
     )
     pools = _skill_pools()
     exp_guidance = _experience_guidance()
+    proj_guidance = _project_guidance()
     lead_lines = layout.LEADERSHIP_ENTRY_LINES
     lead_guidance = (
         f"Each entry = EXACTLY {lead_lines} printed line(s), normally as "
@@ -266,7 +283,8 @@ Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 Selection guidance — the resume template has FIXED sections; fill them to one full page (~14-18 bullets):
 - Work Experience (use the block names exactly as listed in the catalog above):
 {exp_guidance}
-- Projects: include ALL available projects, ORDERED STRONGEST-FIRST for THIS job. Give the strongest ~2-3 groups and weaker ones ~1 group.
+- Projects: include ALL available projects, ORDERED STRONGEST-FIRST for THIS job; for each project produce the target number of bullet group(s) shown below (densest / most JD-relevant atoms first):
+{proj_guidance}
 - Leadership: ALWAYS include EVERY leadership entry. {lead_guidance}
 - Line density rule: every bullet must fill at least 70% of its printed line. Never write a bullet so short it leaves more than ~30% of the line blank — fuse atoms or pick denser content instead.
 - Within a block, order groups by relevance to THIS job.
@@ -378,14 +396,29 @@ def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
 
 
 def _cap_projects(clean: Dict[str, Any]) -> None:
-    """Keep the top config.projects_max() projects (strength-ordered by select) and cap
-    each to its per-project bullet count (config.project_targets) when set, else the
-    global PROJECT_BULLETS_MAX. Projects are never force-injected, only trimmed."""
+    """Keep the top config.projects_max() projects (strength-ordered by select) and fit
+    each to its per-project bullet count. A project with a configured layout
+    (config.project_targets) is resized to EXACTLY that many groups — padded UP from its
+    own unused atoms (like a constant block via _resize_to_count, fused groups preserved)
+    as well as trimmed down — so the configured count is a TARGET, not just a ceiling.
+    An unconfigured project keeps cap-only behavior (trimmed to the global
+    PROJECT_BULLETS_MAX, never padded). Projects are never force-injected; padding draws
+    only from the project's own atoms, so it is best-effort when a project has fewer
+    atoms than its configured count."""
     projects = clean.get("projects", [])[:config.projects_max()]
+    used: set[str] = {
+        aid
+        for sec in ("experience", "projects", "leadership")
+        for e in clean.get(sec, [])
+        for g in e["groups"]
+        for aid in g
+    }
     for entry in projects:
         targets = config.project_targets(entry["name"])
-        cap = len(targets) if targets else config.PROJECT_BULLETS_MAX
-        entry["groups"] = entry["groups"][:cap]
+        if targets:  # configured -> honor the count: pad up + trim down (like experience)
+            _resize_to_count(entry, "projects", entry["name"], len(targets), used, singles=False)
+        else:        # unconfigured -> cap only, never pad
+            entry["groups"] = entry["groups"][:config.PROJECT_BULLETS_MAX]
     clean["projects"] = projects
 
 

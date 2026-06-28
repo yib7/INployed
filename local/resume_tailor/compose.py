@@ -46,6 +46,13 @@ _CORE_VERBS = (
     "Benchmarked, Prototyped, Instrumented"
 )
 
+
+def _render_verb_palette(verbs: Dict[str, List[str]]) -> str:
+    """Render the categorized action verbs as a compact grouped block for the prompt:
+    one `Category: v1, v2, ...` line per category, in file order. The model picks a
+    category-appropriate opener; the no-reuse rule is enforced separately downstream."""
+    return "\n".join(f"{cat}: {', '.join(items)}" for cat, items in verbs.items() if items)
+
 # Which blocks must always render and the hard line budgets for the fixed blocks
 # are CONFIG-DRIVEN (yaml `tailor:` section) so nothing is tied to one person's
 # resume. See _required_blocks below for the schema and defaults.
@@ -548,7 +555,7 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
         if briefs.get(name):
             block_entry["brief"] = briefs[name]
         payload.append(block_entry)
-    verbs = _CORE_VERBS
+    verbs = _render_verb_palette(assets.active_verbs())
     example = assets.example_text()[:1200]
     system = (
         "You write resume bullets by faithfully RE-PHRASING fact-atoms for a specific job. "
@@ -567,8 +574,11 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
         "COMPLETE sentence that ends naturally WITHIN its own character budget (the "
         "'length_target' given below) — never write a longer sentence assuming it will be "
         "trimmed; a truncated bullet ending mid-clause is a failure. "
-        "Front-load the result/impact that matters for THIS job. Open with a strong action "
-        "verb from the provided list that matches the atom's real ownership. Numbers exactly "
+        "Front-load the result/impact that matters for THIS job. Open every bullet with a "
+        "strong action verb chosen from the categorized list below, picking a "
+        "category-appropriate verb that matches the atom's real ownership. Every bullet's "
+        "opening verb MUST be DISTINCT — never reuse a leading verb anywhere on the resume "
+        "(the list is large; there is always an unused, fitting choice). Numbers exactly "
         "as written. Write 'greater than or equal to' style comparisons with the symbols "
         ">= and <= (they are converted to proper math notation later).\n"
         "SPACE: a bullet that fits on ONE printed line should fill at least ~90% of it — "
@@ -581,7 +591,9 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
 JOB DESCRIPTION (for angle/emphasis only — never a source of new facts):
 {jd[:2500]}
 
-ACTION VERBS (open each bullet with one of these; match the atom's real ownership):
+ACTION VERBS (open each bullet with one of these, grouped by category; pick a
+category-appropriate verb matching the atom's real ownership, and use each leading verb at
+most ONCE across the whole resume — no two bullets may start with the same verb):
 {verbs}
 
 STYLE EXEMPLAR (match this voice, length and density — NEVER copy its facts):

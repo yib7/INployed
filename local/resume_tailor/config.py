@@ -27,6 +27,9 @@ MASTER_YAML = ASSETS_DIR / "master_experience.yaml"
 TEMPLATE_TEX = ASSETS_DIR / "resume_template.tex"
 # Style exemplar fed (bounded) into the rephrase prompt — the one-page look the user likes.
 EXAMPLE_PDF = ASSETS_DIR / "resume_sample.pdf"
+# Curated, categorized résumé action verbs the rephrase pass draws openers from (one per
+# bullet, never reused). Universal (not personal), so it is tracked; built-in fallback if absent.
+ACTIVE_WORDS_MD = ASSETS_DIR / "active_words.md"
 
 OUTPUT_ROOT = Path(os.getenv("RESUME_TAILOR_OUTPUT", str(Path.home() / "Downloads" / "Generated_Resumes")))
 CANDIDATE_NAME = os.getenv("RESUME_TAILOR_CANDIDATE", "Your_Name")

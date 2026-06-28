@@ -124,3 +124,49 @@ def example_text() -> str:
         return _pdf_text(config.EXAMPLE_PDF)
     except Exception:
         return ""
+
+
+# A built-in palette used only when active_words.md is missing/unparseable (fresh clone,
+# CI, or a user who deleted it) — keeps the engine working with a sane verb set. The real
+# source is the curated, categorized resume_tailor_files/active_words.md.
+_FALLBACK_VERBS: Dict[str, List[str]] = {
+    "Technical Skills": [
+        "Built", "Designed", "Engineered", "Developed", "Implemented", "Architected",
+        "Automated", "Optimized", "Accelerated", "Reduced", "Improved", "Increased",
+        "Streamlined", "Scaled", "Refactored", "Deployed", "Integrated", "Migrated",
+        "Launched", "Shipped", "Analyzed", "Modeled", "Forecasted", "Quantified",
+        "Evaluated", "Validated", "Diagnosed", "Researched", "Led", "Directed",
+        "Coordinated", "Mentored", "Spearheaded", "Drove", "Owned", "Delivered",
+        "Resolved", "Standardized", "Consolidated", "Boosted", "Generated", "Produced",
+        "Trained", "Benchmarked", "Prototyped", "Instrumented",
+    ],
+}
+
+
+@lru_cache(maxsize=1)
+def active_verbs() -> Dict[str, List[str]]:
+    """The curated résumé action verbs grouped by category, parsed from active_words.md.
+
+    Format: a `## Heading` line opens a category; each following body line lists verbs
+    separated by the `·` middot; `---` rules and blanks are ignored. Order (categories and
+    verbs) is preserved as written. Falls back to a built-in palette when the file is
+    absent or yields nothing (so the engine never loses its openers)."""
+    path = config.ACTIVE_WORDS_MD
+    out: Dict[str, List[str]] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {k: list(v) for k, v in _FALLBACK_VERBS.items()}
+    current: str = ""
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            current = s[3:].strip()
+            out.setdefault(current, [])
+        elif current and s and not s.startswith("#") and s != "---":
+            for token in s.split("·"):
+                v = token.strip()
+                if v:
+                    out[current].append(v)
+    out = {cat: verbs for cat, verbs in out.items() if verbs}
+    return out or {k: list(v) for k, v in _FALLBACK_VERBS.items()}

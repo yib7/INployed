@@ -50,12 +50,12 @@ A few **durability/visibility** affordances: the Tracker tab can **Export / Impo
 **pipeline badge** (`jobsdata.run_staleness` + the `stale_after_hours` setting). The Resume Data tab
 warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.resume_md_stale`,
 mtime compare) with a one-click Regenerate. It also carries a collapsible **Resume Layout** editor
-(`ResumeDataEditor._layout_block`) for the per-bullet line targets — it reads/writes config.json's
+(`ResumeDataEditor._layout_block`) for the per-bullet line targets; it reads/writes config.json's
 `resume_layout` (sections) and `project_layout` (projects) maps, the very ones the tailor reads via
 `resume_tailor/config.py:block_targets`/`project_targets`; row names are pulled from the master so
 they match the engine's lookups. A master toggle, `resume_layout_enabled` (default on), gates both
 maps in `config.py` so disabling it falls back to the engine defaults **without** discarding the saved
-targets — an A/B test of custom-vs-default layout. With zero jobs loaded the High Score tab shows a
+targets, enabling an A/B test of custom-vs-default layout. With zero jobs loaded the High Score tab shows a
 first-run get-started hint (`JobsTab.set_empty_widget`).
 
 A few **readability** affordances. One persisted **interface scale** (`ui_scale_pct` in `config.json`)

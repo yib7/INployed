@@ -788,6 +788,23 @@ class MainWindow(QtWidgets.QMainWindow):
         workers.run_async(self, lambda: self._scrape_work(choice == "bounded"),
                           on_done=self._after_scrape, on_error=self._after_scrape_error)
 
+    def _scrape_env(self) -> dict:
+        """Environment for the local scrape subprocess: a copy of ours, plus a pointer to
+        the synced Drive master so the scraper also excludes — and never re-bills — jobs
+        the VM already collected. The local repo master is only a small stub of recent
+        local runs, so without this a local 'Find new jobs' run re-pulls (and re-scores)
+        postings the VM already has. Set on the CHILD's env only, not our own process, so
+        the post-scrape VM-push set stays lean — it carries what THIS host collected, not
+        the Drive master pulled down from the VM."""
+        env = os.environ.copy()
+        root = gdrive_root_dir(self.csv_paths)
+        if root is not None:
+            master = Path(root) / "linkedin_jobs_master.csv.gz"
+            if master.exists():
+                # scraper.EXTRA_MASTER_ENV — the synced Drive master to also exclude from.
+                env["LINKEDIN_EXTRA_MASTER"] = str(master)
+        return env
+
     def _scrape_work(self, bounded: bool):
         """Run scraper.py then score_jobs.py, streaming their output to scrape.log.
 
@@ -796,6 +813,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         repo = Path(__file__).resolve().parents[2]
         log_path = self._scrape_log_path()
+        env = self._scrape_env()
         with open(log_path, "w", encoding="utf-8", errors="replace") as log:
             for cmd in (self.scraper_cmd(bounded), self.scorer_cmd()):
                 log.write(f"\n=== {' '.join(cmd)} ===\n")
@@ -803,7 +821,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 proc = subprocess.Popen(
                     cmd, cwd=str(repo), stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                    errors="replace", creationflags=_no_window_flag())
+                    errors="replace", creationflags=_no_window_flag(), env=env)
                 captured: list[str] = []
                 if proc.stdout is not None:
                     for line in proc.stdout:

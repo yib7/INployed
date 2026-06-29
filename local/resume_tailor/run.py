@@ -10,6 +10,7 @@ CLI:  python -m resume_tailor.run --job-id <id> [--cover-letter]
 """
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -86,10 +87,24 @@ _CLAUSE_INTROS = frozenset((
 ))
 
 
+# A trailing BARE number/range with no unit ('took 1', 'took 1-2') — what a chopped
+# quantity leaves behind. '95%', '40,000+', '7.4x' carry a unit and are NOT bare.
+_BARE_NUM = re.compile(r"\d+([.,]\d+)*([–\-]\d+([.,]\d+)*)?$")
+
+
+def _bare_num_tail(words: list) -> bool:
+    return bool(words and _BARE_NUM.fullmatch(words[-1].lower().strip(",;:")))
+
+
 def _strip_dangling(text: str) -> str:
     """Drop trailing words/clauses that leave a sentence grammatically incomplete:
     first any trailing pure stopword, then a trailing fragment introduced by a
-    clause connective (e.g. '...periods while maintaining' -> '...periods')."""
+    clause connective (e.g. '...periods while maintaining' -> '...periods'), and
+    finally a dangling BARE NUMBER left when a quantity was chopped mid-phrase
+    (e.g. the model spelled '1-2 weeks' as '1 to 2 weeks' and the trim cut it to
+    '...that previously took 1' -> drop the whole '...took 1' clause). The last step
+    repeats ONLY while a bare number still trails, so it stops at the first complete
+    clause and never eats into well-formed text."""
     words = text.split()
     while len(words) > 3 and words[-1].lower().strip(",;:") in _TRAILING_STOPWORDS:
         words.pop()
@@ -99,6 +114,16 @@ def _strip_dangling(text: str) -> str:
             if len(candidate) >= 4:
                 words = candidate
             break
+    while len(words) > 4 and _bare_num_tail(words):
+        n = len(words)
+        for k in range(1, min(7, len(words))):
+            if words[-k].lower().strip(",;:") in _CLAUSE_INTROS:
+                candidate = words[:-k]
+                if len(candidate) >= 4:
+                    words = candidate
+                break
+        if len(words) == n:          # no clause intro applied -> shed the bare number itself
+            words.pop()
     return " ".join(words).rstrip(",;: ")
 
 
@@ -198,6 +223,11 @@ def tailor(
     # Per-block "don't tailor": swap selected verbatim blocks to the user's exact
     # bullets BEFORE rephrase, so the LLM never sees (or rewrites) them.
     verbatim = compose.inject_verbatim(sel)
+    # Float each project's overview bullet ("what is this project") to the front so detail
+    # bullets don't lead. Runs BEFORE briefs/rephrase, so the cohesion framing and the
+    # per-position line budgets build on the corrected order. Projects only; never invents.
+    if config.lead_overview_enabled():
+        compose.lead_with_overview(jd, job_title, sel)
     # One cheap batched call: a cohesion brief per (non-verbatim) block so its bullets
     # read as one story instead of glued-together atoms.
     log("framing each block for cohesion…")
@@ -225,6 +255,15 @@ def tailor(
 
     log("compressing skills…")
     skill_lines = compose.compress_skills(jd, job_title, sel)
+
+    # Optional 5th line: the JD's concept buzzwords the candidate genuinely owns (anchored
+    # to concepts_and_methodologies; the JD's own spelling via skill_aliases, then padded
+    # with the model's role-relevant ranking). Never invents; one-page enforcement is the
+    # backstop. Appended last so it sits below the four tool lines.
+    if config.methods_line_enabled():
+        methods = compose.methods_line(jd, sel)
+        if methods:
+            skill_lines.append(methods)
 
     out_dir = output.resolve_dir(company, job_title)
     with tempfile.TemporaryDirectory(prefix="resume_tailor_") as tmp:

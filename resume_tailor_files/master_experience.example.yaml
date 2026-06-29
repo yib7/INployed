@@ -115,3 +115,13 @@ skills:
   data: [pandas, NumPy, PostgreSQL, Spark]
   cloud_devops: [AWS, Docker, GitHub Actions, Linux]
   tools: [Git, Jupyter, FastAPI, React]
+
+# Optional: map a real skill above to the alternate wordings a job description / ATS
+# might use for it. A JD's wording then matches that skill, and (when the JD uses it)
+# prints on the resume's "Methods" line in the casing written here -- without inventing
+# a skill. ANCHORING RULE: every key MUST be a real skill listed in `skills:` above
+# (unanchored keys are ignored and flagged by "Check setup"); aliases only change
+# WORDING for a concept you genuinely have. Extend as you harvest keywords from postings.
+skill_aliases:
+  "RAG": ["Retrieval-Augmented Generation", "Retrieval Augmented Generation"]
+  "LLM prompt engineering": ["Prompt Engineering", "Prompt Design"]

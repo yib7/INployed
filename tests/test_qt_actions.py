@@ -1,4 +1,5 @@
 """SP4: score preview visibility + the worker-backed job actions (mocked backends)."""
+import os
 import types
 from unittest.mock import MagicMock
 
@@ -28,6 +29,30 @@ def test_scraper_and_scorer_cmd(qtbot):
     assert w.scraper_cmd(False)[-1].endswith("scraper.py")
     assert "--max-keywords" in w.scraper_cmd(True)
     assert w.scorer_cmd()[-1].endswith("score_jobs.py")
+
+
+def test_scrape_env_points_at_drive_master(qtbot, monkeypatch, tmp_path):
+    # Local-scrape cost fix: the child env points the scraper at the synced Drive master
+    # so a local run also excludes (never re-bills) jobs the VM already collected.
+    import scraper
+    w = _win(qtbot)
+    (tmp_path / "linkedin_jobs_master.csv.gz").write_bytes(b"")  # just has to exist
+    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: tmp_path)
+    monkeypatch.delenv("LINKEDIN_EXTRA_MASTER", raising=False)
+
+    env = w._scrape_env()
+    assert env["LINKEDIN_EXTRA_MASTER"] == str(tmp_path / "linkedin_jobs_master.csv.gz")
+    assert "LINKEDIN_EXTRA_MASTER" == scraper.EXTRA_MASTER_ENV       # guard against drift
+    assert "LINKEDIN_EXTRA_MASTER" not in os.environ                 # our own env untouched -> push stays lean
+
+
+def test_scrape_env_omits_extra_master_when_absent(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.delenv("LINKEDIN_EXTRA_MASTER", raising=False)
+    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)   # no Drive root
+    assert "LINKEDIN_EXTRA_MASTER" not in w._scrape_env()
+    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: tmp_path)  # root, but no master file
+    assert "LINKEDIN_EXTRA_MASTER" not in w._scrape_env()
 
 
 def test_console_python_swaps_pythonw_for_python(monkeypatch):

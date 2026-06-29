@@ -17,10 +17,11 @@ carries its source atom ids so the verifier and a human can trace it.
 from __future__ import annotations
 
 import json
+import re
 from math import ceil
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import assets, config, layout, measure
+from . import assets, ats, config, layout, measure
 from .llm import call
 
 _PRINCIPLE = (
@@ -254,10 +255,13 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         "Do NOT pad with weak/unrelated filler just to reach the count — a few sharp, relevant "
         "skills beat a long list. Preserve any '(conceptual)' / '(from scratch)' qualifiers "
         "verbatim. You MAY merge closely-related API entries into one compact token (e.g. "
-        "'Gemini/OpenAI/Claude API').\n"
+        "'Gemini/OpenAI/Claude API'). ALSO rank the candidate's concepts/methodologies (the "
+        "METHODS POOL) by relevance to this job, most-relevant first, copying items verbatim "
+        "from that pool (selection only, never invent) for the 'methods' output.\n"
         + _PRINCIPLE
     )
     pools = _skill_pools()
+    methods_pool = _methods_pool()
     exp_guidance = _experience_guidance()
     proj_guidance = _project_guidance()
     lead_lines = layout.LEADERSHIP_ENTRY_LINES
@@ -280,6 +284,9 @@ Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
 Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
 Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
+METHODS POOL (for the "methods" output only — the candidate's concepts/methodologies; RANK by relevance to THIS job, most-relevant FIRST, and return ~8-10. SELECTION ONLY: copy items VERBATIM from this pool, never invent. These become the résumé's concepts line; lead with the concepts this role centers on (e.g. data analysis, ETL, A/B testing, modeling)):
+{json.dumps(methods_pool, ensure_ascii=False)}
+
 Selection guidance — the resume template has FIXED sections; fill them to one full page (~14-18 bullets):
 - Work Experience (use the block names exactly as listed in the catalog above):
 {exp_guidance}
@@ -287,7 +294,7 @@ Selection guidance — the resume template has FIXED sections; fill them to one 
 {proj_guidance}
 - Leadership: ALWAYS include EVERY leadership entry. {lead_guidance}
 - Line density rule: every bullet must fill at least 70% of its printed line. Never write a bullet so short it leaves more than ~30% of the line blank — fuse atoms or pick denser content instead.
-- Within a block, order groups by relevance to THIS job.
+- Within a PROJECT, LEAD with the bullet that introduces what the project IS (its overview / "what is this at a glance"), THEN order the remaining bullets by relevance to THIS job — a reader should know what a project is before the detail bullets. Within experience/leadership, order by relevance.
 
 Return ONLY JSON (use the real block names + atom ids from the catalog; groups is a list of lists of atom ids):
 {{
@@ -298,6 +305,7 @@ Return ONLY JSON (use the real block names + atom ids from the catalog; groups i
   "leadership": [{{"name": "<leadership org>", "groups": [["<atom_id>"]]}}],
   "skill_focus": "one of: ml_research | backend_platform | data_analytics | general",
   "skills": {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}},
+  "methods": ["<concept from the METHODS POOL>", "<next most relevant>", "..."],
   "rationale": "1-2 sentences (incl. why projects are ordered as they are)"
 }}
 
@@ -319,6 +327,7 @@ def _normalize_selection(sel: Dict[str, Any]) -> Dict[str, Any]:
 
     clean: Dict[str, Any] = {"skill_focus": sel.get("skill_focus", "general"),
                              "skills": sel.get("skills") or {},
+                             "methods": _clean_methods(sel.get("methods")),
                              "rationale": sel.get("rationale", "")}
     for sec in ("experience", "projects", "leadership"):
         clean[sec] = []
@@ -515,6 +524,89 @@ def _blocks_in_order(sel: Dict[str, Any]) -> List[Tuple[str, List[str]]]:
                     order.append(name)
                 by_block[name].append(gk)
     return [(name, by_block[name]) for name in order]
+
+
+def _overview_group_index(name: str, groups: List[List[str]]) -> int:
+    """Deterministic fallback: the index of the group holding the project's earliest-
+    AUTHORED atom (master file order). The master lists each project's overview/headline
+    atom first, so this floats the natural intro bullet to the front when the model pass
+    is unavailable. Verbatim/unknown ids sort last so a real atom always wins."""
+    order = {aid: i for i, aid in enumerate(_block_atoms("projects", name))}
+    sentinel = len(order) + 1
+    best_idx, best_rank = 0, sentinel + 1
+    for idx, g in enumerate(groups):
+        rank = min((order.get(a, sentinel) for a in g), default=sentinel)
+        if rank < best_rank:
+            best_idx, best_rank = idx, rank
+    return best_idx
+
+
+def lead_with_overview(jd: str, job_title: str, sel: Dict[str, Any]) -> None:
+    """Reorder each PROJECT's bullet GROUPS so the bullet that introduces the project — its
+    high-level "what is this project at a glance" overview — LEADS, instead of a detail bullet
+    that select() placed first by JD-relevance. A reader should learn what a project IS before
+    the implementation bullets make sense.
+
+    A cheap batched model pass picks the lead from each project's OWN selected bullets (it only
+    chooses which existing bullet should lead — it writes no prose and invents nothing). When the
+    call fails or returns nothing usable for a project, a deterministic file-order fallback floats
+    the project's earliest-authored atom's group to the front, so flow is ALWAYS enforced.
+
+    Mutates `sel` in place. Projects only (experience/leadership keep their template/relevance
+    order). Verbatim projects (the user's exact bullets, in the user's order) and single-bullet
+    projects are left untouched. Runs BEFORE briefs/rephrase so cohesion framing and the
+    per-position line budgets build on the corrected order. Advisory: never fatal."""
+    candidates: List[Dict[str, Any]] = []
+    payload: List[Dict[str, Any]] = []
+    for entry in sel.get("projects", []) or []:
+        groups = entry.get("groups", []) or []
+        if len(groups) < 2:
+            continue
+        if any(is_verbatim_gkey(_gkey(g)) for g in groups):
+            continue
+        candidates.append(entry)
+        bullets = [
+            {"n": n, "summary": " | ".join(
+                str(_atom_payload(a).get("what", "")) for a in g)[:300]}
+            for n, g in enumerate(groups, start=1)
+        ]
+        payload.append({"project": entry["name"], "bullets": bullets})
+    if not candidates:
+        return
+
+    picks: Dict[str, int] = {}
+    system = (
+        "You order resume bullets for narrative flow. For each project you are given its "
+        "selected bullets, numbered. Pick the ONE bullet that best introduces the project — "
+        "the high-level overview a reader needs ('what is this project at a glance') BEFORE the "
+        "detail bullets make sense — and return its number. This is PURE ORDERING: you write no "
+        "prose, you invent nothing, you only choose which EXISTING bullet should lead.\n" + _PRINCIPLE
+    )
+    user = f"""TARGET JOB: {job_title}
+
+PROJECTS (each with its selected bullets, numbered):
+{json.dumps(payload, ensure_ascii=False, indent=1)}
+
+For each project, return the NUMBER of the bullet that should LEAD (its overview / intro).
+Return ONLY JSON: {{"projects": [{{"project": "<name>", "lead": <number>}}, ...]}}"""
+    try:
+        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
+        for p in out.get("projects", []) or []:
+            lead = p.get("lead")
+            if isinstance(lead, int) and not isinstance(lead, bool):
+                picks[p.get("project")] = lead
+    except Exception:  # noqa: BLE001 - ordering is advisory; fall back to file order
+        picks = {}
+
+    for entry in candidates:
+        groups = entry["groups"]
+        lead = picks.get(entry["name"])
+        if isinstance(lead, int) and 1 <= lead <= len(groups):
+            j = lead - 1
+        else:
+            j = _overview_group_index(entry["name"], groups)
+        if j > 0:
+            groups.insert(0, groups.pop(j))
 
 
 def block_briefs(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]:
@@ -903,6 +995,30 @@ def _skill_pools() -> Dict[str, List[str]]:
     return {label: _pool(skills, keys) for label, keys in _SKILL_BUCKETS}
 
 
+def _methods_pool() -> List[str]:
+    """The candidate's concepts/methodologies pool — the source of the (optional) 5th
+    'Methods' concepts line. Rendered nowhere among the four tool lines, so this is its
+    only path to the page."""
+    skills = assets.load_master().get("skills", {}) or {}
+    return list(skills.get("concepts_and_methodologies", []) or [])
+
+
+def _clean_methods(raw: Any) -> List[str]:
+    """Validate a model 'methods' ranking against the concepts pool: keep only real pool
+    concepts (anchored — never invent), printed in the pool's own spelling, de-duplicated
+    by normalized concept, model order preserved."""
+    pool_by_norm = {ats._norm_skill(p): p for p in _methods_pool()}
+    out: List[str] = []
+    seen: set[str] = set()
+    for item in (raw or []):
+        key = ats._norm_skill(str(item))
+        spelling = pool_by_norm.get(key)
+        if spelling and key not in seen:
+            out.append(spelling)
+            seen.add(key)
+    return out
+
+
 def _finalize_skill_lines(out: Dict[str, Any]) -> List[Dict[str, str]]:
     """Resolve the best-N skills per line: take the model's relevance-ranked picks,
     complete from the pool up to the target if it under-returned, then trim from the
@@ -920,18 +1036,37 @@ def _finalize_skill_lines(out: Dict[str, Any]) -> List[Dict[str, str]]:
     return lines
 
 
+def _split_skill_tokens(s: str) -> List[str]:
+    """Split a comma-joined skills string into tokens WITHOUT splitting on commas inside
+    parentheses, so a merged token like 'LLM APIs (Gemini, OpenAI, Claude)' stays ONE item.
+    A flat ``split(",")`` shatters it into 3 fragments — which then miscount toward the
+    best-N target (a 10-target line stops at ~8 visual items) and can be cut mid-parenthesis."""
+    tokens: List[str] = []
+    depth = start = 0
+    for i, ch in enumerate(s):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            tokens.append(s[start:i])
+            start = i + 1
+    tokens.append(s[start:])
+    return [t.strip() for t in tokens if t.strip()]
+
+
 def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
     """Best-N selection for one skills line. Start from the model's items in its
-    relevance order (kept verbatim — merged tokens like 'Gemini/OpenAI/Claude API'
-    and '(conceptual)' qualifiers are preserved); if it returned fewer than
-    `target`, append still-unused pool skills in pool order (the least-relevant
-    tail) until the line has min(target, len(pool)) items; then cap the count at
-    `target`. No char floor — the printed-line cap (applied later) is the only size
-    limit, so a genuinely short list is never padded to fill the line."""
+    relevance order (kept verbatim — merged tokens like 'Gemini/OpenAI/Claude API',
+    '(Gemini, OpenAI, Claude)', and '(conceptual)' qualifiers are preserved); if it
+    returned fewer than `target`, append still-unused pool skills in pool order (the
+    least-relevant tail) until the line has min(target, len(pool)) items; then cap the
+    count at `target`. No char floor — the printed-line cap (applied later) is the only
+    size limit, so a genuinely short list is never padded to fill the line."""
     picked: List[str] = []
     seen = set()
-    for tok in (t.strip() for t in items.split(",")):
-        if tok and tok.lower() not in seen:
+    for tok in _split_skill_tokens(items):
+        if tok.lower() not in seen:
             picked.append(tok)
             seen.add(tok.lower())
     if target > 0:
@@ -961,8 +1096,10 @@ def _cap_items(label: str, items: str) -> str:
     """Keep whole comma-separated tokens while the rendered skills line (bold label +
     items) fits ONE printed line by real glyph width (measure.skill_line_width) — never
     cut mid-token, never wrap. The first token is always kept (a line is never emptied),
-    so a lone over-wide token still renders rather than vanishing."""
-    toks = [t.strip() for t in items.split(",") if t.strip()]
+    so a lone over-wide token still renders rather than vanishing. Tokenization is
+    parenthesis-aware (_split_skill_tokens) so a merged 'X (a, b, c)' token is kept or
+    dropped whole, never cut to an unclosed '...X (a'."""
+    toks = _split_skill_tokens(items)
     kept: List[str] = []
     for t in toks:
         if kept and measure.skill_line_width(label, ", ".join(kept + [t])) > measure.SKILL_LINE_CAPACITY:
@@ -1019,6 +1156,80 @@ Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Develop
     except Exception:
         out = {}
     return _finalize_skill_lines(out)
+
+
+# ── Methods line (optional 5th concepts line) ────────────────────────────────
+def methods_line(jd: str, sel: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Build the optional 'Methods' concepts line: the buzzwords the candidate genuinely
+    owns, surfaced so an ATS/reader sees them. Two tiers, anchored to the concepts pool —
+    never invents, never empty:
+
+      Tier 1 (ATS keywords first, deterministic): for each pool concept the JD references,
+        take it — printing the concept's own spelling on a DIRECT JD hit, or the JD's alias
+        spelling when only an anchored alias appears (so the page shows the JD's wording).
+        Ranked by JD hit frequency, with equal-frequency hits broken by the model's
+        role-relevance order (sel['methods']) so a role-defining buzzword (ETL, feature
+        engineering) outranks a generic one (collaboration) — alphabetical only as a last tie.
+      Tier 2 (pad to target, role-relevant): if Tier 1 is short of the target, append from
+        the model's role-relevance ranking (sel['methods'], pool spelling), skipping any
+        concept already chosen (dedup by canonical).
+
+    Returns {'label', 'items'} width-capped to ONE printed line, or None when the pool is
+    empty or the target is 0 (the label is omitted entirely — never an empty line)."""
+    pool = _methods_pool()
+    target = layout.skill_targets().get("Methods", 0)
+    if not pool or target <= 0:
+        return None
+    label = config.methods_line_label()
+    aliases_by_norm = {ats._norm_skill(c): al for c, al in ats.anchored_alias_groups()}
+    # The model's role-relevance order breaks equal-frequency Tier-1 ties (a concept the
+    # model didn't rank falls to the back); same ranking also drives Tier-2 padding.
+    model_methods = (sel.get("methods") or []) if isinstance(sel, dict) else []
+    methods_rank = {ats._norm_skill(m): i for i, m in enumerate(model_methods)}
+    unranked = len(methods_rank) + 1
+
+    # Tier 1 — deterministic JD matches, ranked by (frequency, model relevance, name).
+    tier1: List[tuple[int, int, str, str]] = []   # (freq, model_rank, printed, canonical norm)
+    chosen_norm: set[str] = set()
+    for concept in pool:
+        cnorm = ats._norm_skill(concept)
+        direct = max(len(ats._term_pattern(concept).findall(jd)),
+                     len(ats._term_pattern(_paren_strip(concept)).findall(jd)))
+        if direct > 0:
+            printed, freq = concept, direct
+        else:
+            printed, freq = None, 0
+            for alias in aliases_by_norm.get(cnorm, []):
+                n = len(ats._term_pattern(alias).findall(jd))
+                if n > freq:
+                    printed, freq = alias, n
+        if printed and cnorm not in chosen_norm:
+            tier1.append((freq, methods_rank.get(cnorm, unranked), printed, cnorm))
+            chosen_norm.add(cnorm)
+    tier1.sort(key=lambda t: (-t[0], t[1], t[2].lower()))
+    chosen = [printed for _f, _r, printed, _c in tier1]
+
+    # Tier 2 — pad from the model's role-relevance ranking (pool spelling), anchored + deduped.
+    pool_by_norm = {ats._norm_skill(p): p for p in pool}
+    for concept in model_methods:
+        if len(chosen) >= target:
+            break
+        cnorm = ats._norm_skill(str(concept))
+        spelling = pool_by_norm.get(cnorm)
+        if spelling and cnorm not in chosen_norm:
+            chosen.append(spelling)
+            chosen_norm.add(cnorm)
+
+    items = _cap_items(label, ", ".join(chosen[:target]))
+    if not items:
+        return None
+    return {"label": label, "items": items}
+
+
+def _paren_strip(s: str) -> str:
+    """Drop a parenthetical qualifier for JD matching: 'Exploratory Data Analysis (EDA)'
+    -> 'Exploratory Data Analysis' (the form a JD is likelier to spell)."""
+    return re.sub(r"\(.*?\)", "", s).strip()
 
 
 # ── Shrink (one-page enforcement helper) ─────────────────────────────────────

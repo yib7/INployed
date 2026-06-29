@@ -27,9 +27,11 @@ LEADERSHIP_ENTRY_LINES = 2
 # There is NO fill floor: the line width is a hard ceiling, not a target — a short
 # list of relevant skills stays short rather than being padded.
 def skill_targets() -> Dict[str, int]:
-    """Best-N item count per category. Override via
-    RESUME_TAILOR_SKILL_TARGETS="Languages=7,Frameworks=7,Developer Tools=10,Libraries=10"."""
-    targets = {"Languages": 7, "Frameworks": 7, "Developer Tools": 10, "Libraries": 10}
+    """Best-N item count per category. 'Methods' is the optional 5th concepts line
+    (compose.methods_line); the four tool lines ignore it. Override via
+    RESUME_TAILOR_SKILL_TARGETS="Languages=7,Frameworks=7,Developer Tools=10,Libraries=10,Methods=6"."""
+    targets = {"Languages": 7, "Frameworks": 7, "Developer Tools": 10, "Libraries": 10,
+               "Methods": 6}
     for part in os.getenv("RESUME_TAILOR_SKILL_TARGETS", "").split(","):
         key, sep, val = part.partition("=")
         if sep:

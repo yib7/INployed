@@ -58,6 +58,9 @@ def find_gap_keywords(jd_text: str, master: Optional[dict] = None) -> List[str]:
     """JD keywords not already present in the candidate's skill pool, in JD-relevance
     order. These are the 'you might have this but didn't list it' candidates."""
     have = candidate_skill_terms(master)
+    # A JD synonym of an owned concept (an anchored alias) is already covered — fold the
+    # alias spellings in so it is not proposed as a gap the candidate "lacks".
+    have |= {sp.lower() for _canon, aliases in ats.anchored_alias_groups() for sp in aliases}
     gaps: List[str] = []
     for kw in ats.extract_keywords(jd_text):
         if kw.lower() not in have:
@@ -226,6 +229,7 @@ def apply_to_file(placements: Dict[str, List[str]], path: Optional[Path] = None,
         path.with_suffix(path.suffix + ".bak").write_text(original, encoding="utf-8")
     path.write_text(new_text, encoding="utf-8")
     assets.load_master.cache_clear()
+    assets.skill_aliases.cache_clear()
     assets.atoms_by_id.cache_clear()
     assets.blocks.cache_clear()
     return diff

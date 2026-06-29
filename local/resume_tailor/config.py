@@ -142,6 +142,44 @@ def fill_underfull_enabled() -> bool:
     return _config_json().get("fill_underfull", True) is not False
 
 
+def lead_overview_enabled() -> bool:
+    """Whether the project-overview-first reorder runs (compose.lead_with_overview): float
+    each project's overview/intro bullet ("what is this project at a glance") to the front so
+    detail bullets don't lead. select() orders bullets by JD-relevance, which can bury the
+    overview; this pass picks the lead via a cheap model call with a deterministic file-order
+    fallback (the master authors the overview atom first), so flow is always enforced. It only
+    REORDERS existing bullets -- never invents. Defaults ON. Precedence: RESUME_TAILOR_LEAD_OVERVIEW
+    env > config.json 'lead_overview' > True."""
+    env = os.getenv("RESUME_TAILOR_LEAD_OVERVIEW")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return _config_json().get("lead_overview", True) is not False
+
+
+def methods_line_enabled() -> bool:
+    """Whether the résumé renders a 'Methods' concepts line (compose.methods_line): a 5th
+    technical-skills line that surfaces the JD's concept buzzwords ('A/B Testing', 'ETL',
+    'data wrangling') the candidate genuinely owns — printed in the JD's own spelling via
+    the anchored skill_aliases layer (Tier 1) then padded with the model's role-relevant
+    concept ranking (Tier 2). It only draws from concepts_and_methodologies the user
+    declared, never invents. Defaults ON. Precedence: RESUME_TAILOR_METHODS_LINE env >
+    config.json 'methods_line' > True."""
+    env = os.getenv("RESUME_TAILOR_METHODS_LINE")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return _config_json().get("methods_line", True) is not False
+
+
+def methods_line_label() -> str:
+    """The label printed before the Methods concepts line. Precedence:
+    RESUME_TAILOR_METHODS_LABEL env > config.json 'methods_line_label' > 'Methods'."""
+    env = os.getenv("RESUME_TAILOR_METHODS_LABEL")
+    if env is not None and str(env).strip():
+        return str(env).strip()
+    val = _config_json().get("methods_line_label")
+    return str(val).strip() if isinstance(val, str) and str(val).strip() else "Methods"
+
+
 def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.

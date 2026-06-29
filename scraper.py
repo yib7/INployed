@@ -49,6 +49,14 @@ MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
 # what was just pulled. Unioned into load_exclude_ids() on top of this host's master.
 EXTERNAL_EXCLUDE_FILE = OUTPUT_DIR / "external_exclude_ids.json"
 
+# An additional master CSV (path in this env var; .csv or .csv.gz) to exclude from, on
+# top of this host's own master. The local dashboard sets it to the synced Drive master
+# so a LOCAL "Find new jobs" run also skips — and never re-bills — jobs the VM already
+# collected: the local repo master is only a small stub of recent local runs, while the
+# Drive master is the VM's full cumulative record. Unset on the VM (whose own master IS
+# the full set), so the VM's exclusion is unchanged.
+EXTRA_MASTER_ENV = "LINKEDIN_EXTRA_MASTER"
+
 # Spammy aggregator companies to drop entirely — from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
 # Add more names here as needed. The dashboard's right-click "Block company"
@@ -190,17 +198,42 @@ def load_external_exclude_ids() -> list[str]:
         return []
 
 
+def load_extra_master_ids() -> list[str]:
+    """Job ids from the additional master named by $LINKEDIN_EXTRA_MASTER (the synced
+    Drive master, for a local run). [] when the var is unset, the file is missing, or it
+    can't be read. Accepts a plain or gzipped CSV. Best-effort: a bad/absent extra master
+    never crashes a run — it just means weaker exclusion, not a fabricated one."""
+    raw = os.environ.get(EXTRA_MASTER_ENV, "").strip()
+    if not raw:
+        return []
+    path = Path(raw)
+    if not path.exists():
+        return []
+    try:
+        comp = "gzip" if path.suffix == ".gz" else "infer"
+        df = pd.read_csv(path, usecols=lambda c: c == "job_posting_id", dtype=str,
+                         compression=comp)
+    except (OSError, ValueError, pd.errors.ParserError) as e:
+        print(f"Could not read extra master {path.name} for exclusions ({e}); ignoring")
+        return []
+    if "job_posting_id" not in df.columns or df.empty:
+        return []
+    return df["job_posting_id"].dropna().astype(str).unique().tolist()
+
+
 def load_exclude_ids() -> list[str]:
     """Every job id this host knows to skip — a hard no-repeat guard. Bright Data
     bills per collection, so re-fetching a posting we already have is pure wasted
     spend; and a listing open long enough to fall outside any recent-only window is
     usually stale anyway, so there's no upside to re-collecting it. We exclude the
-    whole master, UNIONED with external_exclude_ids.json (ids collected on another
-    machine — e.g. a manual local run — and pushed here so a scheduled VM run skips
-    them). Falls back to the last-run JSON when the master is missing/unreadable."""
+    whole master, UNIONED with the extra master named by $LINKEDIN_EXTRA_MASTER (the
+    synced Drive master, so a LOCAL run skips what the VM already collected) and with
+    external_exclude_ids.json (ids collected on another machine — e.g. a manual local
+    run — and pushed here so a scheduled VM run skips them). Falls back to the last-run
+    JSON when this host's master is missing/unreadable."""
     ids = list(_master_ids())
     seen = set(ids)
-    for jid in load_external_exclude_ids():
+    for jid in load_extra_master_ids() + load_external_exclude_ids():
         if jid not in seen:
             ids.append(jid)
             seen.add(jid)

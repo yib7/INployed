@@ -6,6 +6,60 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-29
+
+### Added
+- Anchored `skill_aliases` layer + a rendered "Methods" concepts line, so the résumé
+  surfaces the concept buzzwords an ATS screens for ("data analysis", "ETL", "A/B testing",
+  "data wrangling", "stakeholder management") that the candidate genuinely demonstrates but
+  the résumé might never spell. Two root causes are fixed: the ATS matcher was literal (a JD
+  synonym of an owned concept read as a false MISSING), and the `concepts_and_methodologies`
+  pool was rendered nowhere (so those terms could never match the page). A new optional
+  top-level `skill_aliases:` map (canonical -> [JD spellings]) is **anchored** — a group is
+  used only when its canonical is a real skill in the taxonomy, so an alias can never inject
+  an untethered keyword. It is wired into the ATS report + gap-finder (a JD synonym of an
+  owned concept now counts as covered and is no longer proposed as a gap) and into a new
+  fifth technical-skills line built in two tiers: Tier 1 prints, in the JD's own spelling,
+  each pool concept the JD references (deterministic, ranked by JD frequency); Tier 2 pads
+  to a ~6-item target from the model's role-relevance concept ranking (folded into the
+  existing selection pass — **no new LLM call**). Bullets are never touched and nothing is
+  invented — the line draws only from concepts the user declared. Coverage stays honest (a
+  buzzword counts covered only once it is literally on the page). Toggle with
+  `RESUME_TAILOR_METHODS_LINE` (default on); "Check setup" warns on an unanchored alias.
+- Project bullets now lead with the project's overview. `select()` orders a project's bullets
+  purely by job-relevance, which could bury the "what is this project" bullet behind detail
+  bullets (e.g. a project led with its LLM-routing and Docker-sandbox bullets and only said what
+  it actually was on bullet 3). A new pass floats each project's overview/intro bullet to the
+  front so a reader learns what the project is before the implementation detail. A cheap model
+  call picks the lead from the project's own selected bullets — pure reordering, never inventing —
+  with a deterministic file-order fallback (the master authors each project's overview atom first)
+  so flow is always enforced even if the call fails. Projects only; verbatim and single-bullet
+  projects are untouched. Toggle with `RESUME_TAILOR_LEAD_OVERVIEW` (default on).
+
+### Fixed
+- Résumé bullets no longer end on a dangling bare number. When the model spelled a trailing
+  range as words ("took 1 to 2 weeks per cycle") and the deterministic width-trim cut the
+  tail, the dangling-cleanup removed only the innermost connective ("to 2" -> "took 1") and
+  stopped, leaving a meaningless "...took 1." The cleanup now recognizes a chopped trailing
+  quantity and drops the whole incomplete clause back to a clean boundary, while still leaving
+  unit-bearing metrics ("95%", "40,000+ users") intact.
+- Skills lines now fill to their configured best-N count when a category contains a merged,
+  comma-bearing token like "LLM APIs (Gemini, OpenAI, Claude)". That token was being split on
+  its internal commas — both in the YAML flow list (so it parsed as three pool entries) and in
+  the line splitter — so it counted as three items and a 10-target Developer Tools line stopped
+  at 8 with space to spare. Tokenization is now parenthesis-aware (kept or dropped whole, never
+  cut to an unclosed paren) and the master entry is quoted.
+- Local "Find new jobs" runs no longer re-collect (and re-score) postings the VM already
+  scraped. The scraper excludes already-collected job ids by reading its host master, but on
+  a local machine that file is only a small stub of recent local runs — it had no knowledge of
+  the cumulative master the VM owns on Google Drive, so a local run re-pulled (re-billing Bright
+  Data) and re-scored (re-billing Gemini) jobs already collected. The dashboard now points the
+  scraper at the synced Drive master via `LINKEDIN_EXTRA_MASTER`, which `load_exclude_ids()`
+  unions on top of the local master and `external_exclude_ids.json`. It is set only on the scrape
+  subprocess (not pushed back to the VM, whose own master already is the full set), so the
+  VM's exclusion is unchanged. In one real run this would have skipped 74 of 198 duplicate
+  collections.
+
 ## [1.2.0] - 2026-06-28
 
 ### Added
@@ -79,7 +133,8 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/yib7/INployed/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/yib7/INployed/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/yib7/INployed/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/yib7/INployed/compare/v1.1.0...v1.1.1

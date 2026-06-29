@@ -5,12 +5,19 @@ the live files for the dashboard's "Check setup" button.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 from . import apply_answers, assets
 
 _SECTIONS = ("experience", "projects", "leadership")
 _NAME_KEY = {"experience": "org", "projects": "name", "leadership": "org"}
+
+
+def _norm_skill(item: str) -> str:
+    """Match the engine's skill-normalization (paren-stripped, lowercased) so the
+    anchoring check uses the same key as ats._norm_skill."""
+    return re.sub(r"\(.*?\)", "", str(item)).strip().lower()
 
 
 def validate_master(master: Dict[str, Any]) -> List[str]:
@@ -68,6 +75,17 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
                     if str(n).strip() and str(n).strip() not in known.get(sec, set()):
                         errors.append(
                             "tailor.required.%s names a block not in %s: '%s'" % (sec, sec, n))
+
+    aliases = master.get("skill_aliases")
+    if isinstance(aliases, dict):
+        real = {_norm_skill(item)
+                for pool in (master.get("skills", {}) or {}).values()
+                for item in (pool or [])}
+        for canon in aliases:
+            if str(canon).strip() and _norm_skill(str(canon)) not in real:
+                errors.append(
+                    "skill_aliases canonical '%s' is not a known skill — anchor it to a real "
+                    "entry in `skills:` (usually concepts_and_methodologies) or remove it" % canon)
     return errors
 
 

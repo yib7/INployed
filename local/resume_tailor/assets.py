@@ -49,6 +49,26 @@ def tailor_config() -> Dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
+def skill_aliases() -> Dict[str, List[str]]:
+    """Optional top-level `skill_aliases:` map: canonical skill -> [JD spellings the
+    ATS/JD may use for that same concept]. Each canonical SHOULD be a real skill in the
+    taxonomy; anchoring (dropping unanchored canonicals) is enforced downstream by
+    ats.anchored_alias_groups, so this loader is permissive. Absent/malformed -> {}.
+    A scalar alias is promoted to a one-element list."""
+    raw = load_master().get("skill_aliases") or {}
+    out: Dict[str, List[str]] = {}
+    if isinstance(raw, dict):
+        for canon, aliases in raw.items():
+            if not isinstance(canon, str):
+                continue
+            if isinstance(aliases, str):
+                aliases = [aliases]
+            if isinstance(aliases, (list, tuple)):
+                out[canon] = [str(a).strip() for a in aliases if str(a).strip()]
+    return out
+
+
+@lru_cache(maxsize=1)
 def atoms_by_id() -> Dict[str, Dict[str, Any]]:
     """Flat {atom_id: atom + provenance}. Atom ids are unique across the file."""
     master = load_master()

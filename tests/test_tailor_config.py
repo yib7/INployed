@@ -22,7 +22,7 @@ from resume_tailor import run as rt_run  # noqa: E402
 
 _CACHED = (
     assets.load_master, assets.tailor_config, assets.atoms_by_id,
-    assets.blocks, assets.template_head,
+    assets.blocks, assets.template_head, assets.skill_aliases,
 )
 
 _MASTER = textwrap.dedent("""
@@ -88,6 +88,15 @@ _MASTER = textwrap.dedent("""
       developer_tools: [Git, Docker]
       frameworks: [Flask]
       libraries: [pandas]
+      concepts_and_methodologies:
+        - "A/B Testing"
+        - "Feature Engineering"
+        - "Hypothesis Testing"
+        - "Exploratory Data Analysis (EDA)"
+        - "Data Cleaning & Preprocessing"
+    skill_aliases:
+      "A/B Testing": ["Experimentation", "Split Testing"]
+      "Data Cleaning & Preprocessing": ["Data Wrangling"]
 """)
 
 
@@ -546,3 +555,212 @@ def test_fill_underfull_enabled_config_off(synthetic_master, monkeypatch):
     monkeypatch.delenv("RESUME_TAILOR_FILL_UNDERFULL", raising=False)
     monkeypatch.setattr(config, "_config_json", lambda: {"fill_underfull": False})
     assert config.fill_underfull_enabled() is False
+
+
+# --- lead-with-overview: project bullets lead with the "what is this" overview --------
+# select() orders a project's bullet GROUPS purely by JD-relevance, so a project's
+# overview ("what is this project at a glance") can land on bullet 2 or 3 behind detail
+# bullets — the reader hits the tech history before learning what the thing IS.
+# lead_with_overview() floats the intro bullet to the front (a cheap model pass picks it;
+# a deterministic file-order fallback — the master authors the overview atom first —
+# guarantees flow even with no/failed model call). Projects only; pure reorder, no invent.
+
+def test_lead_with_overview_floats_model_pick_to_front(synthetic_master, monkeypatch):
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"], ["p2b"], ["p2c"]]}]}
+    # The model designates bullet 3 (p2c) as the overview/intro.
+    monkeypatch.setattr(compose, "call",
+                        lambda *a, **k: {"projects": [{"project": "ProjTwo", "lead": 3}]})
+    compose.lead_with_overview("a real job description " * 5, "Engineer", sel)
+    assert sel["projects"][0]["groups"] == [["p2c"], ["p2a"], ["p2b"]]   # rest keep order
+
+
+def test_lead_with_overview_falls_back_to_file_order_on_failure(synthetic_master, monkeypatch):
+    # Model call fails -> deterministic fallback floats the group holding the earliest
+    # AUTHORED atom (p2a, file-order index 0) to the front, leaving the rest in place.
+    def boom(*a, **k):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(compose, "call", boom)
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2a"], ["p2b"]]}]}
+    compose.lead_with_overview("jd", "Engineer", sel)
+    assert sel["projects"][0]["groups"] == [["p2a"], ["p2c"], ["p2b"]]
+
+
+def test_lead_with_overview_invalid_pick_uses_file_order(synthetic_master, monkeypatch):
+    # An out-of-range pick is ignored and the file-order fallback applies.
+    monkeypatch.setattr(compose, "call",
+                        lambda *a, **k: {"projects": [{"project": "ProjTwo", "lead": 99}]})
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2c"], ["p2a"]]}]}
+    compose.lead_with_overview("jd", "Engineer", sel)
+    assert sel["projects"][0]["groups"] == [["p2a"], ["p2c"]]
+
+
+def test_lead_with_overview_single_bullet_project_makes_no_call(synthetic_master, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("no LLM call when there is nothing to reorder")
+
+    monkeypatch.setattr(compose, "call", boom)
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjOne", "groups": [["p1"]]}]}
+    compose.lead_with_overview("jd", "Engineer", sel)
+    assert sel["projects"][0]["groups"] == [["p1"]]
+
+
+def test_lead_with_overview_skips_verbatim_project(synthetic_master, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("a verbatim project's order is the user's — never reorder it")
+
+    monkeypatch.setattr(compose, "call", boom)
+    groups = [["__verbatim__/ProjTwo/0"], ["__verbatim__/ProjTwo/1"]]
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [g[:] for g in groups]}]}
+    compose.lead_with_overview("jd", "Engineer", sel)
+    assert sel["projects"][0]["groups"] == groups
+
+
+def test_lead_with_overview_leaves_experience_and_leadership(synthetic_master, monkeypatch):
+    # Only projects are reordered; experience/leadership keep their template/relevance order
+    # even when a project triggers the model call.
+    monkeypatch.setattr(compose, "call",
+                        lambda *a, **k: {"projects": [{"project": "ProjTwo", "lead": 1}]})
+    sel = {"experience": [{"name": "Big Co", "groups": [["bigco_a"], ["bigco_b"]]}],
+           "leadership": [{"name": "Club A", "groups": [["la_a"], ["la_b"]]}],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"], ["p2b"]]}]}
+    compose.lead_with_overview("jd", "Engineer", sel)
+    assert sel["experience"][0]["groups"] == [["bigco_a"], ["bigco_b"]]
+    assert sel["leadership"][0]["groups"] == [["la_a"], ["la_b"]]
+
+
+def test_select_prompt_leads_projects_with_overview(synthetic_master, monkeypatch):
+    captured = {}
+
+    def fake_call(system, user, tier, **kw):
+        captured["user"] = user
+        return {"experience": [], "projects": [], "leadership": [],
+                "skill_focus": "general", "skills": {}, "rationale": ""}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    compose.select("Build data pipelines.", "Data Analyst", "ACME")
+    assert "overview" in captured["user"].lower()
+
+
+# --- config gate: RESUME_TAILOR_LEAD_OVERVIEW -----------------------------------
+
+def test_lead_overview_enabled_default_true(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_LEAD_OVERVIEW", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.lead_overview_enabled() is True
+
+
+def test_lead_overview_enabled_env_off(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_LEAD_OVERVIEW", "0")
+    assert config.lead_overview_enabled() is False
+
+
+def test_lead_overview_enabled_config_off(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_LEAD_OVERVIEW", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"lead_overview": False})
+    assert config.lead_overview_enabled() is False
+
+
+# --- Methods line: select() methods ranking is cleaned/anchored to the pool -----
+
+def test_normalize_selection_cleans_methods_to_pool(synthetic_master):
+    sel = compose._normalize_selection({
+        "experience": [], "projects": [], "leadership": [],
+        "methods": ["A/B Testing", "a/b testing", "Totally Invented", "Feature Engineering"],
+    })
+    # deduped (case-insensitive), invented dropped, printed in the pool's spelling
+    assert sel["methods"] == ["A/B Testing", "Feature Engineering"]
+
+
+def test_normalize_selection_methods_defaults_empty(synthetic_master):
+    sel = compose._normalize_selection({"experience": [], "projects": [], "leadership": []})
+    assert sel["methods"] == []
+
+
+# --- Methods line: the two-tier builder ----------------------------------------
+
+def test_methods_line_tier1_prints_jd_spelling_ranked_by_frequency(synthetic_master):
+    # alias-only hit -> the JD's spelling ('Experimentation'); direct hit -> the concept.
+    jd = "We love Experimentation, Experimentation, Experimentation. Some Feature Engineering too."
+    line = compose.methods_line(jd, {"methods": []})
+    items = line["items"].split(", ")
+    assert "Experimentation" in items
+    assert "Feature Engineering" in items
+    assert "A/B Testing" not in items                 # canonical not printed when the JD uses the alias
+    assert items.index("Experimentation") < items.index("Feature Engineering")  # by JD frequency
+
+
+def test_methods_line_tier1_ties_broken_by_model_relevance(synthetic_master):
+    # Two equal-frequency JD hits: the model ranks the alphabetically-LATER one higher,
+    # so role-relevance (not the alphabet) decides which earned buzzword leads.
+    jd = "We need Feature Engineering and A/B Testing."          # each appears once
+    sel = {"methods": ["Feature Engineering", "A/B Testing"]}    # model: FE more relevant
+    line = compose.methods_line(jd, sel)
+    items = line["items"].split(", ")
+    assert items.index("Feature Engineering") < items.index("A/B Testing")
+
+
+def test_methods_line_tier2_pads_from_model_ranking_dedup_by_canonical(synthetic_master):
+    jd = "Experimentation everywhere."               # exactly one Tier-1 hit
+    sel = {"methods": ["A/B Testing", "Hypothesis Testing", "Exploratory Data Analysis (EDA)"]}
+    line = compose.methods_line(jd, sel)
+    items = line["items"].split(", ")
+    assert items[0] == "Experimentation"             # Tier-1 leads
+    assert "A/B Testing" not in items                # same canonical as the chosen alias -> skipped
+    assert "Hypothesis Testing" in items and "Exploratory Data Analysis (EDA)" in items
+
+
+def test_methods_line_tier2_anchors_to_pool(synthetic_master):
+    # a model 'method' that is not a real concept is never printed (anchored to the pool)
+    line = compose.methods_line("nothing here", {"methods": ["Hypothesis Testing", "Invented Method"]})
+    items = line["items"].split(", ")
+    assert items == ["Hypothesis Testing"]
+
+
+def test_methods_line_none_when_pool_empty(synthetic_master, monkeypatch):
+    monkeypatch.setattr(compose, "_methods_pool", lambda: [])
+    assert compose.methods_line("Experimentation", {"methods": ["Hypothesis Testing"]}) is None
+
+
+def test_methods_line_none_when_target_zero(synthetic_master, monkeypatch):
+    monkeypatch.setattr(compose.layout, "skill_targets", lambda: {"Methods": 0})
+    assert compose.methods_line("Experimentation", {"methods": ["Hypothesis Testing"]}) is None
+
+
+def test_methods_line_width_capped_to_one_line(synthetic_master, monkeypatch):
+    monkeypatch.setattr(compose.layout, "skill_targets", lambda: {"Methods": 6})
+    cap = compose.measure.skill_line_width("Methods", "Experimentation")
+    monkeypatch.setattr(compose.measure, "SKILL_LINE_CAPACITY", cap)
+    jd = "Experimentation and Feature Engineering and Hypothesis Testing"
+    line = compose.methods_line(jd, {"methods": []})
+    assert line["items"] == "Experimentation"        # only the first token fits the tiny capacity
+
+
+# --- config gate: RESUME_TAILOR_METHODS_LINE ------------------------------------
+
+def test_methods_line_enabled_default_true(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_METHODS_LINE", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.methods_line_enabled() is True
+
+
+def test_methods_line_enabled_env_off(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_METHODS_LINE", "0")
+    assert config.methods_line_enabled() is False
+
+
+def test_methods_line_enabled_config_off(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_METHODS_LINE", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"methods_line": False})
+    assert config.methods_line_enabled() is False
+
+
+def test_methods_line_label_default(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_METHODS_LABEL", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.methods_line_label() == "Methods"

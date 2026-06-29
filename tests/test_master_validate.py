@@ -40,6 +40,23 @@ def test_master_flags_tailor_required_unknown_block():
     assert any("Ghost Corp" in e for e in mv.validate_master(m))
 
 
+def test_master_flags_unanchored_skill_alias():
+    m = {"basics": {"name": "A", "email": "a@b.c"},
+         "skills": {"concepts_and_methodologies": ["A/B Testing"]},
+         "skill_aliases": {"A/B Testing": ["Experimentation"],
+                           "Made Up Concept": ["bogus"]}}
+    errs = mv.validate_master(m)
+    assert any("Made Up Concept" in e for e in errs)        # unanchored -> flagged
+    assert not any("A/B Testing" in e for e in errs)        # anchored (paren-stripped) -> fine
+
+
+def test_master_alias_anchor_matches_paren_stripped_concept():
+    m = {"basics": {"name": "A", "email": "a@b.c"},
+         "skills": {"concepts_and_methodologies": ["Exploratory Data Analysis (EDA)"]},
+         "skill_aliases": {"Exploratory Data Analysis (EDA)": ["data analysis"]}}
+    assert mv.validate_master(m) == []
+
+
 def test_validate_answers_delegates():
     bad = [{"id": "x", "question": "", "answer": "", "kind": "fixed", "status": "active"}]
     assert mv.validate_answers(bad)  # non-empty

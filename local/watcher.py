@@ -9,7 +9,7 @@ Each invocation:
   2. Resolves the synced LinkedInJobs folder.
   3. Reconciles is_seen against the local SQLite registry on any file
      whose mtime has advanced since we last processed it.
-  4. Launches the Tkinter UI iff a file was newly reconciled AND it has
+  4. Launches the dashboard UI iff a file was newly reconciled AND it has
      unseen score>=4 rows. Otherwise exits silently.
 
 No polling loop — the process exits after one pass.

@@ -6,6 +6,16 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Dependency refresh (2026-07-01): markdownify 1.2.2 -> 1.2.3 (both requirement sets),
+  CI `actions/checkout` v5 -> v7. google-genai stays 1.x locally on purpose (2.x is a
+  major bump on the live LLM path); the VM's numpy stays 2.4.x (numpy 2.5+ needs
+  Python >=3.12, the VM runs 3.11).
+- `docs/ARCHITECTURE.md` caught up with the tree: the watcher + shared `local/locks.py`
+  single-instance lock, the anchored alias maps and Methods concepts line, the
+  `resume.md` concepts-pool guarantee, and module-table rows for `measure.py` /
+  `master_edit.py` / `master_validate.py` / `apply_answers.py`.
+
 ## [1.4.0] - 2026-07-01
 
 ### Added

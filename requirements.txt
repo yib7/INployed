@@ -1,5 +1,6 @@
 # Local Windows side (C:\Python314, Python 3.14.0): watcher, dashboard,
-# resume tailor, and tests. Snapshot of the working install on 2026-06-12.
+# resume tailor, and tests. Pins re-verified against PyPI stable on 2026-07-01
+# (full test suite + ruff green on this exact set).
 #
 #   python -m pip install -r requirements.txt
 #
@@ -13,7 +14,7 @@
 
 pandas==3.0.3
 google-genai==1.56.0   # held at 1.x on purpose: 2.x is a major bump on the live LLM path (see CHANGELOG)
-markdownify==1.2.2
+markdownify==1.2.3
 pypdf==6.14.2
 PyYAML==6.0.3
 ruamel.yaml==0.19.1

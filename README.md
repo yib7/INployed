@@ -53,7 +53,7 @@ flowchart TD
     C -->|Drive desktop sync| D["Local synced jobs folder"]
     subgraph Desktop["Windows PC"]
         D --> E["app.py dashboard (Qt)<br/>triage / tracker / stats"]
-        E -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - verify - LaTeX"]
+        E -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - layout - LaTeX"]
         F --> G["Tailored PDF + cover letter<br/>+ ATS report + prep sheet"]
     end
 ```
@@ -367,12 +367,12 @@ The composition pipeline (in `local/resume_tailor/`) is built around one rule,
 **select and re-phrase, never invent**:
 
 1. **select** (flash): pick the best experiences/projects and group their atoms.
+   Selection can only choose from your atoms, so every bullet is grounded by
+   construction.
 2. **rephrase** (pro): write one bullet per group, fusing only that group's facts.
-3. **verify** (flash): an anti-inflation gate. Each bullet is checked against the
-   *union* of its source atoms; unsupported bullets are fixed once, else dropped.
-4. **layout**: bullets are driven to exact printed-line budgets so the résumé
+3. **layout**: bullets are driven to exact printed-line budgets so the résumé
    fills one page cleanly (single-line bullets ≥75% full, no stubby lines).
-5. **compile**: render LaTeX and enforce one page.
+4. **compile**: render LaTeX and enforce one page.
 
 The skills section follows the same rule. A **Methods** line surfaces the concept
 keywords an ATS screens for ("ETL", "A/B testing", "data analysis") drawn only from

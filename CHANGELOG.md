@@ -6,6 +6,17 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `master_experience.example.yaml` now buckets its skills under the keys the tailor
+  actually renders (`languages` / `frameworks` / `developer_tools` / `libraries`, plus
+  `concepts_and_methodologies` for the Methods line). The example previously used
+  free-form keys (`ml_ai`, `data`, `cloud_devops`, `tools`), so on a fresh clone three
+  of the four skill pools were empty: a first-time user's tailored résumé printed only
+  the Languages line, and the fresh-clone test suite failed
+  `test_compress_skills_returns_four_labeled_lines` (the same 20 example skills are
+  kept, only regrouped). The taxonomy comment in the example now states the bucket
+  contract instead of "group however reads best".
+
 ### Changed
 - Dependency refresh (2026-07-01): markdownify 1.2.2 -> 1.2.3 (both requirement sets),
   CI `actions/checkout` v5 -> v7. google-genai stays 1.x locally on purpose (2.x is a

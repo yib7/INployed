@@ -27,11 +27,18 @@ jobs:
       - name: Lint (ruff)
         run: python -m ruff check .
 
+      # pytest and the smoke test are SEPARATE steps on purpose: in one multi-line
+      # PowerShell run block only the LAST command's exit code decides the step, so a
+      # pytest failure followed by a passing smoke test went green (this actually
+      # happened -- a hung test was killed by the timeout and CI still passed).
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen   # Qt UI tests run headless (no display on CI)
-        run: |
-          # --timeout: a hung test fails fast with a thread dump instead of burning
-          # the 6-hour job ceiling (the suite itself runs in well under a minute).
-          python -m pytest -q --timeout=120 --timeout-method=thread
-          python tests/smoke_qt.py
+        # The per-test timeout lives in pytest.ini (timeout = 120), so a hung test
+        # fails fast with a thread dump everywhere, not just on CI.
+        run: python -m pytest -q
+
+      - name: Dashboard smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tests/smoke_qt.py

@@ -7,6 +7,8 @@
 # ── Personal / user-supplied content (commit the *.example templates instead) ─
 resume.md
 resume_tailor_files/master_experience.yaml
+# Covers the user's resume_sample.pdf (style example the engine reads via
+# config.EXAMPLE_PDF) and any personal resume PDFs kept beside the master.
 resume_tailor_files/resume_*.pdf
 local/config.json
 search_config.json
@@ -34,7 +36,6 @@ company_blocklist.txt
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
-*.pyo
 .pytest_cache/
 
 # ── OS / editor / IDE ────────────────────────────────────────────────────────

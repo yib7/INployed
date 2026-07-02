@@ -66,7 +66,9 @@ flowchart TD
 - **Python 3.14** (the Qt UI installs via `pip` with the other deps, including PySide6).
 - **MiKTeX** (for `pdflatex`): `winget install MiKTeX.MiKTeX`. The résumé engine
   compiles LaTeX to PDF. (Set `PDFLATEX_PATH` if it isn't on `PATH`.)
-- **A Google Cloud project** with Vertex AI enabled (for Gemini scoring + tailoring).
+- **A Google Cloud project** with Vertex AI enabled (for Gemini scoring + tailoring),
+  plus the **[gcloud CLI](https://cloud.google.com/sdk/docs/install)** for the
+  `gcloud auth` login step (and the optional VM controls).
 - *(Optional, for scraping your own jobs)* a **Bright Data** account + LinkedIn dataset.
 
 > **Platform:** Windows is the primary target. The `Open INployed Dashboard.cmd`
@@ -78,6 +80,9 @@ flowchart TD
 
 ### 2. One-command setup
 ```powershell
+git clone https://github.com/yib7/INployed.git
+cd INployed
+
 # Fast: drop the example config into place, then edit it
 ./scripts/setup.ps1
 
@@ -90,6 +95,7 @@ any time to revisit settings; nothing is overwritten without `-Force`.
 
 Then install dependencies (if you skipped `-InstallDeps`) and authenticate:
 ```powershell
+python -m venv venv; .\venv\Scripts\activate   # (optional) keep deps in a project venv
 python -m pip install -r requirements.txt
 gcloud auth application-default login
 ```
@@ -387,9 +393,11 @@ Google Drive · cron · pytest.
 
 ## Tests
 ```bash
-QT_QPA_PLATFORM=offscreen python -m pytest   # unit + regression + Qt UI suite (headless)
-QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py   # Qt dashboard smoke test
+python -m pytest            # unit + regression + Qt UI suite (runs Qt headless by itself)
+python tests/smoke_qt.py    # Qt dashboard smoke test
 ```
+The suite sets `QT_QPA_PLATFORM=offscreen` itself, so the same two commands work in
+PowerShell, cmd, and bash. (CI exports it explicitly; see `.github/workflows/ci.yml`.)
 
 ## Screenshots
 ![The High Score tab showing scored jobs with LLM relevance scores, deep scores, apply/consider/tailored color tints, a recommendation legend, and the selected job's score breakdown above the bottom action bar (representative sample data)](docs/dashboard.png)

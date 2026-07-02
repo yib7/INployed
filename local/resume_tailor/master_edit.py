@@ -22,7 +22,10 @@ from . import assets, config
 
 _SECTIONS = ("experience", "projects", "leadership")
 _NAME_KEY = {"experience": "org", "projects": "name", "leadership": "org"}
-_CACHED = (assets.load_master, assets.tailor_config, assets.atoms_by_id, assets.blocks)
+_CACHED = (
+    assets.load_master, assets.tailor_config, assets.atoms_by_id, assets.blocks,
+    assets.skill_aliases, assets.skill_aliases_match_only,
+)
 
 
 def _yaml() -> YAML:

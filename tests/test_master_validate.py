@@ -57,6 +57,16 @@ def test_master_alias_anchor_matches_paren_stripped_concept():
     assert mv.validate_master(m) == []
 
 
+def test_master_flags_unanchored_match_only_alias():
+    m = {"basics": {"name": "A", "email": "a@b.c"},
+         "skills": {"developer_tools": ["Docker"]},
+         "skill_aliases_match_only": {"Docker": ["Containerization"],
+                                      "Phantom Tool": ["nope"]}}
+    errs = mv.validate_master(m)
+    assert any("Phantom Tool" in e for e in errs)           # unanchored -> flagged
+    assert not any("Docker" in e for e in errs)             # anchored -> fine
+
+
 def test_validate_answers_delegates():
     bad = [{"id": "x", "question": "", "answer": "", "kind": "fixed", "status": "active"}]
     assert mv.validate_answers(bad)  # non-empty

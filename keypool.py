@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import os
+import tempfile
 import time
 from collections import defaultdict, deque
 from datetime import datetime
@@ -28,6 +29,13 @@ LIMITS: dict[str, dict[str, int]] = {
     "gemini-3.1-flash-lite": {"rpm": 15, "rpd": 500},
     "gemini-3.5-flash": {"rpm": 5, "rpd": 20},
 }
+
+# Conservative gate for any model not listed above (e.g. gemini-3.1-pro-preview,
+# offered in the Settings UI dropdowns but never given explicit LIMITS). Without
+# this, _select's `limits is None` branch handed out free keys ungated, and a
+# real 429 looped with no sleep (set_exhausted was a no-op since _select never
+# checked state when limits was None).
+DEFAULT_LIMITS = {"rpm": 5, "rpd": 100}
 
 _PACIFIC = ZoneInfo("America/Los_Angeles")
 
@@ -67,10 +75,13 @@ class UsageState:
         except (OSError, ValueError):
             data = {}
         self.date = pacific_today()
+        self.usage = {}
         if data.get("date") == self.date and isinstance(data.get("usage"), dict):
-            self.usage = {str(k): int(v) for k, v in data["usage"].items()}
-        else:
-            self.usage = {}
+            for k, v in data["usage"].items():
+                try:
+                    self.usage[str(k)] = int(v)
+                except (TypeError, ValueError):
+                    continue  # corrupt entry -- drop it, don't crash the whole load
 
     def get(self, fp: str, model: str) -> int:
         return int(self.usage.get(self._k(fp, model), 0))
@@ -83,10 +94,19 @@ class UsageState:
 
     def save(self) -> None:
         try:
-            self.path.write_text(
-                json.dumps({"date": self.date, "usage": self.usage}),
-                encoding="utf-8",
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{self.path.name}.", suffix=".tmp", dir=str(self.path.parent)
             )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump({"date": self.date, "usage": self.usage}, f)
+                os.replace(tmp_name, str(self.path))
+            except OSError:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
         except OSError:
             pass
 
@@ -158,6 +178,13 @@ class KeyPool:
     @classmethod
     def from_env(cls, *, state_path: Path | str | None = None) -> "KeyPool":
         from google import genai
+        from google.genai import types as genai_types
+
+        # Bounded HTTP timeout on every client: without it a hung generate_content
+        # call blocks forever, and with semaphores one stuck call stalls the whole
+        # stage on the unattended VM (SDK takes the timeout in milliseconds).
+        timeout_ms = int(os.environ.get("SCORE_HTTP_TIMEOUT_S", "120")) * 1000
+        http_options = genai_types.HttpOptions(timeout=timeout_ms)
 
         keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
         if not keys:
@@ -167,14 +194,20 @@ class KeyPool:
         members: list[dict] = []
         for k in keys:
             members.append(
-                {"client": genai.Client(api_key=k), "kind": "free", "fp": key_fingerprint(k)}
+                {
+                    "client": genai.Client(api_key=k, http_options=http_options),
+                    "kind": "free",
+                    "fp": key_fingerprint(k),
+                }
             )
         project = os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
         if project:
             location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1").strip() or "us-central1"
             members.append(
                 {
-                    "client": genai.Client(vertexai=True, project=project, location=location),
+                    "client": genai.Client(
+                        vertexai=True, project=project, location=location, http_options=http_options
+                    ),
                     "kind": "vertex",
                     "fp": None,
                 }
@@ -189,7 +222,7 @@ class KeyPool:
         return cls(members, state)
 
     async def generate(self, *, model: str, contents: Any, config: Any) -> Any:
-        limits = LIMITS.get(model)
+        limits = LIMITS.get(model, DEFAULT_LIMITS)
         transient = 0
         while True:
             async with self._lock:

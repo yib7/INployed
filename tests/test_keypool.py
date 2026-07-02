@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -132,8 +133,12 @@ def test_from_env_builds_free_members_and_vertex(monkeypatch, tmp_path):
     assert kinds == ["free", "free", "free", "vertex"]
     assert pool._members[-1]["fp"] is None
     assert all(m["fp"] for m in pool._members[:3])
-    assert created[0] == {"api_key": "k1"}
-    assert created[-1] == {"vertexai": True, "project": "proj", "location": "global"}
+    assert created[0]["api_key"] == "k1"
+    assert created[-1]["vertexai"] is True
+    assert created[-1]["project"] == "proj"
+    assert created[-1]["location"] == "global"
+    # every client (free and vertex) carries a bounded HTTP timeout (P1-4)
+    assert all("http_options" in kwargs for kwargs in created)
 
 
 def test_from_env_raises_without_any_credential(monkeypatch, tmp_path):
@@ -146,3 +151,153 @@ def test_from_env_raises_without_any_credential(monkeypatch, tmp_path):
         assert False, "expected PoolError"
     except keypool.PoolError:
         pass
+
+
+UNKNOWN_MODEL = "gemini-3.1-pro-preview"
+
+
+# --- P0-2: unknown models must get DEFAULT_LIMITS RPM/RPD gating -----------
+
+def test_default_limits_exist_and_are_conservative():
+    assert keypool.DEFAULT_LIMITS["rpm"] > 0
+    assert keypool.DEFAULT_LIMITS["rpd"] > 0
+
+
+def test_select_gates_unknown_model_by_default_limits_once_rpd_exhausted(tmp_path):
+    # No vertex member -- if an unknown model isn't gated, _select would keep
+    # handing out the free key forever (the P0-2 infinite-loop bug).
+    free = {"client": _client(lambda *_: _resp("FREE")), "kind": "free", "fp": "fp1"}
+    pool = _pool([free], tmp_path)
+    limits = keypool.LIMITS.get(UNKNOWN_MODEL, keypool.DEFAULT_LIMITS)
+    pool._state.set_exhausted("fp1", UNKNOWN_MODEL, limits["rpd"])
+    kind, idx, wait = pool._select(UNKNOWN_MODEL, limits)
+    assert kind == "none"
+
+
+def test_generate_raises_pool_error_for_unknown_model_when_free_rpd_exhausted(tmp_path):
+    # Mirrors the real generate() codepath: LIMITS.get(model, DEFAULT_LIMITS)
+    # must be what generate() actually uses, not None.
+    free = {"client": _client(lambda *_: _resp("FREE")), "kind": "free", "fp": "fp1"}
+    pool = _pool([free], tmp_path)
+    limits = keypool.LIMITS.get(UNKNOWN_MODEL, keypool.DEFAULT_LIMITS)
+    pool._state.set_exhausted("fp1", UNKNOWN_MODEL, limits["rpd"])
+    try:
+        asyncio.run(pool.generate(model=UNKNOWN_MODEL, contents="x", config=None))
+        assert False, "expected PoolError (unknown model must be gated, not unthrottled)"
+    except keypool.PoolError:
+        pass
+
+
+def test_known_model_limits_unchanged_by_default_limits_addition():
+    # No happy-path change for the two known models.
+    assert keypool.LIMITS[FLASH] == {"rpm": 5, "rpd": 20}
+    assert keypool.LIMITS["gemini-3.1-flash-lite"] == {"rpm": 15, "rpd": 500}
+
+
+# --- P1-4: from_env-built clients must carry an HTTP timeout ---------------
+
+def test_from_env_sets_default_http_timeout_on_free_and_vertex_clients(monkeypatch, tmp_path):
+    created = []
+
+    def fake_client(**kwargs):
+        created.append(kwargs)
+        return _client(lambda *_: _resp("ok"))
+
+    monkeypatch.setattr("google.genai.Client", fake_client)
+    monkeypatch.delenv("SCORE_HTTP_TIMEOUT_S", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+
+    keypool.KeyPool.from_env(state_path=tmp_path / "s.json")
+
+    assert len(created) == 2
+    for kwargs in created:
+        assert "http_options" in kwargs
+        assert kwargs["http_options"].timeout == 120000
+
+
+def test_from_env_respects_score_http_timeout_s_env_override(monkeypatch, tmp_path):
+    created = []
+
+    def fake_client(**kwargs):
+        created.append(kwargs)
+        return _client(lambda *_: _resp("ok"))
+
+    monkeypatch.setattr("google.genai.Client", fake_client)
+    monkeypatch.setenv("SCORE_HTTP_TIMEOUT_S", "45")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+
+    keypool.KeyPool.from_env(state_path=tmp_path / "s.json")
+
+    assert len(created) == 2
+    for kwargs in created:
+        assert kwargs["http_options"].timeout == 45000
+
+
+# --- P2-8: UsageState robustness --------------------------------------------
+
+def test_usage_state_load_survives_non_int_usage_value(tmp_path):
+    p = tmp_path / "score_state.json"
+    today = keypool.pacific_today()
+    p.write_text(json.dumps({"date": today, "usage": {"fp1:m": "garbage"}}), encoding="utf-8")
+    st = keypool.UsageState(p)
+    st.load()  # must not raise
+    assert st.get("fp1", "m") == 0
+
+
+def test_usage_state_load_survives_mixed_valid_and_invalid_values(tmp_path):
+    p = tmp_path / "score_state.json"
+    today = keypool.pacific_today()
+    p.write_text(
+        json.dumps({"date": today, "usage": {"fp1:m": 7, "fp2:m": "garbage", "fp3:m": None}}),
+        encoding="utf-8",
+    )
+    st = keypool.UsageState(p)
+    st.load()  # must not raise
+    assert st.get("fp1", "m") == 7
+    assert st.get("fp2", "m") == 0
+    assert st.get("fp3", "m") == 0
+
+
+def test_usage_state_save_writes_atomically_via_os_replace(tmp_path, monkeypatch):
+    p = tmp_path / "score_state.json"
+    st = keypool.UsageState(p)
+    st.load()
+    st.incr("fp1", "m", 5)
+
+    calls = []
+    real_replace = os.replace
+
+    def spy_replace(src, dst):
+        calls.append((str(src), str(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(keypool.os, "replace", spy_replace)
+    st.save()
+
+    assert len(calls) == 1
+    assert calls[0][1] == str(p)
+    # temp file was in the same directory (same-filesystem rename guarantee)
+    assert Path(calls[0][0]).parent == p.parent
+    assert not Path(calls[0][0]).exists()  # renamed away, no leftover temp file
+
+    st2 = keypool.UsageState(p)
+    st2.load()
+    assert st2.get("fp1", "m") == 5
+
+
+def test_usage_state_save_content_round_trips(tmp_path):
+    p = tmp_path / "score_state.json"
+    st = keypool.UsageState(p)
+    st.load()
+    st.incr("fpA", "gemini-3.5-flash", 2)
+    st.set_exhausted("fpB", "gemini-3.1-flash-lite", 500)
+    st.save()
+
+    on_disk = json.loads(p.read_text(encoding="utf-8"))
+    assert on_disk["date"] == st.date
+    assert on_disk["usage"]["fpA:gemini-3.5-flash"] == 2
+    assert on_disk["usage"]["fpB:gemini-3.1-flash-lite"] == 500

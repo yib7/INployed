@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -162,8 +163,13 @@ def get_run_label() -> str:
 def load_previous_ids() -> list[str]:
     if not PREVIOUS_IDS_FILE.exists():
         return []
-    with open(PREVIOUS_IDS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(PREVIOUS_IDS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"Could not read {PREVIOUS_IDS_FILE.name} ({e}); ignoring last-run ids")
+        return []
+    return [str(x) for x in data] if isinstance(data, list) else []
 
 
 def _master_ids() -> list[str]:
@@ -240,9 +246,26 @@ def load_exclude_ids() -> list[str]:
     return ids
 
 
+def _atomic_write_json(path: Path, data) -> None:
+    """Same-dir tempfile + os.replace for a JSON write (mirrors _atomic_to_csv).
+    A crash mid-write leaves either the old file or the new one, never a
+    truncated partial write."""
+    fd, tmp = tempfile.mkstemp(prefix=path.stem + ".", suffix=".tmp", dir=str(path.parent))
+    os.close(fd)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def save_current_ids(ids: list[str]) -> None:
-    with open(PREVIOUS_IDS_FILE, "w", encoding="utf-8") as f:
-        json.dump(ids, f)
+    _atomic_write_json(PREVIOUS_IDS_FILE, ids)
 
 
 def write_external_exclude_ids(path: Path | None = None) -> Path:
@@ -287,9 +310,43 @@ def drop_blocklisted_companies(df: pd.DataFrame) -> pd.DataFrame:
     return df[~mask]
 
 
+def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:
+    """Write `df` to `path` atomically: same-dir tempfile + os.replace.
+
+    A crash/kill/OOM mid-write then leaves either the old file (rename never
+    happened) or the new one (rename completed) -- never a truncated partial
+    write. `path` is only touched by the final os.replace. scraper.py is
+    copied standalone to the VM (no local/ package), hence this private copy
+    instead of importing local/csv_io.write_csv_gz_atomic.
+    """
+    fd, tmp = tempfile.mkstemp(prefix=path.stem + ".", suffix=".tmp", dir=str(path.parent))
+    os.close(fd)
+    try:
+        df.to_csv(tmp, index=False, encoding="utf-8", **kwargs)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def append_to_master(df: pd.DataFrame) -> int:
     if MASTER_CSV.exists():
-        existing = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str})
+        try:
+            existing = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str})
+        except (OSError, ValueError, pd.errors.ParserError) as e:
+            # NEVER treat an unreadable-but-existing master as empty -- that would
+            # fabricate a fresh master, quietly shrinking the exclude set and
+            # re-billing already-collected jobs. Abort loudly instead: this run's
+            # fresh rows are still safe in the run-dir CSV, so a `--snapshot`
+            # rerun (once the master is fixed/restored) recovers cleanly.
+            raise OSError(
+                f"cannot update {MASTER_CSV.name}: existing master is unreadable ({e}). "
+                f"This run's rows are still saved to the run-dir CSV; fix or restore "
+                f"{MASTER_CSV} and rerun with --snapshot to recover them."
+            ) from e
         combined = pd.concat([existing, df], ignore_index=True)
     else:
         combined = df
@@ -299,7 +356,7 @@ def append_to_master(df: pd.DataFrame) -> int:
         combined["job_posting_id"] = combined["job_posting_id"].astype(str)
         combined = combined.drop_duplicates(subset=["job_posting_id"], keep="first")
     combined = drop_blocklisted_companies(combined)
-    combined.to_csv(MASTER_CSV, index=False, encoding="utf-8")
+    _atomic_to_csv(combined, MASTER_CSV)
     return len(combined)
 
 
@@ -458,10 +515,6 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
             # whose run aborted after billing). No trigger -> no extra cost.
             print(f"Run: {run_label} | Recovering already-collected snapshot {snapshot_id} (no new trigger/billing)")
         results = await download(session, snapshot_id)
-
-    if not isinstance(results, list):
-        print(f"Unexpected response shape: {results}")
-        sys.exit(1)
 
     df = pd.json_normalize(results)
     if df.empty:

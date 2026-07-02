@@ -18,9 +18,19 @@ def atomic_write_json(path: Path, data: Any) -> None:
 
     The temp name includes the PID so two processes writing at once don't
     collide on the temp file itself. os.replace is atomic on the same
-    filesystem, which a same-directory temp guarantees.
+    filesystem, which a same-directory temp guarantees. If os.replace raises
+    (e.g. the destination is locked on Windows), the tmp file is unlinked
+    rather than left stranded -- same try/finally pattern as
+    csv_io.write_csv_gz_atomic / scraper._atomic_to_csv.
     """
     path = Path(path)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass

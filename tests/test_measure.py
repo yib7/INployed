@@ -127,15 +127,37 @@ def test_fill_floor_width_monotonic_in_target():
     assert measure.fill_floor_width(1) < measure.fill_floor_width(2) < measure.fill_floor_width(3)
 
 
-def test_fill_floor_width_single_line_is_ninety_percent():
+def test_fill_floor_width_single_line_is_half():
+    # The underfull-fill TRIGGER only rescues a line below 50% full (was 90%).
     from math import ceil
-    assert measure.fill_floor_width(1) == ceil(0.90 * measure.BODY_LINE_CAPACITY)
+    assert measure.fill_floor_width(1) == ceil(0.50 * measure.BODY_LINE_CAPACITY)
 
 
 def test_fill_floor_width_multiline_reaches_into_last_line():
     from math import ceil
-    # A 2-line bullet must reach >=75% into its second line: (1 + 0.75) * capacity.
-    assert measure.fill_floor_width(2) == ceil(1.75 * measure.BODY_LINE_CAPACITY)
+    # A 2-line bullet only triggers fill below 50% into its second line: (1 + 0.50) * capacity.
+    assert measure.fill_floor_width(2) == ceil(1.50 * measure.BODY_LINE_CAPACITY)
+
+
+def test_is_underfull_false_for_sixty_percent_line():
+    # A single-line bullet filling ~55-60% of its line is NO LONGER rescued (was, under 0.90):
+    # some white space is fine to keep it readable; only sub-50% lines trigger the fill.
+    from math import ceil
+    cap = measure.BODY_LINE_CAPACITY
+    text = ""
+    while measure.text_width(text) < ceil(0.55 * cap):
+        text += "wide "
+    assert ceil(0.50 * cap) <= measure.text_width(text) < ceil(0.90 * cap)
+    assert measure.is_underfull(text, 1) is False        # would have been True at the old 0.90 floor
+
+
+def test_length_hint_aim_unchanged_when_trigger_relaxed():
+    # The TRIGGER drops to 50%, but the rephrase AIM stays 0.90/0.75 — intentionally decoupled
+    # (we still ask the model to fill the line; we just stop folding in a spare atom above 50%).
+    from math import ceil
+    assert measure.FULL_LINE_FILL == 0.90 and measure.LAST_LINE_FILL == 0.75   # aim constants
+    assert measure.UNDERFULL_FILL == 0.50                                      # new trigger constant
+    assert f"{ceil(0.90 * config.MAX_LINE_CHARS)}-" in compose._length_hint(1)
 
 
 def test_is_underfull_true_for_stubby_bullet():
@@ -213,7 +235,9 @@ def test_split_skill_tokens_plain_line_unchanged():
 def test_complete_to_count_counts_parenthesized_token_as_one():
     # The "(Gemini, OpenAI, Claude)" token counts as ONE item, so the line completes to
     # the full target from the pool instead of stopping early on its shattered commas.
-    pool = ["AWS", "S3", "Lambda", "EC2", "RDS"]
+    # (Pool carries the token's members so it ANCHORS -- SP7 requires every named member
+    # to be pool-backed; this test pins the not-shattered COUNTING, not the anchor gate.)
+    pool = ["AWS", "S3", "Lambda", "EC2", "RDS", "Gemini", "OpenAI", "Claude"]
     picked = compose._complete_to_count(
         "AWS, LLM APIs (Gemini, OpenAI, Claude), S3", pool, 5)
     assert len(picked) == 5                                 # 5 VISUAL items, not 3

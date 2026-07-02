@@ -16,6 +16,12 @@ from pypdf import PdfReader
 
 from . import config, render
 
+# pdflatex is a console app; spawned from the windowless dashboard (pythonw) it would
+# otherwise flash a console window each pass and steal focus — the cause of the pop-ups
+# during a tailor run. CREATE_NO_WINDOW (Windows only; 0 elsewhere) keeps every compile
+# headless — mirrors qt.main_window._no_window_flag().
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 @dataclass
 class CompileResult:
@@ -46,7 +52,13 @@ def compile_tex(tex_path: Path, work_dir: Path) -> CompileResult:
     ]
     last = ""
     for _ in range(2):
-        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(tex_path.parent))
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  cwd=str(tex_path.parent), creationflags=_NO_WINDOW,
+                                  timeout=180)
+        except subprocess.TimeoutExpired:
+            return CompileResult(False, None, "", "pdflatex timed out after 180s "
+                                 "(a MiKTeX package prompt? run pdflatex once by hand.)")
         last = proc.stdout + "\n" + proc.stderr
         if proc.returncode != 0:
             return CompileResult(False, None, "\n".join(last.splitlines()[-60:]),

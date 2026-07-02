@@ -140,6 +140,33 @@ def test_projects_count_control_loads_and_saves(qtbot, master_tmp, tmp_path, mon
     assert jobsdata.load_projects_count() == (2, "max")
 
 
+def test_project_tiers_control_loads_and_saves(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    jobsdata.save_project_bullet_tiers([{"projects": 2, "bullets": 3}])
+    ed = _editor(qtbot, master_tmp)
+    assert ed._project_tiers_edit.text().replace(" ", "") == "2:3"   # prefilled from config
+    ed._project_tiers_edit.setText("2:3, 2:2, 1:1")
+    ed._save_layout()
+    assert jobsdata.load_project_bullet_tiers() == [
+        {"projects": 2, "bullets": 3}, {"projects": 2, "bullets": 2}, {"projects": 1, "bullets": 1}]
+
+
+def test_project_tiers_blank_clears(qtbot, master_tmp, tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    jobsdata.save_project_bullet_tiers([{"projects": 1, "bullets": 3}])
+    ed = _editor(qtbot, master_tmp)
+    ed._project_tiers_edit.setText("")        # clearing the box disables tiering
+    ed._save_layout()
+    assert jobsdata.load_project_bullet_tiers() == []
+
+
+def test_parse_tiers_drops_malformed_tokens():
+    assert rdt._parse_tiers("2:3, junk, 1:1, 5") == [
+        {"projects": 2, "bullets": 3}, {"projects": 1, "bullets": 1}]
+
+
 def test_projects_count_warning_shows_above_four(qtbot, master_tmp, tmp_path, monkeypatch):
     import jobsdata
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)

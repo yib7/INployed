@@ -94,24 +94,30 @@ def line_count(text: str, capacity: int | None = None) -> int:
     return n
 
 
-# Minimum fraction of a printed line a bullet should fill to count as "full": a single-line
-# bullet should fill >=FULL_LINE_FILL of its one line; a multi-line bullet's last line may run
-# shorter but should still reach >=LAST_LINE_FILL into it. Shared by the rephrase length hint
-# (compose._length_hint) and underfull detection (is_underfull) so the two never drift.
-FULL_LINE_FILL = 0.90
-LAST_LINE_FILL = 0.75
+# Two distinct fill fractions, intentionally DECOUPLED:
+#   * the rephrase AIM (FULL_LINE_FILL / LAST_LINE_FILL) is how full we ASK the model to make a
+#     bullet (compose._length_hint): a single-line bullet aims for >=90% of its line, a multi-line
+#     bullet's last line for >=75%. Unchanged — we still want lines to read full.
+#   * the underfull TRIGGER (UNDERFULL_FILL) is how empty a line must be before we RESCUE it by
+#     folding in a spare same-block atom (fill_floor_width -> is_underfull -> compose.fill_underfull).
+#     Set low (50%) so only a genuinely sparse line is grown; some white space above it is fine and
+#     kept for readability.
+FULL_LINE_FILL = 0.90    # _length_hint aim (single line)
+LAST_LINE_FILL = 0.75    # _length_hint aim (last line of a multi-line bullet)
+UNDERFULL_FILL = 0.50    # is_underfull / fill_underfull trigger (rescue only below half-full)
 
 
 def fill_floor_width(target_lines: int, capacity: int | None = None) -> int:
-    """Minimum acceptable total advance width (1/1000-em units) for a bullet with a
-    `target_lines` printed-line budget: a 1-line bullet must reach FULL_LINE_FILL of its
-    line; a multi-line bullet must reach LAST_LINE_FILL into its last line — i.e.
-    ((target_lines - 1) + LAST_LINE_FILL) * capacity. The em-unit twin of
-    compose._length_hint's character floor; below this a bullet is considered underfull."""
+    """Width (1/1000-em units) below which a `target_lines` bullet is treated as UNDERFULL and may
+    have a spare atom folded in: a 1-line bullet below UNDERFULL_FILL of its line, a multi-line
+    bullet below UNDERFULL_FILL into its last line — i.e. ((target_lines - 1) + UNDERFULL_FILL) *
+    capacity. This is the rescue TRIGGER only; the rephrase still AIMS for the fuller
+    FULL_LINE_FILL / LAST_LINE_FILL (compose._length_hint), so a 50-90% line is left as readable
+    white space rather than padded."""
     cap = BODY_LINE_CAPACITY if capacity is None else capacity
     if target_lines <= 1:
-        return ceil(FULL_LINE_FILL * cap)
-    return ceil(((target_lines - 1) + LAST_LINE_FILL) * cap)
+        return ceil(UNDERFULL_FILL * cap)
+    return ceil(((target_lines - 1) + UNDERFULL_FILL) * cap)
 
 
 def is_underfull(text: str, target_lines: int, capacity: int | None = None) -> bool:

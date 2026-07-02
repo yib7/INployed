@@ -55,8 +55,9 @@ def main(argv: list[str] | None = None) -> int:
 
     lock = _UILock(UI_LOCK)
     if not lock.acquire():
-        QtWidgets.QMessageBox.information(
-            None, "INployed", "The dashboard is already running.")
+        # Exit silently (no modal) -- the already-running instance's own
+        # FS-watcher/poll picks up any new files this relaunch would have
+        # opened, so interrupting the user here only annoys them.
         return 0
     win = None
     rc = 0

@@ -23,6 +23,7 @@ from resume_tailor import run as rt_run  # noqa: E402
 _CACHED = (
     assets.load_master, assets.tailor_config, assets.atoms_by_id,
     assets.blocks, assets.template_head, assets.skill_aliases,
+    assets.skill_aliases_match_only,
 )
 
 _MASTER = textwrap.dedent("""
@@ -85,7 +86,7 @@ _MASTER = textwrap.dedent("""
           - {id: lb_a, what: "single atom org", angles: [lead]}
     skills:
       languages: [Python, SQL]
-      developer_tools: [Git, Docker]
+      developer_tools: [Git, Docker, PostgreSQL]
       frameworks: [Flask]
       libraries: [pandas]
       concepts_and_methodologies:
@@ -97,6 +98,9 @@ _MASTER = textwrap.dedent("""
     skill_aliases:
       "A/B Testing": ["Experimentation", "Split Testing"]
       "Data Cleaning & Preprocessing": ["Data Wrangling"]
+      "PostgreSQL": ["Postgres"]
+    skill_aliases_match_only:
+      "Docker": ["Containerization"]
 """)
 
 
@@ -764,3 +768,105 @@ def test_methods_line_label_default(synthetic_master, monkeypatch):
     monkeypatch.delenv("RESUME_TAILOR_METHODS_LABEL", raising=False)
     monkeypatch.setattr(config, "_config_json", lambda: {})
     assert config.methods_line_label() == "Methods"
+
+
+# --- Tech-line alias swap: print the JD's spelling for a printable variant ------
+
+def _dev_tools_items(out, jd):
+    """The 'Developer Tools' line items (tokens) produced by _finalize_skill_lines."""
+    lines = {ln["label"]: ln["items"] for ln in compose._finalize_skill_lines(out, jd)}
+    return lines["Developer Tools"].split(", ")
+
+
+def test_tech_swap_prints_jd_spelling_for_printable_variant(synthetic_master):
+    # JD uses 'Postgres' (a printable alias) and never 'PostgreSQL' -> the tech line swaps.
+    out = {"Developer Tools": "Git, Docker, PostgreSQL"}
+    items = _dev_tools_items(out, "We run Postgres in production. Postgres tuning a plus.")
+    assert "Postgres" in items
+    assert "PostgreSQL" not in items
+
+
+def test_tech_swap_keeps_canonical_on_direct_jd_hit(synthetic_master):
+    # JD spells the canonical itself -> keep the candidate's spelling (no swap).
+    out = {"Developer Tools": "Git, Docker, PostgreSQL"}
+    items = _dev_tools_items(out, "Deep PostgreSQL experience required.")
+    assert "PostgreSQL" in items
+    assert "Postgres" not in items
+
+
+def test_tech_swap_keeps_canonical_when_jd_silent(synthetic_master):
+    # the JD mentions neither spelling -> the canonical stays printed.
+    out = {"Developer Tools": "Git, Docker, PostgreSQL"}
+    items = _dev_tools_items(out, "A backend role with no database named.")
+    assert "PostgreSQL" in items
+    assert "Postgres" not in items
+
+
+def test_tech_swap_never_swaps_match_only_term(synthetic_master):
+    # 'Containerization' is a MATCH-ONLY alias of Docker -> Docker is never dumbed down on the page.
+    out = {"Developer Tools": "Git, Docker, PostgreSQL"}
+    items = _dev_tools_items(out, "Heavy Containerization. Containerization everywhere.")
+    assert "Docker" in items
+    assert "Containerization" not in items
+
+
+def test_tech_swap_off_by_gate(synthetic_master, monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_TECH_ALIASES", "0")
+    out = {"Developer Tools": "Git, Docker, PostgreSQL"}
+    items = _dev_tools_items(out, "We run Postgres in production.")
+    assert "PostgreSQL" in items                 # gate off -> canonical stays
+    assert "Postgres" not in items
+
+
+def test_tech_swap_threads_through_compress_skills(synthetic_master):
+    # compress_skills passes the JD into the finalize pass (pre-selected skills path, no LLM call).
+    sel = {"skills": {"Developer Tools": "Git, Docker, PostgreSQL"}}
+    lines = {ln["label"]: ln["items"] for ln in compose.compress_skills(
+        "Postgres-heavy stack.", "Engineer", sel)}
+    assert "Postgres" in lines["Developer Tools"].split(", ")
+
+
+# --- config gate: RESUME_TAILOR_TECH_ALIASES ------------------------------------
+
+def test_tech_aliases_enabled_default_true(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_TECH_ALIASES", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.tech_aliases_enabled() is True
+
+
+def test_tech_aliases_enabled_env_off(monkeypatch):
+    monkeypatch.setenv("RESUME_TAILOR_TECH_ALIASES", "0")
+    assert config.tech_aliases_enabled() is False
+
+
+def test_tech_aliases_enabled_config_off(synthetic_master, monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_TECH_ALIASES", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"tech_aliases": False})
+    assert config.tech_aliases_enabled() is False
+
+
+# --- load_master shape validation (P1-7): a malformed yaml must fail loudly at the
+# load boundary, not as a deep AttributeError the first time a consumer calls .get() ---
+
+def test_load_master_empty_file_raises_value_error(tmp_path, monkeypatch):
+    p = tmp_path / "master.yaml"
+    p.write_text("", encoding="utf-8")  # yaml.safe_load("") -> None
+    monkeypatch.setattr(config, "MASTER_YAML", p)
+    assets.load_master.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="master.yaml"):
+            assets.load_master()
+    finally:
+        assets.load_master.cache_clear()
+
+
+def test_load_master_top_level_list_raises_value_error(tmp_path, monkeypatch):
+    p = tmp_path / "master.yaml"
+    p.write_text("- just\n- a\n- list\n", encoding="utf-8")  # top-level list, not a mapping
+    monkeypatch.setattr(config, "MASTER_YAML", p)
+    assets.load_master.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="master.yaml"):
+            assets.load_master()
+    finally:
+        assets.load_master.cache_clear()

@@ -1,5 +1,5 @@
 """SP2: the Qt shell builds with seven tabs, a dark theme, and a single-instance lock."""
-from PySide6 import QtGui
+from PySide6 import QtGui, QtWidgets
 
 import app as qt_app
 from jobsdata import _UILock
@@ -35,3 +35,16 @@ def test_single_instance_lock(tmp_path):
     first.release()
     assert second.acquire() is True     # released -> the next instance can take it
     second.release()
+
+
+def test_main_exits_silently_when_lock_already_held(monkeypatch):
+    # P2-2: a second instance must exit(0) quietly -- the live instance's own
+    # FS-watcher/poll already picks up new files, so a modal here only interrupts
+    # the user for no reason.
+    monkeypatch.setattr(qt_app._UILock, "acquire", lambda self: False)
+
+    def _boom(*a, **k):
+        raise AssertionError("second instance must not show a modal dialog")
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", _boom)
+    assert qt_app.main([]) == 0

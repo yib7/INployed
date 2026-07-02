@@ -117,11 +117,24 @@ skills:
   tools: [Git, Jupyter, FastAPI, React]
 
 # Optional: map a real skill above to the alternate wordings a job description / ATS
-# might use for it. A JD's wording then matches that skill, and (when the JD uses it)
-# prints on the resume's "Methods" line in the casing written here -- without inventing
-# a skill. ANCHORING RULE: every key MUST be a real skill listed in `skills:` above
-# (unanchored keys are ignored and flagged by "Check setup"); aliases only change
-# WORDING for a concept you genuinely have. Extend as you harvest keywords from postings.
+# might use for it -- so a JD's wording matches a skill you genuinely have, without
+# inventing one. ANCHORING RULE (both maps): every key MUST be a real skill listed in
+# `skills:` above (unanchored keys are ignored and flagged by "Check setup"); aliases
+# only change WORDING. Extend as you harvest keywords from postings.
+#
+# skill_aliases -- PRINTABLE spelling variants. Matched AND printed in the JD's own
+# spelling when earned: on the "Methods" concepts line, and swapped onto a technical-
+# skills line (e.g. a JD that says "Postgres" makes the line print "Postgres" instead of
+# "PostgreSQL", so a literal keyword ATS sees the JD's exact term). Use for true variants
+# you are happy to see on the page.
 skill_aliases:
   "RAG": ["Retrieval-Augmented Generation", "Retrieval Augmented Generation"]
   "LLM prompt engineering": ["Prompt Engineering", "Prompt Design"]
+  "PostgreSQL": ["Postgres"]            # tech spelling variant -> swapped onto the skills line
+
+# skill_aliases_match_only -- BROADER synonyms. Counted as covered in the ATS report and
+# never proposed as a gap, but NEVER printed/swapped -- your stronger canonical token stays
+# on the page. Use for vague or weaker terms you do not want literally on the resume.
+skill_aliases_match_only:
+  "Docker": ["Containerization", "Containers"]
+  "AWS": ["Amazon Web Services"]

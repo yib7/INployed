@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -512,22 +513,51 @@ async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
 # is not just raw scrape data. (job_posting_id is the merge key, kept separate.)
 SCORE_COLS = [
     "score", "reason", "deep_score", "strengths", "gaps", "recommendation",
-    "filter_junk_title", "filter_too_many_years", "filtered_out", "is_seen",
+    "filter_junk_title", "filter_junk_desc", "filter_too_many_years",
+    "filter_clearance", "filter_degree", "filtered_out", "is_seen",
 ]
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
+
+
+def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:
+    """Write `df` to `path` atomically: same-dir tempfile + os.replace.
+
+    A crash/kill/OOM mid-write then leaves either the old file (rename never
+    happened) or the new one (rename completed) -- never a truncated partial
+    write. score_jobs.py is copied standalone to the VM (no local/ package),
+    hence this private copy instead of importing local/csv_io.write_csv_gz_atomic.
+    """
+    fd, tmp = tempfile.mkstemp(prefix=path.stem + ".", suffix=".tmp", dir=str(path.parent))
+    os.close(fd)
+    try:
+        df.to_csv(tmp, index=False, encoding="utf-8", **kwargs)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def update_master_scores(scored: pd.DataFrame) -> None:
     """Merge this run's score columns into the cumulative master CSV.
 
     The master is otherwise raw scrape data (scraper.py owns it); this folds in
-    score / recommendation / is_seen so the master is a complete record. Uses
-    DataFrame.update, so jobs scored on a previous run that are not in this run
-    keep their existing scores, and jobs in this run get refreshed.
+    score / recommendation / the filter columns so the master is a complete
+    record. Uses DataFrame.update, so jobs scored on a previous run that are not
+    in this run keep their existing scores, and jobs in this run get refreshed.
+
+    is_seen is deliberately excluded from the merge: it is local triage state
+    owned by the dashboard's sticky registry reconcile, not by scoring. Folding
+    it in here would let a routine re-score (fresh scrape or rescore pass) reset
+    an already-"yes" master row back to "no". `scored` (e.g. the per-run scored
+    CSV) may still carry the column for its own output -- it is simply never
+    read out of it here.
     """
     if not MASTER_CSV.exists() or "job_posting_id" not in scored.columns:
         return
-    cols = [c for c in SCORE_COLS if c in scored.columns]
+    cols = [c for c in SCORE_COLS if c in scored.columns and c != "is_seen"]
     if not cols:
         return
     s = scored[["job_posting_id"] + cols].copy()
@@ -543,7 +573,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
             master[c] = pd.NA
     master = master.set_index("job_posting_id")
     master.update(s)
-    master.reset_index().to_csv(MASTER_CSV, index=False, encoding="utf-8")
+    _atomic_to_csv(master.reset_index(), MASTER_CSV)
 
 
 def save_output(df: pd.DataFrame, input_csv: Path) -> Path:
@@ -683,9 +713,16 @@ async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     return len(todo), n
 
 
+def load_resume() -> str:
+    """Read resume.md, or exit with a friendly message instead of a raw traceback."""
+    if not RESUME_PATH.exists():
+        sys.exit("resume.md not found - generate it from the dashboard's Resume Data tab")
+    return RESUME_PATH.read_text(encoding="utf-8")
+
+
 async def main() -> None:
     args = parse_args()
-    resume = RESUME_PATH.read_text(encoding="utf-8")
+    resume = load_resume()
     pool = make_pool()
 
     stats = {

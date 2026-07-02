@@ -67,7 +67,10 @@ def _master_fixture(tmp_path, monkeypatch, text):
     p = tmp_path / "master_experience.yaml"
     p.write_text(text, encoding="utf-8")
     monkeypatch.setattr(config, "MASTER_YAML", p)
-    cached = (assets.load_master, assets.tailor_config, assets.atoms_by_id, assets.blocks)
+    cached = (
+        assets.load_master, assets.tailor_config, assets.atoms_by_id, assets.blocks,
+        assets.skill_aliases, assets.skill_aliases_match_only,
+    )
     for fn in cached:
         fn.cache_clear()
     return p, cached

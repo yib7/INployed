@@ -35,7 +35,13 @@ def load_master() -> Dict[str, Any]:
         if example.exists():
             path = example
     with path.open(encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        data = yaml.safe_load(fh)
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{path.name} must be a YAML mapping (got "
+            f"{type(data).__name__ if data is not None else 'empty file'}) "
+            "- see master_experience.example.yaml")
+    return data
 
 
 @lru_cache(maxsize=1)
@@ -48,14 +54,12 @@ def tailor_config() -> Dict[str, Any]:
     return load_master().get("tailor") or {}
 
 
-@lru_cache(maxsize=1)
-def skill_aliases() -> Dict[str, List[str]]:
-    """Optional top-level `skill_aliases:` map: canonical skill -> [JD spellings the
-    ATS/JD may use for that same concept]. Each canonical SHOULD be a real skill in the
-    taxonomy; anchoring (dropping unanchored canonicals) is enforced downstream by
-    ats.anchored_alias_groups, so this loader is permissive. Absent/malformed -> {}.
-    A scalar alias is promoted to a one-element list."""
-    raw = load_master().get("skill_aliases") or {}
+def _load_alias_map(key: str) -> Dict[str, List[str]]:
+    """Parse a top-level alias map (canonical -> [spellings]) from the master. Permissive:
+    non-string canonicals are skipped, a scalar alias is promoted to a one-element list,
+    blanks dropped. Anchoring (canonical must be a real skill) is enforced downstream in
+    ats, so this loader does no anchoring. Absent/malformed -> {}."""
+    raw = load_master().get(key) or {}
     out: Dict[str, List[str]] = {}
     if isinstance(raw, dict):
         for canon, aliases in raw.items():
@@ -66,6 +70,29 @@ def skill_aliases() -> Dict[str, List[str]]:
             if isinstance(aliases, (list, tuple)):
                 out[canon] = [str(a).strip() for a in aliases if str(a).strip()]
     return out
+
+
+@lru_cache(maxsize=1)
+def skill_aliases() -> Dict[str, List[str]]:
+    """Optional top-level `skill_aliases:` map: canonical skill -> [JD spellings the
+    ATS/JD may use for that same concept]. These are the PRINTABLE spelling variants —
+    matched by the ATS layer AND surfaced in the JD's own spelling on the page when earned
+    (the Methods concepts line, and swapped onto the four technical-skills lines). Use for
+    true variants you are happy to see printed (Postgres == PostgreSQL). Each canonical
+    SHOULD be a real skill in the taxonomy; anchoring is enforced downstream in
+    ats.anchored_alias_groups, so this loader is permissive."""
+    return _load_alias_map("skill_aliases")
+
+
+@lru_cache(maxsize=1)
+def skill_aliases_match_only() -> Dict[str, List[str]]:
+    """Optional top-level `skill_aliases_match_only:` map: canonical skill -> [broader JD
+    synonyms]. These are matched by the ATS report + gap-finder (a JD synonym of an owned
+    skill counts as covered and is not proposed as a gap) but are NEVER printed/swapped onto
+    the page — the candidate's stronger canonical token stays. Use for broader or weaker
+    terms you do NOT want literally on the résumé (e.g. 'Large Language Models' for a specific
+    'LLM APIs (Gemini, OpenAI, Claude)' token). Same shape + anchoring as skill_aliases."""
+    return _load_alias_map("skill_aliases_match_only")
 
 
 @lru_cache(maxsize=1)

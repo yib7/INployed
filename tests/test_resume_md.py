@@ -101,6 +101,54 @@ def test_resume_md_not_stale_when_master_absent(tmp_path):
     assert resume_md.resume_md_stale(master_path=master, resume_md_path=md) is False
 
 
+_YAML_WITH_CONCEPTS = """\
+basics:
+  name: Jane Doe
+skills:
+  languages: [Python, SQL]
+  concepts_and_methodologies: ["A/B Testing", "ETL", "Feature Engineering"]
+"""
+
+
+def test_structure_prompt_names_concepts_and_methodologies():
+    # the generator must explicitly ask for a Concepts & Methodologies line so a faithful
+    # regen never silently drops the pool the scorer screens against.
+    seen = {}
+
+    def fake(system, user, model):
+        seen["user"] = user
+        return "# Jane Doe\n"
+
+    resume_md.generate_resume_md(_YAML_WITH_CONCEPTS, "m", llm_call=fake)
+    assert "Concepts & Methodologies" in seen["user"]
+
+
+def test_generate_appends_concepts_when_model_omits_them():
+    # the model returns a resume that never mentions the concepts pool -> the deterministic
+    # guarantee folds every item back in so the scorer can still match those terms.
+    md = resume_md.generate_resume_md(
+        _YAML_WITH_CONCEPTS, "m",
+        llm_call=lambda s, u, m: "# Jane Doe\n\n## Technical Skills\n**Languages:** Python, SQL\n")
+    for item in ("A/B Testing", "ETL", "Feature Engineering"):
+        assert item in md
+
+
+def test_generate_does_not_duplicate_present_concepts():
+    body = ("# Jane Doe\n\n## Technical Skills\n**Languages:** Python, SQL\n"
+            "**Concepts & Methodologies:** A/B Testing, ETL, Feature Engineering\n")
+    md = resume_md.generate_resume_md(_YAML_WITH_CONCEPTS, "m", llm_call=lambda s, u, m: body)
+    for item in ("A/B Testing", "ETL", "Feature Engineering"):
+        assert md.count(item) == 1                  # already on the page -> not re-appended
+
+
+def test_generate_no_concepts_pool_is_noop():
+    # a YAML lacking the pool must not crash and must not append a concepts line
+    md = resume_md.generate_resume_md(
+        "basics:\n  name: Jane Doe\n", "m",
+        llm_call=lambda s, u, m: "# Jane Doe\n\n## Summary\nGreat.\n")
+    assert "Concepts & Methodologies" not in md
+
+
 def test_push_argv_targets_resume_md_on_vm():
     import vm_sync
     t = vm_sync.VMTarget(instance="vm", zone="z", user="u", remote_dir="~")

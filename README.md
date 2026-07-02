@@ -29,14 +29,16 @@ It is three cooperating pieces:
 
 ## Demo
 
-![Animated tour of the dashboard: the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Resume Data tab holds the select-and-rephrase source of truth; and the Apply panel shows the self-contained apply sheet.](docs/demo.gif)
+![Animated tour of the dashboard: the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Stats tab reports per-run pipeline metrics; the Resume Data tab holds the select-and-rephrase source of truth plus the Resume Layout bullet-sizing editor; the Apply Answers tab stores reusable application answers; and the Settings tab configures the whole pipeline.](docs/demo.gif)
 
 A tour of the full loop: **High Score** ranks every discovered posting by a two-stage
 Gemini relevance score and color-codes the recommendation; selecting a job opens its
 **score breakdown** (reason, strengths, gaps); the **Tracker** follows each application
-from applied through interviewing, offer, or rejected; the **Resume Data** tab is the
-select-and-rephrase source of truth the tailor draws from; and the **Apply** panel
-produces a self-contained apply sheet. *(Shown with representative sample data.)*
+from applied through interviewing, offer, or rejected; **Stats** reports per-run
+pipeline metrics; the **Resume Data** tab is the select-and-rephrase source of truth
+the tailor draws from (including the Resume Layout bullet-sizing editor); **Apply
+Answers** holds the reusable answers the apply helper fills into forms; and
+**Settings** configures the whole pipeline. *(Shown with representative sample data.)*
 
 ---
 
@@ -390,7 +392,7 @@ QT_QPA_PLATFORM=offscreen python tests/smoke_qt.py   # Qt dashboard smoke test
 ```
 
 ## Screenshots
-![The High Score tab showing scored jobs with LLM relevance scores, deep scores, apply/consider/tailored color tints, and a recommendation legend (representative sample data)](docs/dashboard.png)
+![The High Score tab showing scored jobs with LLM relevance scores, deep scores, apply/consider/tailored color tints, a recommendation legend, and the selected job's score breakdown above the bottom action bar (representative sample data)](docs/dashboard.png)
 
 The **High Score** tab surfaces only unseen postings scoring ≥4, ordered by score then
 fewest applicants (the freshest apply window first). Selecting a row shows the model's

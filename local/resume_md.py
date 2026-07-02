@@ -16,6 +16,8 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 # resume.md lives at the repo root — exactly where score_jobs.py reads it
 # (OUTPUT_DIR / "resume.md", OUTPUT_DIR being the repo root). resume_md.py is in
 # local/, so the root is one level up.
@@ -66,6 +68,9 @@ location, dates, honors if present.>
 
 ## Technical Skills
 **<Pool>:** <comma-separated items>   (one line per skills pool in the YAML)
+ALWAYS include a **Concepts & Methodologies:** line listing every item from that pool
+verbatim — it is what the scorer screens concept keywords against, so never summarize,
+sample, or drop it.
 """
 
 
@@ -112,6 +117,42 @@ def _clean(text: str) -> str:
     return t + "\n"
 
 
+def _concepts_pool(yaml_text: str) -> list[str]:
+    """The master's `skills.concepts_and_methodologies` items (or [] if absent / unparsable).
+
+    These are the concept keywords the scorer screens a posting against; we use them to
+    GUARANTEE they survive generation. Any parse failure is swallowed — a malformed master
+    must never break the build (the guarantee just no-ops)."""
+    try:
+        data = yaml.safe_load(yaml_text)
+    except Exception:  # noqa: BLE001 - a malformed master must never break generation
+        return []
+    if not isinstance(data, dict):
+        return []
+    skills = data.get("skills")
+    pool = skills.get("concepts_and_methodologies") if isinstance(skills, dict) else None
+    if isinstance(pool, str):
+        pool = [pool]
+    if not isinstance(pool, (list, tuple)):
+        return []
+    return [str(x).strip() for x in pool if str(x).strip()]
+
+
+def _ensure_concepts(md: str, concepts: list[str]) -> str:
+    """Deterministic, zero-cost guarantee that every `concepts_and_methodologies` item is
+    present in resume.md (the scorer matches concept keywords against it). Any item the model
+    dropped is appended verbatim in a Concepts & Methodologies line; items already on the page
+    are left as-is, so nothing is duplicated and nothing is invented (it draws ONLY from the
+    user's own pool). No LLM call."""
+    if not concepts:
+        return md
+    low = md.lower()
+    missing = [c for c in concepts if c.lower() not in low]
+    if not missing:
+        return md
+    return md.rstrip("\n") + "\n**Concepts & Methodologies:** " + ", ".join(missing) + "\n"
+
+
 def generate_resume_md(
     yaml_text: str,
     model: str,
@@ -128,7 +169,10 @@ def generate_resume_md(
     out = call(SYSTEM_PROMPT, build_prompt(yaml_text), model)
     if not isinstance(out, str) or not out.strip():
         raise ValueError("The model returned no resume text.")
-    return _clean(out)
+    # De-fence first, then guarantee the concepts pool survived (append any item the model
+    # dropped) — so the scorer never under-scores a posting that screens for a concept the
+    # candidate genuinely owns.
+    return _ensure_concepts(_clean(out), _concepts_pool(yaml_text))
 
 
 def write_resume_md(text: str, path: Path | None = None) -> Path:

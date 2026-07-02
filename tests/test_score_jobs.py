@@ -1,10 +1,12 @@
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import score_jobs as sj  # noqa: E402
@@ -113,3 +115,165 @@ def test_append_run_stats_migrates_old_header(tmp_path, monkeypatch):
     assert len(df) == 2
     assert df.iloc[0]["free_calls"] == 0   # old row backfilled
     assert df.iloc[1]["free_calls"] == 2   # new row written
+
+
+# P1-2: score_jobs.py is copied standalone to the VM, so it gets its own private
+# _atomic_to_csv (content correctness + tmp cleanup on failure), and
+# update_master_scores must use it so a crash mid-write never truncates the master.
+
+def test_atomic_to_csv_writes_correct_content_and_replaces_file(tmp_path):
+    path = tmp_path / "out.csv"
+    df = pd.DataFrame([{"job_posting_id": "1", "score": 5},
+                       {"job_posting_id": "2", "score": 3}])
+    sj._atomic_to_csv(df, path)
+    round_tripped = pd.read_csv(path, dtype={"job_posting_id": str})
+    assert list(round_tripped["job_posting_id"]) == ["1", "2"]
+    assert list(round_tripped["score"]) == [5, 3]
+    leftovers = [p for p in tmp_path.iterdir() if p.name != "out.csv"]
+    assert leftovers == []
+
+
+def test_atomic_to_csv_cleans_up_tmp_on_failure_and_leaves_target_untouched(monkeypatch, tmp_path):
+    path = tmp_path / "out.csv"
+    path.write_text("job_posting_id,score\n1,5\n", encoding="utf-8")
+    before = path.read_bytes()
+
+    def boom(self, *a, **k):
+        raise ValueError("kaboom mid-write")
+    monkeypatch.setattr(pd.DataFrame, "to_csv", boom)
+
+    df = pd.DataFrame([{"job_posting_id": "2", "score": 3}])
+    with pytest.raises(ValueError):
+        sj._atomic_to_csv(df, path)
+
+    assert path.read_bytes() == before
+    leftovers = [p for p in tmp_path.iterdir() if p.name != "out.csv"]
+    assert leftovers == []
+
+
+def test_update_master_scores_writes_atomically_and_correctly(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame([{"job_posting_id": "1", "job_title": "A"},
+                 {"job_posting_id": "2", "job_title": "B"}]).to_csv(master, index=False)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    scored = pd.DataFrame([{"job_posting_id": "1", "score": 5, "recommendation": "apply"}])
+    sj.update_master_scores(scored)
+
+    out = pd.read_csv(master, dtype={"job_posting_id": str})
+    row1 = out[out["job_posting_id"] == "1"].iloc[0]
+    assert row1["score"] == 5
+    assert row1["recommendation"] == "apply"
+    leftovers = [p for p in tmp_path.iterdir() if p.name != "linkedin_jobs_master.csv"]
+    assert leftovers == []  # no stray tmp file left in the master's directory
+
+
+def test_update_master_scores_leaves_master_untouched_on_replace_failure(tmp_path, monkeypatch):
+    # A crash mid-write (disk full, kill, OOM) must never truncate the cumulative
+    # master -- the final write must go through _atomic_to_csv (tmp + os.replace),
+    # not a naked to_csv straight onto MASTER_CSV. Failing os.replace AFTER the tmp
+    # file is fully written proves the real destination was never opened for write
+    # (a naked to_csv would have already truncated/replaced MASTER_CSV by now).
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame([{"job_posting_id": "1", "job_title": "A"},
+                 {"job_posting_id": "2", "job_title": "B"}]).to_csv(master, index=False)
+    before = master.read_bytes()
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    def boom_replace(*a, **k):
+        raise OSError("simulated crash right before the rename")
+    monkeypatch.setattr(os, "replace", boom_replace)
+
+    scored = pd.DataFrame([{"job_posting_id": "1", "score": 5, "recommendation": "apply"}])
+    with pytest.raises(OSError):
+        sj.update_master_scores(scored)
+
+    assert master.read_bytes() == before            # untouched: os.replace never landed
+
+
+# P2-6: SCORE_COLS must fold ALL mechanical-filter columns into the master, not
+# just a subset -- else the master's filter record is partial/inconsistent.
+
+def test_score_cols_include_all_filter_columns():
+    for col in ("filter_junk_title", "filter_junk_desc", "filter_too_many_years",
+               "filter_clearance", "filter_degree", "filtered_out"):
+        assert col in sj.SCORE_COLS, col
+
+
+def test_update_master_scores_folds_all_filter_columns_into_master(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame([{"job_posting_id": "1", "job_title": "A"}]).to_csv(master, index=False)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    scored = pd.DataFrame([{
+        "job_posting_id": "1",
+        "filter_junk_title": False,
+        "filter_junk_desc": True,
+        "filter_too_many_years": False,
+        "filter_clearance": True,
+        "filter_degree": False,
+        "filtered_out": True,
+    }])
+    sj.update_master_scores(scored)
+
+    out = pd.read_csv(master, dtype={"job_posting_id": str})
+    row1 = out[out["job_posting_id"] == "1"].iloc[0]
+    assert bool(row1["filter_junk_desc"]) is True
+    assert bool(row1["filter_clearance"]) is True
+    assert bool(row1["filter_degree"]) is False
+
+
+# P2-11: re-scoring a fresh scrape must NOT reset an existing master row's
+# is_seen back to "no" -- the master merge must drop is_seen the same way
+# rescore_master_failures already does, while the per-run scored CSV output
+# still carries is_seen (for the local sticky-registry reconcile).
+
+def test_update_master_scores_never_touches_is_seen_in_master(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame([{"job_posting_id": "1", "job_title": "A", "is_seen": "yes"}]).to_csv(
+        master, index=False)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    # Simulates a fresh-scrape rescoring pass: whole frame carries is_seen="no"
+    # (save_output's happy-path behavior) alongside a real score update.
+    scored = pd.DataFrame([{"job_posting_id": "1", "score": 5, "is_seen": "no"}])
+    sj.update_master_scores(scored)
+
+    out = pd.read_csv(master, dtype={"job_posting_id": str})
+    row1 = out[out["job_posting_id"] == "1"].iloc[0]
+    assert row1["score"] == 5               # the real update still lands
+    assert row1["is_seen"] == "yes"         # but is_seen in the master is untouched
+
+
+def test_save_output_scored_csv_still_carries_is_seen(tmp_path, monkeypatch):
+    # The MASTER merge drops is_seen, but the per-run scored CSV (consumed by the
+    # local sticky-registry reconcile) must still have the column.
+    monkeypatch.setattr(sj, "MASTER_CSV", tmp_path / "linkedin_jobs_master.csv")  # no master -> merge no-ops
+    input_csv = tmp_path / "linkedin_jobs_2026-07-01_morning.csv"
+    input_csv.write_text("job_posting_id\n1\n", encoding="utf-8")
+
+    df = pd.DataFrame([{"job_posting_id": "1", "score": 5}])
+    out_path = sj.save_output(df, input_csv)
+
+    out = pd.read_csv(out_path, dtype={"job_posting_id": str}, compression="gzip")
+    assert "is_seen" in out.columns
+    assert out.iloc[0]["is_seen"] == "no"
+
+
+# P2-12: a missing resume.md must exit with a friendly message, not a raw
+# FileNotFoundError traceback.
+
+def test_load_resume_missing_file_exits_with_friendly_message(monkeypatch, tmp_path):
+    monkeypatch.setattr(sj, "RESUME_PATH", tmp_path / "resume.md")
+    with pytest.raises(SystemExit) as exc_info:
+        sj.load_resume()
+    msg = str(exc_info.value)
+    assert "resume.md" in msg
+    assert "Resume Data" in msg
+
+
+def test_load_resume_reads_existing_file(monkeypatch, tmp_path):
+    resume_path = tmp_path / "resume.md"
+    resume_path.write_text("# My Resume\n", encoding="utf-8")
+    monkeypatch.setattr(sj, "RESUME_PATH", resume_path)
+    assert sj.load_resume() == "# My Resume\n"

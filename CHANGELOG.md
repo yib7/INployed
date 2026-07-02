@@ -6,6 +6,87 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-01
+
+### Added
+- Technical-skills lines now print the JD's spelling for a tech skill too, not just concepts.
+  The same alias idea is split into two anchored maps so a real keyword ATS sees the JD's
+  exact term without dumbing the résumé down: `skill_aliases` (existing) are **printable
+  spelling variants** that are matched AND swapped onto a tech line when the JD uses them
+  (a posting that says "Postgres" makes the line print "Postgres" instead of "PostgreSQL");
+  a new `skill_aliases_match_only` map holds **broader synonyms** that count toward ATS
+  coverage and are never proposed as a gap but are never printed (so "Large Language Models"
+  matches your specific "LLM APIs (Gemini, OpenAI, Claude)" token without replacing it on the
+  page). The swap is deterministic (no new LLM call), only fires when the JD uses the alias
+  and not the canonical (a direct hit keeps your spelling), respects the one-line width cap,
+  and is anchored exactly like concepts. Toggle with `RESUME_TAILOR_TECH_ALIASES` (default on);
+  "Check setup" warns on an unanchored canonical in either map.
+- The scorer's `resume.md` now guarantees the concepts/methodologies pool survives generation.
+  `resume.md` (what every posting is scored against) is produced from the master by a model
+  call whose prompt asked for one line per skills pool, but nothing enforced the
+  `concepts_and_methodologies` line, so a dropped line meant a posting screening for a concept
+  the candidate owns could be under-scored. The prompt now names the line explicitly, and a
+  deterministic zero-cost pass appends, verbatim and dedup-aware, any pool concept the model
+  dropped. Nothing is invented; if the pool is absent or the master unparsable it is a no-op.
+- Tiered, rank-based project bullet allotment. Until now every project on the tailored résumé
+  got a flat bullet count (`PROJECT_BULLETS_MAX`, default 2) unless individually named in the
+  `project_layout` map — spending the same space on the headline, most-JD-relevant project as on
+  the weakest. A new optional `project_bullet_tiers` config (a list of `{projects, bullets}` tier
+  objects, e.g. `[{projects: 2, bullets: 3}, {projects: 2, bullets: 2}, {projects: 1, bullets: 1}]`)
+  sizes projects by **strength rank**: `select()` already orders projects strongest-first for the
+  job, so the top tier earns more bullets and weaker ones fewer, with projects past the last tier
+  falling back to the global default. Unlike the existing name-keyed `project_layout` (static),
+  tiers follow whichever project ranks strongest for *this* job. Tiered projects pad UP from their
+  own unused atoms (best-effort, bounded by what the project actually has — nothing is invented), so
+  a strong-but-thin project simply stays at its atom count; one-page enforcement, which already drops
+  weakest-first, then claws bullets back only from the weak end, reinforcing the emphasis. Precedence:
+  an explicit name-keyed `project_layout` entry still wins, then tiers, then the global
+  `PROJECT_BULLETS_MAX`. Opt-in and gated by the existing `resume_layout_enabled` master toggle (part
+  of the same A/B test). Editable from the dashboard — Resume Data tab > "Projects on the résumé" >
+  the "Bullets by strength" box, where tiers are typed as `projects:bullets` pairs ("2:3, 2:2, 1:1");
+  leaving it blank keeps the flat allotment.
+
+### Changed
+- The Methods concepts line now pads to a ~7-item target (was ~6), so one more genuinely
+  earned concept buzzword reaches the page. Still width-capped to one printed line and still
+  drawn only from concepts the user declared (`RESUME_TAILOR_SKILL_TARGETS` overrides).
+- The underfull-bullet fill rescue now only grows a bullet whose printed line is below 50%
+  full, instead of anything under the 90%/75% rephrase aim. The rephrase still aims for a
+  well-filled line; the rescue pass no longer pads lines that are already mostly full, so a
+  little white space is left alone.
+
+### Fixed
+Hardening pass from a full-code audit (24 findings; failure paths and guards only, no
+happy-path behavior change):
+- An existing-but-unreadable cumulative master CSV now ABORTS the run (scraper, scorer, and
+  dashboard append/dedup paths) instead of being silently treated as empty, which could
+  truncate the cumulative master to the latest batch. Every master/state write is now atomic
+  (write to a temp file, then `os.replace`), covering the scraper and scorer masters, the
+  run-state JSON, key-usage state, and the dashboard CSV paths, so a crash mid-write can no
+  longer leave a half-written file.
+- The key pool now applies conservative default rate limits (`5 rpm / 100 rpd`) to a model it
+  does not recognize instead of retrying unthrottled, and every Gemini client is built with an
+  HTTP timeout (`SCORE_HTTP_TIMEOUT_S`, default 120s) so a hung request cannot stall a run.
+  Corrupt key-usage state values no longer crash loading.
+- The four technical-skills lines are anchored to the user's declared pools: a token the model
+  invents is dropped and replaced from the real pool (merged tokens like
+  "Gemini/OpenAI/Claude API" are checked member-by-member), closing the last path by which a
+  skill not owned by the user could print.
+- High Score filtering no longer crashes on a master without a `deep_score` column and no
+  longer returns silently empty on a non-default index; a blank or missing `is_seen` value is
+  normalized to "no" so newly scraped jobs are never invisible to the High Score tab or the
+  watcher popup.
+- A corrupt `last_run_job_ids.json` degrades to an empty list with a warning instead of
+  crashing the scrape; `pdflatex` runs under a 180s timeout with a clear message (a first-run
+  MiKTeX package prompt can no longer hang tailoring forever); the master YAML is
+  shape-validated at load with a clear error; editing the master clears the alias caches so a
+  Check-setup run never reads stale aliases; the file watcher knows all four run labels
+  (afternoon/night runs were invisible to it) and honors the `stale_after_hours` setting; a
+  second dashboard launch exits silently instead of popping a modal over the live instance;
+  the missing-`resume.md` path exits with an actionable message; repository links in the
+  résumé normalize full URLs; and the single-instance lock is one shared class
+  (`local/locks.py`) instead of two copies.
+
 ## [1.3.0] - 2026-06-29
 
 ### Added

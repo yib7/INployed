@@ -2,6 +2,7 @@
 No LLM, no UI."""
 import inspect
 import shutil
+import subprocess
 import sys
 from math import ceil
 from pathlib import Path
@@ -142,6 +143,117 @@ def test_cap_projects_honors_configured_max(monkeypatch):
     assert len(sel["projects"]) == 4
 
 
+# ── tiered per-rank project bullet allotment ─────────────────────────────────
+def test_project_bullet_tiers_expands(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {"project_bullet_tiers": [
+        {"projects": 2, "bullets": 3},
+        {"projects": 2, "bullets": 2},
+        {"projects": 1, "bullets": 1},
+    ]})
+    assert config.project_bullet_tiers() == [3, 3, 2, 2, 1]
+    assert config.project_rank_bullets(0) == 3
+    assert config.project_rank_bullets(4) == 1
+    assert config.project_rank_bullets(5) is None   # past the last tier -> global default
+
+
+def test_project_bullet_tiers_sanitizes(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {"project_bullet_tiers": [
+        {"projects": 0, "bullets": 9},   # projects clamp ->1, bullets clamp 1-5 ->5
+        {"projects": 2, "bullets": 0},   # bullets clamp ->1
+        {"projects": 1},                 # missing 'bullets' -> tier skipped
+        "nope",                          # not a dict -> skipped
+    ]})
+    assert config.project_bullet_tiers() == [5, 1, 1]
+
+
+def test_project_bullet_tiers_absent_is_none(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.project_bullet_tiers() is None
+    assert config.project_rank_bullets(0) is None
+
+
+def test_project_bullet_tiers_respects_master_toggle(monkeypatch):
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "resume_layout_enabled": False,
+        "project_bullet_tiers": [{"projects": 1, "bullets": 3}]})
+    assert config.project_bullet_tiers() is None
+
+
+def test_project_bullet_tiers_caps_at_limit(monkeypatch):
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"project_bullet_tiers": [{"projects": 10, "bullets": 3}]})
+    assert config.project_bullet_tiers() == [3] * config.PROJECTS_MAX_LIMIT  # 6
+
+
+def test_cap_projects_applies_tiers(monkeypatch):
+    # Strongest-first: P1, P2, P3 kept (P4 dropped by default max=3).
+    # Tiers [{2,3},{1,1}] -> per-rank [3, 3, 1]: P1->3, P2->3 (padded up), P3->1.
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"project_bullet_tiers": [
+        {"projects": 2, "bullets": 3},
+        {"projects": 1, "bullets": 1},
+    ]})
+    atoms = {"P1": ["e1", "e2", "e3"], "P2": ["f1", "f2", "f3"], "P3": ["g1"]}
+    monkeypatch.setattr(compose, "_block_atoms", lambda section, name: atoms.get(name, []))
+    sel = _fake_sel()
+    compose._cap_projects(sel)
+    by = {e["name"]: e["groups"] for e in sel["projects"]}
+    assert len(by["P1"]) == 3
+    assert len(by["P2"]) == 3
+    assert by["P2"] == [["f1"], ["f2"], ["f3"]]      # padded up from its OWN atoms
+    assert len(by["P3"]) == 1
+
+
+def test_cap_projects_per_name_config_beats_tiers(monkeypatch):
+    # P1 has an explicit name-keyed layout (1 bullet) AND a tier (3) — name wins.
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"P1": {"line_targets": [1]}},
+        "project_bullet_tiers": [{"projects": 3, "bullets": 3}]})
+    atoms = {"P1": ["e1", "e2", "e3"], "P2": ["f1", "f2", "f3"], "P3": ["g1", "g2", "g3"]}
+    monkeypatch.setattr(compose, "_block_atoms", lambda section, name: atoms.get(name, []))
+    sel = _fake_sel()
+    compose._cap_projects(sel)
+    by = {e["name"]: e["groups"] for e in sel["projects"]}
+    assert len(by["P1"]) == 1                          # name config (1) beats tier (3)
+    assert len(by["P2"]) == 3                          # tier still applies to the rest
+
+
+def test_project_guidance_aims_high_under_tiers(monkeypatch):
+    # select() runs before ranking, so an unconfigured project can't know its rank yet;
+    # under tiers it aims for the LARGEST tier count so enough atoms surface, and a taper
+    # note tells the model final counts shrink by strength. _cap_projects trims downstream.
+    monkeypatch.setattr(config, "_config_json", lambda: {"project_bullet_tiers": [
+        {"projects": 1, "bullets": 3}, {"projects": 2, "bullets": 1}]})
+    monkeypatch.setattr(compose.assets, "blocks",
+                        lambda: {"projects": [{"name": "P1"}, {"name": "P2"}]})
+    g = compose._project_guidance()
+    assert "aim for 3 bullet group(s)" in g          # largest tier count, not the global 2
+    assert "strength" in g.lower()                    # taper note present
+
+
+def test_project_guidance_per_name_keeps_count_under_tiers(monkeypatch):
+    # A name-keyed project keeps its own configured count even when tiers are set.
+    monkeypatch.setattr(config, "_config_json", lambda: {
+        "project_layout": {"P1": {"line_targets": [2, 2]}},   # 2 bullets (list length)
+        "project_bullet_tiers": [{"projects": 3, "bullets": 3}]})
+    monkeypatch.setattr(compose.assets, "blocks", lambda: {"projects": [{"name": "P1"}]})
+    g = compose._project_guidance()
+    assert "P1: aim for 2 bullet group(s)" in g       # name config (2), not the tier max (3)
+
+
+def test_cap_projects_tiers_best_effort_when_thin(monkeypatch):
+    # Tier wants 3 bullets for rank-0, but P1 only has 1 atom -> stays at 1 (no fabrication).
+    monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"project_bullet_tiers": [{"projects": 1, "bullets": 3}]})
+    monkeypatch.setattr(compose, "_block_atoms", lambda section, name: ["e1"])
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "P1", "groups": [["e1"]]}]}
+    compose._cap_projects(sel)
+    assert sel["projects"][0]["groups"] == [["e1"]]    # capped by atom supply, never invented
+
+
 def test_bullet_line_targets_maps_each_bullet(monkeypatch):
     monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
         "Globex": {"line_targets": [2, 1]},
@@ -224,6 +336,11 @@ def test_compress_skills_returns_four_labeled_lines():
         assert len(ln["items"].split(", ")) <= targets[ln["label"]]
 
 
+def test_skill_targets_methods_default_is_seven():
+    """The optional Methods concepts line pads to 7 earned buzzwords by default (was 6)."""
+    assert compose.layout.skill_targets()["Methods"] == 7
+
+
 def test_complete_to_count_keeps_model_order_then_completes_from_pool():
     """SP1: the model's relevance order leads; the pool completes up to the target."""
     pool = ["Python", "SQL", "C", "Java", "R", "Go", "Rust", "Kotlin"]
@@ -254,12 +371,98 @@ def test_complete_to_count_preserves_merged_token_and_skips_its_components():
     assert out == ["Gemini/OpenAI/Claude API", "Git", "Docker"]   # components skipped
 
 
+# --- SP7: anchor picked tokens to the line's own pool (select, never invent) -----
+# The model's picked tokens are no longer kept verbatim: a token is kept only if it is
+# anchored to THIS line's pool. A bare token / '(conceptual)' qualifier must trace to a
+# pool skill; a MERGED token ('/'-join or an 'X (a, b, c)' paren list) survives only
+# when EVERY member it names anchors (the umbrella label is packaging, not a member).
+# A hallucinated token of ANY shape is dropped and the pool completion fills its slot
+# -- so no invented skill ever reaches the page.
+
+def test_complete_to_count_drops_hallucinated_token_and_fills_from_pool():
+    """A bare token the model invented (in no pool) is dropped; the pool refills the slot."""
+    pool = ["Python", "SQL", "Java", "Go"]
+    out = compose._complete_to_count("Python, Rust, SQL", pool, 4)
+    assert "Rust" not in out                                  # invented -> dropped
+    assert out == ["Python", "SQL", "Java", "Go"]             # slot refilled from the pool
+
+
+def test_complete_to_count_keeps_anchored_bare_token():
+    """A bare token that IS a pool skill passes through in the model's order."""
+    pool = ["Python", "SQL", "Java", "Go"]
+    out = compose._complete_to_count("Go, Python", pool, 3)
+    assert out[:2] == ["Go", "Python"]                        # both anchored -> kept, order held
+
+
+def test_complete_to_count_keeps_merged_slash_token_pool_backed():
+    """A '/'-merged token whose parts are pool skills is kept verbatim (its parts skipped)."""
+    pool = ["Gemini", "OpenAI", "Claude", "Git", "Docker"]
+    out = compose._complete_to_count("Gemini/OpenAI/Claude API, Git", pool, 3)
+    assert out[0] == "Gemini/OpenAI/Claude API"               # merged token kept intact
+
+
+def test_complete_to_count_keeps_paren_list_merged_token():
+    """A pool-backed UMBRELLA token is kept intact: 'LLM APIs (a, b, c)' passes when its
+    MEMBERS are pool skills even though no 'LLM APIs' pool entry exists (the label is
+    packaging, like a qualifier) -- and the completion never re-adds a member the merged
+    token already shows on the line."""
+    pool = ["Gemini", "OpenAI", "Claude", "Git", "Docker"]
+    out = compose._complete_to_count("LLM APIs (Gemini, OpenAI, Claude)", pool, 3)
+    assert out == ["LLM APIs (Gemini, OpenAI, Claude)", "Git", "Docker"]
+
+
+def test_complete_to_count_drops_fabricated_slash_merge():
+    """A '/'-merge whose parts trace to NOTHING in the pool is dropped whole; the pool
+    completion refills its slot -- a merged shape is not a free pass."""
+    pool = ["Python", "SQL", "Java"]
+    out = compose._complete_to_count("Python, Rust/Zig API", pool, 3)
+    assert out == ["Python", "SQL", "Java"]                   # fabricated merge gone, refilled
+
+
+def test_complete_to_count_drops_fabricated_paren_list():
+    """An invented umbrella enumerating invented members ('Fake Tools (Foo, Bar)') is
+    dropped whole; the pool completion refills its slot."""
+    pool = ["AWS", "S3", "Lambda"]
+    out = compose._complete_to_count("AWS, Fake Tools (Foo, Bar)", pool, 3)
+    assert out == ["AWS", "S3", "Lambda"]                     # fabricated umbrella gone
+
+
+def test_complete_to_count_keeps_verbatim_slashed_pool_entry():
+    """A pool entry that itself contains a slash ('CI/CD') picked VERBATIM always passes:
+    token-equals-pool-entry short-circuits before the per-member check (whose short parts
+    'ci'/'cd' would otherwise demand their own pool entries)."""
+    pool = ["CI/CD", "Git"]
+    out = compose._complete_to_count("CI/CD", pool, 2)
+    assert out == ["CI/CD", "Git"]
+
+
+def test_complete_to_count_keeps_conceptual_qualified_pool_skill():
+    """'X (conceptual)' is kept when X is a pool skill: the qualifier is not a component list,
+    so the base must anchor; a '(conceptual)' on an INVENTED base is still dropped."""
+    pool = ["PyTorch", "pandas", "NumPy"]
+    out = compose._complete_to_count("PyTorch (conceptual), Rust (conceptual)", pool, 3)
+    assert "PyTorch (conceptual)" in out                      # base anchored -> kept verbatim
+    assert not any("Rust" in t for t in out)                  # invented base -> dropped
+
+
+def test_complete_to_count_short_token_exact_anchor_only():
+    """Short tokens ('C', 'R') anchor only by EXACT pool match -- never as a substring of a
+    longer entry -- so an in-pool 'C'/'R' passes but an invented short 'K' is dropped."""
+    pool = ["JavaScript", "C", "R", "Python"]
+    out = compose._complete_to_count("C, R, K", pool, 4)
+    assert "C" in out and "R" in out                          # exact pool skills -> kept
+    assert "K" not in out                                     # not in pool, no false substring
+
+
 def test_finalize_skill_lines_drops_bottom_to_fit_one_line(monkeypatch):
     """SP1 + width measurement: when the chosen items overflow one printed line (by real
     rendered glyph width, not char count), the least-relevant tail is dropped until they
     fit — never padded, never wrapped."""
+    # Languages pool holds exactly the fed tokens so all four ANCHOR (SP7) -- this test
+    # isolates the width TRIM, not the anchor gate; empty pools elsewhere stay empty.
     monkeypatch.setattr(compose, "_skill_pools", lambda: {
-        "Languages": [], "Frameworks": [], "Developer Tools": [], "Libraries": []})
+        "Languages": ["Python", "SQL", "JavaScript", "TypeScript"],
+        "Frameworks": [], "Developer Tools": [], "Libraries": []})
     monkeypatch.setattr(compose.layout, "skill_targets", lambda: {
         "Languages": 7, "Frameworks": 0, "Developer Tools": 0, "Libraries": 0})
     # Capacity = exactly the rendered width of "Languages: Python, SQL" -> next item overflows.
@@ -503,6 +706,82 @@ def test_enforce_one_page_resolves_keep_projects_from_config(tmp_path, monkeypat
     rt_compile.enforce_one_page({"projects": []}, {"g": "x"}, [],
                                 tmp_path / "r.tex", tmp_path)
     assert seen["keep"] is True
+
+
+def test_compile_tex_suppresses_console_window(tmp_path, monkeypatch):
+    """pdflatex must spawn headless: compile_tex passes creationflags=_NO_WINDOW so the
+    windowless dashboard (pythonw) never flashes a console window per compile pass — the
+    cause of the focus-stealing pop-ups during a tailor run. Mirrors the scrape spawn's
+    qt.main_window._no_window_flag() idiom."""
+    import os
+    from types import SimpleNamespace
+
+    from resume_tailor import compile as rt_compile
+
+    recorded: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(rt_compile, "pdflatex_available", lambda: True)
+    monkeypatch.setattr(rt_compile.subprocess, "run", fake_run)
+
+    tex = tmp_path / "r.tex"
+    tex.write_text(r"\documentclass{article}\begin{document}x\end{document}", encoding="utf-8")
+    rt_compile.compile_tex(tex, tmp_path / "out")
+
+    # the spawn is silenced, and the existing run kwargs still travel through
+    assert recorded.get("creationflags") == rt_compile._NO_WINDOW
+    assert recorded.get("capture_output") is True
+    assert recorded.get("text") is True
+    assert recorded.get("cwd") == str(tex.parent)
+    # platform contract: a real suppression flag on Windows, a harmless 0 no-op off it
+    assert (os.name == "nt") == (rt_compile._NO_WINDOW == 0x08000000)
+    assert os.name == "nt" or rt_compile._NO_WINDOW == 0
+
+
+def test_compile_tex_passes_timeout_180(tmp_path, monkeypatch):
+    """compile_tex must bound the pdflatex subprocess so a stuck MiKTeX package-install
+    prompt cannot block the tailor thread forever (P1-5)."""
+    from types import SimpleNamespace
+
+    from resume_tailor import compile as rt_compile
+
+    recorded: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(rt_compile, "pdflatex_available", lambda: True)
+    monkeypatch.setattr(rt_compile.subprocess, "run", fake_run)
+
+    tex = tmp_path / "r.tex"
+    tex.write_text(r"\documentclass{article}\begin{document}x\end{document}", encoding="utf-8")
+    rt_compile.compile_tex(tex, tmp_path / "out")
+
+    assert recorded.get("timeout") == 180
+
+
+def test_compile_tex_timeout_expired_returns_friendly_failure(tmp_path, monkeypatch):
+    """A pdflatex hang (subprocess.TimeoutExpired) must not raise out of compile_tex -
+    it returns a failed CompileResult with a message pointing at the likely cause."""
+    from resume_tailor import compile as rt_compile
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=180)
+
+    monkeypatch.setattr(rt_compile, "pdflatex_available", lambda: True)
+    monkeypatch.setattr(rt_compile.subprocess, "run", fake_run)
+
+    tex = tmp_path / "r.tex"
+    tex.write_text(r"\documentclass{article}\begin{document}x\end{document}", encoding="utf-8")
+    result = rt_compile.compile_tex(tex, tmp_path / "out")
+
+    assert result.ok is False
+    assert result.pdf_path is None
+    assert "timed out" in (result.error or "").lower()
 
 
 @pytest.mark.skipif(shutil.which("pdflatex") is None, reason="pdflatex not installed")

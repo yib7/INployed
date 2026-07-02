@@ -76,16 +76,17 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
                         errors.append(
                             "tailor.required.%s names a block not in %s: '%s'" % (sec, sec, n))
 
-    aliases = master.get("skill_aliases")
-    if isinstance(aliases, dict):
-        real = {_norm_skill(item)
-                for pool in (master.get("skills", {}) or {}).values()
-                for item in (pool or [])}
-        for canon in aliases:
-            if str(canon).strip() and _norm_skill(str(canon)) not in real:
-                errors.append(
-                    "skill_aliases canonical '%s' is not a known skill — anchor it to a real "
-                    "entry in `skills:` (usually concepts_and_methodologies) or remove it" % canon)
+    real = {_norm_skill(item)
+            for pool in (master.get("skills", {}) or {}).values()
+            for item in (pool or [])}
+    for key in ("skill_aliases", "skill_aliases_match_only"):
+        aliases = master.get(key)
+        if isinstance(aliases, dict):
+            for canon in aliases:
+                if str(canon).strip() and _norm_skill(str(canon)) not in real:
+                    errors.append(
+                        "%s canonical '%s' is not a known skill — anchor it to a real entry in "
+                        "`skills:` (usually concepts_and_methodologies) or remove it" % (key, canon))
     return errors
 
 

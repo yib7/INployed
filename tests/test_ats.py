@@ -27,6 +27,7 @@ _MASTER = textwrap.dedent("""
       email: test@example.com
     skills:
       languages: [Python, SQL]
+      developer_tools: [Docker, PostgreSQL]
       concepts_and_methodologies:
         - "A/B Testing"
         - "Exploratory Data Analysis (EDA)"
@@ -35,12 +36,17 @@ _MASTER = textwrap.dedent("""
     skill_aliases:
       "A/B Testing": ["Experimentation", "Split Testing"]
       "Data Cleaning & Preprocessing": ["Data Wrangling", "Data Preparation"]
+      "PostgreSQL": ["Postgres"]
       "Nonexistent Concept": ["Bogus Alias"]
+    skill_aliases_match_only:
+      "Docker": ["Containerization", "Containers"]
+      "Nonexistent Tool": ["Ghost Term"]
 """)
 
 
 def _clear():
-    for name in ("load_master", "skill_aliases", "atoms_by_id", "blocks"):
+    for name in ("load_master", "skill_aliases", "skill_aliases_match_only",
+                 "atoms_by_id", "blocks"):
         fn = getattr(assets, name, None)
         if fn is not None and hasattr(fn, "cache_clear"):
             fn.cache_clear()
@@ -117,3 +123,44 @@ def test_gap_excludes_jd_synonym_of_owned_concept(synthetic_master):
     gaps = [g.lower() for g in master_gaps.find_gap_keywords(jd)]
     assert "data wrangling" not in gaps        # owned via alias of Data Cleaning & Preprocessing
     assert "kubernetes" in gaps                 # genuinely missing
+
+
+# ── match-only alias map (broader synonyms: match, never print) ───────────────
+def test_match_only_groups_anchored_and_separate_from_printable(synthetic_master):
+    printable = dict(ats.anchored_alias_groups())
+    match_only = dict(ats.match_only_alias_groups())
+    all_groups = dict(ats.all_alias_groups())
+    # a match-only canonical is a real skill -> kept; its unanchored sibling -> dropped
+    assert match_only.get("Docker") == ["Containerization", "Containers"]
+    assert "Nonexistent Tool" not in match_only
+    # the two maps are distinct: a match-only term is NOT in the printable (swap) source
+    assert "Docker" not in printable
+    # ...but the union (used for matching) carries both
+    assert "Docker" in all_groups and "A/B Testing" in all_groups
+
+
+def test_alias_index_includes_match_only_for_matching(synthetic_master):
+    idx = ats.alias_index()
+    assert idx.get("containerization") == ("Docker", "Containerization", "Containers")
+    # an unanchored match-only alias never enters the index
+    assert "ghost term" not in idx
+
+
+def test_extract_surfaces_match_only_synonym(synthetic_master):
+    jd = "Strong Containerization background. Containerization at scale required."
+    kws = ats.extract_keywords(jd)
+    assert "Containerization" in kws            # the JD's broader term surfaces as a keyword
+    assert "Docker" not in kws                  # collapsed into the same group
+
+
+def test_coverage_match_only_present_when_canonical_on_page(synthetic_master):
+    # the JD's broader term counts as covered because the candidate's canonical is printed
+    frac, present, missing = ats.coverage(["Containerization"], "Shipped services in Docker.")
+    assert "Containerization" in present
+
+
+def test_gap_excludes_match_only_synonym_of_owned_skill(synthetic_master):
+    jd = "We need Containerization and Kubernetes. Kubernetes is essential."
+    gaps = [g.lower() for g in master_gaps.find_gap_keywords(jd)]
+    assert "containerization" not in gaps       # owned via match-only alias of Docker
+    assert "kubernetes" in gaps

@@ -77,14 +77,19 @@ def _candidate_terms() -> List[str]:
 
 
 # ── Anchored skill aliases (canonical -> JD spellings) ────────────────────────
-def anchored_alias_groups() -> List[Tuple[str, List[str]]]:
-    """(canonical, [aliases]) for each skill_aliases entry whose canonical is a REAL
-    skill in the taxonomy (paren-stripped match). Unanchored groups are dropped so an
-    alias can never inject an untethered keyword or drift away from a true skill.
-    Aliases are de-duplicated (case-insensitively) and never repeat the canonical."""
+# Two alias maps with different print behavior, but the SAME matching behavior:
+#   skill_aliases (printable)        -> matched AND surfaced/swapped onto the page
+#   skill_aliases_match_only (broad) -> matched only, never printed
+# anchored_alias_groups() is the PRINTABLE source (Methods line + tech-line swap);
+# all_alias_groups() is the union used for matching (extract/coverage/gap).
+def _anchor(raw: dict) -> List[Tuple[str, List[str]]]:
+    """(canonical, [aliases]) for each entry whose canonical is a REAL skill in the taxonomy
+    (paren-stripped match). Unanchored groups are dropped so an alias can never inject an
+    untethered keyword or drift away from a true skill. Aliases are de-duplicated
+    (case-insensitively) and never repeat the canonical."""
     real = {_norm_skill(t) for t in _candidate_terms()}
     groups: List[Tuple[str, List[str]]] = []
-    for canon, aliases in assets.skill_aliases().items():
+    for canon, aliases in raw.items():
         if _norm_skill(canon) not in real:
             continue
         seen = {canon.lower()}
@@ -98,12 +103,32 @@ def anchored_alias_groups() -> List[Tuple[str, List[str]]]:
     return groups
 
 
+def anchored_alias_groups() -> List[Tuple[str, List[str]]]:
+    """The PRINTABLE alias groups (from skill_aliases): matched and surfaced in the JD's own
+    spelling when earned — on the Methods concepts line and swapped onto the four tech lines."""
+    return _anchor(assets.skill_aliases())
+
+
+def match_only_alias_groups() -> List[Tuple[str, List[str]]]:
+    """The MATCH-ONLY alias groups (from skill_aliases_match_only): broader synonyms that count
+    toward coverage / are not proposed as gaps, but are never printed or swapped onto the page."""
+    return _anchor(assets.skill_aliases_match_only())
+
+
+def all_alias_groups() -> List[Tuple[str, List[str]]]:
+    """Every anchored alias group — printable + match-only — for MATCHING (extract_keywords,
+    coverage, gap-finder), where both kinds behave identically: a JD synonym of an owned skill
+    counts as the same skill regardless of whether it is printable."""
+    return anchored_alias_groups() + match_only_alias_groups()
+
+
 def alias_index() -> dict[str, Tuple[str, ...]]:
     """Normalized spelling -> the full alias group (canonical + aliases) it belongs to,
-    for O(1) group lookups in extract_keywords/coverage. Keys are _norm_skill()'d so a
-    paren-stripped canonical resolves too; the first group to claim a spelling wins."""
+    for O(1) group lookups in extract_keywords/coverage. Built from BOTH maps so matching is
+    alias-aware for printable and match-only alike. Keys are _norm_skill()'d so a paren-stripped
+    canonical resolves too; the first group to claim a spelling wins."""
     idx: dict[str, Tuple[str, ...]] = {}
-    for canon, aliases in anchored_alias_groups():
+    for canon, aliases in all_alias_groups():
         group = (canon, *aliases)
         for spelling in group:
             idx.setdefault(_norm_skill(spelling), group)
@@ -121,7 +146,7 @@ def extract_keywords(jd_text: str, top_n: int = 30) -> List[str]:
     # de-duplicated case-insensitively (so a term in two pools isn't counted twice).
     spellings: list[str] = []
     seen: set[str] = set()
-    alias_spellings = [a for _canon, aliases in anchored_alias_groups() for a in aliases]
+    alias_spellings = [a for _canon, aliases in all_alias_groups() for a in aliases]
     for t in [*_candidate_terms(), *BUILTIN_TERMS, *alias_spellings]:
         if t.lower() not in seen:
             spellings.append(t)

@@ -40,8 +40,8 @@ GCP_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
 GCP_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 
 # ── Per-task model tiers ─────────────────────────────────────────────────────
-# flash       → the judgment passes: selection (which evidence), fact-verify
-#               (anti-inflation audit), and the skills fallback. Few calls/run.
+# flash       → the judgment passes: selection (which evidence) and the skills
+#               fallback. Few calls/run.
 # pro         → the creative first pass (rephrase) + cover letter (quality-critical)
 MODEL_FLASH = os.getenv("RESUME_TAILOR_MODEL_FLASH", "gemini-3.5-flash")
 # PRO tier maps to 3.5-flash by default; set this to gemini-3.1-pro-preview for
@@ -60,10 +60,11 @@ TIER_FLASH_LITE = "flash_lite"
 TIER_FLASH = "flash"
 TIER_PRO = "pro"
 
-_GEMINI_TIERS = {
-    TIER_FLASH_LITE: MODEL_FLASH_LITE,
-    TIER_FLASH: MODEL_FLASH,
-    TIER_PRO: MODEL_PRO,
+# Tier token -> (env var, default) for model_for()'s live lookup.
+_TIER_ENV = {
+    TIER_FLASH_LITE: ("RESUME_TAILOR_MODEL_FLASH_LITE", MODEL_FLASH_LITE),
+    TIER_FLASH: ("RESUME_TAILOR_MODEL_FLASH", MODEL_FLASH),
+    TIER_PRO: ("RESUME_TAILOR_MODEL_PRO", MODEL_PRO),
 }
 
 
@@ -180,6 +181,20 @@ def methods_line_label() -> str:
     return str(val).strip() if isinstance(val, str) and str(val).strip() else "Methods"
 
 
+def tech_aliases_enabled() -> bool:
+    """Whether the four technical-skills lines swap a printed skill to the JD's own spelling
+    when the JD uses a PRINTABLE alias of it (compose._finalize_skill_lines): e.g. a JD that
+    says 'Postgres' makes the line print 'Postgres' instead of 'PostgreSQL', so a literal
+    keyword ATS sees the JD's exact term. Only printable skill_aliases swap; match-only
+    synonyms never do. Off lets a user who dislikes an abbreviation swap (Kubernetes -> K8s)
+    keep their canonical spellings. Defaults ON. Precedence: RESUME_TAILOR_TECH_ALIASES env >
+    config.json 'tech_aliases' > True."""
+    env = os.getenv("RESUME_TAILOR_TECH_ALIASES")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return _config_json().get("tech_aliases", True) is not False
+
+
 def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.
@@ -258,6 +273,51 @@ def project_targets(name: str) -> list[int] | None:
     return out or None
 
 
+def project_bullet_tiers() -> list[int] | None:
+    """Tiered, RANK-based project bullet counts expanded into a per-rank list.
+
+    config.json `project_bullet_tiers` is a list of {"projects": N, "bullets": M}
+    tier objects read top-down against the strength-ranked project list (select()
+    orders strongest-first). [{projects:2,bullets:3},{projects:2,bullets:2},
+    {projects:1,bullets:1}] -> [3, 3, 2, 2, 1]: the top 2 projects get 3 bullets,
+    the next 2 get 2, the 5th gets 1. Projects past the last tier fall back to the
+    global PROJECT_BULLETS_MAX (callers use project_rank_bullets, which returns None
+    there). `projects` is clamped >=1, `bullets` clamped 1-5 (matching the
+    project_targets list-length range); a tier missing/garbling either key is skipped.
+    The expanded list is capped at PROJECTS_MAX_LIMIT. Returns None when absent/bad or
+    when the resume_layout master toggle is off, so this is opt-in and gated like
+    project_layout / resume_layout."""
+    if not resume_layout_enabled():
+        return None
+    raw = _config_json().get("project_bullet_tiers")
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return None
+    out: list[int] = []
+    for tier in raw:
+        if not isinstance(tier, dict):
+            continue
+        try:
+            count = max(1, int(tier["projects"]))
+            bullets = max(1, min(5, int(tier["bullets"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.extend([bullets] * count)
+        if len(out) >= PROJECTS_MAX_LIMIT:
+            break
+    out = out[:PROJECTS_MAX_LIMIT]
+    return out or None
+
+
+def project_rank_bullets(rank: int) -> int | None:
+    """Bullet count for the project at 0-based strength `rank` from the configured
+    tiers, or None when no tiers are configured or `rank` is past the last tier (the
+    caller then uses the global PROJECT_BULLETS_MAX)."""
+    tiers = project_bullet_tiers()
+    if not tiers or rank < 0 or rank >= len(tiers):
+        return None
+    return tiers[rank]
+
+
 def gemini_auth() -> str:
     """Gemini auth mode: 'vertex' (default; uses GOOGLE_CLOUD_PROJECT) or
     'api_key' (uses RESUME_TAILOR_GEMINI_API_KEY -- for users without Vertex).
@@ -268,8 +328,19 @@ def gemini_auth() -> str:
 
 
 def model_for(tier: str) -> str:
-    """Concrete Gemini model id for a tier token."""
-    return _GEMINI_TIERS.get(tier, MODEL_FLASH)
+    """Concrete Gemini model id for a tier token.
+
+    Resolved live (not frozen at import), like gemini_auth()/projects_max() --
+    reads os.environ on every call rather than caching a module-level constant.
+    That does NOT mean a Settings-written RESUME_TAILOR_MODEL_* change in .env
+    is picked up by an already-running dashboard: load_dotenv() only runs once,
+    at import, and Settings writes to the .env file, not to os.environ directly.
+    The new value is only visible to a process that re-reads env after the
+    write -- e.g. the dashboard restarting, or the var being set directly in
+    the environment (not just the .env file) before the process starts. An
+    unrecognized tier falls back to the flash model."""
+    env, default = _TIER_ENV.get(tier, (None, MODEL_FLASH))
+    return os.getenv(env, default) if env else default
 
 
 def tailor_timeout_schedule() -> list[int]:

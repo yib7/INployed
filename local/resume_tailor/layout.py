@@ -29,9 +29,9 @@ LEADERSHIP_ENTRY_LINES = 2
 def skill_targets() -> Dict[str, int]:
     """Best-N item count per category. 'Methods' is the optional 5th concepts line
     (compose.methods_line); the four tool lines ignore it. Override via
-    RESUME_TAILOR_SKILL_TARGETS="Languages=7,Frameworks=7,Developer Tools=10,Libraries=10,Methods=6"."""
+    RESUME_TAILOR_SKILL_TARGETS="Languages=7,Frameworks=7,Developer Tools=10,Libraries=10,Methods=7"."""
     targets = {"Languages": 7, "Frameworks": 7, "Developer Tools": 10, "Libraries": 10,
-               "Methods": 6}
+               "Methods": 7}
     for part in os.getenv("RESUME_TAILOR_SKILL_TARGETS", "").split(","):
         key, sep, val = part.partition("=")
         if sep:

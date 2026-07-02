@@ -55,8 +55,14 @@ mtime compare) with a one-click Regenerate. It also carries a collapsible **Resu
 `resume_tailor/config.py:block_targets`/`project_targets`; row names are pulled from the master so
 they match the engine's lookups. A master toggle, `resume_layout_enabled` (default on), gates both
 maps in `config.py` so disabling it falls back to the engine defaults **without** discarding the saved
-targets, enabling an A/B test of custom-vs-default layout. With zero jobs loaded the High Score tab shows a
-first-run get-started hint (`JobsTab.set_empty_widget`).
+targets, enabling an A/B test of custom-vs-default layout. The same `resume_layout_enabled` toggle also
+gates `project_bullet_tiers` (config.json), an optional list of `{projects, bullets}` tiers that sizes
+projects by strength rank (top tier = more bullets) instead of the flat per-project default;
+`config.py:project_bullet_tiers`/`project_rank_bullets` expand it to a per-rank count and
+`compose._cap_projects` applies it, with an explicit `project_layout` entry taking precedence. It is
+edited in the same tab's projects control (`_projects_control`) via the "Bullets by strength" box, where
+tiers are typed as `projects:bullets` pairs and round-tripped by `jobsdata.load/save_project_bullet_tiers`.
+With zero jobs loaded the High Score tab shows a first-run get-started hint (`JobsTab.set_empty_widget`).
 
 A few **readability** affordances. One persisted **interface scale** (`ui_scale_pct` in `config.json`)
 sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control (slider + `-`/`+`,
@@ -95,7 +101,7 @@ bullet must be traceable to a fact ("atom") the user actually wrote in
 | `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. |
 | `llm.py` | The single Gemini transport (`call()` → `_call_gemini`). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
 | `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config) and the LaTeX preamble. |
-| `compose.py` | The LLM stages: `select` → `rephrase` → `verify` → `compress_skills`, plus the constrained `rephrase_fix`/`refit`/`shrink` fix-ups. |
+| `compose.py` | The LLM stages: `select` → `rephrase` → `compress_skills`. |
 | `layout.py` | The hard layout spec: per-bullet printed-line budgets and fill floors (single-line ≥75%, multi-line last line ≥50%), all calibrated to the template. |
 | `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. |
 | `compile.py` | Runs `pdflatex` and enforces one page (drop-weakest-bullet + shrink loop). |
@@ -154,7 +160,7 @@ and shrinks until it fits one page.
 flowchart LR
     JOB["job (CSV row)"] --> SEL["select"]
     YAML["master_experience.yaml<br/>(your atoms)"] --> SEL
-    SEL --> REP["rephrase"] --> VER["verify"] --> FIT["layout fit"] --> REN["render"] --> TEX["pdflatex"] --> PDF["one-page PDF"]
+    SEL --> REP["rephrase"] --> FIT["layout fit"] --> REN["render"] --> TEX["pdflatex"] --> PDF["one-page PDF"]
     PDF -.-> EXTRAS["+ ATS report, cover letter,<br/>prep sheet, apply.md"]
 ```
 

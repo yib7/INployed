@@ -33,7 +33,9 @@ if str(HERE) not in sys.path:
 
 from csv_io import read_csv_gz, reconcile_file  # noqa: E402
 from jsonutil import atomic_write_json  # noqa: E402
+from locks import SingleInstance  # noqa: E402  (shared single-instance lock)
 from seen_db import SeenRegistry  # noqa: E402
+from vm_schedule import RUN_LABELS  # noqa: E402  (canonical run-label set, re-exported)
 
 
 # --------------------------------------------------------------------------- paths
@@ -43,7 +45,6 @@ APPDATA.mkdir(parents=True, exist_ok=True)
 LOG_PATH = APPDATA / "watcher.log"
 STATE_PATH = APPDATA / "state.json"
 LOCK_PATH = APPDATA / "watcher.lock"
-RELOAD_FLAG = APPDATA / "reload.flag"
 
 CONFIG_PATH = HERE / "config.json"
 UI_PATH = HERE / "app.py"   # the Qt dashboard entry point (was the deleted ui.py)
@@ -56,44 +57,6 @@ log.setLevel(logging.INFO)
 _handler = RotatingFileHandler(LOG_PATH, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
 _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 log.addHandler(_handler)
-
-
-# --------------------------------------------------------------------------- single-instance lock
-
-class SingleInstance:
-    """Concurrent-trigger guard. Uses msvcrt.locking on Windows; fcntl elsewhere."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._fh = None
-
-    def acquire(self) -> bool:
-        self._fh = open(self.path, "a+b")
-        try:
-            if os.name == "nt":
-                import msvcrt
-                self._fh.seek(0)  # msvcrt.locking is byte-range; always lock byte 0
-                msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except OSError:
-            self._fh.close()
-            self._fh = None
-            return False
-
-    def release(self) -> None:
-        if self._fh is not None:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    self._fh.seek(0)
-                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
-            except OSError:
-                pass
-            self._fh.close()
-            self._fh = None
 
 
 # --------------------------------------------------------------------------- config + gdrive auto-detect
@@ -163,14 +126,14 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+    atomic_write_json(STATE_PATH, state)
 
 
 # --------------------------------------------------------------------------- file scanning
 
 def list_target_files(gdrive_root: Path) -> list[Path]:
     out: list[Path] = []
-    for sub in ("morning", "evening"):
+    for sub in RUN_LABELS:
         d = gdrive_root / sub
         if d.is_dir():
             out.extend(sorted(d.glob("*_scored.csv.gz")))
@@ -196,7 +159,7 @@ def _safe_mtime(path: Path) -> float:
 
 
 def latest_for_ui(files: list[Path]) -> list[Path]:
-    """Fallback UI source: latest morning + latest evening.
+    """Fallback UI source: latest file per run label (morning/afternoon/evening/night).
 
     Used only if the master .csv.gz hasn't synced yet; normally the UI reads
     the master (the complete scored record). The watcher reconciles all files
@@ -204,12 +167,23 @@ def latest_for_ui(files: list[Path]) -> list[Path]:
     """
     by_label: dict[str, Path] = {}
     for f in files:
-        if f.parent.name not in ("morning", "evening"):
+        if f.parent.name not in RUN_LABELS:
             continue
         cur = by_label.get(f.parent.name)
         if cur is None or _safe_mtime(f) > _safe_mtime(cur):
             by_label[f.parent.name] = f
     return list(by_label.values())
+
+
+def master_is_stale(age_h: float, cfg: dict) -> bool:
+    """True if the master run is older than the configured staleness threshold.
+
+    Reads `stale_after_hours` from the same config dict the dashboard's Stats
+    tab uses (local/settings.py), defaulting to 36 when absent so existing
+    behavior is unchanged for configs that predate this setting.
+    """
+    threshold = cfg.get("stale_after_hours", 36)
+    return age_h > threshold
 
 
 def has_unseen_high_score(path: Path, min_score: int) -> bool:
@@ -246,8 +220,8 @@ def launch_ui(csv_paths: list[Path]) -> None:
     group) so it escapes the job and keeps running after we exit. If breakaway
     is denied, we fall back to a plain detached launch.
 
-    The UI self-deduplicates: if one is already running, the new process writes
-    reload.flag and exits silently.
+    The UI self-deduplicates via its own single-instance lock (jobsdata.UI_LOCK):
+    if one is already running, the new process exits silently.
     """
     pythonw = _pythonw_executable()
     args = [pythonw, str(UI_PATH)] + [str(p) for p in csv_paths]
@@ -299,11 +273,12 @@ def main() -> int:
             files = list_target_files(gdrive_root)
 
             # Companion to the VM-side healthcheck: if the master hasn't been
-            # refreshed in 36h, the VM pipeline or Drive sync is likely broken.
+            # refreshed within stale_after_hours (default 36h), the VM pipeline
+            # or Drive sync is likely broken.
             master_path = gdrive_root / "linkedin_jobs_master.csv.gz"
             if master_path.exists():
                 age_h = (time.time() - _safe_mtime(master_path)) / 3600
-                if age_h > 36:
+                if master_is_stale(age_h, cfg):
                     log.warning(
                         "Master is %.0f h old — VM pipeline or Drive sync may be broken "
                         "(check ~/scraper.log on the VM)", age_h,

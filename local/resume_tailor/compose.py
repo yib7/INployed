@@ -3,16 +3,14 @@
 select()          flash : choose blocks + ordered bullet GROUPS (by atom id) + skill focus
 rephrase()        pro   : one bullet per GROUP, faithfully fusing only that group's atoms
 compress_skills() flash : exactly 4 fixed-label lines drawn from the taxonomy
-verify()          flash : anti-inflation gate — each bullet vs the UNION of its group's atoms
-rephrase_fix()    flash : regenerate a flagged bullet once, fixing the cited problems
 
 Only the creative first pass (rephrase) and the cover letter run on the PRO tier.
-All other stages (selection, verify, rephrase_fix) use flash for constrained rewrites
-of already-grounded text. Length is finalized deterministically downstream.
+Selection uses flash for constrained rewrites of already-grounded text. Length is
+finalized deterministically downstream.
 
 A "group" is a list of 1-3 closely-related atom ids fused into ONE bullet (e.g. an
 accuracy gain + the cost cut). Each bullet's group key is "+".join(ids); every bullet
-carries its source atom ids so the verifier and a human can trace it.
+carries its source atom ids so a human can trace it back to the master yaml.
 """
 from __future__ import annotations
 
@@ -149,22 +147,35 @@ def _project_guidance() -> str:
     """Per-project selection guidance for select(), generated from the config so it
     honors each project's configured bullet count instead of defaulting weaker projects
     to one group. A project with a custom layout (`config.project_targets`) uses that
-    count; an unconfigured project uses the global `PROJECT_BULLETS_MAX`. The engine
-    pads/trims to this count deterministically downstream (`_cap_projects`); telling the
-    model up front makes it pick that many relevant atoms in strength order."""
+    count; otherwise, when tiered allotment is configured (`config.project_bullet_tiers`),
+    an unconfigured project aims for the LARGEST tier count — select() runs before the
+    strength ranking exists, so we can't assign a per-project rank yet; aiming high makes
+    the model surface enough relevant atoms for whatever lands in the top slot, and
+    `_cap_projects` trims each project to its actual rank's tier count downstream. With no
+    tiers, an unconfigured project uses the global `PROJECT_BULLETS_MAX`."""
+    tiers = config.project_bullet_tiers()
+    tier_max = max(tiers) if tiers else None
     lines: List[str] = []
     for b in assets.blocks().get("projects", []):
         name = b["name"]
         targets = config.project_targets(name)
-        n = len(targets) if targets else config.PROJECT_BULLETS_MAX
+        if targets:
+            n = len(targets)
+        elif tier_max is not None:
+            n = tier_max
+        else:
+            n = config.PROJECT_BULLETS_MAX
         lines.append(f"  - {name}: aim for {n} bullet group(s), densest / most JD-relevant first.")
+    if tier_max is not None:
+        lines.append("  - Final bullet counts taper by project strength: the strongest "
+                     "project(s) keep the most groups, weaker ones fewer.")
     return "\n".join(lines)
 
 
 # ── verbatim ("don't tailor — use my exact bullets") ─────────────────────────
 # A block the user marked verbatim has its groups replaced (after _normalize_selection)
 # with synthetic single-bullet groups whose id is "__verbatim__/<block>/<i>". These
-# carry the user's EXACT text: they're excluded from rephrase/cohesion/verify/trim and
+# carry the user's EXACT text: they're excluded from rephrase/cohesion/trim and
 # rendered as typed (render._group_bullets just reads the bullets dict by gkey).
 _VERBATIM_PREFIX = "__verbatim__"
 
@@ -200,7 +211,7 @@ def inject_verbatim(sel: Dict[str, Any]) -> Dict[str, str]:
 def group_map(sel: Dict[str, Any]) -> Dict[str, List[str]]:
     """Ordered {gkey: [atom_ids]} across experience -> projects -> leadership.
     Verbatim groups are excluded — they carry the user's exact text, not atoms, so the
-    LLM stages (rephrase/verify) must never see them."""
+    LLM stages (rephrase) must never see them."""
     gm: "Dict[str, List[str]]" = {}
     for sec in ("experience", "projects", "leadership"):
         for entry in sel.get(sec, []):
@@ -406,14 +417,18 @@ def _enforce_fixed_counts(clean: Dict[str, Any]) -> None:
 
 def _cap_projects(clean: Dict[str, Any]) -> None:
     """Keep the top config.projects_max() projects (strength-ordered by select) and fit
-    each to its per-project bullet count. A project with a configured layout
-    (config.project_targets) is resized to EXACTLY that many groups — padded UP from its
-    own unused atoms (like a constant block via _resize_to_count, fused groups preserved)
-    as well as trimmed down — so the configured count is a TARGET, not just a ceiling.
-    An unconfigured project keeps cap-only behavior (trimmed to the global
-    PROJECT_BULLETS_MAX, never padded). Projects are never force-injected; padding draws
-    only from the project's own atoms, so it is best-effort when a project has fewer
-    atoms than its configured count."""
+    each to its bullet count. Per-project count precedence:
+
+      1. explicit name-keyed layout (config.project_targets) -> EXACTLY len(targets);
+      2. else tiered by rank (config.project_rank_bullets) -> that many groups;
+      3. else the global PROJECT_BULLETS_MAX.
+
+    For (1) and (2) the project is resized via _resize_to_count — padded UP from its OWN
+    unused atoms (fused groups preserved) as well as trimmed down — so the count is a
+    TARGET, not just a ceiling. For (3) it keeps cap-only behavior (trimmed, never padded).
+    Padding draws only from the project's own atoms and never force-injects, so a count is
+    best-effort: a project with fewer atoms than its target stays at its atom count (the
+    select-and-rephrase rule — never invent)."""
     projects = clean.get("projects", [])[:config.projects_max()]
     used: set[str] = {
         aid
@@ -422,11 +437,14 @@ def _cap_projects(clean: Dict[str, Any]) -> None:
         for g in e["groups"]
         for aid in g
     }
-    for entry in projects:
+    for rank, entry in enumerate(projects):
         targets = config.project_targets(entry["name"])
-        if targets:  # configured -> honor the count: pad up + trim down (like experience)
+        tier_n = config.project_rank_bullets(rank)
+        if targets:           # name-keyed -> exact line_targets count (pad up + trim down)
             _resize_to_count(entry, "projects", entry["name"], len(targets), used, singles=False)
-        else:        # unconfigured -> cap only, never pad
+        elif tier_n is not None:  # tiered by strength rank -> pad up + trim down to tier_n
+            _resize_to_count(entry, "projects", entry["name"], tier_n, used, singles=False)
+        else:                 # unconfigured -> cap only, never pad
             entry["groups"] = entry["groups"][:config.PROJECT_BULLETS_MAX]
     clean["projects"] = projects
 
@@ -744,28 +762,6 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ..
     return result
 
 
-def rephrase_fix(jd: str, ids: List[str], bad_text: str, problems: List[str]) -> str:
-    """Regenerate one flagged bullet, deterministically, fixing the problems."""
-    atoms = {a: _atom_payload(a) for a in ids}
-    system = (
-        "Rewrite ONE resume bullet to fix grounding problems. If multiple atoms are given, "
-        "fuse them into one line. " + _PRINCIPLE + "\n"
-        "Plain text, past tense, no pronouns, no markup, <= ~300 chars."
-    )
-    user = f"""ATOMS (the only allowed source of facts):
-{json.dumps(atoms, ensure_ascii=False, indent=1)}
-
-JOB CONTEXT (emphasis only): {jd[:1500]}
-
-PREVIOUS BULLET: {bad_text}
-PROBLEMS TO FIX: {problems}
-
-Return ONLY JSON: {{"text": "<corrected bullet>"}}"""
-    # Mechanical constrained edit (fix grounding on one bullet) -> cheapest tier.
-    out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
-    return (out.get("text") or "").strip()
-
-
 # ── Stage 2b: unique leading verbs (no opener reused across the resume) ───────
 # Punctuation stripped from the EDGES of a leading token (an inner hyphen in
 # "Co-developed" is kept). The palette verbs are capitalized past-tense; matching is
@@ -1019,17 +1015,59 @@ def _clean_methods(raw: Any) -> List[str]:
     return out
 
 
-def _finalize_skill_lines(out: Dict[str, Any]) -> List[Dict[str, str]]:
+def _jd_alias_match(concept: str, aliases: List[str], jd: str) -> Tuple[Optional[str], int]:
+    """The spelling to PRINT for `concept` given the JD, plus its JD frequency:
+      - a DIRECT JD hit (the concept itself, full or paren-stripped) -> (concept, freq)
+      - else the most-frequent anchored ALIAS the JD uses            -> (alias, freq)
+      - no hit at all                                                -> (None, 0)
+    Shared by the Methods concepts line (Tier 1) and the tech-line swap, so both surface the
+    JD's own wording the same way: the concept's spelling on a direct hit, the JD's alias
+    spelling when only an alias appears."""
+    direct = max(len(ats._term_pattern(concept).findall(jd)),
+                 len(ats._term_pattern(_paren_strip(concept)).findall(jd)))
+    if direct > 0:
+        return concept, direct
+    printed, freq = None, 0
+    for alias in aliases:
+        n = len(ats._term_pattern(alias).findall(jd))
+        if n > freq:
+            printed, freq = alias, n
+    return printed, freq
+
+
+def _swap_to_jd_spelling(token: str, aliases_by_norm: Dict[str, List[str]], jd: str) -> str:
+    """Swap a printed technical-skill token to the JD's spelling when the JD uses a PRINTABLE
+    alias of it (and not the canonical) — so a literal keyword ATS sees the JD's exact term.
+    A direct JD hit or no JD mention keeps the token unchanged; match-only synonyms are absent
+    from `aliases_by_norm` so they never swap (the candidate's stronger token stays)."""
+    aliases = aliases_by_norm.get(ats._norm_skill(token))
+    if not aliases:
+        return token
+    printed, _freq = _jd_alias_match(token, aliases, jd)
+    # printed == token on a direct hit; an alias only on an alias-only hit; None when no hit.
+    return printed if (printed and printed != token) else token
+
+
+def _finalize_skill_lines(out: Dict[str, Any], jd: str = "") -> List[Dict[str, str]]:
     """Resolve the best-N skills per line: take the model's relevance-ranked picks,
     complete from the pool up to the target if it under-returned, then trim from the
     tail (least relevant) to the one-printed-line cap. No fill floor — a short list
-    of relevant skills stays short. Always returns the four labeled lines."""
+    of relevant skills stays short. Always returns the four labeled lines.
+
+    When `jd` is given and tech aliases are enabled, each picked token is swapped to the JD's
+    own spelling if the JD uses a printable alias of it (before the width cap, so the swapped
+    width is measured)."""
     targets = layout.skill_targets()
     pools = _skill_pools()
+    swap = bool(jd) and config.tech_aliases_enabled()
+    aliases_by_norm = ({ats._norm_skill(c): al for c, al in ats.anchored_alias_groups()}
+                       if swap else {})
     lines: List[Dict[str, str]] = []
     for label, _keys in _SKILL_BUCKETS:
         picked = _complete_to_count(out.get(label) or "", pools.get(label, []),
                                     targets.get(label, 0))
+        if swap:
+            picked = [_swap_to_jd_spelling(tok, aliases_by_norm, jd) for tok in picked]
         items = _cap_items(label, ", ".join(picked))
         if items:
             lines.append({"label": label, "items": items})
@@ -1055,39 +1093,131 @@ def _split_skill_tokens(s: str) -> List[str]:
     return [t.strip() for t in tokens if t.strip()]
 
 
+def _paren_list_items(tok: str) -> List[str]:
+    """The comma-separated items enumerated inside a token's LAST parenthetical, but ONLY
+    when that parenthetical is a LIST (contains a comma) -- e.g. 'LLM APIs (Gemini, OpenAI,
+    Claude)' -> ['Gemini', 'OpenAI', 'Claude']. A single-item qualifier like '(conceptual)'
+    or '(from scratch)' is NOT a component list, so it returns [] and the base is what must
+    anchor. Empty when there is no parenthetical at all."""
+    m = re.search(r"\(([^()]*)\)\s*$", tok.strip())
+    if not m or "," not in m.group(1):
+        return []
+    return [p.strip() for p in m.group(1).split(",") if p.strip()]
+
+
+def _merged_members(tok: str) -> List[str]:
+    """The constituent skills a MERGED token asserts, derived from the RAW token (BEFORE
+    ats._norm_skill, which would strip the paren content away): the items of a trailing
+    '(a, b, c)' paren LIST, plus the '/'-parts of the pre-paren label when it is a
+    slash-join. The un-slashed umbrella label itself ('LLM APIs' in 'LLM APIs (Gemini,
+    OpenAI, Claude)') is packaging, not a member -- like a '(conceptual)' qualifier it
+    anchors nothing by itself. Empty for a bare / qualifier-only token (not merged)."""
+    items = _paren_list_items(tok)
+    label = re.sub(r"\([^()]*\)\s*$", "", tok).strip() if items else tok
+    members = list(items)
+    if "/" in label:
+        members.extend(p.strip() for p in label.split("/") if p.strip())
+    return members
+
+
+def _skill_base(tok: str) -> str:
+    """A token's anchorable base: ats._norm_skill (lowercased, parens stripped) with any
+    ' API'/' APIs' WORD removed ('Gemini API' -> 'gemini') -- word-boundary, so 'Rapids'
+    is untouched and 'LLM APIs' becomes 'llm', never 'llms'."""
+    return re.sub(r"\bapis?\b", "", ats._norm_skill(tok)).strip()
+
+
+def _base_anchors(base: str, pool_norms: set) -> bool:
+    """One normalized base vs the line's pool: a SHORT base (<=2 chars, 'C'/'R'/'Go')
+    requires an EXACT pool match so it never false-anchors as a substring of a longer
+    entry ('R' in 'JavaScript'); a longer base matches a pool entry by equality or
+    either-direction containment ('Postgres' <-> 'PostgreSQL').
+
+    Sanctioned residual: containment is a deliberate tradeoff, not a gap. It is what
+    lets alias canonicals anchor without a hardcoded alias table (e.g. 'Postgres' vs
+    a pool entry spelled 'PostgreSQL'), but it also means a fabricated >2-char token
+    can false-anchor as a substring of an unrelated longer pool entry (e.g. an
+    invented 'Java' would anchor against a pool 'JavaScript'). Accepted on purpose;
+    <=2-char parts stay exact-match-only so the riskiest (shortest, most collision-
+    prone) tokens never get the containment leniency."""
+    if not base:
+        return False
+    if len(base) <= 2:
+        return base in pool_norms
+    return any(base == n or base in n or n in base for n in pool_norms)
+
+
+def _anchored(tok: str, pool_norms: set) -> bool:
+    """SELECT-AND-NEVER-INVENT gate for one model-picked skill token, checked against THIS
+    line's own pool (its normalized forms). A token is anchored -- allowed onto the page --
+    iff EVERY skill it asserts traces to the pool:
+
+      * a BARE token or a single '(conceptual)'/'(from scratch)' QUALIFIER: its base
+        (_skill_base) must anchor to a pool skill (_base_anchors);
+      * a MERGED token (a '/'-join like 'Gemini/OpenAI/Claude API', or an 'X (a, b, c)'
+        paren LIST like 'LLM APIs (Gemini, OpenAI, Claude)'): every MEMBER must anchor --
+        each slash-part and each paren-list item. The umbrella label is packaging and need
+        not be a pool entry itself; a token that IS a pool entry verbatim (a slashed pool
+        skill like 'CI/CD', whose short parts have no own entries) always passes first.
+
+    Everything else -- a bare token with no pool relationship ('Rust'), an invented short
+    token ('K'), a '(conceptual)' on an invented base, a fabricated merge ('Rust/Zig API',
+    'Fake Tools (Foo, Bar)') -- is dropped; the pool-completion then refills the freed
+    slot, so the line never loses a count and never gains a fabricated skill."""
+    members = _merged_members(tok)
+    if not members:
+        return _base_anchors(_skill_base(tok), pool_norms)
+    if ats._norm_skill(tok) in pool_norms:
+        return True
+    return all(_base_anchors(_skill_base(m), pool_norms) for m in members)
+
+
 def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
     """Best-N selection for one skills line. Start from the model's items in its
-    relevance order (kept verbatim — merged tokens like 'Gemini/OpenAI/Claude API',
-    '(Gemini, OpenAI, Claude)', and '(conceptual)' qualifiers are preserved); if it
-    returned fewer than `target`, append still-unused pool skills in pool order (the
-    least-relevant tail) until the line has min(target, len(pool)) items; then cap the
-    count at `target`. No char floor — the printed-line cap (applied later) is the only
-    size limit, so a genuinely short list is never padded to fill the line."""
+    relevance order, but ANCHOR each first: a picked token is kept only if EVERY skill it
+    asserts traces to THIS line's pool (`_anchored` -- a bare/'(conceptual)'-qualified
+    token must match a pool skill; a merged '/'-join or 'X (a, b, c)' paren-list token
+    needs every named member pool-backed). A token the model invented -- any shape -- is
+    dropped BEFORE completion so it never reaches the page, enforcing the project's
+    select-and-never-invent rule the way the Methods line already does; anchored merged
+    forms like 'Gemini/OpenAI/Claude API' and '(conceptual)' qualifiers on real skills are
+    preserved verbatim. If fewer than `target` survive, append still-unused pool skills in
+    pool order (the least-relevant tail) until the line has min(target, len(pool)) items --
+    refilling any slot a dropped hallucination freed; then cap the count at `target`. No
+    char floor -- the printed-line cap (applied later) is the only size limit, so a
+    genuinely short list is never padded to fill the line."""
+    pool_norms = {ats._norm_skill(c) for c in pool}
+    pool_norms.discard("")
     picked: List[str] = []
     seen = set()
     for tok in _split_skill_tokens(items):
-        if tok.lower() not in seen:
+        if tok.lower() not in seen and _anchored(tok, pool_norms):
             picked.append(tok)
             seen.add(tok.lower())
     if target > 0:
-        # atoms already shown: each picked token plus its "/"- and space-delimited
-        # parts, so completing the line never re-adds a skill already inside a merged
-        # token ('Gemini' in 'Gemini/OpenAI/Claude API') — while single-char skills
-        # like 'C'/'R' are NOT falsely matched as substrings of 'JavaScript'.
+        # atoms already shown: each picked token plus its "/"- and space-delimited parts
+        # AND its paren-LIST members, so completing the line never re-adds a skill already
+        # inside a merged token ('Gemini' in 'Gemini/OpenAI/Claude API' or in
+        # 'LLM APIs (Gemini, OpenAI, Claude)' -- the anchored members ARE pool entries now)
+        # -- while single-char skills like 'C'/'R' are NOT falsely matched as substrings
+        # of 'JavaScript'.
         present = set()
+
+        def _mark(tok: str) -> None:
+            tl = tok.lower()
+            present.add(tl)
+            present.update(tl.replace("/", " ").split())
+            present.update(m.lower() for m in _paren_list_items(tok))
+
         for p in picked:
-            pl = p.lower()
-            present.add(pl)
-            present.update(pl.replace("/", " ").split())
+            _mark(p)
         for cand in pool:
             if len(picked) >= target:
                 break
-            cl = cand.lower()
-            if cl in present:
+            if cand.lower() in present:
                 continue
             picked.append(cand)
-            present.add(cl)
-            present.update(cl.replace("/", " ").split())
+            _mark(cand)
         picked = picked[:target]
     return picked
 
@@ -1116,7 +1246,7 @@ def compress_skills(jd: str, job_title: str, sel: Dict[str, Any]) -> List[Dict[s
     """
     pre = sel.get("skills") if isinstance(sel, dict) else None
     if pre:
-        lines = _finalize_skill_lines(pre)
+        lines = _finalize_skill_lines(pre, jd)
         if lines:
             return lines
 
@@ -1155,7 +1285,7 @@ Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Develop
         out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
     except Exception:
         out = {}
-    return _finalize_skill_lines(out)
+    return _finalize_skill_lines(out, jd)
 
 
 # ── Methods line (optional 5th concepts line) ────────────────────────────────
@@ -1193,16 +1323,7 @@ def methods_line(jd: str, sel: Dict[str, Any]) -> Optional[Dict[str, str]]:
     chosen_norm: set[str] = set()
     for concept in pool:
         cnorm = ats._norm_skill(concept)
-        direct = max(len(ats._term_pattern(concept).findall(jd)),
-                     len(ats._term_pattern(_paren_strip(concept)).findall(jd)))
-        if direct > 0:
-            printed, freq = concept, direct
-        else:
-            printed, freq = None, 0
-            for alias in aliases_by_norm.get(cnorm, []):
-                n = len(ats._term_pattern(alias).findall(jd))
-                if n > freq:
-                    printed, freq = alias, n
+        printed, freq = _jd_alias_match(concept, aliases_by_norm.get(cnorm, []), jd)
         if printed and cnorm not in chosen_norm:
             tier1.append((freq, methods_rank.get(cnorm, unranked), printed, cnorm))
             chosen_norm.add(cnorm)
@@ -1230,67 +1351,3 @@ def _paren_strip(s: str) -> str:
     """Drop a parenthetical qualifier for JD matching: 'Exploratory Data Analysis (EDA)'
     -> 'Exploratory Data Analysis' (the form a JD is likelier to spell)."""
     return re.sub(r"\(.*?\)", "", s).strip()
-
-
-# ── Shrink (one-page enforcement helper) ─────────────────────────────────────
-def shrink(jd: str, bullets: Dict[str, str], pages: int) -> Dict[str, str]:
-    """Shorten bullets to fit one page, preserving every metric and claim.
-
-    Same grounding rule: this only TRIMS wording (adjectives, filler, redundant
-    clauses) — it never drops a number or adds anything. Returns {gkey: text};
-    any key the model omits keeps its previous text.
-    """
-    system = (
-        "Shorten resume bullets so the resume fits on one page. Keep EVERY number, "
-        "metric, tool, and claim — only cut filler words, adjectives, and redundant "
-        "clauses. Never add anything. Keep each bullet's OPENING VERB unchanged (the "
-        "openers are unique across the resume). Plain text, no markup. " + _PRINCIPLE
-    )
-    user = (
-        f"The resume is {pages} pages; it must be 1. Tighten each bullet by ~20-30%% "
-        "without losing any fact or number, and keep its first word (the action verb) "
-        "exactly as given.\n\nBULLETS:\n"
-        + json.dumps([{"gkey": k, "text": v} for k, v in bullets.items()], ensure_ascii=False, indent=1)
-        + '\n\nReturn ONLY JSON: {"bullets": [{"gkey": "...", "text": "..."}, ...]}'
-    )
-    try:
-        # Mechanical batch tighten (trim wording to fit one page) -> cheapest tier.
-        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
-    except Exception:
-        return bullets
-    result = dict(bullets)
-    for b in out.get("bullets", []):
-        gk, text = b.get("gkey"), (b.get("text") or "").strip()
-        if gk in result and text:
-            result[gk] = text
-    return result
-
-
-# ── Stage 4: verify (anti-inflation gate) ────────────────────────────────────
-def verify(bullets: Dict[str, str], gm: Dict[str, List[str]]) -> Dict[str, Dict[str, Any]]:
-    """Return {gkey: {ok, problems}} checking each bullet against its group's atom UNION."""
-    payload = [
-        {"gkey": gk, "bullet": text, "atoms": [_atom_payload(a) for a in gm.get(gk, [])]}
-        for gk, text in bullets.items()
-    ]
-    system = (
-        "You are a strict fact-grounding auditor for resume bullets. For each bullet, "
-        "compare it ONLY to the union of its atoms. Mark ok=false if the bullet: (a) states "
-        "a number/metric not in the atoms, (b) names a tool/tech/skill/company not in the "
-        "atoms, (c) uses a verb that overstates the atoms' ownership (e.g. 'led' when the "
-        "atom says contributed/helped), or (d) adds any claim the atoms do not support. "
-        "Fusing multiple atoms into one line is fine. Be conservative: a faithful paraphrase "
-        "with the same numbers is ok=true."
-    )
-    user = (
-        "BULLETS + ATOMS:\n"
-        + json.dumps(payload, ensure_ascii=False, indent=1)
-        + '\n\nReturn ONLY JSON: {"results": [{"gkey": "...", "ok": true, "problems": []}, ...]}'
-    )
-    out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.0)
-    results: Dict[str, Dict[str, Any]] = {}
-    for r in out.get("results", []):
-        gk = r.get("gkey")
-        if gk in bullets:
-            results[gk] = {"ok": bool(r.get("ok", True)), "problems": r.get("problems", []) or []}
-    return results

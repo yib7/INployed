@@ -50,6 +50,28 @@ def _parse_targets(text: str) -> list[int]:
     return out
 
 
+def _parse_tiers(text: str) -> list[dict]:
+    """Parse a 'Bullets by strength' box ('2:3, 2:2, 1:1') into tier dicts
+    [{'projects': 2, 'bullets': 3}, ...]. Each token is projects:bullets; tokens that
+    aren't two integers are dropped (jobsdata/engine clamp on save/read)."""
+    out: list[dict] = []
+    for tok in text.replace(";", ",").split(","):
+        parts = tok.strip().split(":")
+        if len(parts) != 2:
+            continue
+        try:
+            out.append({"projects": int(parts[0]), "bullets": int(parts[1])})
+        except ValueError:
+            continue
+    return out
+
+
+def _tiers_to_text(tiers: list) -> str:
+    """Render saved tier dicts back into the 'projects:bullets, ...' box text."""
+    return ", ".join(f"{t['projects']}:{t['bullets']}" for t in (tiers or [])
+                     if isinstance(t, dict) and "projects" in t and "bullets" in t)
+
+
 class ResumeDataEditor(QtWidgets.QWidget):
     def __init__(self, on_saved: Callable[[], None] | None = None,
                  master_path: Path | None = None, parent=None):
@@ -474,6 +496,20 @@ class ResumeDataEditor(QtWidgets.QWidget):
         mode_help.setProperty("muted", True)
         form.addRow(mode_help)
 
+        self._project_tiers_edit = QtWidgets.QLineEdit(
+            _tiers_to_text(jobsdata.load_project_bullet_tiers()))
+        self._project_tiers_edit.setPlaceholderText("e.g. 2:3, 2:2, 1:1")
+        form.addRow("Bullets by strength", self._project_tiers_edit)
+        tiers_help = QtWidgets.QLabel(
+            'Optional tiers (projects:bullets, strongest first): "2:3, 2:2, 1:1" gives your '
+            "2 strongest projects 3 bullets each, the next 2 get 2, the 5th gets 1. Projects "
+            "past the last tier use the bullet count above. Leave blank for a flat count. The "
+            "strongest project is whichever best fits each job, so this re-tiers per posting; a "
+            "per-project box below (if set) overrides its tier.")
+        tiers_help.setWordWrap(True)
+        tiers_help.setProperty("muted", True)
+        form.addRow(tiers_help)
+
         self._projects_warn = QtWidgets.QLabel(
             "More than 4 projects rarely fits one page cleanly — the tailor may shrink "
             "bullets or (in 'at most' mode) drop your weakest projects to hold one page.")
@@ -563,6 +599,8 @@ class ResumeDataEditor(QtWidgets.QWidget):
             count_msg = f"{self._projects_count_spin.value()} project(s) [{mode}]; "
         else:
             count_msg = ""
+        if hasattr(self, "_project_tiers_edit"):
+            jobsdata.save_project_bullet_tiers(_parse_tiers(self._project_tiers_edit.text()))
         self._set_status(
             f"Layout saved ({count_msg}{len(sec_map)} section(s), {len(proj_map)} project(s)).")
 

@@ -14,7 +14,10 @@ sys.path.insert(0, str(REPO / "local"))
 
 from resume_tailor import assets, config, master_edit  # noqa: E402
 
-_CACHED = (assets.load_master, assets.tailor_config, assets.atoms_by_id, assets.blocks)
+_CACHED = (
+    assets.load_master, assets.tailor_config, assets.atoms_by_id, assets.blocks,
+    assets.skill_aliases, assets.skill_aliases_match_only,
+)
 
 _MASTER = textwrap.dedent("""\
     # HEADER COMMENT - must survive
@@ -181,6 +184,57 @@ def test_each_edit_write_makes_bak(master):
 def test_edit_ops_raise_on_bad_target(master, op, args):
     with pytest.raises(ValueError):
         getattr(master_edit, op)(*args)
+
+
+# --- P1-9: master_edit's cache-clear must also cover the two alias functions, or a
+# restore_bytes (the dashboard's "revert to opening state") keeps serving stale alias
+# groups to the ATS layer / Methods line until an app restart ------------------------
+
+_MASTER_WITH_ALIASES_V2 = textwrap.dedent("""\
+    basics:
+      name: Jane Q. Public
+    experience:
+      - org: Big Co
+        title: Engineer
+        location: City, ST
+        dates: "2024-06 / 2024-08"
+        achievements:
+          - id: bigco_a
+            what: "did a thing"
+            angles: [x]
+    skills:
+      languages: [Python]
+    skill_aliases:
+      Python: [Py3]
+    skill_aliases_match_only:
+      Python: [Scripting]
+""")
+
+
+def test_restore_bytes_clears_alias_caches(master):
+    # Prime both alias caches with the fixture's (aliasless) master.
+    assert assets.skill_aliases() == {}
+    assert assets.skill_aliases_match_only() == {}
+
+    master_edit.restore_bytes(_MASTER_WITH_ALIASES_V2.encode("utf-8"))
+
+    # Stale cached {} must be gone -- the alias functions re-read the new file.
+    assert assets.skill_aliases() == {"Python": ["Py3"]}
+    assert assets.skill_aliases_match_only() == {"Python": ["Scripting"]}
+
+
+def test_update_atom_clears_alias_caches(master):
+    # Any write through master_edit (not just restore_bytes) must also refresh the
+    # alias caches -- prime them, rewrite the file out-of-band with new aliases, then
+    # perform an unrelated edit through the public API and confirm the alias functions
+    # pick up the new-on-disk content instead of serving the primed stale value.
+    assert assets.skill_aliases() == {}
+
+    master.write_text(_MASTER_WITH_ALIASES_V2, encoding="utf-8")
+    master_edit.update_atom("bigco_a", {"what": "rebuilt the thing"})
+
+    assert assets.skill_aliases() == {"Python": ["Py3"]}
+    assert assets.skill_aliases_match_only() == {"Python": ["Scripting"]}
 
 
 @pytest.mark.parametrize("section,data,msg", [

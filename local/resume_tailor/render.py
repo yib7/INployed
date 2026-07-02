@@ -126,6 +126,10 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
             continue
         name = to_latex(b.get("name", ""))
         repo = (b.get("repo") or "").strip()
+        # Strip any scheme the yaml already stored -- master_experience.yaml may hold
+        # either a bare host+path (github.com/x/y) or a full URL (https://github.com/x/y);
+        # without this, prefixing "https://" onto a full URL doubles the scheme.
+        repo = repo.removeprefix("https://").removeprefix("http://")
         # Link sits inline after the name as " | Link" (italic), mirroring the Work
         # Experience header; empty (no trailing pipe) when the project has no repo.
         if "github.com" in repo:

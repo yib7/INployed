@@ -20,7 +20,8 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
-from csv_io import read_csv_gz  # noqa: E402
+from csv_io import read_csv_gz, write_csv_gz_atomic  # noqa: E402
+from locks import SingleInstance  # noqa: E402  (shared single-instance lock)
 from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
 
 # Repo root: scraper.py / score_jobs.py write their outputs here (one level above
@@ -30,7 +31,6 @@ REPO_ROOT = HERE.parent
 
 APPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "linkedin_watcher"
 APPDATA.mkdir(parents=True, exist_ok=True)
-RELOAD_FLAG = APPDATA / "reload.flag"
 UI_LOCK = APPDATA / "ui.lock"
 
 
@@ -122,40 +122,11 @@ _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 _RUN_FILE_IDS: dict[str, list[str]] = {}
 
 
-class _UILock:
-    """Single-instance guard for the dashboard window. Same pattern as watcher.py."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._fh = None
-
-    def acquire(self) -> bool:
-        self._fh = open(self.path, "a+b")
-        try:
-            if os.name == "nt":
-                import msvcrt
-                self._fh.seek(0)
-                msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except OSError:
-            self._fh.close()
-            self._fh = None
-            return False
-
-    def release(self) -> None:
-        if self._fh is not None:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    self._fh.seek(0)
-                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
-            except OSError:
-                pass
-            self._fh.close()
-            self._fh = None
+# Backwards-compatible alias: this was a jobsdata-local class (_UILock) before
+# it was extracted to locks.SingleInstance (shared with watcher.py) since the
+# two were byte-for-byte the same lock logic. Kept so local/app.py's `from
+# jobsdata import _UILock` and its test monkeypatches keep working unchanged.
+_UILock = SingleInstance
 
 
 def extraction_dates_from_runs(paths: list[Path]) -> dict[str, str]:
@@ -305,7 +276,8 @@ _MANUAL_PERSIST_COLS = [
     "url", "job_title", "company_name", "job_location", "job_summary",
     "job_posted_date", "run_label", "extracted_date", "source",
     "score", "reason", "deep_score", "strengths", "gaps", "recommendation",
-    "filter_junk_title", "filter_too_many_years", "filtered_out", "is_seen",
+    "filter_junk_title", "filter_junk_desc", "filter_too_many_years",
+    "filter_clearance", "filter_degree", "filtered_out", "is_seen",
 ]
 
 
@@ -325,8 +297,10 @@ def _append_dedup_csv(record: dict, path: Path, *, compression=None) -> bool:
         try:
             existing = pd.read_csv(path, dtype={"job_posting_id": str},
                                    compression=compression)
-        except (OSError, ValueError):
-            existing = pd.DataFrame()
+        except (OSError, ValueError) as e:
+            # NEVER treat an unreadable-but-existing store as empty -- overwriting
+            # it would silently destroy the cumulative master.
+            raise OSError(f"cannot append to {path.name}: existing file unreadable ({e})") from e
     else:
         existing = pd.DataFrame()
     already = (not existing.empty and "job_posting_id" in existing.columns
@@ -335,7 +309,7 @@ def _append_dedup_csv(record: dict, path: Path, *, compression=None) -> bool:
     combined["job_posting_id"] = combined["job_posting_id"].astype(str)
     combined = combined.drop_duplicates(subset=["job_posting_id"], keep="first")
     path.parent.mkdir(parents=True, exist_ok=True)
-    combined.to_csv(path, index=False, encoding="utf-8", compression=compression)
+    write_csv_gz_atomic(combined, path, compression=compression)
     return not already
 
 
@@ -384,7 +358,7 @@ def _drop_ids_from_csv(path: Path, ids: set[str]) -> None:
     keep = df[~df["job_posting_id"].astype(str).isin(ids)]
     if len(keep) == len(df):
         return  # this file held none of the targets
-    keep.to_csv(path, index=False, encoding="utf-8", compression=compression)
+    write_csv_gz_atomic(keep, path, compression=compression)
 
 
 def load_removed_jobs() -> set[str]:
@@ -655,6 +629,32 @@ def save_projects_count(n: int, mode: str) -> None:
     _save_cfg({"projects_max": n, "projects_mode": mode})
 
 
+def load_project_bullet_tiers() -> list[dict]:
+    """[{'projects': int, 'bullets': int}, ...] from config.json ([] when absent/bad).
+    Tiered, rank-based project bullet counts read by the résumé engine
+    (resume_tailor/config.py:project_bullet_tiers); an empty list means flat allotment."""
+    val = _load_cfg().get("project_bullet_tiers")
+    if not isinstance(val, list):
+        return []
+    return [{"projects": t["projects"], "bullets": t["bullets"]}
+            for t in val if isinstance(t, dict) and "projects" in t and "bullets" in t]
+
+
+def save_project_bullet_tiers(tiers: list) -> None:
+    """Persist tiered project bullet counts (merged into config.json, so it never wipes
+    the per-name project_layout). Each tier is sanitized to {'projects': N>=1,
+    'bullets': 1..5}; malformed rows are dropped. An empty list disables tiering."""
+    out: list[dict] = []
+    for t in tiers or []:
+        try:
+            p = max(1, int(t["projects"]))
+            b = max(1, min(5, int(t["bullets"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append({"projects": p, "bullets": b})
+    _save_cfg({"project_bullet_tiers": out})
+
+
 def gdrive_root_dir(csv_paths: list[Path]) -> Path | None:
     """The synced LinkedInJobs folder: config.json's gdrive_root, else inferred
     from the loaded files' location (run files sit one level deeper)."""
@@ -728,11 +728,15 @@ def filter_high_unseen(df: pd.DataFrame, min_score: int = 4) -> pd.DataFrame:
     if df.empty or "score" not in df.columns:
         return df.iloc[0:0]
     score = pd.to_numeric(df["score"], errors="coerce").fillna(0)
-    is_seen = df["is_seen"].astype(str) if "is_seen" in df.columns else pd.Series(["no"] * len(df))
+    is_seen = (df["is_seen"].astype(str) if "is_seen" in df.columns
+               else pd.Series("no", index=df.index))
     mask = (score >= min_score) & (is_seen == "no")
     out = df.loc[mask].copy()
     out["__score_num"] = score[mask]
-    out["__deep_num"] = pd.to_numeric(out.get("deep_score", 0), errors="coerce").fillna(0)
+    if "deep_score" in out.columns:
+        out["__deep_num"] = pd.to_numeric(out["deep_score"], errors="coerce").fillna(0)
+    else:
+        out["__deep_num"] = 0.0
     # Fewest applicants first within a score band: early applications convert
     # far better, so the freshest apply window floats to the top. Unknown
     # applicant counts sort last.

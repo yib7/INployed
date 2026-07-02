@@ -30,19 +30,19 @@ All notable changes to INployed are recorded here. The format follows
   dropped. Nothing is invented; if the pool is absent or the master unparsable it is a no-op.
 - Tiered, rank-based project bullet allotment. Until now every project on the tailored résumé
   got a flat bullet count (`PROJECT_BULLETS_MAX`, default 2) unless individually named in the
-  `project_layout` map — spending the same space on the headline, most-JD-relevant project as on
+  `project_layout` map - spending the same space on the headline, most-JD-relevant project as on
   the weakest. A new optional `project_bullet_tiers` config (a list of `{projects, bullets}` tier
   objects, e.g. `[{projects: 2, bullets: 3}, {projects: 2, bullets: 2}, {projects: 1, bullets: 1}]`)
   sizes projects by **strength rank**: `select()` already orders projects strongest-first for the
   job, so the top tier earns more bullets and weaker ones fewer, with projects past the last tier
   falling back to the global default. Unlike the existing name-keyed `project_layout` (static),
   tiers follow whichever project ranks strongest for *this* job. Tiered projects pad UP from their
-  own unused atoms (best-effort, bounded by what the project actually has — nothing is invented), so
+  own unused atoms (best-effort, bounded by what the project actually has - nothing is invented), so
   a strong-but-thin project simply stays at its atom count; one-page enforcement, which already drops
   weakest-first, then claws bullets back only from the weak end, reinforcing the emphasis. Precedence:
   an explicit name-keyed `project_layout` entry still wins, then tiers, then the global
   `PROJECT_BULLETS_MAX`. Opt-in and gated by the existing `resume_layout_enabled` master toggle (part
-  of the same A/B test). Editable from the dashboard — Resume Data tab > "Projects on the résumé" >
+  of the same A/B test). Editable from the dashboard - Resume Data tab > "Projects on the résumé" >
   the "Bullets by strength" box, where tiers are typed as `projects:bullets` pairs ("2:3, 2:2, 1:1");
   leaving it blank keeps the flat allotment.
 
@@ -96,15 +96,15 @@ happy-path behavior change):
   the résumé might never spell. Two root causes are fixed: the ATS matcher was literal (a JD
   synonym of an owned concept read as a false MISSING), and the `concepts_and_methodologies`
   pool was rendered nowhere (so those terms could never match the page). A new optional
-  top-level `skill_aliases:` map (canonical -> [JD spellings]) is **anchored** — a group is
+  top-level `skill_aliases:` map (canonical -> [JD spellings]) is **anchored** - a group is
   used only when its canonical is a real skill in the taxonomy, so an alias can never inject
   an untethered keyword. It is wired into the ATS report + gap-finder (a JD synonym of an
   owned concept now counts as covered and is no longer proposed as a gap) and into a new
   fifth technical-skills line built in two tiers: Tier 1 prints, in the JD's own spelling,
   each pool concept the JD references (deterministic, ranked by JD frequency); Tier 2 pads
   to a ~6-item target from the model's role-relevance concept ranking (folded into the
-  existing selection pass — **no new LLM call**). Bullets are never touched and nothing is
-  invented — the line draws only from concepts the user declared. Coverage stays honest (a
+  existing selection pass - **no new LLM call**). Bullets are never touched and nothing is
+  invented - the line draws only from concepts the user declared. Coverage stays honest (a
   buzzword counts covered only once it is literally on the page). Toggle with
   `RESUME_TAILOR_METHODS_LINE` (default on); "Check setup" warns on an unanchored alias.
 - Project bullets now lead with the project's overview. `select()` orders a project's bullets
@@ -112,7 +112,7 @@ happy-path behavior change):
   bullets (e.g. a project led with its LLM-routing and Docker-sandbox bullets and only said what
   it actually was on bullet 3). A new pass floats each project's overview/intro bullet to the
   front so a reader learns what the project is before the implementation detail. A cheap model
-  call picks the lead from the project's own selected bullets — pure reordering, never inventing —
+  call picks the lead from the project's own selected bullets (pure reordering, never inventing),
   with a deterministic file-order fallback (the master authors each project's overview atom first)
   so flow is always enforced even if the call fails. Projects only; verbatim and single-bullet
   projects are untouched. Toggle with `RESUME_TAILOR_LEAD_OVERVIEW` (default on).
@@ -126,13 +126,13 @@ happy-path behavior change):
   unit-bearing metrics ("95%", "40,000+ users") intact.
 - Skills lines now fill to their configured best-N count when a category contains a merged,
   comma-bearing token like "LLM APIs (Gemini, OpenAI, Claude)". That token was being split on
-  its internal commas — both in the YAML flow list (so it parsed as three pool entries) and in
-  the line splitter — so it counted as three items and a 10-target Developer Tools line stopped
+  its internal commas - both in the YAML flow list (so it parsed as three pool entries) and in
+  the line splitter - so it counted as three items and a 10-target Developer Tools line stopped
   at 8 with space to spare. Tokenization is now parenthesis-aware (kept or dropped whole, never
   cut to an unclosed paren) and the master entry is quoted.
 - Local "Find new jobs" runs no longer re-collect (and re-score) postings the VM already
   scraped. The scraper excludes already-collected job ids by reading its host master, but on
-  a local machine that file is only a small stub of recent local runs — it had no knowledge of
+  a local machine that file is only a small stub of recent local runs - it had no knowledge of
   the cumulative master the VM owns on Google Drive, so a local run re-pulled (re-billing Bright
   Data) and re-scored (re-billing Gemini) jobs already collected. The dashboard now points the
   scraper at the synced Drive master via `LINKEDIN_EXTRA_MASTER`, which `load_exclude_ids()`
@@ -214,7 +214,8 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/yib7/INployed/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/yib7/INployed/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/yib7/INployed/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/yib7/INployed/compare/v1.1.1...v1.1.2

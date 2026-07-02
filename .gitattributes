@@ -1,3 +1,18 @@
-# Shell scripts run on the Linux VM (scraper-vm) — force LF so a Windows
+# Line-ending policy for cross-platform clones (repo is Windows-authored).
+# Text files are stored LF in the repo and checked out per-platform, except
+# where an explicit eol is forced below.
+* text=auto
+
+# Shell scripts run on the Linux VM (scraper-vm) -- force LF so a Windows
 # checkout's CRLF can never break the shebang or the script when scp'd over.
 *.sh text eol=lf
+
+# Windows-only launchers: force CRLF everywhere (cmd.exe needs CRLF for
+# multi-line scripts; PowerShell 5.1 is safest with CRLF).
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets: never diff, merge, or normalize.
+*.png binary
+*.gif binary
+*.ico binary

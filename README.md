@@ -110,7 +110,10 @@ The Resume Data tab also has a collapsible **Resume Layout** editor for fine-tun
 many bullets each section/project gets and how long each one runs. Give a section or
 project a comma-separated list of per-bullet printed-line counts. For example,
 `2, 2, 1` means three bullets sized 2 / 2 / 1 lines (each 1 to 3, up to 5 bullets),
-and the one-page tailor honors it. A master **"Apply custom bullet layout"** checkbox turns the whole
+and the one-page tailor honors it. A **"Bullets by strength"** box sizes projects by how
+strongly each ranks for *this* job instead of a flat count: type tiers as `projects:bullets`
+pairs (e.g. `2:3, 2:2, 1:1`) and the strongest-matching projects earn the extra bullets.
+A master **"Apply custom bullet layout"** checkbox turns the whole
 feature on or off: unchecked, the engine uses its built-in defaults but your saved
 targets are kept, so you can **A/B test** whether your custom layout helps or hurts your
 résumés without throwing the configuration away.
@@ -193,9 +196,11 @@ tinted **blue** in the High Score / All Jobs lists (delete the folder and the
 tint clears on the next refresh), and in the **Tracker** an *applied* job is
 **blue** and a *rejected* one is **red**. Right-click any job → **Set status →**
 to mark it applied / interviewing / rejected / offer from any tab. Right-click also
-offers **Delete job** (any row) and **Edit job…** (for jobs you added by hand). A
-**Find new jobs** button (top action bar) kicks off a fresh discovery + score on
-demand. It asks first (a *small test run* or a *full run*) because finding jobs costs
+offers **Delete job** (any row) and **Edit job…** (for jobs you added by hand). An
+**Add job by hand** button (High Score / All Jobs toolbar) takes a pasted posting URL or
+job description and runs it through the same scoring + tailoring pipeline as a scraped
+job. A **Find new jobs** button (bottom action bar) kicks off a fresh discovery + score
+on demand. It asks first (a *small test run* or a *full run*) because finding jobs costs
 real money / API credits.
 
 The **Tracker** tab has **Export tracker… / Import tracker…** buttons. Your whole
@@ -360,6 +365,13 @@ The composition pipeline (in `local/resume_tailor/`) is built around one rule,
 4. **layout**: bullets are driven to exact printed-line budgets so the résumé
    fills one page cleanly (single-line bullets ≥75% full, no stubby lines).
 5. **compile**: render LaTeX and enforce one page.
+
+The skills section follows the same rule. A **Methods** line surfaces the concept
+keywords an ATS screens for ("ETL", "A/B testing", "data analysis") drawn only from
+concepts you declared, and an **anchored alias map** lets skills lines print the JD's
+own spelling of a skill you own ("Postgres" for your "PostgreSQL"); an alias is used
+only when its canonical is a real skill in your data, so it can never inject a keyword
+you don't have. An underfull bullet is filled only from unused facts in its own entry.
 
 Layout is **config-driven** (the `tailor:` block in your yaml): which sections are
 required and their line budgets are declared in data, not hardcoded, so it works

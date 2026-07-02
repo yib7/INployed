@@ -120,6 +120,12 @@ def test_master_is_stale_defaults_to_36_when_absent():
     assert watcher.master_is_stale(37.0, {}) is True
 
 
+def test_master_is_stale_boundary_exactly_at_threshold_is_fresh():
+    """The threshold is strict: a run EXACTLY stale_after_hours old is not yet stale."""
+    assert watcher.master_is_stale(36.0, {}) is False
+    assert watcher.master_is_stale(100.0, {"stale_after_hours": 100}) is False
+
+
 # P2-9: local/locks.py is the single shared lock class -- watcher.SingleInstance
 # and jobsdata._UILock are now both aliases of locks.SingleInstance (previously
 # byte-for-byte duplicated in each module). Test the shared module directly, not

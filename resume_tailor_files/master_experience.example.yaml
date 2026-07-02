@@ -107,14 +107,18 @@ leadership:
           - "membership 20 -> 60 over one academic year"
         angles: [leadership, community, teaching]
 
-# Skills taxonomy — group however reads best on a résumé line. The tailor will
-# select and reorder these per job description.
+# Skills taxonomy — the tailor renders four fixed skill lines, and each line pulls
+# ONLY from its matching bucket below: languages / frameworks / developer_tools /
+# libraries. Keep every tool-type skill in one of those four (a skill under any other
+# key never reaches a skills line). The optional concepts_and_methodologies bucket
+# holds concept buzzwords (RAG, ETL, A/B testing ...) and feeds the "Methods" line
+# and the ATS matcher instead of the four tool lines.
 skills:
   languages: [Python, JavaScript, SQL, Java]
-  ml_ai: [PyTorch, scikit-learn, LLM prompt engineering, RAG]
-  data: [pandas, NumPy, PostgreSQL, Spark]
-  cloud_devops: [AWS, Docker, GitHub Actions, Linux]
-  tools: [Git, Jupyter, FastAPI, React]
+  frameworks: [React, FastAPI, Spark]
+  developer_tools: [Git, Docker, AWS, GitHub Actions, Linux, PostgreSQL, Jupyter]
+  libraries: [pandas, NumPy, PyTorch, scikit-learn]
+  concepts_and_methodologies: [RAG, LLM prompt engineering]
 
 # Optional: map a real skill above to the alternate wordings a job description / ATS
 # might use for it -- so a JD's wording matches a skill you genuinely have, without

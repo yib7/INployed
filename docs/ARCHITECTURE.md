@@ -44,12 +44,24 @@ score preview for a right-side **Apply panel** (copyable doc paths + the apply s
 **Expand** button that pops it into a large resizable reader; the close button dismisses it, and
 **"I applied to this job"** confirms → records the job applied in the Tracker → closes).
 
+Between VM drops, `local/watcher.py` closes the loop with **no polling**: a one-shot fired by
+Windows Task Scheduler (Logon / Unlock / Resume plus six scheduled fires around the VM's Drive
+drops; installed by `local/setup_tasks.ps1` from `local/task.xml`), it reconciles each newly-synced
+file's `is_seen` against the registry and launches the dashboard only when unseen score≥4 rows
+arrived. Its summary also flags a master run older than the `stale_after_hours` setting
+(`watcher.master_is_stale`, the same config key the Stats badge reads). The watcher and the
+dashboard share one concurrent-instance guard, `local/locks.py:SingleInstance` (an OS-level
+msvcrt/fcntl file lock): the dashboard uses it to no-op a relaunch over a live window, the watcher
+to skip a trigger while a previous fire is still working.
+
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
 `seen.db` (`SeenRegistry.export_to` via SQLite `VACUUM INTO`; `import_from` merges, with newer
 `status_date` winning, earliest `applied_date` kept, seen unioned). The Stats tab shows a fresh/stale
 **pipeline badge** (`jobsdata.run_staleness` + the `stale_after_hours` setting). The Resume Data tab
 warns when `resume.md` has drifted behind `master_experience.yaml` (`resume_md.resume_md_stale`,
-mtime compare) with a one-click Regenerate. It also carries a collapsible **Resume Layout** editor
+mtime compare) with a one-click Regenerate; the rebuild (`local/resume_md.py`, injected Gemini call;
+tests never spend a credit) deterministically re-appends any `concepts_and_methodologies` item the
+model dropped (`_ensure_concepts`), so the scorer always matches against the full concepts pool. It also carries a collapsible **Resume Layout** editor
 (`ResumeDataEditor._layout_block`) for the per-bullet line targets; it reads/writes config.json's
 `resume_layout` (sections) and `project_layout` (projects) maps, the very ones the tailor reads via
 `resume_tailor/config.py:block_targets`/`project_targets`; row names are pulled from the master so
@@ -101,15 +113,19 @@ bullet must be traceable to a fact ("atom") the user actually wrote in
 | `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. |
 | `llm.py` | The single Gemini transport (`call()` → `_call_gemini`). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
 | `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config) and the LaTeX preamble. |
-| `compose.py` | The LLM stages: `select` → `rephrase` → `compress_skills`. |
+| `compose.py` | The LLM stages: `select` → `rephrase` → `compress_skills`, plus the deterministic `methods_line` (the optional 5th "Methods" skills line: concepts from the master's `concepts_and_methodologies` pool that the JD actually references, printed in the JD's own spelling on an alias hit). |
 | `layout.py` | The hard layout spec: per-bullet printed-line budgets and fill floors (single-line ≥75%, multi-line last line ≥50%), all calibrated to the template. |
+| `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. |
 | `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. |
 | `compile.py` | Runs `pdflatex` and enforces one page (drop-weakest-bullet + shrink loop). |
 | `latexutil.py` | Escaping, emphasis stripping, date formatting, unicode-math → LaTeX. |
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
-| `ats.py` | Deterministic ATS keyword-coverage report. |
+| `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
+| `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
+| `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` backs the dashboard's "Check setup" button. |
+| `apply_answers.py` | The reusable screening-answer bank (git-ignored `apply_answers.json`): seeds from `apply_config.DEFAULTS`, migrates legacy overrides, and feeds the standard answers into `apply.md`. |
 | `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are now config-driven, default-preserving. |
 | `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder (by the `apply.md` meta marker), build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO, structured address). |
 

@@ -6,28 +6,7 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- `master_experience.example.yaml` now buckets its skills under the keys the tailor
-  actually renders (`languages` / `frameworks` / `developer_tools` / `libraries`, plus
-  `concepts_and_methodologies` for the Methods line). The example previously used
-  free-form keys (`ml_ai`, `data`, `cloud_devops`, `tools`), so on a fresh clone three
-  of the four skill pools were empty: a first-time user's tailored résumé printed only
-  the Languages line, and the fresh-clone test suite failed
-  `test_compress_skills_returns_four_labeled_lines` (the same 20 example skills are
-  kept, only regrouped). The taxonomy comment in the example now states the bucket
-  contract instead of "group however reads best".
-
-### Changed
-- Dependency refresh (2026-07-01): markdownify 1.2.2 -> 1.2.3 (both requirement sets),
-  CI `actions/checkout` v5 -> v7. google-genai stays 1.x locally on purpose (2.x is a
-  major bump on the live LLM path); the VM's numpy stays 2.4.x (numpy 2.5+ needs
-  Python >=3.12, the VM runs 3.11).
-- `docs/ARCHITECTURE.md` caught up with the tree: the watcher + shared `local/locks.py`
-  single-instance lock, the anchored alias maps and Methods concepts line, the
-  `resume.md` concepts-pool guarantee, and module-table rows for `measure.py` /
-  `master_edit.py` / `master_validate.py` / `apply_answers.py`.
-
-## [1.4.0] - 2026-07-01
+## [1.4.0] - 2026-07-02
 
 ### Added
 - Technical-skills lines now print the JD's spelling for a tech skill too, not just concepts.
@@ -68,6 +47,14 @@ All notable changes to INployed are recorded here. The format follows
   leaving it blank keeps the flat allotment.
 
 ### Changed
+- Dependency refresh (2026-07-01): markdownify 1.2.2 -> 1.2.3 (both requirement sets),
+  CI `actions/checkout` v5 -> v7. google-genai stays 1.x locally on purpose (2.x is a
+  major bump on the live LLM path); the VM's numpy stays 2.4.x (numpy 2.5+ needs
+  Python >=3.12, the VM runs 3.11).
+- `docs/ARCHITECTURE.md` caught up with the tree: the watcher + shared `local/locks.py`
+  single-instance lock, the anchored alias maps and Methods concepts line, the
+  `resume.md` concepts-pool guarantee, and module-table rows for `measure.py` /
+  `master_edit.py` / `master_validate.py` / `apply_answers.py`.
 - The Methods concepts line now pads to a ~7-item target (was ~6), so one more genuinely
   earned concept buzzword reaches the page. Still width-capped to one printed line and still
   drawn only from concepts the user declared (`RESUME_TAILOR_SKILL_TARGETS` overrides).
@@ -77,6 +64,25 @@ All notable changes to INployed are recorded here. The format follows
   little white space is left alone.
 
 ### Fixed
+- The CI badge is trustworthy again. The workflow's test step ran pytest and the
+  dashboard smoke test in one multi-line PowerShell block, where only the last
+  command's exit code decides the step result - so a pytest failure followed by a
+  passing smoke test reported green. This actually happened: a non-hermetic test
+  (`test_check_setup_reports_ok` silently depended on the developer's `.env`
+  supplying a Google Cloud project id) hung on CI's bare checkout, was killed by
+  the test timeout, and CI still passed - never running the test files after it.
+  The test now pins its inputs and stubs the error dialog, pytest and the smoke
+  test are separate CI steps, and the per-test timeout lives in `pytest.ini` so a
+  hung test fails fast in every environment, not only where the flag is passed.
+- `master_experience.example.yaml` now buckets its skills under the keys the tailor
+  actually renders (`languages` / `frameworks` / `developer_tools` / `libraries`, plus
+  `concepts_and_methodologies` for the Methods line). The example previously used
+  free-form keys (`ml_ai`, `data`, `cloud_devops`, `tools`), so on a fresh clone three
+  of the four skill pools were empty: a first-time user's tailored résumé printed only
+  the Languages line, and the fresh-clone test suite failed
+  `test_compress_skills_returns_four_labeled_lines` (the same 20 example skills are
+  kept, only regrouped). The taxonomy comment in the example now states the bucket
+  contract instead of "group however reads best".
 Hardening pass from a full-code audit (24 findings; failure paths and guards only, no
 happy-path behavior change):
 - An existing-but-unreadable cumulative master CSV now ABORTS the run (scraper, scorer, and

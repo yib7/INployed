@@ -623,11 +623,21 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     monkeypatch.setattr(master_validate, "check_setup", lambda: {"master": [], "answers": []})
     monkeypatch.setattr(mw.settings, "load", lambda: {})
     monkeypatch.setattr(mw.settings, "secret_status", lambda: {})
+    # Pin the engine-credential inputs so the test is hermetic: without these it
+    # silently depended on the developer's real .env/config.json supplying a
+    # GOOGLE_CLOUD_PROJECT -- on a clean clone / CI the vertex warning fired and the
+    # unmocked critical() modal hung the suite forever.
+    monkeypatch.setattr(mw.jobsdata, "_load_cfg", lambda: {"gemini_auth": "vertex"})
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     shown = {}
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         staticmethod(lambda *a, **k: shown.setdefault("info", True)))
+    # Stub critical too: a regression must FAIL the assert below, never hang on a modal.
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: shown.setdefault("critical", True)))
     w._check_setup()
     assert shown.get("info")
+    assert "critical" not in shown
 
 
 def test_first_run_hint_visible_without_data(qtbot):

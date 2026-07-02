@@ -419,6 +419,15 @@ def test_complete_to_count_drops_fabricated_slash_merge():
     assert out == ["Python", "SQL", "Java"]                   # fabricated merge gone, refilled
 
 
+def test_complete_to_count_drops_partially_fabricated_merge():
+    """A merged token with ONE invented member is dropped WHOLE (every member must
+    anchor -- one real member does not carry an invented one onto the page); the pool
+    completion refills the slot."""
+    pool = ["Gemini", "OpenAI", "Python", "SQL"]
+    out = compose._complete_to_count("Python, Gemini/Rust API", pool, 3)
+    assert out == ["Python", "Gemini", "OpenAI"]              # partial merge gone, refilled
+
+
 def test_complete_to_count_drops_fabricated_paren_list():
     """An invented umbrella enumerating invented members ('Fake Tools (Foo, Bar)') is
     dropped whole; the pool completion refills its slot."""

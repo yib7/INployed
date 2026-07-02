@@ -413,6 +413,7 @@ local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/c
 local/chrome.py         open job/resume links in the configured Chrome profile
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders + settings->VM change detection
+local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test

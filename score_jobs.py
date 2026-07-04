@@ -509,6 +509,8 @@ async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
             }
 
 
+CHUNK = 2000  # Chunked streaming row count for update_master_scores (memory bounded)
+
 # Columns produced by scoring that should be carried into the master CSV so it
 # is not just raw scrape data. (job_posting_id is the merge key, kept separate.)
 SCORE_COLS = [
@@ -564,16 +566,39 @@ def update_master_scores(scored: pd.DataFrame) -> None:
     s["job_posting_id"] = s["job_posting_id"].astype(str)
     s = s.drop_duplicates(subset=["job_posting_id"], keep="last").set_index("job_posting_id")
 
-    master = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str})
-    if "job_posting_id" not in master.columns:
+    header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
+    if "job_posting_id" not in header:
         return
-    master["job_posting_id"] = master["job_posting_id"].astype(str)
-    for c in cols:
-        if c not in master.columns:
-            master[c] = pd.NA
-    master = master.set_index("job_posting_id")
-    master.update(s)
-    _atomic_to_csv(master.reset_index(), MASTER_CSV)
+    add_cols = [c for c in cols if c not in header]
+    fd, tmp = tempfile.mkstemp(prefix=MASTER_CSV.stem + ".", suffix=".tmp",
+                               dir=str(MASTER_CSV.parent)); os.close(fd)
+    wrote_header = False
+    try:
+        for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
+            chunk["job_posting_id"] = chunk["job_posting_id"].astype(str)
+            for c in add_cols:
+                chunk[c] = pd.NA
+            chunk = chunk.set_index("job_posting_id")
+            # Per-chunk dtype inference (not whole-file) means a text column
+            # that is all-empty within this chunk's rows reads back as float64.
+            # DataFrame.update() on pandas >= 3 raises TypeError rather than
+            # silently upcasting when it would write a non-numeric value into
+            # a numeric column, so widen just those columns first. Columns
+            # that are numeric on both sides are left alone so their on-disk
+            # formatting (e.g. "5.0") is unchanged.
+            for c in cols:
+                if (c in chunk.columns and pd.api.types.is_numeric_dtype(chunk[c])
+                        and not pd.api.types.is_numeric_dtype(s[c])):
+                    chunk[c] = chunk[c].astype(object)
+            chunk.update(s)  # aligns on index: only this chunk's ids that appear in s change
+            chunk.reset_index().to_csv(tmp, mode="a", header=not wrote_header,
+                                       index=False, encoding="utf-8")
+            wrote_header = True
+        os.replace(tmp, MASTER_CSV)
+    finally:
+        if os.path.exists(tmp):
+            try: os.unlink(tmp)
+            except OSError: pass
 
 
 def save_output(df: pd.DataFrame, input_csv: Path) -> Path:

@@ -793,10 +793,15 @@ def sort_query(view: pd.DataFrame) -> pd.DataFrame:
 
 
 def filter_and_sort(base: pd.DataFrame, search: str, minscore: str, day: str,
-                    time_: str, reco: str, easy: bool = False,
+                    time_: str, reco: str, easy: str | bool = "All",
                     search_column: str | None = None) -> pd.DataFrame:
     """Apply the shared multi-column filters (AND) + default sort to a base set.
-    search_column: a column id to restrict the text search to; None/"All" = all."""
+    search_column: a column id to restrict the text search to; None/"All" = all.
+    easy: "All" / "Easy Apply" / "Not Easy Apply" (legacy bools normalize to
+    True -> "Easy Apply", False -> "All"). A NaN/blank is_easy_apply cell counts
+    as NOT easy apply — it survives "Not Easy Apply" and never matches "Easy Apply"."""
+    if isinstance(easy, bool):                     # pre-combo callers
+        easy = "Easy Apply" if easy else "All"
     view = base
     if view.empty:
         return view
@@ -820,8 +825,9 @@ def filter_and_sort(base: pd.DataFrame, search: str, minscore: str, day: str,
         view = view.loc[view["run_label"].astype(str).str.lower() == time_.lower()]
     if reco not in ("", "All") and "recommendation" in view.columns:
         view = view.loc[view["recommendation"].astype(str).str.lower() == reco.lower()]
-    if easy and "is_easy_apply" in view.columns:
-        view = view.loc[view["is_easy_apply"].astype(str).str.lower().isin(("true", "1", "yes"))]
+    if easy not in ("", "All") and "is_easy_apply" in view.columns:
+        truthy = view["is_easy_apply"].astype(str).str.lower().isin(("true", "1", "yes"))
+        view = view.loc[truthy] if easy == "Easy Apply" else view.loc[~truthy]
     return sort_query(view)
 
 

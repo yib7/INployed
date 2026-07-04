@@ -138,6 +138,44 @@ def test_filters_button_shows_active_count(qtbot):
     assert tab._filters_btn.text() == "Filters"
 
 
+def test_easy_filter_is_a_three_state_combo(qtbot):
+    # SP3: the Easy Apply checkbox became a combo with a Not-Easy-Apply state.
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    assert isinstance(tab.easy, QtWidgets.QComboBox)
+    items = [tab.easy.itemText(i) for i in range(tab.easy.count())]
+    assert items == ["All", "Easy Apply", "Not Easy Apply"]
+    assert tab.easy.currentText() == "All"
+
+
+def test_easy_combo_counts_and_resets(qtbot):
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    assert tab._filters_btn.text() == "Filters"
+    tab.easy.setCurrentText("Not Easy Apply")     # currentIndexChanged -> _apply_filters
+    assert "(1)" in tab._filters_btn.text()
+    tab.easy.setCurrentText("Easy Apply")
+    assert "(1)" in tab._filters_btn.text()
+    tab.reset_filters()
+    assert tab.easy.currentText() == "All"
+    assert tab._filters_btn.text() == "Filters"
+
+
+def test_easy_combo_filters_rows(qtbot):
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    df = _df()
+    df["is_easy_apply"] = ["True", "false", None]
+    tab.set_source_df(df)
+    tab.easy.setCurrentText("Easy Apply")
+    assert tab.model.rowCount() == 1
+    tab.easy.setCurrentText("Not Easy Apply")     # NaN counts as not-easy
+    assert tab.model.rowCount() == 2
+    tab.easy.setCurrentText("All")
+    assert tab.model.rowCount() == 3
+
+
 def test_add_filter_row_lives_in_popup_and_counts(qtbot):
     # Cycle 17 SP2: an extra filter (the Tracker's Follow-up-due checkbox) mounts in
     # the Filters popup and, when active, counts toward the badge.

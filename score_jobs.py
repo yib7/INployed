@@ -591,16 +591,22 @@ def update_master_scores(scored: pd.DataFrame) -> None:
             for c in add_cols:
                 chunk[c] = pd.NA
             chunk = chunk.set_index("job_posting_id")
-            # Per-chunk dtype inference (not whole-file) means a text column
-            # that is all-empty within this chunk's rows reads back as float64.
+            # Per-chunk dtype inference (not whole-file) means a column that is
+            # all-empty within this chunk's rows reads back as float64.
             # DataFrame.update() on pandas >= 3 raises TypeError rather than
-            # silently upcasting when it would write a non-numeric value into
-            # a numeric column, so widen just those columns first. Columns
-            # that are numeric on both sides are left alone so their on-disk
-            # formatting (e.g. "5.0") is unchanged.
+            # silently upcasting when it would write an incompatible value into
+            # such a column, so widen just those columns first. Columns that are
+            # numeric on both sides are left alone so their on-disk formatting
+            # (e.g. "5.0") is unchanged. bool is deliberately treated as
+            # non-numeric here: is_numeric_dtype(bool) is True, but update()
+            # still refuses to write True/False into a float64 block, so the
+            # boolean filter columns (filter_*, filtered_out) landing on an
+            # all-empty float64 master chunk must widen too.
+            def _is_num(x):
+                return (pd.api.types.is_numeric_dtype(x)
+                        and not pd.api.types.is_bool_dtype(x))
             for c in cols:
-                if (c in chunk.columns and pd.api.types.is_numeric_dtype(chunk[c])
-                        and not pd.api.types.is_numeric_dtype(s[c])):
+                if c in chunk.columns and _is_num(chunk[c]) and not _is_num(s[c]):
                     chunk[c] = chunk[c].astype(object)
             chunk.update(s)  # aligns on index: only this chunk's ids that appear in s change
             chunk.reset_index().to_csv(tmp, mode="a", header=not wrote_header,

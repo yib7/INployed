@@ -509,6 +509,8 @@ async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
             }
 
 
+CHUNK = 2000  # Chunked streaming row count for update_master_scores (memory bounded)
+
 # Columns produced by scoring that should be carried into the master CSV so it
 # is not just raw scrape data. (job_posting_id is the merge key, kept separate.)
 SCORE_COLS = [
@@ -564,16 +566,39 @@ def update_master_scores(scored: pd.DataFrame) -> None:
     s["job_posting_id"] = s["job_posting_id"].astype(str)
     s = s.drop_duplicates(subset=["job_posting_id"], keep="last").set_index("job_posting_id")
 
-    master = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str})
-    if "job_posting_id" not in master.columns:
+    header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
+    if "job_posting_id" not in header:
         return
-    master["job_posting_id"] = master["job_posting_id"].astype(str)
-    for c in cols:
-        if c not in master.columns:
-            master[c] = pd.NA
-    master = master.set_index("job_posting_id")
-    master.update(s)
-    _atomic_to_csv(master.reset_index(), MASTER_CSV)
+    add_cols = [c for c in cols if c not in header]
+    fd, tmp = tempfile.mkstemp(prefix=MASTER_CSV.stem + ".", suffix=".tmp",
+                               dir=str(MASTER_CSV.parent)); os.close(fd)
+    wrote_header = False
+    try:
+        for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
+            chunk["job_posting_id"] = chunk["job_posting_id"].astype(str)
+            for c in add_cols:
+                chunk[c] = pd.NA
+            chunk = chunk.set_index("job_posting_id")
+            # Per-chunk dtype inference (not whole-file) means a text column
+            # that is all-empty within this chunk's rows reads back as float64.
+            # DataFrame.update() on pandas >= 3 raises TypeError rather than
+            # silently upcasting when it would write a non-numeric value into
+            # a numeric column, so widen just those columns first. Columns
+            # that are numeric on both sides are left alone so their on-disk
+            # formatting (e.g. "5.0") is unchanged.
+            for c in cols:
+                if (c in chunk.columns and pd.api.types.is_numeric_dtype(chunk[c])
+                        and not pd.api.types.is_numeric_dtype(s[c])):
+                    chunk[c] = chunk[c].astype(object)
+            chunk.update(s)  # aligns on index: only this chunk's ids that appear in s change
+            chunk.reset_index().to_csv(tmp, mode="a", header=not wrote_header,
+                                       index=False, encoding="utf-8")
+            wrote_header = True
+        os.replace(tmp, MASTER_CSV)
+    finally:
+        if os.path.exists(tmp):
+            try: os.unlink(tmp)
+            except OSError: pass
 
 
 def save_output(df: pd.DataFrame, input_csv: Path) -> Path:
@@ -685,22 +710,43 @@ def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
     return master[(score.isna() & ~filtered) | err]
 
 
+def _load_rows_by_id(master_csv, ids) -> pd.DataFrame:
+    """Chunked by-id load: scan `master_csv` in CHUNK-row pieces, keeping only
+    rows whose job_posting_id is in `ids`. Used to pull the (<=RESCORE_CAP)
+    full rows needed for rescoring without ever holding the whole master
+    (with its two ~90 MB text columns) in memory at once."""
+    want = set(map(str, ids))
+    parts = []
+    for chunk in pd.read_csv(master_csv, dtype={"job_posting_id": str}, chunksize=CHUNK):
+        chunk["job_posting_id"] = chunk["job_posting_id"].astype(str)
+        hit = chunk[chunk["job_posting_id"].isin(want)]
+        if not hit.empty:
+            parts.append(hit)
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
 async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     """Retry failed/missing master rows. Returns (attempted, newly_scored)."""
     if not MASTER_CSV.exists():
         return 0, 0
-    master = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str})
-    if "job_posting_id" not in master.columns or master.empty:
+    header = pd.read_csv(MASTER_CSV, nrows=0).columns
+    light_cols = [c for c in ("job_posting_id", "score", "filtered_out", "reason",
+                              "recommendation") if c in header]
+    # Candidate-finding never needs the two ~90 MB text columns.
+    light = pd.read_csv(MASTER_CSV, usecols=light_cols, dtype={"job_posting_id": str})
+    if "job_posting_id" not in light.columns or light.empty:
         return 0, 0
-    desc_col = pick_col(master, ("job_description_formatted", "job_description"))
-    if not desc_col:
+    todo_ids = rows_needing_rescore(light)["job_posting_id"].astype(str)
+    if todo_ids.empty:
         return 0, 0
-    todo = rows_needing_rescore(master)
-    if todo.empty:
-        return 0, 0
-    todo = todo.tail(RESCORE_CAP).copy()  # newest first if more than the cap
-    print(f"Rescore pass: retrying {len(todo)} master row(s) with missing/failed scores")
+    todo_ids = todo_ids.tail(RESCORE_CAP).tolist()  # newest-first cap, same as before
+    print(f"Rescore pass: retrying {len(todo_ids)} master row(s) with missing/failed scores")
 
+    master = _load_rows_by_id(MASTER_CSV, todo_ids)  # <= RESCORE_CAP full rows only
+    desc_col = pick_col(master, ("job_description_formatted", "job_description"))
+    if not desc_col or master.empty:
+        return 0, 0
+    todo = master.copy()
     todo["job_posting_id"] = todo["job_posting_id"].astype(str)
     todo = todo.drop(columns=[c for c in SCORE_COLS if c in todo.columns], errors="ignore")
     title_col = pick_col(master, ("job_title", "job_posting_title", "title"))

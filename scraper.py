@@ -346,28 +346,29 @@ def append_to_master(df: pd.DataFrame) -> int:
         return len(new)
 
     # Validate readability up front so a corrupt-but-present master still raises
-    # loudly (never silently treated as empty — same contract as before).
+    # loudly (never silently treated as empty — same contract as before). The
+    # probe's full parse also gives us existing_ids for free, before the tempfile
+    # stream starts and before blocklist filtering (so a new row colliding with an
+    # existing-but-about-to-be-blocklisted row is still correctly excluded below).
     try:
         header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
         probe = pd.read_csv(MASTER_CSV, usecols=lambda c: c == "job_posting_id",
-                            dtype=str)  # forces a full parse cheaply
+                            dtype=str)
     except (OSError, ValueError, pd.errors.ParserError) as e:
         raise OSError(
             f"cannot update {MASTER_CSV.name}: existing master is unreadable ({e}). "
             f"This run's rows are still saved to the run-dir CSV; fix or restore "
             f"{MASTER_CSV} and rerun with --snapshot to recover them."
         ) from e
+    existing_ids: set[str] = set(probe["job_posting_id"].astype(str)) if "job_posting_id" in probe.columns else set()
+    del probe  # release memory before streaming
 
     unified = header + [c for c in new.columns if c not in header]  # column union, order preserved
-    existing_ids: set[str] = set()
     fd, tmp = tempfile.mkstemp(prefix=MASTER_CSV.stem + ".", suffix=".tmp",
                                dir=str(MASTER_CSV.parent)); os.close(fd)
     total = 0; wrote_header = False
     try:
         for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
-            if "job_posting_id" in chunk.columns:
-                chunk["job_posting_id"] = chunk["job_posting_id"].astype(str)
-                existing_ids.update(chunk["job_posting_id"])
             chunk = drop_blocklisted_companies(chunk)             # retroactive re-filter, preserved
             chunk = chunk.reindex(columns=unified)
             chunk.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")

@@ -814,6 +814,7 @@ class MainWindow(QtWidgets.QMainWindow):
         repo = Path(__file__).resolve().parents[2]
         log_path = self._scrape_log_path()
         env = self._scrape_env()
+        before = self._outbox_snapshot()
         with open(log_path, "w", encoding="utf-8", errors="replace") as log:
             for cmd in (self.scraper_cmd(bounded), self.scorer_cmd()):
                 log.write(f"\n=== {' '.join(cmd)} ===\n")
@@ -839,6 +840,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # configured) so its next scheduled run doesn't re-collect — and re-bill —
             # what this run just pulled. Best-effort: never fail the scrape over a sync.
             self._push_seen_ids_to_vm(log)
+            self._push_outbox_to_vm(log, before)
         return True
 
     @staticmethod
@@ -871,6 +873,52 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:  # noqa: BLE001 - sync is best-effort, never fail the scrape
             try:
                 log.write(f"\n=== VM seen-id sync: error ({e}) — scrape unaffected ===\n")
+                log.flush()
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _outbox_snapshot() -> dict:
+        """Pre-scrape {run-file: mtime} so the post-scrape hook can tell which run
+        files this scrape produced/rewrote. {} on any failure (hook degrades to
+        push-retries-only)."""
+        try:
+            repo = Path(__file__).resolve().parents[2]
+            if str(repo / "local") not in sys.path:
+                sys.path.insert(0, str(repo / "local"))
+            import outbox
+            return outbox.snapshot_run_files()
+        except Exception:  # noqa: BLE001 - best-effort
+            return {}
+
+    @staticmethod
+    def _push_outbox_to_vm(log, before: dict) -> None:
+        """Best-effort post-scrape data sync: queue this run's new master rows (+ the
+        run-stats file) in the outbox and push every pending outbox file to the VM's
+        ~/incoming/. Failures are logged to scrape.log and swallowed — a sync problem
+        never fails a scrape. Push still runs when the run added nothing, so files
+        queued by earlier failed pushes retry here."""
+        try:
+            repo = Path(__file__).resolve().parents[2]
+            if str(repo / "local") not in sys.path:
+                sys.path.insert(0, str(repo / "local"))
+            import outbox
+            import vm_sync
+            ids = outbox.new_run_ids(before)
+            if ids:
+                path = outbox.write_rows_outbox(ids)
+                log.write(f"\n=== outbox: queued {len(ids)} row id(s) -> "
+                          f"{getattr(path, 'name', None)} ===\n")
+            else:
+                log.write("\n=== outbox: no new rows this run ===\n")
+            outbox.write_stats_outbox()
+            target = vm_sync.VMTarget.from_env()
+            pushed, kept = outbox.push_outbox(target, log=log)
+            log.write(f"outbox push done: {pushed} pushed, {kept} kept\n")
+            log.flush()
+        except Exception as e:  # noqa: BLE001 - sync is best-effort
+            try:
+                log.write(f"\n=== outbox sync: error ({e}) — scrape unaffected ===\n")
                 log.flush()
             except Exception:  # noqa: BLE001
                 pass
@@ -935,6 +983,22 @@ class MainWindow(QtWidgets.QMainWindow):
             company=vals.get("company", ""), title=vals.get("title", ""),
             do_tailor=do_tailor, tailor_opts=opts, on_status=self.tailor_progress.emit)
         res["requested_tailor"] = do_tailor  # so the finish status can distinguish skip vs fail
+        # Queue + push the new master row to the VM (best-effort — never fail the add).
+        try:
+            repo = Path(__file__).resolve().parents[2]
+            if str(repo / "local") not in sys.path:
+                sys.path.insert(0, str(repo / "local"))
+            import outbox
+            import vm_sync
+            jid = str((res.get("record") or {}).get("job_posting_id", "")).strip()
+            with open(self._scrape_log_path(), "a", encoding="utf-8",
+                      errors="replace") as log:
+                log.write("\n=== manual add: outbox sync ===\n")
+                if jid:
+                    outbox.write_rows_outbox([jid])
+                outbox.push_outbox(vm_sync.VMTarget.from_env(), log=log)
+        except Exception:  # noqa: BLE001 - sync is best-effort
+            pass
         return res
 
     def _finish_manual_add(self, result: dict) -> None:

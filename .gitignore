@@ -32,7 +32,8 @@ last_run_job_ids.json
 external_exclude_ids.json
 score_state.json
 company_blocklist.txt
-outbox/  # local scrape rows queued for the VM (deleted after confirmed push)
+# local scrape rows queued for the VM (deleted after confirmed push)
+outbox/
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/

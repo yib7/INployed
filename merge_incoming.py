@@ -27,6 +27,7 @@ INCOMING_DIR = HOME / "incoming"
 MASTER_CSV = HOME / "linkedin_jobs_master.csv"
 RUN_STATS_CSV = HOME / "run_stats.csv"
 STATS_KEY = ["timestamp", "input_csv"]
+CHUNK = 2000  # Chunked streaming row count for the master-wins merge (memory bounded)
 
 # Per-file parse/read failures that must quarantine-and-continue rather than
 # raise. NOT included: unreadable *master*, which is the one case that must
@@ -190,9 +191,21 @@ def main(
         good_dfs, good_paths = _process_row_files(row_paths, bad_dir)
 
         if good_dfs:
+            header: list[str] = []
+            existing_ids: set[str] = set()
+            before_len = 0
             if master_csv.exists():
+                # Cheap probe: usecols=["job_posting_id"] parses every row but
+                # materializes only that one column, so this never holds the
+                # full 92 MB master in memory. It doubles as the readability
+                # check (a genuinely corrupt master must still raise here,
+                # same contract as the old full pd.read_csv did) and gives us
+                # existing_ids + before_len for free before the chunked stream
+                # below even starts.
                 try:
-                    master_df = pd.read_csv(master_csv, dtype={"job_posting_id": str})
+                    header = pd.read_csv(master_csv, nrows=0).columns.tolist()
+                    probe = pd.read_csv(master_csv, usecols=lambda c: c == "job_posting_id",
+                                         dtype=str)
                 except _BAD_FILE_ERRORS as e:
                     # NEVER treat an unreadable-but-existing master as empty --
                     # that would silently rebuild the exclude set from nothing
@@ -206,25 +219,56 @@ def main(
                         f"leaving queued files in place and aborting."
                     )
                     return 1
-            else:
-                master_df = None
+                before_len = len(probe)
+                if "job_posting_id" in probe.columns:
+                    existing_ids = set(probe["job_posting_id"].astype(str))
+                del probe  # release memory before streaming
 
-            # Fold files in one at a time (rather than one big concat) so each
-            # file's own contribution to the running total can be reported
+            def _not_yet_in_master(rows: pd.DataFrame) -> pd.DataFrame:
+                if "job_posting_id" in rows.columns:
+                    return rows[~rows["job_posting_id"].isin(existing_ids)]
+                return rows
+
+            # Fold incoming files against each other first (small: bounded by
+            # the day's pushed files, never the master) so each file's own
+            # contribution to the running total can still be reported
             # accurately -- "new rows" means rows that survived dedup, not
-            # rows in the source file.
-            combined = master_df
-            before_len = 0 if master_df is None else len(master_df)
+            # rows in the source file. Earlier-sorted files win ties over
+            # later ones, matching the previous sequential-concat behaviour.
+            incoming_running: pd.DataFrame | None = None
             running_total = before_len
             contributions: list[tuple[Path, int]] = []
             for path, df in zip(good_paths, good_dfs):
-                combined = merge_rows(combined, df)
-                contributions.append((path, len(combined) - running_total))
-                running_total = len(combined)
+                incoming_running = merge_rows(incoming_running, df)
+                new_total = before_len + len(_not_yet_in_master(incoming_running))
+                contributions.append((path, new_total - running_total))
+                running_total = new_total
 
-            if len(combined) > before_len:
-                _atomic_to_csv(combined, master_csv)
-                _say(f"master updated: {len(combined) - before_len} new row(s), {len(combined)} total")
+            truly_new = _not_yet_in_master(incoming_running)
+            final_total = before_len + len(truly_new)
+
+            if final_total > before_len:
+                unified = header + [c for c in incoming_running.columns if c not in header]
+                fd, tmp = tempfile.mkstemp(prefix=master_csv.stem + ".", suffix=".tmp",
+                                            dir=str(master_csv.parent))
+                os.close(fd)
+                try:
+                    wrote_header = False
+                    if master_csv.exists():
+                        for chunk in pd.read_csv(master_csv, dtype={"job_posting_id": str}, chunksize=CHUNK):
+                            chunk = chunk.reindex(columns=unified)
+                            chunk.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
+                            wrote_header = True
+                    truly_new_out = truly_new.reindex(columns=unified)
+                    truly_new_out.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
+                    os.replace(tmp, master_csv)
+                finally:
+                    if os.path.exists(tmp):
+                        try:
+                            os.unlink(tmp)
+                        except OSError:
+                            pass
+                _say(f"master updated: {final_total - before_len} new row(s), {final_total} total")
             else:
                 _say("no new rows after dedup; master left untouched")
 

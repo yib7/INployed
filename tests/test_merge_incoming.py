@@ -135,3 +135,95 @@ def test_fresh_file_skipped_not_quarantined(tmp_path):
     assert (inc / "local_rows_fresh.csv.gz").exists()
     assert not (inc / "bad").exists()
     assert not master.exists()
+
+
+def _full_load_reference(existing, incoming):  # the CURRENT semantics, for equivalence
+    combined = pd.concat([existing, incoming], ignore_index=True)
+    combined["job_posting_id"] = combined["job_posting_id"].astype(str)
+    return combined.drop_duplicates(subset=["job_posting_id"], keep="first").reset_index(drop=True)
+
+
+def test_merge_rows_matches_full_load_reference():
+    # merge_rows() is the in-memory reference/spec (used directly, and as the
+    # per-incoming-file folding step inside main()) -- this pins its contract:
+    # master wins on collision (id "3"), column union preserved either way.
+    existing = pd.DataFrame({
+        "job_posting_id": ["1", "2", "3"],
+        "job_title": ["a", "b", "c"],
+        "company_name": ["x", "y", "z"],
+    })
+    incoming = pd.DataFrame({
+        "job_posting_id": ["3", "4"],
+        "job_title": ["C2", "d"],
+        "company_name": ["z", "w"],
+        "local_only_col": ["keep-me", "also-me"],
+    })
+
+    got = merge_incoming.merge_rows(existing.astype({"job_posting_id": str}), incoming)
+    got = got.sort_values("job_posting_id").reset_index(drop=True)
+
+    ref = _full_load_reference(existing.astype({"job_posting_id": str}), incoming)
+    ref = ref.sort_values("job_posting_id").reset_index(drop=True)
+
+    assert got["job_title"].tolist() == ref["job_title"].tolist()  # id 3 keeps existing "c"
+    assert sorted(got.columns) == sorted(ref.columns)
+    assert "local_only_col" in got.columns  # column union preserved
+    assert got.set_index("job_posting_id").loc["4", "local_only_col"] == "also-me"
+
+
+def test_chunked_merge_via_main_matches_full_load(tmp_path, monkeypatch):
+    # The brief's required equivalence test: the chunked master-wins merge
+    # (main()'s on-disk path, exercising the tempfile-streaming + os.replace
+    # machinery, not just the in-memory merge_rows() helper) frame-equals the
+    # current concat(existing, incoming).drop_duplicates(keep="first") result.
+    # Fixture large enough (7 master rows) that CHUNK=2 forces 4 chunks, with a
+    # collision (id "3") to prove master-wins, plus an incoming-only column to
+    # prove column union survives the chunked rewrite.
+    inc, master, stats = _setup(tmp_path)
+    existing = pd.DataFrame({
+        "job_posting_id": ["1", "2", "3", "4", "5", "6", "7"],
+        "job_title": ["a", "b", "c", "d", "e", "f", "g"],
+        "company_name": ["v", "w", "x", "y", "z", "p", "q"],
+    })
+    existing.to_csv(master, index=False)
+    incoming = pd.DataFrame({
+        "job_posting_id": ["3", "8"],
+        "job_title": ["C2", "h"],
+        "company_name": ["x", "r"],
+        "local_only_col": ["keep-me", "also-me"],
+    })
+    _gz(inc / "local_rows_a.csv.gz", incoming)
+    monkeypatch.setattr(merge_incoming, "CHUNK", 2)  # force multi-chunk
+
+    orig_read_csv = pd.read_csv
+    chunk_calls = []
+
+    def _spy(*args, **kwargs):
+        if kwargs.get("chunksize"):
+            chunk_calls.append(kwargs["chunksize"])
+        return orig_read_csv(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_csv", _spy)
+    assert merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats, min_age_seconds=0) == 0
+    assert chunk_calls == [2]  # confirms the streaming path (not a full load) actually ran
+
+    got = pd.read_csv(master, dtype={"job_posting_id": str}).sort_values("job_posting_id").reset_index(drop=True)
+    ref = _full_load_reference(existing.astype({"job_posting_id": str}), incoming)
+    ref = ref.sort_values("job_posting_id").reset_index(drop=True)
+    assert got["job_title"].tolist() == ref["job_title"].tolist()
+    assert sorted(got.columns) == sorted(ref.columns)
+    assert "local_only_col" in got.columns
+    assert got.set_index("job_posting_id").loc["8", "local_only_col"] == "also-me"
+
+
+def test_unreadable_master_still_aborts_with_chunk_set(tmp_path, monkeypatch):
+    # Confirm the exit-1-on-unreadable-master policy survives the rewrite even
+    # when CHUNK is small enough to force streaming.
+    inc, master, stats = _setup(tmp_path)
+    master.write_bytes(b'a,b\n"unclosed quote never ends\nx')  # unparseable CSV
+    _gz(inc / "local_rows_a.csv.gz", pd.DataFrame([{"job_posting_id": "7"}]))
+    monkeypatch.setattr(merge_incoming, "CHUNK", 2)
+    rc = merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats, min_age_seconds=0)
+    assert rc == 1
+    assert (inc / "local_rows_a.csv.gz").exists()          # nothing consumed
+    assert master.read_bytes().startswith(b"a,b")          # master untouched

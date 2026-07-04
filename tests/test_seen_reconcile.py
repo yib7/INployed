@@ -167,6 +167,25 @@ def test_import_applied_date_earliest_kept(tmp_path):
     cur.close()
 
 
+def test_clear_resume_path_removes_row(tmp_path):
+    """Deleting a job must not leak its resume_paths row: set, clear, gone."""
+    reg = SeenRegistry(tmp_path / "seen.db")
+    reg.record_resume("1", "C:/gen/Acme/Engineer")
+    assert reg.resume_path("1") == "C:/gen/Acme/Engineer"
+    reg.clear_resume_path("1")
+    assert reg.resume_path("1") is None
+    assert reg.resume_paths() == {}
+    reg.close()
+
+
+def test_clear_resume_path_missing_id_is_noop(tmp_path):
+    reg = SeenRegistry(tmp_path / "seen.db")
+    reg.record_resume("1", "C:/gen/1")
+    reg.clear_resume_path("never-recorded")   # absent id -> no error, nothing lost
+    assert reg.resume_paths() == {"1": "C:/gen/1"}
+    reg.close()
+
+
 def test_import_resume_paths_keep_existing(tmp_path):
     cur = SeenRegistry(tmp_path / "cur.db")
     cur.record_resume("1", "C:/cur/1")

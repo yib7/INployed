@@ -164,6 +164,14 @@ class SeenRegistry:
         cur = self._conn.execute("SELECT job_posting_id, path FROM resume_paths")
         return {row[0]: row[1] for row in cur.fetchall()}
 
+    def clear_resume_path(self, job_posting_id: str) -> None:
+        """Drop the résumé-folder link for a deleted job (no-op if absent) so
+        the row doesn't outlive the folder it points at."""
+        self._conn.execute(
+            "DELETE FROM resume_paths WHERE job_posting_id = ?", (str(job_posting_id),)
+        )
+        self._conn.commit()
+
     # ---- backup / restore ----------------------------------------------------
 
     def export_to(self, dest: Path | str) -> Path:

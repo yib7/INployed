@@ -22,7 +22,10 @@ if str(HERE) not in sys.path:
 
 def _resolve_sources() -> tuple[list[Path], str | None]:
     """(csv paths to open, error message or None). Reuses the watcher's config
-    + Drive auto-detection so both entry points agree on where the data lives."""
+    + Drive auto-detection so both entry points agree on where the data lives.
+
+    Note: app.main owns the local-runs fold now, so _resolve_sources returns
+    Drive-only sources (or empty if no Drive but local files exist)."""
     from watcher import (  # imported lazily so a bad import still hits the logger
         detect_gdrive_root,
         latest_for_ui,
@@ -32,16 +35,13 @@ def _resolve_sources() -> tuple[list[Path], str | None]:
 
     import jobsdata  # repo-root scored files from a LOCAL "Run scraper"
 
-    # Files a local scrape produced (repo dir, not the Drive folder). Merged into
-    # whatever Drive sources we resolve so a local run shows up across restarts.
-    local = jobsdata.local_run_files()
-
     cfg = load_config()
     root = cfg.get("gdrive_root") or detect_gdrive_root()
     if not root:
-        # No Drive folder. If we did scrape locally, open those; else the usual error.
-        if local:
-            return local, None
+        # No Drive folder. If local files exist, return empty (app.main will fold them in);
+        # else return the usual error.
+        if jobsdata.local_run_files():
+            return [], None
         return [], (
             "Could not find the LinkedInJobs folder.\n\n"
             "Make sure Google Drive is running and synced, or set 'gdrive_root' in:\n"
@@ -50,14 +50,14 @@ def _resolve_sources() -> tuple[list[Path], str | None]:
     root = Path(root)
     master = root / "linkedin_jobs_master.csv.gz"
     if master.exists():
-        return [master, *local], None
+        return [master], None
     # Master hasn't synced yet — fall back to the latest per-run files.
     fallback = latest_for_ui(list_target_files(root))
     if fallback:
-        return [*fallback, *local], None
+        return fallback, None
     # Folder exists but nothing has synced — open the master path anyway so the
     # window appears (Refresh will pick the file up once Drive delivers it).
-    return [master, *local], None
+    return [master], None
 
 
 def _log_error(exc: BaseException) -> None:

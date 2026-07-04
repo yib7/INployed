@@ -710,22 +710,43 @@ def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
     return master[(score.isna() & ~filtered) | err]
 
 
+def _load_rows_by_id(master_csv, ids) -> pd.DataFrame:
+    """Chunked by-id load: scan `master_csv` in CHUNK-row pieces, keeping only
+    rows whose job_posting_id is in `ids`. Used to pull the (<=RESCORE_CAP)
+    full rows needed for rescoring without ever holding the whole master
+    (with its two ~90 MB text columns) in memory at once."""
+    want = set(map(str, ids))
+    parts = []
+    for chunk in pd.read_csv(master_csv, dtype={"job_posting_id": str}, chunksize=CHUNK):
+        chunk["job_posting_id"] = chunk["job_posting_id"].astype(str)
+        hit = chunk[chunk["job_posting_id"].isin(want)]
+        if not hit.empty:
+            parts.append(hit)
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
 async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     """Retry failed/missing master rows. Returns (attempted, newly_scored)."""
     if not MASTER_CSV.exists():
         return 0, 0
-    master = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str})
-    if "job_posting_id" not in master.columns or master.empty:
+    header = pd.read_csv(MASTER_CSV, nrows=0).columns
+    light_cols = [c for c in ("job_posting_id", "score", "filtered_out", "reason",
+                              "recommendation") if c in header]
+    # Candidate-finding never needs the two ~90 MB text columns.
+    light = pd.read_csv(MASTER_CSV, usecols=light_cols, dtype={"job_posting_id": str})
+    if "job_posting_id" not in light.columns or light.empty:
         return 0, 0
-    desc_col = pick_col(master, ("job_description_formatted", "job_description"))
-    if not desc_col:
+    todo_ids = rows_needing_rescore(light)["job_posting_id"].astype(str)
+    if todo_ids.empty:
         return 0, 0
-    todo = rows_needing_rescore(master)
-    if todo.empty:
-        return 0, 0
-    todo = todo.tail(RESCORE_CAP).copy()  # newest first if more than the cap
-    print(f"Rescore pass: retrying {len(todo)} master row(s) with missing/failed scores")
+    todo_ids = todo_ids.tail(RESCORE_CAP).tolist()  # newest-first cap, same as before
+    print(f"Rescore pass: retrying {len(todo_ids)} master row(s) with missing/failed scores")
 
+    master = _load_rows_by_id(MASTER_CSV, todo_ids)  # <= RESCORE_CAP full rows only
+    desc_col = pick_col(master, ("job_description_formatted", "job_description"))
+    if not desc_col or master.empty:
+        return 0, 0
+    todo = master.copy()
     todo["job_posting_id"] = todo["job_posting_id"].astype(str)
     todo = todo.drop(columns=[c for c in SCORE_COLS if c in todo.columns], errors="ignore")
     title_col = pick_col(master, ("job_title", "job_posting_title", "title"))

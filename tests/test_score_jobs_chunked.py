@@ -1,3 +1,5 @@
+import asyncio
+
 import pandas as pd
 
 import score_jobs
@@ -175,3 +177,128 @@ def test_multichunk_no_leftover_tmp_file_in_master_dir(tmp_path, monkeypatch):
 
     leftovers = [p for p in tmp_path.iterdir() if p.name != "linkedin_jobs_master.csv"]
     assert leftovers == []
+
+
+# --- Task 4: usecols two-pass rescore_master_failures --------------------
+#
+# rescore_master_failures's tail calls Gemini scoring (run_scoring). None of
+# these tests may let that happen for real: test_rescore_candidates_match_full_load
+# and test_rescore_skips_big_columns stub run_scoring with a fake that just
+# records which ids it was asked to score and returns an inert scored frame,
+# so nothing leaves the machine and no real spend occurs.
+
+def _rescore_master_df(n=6):
+    """A small master frame with the two big text columns present (as the real
+    master always has), plus a mix of already-scored, never-scored (NaN
+    score, not filtered), an ERROR: row, and a retention-filtered row (which
+    must NOT re-enter the candidate set even though its score is NaN)."""
+    return pd.DataFrame({
+        "job_posting_id": [str(i) for i in range(1, n + 1)],
+        "job_title": [f"title {i}" for i in range(1, n + 1)],
+        "job_description_formatted": [f"<p>desc {i}</p>" * 20 for i in range(1, n + 1)],
+        "job_summary": [f"summary {i}" for i in range(1, n + 1)],
+        "score": [5, None, None, 3, None, None],
+        "filtered_out": [False, False, False, False, False, True],  # row 6: retention-stripped
+        "reason": ["ok", None, "ERROR: boom", "ok", None, "filtered_out"],
+        "recommendation": ["apply", None, None, "skip", None, None],
+    })
+
+
+def _fake_run_scoring_recording(calls_list):
+    """Returns an async run_scoring stub that records the ids it was asked to
+    score and returns df unchanged plus inert score columns -- no network."""
+    async def _run_scoring(pool, resume, df):
+        calls_list.append(sorted(df["job_posting_id"].tolist()))
+        out = df.copy()
+        out["score"] = 1
+        out["reason"] = "stub"
+        out["deep_score"] = None
+        out["strengths"] = ""
+        out["gaps"] = ""
+        out["recommendation"] = "stub"
+        return out
+    return _run_scoring
+
+
+def test_rescore_candidates_match_full_load(tmp_path, monkeypatch):
+    """Candidates found via the light usecols read (as exercised by the real
+    rescore_master_failures) equal those from rows_needing_rescore(full_master),
+    tail-capped at RESCORE_CAP -- i.e. the two-pass read changes nothing about
+    *which* rows get rescored."""
+    master_df = _rescore_master_df()
+    m = tmp_path / "linkedin_jobs_master.csv"
+    master_df.to_csv(m, index=False)
+    monkeypatch.setattr(score_jobs, "MASTER_CSV", m)
+
+    calls = []
+    monkeypatch.setattr(score_jobs, "run_scoring", _fake_run_scoring_recording(calls))
+
+    asyncio.run(score_jobs.rescore_master_failures(pool=None, resume="resume"))
+
+    assert len(calls) == 1
+    got_ids = set(calls[0])
+
+    expected_ids = set(
+        score_jobs.rows_needing_rescore(master_df)["job_posting_id"]
+        .astype(str)
+        .tail(score_jobs.RESCORE_CAP)
+        .tolist()
+    )
+    assert got_ids == expected_ids
+    assert got_ids == {"2", "3", "5"}  # rows 1,4 already scored; row 6 retention-filtered
+
+
+def test_rescore_skips_big_columns(tmp_path, monkeypatch):
+    """The candidate-finding read must request neither job_description_formatted
+    nor job_summary -- those are the two ~90 MB text columns this task exists
+    to skip during candidate selection."""
+    master_df = _rescore_master_df()
+    m = tmp_path / "linkedin_jobs_master.csv"
+    master_df.to_csv(m, index=False)
+    monkeypatch.setattr(score_jobs, "MASTER_CSV", m)
+
+    monkeypatch.setattr(score_jobs, "run_scoring", _fake_run_scoring_recording([]))
+
+    calls = []
+    real_read_csv = pd.read_csv
+
+    def recording_read_csv(*args, **kwargs):
+        calls.append(kwargs.get("usecols"))
+        return real_read_csv(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_csv", recording_read_csv)
+
+    asyncio.run(score_jobs.rescore_master_failures(pool=None, resume="resume"))
+
+    # The only usecols-restricted read is the light candidate-finding pass
+    # (the nrows=0 header probe and the full-row _load_rows_by_id read pass
+    # usecols=None). At least one call must have restricted usecols, and none
+    # of the restricted-usecols calls may include the big text columns.
+    restricted = [u for u in calls if u is not None]
+    assert restricted, "expected at least one usecols-restricted read"
+    for usecols in restricted:
+        assert "job_description_formatted" not in usecols
+        assert "job_summary" not in usecols
+
+
+def test_load_rows_by_id_returns_only_requested(tmp_path, monkeypatch):
+    """_load_rows_by_id returns exactly the requested ids with full columns,
+    reading the master in chunks (CHUNK forced small to guarantee the
+    requested ids are split across multiple chunks)."""
+    master_df = pd.DataFrame({
+        "job_posting_id": [str(i) for i in range(1, 8)],
+        "job_title": [f"title {i}" for i in range(1, 8)],
+        "job_description_formatted": [f"desc {i}" for i in range(1, 8)],
+    })
+    m = tmp_path / "linkedin_jobs_master.csv"
+    master_df.to_csv(m, index=False)
+    monkeypatch.setattr(score_jobs, "CHUNK", 2)  # 7 rows / 2 per chunk -> 4 chunks
+
+    # ids 1 and 7 fall in the first and last chunk respectively, so a
+    # correct implementation must scan every chunk, not just the first.
+    got = score_jobs._load_rows_by_id(m, ["1", "7"])
+
+    assert sorted(got["job_posting_id"].tolist()) == ["1", "7"]
+    assert list(got.columns) == list(master_df.columns)
+    assert got.loc[got["job_posting_id"] == "1", "job_title"].iloc[0] == "title 1"
+    assert got.loc[got["job_posting_id"] == "7", "job_title"].iloc[0] == "title 7"

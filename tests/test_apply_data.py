@@ -20,7 +20,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
-from resume_tailor import apply_answers, apply_config, apply_data, output  # noqa: E402
+from resume_tailor import apply_answers, apply_config, apply_data, assets, output  # noqa: E402
 
 
 _MASTER = {
@@ -244,3 +244,71 @@ def test_write_from_folder_backfills_without_resume_sections(tmp_path):
     assert out.name == "apply.md"
     text = out.read_text(encoding="utf-8")
     assert "## Work experience" not in text and "Re-tailor" in text
+
+
+# --- assets.full_url ----------------------------------------------------------
+
+@pytest.mark.parametrize("raw", [
+    "https://linkedin.com/in/t",
+    "http://cool.dev",
+    "HTTPS://GitHub.com/t",     # scheme check is case-insensitive
+    "HTTP://x.io",
+])
+def test_full_url_is_idempotent_on_scheme_prefixed_values(raw):
+    assert assets.full_url(raw) == raw
+
+
+def test_full_url_prepends_https_to_bare_values():
+    assert assets.full_url("linkedin.com/in/t") == "https://linkedin.com/in/t"
+    assert assets.full_url("  github.com/t  ") == "https://github.com/t"  # stripped first
+
+
+def test_full_url_empty_values_stay_blank():
+    assert assets.full_url("") == ""
+    assert assets.full_url(None) == ""
+    assert assets.full_url("   ") == ""
+
+
+# --- item 3: contact block carries full https:// links -------------------------
+
+def test_write_contact_links_are_full_https_urls(tmp_path):
+    text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
+    assert "- **LinkedIn:** https://li\n" in text
+    assert "- **GitHub / Portfolio:** https://gh\n" in text
+
+
+# --- item 6: project entry headers carry no dates ------------------------------
+
+def test_write_project_headers_carry_no_dates(tmp_path):
+    text = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                            skill_lines=_SKILLS).read_text(encoding="utf-8")
+    assert "**CoolApp**\n" in text            # bare header
+    assert "**CoolApp** — " not in text       # no " — 2024" suffix
+    # experience / leadership / education dates are untouched
+    assert "2024-06 / 2024-08" in text        # experience
+    assert "2023-2024" in text                # leadership
+    assert "2020-2024" in text                # education
+
+
+# --- item 7: honors/awards sub-bullet under education ---------------------------
+
+def _master_with_honors(honors):
+    m = json.loads(json.dumps(_MASTER))
+    m["education"][0]["honors"] = honors
+    return m
+
+
+def test_education_honors_list_renders_awards_sub_bullet():
+    md = apply_data.build_markdown(
+        _master_with_honors(["Dean's List", "Honors College"]), _JOB, [])
+    assert "  - Awards & Honors: Dean's List; Honors College\n" in md
+
+
+def test_education_honors_scalar_is_coerced_to_one_item():
+    md = apply_data.build_markdown(_master_with_honors("Dean's List"), _JOB, [])
+    assert "  - Awards & Honors: Dean's List\n" in md
+
+
+def test_education_without_honors_has_no_awards_line():
+    assert "Awards & Honors" not in apply_data.build_markdown(dict(_MASTER), _JOB, [])
+    assert "Awards & Honors" not in apply_data.build_markdown(_master_with_honors([]), _JOB, [])

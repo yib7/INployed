@@ -583,7 +583,8 @@ def update_master_scores(scored: pd.DataFrame) -> None:
         return
     add_cols = [c for c in cols if c not in header]
     fd, tmp = tempfile.mkstemp(prefix=MASTER_CSV.stem + ".", suffix=".tmp",
-                               dir=str(MASTER_CSV.parent)); os.close(fd)
+                               dir=str(MASTER_CSV.parent))
+    os.close(fd)
     wrote_header = False
     try:
         for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
@@ -615,8 +616,10 @@ def update_master_scores(scored: pd.DataFrame) -> None:
         os.replace(tmp, MASTER_CSV)
     finally:
         if os.path.exists(tmp):
-            try: os.unlink(tmp)
-            except OSError: pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def save_output(df: pd.DataFrame, input_csv: Path) -> Path:

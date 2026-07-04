@@ -15,7 +15,8 @@ def test_chunked_matches_full_load(tmp_path, monkeypatch):
                              "company_name": ["x","y","z"]})
     new = pd.DataFrame({"job_posting_id": ["3","4"], "job_title": ["C2","d"],
                         "company_name": ["z","w"]})
-    m = tmp_path / "master.csv"; existing.to_csv(m, index=False)
+    m = tmp_path / "master.csv"
+    existing.to_csv(m, index=False)
     monkeypatch.setattr(scraper, "MASTER_CSV", m)
     monkeypatch.setattr(scraper, "CHUNK", 2)  # force multi-chunk
     ret = scraper.append_to_master(new)
@@ -28,7 +29,8 @@ def test_chunked_matches_full_load(tmp_path, monkeypatch):
 def test_new_only_column_unioned(tmp_path, monkeypatch):
     existing = pd.DataFrame({"job_posting_id": ["1"], "job_title": ["a"]})
     new = pd.DataFrame({"job_posting_id": ["2"], "job_title": ["b"], "brand_new": ["v"]})
-    m = tmp_path / "master.csv"; existing.to_csv(m, index=False)
+    m = tmp_path / "master.csv"
+    existing.to_csv(m, index=False)
     monkeypatch.setattr(scraper, "MASTER_CSV", m)
     scraper.append_to_master(new)
     df = pd.read_csv(m)
@@ -38,7 +40,8 @@ def test_new_only_column_unioned(tmp_path, monkeypatch):
 def test_blocklist_refilters_whole_master(tmp_path, monkeypatch):
     existing = pd.DataFrame({"job_posting_id": ["1"], "company_name": ["BadCorp"]})
     new = pd.DataFrame({"job_posting_id": ["2"], "company_name": ["GoodCo"]})
-    m = tmp_path / "master.csv"; existing.to_csv(m, index=False)
+    m = tmp_path / "master.csv"
+    existing.to_csv(m, index=False)
     monkeypatch.setattr(scraper, "MASTER_CSV", m)
     monkeypatch.setattr(scraper, "load_blocklist", lambda: ["badcorp"])
     scraper.append_to_master(new)
@@ -46,7 +49,8 @@ def test_blocklist_refilters_whole_master(tmp_path, monkeypatch):
 
 
 def test_unreadable_master_still_raises(tmp_path, monkeypatch):
-    m = tmp_path / "master.csv"; m.write_bytes(b"\x00\x01 not,csv\n\"unterminated")
+    m = tmp_path / "master.csv"
+    m.write_bytes(b"\x00\x01 not,csv\n\"unterminated")
     monkeypatch.setattr(scraper, "MASTER_CSV", m)
     # a genuinely unreadable master must not be silently treated as empty
     with pytest.raises(OSError):

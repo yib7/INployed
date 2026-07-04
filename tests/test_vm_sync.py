@@ -171,3 +171,11 @@ def test_changed_vm_files_flags_real_remote_type_change():
     before = {"remote_types": ["Hybrid"]}
     after = {"remote_types": ["Hybrid", "Remote"]}
     assert vm_sync.changed_vm_files(before, after) == {"search_config.json"}
+
+
+def test_push_outbox_file_cmd_targets_incoming():
+    cmd = _target().push_outbox_file_cmd("/local/outbox/local_rows_x.csv.gz")
+    assert cmd[:3] == ["gcloud", "compute", "scp"]
+    assert "/local/outbox/local_rows_x.csv.gz" in cmd
+    assert "yib@scraper-vm:incoming/local_rows_x.csv.gz" in cmd
+    assert "yib@scraper-vm:~/incoming/local_rows_x.csv.gz" not in cmd

@@ -49,3 +49,6 @@ Thumbs.db
 # (which holds secrets, per the user's "self-contained snapshots" choice), so the
 # whole archive must never be committed.
 local/settings_archive/
+
+# linked git worktrees (never committed)
+.worktrees/

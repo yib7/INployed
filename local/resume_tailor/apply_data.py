@@ -88,6 +88,43 @@ def parse_marker(text: str) -> Dict[str, str]:
     return data if isinstance(data, dict) else {}
 
 
+# The résumé sections whose bullets ARE the tailored resume content. Technical
+# skills is deliberately excluded — it's the same set coverletter.generate_body
+# receives at tailor time (the surviving bullets, never the skill lines).
+_RESUME_BULLET_SECTIONS = frozenset(
+    ("## Work experience", "## Projects", "## Leadership"))
+# What _resume_lines writes when no tailoring data was available (CLI/backfill).
+RETAILOR_PLACEHOLDER = "_(Re-tailor this job to embed the résumé contents here.)_"
+
+
+def parse_resume_bullets(md_text: str) -> List[str]:
+    """The tailored résumé bullets embedded in an apply.md, in document order.
+
+    Collects the top-level `- ` lines inside the Work experience / Projects /
+    Leadership sections only (a section ends at the next `## ` heading), with the
+    leading `- ` stripped. Entry headers are `**…**` lines and project links are
+    `*…*` lines, so bullets are the only `- ` lines there; an INDENTED `  - `
+    sub-bullet (education's honors line) never matches. Returns [] for an
+    untailored/backfilled sheet (the re-tailor placeholder) — callers use that to
+    tell the user to re-tailor first. Tolerant of hand edits: stray text lines
+    are simply ignored.
+    """
+    text = md_text or ""
+    if RETAILOR_PLACEHOLDER in text:
+        return []
+    bullets: List[str] = []
+    in_section = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            in_section = line.strip() in _RESUME_BULLET_SECTIONS
+            continue
+        if in_section and line.startswith("- "):
+            item = line[2:].strip()
+            if item:
+                bullets.append(item)
+    return bullets
+
+
 def _kv(label: str, value: Any, *, always: bool = False) -> str:
     """A `- **label:** value` line, or "" when value is empty (unless always)."""
     text = "" if value is None else str(value).strip()
@@ -277,7 +314,7 @@ def _resume_lines(master: Dict[str, Any], sel: Optional[Dict[str, Any]],
     ]
     body = "".join(p for p in parts if p)
     if not body:
-        return "## Résumé\n_(Re-tailor this job to embed the résumé contents here.)_\n"
+        return f"## Résumé\n{RETAILOR_PLACEHOLDER}\n"
     return body
 
 

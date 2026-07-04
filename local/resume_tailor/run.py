@@ -372,6 +372,73 @@ def tailor(
     return out_dir
 
 
+def generate_cover_letter(
+    job: Dict[str, str],
+    out_dir: Path,
+    *,
+    tone: str = "professional",
+    on_status: StatusFn = None,
+) -> Path:
+    """Generate (or regenerate) JUST the cover letter for an already-tailored job.
+
+    Mirrors tailor()'s cover-letter block step for step, but sources the résumé
+    bullets from the folder's existing apply.md (written on every tailor,
+    deterministic) instead of the in-flight tailoring state — so no re-tailor and
+    no extra selection/rephrase calls. Unlike inside tailor() (where the letter is
+    an optional extra and failures only log), here the letter IS the job, so
+    failures raise. Returns the path of the PDF copied into `out_dir`.
+    """
+    log = on_status or _noop
+    llm.reset_usage()
+
+    company = _field(job, "company_name") or "Unknown Company"
+    job_title = _field(job, "job_title") or "Role"
+    jd = _job_description_text(job)
+    if not pdflatex_available():
+        raise RuntimeError(f"pdflatex not found at '{config.PDFLATEX_PATH}'. Install MiKTeX/TeX Live.")
+    if len(jd) < 40:
+        raise RuntimeError("Job description is empty/too short to tailor against.")
+
+    out_dir = Path(out_dir)
+    apply_md = out_dir / "apply.md"
+    if not apply_md.exists():
+        raise RuntimeError(
+            "No apply.md found in this job's tailored folder — re-tailor the job "
+            "first, then generate the cover letter.")
+    parsed = apply_data.parse_resume_bullets(apply_md.read_text(encoding="utf-8"))
+    if not parsed:
+        raise RuntimeError(
+            "This job's apply.md carries no tailored résumé bullets — re-tailor "
+            "the job first, then generate the cover letter.")
+    # coverletter.generate_body reads bullets.values() (tailor hands it the
+    # group-key -> text dict); synthetic keys keep the same shape + order.
+    bullets = {f"b{i}": text for i, text in enumerate(parsed)}
+
+    log(f"writing cover letter for: {job_title} @ {company}")
+    blurb = ""
+    try:
+        log("researching company (grounded search)…")
+        blurb = research.company_blurb(company, job_title)
+    except Exception as exc:  # noqa: BLE001 - research is optional
+        log(f"company research unavailable ({exc})")
+    body = coverletter.generate_body(jd, job_title, company, bullets,
+                                     research=blurb, tone=tone)
+
+    with tempfile.TemporaryDirectory(prefix="resume_tailor_") as tmp:
+        tmp_path = Path(tmp)
+        cl_tex = tmp_path / "cover_letter.tex"
+        log("rendering + compiling cover letter…")
+        cl_res, _ = coverletter.render_cover_letter(body, company, cl_tex, tmp_path)
+        if not cl_res.ok or not cl_res.pdf_path:
+            raise RuntimeError(f"Cover letter compile failed: {cl_res.error}")
+        dest = out_dir / output.cover_filename()
+        shutil.copyfile(cl_res.pdf_path, dest)
+
+    log(f"done -> {dest}")
+    log("token usage: " + llm.usage_summary())
+    return dest
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 _DEFAULT_CSV = "E:/My Drive/LinkedInJobs/linkedin_jobs_master.csv.gz"
 

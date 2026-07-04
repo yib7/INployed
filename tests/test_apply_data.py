@@ -312,3 +312,70 @@ def test_education_honors_scalar_is_coerced_to_one_item():
 def test_education_without_honors_has_no_awards_line():
     assert "Awards & Honors" not in apply_data.build_markdown(dict(_MASTER), _JOB, [])
     assert "Awards & Honors" not in apply_data.build_markdown(_master_with_honors([]), _JOB, [])
+
+
+# --- parse_resume_bullets: apply.md -> the tailored résumé bullets --------------
+
+def test_parse_resume_bullets_roundtrip_from_build_markdown():
+    # Feed a full generated sheet through the parser: exactly the work /
+    # projects / leadership bullets come back, in document order.
+    md = apply_data.build_markdown(
+        _master_with_honors(["Dean's List"]), _JOB, [],
+        sel=_SEL, bullets=_BULLETS, skill_lines=_SKILLS)
+    got = apply_data.parse_resume_bullets(md)
+    assert got == [
+        "Built the ingestion pipeline fast.",
+        "Cut cloud spend 40%.",
+        "Shipped CoolApp end to end.",
+        "Grew membership threefold.",
+    ]
+
+
+def test_parse_resume_bullets_excludes_skills_education_and_answers():
+    md = apply_data.build_markdown(
+        _master_with_honors(["Dean's List"]), _JOB,
+        [{"id": "how_did_you_hear", "question": "How did you hear?",
+          "answer": "LinkedIn", "status": "active"}],
+        sel=_SEL, bullets=_BULLETS, skill_lines=_SKILLS)
+    got = apply_data.parse_resume_bullets(md)
+    joined = "\n".join(got)
+    assert "Python, SQL" not in joined          # Technical skills excluded
+    assert "Dean's List" not in joined       # education honors sub-bullet
+    assert "Uni" not in joined                  # education entry line
+    assert "LinkedIn" not in joined             # standard answers
+    assert "**" not in joined                   # no entry headers leak in
+
+
+def test_parse_resume_bullets_placeholder_returns_empty():
+    # Backfilled / untailored sheet: the re-tailor note stands in for the résumé.
+    md = apply_data.build_markdown(dict(_MASTER), _JOB, [])
+    assert "Re-tailor" in md
+    assert apply_data.parse_resume_bullets(md) == []
+
+
+def test_parse_resume_bullets_tolerates_hand_edits():
+    md = (
+        "# Apply sheet — Engineer @ Acme\n\n"
+        "## Work experience\n\n"
+        "**Acme Corp** — SWE · NYC\n"
+        "a stray sentence the user typed by hand\n"
+        "- Built a pipeline.\n"
+        "  - an indented sub-note must not count\n\n"
+        "## Projects\n\n"
+        "**CoolApp**\n"
+        "*https://cool · gh/cool*\n\n"
+        "- Shipped CoolApp.\n\n"
+        "## Leadership\n\n"
+        "**Coding Club** — President\n\n"
+        "- Grew membership.\n\n"
+        "## Technical skills\n"
+        "- **Languages:** Python\n"
+    )
+    assert apply_data.parse_resume_bullets(md) == [
+        "Built a pipeline.", "Shipped CoolApp.", "Grew membership."]
+
+
+def test_parse_resume_bullets_empty_and_sectionless_input():
+    assert apply_data.parse_resume_bullets("") == []
+    # bullets outside the three résumé sections never count
+    assert apply_data.parse_resume_bullets("## Education\n- Uni — BS\n") == []

@@ -279,3 +279,93 @@ def test_tab_apply_status_and_block(qtbot):
     assert statuses == [(["1"], "applied")]
     tab.block_company("1")
     assert blocked == ["Acme"]
+
+
+# --- right-click "Generate cover letter" (injected cover_state / on_generate_cover)
+
+
+def _select_rows(tab, *rows):
+    sm = tab.table.selectionModel()
+    sm.clearSelection()
+    flags = (QtCore.QItemSelectionModel.SelectionFlag.Select
+             | QtCore.QItemSelectionModel.SelectionFlag.Rows)
+    for r in rows:
+        sm.select(tab.proxy.index(r, 0), flags)
+
+
+def _menu_texts(monkeypatch, tab, choose: str | None = None):
+    """Open the context menu with exec stubbed out; return the action texts.
+    When `choose` matches an action text, that action is 'clicked'. Patching the
+    Shiboken class's exec attribute doesn't intercept instance calls, so swap in
+    a Python subclass for the duration instead."""
+    seen = {}
+
+    class FakeMenu(QtWidgets.QMenu):
+        def exec(self, *a, **k):
+            seen["texts"] = [act.text() for act in self.actions()]
+            if choose is not None:
+                for act in self.actions():
+                    if act.text() == choose:
+                        return act
+            return None
+
+    monkeypatch.setattr(QtWidgets, "QMenu", FakeMenu)
+    tab._context_menu(QtCore.QPoint(2, 2))
+    return seen.get("texts", [])
+
+
+def test_context_menu_has_no_cover_item_when_unwired(qtbot, monkeypatch):
+    tab = JobsTab("all", COLS)  # no cover_state / on_generate_cover injected
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    _select_rows(tab, 0)
+    texts = _menu_texts(monkeypatch, tab)
+    assert texts and not any("cover letter" in t.lower() for t in texts)
+
+
+def test_context_menu_has_no_cover_item_when_state_is_none(qtbot, monkeypatch):
+    tab = JobsTab("all", COLS, cover_state=lambda jid: None,
+                  on_generate_cover=lambda jid: None)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    _select_rows(tab, 0)
+    texts = _menu_texts(monkeypatch, tab)
+    assert texts and not any("cover letter" in t.lower() for t in texts)
+
+
+def test_context_menu_offers_generate_when_missing(qtbot, monkeypatch):
+    fired = []
+    tab = JobsTab("all", COLS, cover_state=lambda jid: "missing",
+                  on_generate_cover=fired.append)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    _select_rows(tab, 0)
+    expected = tab.selected_ids()[0]
+    texts = _menu_texts(monkeypatch, tab, choose="Generate cover letter")
+    assert "Generate cover letter" in texts
+    assert "Regenerate cover letter" not in texts
+    assert fired == [expected]
+
+
+def test_context_menu_offers_regenerate_when_exists(qtbot, monkeypatch):
+    fired = []
+    tab = JobsTab("all", COLS, cover_state=lambda jid: "exists",
+                  on_generate_cover=fired.append)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    _select_rows(tab, 0)
+    expected = tab.selected_ids()[0]
+    texts = _menu_texts(monkeypatch, tab, choose="Regenerate cover letter")
+    assert "Regenerate cover letter" in texts
+    assert "Generate cover letter" not in texts
+    assert fired == [expected]
+
+
+def test_context_menu_hides_cover_item_on_multi_selection(qtbot, monkeypatch):
+    tab = JobsTab("all", COLS, cover_state=lambda jid: "missing",
+                  on_generate_cover=lambda jid: None)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    _select_rows(tab, 0, 1)
+    texts = _menu_texts(monkeypatch, tab)
+    assert texts and not any("cover letter" in t.lower() for t in texts)

@@ -9,7 +9,9 @@ Template is self-contained (ported from Resume_Tailor) so there's no file dep.
 """
 from __future__ import annotations
 
+import calendar
 import re
+from datetime import date
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -27,7 +29,7 @@ _TEMPLATE = r"""\documentclass[11pt]{letter}
 \hypersetup{colorlinks=false, pdfborder={0 0 0}}
 
 \signature{__CANDIDATE_NAME__}
-\address{}
+\address{__CONTACT_BLOCK__}
 \date{\today}
 
 \begin{document}
@@ -46,6 +48,61 @@ __BODY__
 
 def _display_name() -> str:
     return assets.load_master().get("basics", {}).get("name", config.CANDIDATE_NAME.replace("_", " "))
+
+
+_END_YM_RE = re.compile(r"^(\d{4})-(\d{1,2})$")
+
+
+def _education_context() -> str:
+    """One line of graduation-status facts for the generation prompt.
+
+    Without this the model guesses tense from the JD ("I am completing my
+    studies") even after the candidate has graduated. For each master
+    `education` entry, parse the END token of its `dates` ("YYYY-MM / YYYY-MM"):
+    end <= today's year-month -> graduated (and available immediately); a
+    future end -> expected; "Present"/missing end -> still enrolled with no
+    date claim; an unparseable end -> just the degree line, no claim at all.
+    Entries join with '; '. Pure: reads only load_master() and date.today()."""
+    today = date.today()
+    lines = []
+    for entry in assets.load_master().get("education") or []:
+        if not isinstance(entry, dict):
+            continue
+        label = ", ".join(
+            s for s in (str(entry.get("degree") or "").strip(),
+                        str(entry.get("school") or "").strip()) if s)
+        if not label:
+            continue
+        raw = str(entry.get("dates") or "").strip()
+        end_token = raw.split("/", 1)[1].strip() if "/" in raw else ""
+        if not end_token or end_token.lower() in {"present", "current"}:
+            lines.append(f"{label}: still enrolled")
+            continue
+        m = _END_YM_RE.match(end_token)
+        if not m or not 1 <= int(m.group(2)) <= 12:
+            lines.append(label)  # unparseable end -> no graduation claim
+            continue
+        year, month = int(m.group(1)), int(m.group(2))
+        when = f"{calendar.month_name[month]} {year}"
+        if (year, month) <= (today.year, today.month):
+            lines.append(f"{label}: graduated {when}; has already graduated "
+                         "and is available to start immediately")
+        else:
+            lines.append(f"{label}: expected {when}; still enrolled")
+    return "; ".join(lines)
+
+
+def _contact_block() -> str:
+    """The \\address{} lines (email \\\\ phone \\\\ LinkedIn \\\\ GitHub) from the
+    master basics, links made absolute via assets.full_url and every value
+    escaped with to_latex, so the letter carries the candidate's contact info
+    top-right above the date and stays self-contained when separated from the
+    resume. Missing fields are simply skipped."""
+    basics = assets.load_master().get("basics", {}) or {}
+    values = (basics.get("email"), basics.get("phone"),
+              assets.full_url(basics.get("linkedin")),
+              assets.full_url(basics.get("github")))
+    return " \\\\ ".join(to_latex(v) for v in values if str(v or "").strip())
 
 
 # One-line style instruction per Settings tone choice. The body's content rules
@@ -77,7 +134,14 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
         "and basics; never invent experience, numbers, or interest you can't support. "
         "No salutation and no sign-off (the template adds them). Plain text, paragraphs "
         "separated by a blank line. Warm but professional; write like a person, in "
-        "plain declarative sentences, no clichés. " + tone_directive(tone) + "\n"
+        "plain declarative sentences, no clichés. " + tone_directive(tone) + " "
+        "Use the correct tense for education, based on the EDUCATION line: if the "
+        "candidate has already graduated, NEVER say they are 'completing' or "
+        "'finishing' their studies; refer to the degree as completed. "
+        "Do NOT open with boilerplate ('I am writing to express my interest...', "
+        "'I am writing to apply for...'): the FIRST sentence must lead with "
+        "something specific about the candidate or the company. "
+        "Never use the same metric or number twice in the letter.\n"
         "BANNED PHRASING (using any of these is wrong): " + compose.BANNED_PHRASING
     )
     research_block = (
@@ -98,6 +162,8 @@ FACTS YOU MAY DRAW FROM (the candidate's tailored resume bullets):
 {used}{research_block}
 
 Candidate: {_display_name()}, {assets.load_master().get('basics', {}).get('location', '')}.
+TODAY'S DATE: {date.today():%B %d, %Y}.
+EDUCATION: {_education_context()}
 
 Write the body now."""
     body = compose.call(system, user, config.TIER_PRO, json_out=False, temperature=0.4)
@@ -159,6 +225,7 @@ def render_cover_letter(body: str, company: str, tex_path: Path, work_dir: Path)
         body = "\n".join(lines[:-2]).rstrip()
     rendered = (
         _TEMPLATE.replace("__CANDIDATE_NAME__", to_latex(_display_name()))
+        .replace("__CONTACT_BLOCK__", _contact_block())
         .replace("__COMPANY_NAME__", to_latex(company))
         .replace("__BODY__", _paragraphs(body))
     )

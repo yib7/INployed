@@ -235,14 +235,22 @@ def test_show_preview_renders_segments(qtbot):
     assert "Acme" in text and "great fit" in text
 
 
-def test_mark_ids_seen_writes_registry_and_reloads(qtbot, monkeypatch):
+def test_mark_ids_seen_writes_registry_and_refreshes_views(qtbot, monkeypatch):
+    # SP6: the registry write stays synchronous on the UI thread, but the CSV
+    # rewrite moved to the background write queue and the views refresh from the
+    # in-memory frame — no blocking reload_data.
+    def sync_run_async(owner, fn, on_done=None, on_error=None):
+        on_done(fn()) if on_done else fn()
+
+    monkeypatch.setattr(mw.workers, "run_async", sync_run_async)
     w = _win(qtbot)
     reloaded = []
     monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
     w.id_to_path = {}
     w._mark_ids_seen(["1", "2"])
     w.registry.mark.assert_called_once_with(["1", "2"])
-    assert reloaded
+    assert reloaded == []            # optimistic path: no full disk reload
+    assert w._writes.is_idle()       # the queued CSV write ran (and completed)
 
 
 def test_set_status_for_calls_registry(qtbot):

@@ -71,6 +71,29 @@ sources it was launched with, so local runs show up immediately in EVERY entry p
 including a watcher-launched window — and `load_files`' id-dedup keeps them from
 double-counting once the merged master syncs back down.
 
+### VM cron pipeline: merge, scrape, score, prune, and retention
+The VM's `run_scraper.sh` (invoked twice daily via cron) orchestrates the job discovery and scoring
+pipeline. After pulling the company blocklist, it merges any incoming rows from the dashboard
+(`merge_incoming.py` — local scrapes are master-wins deduped on `job_posting_id`), scrapes fresh jobs
+from Bright Data (`scraper.py`), scores them via Gemini (`score_jobs.py`), and finally prunes old job
+descriptions to bound memory growth (`prune_master.py`). All four master-CSV passes — `append_to_master`,
+`update_master_scores`, `rescore_master_failures`, and the merge itself — are now **bounded-memory
+streaming operations** instead of full-DataFrame loads: each pass chunks the master at 2000 rows,
+probes the id column up-front to validate readability and collect existing ids, streams through
+a temp file, and atomically swaps it in place on success. Peak memory per pass is one chunk plus
+small aux structures, staying flat as the master grows (the fix for the VM's previous OOM kills
+on a ~92 MB master).
+
+**Retention:** After scoring, `prune_master.py` blanks the `job_description_formatted` column for jobs
+older than 3 days (RETENTION_DAYS, CLI-overridable via `--days`), anchored on `extracted_date` with fallback
+to `job_posted_date` — rows with no parseable date are never stripped. The full HTML description
+is ~55% of master bytes and is re-fetchable from each job's LinkedIn url; after 3 days a posting is
+typically applied-to or abandoned. `job_summary` is preserved (an opt-in `--summary` flag can strip it;
+off by default). A stripped row that was never scored is parked with `filtered_out=True` and `reason="pruned_no_desc"`
+(an empty description can't be scored, so it must not sit in the rescore queue forever). Prune never
+deletes rows — only blanks one column, runs chunked and idempotent, and is best-effort (a nonzero exit
+does not fail the cron).
+
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
 `seen.db` (`SeenRegistry.export_to` via SQLite `VACUUM INTO`; `import_from` merges, with newer
 `status_date` winning, earliest `applied_date` kept, seen unioned). The Stats tab shows a fresh/stale

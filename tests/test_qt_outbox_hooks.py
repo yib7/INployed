@@ -5,7 +5,6 @@ subprocess/gcloud — everything at the outbox/vm_sync seam is monkeypatched.
 """
 import io
 import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -13,6 +12,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import manual_add  # noqa: E402
 import outbox  # noqa: E402
 import vm_sync  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
@@ -93,3 +93,47 @@ def test_scrape_work_skips_outbox_hook_on_failure(monkeypatch, tmp_path, win):
     with pytest.raises(RuntimeError):
         win._scrape_work(True)
     assert called == []
+
+
+# ── the manual-add worker's own best-effort outbox block ──────────────────────
+
+def _patch_manual_add_common(monkeypatch, tmp_path, record):
+    monkeypatch.setattr(manual_add, "add_manual_job",
+                        lambda **k: {"record": record, "resume_dir": None, "appended": True})
+    monkeypatch.setattr(MainWindow, "_scrape_log_path",
+                        staticmethod(lambda: tmp_path / "scrape.log"))
+    monkeypatch.setattr(vm_sync.VMTarget, "from_env", classmethod(_unconfigured))
+
+
+def test_manual_add_work_queues_and_pushes(monkeypatch, tmp_path, win):
+    calls = {}
+    _patch_manual_add_common(monkeypatch, tmp_path,
+                             {"job_posting_id": "77", "job_title": "T"})
+    monkeypatch.setattr(outbox, "write_rows_outbox",
+                        lambda ids: calls.setdefault("rows", list(ids)))
+    monkeypatch.setattr(outbox, "push_outbox",
+                        lambda target, log=None: calls.setdefault("push", True) or (1, 0))
+    res = win._manual_add_work({"jd_text": "x"}, {}, do_tailor=False)
+    assert calls["rows"] == ["77"]
+    assert calls["push"] is True
+    assert res["requested_tailor"] is False
+
+
+def test_manual_add_work_no_id_skips_rows_but_pushes(monkeypatch, tmp_path, win):
+    calls = {}
+    _patch_manual_add_common(monkeypatch, tmp_path, {"job_posting_id": ""})
+    monkeypatch.setattr(outbox, "write_rows_outbox",
+                        lambda ids: pytest.fail("no id -> no rows outbox write"))
+    monkeypatch.setattr(outbox, "push_outbox",
+                        lambda target, log=None: calls.setdefault("push", True) or (0, 0))
+    win._manual_add_work({"jd_text": "x"}, {}, do_tailor=False)
+    assert calls == {"push": True}
+
+
+def test_manual_add_work_outbox_error_never_fails_add(monkeypatch, tmp_path, win):
+    _patch_manual_add_common(monkeypatch, tmp_path, {"job_posting_id": "77"})
+    monkeypatch.setattr(outbox, "write_rows_outbox",
+                        lambda ids: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(outbox, "push_outbox", lambda target, log=None: (0, 0))
+    res = win._manual_add_work({"jd_text": "x"}, {}, do_tailor=False)
+    assert res["requested_tailor"] is False

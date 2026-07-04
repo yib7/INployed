@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 from PySide6 import QtWidgets
 
 import manual_add
+import outbox
+import vm_sync
 from qt import main_window as mw
 from qt.main_window import MainWindow
 from qt.manual_add_dialog import ManualAddDialog
@@ -121,7 +123,7 @@ def test_add_job_button_on_high_and_all_tabs(qtbot):
 
 # ── the worker body runs the pipeline (manual_add mocked) ─────────────────────
 
-def test_manual_add_work_calls_pipeline(qtbot, monkeypatch):
+def test_manual_add_work_calls_pipeline(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     captured = {}
 
@@ -131,6 +133,16 @@ def test_manual_add_work_calls_pipeline(qtbot, monkeypatch):
                 "resume_dir": "/tmp/x", "appended": True}
 
     monkeypatch.setattr(manual_add, "add_manual_job", fake_add)
+    # Isolate the best-effort outbox/vm_sync block at the tail of _manual_add_work:
+    # an unconfigured VMTarget makes push_outbox a no-op, write_rows_outbox is
+    # stubbed so nothing touches the real repo outbox dir, and the log goes to
+    # tmp_path instead of the real APPDATA scrape.log. Without this, a machine
+    # with a configured .env would have this test shell out to a real gcloud scp.
+    monkeypatch.setattr(MainWindow, "_scrape_log_path",
+                        staticmethod(lambda: tmp_path / "scrape.log"))
+    monkeypatch.setattr(vm_sync.VMTarget, "from_env",
+                        classmethod(lambda cls: vm_sync.VMTarget(instance="", zone="", user="")))
+    monkeypatch.setattr(outbox, "write_rows_outbox", lambda ids: None)
     vals = {"jd_text": _JD, "url": "https://x/1", "title": "T", "company": "C"}
     opts = {"cover_letter": False, "ats_report": True, "prep_sheet": False,
             "tone": "professional"}

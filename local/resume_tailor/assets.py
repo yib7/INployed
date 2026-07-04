@@ -158,6 +158,19 @@ def template_head() -> str:
     return text[:m.end()].rstrip() + "\n\n"
 
 
+def full_url(value) -> str:
+    """A clickable absolute URL from a stored link value. The master yaml may hold
+    either a bare host+path (linkedin.com/in/x) or a full URL — strip and return
+    scheme-prefixed values as-is (case-insensitive), otherwise prepend https://.
+    Empty/None -> ""."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.lower().startswith(("http://", "https://")):
+        return text
+    return f"https://{text}"
+
+
 def _pdf_text(path) -> str:
     from pypdf import PdfReader
 

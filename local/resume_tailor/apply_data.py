@@ -138,6 +138,14 @@ def _education_lines(education: List[Dict[str, Any]]) -> str:
             line += " · " + " · ".join(tail_bits)
         if line.strip():
             out.append(f"- {line}\n")
+            # Awards & Honors sub-bullet, mirroring the PDF's Education section
+            # (render._education). A scalar honors value counts as a one-item list.
+            honors = e.get("honors")
+            if honors and not isinstance(honors, (list, tuple)):
+                honors = [honors]
+            vals = [str(h).strip() for h in (honors or []) if str(h or "").strip()]
+            if vals:
+                out.append(f"  - Awards & Honors: {'; '.join(vals)}\n")
     if len(out) == 1:
         out.append("- (none listed)\n")
     return "".join(out)
@@ -152,7 +160,7 @@ def _exp_meta(master: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _proj_meta(master: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    return {p.get("name"): {"name": p.get("name"), "dates": p.get("dates"),
+    return {p.get("name"): {"name": p.get("name"),
                             "live_url": p.get("live_url"), "repo": p.get("repo")}
             for p in (master.get("projects", []) or [])}
 
@@ -215,7 +223,7 @@ def _projects_md(entries: List[Dict[str, Any]], meta: Dict[str, Dict[str, Any]],
         items = _grouped_bullets(entry, bullets)
         if not b or not items:
             continue
-        header = _entry_header(b["name"], [b.get("dates")])
+        header = _entry_header(b["name"], [])  # apply.md project headers carry no dates
         link_bits = [str(b.get("live_url") or "").strip(), str(b.get("repo") or "").strip()]
         link = " · ".join(x for x in link_bits if x)
         note = f"*{link}*" if link else ""
@@ -326,8 +334,8 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     parts.append(_kv("Email", basics.get("email", ""), always=True))
     parts.append(_kv("Phone", basics.get("phone", "")))
     parts.append(_kv("Location", basics.get("location", "")))
-    parts.append(_kv("LinkedIn", basics.get("linkedin", "")))
-    parts.append(_kv("GitHub / Portfolio", basics.get("github", "")))
+    parts.append(_kv("LinkedIn", assets.full_url(basics.get("linkedin", ""))))
+    parts.append(_kv("GitHub / Portfolio", assets.full_url(basics.get("github", ""))))
 
     parts.append("\n" + _address_lines(flat))
     parts.append("\n" + _education_lines(education))

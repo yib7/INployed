@@ -81,6 +81,13 @@ export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-global}"
 #    company). Missing file is fine — scraper.py falls back to its built-ins.
 rclone copyto gdrive:LinkedInJobs/company_blocklist.txt ~/company_blocklist.txt 2>/dev/null || true
 
+# 0.5 Fold in rows pushed up by local machines (dashboard "Find new jobs" / manual
+#     adds spool full master rows into ~/incoming; see merge_incoming.py). Bad files
+#     quarantine to ~/incoming/bad and never wedge the run; the ONLY nonzero exit is
+#     an existing-but-unreadable master, which must stop the run here (set -e),
+#     BEFORE the scrape spends money against an exclude set rebuilt from nothing.
+python ~/merge_incoming.py >> ~/scraper.log 2>&1
+
 # 1. Scrape — writes ~/morning/linkedin_jobs_<date>_morning.csv (or evening).
 #    A zero-result run writes nothing and exits 0; scoring then just runs its
 #    rescore pass and the master still uploads.

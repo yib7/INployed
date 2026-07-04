@@ -27,10 +27,28 @@ except Exception:
 
 from PySide6 import QtWidgets  # noqa: E402
 
+import jobsdata  # noqa: E402
 from jobsdata import UI_LOCK, _UILock, load_ui_scale_pct  # noqa: E402
 from qt import wheelguard  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
 from qt.theme import apply_theme  # noqa: E402
+
+
+def _with_local_runs(csv_paths: list[Path]) -> list[Path]:
+    """Sources plus any repo-root local scrape/manual files not already present.
+
+    This is the ONE owner of the local-runs fold: watcher launches pass only the
+    Drive master as argv, so without this a watcher-popped window can never show a
+    local 'Find new jobs' or manual add. Best-effort — a data-dir hiccup must not
+    stop the dashboard from opening."""
+    out = list(csv_paths)
+    try:
+        for p in jobsdata.local_run_files():
+            if p not in out:
+                out.append(p)
+    except Exception:  # noqa: BLE001 - opening the window matters more
+        pass
+    return out
 
 
 def _startup_scale() -> float:
@@ -50,7 +68,7 @@ def build_app(argv: list[str] | None = None) -> QtWidgets.QApplication:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
-    csv_paths = [Path(a) for a in argv[1:] if not a.startswith("-")]
+    csv_paths = _with_local_runs([Path(a) for a in argv[1:] if not a.startswith("-")])
     app = build_app(argv)
 
     lock = _UILock(UI_LOCK)

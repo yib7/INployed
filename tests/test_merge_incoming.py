@@ -197,15 +197,28 @@ def test_chunked_merge_via_main_matches_full_load(tmp_path, monkeypatch):
 
     orig_read_csv = pd.read_csv
     chunk_calls = []
+    master_calls = []  # every pd.read_csv call whose target is the MASTER path
 
     def _spy(*args, **kwargs):
         if kwargs.get("chunksize"):
             chunk_calls.append(kwargs["chunksize"])
+        target = args[0] if args else kwargs.get("filepath_or_buffer")
+        if target is not None and Path(target) == master:
+            master_calls.append(kwargs)
         return orig_read_csv(*args, **kwargs)
 
     monkeypatch.setattr(pd, "read_csv", _spy)
     assert merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats, min_age_seconds=0) == 0
     assert chunk_calls == [2]  # confirms the streaming path (not a full load) actually ran
+
+    # Mechanical bounded-reads assertion: every read of the MASTER during this
+    # merge run must be bounded (nrows, usecols, or chunksize set) -- zero bare
+    # full-frame reads of the master anywhere in main(). Scoped to the master
+    # path only; incoming files are small and may legitimately be read whole.
+    assert len(master_calls) == 3  # nrows=0 header probe, usecols id probe, chunksize stream
+    for kwargs in master_calls:
+        assert kwargs.get("nrows") is not None or kwargs.get("usecols") is not None \
+            or kwargs.get("chunksize") is not None, f"unbounded master read: {kwargs}"
 
     got = pd.read_csv(master, dtype={"job_posting_id": str}).sort_values("job_posting_id").reset_index(drop=True)
     ref = _full_load_reference(existing.astype({"job_posting_id": str}), incoming)
@@ -214,6 +227,58 @@ def test_chunked_merge_via_main_matches_full_load(tmp_path, monkeypatch):
     assert sorted(got.columns) == sorted(ref.columns)
     assert "local_only_col" in got.columns
     assert got.set_index("job_posting_id").loc["8", "local_only_col"] == "also-me"
+
+
+def test_incoming_vs_incoming_collision_first_file_wins(tmp_path, monkeypatch):
+    # Ordering mechanism (read from main(), merge_incoming.py lines ~176-178):
+    # row_paths = sorted(p for p in incoming_dir.glob("local_rows_*.csv.gz") ...)
+    # -- a plain lexicographic sort of the Path objects (by filename, since
+    # they share a directory). st_mtime is used ONLY by _is_old_enough's age
+    # guard, never for ordering. So "local_rows_a.csv.gz" is guaranteed to
+    # sort and process before "local_rows_b.csv.gz" regardless of which was
+    # written to disk first -- deterministic by name alone.
+    inc, master, stats = _setup(tmp_path)
+    # 5 master rows so CHUNK=2 forces multiple chunks (streaming path, not a
+    # one-shot full read).
+    existing = pd.DataFrame({
+        "job_posting_id": ["1", "2", "3", "4", "5"],
+        "job_title": ["a", "b", "c", "d", "e"],
+    })
+    existing.to_csv(master, index=False)
+    monkeypatch.setattr(merge_incoming, "CHUNK", 2)
+
+    # Both incoming files share id "50" (not in master) with a distinguishing
+    # job_title -- first-file-wins (file "a") must keep "from_file_1". Both
+    # also carry id "3", which collides with the MASTER -- master must win
+    # over both. Plus one unique-new id per file ("60" file a, "70" file b).
+    _gz(inc / "local_rows_a.csv.gz", pd.DataFrame({
+        "job_posting_id": ["50", "3", "60"],
+        "job_title": ["from_file_1", "master_should_win_1", "unique_a"],
+    }))
+    _gz(inc / "local_rows_b.csv.gz", pd.DataFrame({
+        "job_posting_id": ["50", "3", "70"],
+        "job_title": ["from_file_2", "master_should_win_2", "unique_b"],
+    }))
+
+    assert merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats, min_age_seconds=0) == 0
+
+    got = pd.read_csv(master, dtype={"job_posting_id": str}).set_index("job_posting_id")
+
+    # (a) shared incoming id "50" lands with file 1's ("a") distinguishing value.
+    assert got.loc["50", "job_title"] == "from_file_1"
+    # (b) master-colliding id "3" keeps the MASTER's original value, not either
+    # incoming file's "master_should_win_*" value.
+    assert got.loc["3", "job_title"] == "c"
+    # (c) both unique-new ids present.
+    assert got.loc["60", "job_title"] == "unique_a"
+    assert got.loc["70", "job_title"] == "unique_b"
+    # (d) final row count exact: 5 master rows + "50" + "60" + "70" = 8
+    # ("3" is a collision, not a new row).
+    assert len(got) == 8
+    # (e) both incoming files consumed/deleted (existing behavior contract,
+    # e.g. test_rows_merge_master_wins_and_column_union).
+    assert not (inc / "local_rows_a.csv.gz").exists()
+    assert not (inc / "local_rows_b.csv.gz").exists()
 
 
 def test_unreadable_master_still_aborts_with_chunk_set(tmp_path, monkeypatch):

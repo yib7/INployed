@@ -365,6 +365,114 @@ def test_apply_button_not_ready_when_md_missing(qtbot, tmp_path, monkeypatch):
     assert w.btn_apply.isEnabled() is False
 
 
+# ---- right-click cover-letter generation (state + handler wiring) -------------
+
+
+def _tailored_folder(tmp_path, monkeypatch):
+    from resume_tailor import output
+    monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Cand")
+    (tmp_path / output.resume_filename()).write_bytes(b"%PDF")
+    (tmp_path / "apply.md").write_text("# sheet", encoding="utf-8")
+    return tmp_path
+
+
+def test_cover_state_none_without_tailored_folder(qtbot):
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = None
+    assert w._cover_state("123") is None
+
+
+def test_cover_state_none_when_apply_md_missing(qtbot, tmp_path, monkeypatch):
+    from resume_tailor import output
+    monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Cand")
+    (tmp_path / output.resume_filename()).write_bytes(b"%PDF")  # no apply.md
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = str(tmp_path)
+    assert w._cover_state("123") is None
+
+
+def test_cover_state_missing_then_exists(qtbot, tmp_path, monkeypatch):
+    from resume_tailor import output
+    _tailored_folder(tmp_path, monkeypatch)
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = str(tmp_path)
+    assert w._cover_state("123") == "missing"
+    (tmp_path / output.cover_filename()).write_bytes(b"%PDF")
+    assert w._cover_state("123") == "exists"
+
+
+def test_jobs_tabs_wire_cover_callbacks(qtbot):
+    w = _win(qtbot)
+    for tab in (w.high_tab, w.all_tab, w.tracker_tab):
+        assert tab._cover_state == w._cover_state
+        assert tab._on_generate_cover == w._generate_cover_for
+
+
+def test_generate_cover_launches_worker_with_master_row_fallback(qtbot, tmp_path,
+                                                                 monkeypatch):
+    _tailored_folder(tmp_path, monkeypatch)
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = str(tmp_path)
+    # df is empty -> _job_payload returns None -> the master-row fallback fires
+    monkeypatch.setattr(mw.jobsdata, "master_row", lambda jid: {
+        "job_posting_id": jid, "company_name": "Acme", "job_title": "Engineer",
+        "job_description_formatted": "x" * 200, "url": "http://x"})
+    monkeypatch.setattr(mw.jobsdata, "_load_cfg", lambda: {"gemini_auth": "vertex"})
+    monkeypatch.setattr(mw.settings, "load", lambda: {"resume_tone": "concise"})
+    ran = {}
+
+    def fake_run_async(owner, fn, on_done=None, on_error=None):
+        ran["fn"] = fn
+
+    monkeypatch.setattr(mw.workers, "run_async", fake_run_async)
+    called = {}
+    monkeypatch.setattr(w, "_cover_work",
+                        lambda job, folder, tone: called.update(
+                            job=job, folder=folder, tone=tone))
+    w._generate_cover_for("123")
+    assert "fn" in ran
+    ran["fn"]()
+    assert called["job"]["company_name"] == "Acme"
+    assert str(called["folder"]) == str(tmp_path)
+    assert called["tone"] == "concise"
+    assert w._covering is True
+
+
+def test_regenerate_cover_declined_confirm_is_noop(qtbot, tmp_path, monkeypatch):
+    from resume_tailor import output
+    _tailored_folder(tmp_path, monkeypatch)
+    (tmp_path / output.cover_filename()).write_bytes(b"%PDF")  # exists -> confirm
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = str(tmp_path)
+    asked = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "question",
+        staticmethod(lambda *a, **k: (asked.append(1),
+                                      QtWidgets.QMessageBox.StandardButton.No)[1]))
+    launched = []
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda *a, **k: launched.append(1))
+    w._generate_cover_for("123")
+    assert asked and launched == []
+
+
+def test_generate_cover_untailored_job_is_noop(qtbot, monkeypatch):
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = None
+    launched = []
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda *a, **k: launched.append(1))
+    w._generate_cover_for("123")
+    assert launched == []
+
+
+def test_cover_work_rechecks_folder_exists(qtbot, tmp_path, monkeypatch):
+    w = _win(qtbot)
+    gone = tmp_path / "deleted"
+    with pytest.raises(RuntimeError, match="[Rr]e-tailor"):
+        w._cover_work({"company_name": "Acme"}, gone, "professional")
+
+
 _APPLY_CTX = {
     "job": {"company": "Acme", "title": "Engineer", "job_posting_id": "1"},
     "resume_pdf": "C:/Generated/Acme/Engineer/Cand_Resume.pdf",

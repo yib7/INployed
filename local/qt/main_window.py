@@ -149,6 +149,8 @@ class MainWindow(QtWidgets.QMainWindow):
             on_selection=self._show_preview,
             on_delete=self._delete_jobs,
             on_edit=self._edit_manual_job,
+            on_generate_cover=self._generate_cover_for,
+            cover_state=self._cover_state,
             hidden_columns=self.hidden_columns,
             save_hidden=self._save_hidden,
         )
@@ -1358,6 +1360,82 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tailor.setEnabled(True)
         QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {exc}")
         self._set_status(f"Tailor failed: {exc}")
+
+    # ---- cover letter for an already-tailored job (right-click) ---------------
+
+    def _cover_state(self, jid: str) -> str | None:
+        """Drives the right-click menu item: None when the job isn't tailored
+        (no folder / resume PDF / apply.md — same readiness as Apply), else
+        "exists"/"missing" by whether the cover-letter PDF is on disk."""
+        ready, folder = self._apply_ready(jid)
+        if not ready or folder is None:
+            return None
+        from resume_tailor import output
+        try:
+            return "exists" if (folder / output.cover_filename()).exists() else "missing"
+        except OSError:
+            return None
+
+    def _generate_cover_for(self, jid: str) -> None:
+        if getattr(self, "_covering", False):
+            return
+        state = self._cover_state(jid)
+        if state is None:
+            self._set_status("Tailor this job first — the cover letter reuses its "
+                             "tailored résumé bullets.")
+            return
+        if state == "exists" and QtWidgets.QMessageBox.question(
+                self, "Regenerate cover letter?",
+                "A cover letter already exists for this job. Regenerate and "
+                "replace it?") != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        payload = self._job_payload(jid)
+        if payload is None:
+            # Row not in the loaded frames (e.g. tracker-only) — the master CSV
+            # still carries the JD (same fallback the edit dialog uses).
+            row = jobsdata.master_row(jid) or {}
+            if row:
+                payload = {
+                    "job_posting_id": jid,
+                    "company_name": str(row.get("company_name", "") or ""),
+                    "job_title": str(row.get("job_title", "") or ""),
+                    "job_description_formatted": str(row.get("job_description_formatted", "") or ""),
+                    "job_description": str(row.get("job_description", "") or ""),
+                    "job_summary": str(row.get("job_summary", "") or ""),
+                    "url": str(row.get("url", "") or ""),
+                }
+        if not payload:
+            self._set_status("Job description not available — cannot generate a "
+                             "cover letter.")
+            return
+        _, folder = self._apply_ready(jid)
+        tone = settings.load().get("resume_tone", "professional")
+        self._covering = True
+        self._apply_auth_env()
+        self._set_status(f"Generating cover letter for {payload['company_name']} — "
+                         f"{payload['job_title']} …")
+        workers.run_async(self, lambda: self._cover_work(payload, folder, tone),
+                          on_done=self._finish_cover, on_error=self._finish_cover_error)
+
+    def _cover_work(self, job: dict, folder, tone: str):
+        from resume_tailor.run import generate_cover_letter
+        # Re-check on the worker: the folder may have been deleted between the
+        # menu click and this thread starting.
+        if not folder or not Path(folder).is_dir():
+            raise RuntimeError("The tailored folder no longer exists — re-tailor "
+                               "this job first.")
+        return generate_cover_letter(job, Path(folder), tone=tone,
+                                     on_status=self.tailor_progress.emit)
+
+    def _finish_cover(self, path) -> None:
+        self._covering = False
+        self._set_status(f"Cover letter ready → {path}")
+
+    def _finish_cover_error(self, exc) -> None:
+        self._covering = False
+        QtWidgets.QMessageBox.warning(self, "Cover letter",
+                                      f"Cover letter failed: {exc}")
+        self._set_status(f"Cover letter failed: {exc}")
 
     # ---- check setup ---------------------------------------------------------
 

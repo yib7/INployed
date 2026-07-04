@@ -24,6 +24,7 @@ from vm_schedule import RUN_LABELS
 class JobsTab(QtWidgets.QWidget):
     def __init__(self, table_key: str, columns, *, on_open_url=None, on_set_status=None,
                  on_block=None, on_selection=None, on_delete=None, on_edit=None,
+                 on_generate_cover=None, cover_state=None,
                  hidden_columns=None, save_hidden=None, parent=None):
         super().__init__(parent)
         self.table_key = table_key
@@ -34,6 +35,11 @@ class JobsTab(QtWidgets.QWidget):
         self._on_selection = on_selection or (lambda jid: None)
         self._on_delete = on_delete or (lambda ids: None)
         self._on_edit = on_edit or (lambda jid: None)
+        # Cover-letter menu item: `cover_state(jid)` -> "missing" (offer Generate) /
+        # "exists" (offer Regenerate) / None (no item). Both default unwired — other
+        # callers construct JobsTab without them and see no menu item at all.
+        self._on_generate_cover = on_generate_cover or (lambda jid: None)
+        self._cover_state = cover_state or (lambda jid: None)
         self._hidden: set[str] = set((hidden_columns or {}).get(table_key, []))
         self._save_hidden = save_hidden or (lambda key, hidden: None)
         self._base = pd.DataFrame()
@@ -361,6 +367,16 @@ class JobsTab(QtWidgets.QWidget):
         status_menu = menu.addMenu("Set status")
         status_acts = {status_menu.addAction(st): st for st in APP_STATUSES}
         menu.addSeparator()
+        # Cover letter for one already-tailored job: Generate when none exists,
+        # Regenerate when one does (the handler confirms first), nothing when the
+        # job isn't tailored (cover_state -> None) or on a multi-selection.
+        cover_act = None
+        if len(ids) == 1:
+            state = self._cover_state(ids[0])
+            if state == "missing":
+                cover_act = menu.addAction("Generate cover letter")
+            elif state == "exists":
+                cover_act = menu.addAction("Regenerate cover letter")
         block_act = menu.addAction("Block company")
         # Edit only for a single manually-added row (field-fix); Delete for any row(s).
         edit_act = (menu.addAction("Edit job…")
@@ -371,6 +387,8 @@ class JobsTab(QtWidgets.QWidget):
             return
         if chosen is open_act:
             self._on_open_url(ids[0])
+        elif cover_act is not None and chosen is cover_act:
+            self._on_generate_cover(ids[0])
         elif chosen is block_act:
             self.block_company(ids[0])
         elif edit_act is not None and chosen is edit_act:

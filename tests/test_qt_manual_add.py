@@ -279,7 +279,21 @@ def test_score_and_tailor_shows_cover_letter_prompt(qtbot, monkeypatch):
 
 # ── delete + edit job handlers ────────────────────────────────────────────────
 
-def test_delete_jobs_confirms_clears_and_reloads(qtbot, monkeypatch):
+def _sync_run_async(owner, fn, on_done=None, on_error=None):
+    """Inline run_async stand-in so the SP6 background write queue runs the CSV
+    delete synchronously and the tests stay deterministic."""
+    try:
+        result = fn()
+    except Exception as exc:  # noqa: BLE001 - mirror the real worker's catch
+        if on_error is not None:
+            on_error(exc)
+        return
+    if on_done is not None:
+        on_done(result)
+
+
+def test_delete_jobs_confirms_clears_and_refreshes(qtbot, monkeypatch):
+    monkeypatch.setattr(mw.workers, "run_async", _sync_run_async)
     w = _win(qtbot)
     monkeypatch.setattr(QtWidgets.QMessageBox, "question",
                         staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
@@ -291,13 +305,17 @@ def test_delete_jobs_confirms_clears_and_reloads(qtbot, monkeypatch):
     w._delete_jobs(["manual-1", "123"])
     assert deleted["ids"] == ["manual-1", "123"]
     w.registry.clear_status.assert_any_call("manual-1")
-    assert reloaded == [True]
+    # SP6: the views refresh from the in-memory frame; the CSV rewrite ran on the
+    # background write queue — no blocking full reload.
+    assert reloaded == []
+    assert "Deleted 2 job(s)." in w.statusBar().currentMessage()
 
 
 def test_delete_jobs_recycles_resume_folders(qtbot, monkeypatch):
     """The résumé-folder snapshot is taken BEFORE the data delete, the recycle
-    helper runs per id afterwards, the resume_paths row is cleared, and the
-    confirm dialog mentions the Recycle Bin."""
+    helper runs per id afterwards (both now on the background write queue), the
+    resume_paths row is cleared, and the confirm dialog mentions the Recycle Bin."""
+    monkeypatch.setattr(mw.workers, "run_async", _sync_run_async)
     w = _win(qtbot)
     events = []
     w.registry.resume_path.side_effect = (
@@ -337,6 +355,7 @@ def test_delete_jobs_clears_registry_even_when_recycle_refuses(qtbot, monkeypatc
 def test_delete_jobs_survives_recycle_error(qtbot, monkeypatch):
     """A locked folder (send2trash raises) must not abort the data delete or the
     registry cleanup — it's reported in the status bar instead."""
+    monkeypatch.setattr(mw.workers, "run_async", _sync_run_async)
     w = _win(qtbot)
     w.registry.resume_path.return_value = "C:/gen/x"
     monkeypatch.setattr(QtWidgets.QMessageBox, "question",
@@ -355,7 +374,7 @@ def test_delete_jobs_survives_recycle_error(qtbot, monkeypatch):
     assert deleted["ids"] == ["x"]                    # delete went through
     w.registry.clear_status.assert_any_call("x")      # cleanup still ran
     w.registry.clear_resume_path.assert_any_call("x")
-    assert reloaded == [True]
+    assert reloaded == []                             # SP6: no blocking full reload
     assert "Recycle Bin" in w.statusBar().currentMessage()  # failure surfaced
 
 

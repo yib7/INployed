@@ -131,6 +131,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # a request that arrived mid-load so it runs once the current one finishes.
         self._loading = False
         self._reload_pending = False
+        # All source-CSV rewrites (mark-seen / delete) run on this FIFO single-flight
+        # background queue so the UI never freezes on a ~27MB gz rewrite and two
+        # writes can never interleave on the same files. Registry (SQLite) writes
+        # stay on the UI thread — the connection is thread-affine and they're fast.
+        self._writes = workers.SerialTaskQueue(self)
         self.tailor_progress.connect(self._set_status)
 
         self._build()
@@ -423,8 +428,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return df, id_to_path
 
     def _apply_frames(self, loaded) -> None:
-        """The UI-thread half of a reload: overlay the seen registry, populate the
-        tabs, refresh tracker/stats/apply, and re-arm the watcher."""
+        """The UI-thread half of a reload: overlay the seen registry, install the
+        frame, and refresh every derived view."""
         df, id_to_path = loaded
         self.id_to_path = id_to_path
         if not df.empty:
@@ -432,6 +437,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 df["is_seen"] = "no"
             df, _ = reconcile_is_seen(df, self.registry)
         self.df = df
+        self._apply_df_views()
+        total = 0 if df.empty else len(df)
+        self._set_status(f"{total:,} jobs · {len(self.df_high)} unseen >=4")
+
+    def _apply_df_views(self) -> None:
+        """Refresh everything derived from the in-memory `self.df` — row/url maps,
+        the high-score view, both job tabs, tracker/stats, the Apply button, and the
+        fs watcher. Zero disk I/O: the optimistic mark-seen/delete paths mutate
+        `self.df` and call this for an instant repaint while the CSV rewrite runs
+        on the background write queue."""
+        df = self.df
         self._row_by_id = ({jid: i for i, jid in enumerate(df["job_posting_id"])}
                            if not df.empty else {})
         self._url_by_id = (dict(zip(df["job_posting_id"].astype(str), df["url"].astype(str)))
@@ -442,8 +458,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.all_tab.set_source_df(df, resume_ids)
         self._refresh_tracker()
         self._refresh_stats()
-        total = 0 if df.empty else len(df)
-        self._set_status(f"{total:,} jobs · {len(self.df_high)} unseen >=4")
         self._refresh_apply_button()  # a freshly tailored job may now be apply-ready
         # Sources/folder may have changed (a local scrape appended paths) — keep the
         # auto-refresh watcher pointed at the current files. No-op before setup.
@@ -591,10 +605,19 @@ class MainWindow(QtWidgets.QMainWindow):
         return tuple(sig)
 
     def _poll_for_changes(self) -> None:
+        if not self._writes.is_idle():
+            return  # our own background rewrite is in flight (see _on_fs_change)
         if self._current_sig() != self._source_sig:
             self.reload_data_async()  # re-snapshots the signature via _rearm_watcher
 
     def _on_fs_change(self, _path: str) -> None:
+        # While one of OUR background rewrites is in flight, ignore fs events: a
+        # >1.5s gap between its per-file replaces would otherwise fire the debounce
+        # mid-write and reload half-old data (e.g. resurrect just-deleted rows) —
+        # and the write-done re-snapshot would then keep that stale view. A real
+        # Drive sync landing in this window is caught by the next 15s poll.
+        if not self._writes.is_idle():
+            return
         self._reload_timer.start()  # coalesce a flurry of events into one reload
 
     def _auto_reload(self) -> None:
@@ -701,12 +724,70 @@ class MainWindow(QtWidgets.QMainWindow):
         ids = tab.selected_ids() if tab is not None else []
         self._update_apply_button(ids[0] if ids else "")
 
+    # ---- background source-CSV writes (the queue in self._writes) -------------
+
+    def _enqueue_write(self, fn, *, description: str, on_done=None) -> None:
+        """Run a source-CSV rewrite on the background write queue.
+
+        On completion (UI thread) the self-write feedback loop is muted — the
+        rewrite fires the QFileSystemWatcher and shifts the mtime signature, which
+        would otherwise trigger a pointless full reload of data we already show.
+        On error, disk is truth: warn and resync with a full reload."""
+        def done(result) -> None:
+            self._suppress_self_write_events()
+            if on_done is not None:
+                on_done(result)
+
+        def error(exc: BaseException) -> None:
+            self._on_write_error(description, exc)
+
+        self._writes.submit(fn, on_done=done, on_error=error)
+
+    def _suppress_self_write_events(self) -> None:
+        """Mute the fs-watcher/poll reactions to our OWN just-finished rewrite:
+        cancel the debounced reload it scheduled, re-add the watched paths the
+        atomic replace dropped, and re-snapshot the mtime signature so the 15s
+        poll stays quiet. (A real Drive sync landing inside this exact window is
+        picked up by the NEXT poll — accepted tradeoff.)"""
+        if getattr(self, "_reload_timer", None) is not None:
+            self._reload_timer.stop()
+        if getattr(self, "_fs_watcher", None) is not None:
+            self._rearm_watcher()   # also re-snapshots _source_sig
+
+    def _on_write_error(self, description: str, exc: BaseException) -> None:
+        """A background write failed — the in-memory (optimistic) state may now
+        disagree with the files. Disk is truth: tell the user and reload."""
+        if getattr(self, "_reload_timer", None) is not None:
+            self._reload_timer.stop()
+        QtWidgets.QMessageBox.warning(
+            self, "Background write failed",
+            f"Could not update the job files ({description}): {exc}\n\n"
+            "Reloading the dashboard from disk.")
+        self.reload_data()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802 - Qt override
+        """Flush queued background writes before the window goes away, so a
+        mark-seen/delete clicked moments before closing still lands on disk."""
+        q = getattr(self, "_writes", None)
+        if q is not None and not q.is_idle():
+            self._set_status("Finishing background writes …")
+            if not q.drain(timeout_ms=30000):
+                QtWidgets.QMessageBox.warning(
+                    self, "Writes still pending",
+                    f"{q.pending_count()} background write(s) did not finish — the "
+                    "files on disk may be missing your last mark-seen/delete.")
+        super().closeEvent(event)
+
     # ---- mark seen (with undo / redo) ----------------------------------------
 
-    def _write_is_seen(self, ids: list[str], value: str) -> None:
-        """Set is_seen=`value` for `ids` in whichever source CSV(s) hold them."""
+    def _write_is_seen(self, ids: list[str], value: str, paths=None) -> None:
+        """Set is_seen=`value` for `ids` in whichever source CSV(s) hold them.
+        Runs on the write queue's worker thread — `paths` is snapshotted on the
+        UI thread at enqueue time so this never reads the mutable id_to_path map."""
         idset = set(ids)
-        for path in {self.id_to_path[i] for i in ids if i in self.id_to_path}:
+        if paths is None:
+            paths = {self.id_to_path[i] for i in ids if i in self.id_to_path}
+        for path in paths:
             try:
                 df = read_csv_gz(path)
                 df["job_posting_id"] = df["job_posting_id"].astype(str)
@@ -717,17 +798,29 @@ class MainWindow(QtWidgets.QMainWindow):
             except (OSError, ValueError):
                 pass
 
+    def _apply_seen_locally(self, ids: list[str], value: str) -> None:
+        """Optimistic seen-flip: update the in-memory frame + views instantly, then
+        queue the CSV rewrite in the background (the freeze used to live there)."""
+        if not self.df.empty and "is_seen" in self.df.columns:
+            idset = {str(i) for i in ids}
+            mask = self.df["job_posting_id"].astype(str).isin(idset)
+            self.df.loc[mask, "is_seen"] = value
+        self._apply_df_views()
+        paths = {self.id_to_path[i] for i in ids if i in self.id_to_path}
+        ids = list(ids)
+        self._enqueue_write(lambda: self._write_is_seen(ids, value, paths),
+                            description=f"is_seen={value} on {len(ids)} job(s)")
+
     def _mark_ids_seen(self, ids: list[str], *, record_undo: bool = True) -> None:
         if not ids:
             return
         already = self.registry.all_ids()
         new_ids = [i for i in ids if i not in already]  # only the ones this click adds
-        self.registry.mark(ids)
-        self._write_is_seen(ids, "yes")
+        self.registry.mark(ids)   # registry write stays on the UI thread (fast, thread-affine)
         if record_undo and new_ids:
             self._seen_undo.append(new_ids)
             self._update_seen_buttons()
-        self.reload_data()
+        self._apply_seen_locally(ids, "yes")
 
     def _mark_seen_selected(self) -> None:
         ids = self._selected_ids()
@@ -743,9 +836,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         ids = self._seen_undo.pop()
         self.registry.unmark(ids)
-        self._write_is_seen(ids, "no")
         self._update_seen_buttons()
-        self.reload_data()
+        self._apply_seen_locally(ids, "no")
         self._set_status(f"Undid 'seen' on {len(ids)} job(s).")
 
     def _update_seen_buttons(self) -> None:
@@ -1118,21 +1210,42 @@ class MainWindow(QtWidgets.QMainWindow):
                 folders[jid] = self.registry.resume_path(jid)
             except Exception:  # noqa: BLE001 - bookkeeping only
                 folders[jid] = None
-        n = jobsdata.delete_jobs(ids)
-        trash_failed = []
+        # Registry cleanup stays on the UI thread (SQLite is thread-affine, and
+        # it's fast) so the tracker view is already correct in the repaint below.
         for jid in ids:
-            try:
-                # Best-effort: refuses (False) anything outside the output root;
-                # a locked folder (open in Explorer) raises and is reported below.
-                recycle_resume_folder(folders.get(jid))
-            except OSError:  # includes send2trash's TrashPermissionError
-                trash_failed.append(jid)
             try:
                 self.registry.clear_status(jid)       # drop any tracker status too
                 self.registry.clear_resume_path(jid)  # résumé link is stale either way
             except Exception:  # noqa: BLE001 - bookkeeping only
                 pass
-        self.reload_data()
+        # Optimistic: drop the rows from the in-memory frame and repaint now; the
+        # multi-file CSV rewrite (the part that used to freeze the UI for seconds)
+        # runs on the background write queue.
+        if not self.df.empty:
+            self.df = self.df[~self.df["job_posting_id"].astype(str).isin(set(ids))]
+            self.df = self.df.reset_index(drop=True)
+        for jid in ids:
+            self.id_to_path.pop(jid, None)
+        self._apply_df_views()
+        self._set_status(f"Deleting {len(ids)} job(s) in background …")
+
+        def work():
+            n = jobsdata.delete_jobs(ids)
+            trash_failed = []
+            for jid in ids:
+                try:
+                    # Best-effort: refuses (False) anything outside the output root;
+                    # a locked folder (open in Explorer) raises and is reported below.
+                    recycle_resume_folder(folders.get(jid))
+                except OSError:  # includes send2trash's TrashPermissionError
+                    trash_failed.append(jid)
+            return n, trash_failed
+
+        self._enqueue_write(work, description=f"delete {len(ids)} job(s)",
+                            on_done=self._finish_delete)
+
+    def _finish_delete(self, result) -> None:
+        n, trash_failed = result
         msg = f"Deleted {n} job(s)."
         if trash_failed:
             msg += (f" Couldn't move {len(trash_failed)} résumé folder(s) to the "

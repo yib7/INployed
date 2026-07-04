@@ -41,7 +41,7 @@ CHUNK = 2000  # Chunked streaming row count for append_to_master (memory bounded
 
 LIMIT_PER_INPUT = 100
 POLL_INTERVAL = 10
-MAX_WAIT_MINUTES = 30
+MAX_WAIT_MINUTES = 60
 MAX_POLL_FAILURES = 5
 
 OUTPUT_DIR = Path(__file__).parent

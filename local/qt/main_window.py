@@ -50,6 +50,7 @@ from qt.settings_tab import SettingsForm
 from qt.stats_tab import StatsTab
 from qt.vm_panel import VMPanel
 from qt.widgets import ScorePreview
+from resume_trash import recycle_resume_folder
 from seen_db import SeenRegistry
 
 TAB_TITLES = [
@@ -1098,23 +1099,45 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- delete / edit job entries -------------------------------------------
 
     def _delete_jobs(self, ids) -> None:
-        """Permanently remove the selected job(s) from the dataset (confirm first)."""
+        """Permanently remove the selected job(s) from the dataset (confirm first).
+        Any tailored-résumé folder goes to the Recycle Bin (recoverable)."""
         ids = [str(i) for i in (ids or []) if str(i).strip()]
         if not ids:
             return
         if QtWidgets.QMessageBox.question(
                 self, "Delete job(s)?",
-                f"Permanently remove {len(ids)} job(s) from your dataset? This can't be undone."
+                f"Permanently remove {len(ids)} job(s) from your dataset? This can't be "
+                "undone. Any tailored-résumé folder is moved to the Recycle Bin."
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        n = jobsdata.delete_jobs(ids)
+        # Snapshot the résumé folders BEFORE the delete — the registry rows are
+        # cleared below, and the folder must still be findable afterwards.
+        folders = {}
         for jid in ids:
             try:
-                self.registry.clear_status(jid)  # drop any tracker status/résumé link too
+                folders[jid] = self.registry.resume_path(jid)
+            except Exception:  # noqa: BLE001 - bookkeeping only
+                folders[jid] = None
+        n = jobsdata.delete_jobs(ids)
+        trash_failed = []
+        for jid in ids:
+            try:
+                # Best-effort: refuses (False) anything outside the output root;
+                # a locked folder (open in Explorer) raises and is reported below.
+                recycle_resume_folder(folders.get(jid))
+            except OSError:  # includes send2trash's TrashPermissionError
+                trash_failed.append(jid)
+            try:
+                self.registry.clear_status(jid)       # drop any tracker status too
+                self.registry.clear_resume_path(jid)  # résumé link is stale either way
             except Exception:  # noqa: BLE001 - bookkeeping only
                 pass
         self.reload_data()
-        self._set_status(f"Deleted {n} job(s).")
+        msg = f"Deleted {n} job(s)."
+        if trash_failed:
+            msg += (f" Couldn't move {len(trash_failed)} résumé folder(s) to the "
+                    "Recycle Bin (folder in use?) — remove them by hand.")
+        self._set_status(msg)
 
     def _edit_manual_job(self, jid) -> None:
         """Field-fix a manually-added job (URL/title/company/JD) via the manual-add

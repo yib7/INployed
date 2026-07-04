@@ -294,6 +294,71 @@ def test_delete_jobs_confirms_clears_and_reloads(qtbot, monkeypatch):
     assert reloaded == [True]
 
 
+def test_delete_jobs_recycles_resume_folders(qtbot, monkeypatch):
+    """The résumé-folder snapshot is taken BEFORE the data delete, the recycle
+    helper runs per id afterwards, the resume_paths row is cleared, and the
+    confirm dialog mentions the Recycle Bin."""
+    w = _win(qtbot)
+    events = []
+    w.registry.resume_path.side_effect = (
+        lambda jid: events.append(("snap", jid)) or f"C:/gen/{jid}")
+    asked = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: (asked.setdefault("text", a[2]),
+                                     QtWidgets.QMessageBox.StandardButton.Yes)[1]))
+    monkeypatch.setattr(mw.jobsdata, "delete_jobs",
+                        lambda ids, **k: events.append(("delete", list(ids))) or len(list(ids)))
+    recycled = []
+    monkeypatch.setattr(mw, "recycle_resume_folder",
+                        lambda p: recycled.append(p) or True)
+    monkeypatch.setattr(w, "reload_data", lambda: None)
+    w._delete_jobs(["a", "b"])
+    assert "Recycle Bin" in asked["text"]
+    assert events == [("snap", "a"), ("snap", "b"), ("delete", ["a", "b"])]
+    assert recycled == ["C:/gen/a", "C:/gen/b"]
+    w.registry.clear_resume_path.assert_any_call("a")
+    w.registry.clear_resume_path.assert_any_call("b")
+
+
+def test_delete_jobs_clears_registry_even_when_recycle_refuses(qtbot, monkeypatch):
+    """A path outside the output root makes the helper refuse (False) — the
+    stale resume_paths row must STILL be cleared."""
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = "C:/somewhere/else"
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(mw.jobsdata, "delete_jobs", lambda ids, **k: len(list(ids)))
+    monkeypatch.setattr(mw, "recycle_resume_folder", lambda p: False)
+    monkeypatch.setattr(w, "reload_data", lambda: None)
+    w._delete_jobs(["x"])
+    w.registry.clear_resume_path.assert_any_call("x")
+
+
+def test_delete_jobs_survives_recycle_error(qtbot, monkeypatch):
+    """A locked folder (send2trash raises) must not abort the data delete or the
+    registry cleanup — it's reported in the status bar instead."""
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = "C:/gen/x"
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    deleted = {}
+    monkeypatch.setattr(mw.jobsdata, "delete_jobs",
+                        lambda ids, **k: deleted.update(ids=list(ids)) or len(list(ids)))
+
+    def boom(p):
+        raise OSError("locked by Explorer")
+
+    monkeypatch.setattr(mw, "recycle_resume_folder", boom)
+    reloaded = []
+    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    w._delete_jobs(["x"])
+    assert deleted["ids"] == ["x"]                    # delete went through
+    w.registry.clear_status.assert_any_call("x")      # cleanup still ran
+    w.registry.clear_resume_path.assert_any_call("x")
+    assert reloaded == [True]
+    assert "Recycle Bin" in w.statusBar().currentMessage()  # failure surfaced
+
+
 def test_delete_jobs_cancel_is_noop(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(QtWidgets.QMessageBox, "question",

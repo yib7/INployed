@@ -23,6 +23,7 @@ tzdata==2026.2         # IANA tz database for zoneinfo on Windows (Pacific RPD r
 
 # desktop UI (local dashboard); abi3 wheels run on Python 3.14
 PySide6==6.11.1
+Send2Trash==1.8.3      # deleting a job moves its tailored-résumé folder to the Recycle Bin
 
 # only needed to run scraper.py locally (it normally runs on the VM)
 aiohttp==3.14.1

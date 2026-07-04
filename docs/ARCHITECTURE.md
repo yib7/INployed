@@ -54,6 +54,23 @@ dashboard share one concurrent-instance guard, `local/locks.py:SingleInstance` (
 msvcrt/fcntl file lock): the dashboard uses it to no-op a relaunch over a live window, the watcher
 to skip a trigger while a previous fire is still working.
 
+**Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
+jobs" run or manual add writes its new full master rows to `<repo>/outbox/local_rows_*.csv.gz`
+(plus the whole `run_stats.csv` as `local_stats_*.csv`) and best-effort-pushes every pending
+outbox file to the VM's `~/incoming/` over the same gcloud scp transport as the config pushes
+(`local/outbox.py`; argv builders in `local/vm_sync.py`). A file is deleted locally only when
+its scp exits 0, so a failed push simply retries on the next scrape or manual add. On the VM,
+`merge_incoming.py` (invoked by `run_scraper.sh` after the blocklist pull, before each scrape)
+folds `~/incoming/*` into the master and `run_stats.csv` — master-wins dedup on
+`job_posting_id`, bad files quarantined to `~/incoming/bad/`, files younger than 60s skipped
+as possibly mid-upload, and the only nonzero exit is an unreadable existing master (which
+stops the cron run before the scrape can spend money). Merged rows then reach the dashboard
+through the normal Drive sync. On the viewing side there is exactly one owner of the
+local-runs fold: `app.py:_with_local_runs` appends `jobsdata.local_run_files()` to whatever
+sources it was launched with, so local runs show up immediately in EVERY entry point —
+including a watcher-launched window — and `load_files`' id-dedup keeps them from
+double-counting once the merged master syncs back down.
+
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
 `seen.db` (`SeenRegistry.export_to` via SQLite `VACUUM INTO`; `import_from` merges, with newer
 `status_date` winning, earliest `applied_date` kept, seen unioned). The Stats tab shows a fresh/stale

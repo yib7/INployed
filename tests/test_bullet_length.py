@@ -24,6 +24,15 @@ def test_approx_tilde_still_converts():
     assert "~" not in out.replace(r"$\sim$", "")
 
 
+def test_ascii_comparison_digraphs_converted_to_latex():
+    # The rephrase prompt tells the model to write ASCII '>=' / '<=' and promises
+    # conversion to math notation. The Babel Street run printed a literal
+    # '\textgreater{}= 95%' because only the unicode glyphs were mapped.
+    out = clean_bullet("reached >= 95% accuracy with <= 2s latency")
+    assert r"$\ge$" in out and r"$\le$" in out
+    assert "textgreater" not in out and "textless" not in out
+
+
 def test_plain_text_bullet_unchanged_except_period():
     out = clean_bullet("Built a data pipeline")
     assert out == "Built a data pipeline."

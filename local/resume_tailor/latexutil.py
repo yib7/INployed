@@ -64,6 +64,10 @@ _MATH_GLYPHS = {chr(cp): tex for cp, tex in _MATH_PAIRS}
 
 def _math_to_latex(text: str) -> str:
     text = text.replace(r"\textasciitilde{}", r"$\sim$")  # '~' (approximately)
+    # The ASCII digraphs the rephrase prompt asks the model to write ('>=', '<='),
+    # already escaped by escape_latex — the promised math-notation conversion.
+    text = text.replace(r"\textgreater{}=", r"$\ge$")
+    text = text.replace(r"\textless{}=", r"$\le$")
     for glyph, tex in _MATH_GLYPHS.items():
         if glyph in text:
             text = text.replace(glyph, tex)

@@ -217,6 +217,17 @@ def test_cap_items_keeps_at_least_the_first_token(monkeypatch):
     assert compose._cap_items("Languages", "Python, SQL") == "Python"
 
 
+def test_cap_items_best_fit_skips_overwide_keeps_later_short_token(monkeypatch):
+    # Best-fit packing: a wide MIDDLE token that overflows must not stop the line — a
+    # shorter token after it still gets its slot, instead of wasting the rest of the line.
+    line = "AWS, Supercalifragilistic Framework Name, Git"
+    cap = measure.skill_line_width("Developer Tools", "AWS, Git")
+    monkeypatch.setattr(compose.measure, "SKILL_LINE_CAPACITY", cap)
+    out = compose._cap_items("Developer Tools", line)
+    assert out == "AWS, Git"          # middle token skipped; trailing short token kept
+    # (old first-overflow-break behavior would have stopped at "AWS")
+
+
 # --- parenthesized (comma-bearing) skill tokens --------------------------------
 # A merged token like "LLM APIs (Gemini, OpenAI, Claude)" carries internal commas;
 # splitting a skills line on every comma shatters it into 3 fragments, which then

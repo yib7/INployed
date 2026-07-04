@@ -57,13 +57,13 @@
 % --- BULLET POINTS (all sections) ---
 \newcommand{\resumeItem}[1]{
 \item\resumeBulletSize{
-{#1\vspace{-2.5pt}}
+{#1\vspace{-.75pt}}
 }
 }
 
 % --- EDUCATION header (two rows: school+GPA / degree+location) ---
 \newcommand{\resumeSubheading}[4]{
-\vspace{-3pt}\item
+\vspace{-2pt}\item
 \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize\textbf{#1} & \resumeHeaderSize#2 \\
 \resumeHeaderSize\textit{#3} & \resumeHeaderSize\textit{#4} \\
@@ -72,7 +72,7 @@
 
 % --- WORK EXPERIENCE header (one line: title|company left, location|dates right) ---
 \newcommand{\resumeSubheadingOneLine}[4]{
-\vspace{-3pt}\item
+\vspace{-2pt}\item
 \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize\textbf{#1} $|$ \textit{#2} $|$ #3 & \resumeHeaderSize #4 \\
 \end{tabular*}\vspace{-7pt}
@@ -80,7 +80,7 @@
 
 % --- LEADERSHIP header (one row: name left, dates right) ---
 \newcommand{\resumeProjectHeading}[2]{
-\vspace{-3pt}\item
+\vspace{-2pt}\item
 \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize#1 & \resumeHeaderSize#2 \\
 \end{tabular*}\vspace{-7pt}
@@ -90,7 +90,7 @@
 % #1 = project name (bolded here); #2 = the " | <link>" suffix (link italicized by
 % the renderer), or empty for a project with no link.
 \newcommand{\resumeProjectHeadingInline}[2]{
-\vspace{-3pt}\item
+\vspace{-2pt}\item
 \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
 \resumeHeaderSize\textbf{#1}#2 & \\
 \end{tabular*}\vspace{-7pt}

@@ -20,7 +20,7 @@ from math import ceil
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import assets, ats, config, layout, measure
-from .llm import call
+from .llm import as_dict, call
 
 _PRINCIPLE = (
     "ABSOLUTE RULE — select and re-phrase, never invent. You may ONLY restate facts "
@@ -30,6 +30,29 @@ _PRINCIPLE = (
     "(if the atom says 'contributed to' or 'helped', do NOT write 'led' or 'owned'). "
     "Inflation here surfaces in the interview, not the application, so it is the worst "
     "possible failure. When unsure, say less."
+)
+
+# The ONE shared enumeration of banned AI-tell phrasing. Every prompt that asks a
+# model to WRITE prose — rephrase, the style-gate repairs (bullets here, the letter
+# body in coverletter), the cover-letter generation — embeds this same list, so the
+# bans can never drift apart. The deterministic _STYLE_BANS regexes below enforce
+# only the always-slop subset; the context-sensitive tells (scalable/dynamic/smart,
+# 'drove X', significant, multiple, end-to-end, grandiosity) live only in this
+# prompt text, where model judgment can spare the legitimate technical uses.
+BANNED_PHRASING = (
+    "em dashes; contrast framing ('not X, but Y', 'X, not Y', 'not just', "
+    "'rather than', 'instead of'); participial tails (', enabling/ensuring/"
+    "allowing/driving/resulting in ...'); buzz adjectives used as filler (robust, "
+    "seamless, comprehensive, powerful, innovative, cutting-edge, holistic, "
+    "world-class, game-changing, very; and scalable/dynamic/smart when not a "
+    "literal technical term); buzzword verbs (leverage, utilize, spearhead, "
+    "empower, harness, streamline; and 'drove X' with no number after it); vague "
+    "quantifiers (various, numerous, multiple, significant, consistently, "
+    "regularly; use the number or cut the claim); grandiosity (guarantees, "
+    "'eliminates by construction', 'the real X'); decorative marketing frames "
+    "('end-to-end', 'one place', 'all-in-one'); stacked adjectives and "
+    "rule-of-three verb trains. State each fact once, plainly; prefer nouns and "
+    "numbers over adjectives."
 )
 
 # A curated palette of strong, role-relevant action verbs. Replaces the 6KB raw
@@ -326,28 +349,40 @@ JOB: {job_title} at {company}
 JOB DESCRIPTION:
 {jd[:7000]}"""
     out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
-    return _normalize_selection(out)
+    return _normalize_selection(as_dict(out, "experience"))
 
 
 def _normalize_selection(sel: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate group atom ids, dedupe globally, inject required blocks, fix order."""
+    """Validate group atom ids, dedupe globally, inject required blocks, fix order.
+    Tolerates model shape drift everywhere: non-dict roots/entries are dropped, a
+    flat string group is treated as a one-atom group, and a non-dict skills value
+    is discarded (it would crash compress_skills' preselected path downstream)."""
+    if not isinstance(sel, dict):
+        sel = {}
     valid_ids = set(assets.atoms_by_id())
     bl = assets.blocks()
     names = {sec: {b["name"] for b in bl[sec]} for sec in bl}
     used: set[str] = set()
 
+    skills = sel.get("skills")
     clean: Dict[str, Any] = {"skill_focus": sel.get("skill_focus", "general"),
-                             "skills": sel.get("skills") or {},
+                             "skills": skills if isinstance(skills, dict) else {},
                              "methods": _clean_methods(sel.get("methods")),
                              "rationale": sel.get("rationale", "")}
     for sec in ("experience", "projects", "leadership"):
         clean[sec] = []
         for entry in sel.get(sec, []) or []:
+            if not isinstance(entry, dict):
+                continue
             name = entry.get("name")
             if name not in names[sec]:
                 continue
             groups: List[List[str]] = []
             for g in entry.get("groups", []) or []:
+                if isinstance(g, str):
+                    g = [g]  # flat id list: each id is its own group
+                if not isinstance(g, (list, tuple)):
+                    continue
                 ids = []
                 for aid in g:
                     if aid in valid_ids and aid not in used and _block_of(aid) == name:
@@ -608,8 +643,11 @@ PROJECTS (each with its selected bullets, numbered):
 For each project, return the NUMBER of the bullet that should LEAD (its overview / intro).
 Return ONLY JSON: {{"projects": [{{"project": "<name>", "lead": <number>}}, ...]}}"""
     try:
-        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
+        out = as_dict(call(system, user, config.TIER_FLASH_LITE, json_out=True,
+                           temperature=0.0), "projects")
         for p in out.get("projects", []) or []:
+            if not isinstance(p, dict):
+                continue
             lead = p.get("lead")
             if isinstance(lead, int) and not isinstance(lead, bool):
                 picks[p.get("project")] = lead
@@ -663,12 +701,15 @@ BLOCKS (each holds the atoms selected for one resume entry):
 
 Return ONLY JSON: {{"briefs": [{{"block": "<block name>", "brief": "<1-2 sentences>"}}, ...]}}"""
     try:
-        out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.2)
+        out = as_dict(call(system, user, config.TIER_FLASH_LITE, json_out=True,
+                           temperature=0.2), "briefs")
     except Exception:  # noqa: BLE001 - cohesion is advisory; fall back to no briefs
         return {}
     names = {b["block"] for b in blocks}
     result: Dict[str, str] = {}
     for b in out.get("briefs", []) or []:
+        if not isinstance(b, dict):
+            continue
         name, brief = b.get("block"), (b.get("brief") or "").strip()
         if name in names and brief:
             result[name] = brief
@@ -712,11 +753,19 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
         "purpose isn't obvious, let the FIRST bullet establish that context using ONLY grounded "
         "atom facts. NEVER move a fact from one group's atoms into another bullet — each bullet "
         "still re-phrases ONLY its own group's atoms.\n"
+        "REDUNDANCY (across the WHOLE resume, not just within a block): a distinctive number "
+        "or metric appears ONCE — when two groups' atoms cite the same figure (an accuracy "
+        "percentage, a corpus size), state it in the bullet where it lands hardest and let the "
+        "other bullet carry its remaining facts. Vary the nouns: a pet word like 'pipeline' "
+        "repeated across many bullets reads templated — after two uses, say what the thing "
+        "concretely is instead. Don't end several bullets the same way (e.g. test counts); "
+        "fold at most one or two test-coverage claims into the page.\n"
         "STYLE: past tense, no first-person pronouns, no markdown, no LaTeX, NO bold or "
         "italics. One sentence (a fused group may run to ~2 clauses). Each bullet MUST be a "
         "COMPLETE sentence that ends naturally WITHIN its own character budget (the "
         "'length_target' given below) — never write a longer sentence assuming it will be "
         "trimmed; a truncated bullet ending mid-clause is a failure. "
+        "BANNED PHRASING (a bullet using any of these is wrong): " + BANNED_PHRASING + "\n"
         "Front-load the result/impact that matters for THIS job. Open every bullet with a "
         "strong action verb chosen from the categorized list below, picking a "
         "category-appropriate verb that matches the atom's real ownership. Every bullet's "
@@ -753,9 +802,12 @@ line. Do NOT exceed the cap and do NOT end mid-clause expecting truncation. Neve
 invent facts to pad and never drop a number to shorten.
 
 Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ...]}}"""
-    out = call(system, user, config.TIER_PRO, json_out=True, temperature=0.25)
+    out = as_dict(call(system, user, config.TIER_PRO, json_out=True, temperature=0.25),
+                  "bullets")
     result: Dict[str, str] = {}
-    for b in out.get("bullets", []):
+    for b in out.get("bullets") or []:
+        if not isinstance(b, dict):
+            continue
         gk, text = b.get("gkey"), (b.get("text") or "").strip()
         if gk in gm and text:
             result[gk] = text
@@ -823,8 +875,10 @@ ACTION VERBS (grouped by category; choose an UNUSED one that fits the atom's own
 PREVIOUS BULLET (keep the same facts; only change the opening verb): {bad_text}
 
 Return ONLY JSON: {{"text": "<rewritten bullet>"}}"""
-    out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
-    return (out.get("text") or "").strip()
+    out = as_dict(call(system, user, config.TIER_FLASH_LITE, json_out=True,
+                       temperature=0.0), "text")
+    text = out.get("text")
+    return text.strip() if isinstance(text, str) else ""
 
 
 def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: str,
@@ -937,13 +991,16 @@ atom adds nothing that fits):
 
 Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<lengthened or unchanged bullet>"}}, ...]}}"""
     try:
-        out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.2)
+        out = as_dict(call(system, user, config.TIER_FLASH, json_out=True,
+                           temperature=0.2), "bullets")
     except Exception:  # noqa: BLE001 - fill is advisory; leave bullets unchanged on any failure
         return bullets
 
     new_text: Dict[str, str] = {}
     seen = {c["gk"] for c in candidates}
     for b in out.get("bullets", []) or []:
+        if not isinstance(b, dict):
+            continue
         gk, text = b.get("gkey"), (b.get("text") or "").strip()
         if gk in seen and text:
             new_text[gk] = text
@@ -961,6 +1018,108 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<lengthened or unch
         bullets.pop(gk, None)
         bullets[_gkey(new_ids)] = text
     return bullets
+
+
+# ── style gate: no AI-tell phrasing reaches the page ─────────────────────────
+# The rephrase prompt bans this phrasing, but a model can still slip one
+# through (observed ~2/18 bullets). This deterministic gate catches offenders,
+# buys ONE batched repair call, and mechanically strips any em dash that
+# survives even that, so an em dash can never print.
+#
+# Only phrasing that is ALWAYS slop in a resume bullet lives here: a false positive
+# triggers a repair that could damage a correct bullet. Context-sensitive tells
+# (dynamic, scalable, smart, multiple, significant, guarantee, decorative
+# "end-to-end", "drove X" with no number) collide with real terms — "dynamic
+# programming", "method signature", "statistically significant", "multiple
+# regression" — so they stay in the PROMPT bans (model judgment), never here.
+_STYLE_BANS: Tuple[Tuple[str, re.Pattern], ...] = (
+    ("em dash", re.compile(r"—|\s--\s")),
+    ("contrast framing",
+     re.compile(r",\s*not\s|\bnot just\b|\brather than\b|\binstead of\b", re.I)),
+    ("participial tail",
+     re.compile(r",\s*(?:enabling|ensuring|allowing|driving|resulting in|empowering"
+                r"|showcasing|highlighting|demonstrating)\b", re.I)),
+    ("buzzword verb",
+     re.compile(r"\b(?:leverag|utiliz|spearhead|harness|empower|streamlin"
+                r"|supercharg|turbocharg|revolutioniz|democratiz)\w*", re.I)),
+    ("hollow intensifier",
+     re.compile(r"\b(?:seamless\w*|robust\w*|comprehensive|cutting-edge|innovative"
+                r"|holistic|state-of-the-art|powerful\w*|world-class|best-in-class"
+                r"|top-notch|groundbreaking|unparalleled|turnkey|blazing\w*"
+                r"|lightning[- ]fast|game[- ]?chang\w*|revolutionar\w*|very"
+                r"|successfully)\b", re.I)),
+    ("vague quantifier",
+     re.compile(r"\b(?:various|numerous|myriad|consistently|regularly)\b"
+                r"|\ba (?:wide range|wide variety|plethora) of\b", re.I)),
+)
+
+
+def style_violations(text: str) -> List[str]:
+    """Names of the banned-phrasing patterns present in a bullet (empty = clean)."""
+    return [name for name, pat in _STYLE_BANS if pat.search(text)]
+
+
+def _strip_em_dashes(text: str) -> str:
+    return re.sub(r"\s*—\s*|\s--\s", ", ", text)
+
+
+def enforce_style(jd: str, job_title: str, sel: Dict[str, Any],
+                  bullets: Dict[str, str]) -> int:
+    """Repair IN PLACE any bullet using banned phrasing: one batched call grounded
+    in the same atoms (same facts, same opening verb, no longer than the current
+    text), then the mechanical em-dash strip as the unconditional backstop.
+    Mutates `bullets`; returns how many were changed. Best-effort: a failed call
+    leaves the texts for the mechanical pass (advisory, never fatal -- like
+    block_briefs / fill_underfull)."""
+    gm = group_map(sel)
+    offenders = {gk: t for gk, t in bullets.items()
+                 if not is_verbatim_gkey(gk) and style_violations(t)}
+    changed = 0
+    if offenders:
+        payload = [
+            {
+                "gkey": gk,
+                "bullet": text,
+                "violations": style_violations(text),
+                "max_chars": len(text),
+                "atoms": {a: _atom_payload(a) for a in gm.get(gk, [])},
+            }
+            for gk, text in offenders.items()
+        ]
+        system = (
+            "You repair resume bullets that slipped into banned phrasing. Rewrite each "
+            "bullet as one plain declarative sentence stating the SAME facts, grounded "
+            "ONLY in its atoms. Keep the OPENING VERB exactly as written and stay within "
+            "'max_chars'. BANNED: " + BANNED_PHRASING + "\n" + _PRINCIPLE
+        )
+        user = f"""TARGET JOB: {job_title}
+
+BULLETS TO REPAIR (each lists which banned patterns it hit; rewrite to remove them,
+keeping every fact, number, and the opening verb):
+{json.dumps(payload, ensure_ascii=False, indent=1)}
+
+Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<repaired bullet>"}}, ...]}}"""
+        try:
+            out = as_dict(call(system, user, config.TIER_FLASH, json_out=True,
+                               temperature=0.2), "bullets")
+        except Exception:  # noqa: BLE001 - repair is advisory; the mechanical pass still runs
+            out = {}
+        for b in out.get("bullets", []) or []:
+            if not isinstance(b, dict):
+                continue
+            gk, text = b.get("gkey"), (b.get("text") or "").strip()
+            # Commit only strict improvement, so a bad repair can't make things worse.
+            if (gk in offenders and text
+                    and len(style_violations(text)) < len(style_violations(offenders[gk]))):
+                bullets[gk] = text
+                changed += 1
+    # Unconditional backstop: an em dash must never reach the page.
+    for gk, text in bullets.items():
+        fixed = _strip_em_dashes(text)
+        if fixed != text:
+            bullets[gk] = fixed
+            changed += 1
+    return changed
 
 
 # ── Stage 3: skills (exactly 4 fixed categories) ─────────────────────────────
@@ -1057,6 +1216,8 @@ def _finalize_skill_lines(out: Dict[str, Any], jd: str = "") -> List[Dict[str, s
     When `jd` is given and tech aliases are enabled, each picked token is swapped to the JD's
     own spelling if the JD uses a printable alias of it (before the width cap, so the swapped
     width is measured)."""
+    if not isinstance(out, dict):  # model shape drift: fall through to pool completion
+        out = {}
     targets = layout.skill_targets()
     pools = _skill_pools()
     swap = bool(jd) and config.tech_aliases_enabled()
@@ -1064,8 +1225,9 @@ def _finalize_skill_lines(out: Dict[str, Any], jd: str = "") -> List[Dict[str, s
                        if swap else {})
     lines: List[Dict[str, str]] = []
     for label, _keys in _SKILL_BUCKETS:
-        picked = _complete_to_count(out.get(label) or "", pools.get(label, []),
-                                    targets.get(label, 0))
+        raw = out.get(label)
+        picked = _complete_to_count(raw if isinstance(raw, str) else "",
+                                    pools.get(label, []), targets.get(label, 0), jd)
         if swap:
             picked = [_swap_to_jd_spelling(tok, aliases_by_norm, jd) for tok in picked]
         items = _cap_items(label, ", ".join(picked))
@@ -1172,7 +1334,33 @@ def _anchored(tok: str, pool_norms: set) -> bool:
     return all(_base_anchors(_skill_base(m), pool_norms) for m in members)
 
 
-def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
+def _completion_order(pool: List[str], jd: str) -> List[str]:
+    """The pool re-ordered for TOP-UP: skills the JD actually names come first (most
+    frequent first), then the user's own pool order as a stable tiebreak. Alias-aware --
+    a skill counts as JD-relevant when the JD uses the skill OR any anchored alias of it
+    (the same match `ats.coverage` uses). With no JD, or no JD hit, the pool order is
+    returned unchanged, so a line the model fully answered stays byte-for-byte what it was.
+
+    This only reorders which UNUSED pool skills fill a line the model under-returned; it
+    never touches the model's own picks and never lets a non-pool skill in (that gate is
+    `_anchored`, upstream). Paired with `_cap_items` best-fit width packing, a
+    short-of-target line ends up carrying the most JD-relevant skills that fit."""
+    if not jd:
+        return list(pool)
+    idx = ats.alias_index()
+
+    def _score(cand: str) -> int:
+        group = idx.get(ats._norm_skill(cand))
+        spellings = group if group else (cand,)
+        return sum(len(ats._term_pattern(sp).findall(jd)) for sp in spellings)
+
+    scored = {c: _score(c) for c in pool}
+    if not any(scored.values()):
+        return list(pool)
+    return sorted(pool, key=lambda c: -scored[c])   # stable: 0-score ties keep pool order
+
+
+def _complete_to_count(items: str, pool: List[str], target: int, jd: str = "") -> List[str]:
     """Best-N selection for one skills line. Start from the model's items in its
     relevance order, but ANCHOR each first: a picked token is kept only if EVERY skill it
     asserts traces to THIS line's pool (`_anchored` -- a bare/'(conceptual)'-qualified
@@ -1181,11 +1369,12 @@ def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
     dropped BEFORE completion so it never reaches the page, enforcing the project's
     select-and-never-invent rule the way the Methods line already does; anchored merged
     forms like 'Gemini/OpenAI/Claude API' and '(conceptual)' qualifiers on real skills are
-    preserved verbatim. If fewer than `target` survive, append still-unused pool skills in
-    pool order (the least-relevant tail) until the line has min(target, len(pool)) items --
-    refilling any slot a dropped hallucination freed; then cap the count at `target`. No
-    char floor -- the printed-line cap (applied later) is the only size limit, so a
-    genuinely short list is never padded to fill the line."""
+    preserved verbatim. If fewer than `target` survive, append still-unused pool skills --
+    JD-relevant ones first (`_completion_order`), then the user's pool order -- until the
+    line has min(target, len(pool)) items, refilling any slot a dropped hallucination
+    freed; then cap the count at `target`. No char floor -- the printed-line cap (applied
+    later) is the only size limit, so a genuinely short list is never padded to fill the
+    line."""
     pool_norms = {ats._norm_skill(c) for c in pool}
     pool_norms.discard("")
     picked: List[str] = []
@@ -1211,7 +1400,7 @@ def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
 
         for p in picked:
             _mark(p)
-        for cand in pool:
+        for cand in _completion_order(pool, jd):
             if len(picked) >= target:
                 break
             if cand.lower() in present:
@@ -1223,17 +1412,20 @@ def _complete_to_count(items: str, pool: List[str], target: int) -> List[str]:
 
 
 def _cap_items(label: str, items: str) -> str:
-    """Keep whole comma-separated tokens while the rendered skills line (bold label +
-    items) fits ONE printed line by real glyph width (measure.skill_line_width) — never
-    cut mid-token, never wrap. The first token is always kept (a line is never emptied),
-    so a lone over-wide token still renders rather than vanishing. Tokenization is
-    parenthesis-aware (_split_skill_tokens) so a merged 'X (a, b, c)' token is kept or
-    dropped whole, never cut to an unclosed '...X (a'."""
+    """Keep whole comma-separated tokens, in order, that fit the rendered skills line (bold
+    label + items) on ONE printed line by real glyph width (measure.skill_line_width) —
+    never cut mid-token, never wrap. Best-fit: an over-wide token in the middle is SKIPPED,
+    not a hard stop, so a shorter token later in the relevance order still claims the
+    leftover space instead of the rest of the line being wasted. Kept tokens stay in their
+    incoming (relevance) order — skipping only drops, never reorders. The first token is
+    always kept (a line is never emptied), so a lone over-wide token still renders rather
+    than vanishing. Tokenization is parenthesis-aware (_split_skill_tokens) so a merged
+    'X (a, b, c)' token is kept or dropped whole, never cut to an unclosed '...X (a'."""
     toks = _split_skill_tokens(items)
     kept: List[str] = []
     for t in toks:
         if kept and measure.skill_line_width(label, ", ".join(kept + [t])) > measure.SKILL_LINE_CAPACITY:
-            break
+            continue
         kept.append(t)
     return ", ".join(kept)
 
@@ -1282,7 +1474,7 @@ Rules:
 
 Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}}"""
     try:
-        out = call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1)
+        out = as_dict(call(system, user, config.TIER_FLASH, json_out=True, temperature=0.1))
     except Exception:
         out = {}
     return _finalize_skill_lines(out, jd)

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -169,7 +170,8 @@ def extraction_dates_from_runs(paths: list[Path]) -> dict[str, str]:
     return id_date
 
 
-def add_extracted_date(df: pd.DataFrame, id_date: dict[str, str]) -> pd.DataFrame:
+def add_extracted_date(df: pd.DataFrame,
+                       id_date_provider: Callable[[], dict[str, str]]) -> pd.DataFrame:
     """Ensure an 'extracted_date' column (the day a job was scraped).
 
     Priority, highest first:
@@ -178,6 +180,14 @@ def add_extracted_date(df: pd.DataFrame, id_date: dict[str, str]) -> pd.DataFram
       3. the date portion of job_posted_date (scrape filter is 'Past 24 hours',
          so the posting date is within ~a day of extraction),
       4. blank.
+
+    `id_date_provider` is a ZERO-ARG callable returning the {id: day} map from the
+    per-run files. It is deliberately lazy: that map only ever fills rows with no
+    stored date (priority 2 sits *below* the master's own value), so when every
+    row already carries one we skip calling it. The provider walks + reads sibling
+    run folders that may live on Google Drive File Stream, where the walk can block
+    for minutes on a cold mount -- and load_files runs on the UI thread during
+    window construction, so paying for it needlessly froze the dashboard on launch.
     """
     if df.empty:
         return df
@@ -185,12 +195,18 @@ def add_extracted_date(df: pd.DataFrame, id_date: dict[str, str]) -> pd.DataFram
         posted = pd.to_datetime(df["job_posted_date"], errors="coerce").dt.strftime("%Y-%m-%d")
     else:
         posted = pd.Series([None] * len(df), index=df.index)
-    from_runs = df["job_posting_id"].astype(str).map(id_date)
     if "extracted_date" in df.columns:
         stored = df["extracted_date"].astype(str).str.strip()
         stored = stored.mask(stored.isin(["", "nan", "NaN", "NaT", "None"]))
     else:
         stored = pd.Series([None] * len(df), index=df.index)
+    # from_runs is a fallback for blank-stored rows only. No blanks -> the whole
+    # (possibly Drive-backed, minutes-long) per-run scan is pure waste; skip it.
+    if stored.isna().any():
+        id_date = id_date_provider() or {}
+        from_runs = df["job_posting_id"].astype(str).map(id_date)
+    else:
+        from_runs = pd.Series([None] * len(df), index=df.index)
     df["extracted_date"] = stored.fillna(from_runs).fillna(posted).fillna("")
     return df
 
@@ -220,7 +236,7 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
     removed = load_removed_jobs()  # user-deleted ids stay hidden even if Drive still has them
     if removed:
         combined = combined[~combined["job_posting_id"].astype(str).isin(removed)]
-    combined = add_extracted_date(combined, extraction_dates_from_runs(paths))
+    combined = add_extracted_date(combined, lambda: extraction_dates_from_runs(paths))
     # Display-friendly applicant count (Bright Data's job_num_applicants): used
     # to prioritize the apply window — fewer applicants = better odds.
     if "job_num_applicants" in combined.columns:

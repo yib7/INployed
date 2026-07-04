@@ -1,5 +1,4 @@
 import pandas as pd
-import importlib
 import pytest
 import scraper
 
@@ -19,10 +18,11 @@ def test_chunked_matches_full_load(tmp_path, monkeypatch):
     m = tmp_path / "master.csv"; existing.to_csv(m, index=False)
     monkeypatch.setattr(scraper, "MASTER_CSV", m)
     monkeypatch.setattr(scraper, "CHUNK", 2)  # force multi-chunk
-    scraper.append_to_master(new)
+    ret = scraper.append_to_master(new)
     got = pd.read_csv(m, dtype={"job_posting_id": str}).sort_values("job_posting_id").reset_index(drop=True)
     ref = _full_load_reference(existing.astype({"job_posting_id": str}), new).sort_values("job_posting_id").reset_index(drop=True)
     assert got["job_title"].tolist() == ref["job_title"].tolist()  # id 3 keeps existing "c"
+    assert ret == len(pd.read_csv(m))  # returned count matches the actual resulting file
 
 
 def test_new_only_column_unioned(tmp_path, monkeypatch):

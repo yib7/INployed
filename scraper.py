@@ -37,6 +37,8 @@ def require_credentials() -> None:
             "BRIGHT_DATA_DATASET_ID in your environment or a local .env file "
             "(see .env.example)."
         )
+CHUNK = 2000  # Chunked streaming row count for append_to_master (memory bounded)
+
 LIMIT_PER_INPUT = 100
 POLL_INTERVAL = 10
 MAX_WAIT_MINUTES = 30
@@ -333,31 +335,57 @@ def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:
 
 
 def append_to_master(df: pd.DataFrame) -> int:
-    if MASTER_CSV.exists():
-        try:
-            existing = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str})
-        except (OSError, ValueError, pd.errors.ParserError) as e:
-            # NEVER treat an unreadable-but-existing master as empty -- that would
-            # fabricate a fresh master, quietly shrinking the exclude set and
-            # re-billing already-collected jobs. Abort loudly instead: this run's
-            # fresh rows are still safe in the run-dir CSV, so a `--snapshot`
-            # rerun (once the master is fixed/restored) recovers cleanly.
-            raise OSError(
-                f"cannot update {MASTER_CSV.name}: existing master is unreadable ({e}). "
-                f"This run's rows are still saved to the run-dir CSV; fix or restore "
-                f"{MASTER_CSV} and rerun with --snapshot to recover them."
-            ) from e
-        combined = pd.concat([existing, df], ignore_index=True)
-    else:
-        combined = df
-    if "job_posting_id" in combined.columns:
-        # Cast before deduping: int64 ids from a re-read master never match the
-        # fresh run's string ids, silently keeping duplicates.
-        combined["job_posting_id"] = combined["job_posting_id"].astype(str)
-        combined = combined.drop_duplicates(subset=["job_posting_id"], keep="first")
-    combined = drop_blocklisted_companies(combined)
-    _atomic_to_csv(combined, MASTER_CSV)
-    return len(combined)
+    new = df.copy()
+    if "job_posting_id" in new.columns:
+        new["job_posting_id"] = new["job_posting_id"].astype(str)
+        new = new.drop_duplicates(subset=["job_posting_id"], keep="first")
+    new = drop_blocklisted_companies(new)
+
+    if not MASTER_CSV.exists():
+        _atomic_to_csv(new, MASTER_CSV)
+        return len(new)
+
+    # Validate readability up front so a corrupt-but-present master still raises
+    # loudly (never silently treated as empty — same contract as before). The
+    # probe's full parse also gives us existing_ids for free, before the tempfile
+    # stream starts and before blocklist filtering (so a new row colliding with an
+    # existing-but-about-to-be-blocklisted row is still correctly excluded below).
+    try:
+        header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
+        probe = pd.read_csv(MASTER_CSV, usecols=lambda c: c == "job_posting_id",
+                            dtype=str)
+    except (OSError, ValueError, pd.errors.ParserError) as e:
+        raise OSError(
+            f"cannot update {MASTER_CSV.name}: existing master is unreadable ({e}). "
+            f"This run's rows are still saved to the run-dir CSV; fix or restore "
+            f"{MASTER_CSV} and rerun with --snapshot to recover them."
+        ) from e
+    existing_ids: set[str] = set(probe["job_posting_id"].astype(str)) if "job_posting_id" in probe.columns else set()
+    del probe  # release memory before streaming
+
+    unified = header + [c for c in new.columns if c not in header]  # column union, order preserved
+    fd, tmp = tempfile.mkstemp(prefix=MASTER_CSV.stem + ".", suffix=".tmp",
+                               dir=str(MASTER_CSV.parent)); os.close(fd)
+    total = 0; wrote_header = False
+    try:
+        for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
+            chunk = drop_blocklisted_companies(chunk)             # retroactive re-filter, preserved
+            chunk = chunk.reindex(columns=unified)
+            chunk.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
+            wrote_header = True; total += len(chunk)
+        if "job_posting_id" in new.columns:
+            truly_new = new[~new["job_posting_id"].isin(existing_ids)]  # keep="first": existing wins
+        else:
+            truly_new = new
+        truly_new = truly_new.reindex(columns=unified)
+        truly_new.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
+        total += len(truly_new)
+        os.replace(tmp, MASTER_CSV)
+    finally:
+        if os.path.exists(tmp):
+            try: os.unlink(tmp)
+            except OSError: pass
+    return total
 
 
 def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> list[dict]:

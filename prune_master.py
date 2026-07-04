@@ -8,7 +8,10 @@ resume-tailor fallback). Chunked so peak memory stays low on a large master.
 Standalone (stdlib + pandas only) — copied to the VM next to scraper.py.
 """
 from __future__ import annotations
-import argparse, os, sys, tempfile
+import argparse
+import os
+import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pandas as pd
@@ -42,8 +45,10 @@ def prune(master_csv: Path, *, retention_days=RETENTION_DAYS, now=None,
         return {"stripped": 0, "parked": 0, "rows": 0}
     cutoff = _cutoff_date(retention_days, now)
     fd, tmp = tempfile.mkstemp(prefix=master_csv.stem + ".", suffix=".tmp",
-                               dir=str(master_csv.parent)); os.close(fd)
-    stripped = parked = rows = 0; wrote_header = False
+                               dir=str(master_csv.parent))
+    os.close(fd)
+    stripped = parked = rows = 0
+    wrote_header = False
     try:
         for chunk in pd.read_csv(master_csv, dtype=str, keep_default_na=False,
                                  chunksize=CHUNK):
@@ -68,8 +73,10 @@ def prune(master_csv: Path, *, retention_days=RETENTION_DAYS, now=None,
             os.replace(tmp, master_csv)
     finally:
         if os.path.exists(tmp):
-            try: os.unlink(tmp)
-            except OSError: pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     return {"stripped": stripped, "parked": parked, "rows": rows}
 
 def main(argv=None) -> int:

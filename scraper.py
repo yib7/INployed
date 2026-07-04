@@ -365,14 +365,17 @@ def append_to_master(df: pd.DataFrame) -> int:
 
     unified = header + [c for c in new.columns if c not in header]  # column union, order preserved
     fd, tmp = tempfile.mkstemp(prefix=MASTER_CSV.stem + ".", suffix=".tmp",
-                               dir=str(MASTER_CSV.parent)); os.close(fd)
-    total = 0; wrote_header = False
+                               dir=str(MASTER_CSV.parent))
+    os.close(fd)
+    total = 0
+    wrote_header = False
     try:
         for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
             chunk = drop_blocklisted_companies(chunk)             # retroactive re-filter, preserved
             chunk = chunk.reindex(columns=unified)
             chunk.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
-            wrote_header = True; total += len(chunk)
+            wrote_header = True
+            total += len(chunk)
         if "job_posting_id" in new.columns:
             truly_new = new[~new["job_posting_id"].isin(existing_ids)]  # keep="first": existing wins
         else:
@@ -383,8 +386,10 @@ def append_to_master(df: pd.DataFrame) -> int:
         os.replace(tmp, MASTER_CSV)
     finally:
         if os.path.exists(tmp):
-            try: os.unlink(tmp)
-            except OSError: pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     return total
 
 

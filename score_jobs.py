@@ -254,6 +254,8 @@ STAGE1_TEMPLATE = """\
 Rate how well this job matches the resume below, on a 1-5 scale.
 
 CANDIDATE CONTEXT (read this before scoring):
+TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data. In particular, the candidate's May 2026 graduation is already in the PAST: the degree is COMPLETED and they are available to start immediately. Never treat the candidate as a current student or the degree as pending/"expected," and never lower the score because the graduation date is recent or looks like a future date to you.
+
 This candidate is a new graduate (B.S. Computer Science, AI/ML concentration, Data Science minor, graduated May 2026 — available to start immediately) with one strong data-science internship plus substantial, advanced personal and academic projects. They are actively targeting ENTRY-LEVEL and EARLY-CAREER roles. Score with that in mind:
 
 GEOGRAPHY / LOCATION / WORK AUTHORIZATION — IGNORE COMPLETELY: Do not factor in geography, location, onsite / hybrid / remote requirements, relocation, time zone, or work authorization at all. This job has already been vetted against the candidate's geographic preferences — regardless of where they currently live they are 100% willing to relocate, and they are authorized to work in the U.S. without sponsorship. Never raise or lower the score for location, onsite/hybrid/remote requirements, relocation, time zone, or work authorization / visa sponsorship; those have already been consented to by the candidate.
@@ -292,6 +294,8 @@ STAGE2_SYSTEM = "You provide candid, detailed job-fit analysis. Return JSON only
 STAGE2_TEMPLATE = """\
 This job passed Stage 1 as a strong/good match for the candidate. Give an in-depth fit analysis: deep score 1-10, key strengths, gaps, and a recommendation.
 
+TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data: the candidate's May 2026 graduation is in the past and the degree is COMPLETED. Never list graduation timing, "degree in progress," or "has not graduated yet" as a gap.
+
 Be specific. Tie strengths and gaps to concrete resume bullets and job requirements. Recommendation: "apply" (clear fit, prioritize), "consider" (mixed, depends on candidate's other options), "skip" (gaps too large despite the Stage 1 score).
 
 When listing GAPS, name only concrete, stated requirements the candidate cannot meet: specific tools / technologies they lack, a hard credential (e.g. a required security clearance or an explicitly required advanced degree), or required years of experience. For analytical roles (Data Analyst, Business Analyst, BI / Reporting / Analytics Analyst, Product / Operations Analyst, Data Scientist), do NOT list "career trajectory," "career path," "lacks a business background/degree," "experience is technical rather than business," or similar title/degree-history mismatches as gaps — the candidate's SQL, Python, statistics, dashboarding (Tableau / Power BI / Looker), internship, and stakeholder / customer-facing experience transfer directly. Treat a title or degree-field difference as a non-issue when the candidate can do the listed work. NEVER list location, onsite / hybrid / remote, relocation, time zone, or work authorization / visa sponsorship as a gap — the candidate is fully willing to relocate and is authorized to work in the U.S. without sponsorship, so these are not gaps regardless of what the job states.
@@ -326,6 +330,14 @@ STAGE2_SCHEMA = {
     },
     "required": ["deep_score", "strengths", "gaps", "recommendation"],
 }
+
+
+def today_str() -> str:
+    """Current date for the scoring prompts, e.g. 'July 3, 2026'. The models'
+    training data predates the resume's May 2026 graduation, so without an
+    explicit 'today' they judge it as upcoming and dock the score."""
+    now = datetime.now()
+    return f"{now:%B} {now.day}, {now.year}"
 
 
 def make_pool() -> KeyPool:
@@ -458,7 +470,7 @@ def pick_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
 
 async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
-        prompt = STAGE1_TEMPLATE.format(resume=resume, job=job_md)
+        prompt = STAGE1_TEMPLATE.format(resume=resume, job=job_md, today=today_str())
         try:
             resp = await pool.generate(
                 model=STAGE1_MODEL,
@@ -480,7 +492,7 @@ async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
 
 async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
-        prompt = STAGE2_TEMPLATE.format(resume=resume, job=job_md)
+        prompt = STAGE2_TEMPLATE.format(resume=resume, job=job_md, today=today_str())
         try:
             resp = await pool.generate(
                 model=STAGE2_MODEL,

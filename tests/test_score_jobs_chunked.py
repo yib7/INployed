@@ -66,6 +66,48 @@ def test_chunked_matches_full_load_reference(tmp_path, monkeypatch):
             assert same, (c, g, r)
 
 
+def test_bool_filter_column_into_float64_master_does_not_raise(tmp_path, monkeypatch):
+    """Regression: the master's boolean filter columns (filter_*, filtered_out)
+    read back as float64 for a chunk of older rows that never carried them (the
+    column is all-empty in that chunk), while a fresh scored frame carries them
+    as real bool -- exactly what add_filter_columns produces. On pandas >= 3
+    DataFrame.update refuses to write bool into a float64 block, and the numeric
+    guard missed it because is_numeric_dtype(bool) is True. update_master_scores
+    must widen those columns and complete without raising, landing the values.
+
+    This is the production crash that stalled the whole VM pipeline: score_jobs.py
+    died here (before the master + run-file uploads), so nothing synced to Drive.
+    """
+    master_df = pd.DataFrame({
+        "job_posting_id": ["1", "2", "3"],
+        "job_title": ["a", "b", "c"],
+        "filtered_out": [None, None, None],       # all-empty -> reads back float64
+        "filter_clearance": [None, None, None],
+    })
+    m = tmp_path / "linkedin_jobs_master.csv"
+    master_df.to_csv(m, index=False)
+    monkeypatch.setattr(score_jobs, "MASTER_CSV", m)
+    monkeypatch.setattr(score_jobs, "CHUNK", 2)  # force multi-chunk
+
+    scored = pd.DataFrame({
+        "job_posting_id": ["1", "2"],
+        "filtered_out": [True, False],
+        "filter_clearance": [False, True],
+    })
+    assert scored["filtered_out"].dtype == bool  # as add_filter_columns produces
+
+    score_jobs.update_master_scores(scored)  # must NOT raise TypeError
+
+    out = pd.read_csv(m, dtype={"job_posting_id": str}).set_index("job_posting_id")
+    # scored ids landed (bool serialized through the object-widened column);
+    # compare via str() so it holds whether read-back infers bool or "True"/"False".
+    assert str(out.loc["1", "filtered_out"]) == "True"
+    assert str(out.loc["2", "filtered_out"]) == "False"
+    assert str(out.loc["1", "filter_clearance"]) == "False"
+    assert str(out.loc["2", "filter_clearance"]) == "True"
+    assert pd.isna(out.loc["3", "filtered_out"])  # id not in scored -> untouched
+
+
 def test_rows_absent_from_scored_are_unchanged(tmp_path, monkeypatch):
     """Contract 2: master rows whose id is not in `scored` keep their existing
     values untouched."""

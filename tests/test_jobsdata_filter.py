@@ -51,6 +51,53 @@ def test_min_score_filter():
     assert list(out["company_name"]) == ["Acme"]   # only the score-5 row
 
 
+# --- three-state Easy Apply filter: All / Easy Apply / Not Easy Apply ---
+
+def _easy_df():
+    return pd.DataFrame([
+        {"job_title": "A", "company_name": "Acme", "url": "u1", "is_easy_apply": "True"},
+        {"job_title": "B", "company_name": "Globex", "url": "u2", "is_easy_apply": "false"},
+        {"job_title": "C", "company_name": "Initech", "url": "u3", "is_easy_apply": None},
+        {"job_title": "D", "company_name": "Umbrella", "url": "u4", "is_easy_apply": ""},
+        {"job_title": "E", "company_name": "Hooli", "url": "u5", "is_easy_apply": "1"},
+    ])
+
+
+def _easy(df, easy):
+    return jobsdata.filter_and_sort(df, "", "Any", "All", "All", "All", easy, None)
+
+
+def test_easy_all_keeps_every_row():
+    assert len(_easy(_easy_df(), "All")) == 5
+
+
+def test_easy_apply_keeps_only_truthy():
+    out = _easy(_easy_df(), "Easy Apply")
+    assert sorted(out["job_title"]) == ["A", "E"]
+
+
+def test_not_easy_apply_keeps_the_complement():
+    # NaN/blank is_easy_apply counts as NOT easy apply.
+    out = _easy(_easy_df(), "Not Easy Apply")
+    assert sorted(out["job_title"]) == ["B", "C", "D"]
+
+
+def test_easy_nan_never_lands_in_easy_apply():
+    easy = set(_easy(_easy_df(), "Easy Apply")["job_title"])
+    assert "C" not in easy and "D" not in easy
+
+
+def test_easy_legacy_bools_still_work():
+    # True -> "Easy Apply", False -> "All" (pre-combo callers).
+    assert sorted(_easy(_easy_df(), True)["job_title"]) == ["A", "E"]
+    assert len(_easy(_easy_df(), False)) == 5
+
+
+def test_easy_filter_without_column_is_a_noop():
+    out = _easy(_df(), "Easy Apply")     # _df has no is_easy_apply column
+    assert len(out) == 2
+
+
 # --- live_resume_ids: the blue "tailored" tint follows on-disk folder existence ---
 
 def test_live_resume_ids_keeps_only_existing_folders(tmp_path):

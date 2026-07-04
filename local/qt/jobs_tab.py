@@ -87,8 +87,9 @@ class JobsTab(QtWidgets.QWidget):
         self.reco = QtWidgets.QComboBox()
         self.reco.addItems(["All", "apply", "consider", "skip"])
         self.reco.currentIndexChanged.connect(self._apply_filters)
-        self.easy = QtWidgets.QCheckBox("Easy Apply")
-        self.easy.stateChanged.connect(self._apply_filters)
+        self.easy = QtWidgets.QComboBox()
+        self.easy.addItems(["All", "Easy Apply", "Not Easy Apply"])
+        self.easy.currentIndexChanged.connect(self._apply_filters)
         self._build_filters_popup()
         bar.addWidget(self._filters_btn)
 
@@ -152,7 +153,7 @@ class JobsTab(QtWidgets.QWidget):
         self._filters_form.addRow("Day:", self.day)
         self._filters_form.addRow("Time:", self.time)
         self._filters_form.addRow("Reco:", self.reco)
-        self._filters_form.addRow("", self.easy)
+        self._filters_form.addRow("Easy Apply:", self.easy)
         self._filters_popup.hide()
 
     def add_filter_row(self, widget, *, label: str = "", is_active=None) -> None:
@@ -180,7 +181,7 @@ class JobsTab(QtWidgets.QWidget):
             int(self.day.currentText() != "All") + \
             int(self.time.currentText() != "All") + \
             int(self.reco.currentText() != "All") + \
-            int(self.easy.isChecked())
+            int(self.easy.currentText() != "All")
         n += sum(1 for predicate in self._extra_filter_active if predicate())
         return n
 
@@ -235,7 +236,7 @@ class JobsTab(QtWidgets.QWidget):
         view = jobsdata.filter_and_sort(
             self._base, self.search.text().strip().lower(), self.minscore.currentText(),
             self.day.currentText(), self.time.currentText(), self.reco.currentText(),
-            self.easy.isChecked(), col)
+            self.easy.currentText(), col)
         self.model.set_dataframe(view, self._resume_ids)
         total = 0 if self._base is None or self._base.empty else len(self._base)
         self.count_label.setText(f"{len(view)} of {total} shown")
@@ -244,9 +245,9 @@ class JobsTab(QtWidgets.QWidget):
 
     def reset_filters(self) -> None:
         self.search.clear()
-        for cb in (self.search_col, self.minscore, self.day, self.time, self.reco):
+        for cb in (self.search_col, self.minscore, self.day, self.time,
+                   self.reco, self.easy):
             cb.setCurrentIndex(0)
-        self.easy.setChecked(False)
         self._apply_filters()
 
     def _refresh_day_combo(self) -> None:

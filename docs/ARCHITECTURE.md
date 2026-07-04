@@ -79,10 +79,15 @@ from Bright Data (`scraper.py`), scores them via Gemini (`score_jobs.py`), and f
 descriptions to bound memory growth (`prune_master.py`). All four master-CSV passes — `append_to_master`,
 `update_master_scores`, `rescore_master_failures`, and the merge itself — are now **bounded-memory
 streaming operations** instead of full-DataFrame loads: each pass chunks the master at 2000 rows,
-probes the id column up-front to validate readability and collect existing ids, streams through
-a temp file, and atomically swaps it in place on success. Peak memory per pass is one chunk plus
-small aux structures, staying flat as the master grows (the fix for the VM's previous OOM kills
-on a ~92 MB master).
+skipping full-DataFrame reads. `append_to_master` and `merge_incoming` probe the id column up-front
+to validate readability and collect existing ids, then stream master chunks through a same-directory
+temp file, atomically swapping it in place on success. `update_master_scores` validates the header
+up-front, then streams chunks through a temp file applying score updates, with atomic swap on success;
+a mid-stream parse failure discards the temp file and leaves the master untouched. `rescore_master_failures`
+is a read-only two-pass: a light `usecols` read skips the two large text columns (~90 MB combined) to
+identify rescore candidates, then loads at most the rescore cap in full rows by id; any writing happens
+through `update_master_scores`. Peak memory per pass is one chunk plus small aux structures,
+staying flat as the master grows (the fix for the VM's previous OOM kills on a ~92 MB master).
 
 **Retention:** After scoring, `prune_master.py` blanks the `job_description_formatted` column for jobs
 older than 3 days (RETENTION_DAYS, CLI-overridable via `--days`), anchored on `extracted_date` with fallback

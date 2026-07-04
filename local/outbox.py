@@ -125,3 +125,52 @@ def pending_files(outbox_dir: Path | None = None) -> list[Path]:
     if not ob.is_dir():
         return []
     return sorted([*ob.glob("local_rows_*.csv.gz"), *ob.glob("local_stats_*.csv")])
+
+
+def push_outbox(target, outbox_dir: Path | None = None, log=None,
+                runner=None) -> tuple[int, int]:
+    """Best-effort scp of every pending outbox file to the VM's ~/incoming/.
+
+    A file is deleted locally ONLY when its scp exits 0; anything else (unconfigured
+    VM, nonzero exit, runner exception) leaves it queued for the next scrape/manual
+    add. Returns (pushed, kept). Never raises — the caller is mid-scrape/add and a
+    sync failure must not surface as a scrape failure.
+    """
+    import vm_sync
+
+    def note(msg: str) -> None:
+        if log is not None:
+            try:
+                log.write(msg + "\n")
+                log.flush()
+            except Exception:  # noqa: BLE001 - logging must not break the push
+                pass
+
+    run = runner if runner is not None else vm_sync.run_cmd
+    files = pending_files(outbox_dir)
+    if not files:
+        return (0, 0)
+    if target is None or not target.configured():
+        note(f"outbox push: no VM configured — keeping {len(files)} queued file(s)")
+        return (0, len(files))
+    pushed = kept = 0
+    for f in files:
+        try:
+            res = run(target.push_outbox_file_cmd(str(f)))
+            rc = getattr(res, "returncode", 1)
+        except Exception as e:  # noqa: BLE001 - keep the file, try the rest
+            note(f"outbox push: {f.name} ERROR ({e}) — kept for retry")
+            kept += 1
+            continue
+        if rc == 0:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+            pushed += 1
+            note(f"outbox push: {f.name} OK")
+        else:
+            kept += 1
+            err = (getattr(res, "stderr", "") or getattr(res, "stdout", "")).strip()
+            note(f"outbox push: {f.name} FAILED (exit {rc}) {err} — kept for retry")
+    return (pushed, kept)

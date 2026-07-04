@@ -34,6 +34,10 @@ TARGET_REMOTE_FILE = {
 # this file into load_exclude_ids() (same dir convention as the config files above).
 EXCLUDE_REMOTE_FILE = "external_exclude_ids.json"
 
+# Remote spool dir for outbox files pushed from local machines; merge_incoming.py
+# (run by run_scraper.sh before each scrape) drains it into the VM master.
+INCOMING_REMOTE_DIR = "incoming"
+
 # VM connection identifiers (all NON-secret), read from the .env via settings.
 VM_KEYS = ("VM_GCLOUD_PATH", "VM_INSTANCE", "VM_ZONE", "VM_PROJECT", "VM_USER",
            "VM_REMOTE_DIR")
@@ -118,6 +122,12 @@ class VMTarget:
         """scp argv that uploads the seen/exclude id file to the VM, where the
         scraper unions it into load_exclude_ids()."""
         return self.build_scp_cmd(local_path, EXCLUDE_REMOTE_FILE)
+
+    def push_outbox_file_cmd(self, local_path: str) -> list[str]:
+        """scp argv that spools one local outbox file into the VM's ~/incoming/,
+        where merge_incoming.py folds it into the master before the next scrape."""
+        return self.build_scp_cmd(local_path,
+                                  f"{INCOMING_REMOTE_DIR}/{Path(local_path).name}")
 
 
 def _norm_value(field, value):

@@ -132,3 +132,76 @@ def test_pending_files_sorted_and_scoped(tmp_path):
 
 def test_pending_files_missing_dir_is_empty(tmp_path):
     assert outbox.pending_files(outbox_dir=tmp_path / "nope") == []
+
+
+# ---- push_outbox ------------------------------------------------------------
+
+class _Res:
+    def __init__(self, rc):
+        self.returncode = rc
+        self.stdout = ""
+        self.stderr = "boom" if rc else ""
+
+
+def _vm_target():
+    import vm_sync
+    return vm_sync.VMTarget(gcloud="gcloud", instance="scraper-vm", zone="z",
+                            project="p", user="yib", remote_dir="~")
+
+
+def _queue(ob: Path, names: list[str]) -> None:
+    ob.mkdir(parents=True, exist_ok=True)
+    for n in names:
+        if n.endswith(".gz"):
+            (ob / n).write_bytes(gzip.compress(b"job_posting_id\n1\n"))
+        else:
+            (ob / n).write_text("timestamp,input_csv\n")
+
+
+def test_push_outbox_deletes_only_on_success(tmp_path):
+    ob = tmp_path / "ob"
+    _queue(ob, ["local_rows_1.csv.gz", "local_stats_2.csv"])
+    calls = []
+
+    def runner(cmd):
+        calls.append(cmd)
+        # First file fails, second succeeds.
+        return _Res(1 if "local_rows_1" in " ".join(cmd) else 0)
+
+    pushed, kept = outbox.push_outbox(_vm_target(), outbox_dir=ob, runner=runner)
+    assert (pushed, kept) == (1, 1)
+    assert [p.name for p in outbox.pending_files(outbox_dir=ob)] == ["local_rows_1.csv.gz"]
+    assert len(calls) == 2
+
+
+def test_push_outbox_unconfigured_keeps_everything(tmp_path):
+    ob = tmp_path / "ob"
+    _queue(ob, ["local_rows_1.csv.gz"])
+    import vm_sync
+    pushed, kept = outbox.push_outbox(
+        vm_sync.VMTarget(instance="", zone="", user=""), outbox_dir=ob,
+        runner=lambda cmd: (_ for _ in ()).throw(AssertionError("must not run")))
+    assert (pushed, kept) == (0, 1)
+    assert len(outbox.pending_files(outbox_dir=ob)) == 1
+
+
+def test_push_outbox_runner_exception_keeps_file_and_continues(tmp_path):
+    ob = tmp_path / "ob"
+    _queue(ob, ["local_rows_1.csv.gz", "local_stats_2.csv"])
+
+    def runner(cmd):
+        if "local_rows_1" in " ".join(cmd):
+            raise RuntimeError("gcloud exploded")
+        return _Res(0)
+
+    pushed, kept = outbox.push_outbox(_vm_target(), outbox_dir=ob, runner=runner)
+    assert (pushed, kept) == (1, 1)
+
+
+def test_push_outbox_logs(tmp_path):
+    import io
+    ob = tmp_path / "ob"
+    _queue(ob, ["local_rows_1.csv.gz"])
+    log = io.StringIO()
+    outbox.push_outbox(_vm_target(), outbox_dir=ob, runner=lambda cmd: _Res(0), log=log)
+    assert "local_rows_1.csv.gz" in log.getvalue()

@@ -281,7 +281,9 @@ def test_seen_undo(qtbot, monkeypatch):
 def test_on_fs_change_schedules_debounced_reload(qtbot, monkeypatch):
     w = _win(qtbot)
     called = []
-    monkeypatch.setattr(w, "reload_data", lambda: called.append(True))
+    # Background refreshes go through reload_data_async so a slow Drive mount can't
+    # freeze the open window (see qt.workers).
+    monkeypatch.setattr(w, "reload_data_async", lambda: called.append(True))
     w._on_fs_change("whatever")
     assert w._reload_timer.isActive()   # a burst of events coalesces into one reload
     w._auto_reload()
@@ -301,7 +303,7 @@ def test_poll_reloads_only_when_sources_change(qtbot, monkeypatch):
     # only when the on-disk signature drifts, so there's no need for a Refresh button.
     w = _win(qtbot)
     called = []
-    monkeypatch.setattr(w, "reload_data", lambda: called.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: called.append(True))
     w._poll_for_changes()
     assert not called                 # signature unchanged -> no reload
     w._source_sig = ("stale",)        # a source changed on disk

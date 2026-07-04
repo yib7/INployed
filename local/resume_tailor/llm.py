@@ -61,6 +61,27 @@ def _extract_json(text: str) -> Any:
         raise LLMError(f"Model did not return valid JSON. Got:\n{text[:500]}")
 
 
+def as_dict(out: Any, key: str = "") -> dict:
+    """Coerce a json_out response to the OBJECT shape its prompt demanded.
+
+    Gemini occasionally roots the answer at an ARRAY: either the object wrapped
+    in a one-element array ([{...}]) or the bare array that belonged under `key`
+    (the {"key": [...]} wrapper dropped). Both recover losslessly here. Any other
+    root coerces to {} so the caller degrades to its no-result path — one
+    bad-shape response used to kill a whole tailor job with
+    "'list' object has no attribute 'get'"."""
+    if isinstance(out, dict):
+        return out
+    if isinstance(out, list):
+        dicts = [i for i in out if isinstance(i, dict)]
+        if not dicts:
+            return {}
+        if key and key not in dicts[0]:
+            return {key: dicts}          # bare array: restore the dropped wrapper
+        return dicts[0]                  # [{...}]: unwrap the object
+    return {}
+
+
 def call(
     system: str,
     user: str,

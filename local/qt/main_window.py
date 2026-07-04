@@ -114,6 +114,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.followup_days = load_followup_days()
         self.hidden_columns = load_hidden_columns()
         self.df = pd.DataFrame()
+        self.df_high = pd.DataFrame()
         self.id_to_path: dict[str, Path] = {}
         self._row_by_id: dict[str, int] = {}
         self._url_by_id: dict[str, str] = {}
@@ -123,12 +124,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._seen_undo: list[list[str]] = []
         self._ui_scale_pct = jobsdata.load_ui_scale_pct()
         self._restart_requested = False  # app.main() relaunches when this is set
+        # Async-load state: the first load (and every background refresh) runs off
+        # the UI thread so a slow Google Drive mount can't freeze the window.
+        # `_loading` guards against overlapping workers; `_reload_pending` remembers
+        # a request that arrived mid-load so it runs once the current one finishes.
+        self._loading = False
+        self._reload_pending = False
         self.tailor_progress.connect(self._set_status)
 
         self._build()
-        self.reload_data()
         self._setup_fs_watcher()
         self._apply_preview_visibility()
+        # Data is loaded via start()/reload_data_async AFTER the window is shown, so
+        # construction never blocks on the (possibly Drive-backed) source files.
 
     # ---- construction --------------------------------------------------------
 
@@ -398,9 +406,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- data ----------------------------------------------------------------
 
-    def reload_data(self) -> None:
+    def start(self) -> None:
+        """Kick off the first data load. Call this AFTER showing the window so it
+        paints immediately; the load itself then runs off the UI thread."""
+        self.reload_data_async()
+
+    def _load_frames(self):
+        """The blocking half of a reload, safe to run OFF the UI thread: read and
+        merge the source files and drop blocklisted rows. Touches neither Qt nor the
+        SQLite registry (both thread-affine) — those wait for _apply_frames."""
         df, id_to_path = load_files(self.csv_paths)
         df = drop_blocklisted(df, load_local_blocklist(self.csv_paths))
+        return df, id_to_path
+
+    def _apply_frames(self, loaded) -> None:
+        """The UI-thread half of a reload: overlay the seen registry, populate the
+        tabs, refresh tracker/stats/apply, and re-arm the watcher."""
+        df, id_to_path = loaded
         self.id_to_path = id_to_path
         if not df.empty:
             if "is_seen" not in df.columns:
@@ -424,6 +446,44 @@ class MainWindow(QtWidgets.QMainWindow):
         # auto-refresh watcher pointed at the current files. No-op before setup.
         if getattr(self, "_fs_watcher", None) is not None:
             self._rearm_watcher()
+
+    def reload_data(self) -> None:
+        """Synchronous load + apply. Kept for tests and for the post-action
+        refreshes (scrape / manual-add / tailor) that already run after a worker
+        finishes; startup and the background watcher/poll use reload_data_async."""
+        self._apply_frames(self._load_frames())
+
+    def reload_data_async(self) -> None:
+        """Load off the UI thread, then apply on it — so a cold/slow source mount
+        keeps the window responsive instead of freezing it. Overlapping calls
+        coalesce into a single trailing reload."""
+        if self._loading:
+            self._reload_pending = True
+            return
+        # Nothing on disk to read yet → apply synchronously (instant, empty) rather
+        # than spin up a worker; this also keeps the test suite thread-free.
+        if not any(Path(p).exists() for p in self.csv_paths):
+            self._apply_frames(self._load_frames())
+            return
+        self._loading = True
+        self._reload_pending = False
+        self._set_status("Loading jobs …")
+        workers.run_async(self, self._load_frames,
+                          on_done=self._on_frames_loaded,
+                          on_error=self._on_load_error)
+
+    def _on_frames_loaded(self, loaded) -> None:
+        self._loading = False
+        self._apply_frames(loaded)
+        if self._reload_pending:
+            self.reload_data_async()
+
+    def _on_load_error(self, exc: BaseException) -> None:
+        # A load failure must never kill the window; surface it and stay usable.
+        self._loading = False
+        self._set_status(f"Could not load jobs: {exc}")
+        if self._reload_pending:
+            self.reload_data_async()
 
     def _refresh_tracker(self) -> None:
         rows = self.registry.status_rows()
@@ -529,13 +589,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _poll_for_changes(self) -> None:
         if self._current_sig() != self._source_sig:
-            self.reload_data()  # re-snapshots the signature via _rearm_watcher
+            self.reload_data_async()  # re-snapshots the signature via _rearm_watcher
 
     def _on_fs_change(self, _path: str) -> None:
         self._reload_timer.start()  # coalesce a flurry of events into one reload
 
     def _auto_reload(self) -> None:
-        self.reload_data()
+        self.reload_data_async()
 
     # ---- row helpers ---------------------------------------------------------
 

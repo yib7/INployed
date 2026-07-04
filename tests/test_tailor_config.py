@@ -513,6 +513,20 @@ def test_fill_underfull_best_effort_on_llm_failure(synthetic_master, monkeypatch
     assert sel["projects"][0]["groups"] == [["p2a"]]
 
 
+def test_fill_underfull_never_fatal_on_array_root(synthetic_master, monkeypatch):
+    # The model rooted its answer at an ARRAY of junk instead of {"bullets": [...]}.
+    # fill is advisory: the bad shape must degrade to "unchanged", never raise
+    # ('list' object has no attribute 'get' used to kill the whole tailor job).
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    monkeypatch.setattr(compose, "call", lambda *a, **k: ["junk", 42])
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+    bullets = {"p2a": "Built an app."}
+    out = compose.fill_underfull("jd", "Engineer", sel, bullets)
+    assert out == {"p2a": "Built an app."}
+    assert sel["projects"][0]["groups"] == [["p2a"]]
+
+
 def test_fill_then_trim_keeps_within_line_target(synthetic_master, monkeypatch):
     # An overshoot from the fill pass is trimmed back to the bullet's line target.
     monkeypatch.setattr(config, "_config_json", lambda: {})

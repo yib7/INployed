@@ -57,6 +57,28 @@ def test_stage2_template_excludes_location_and_workauth_gaps():
         assert kw in t, kw
 
 
+def test_templates_anchor_current_date():
+    """Both prompts must carry a {today} placeholder plus wording that pins all
+    resume/JD dates to it: the models' training data predates the candidate's
+    May 2026 graduation, so without an explicit current date they read it as
+    upcoming ("hasn't graduated yet") and dock the score."""
+    for tmpl in (sj.STAGE1_TEMPLATE, sj.STAGE2_TEMPLATE):
+        t = tmpl.lower()
+        assert "{today}" in tmpl
+        assert "today's date" in t
+        assert "training data" in t
+
+
+def test_score_prompts_include_todays_date():
+    """The prompt actually sent to the model must contain the real current date."""
+    pool = FakePool({})
+    asyncio.run(sj.score_stage1(pool, asyncio.Semaphore(1), "resume", "J1", "jd"))
+    asyncio.run(sj.score_stage2(pool, asyncio.Semaphore(1), "resume", "J2", "jd"))
+    assert len(pool.calls) == 2
+    for _, contents in pool.calls:
+        assert sj.today_str() in contents
+
+
 def test_score_stage1_success():
     pool = FakePool({"JD-TEXT": 5})
     out = asyncio.run(sj.score_stage1(pool, asyncio.Semaphore(1), "resume", "J1", "JD-TEXT here"))

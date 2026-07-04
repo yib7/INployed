@@ -86,6 +86,36 @@ _CLAUSE_INTROS = frozenset((
     "which", "and", "or", "with", "for", "of", "from",
 ))
 
+# Plain prepositions get a NARROWER rule than _CLAUSE_INTROS: a cut landing inside
+# a prepositional phrase strands a modifier the stopword check can't see
+# ('...linear regressions on categorical.'), but a preposition can also head a
+# tail that reads complete ('for over 40,000+ users', 'among the top 95%',
+# 'on AWS') which must survive. _prep_fragment tells the two apart.
+_PREP_INTROS = frozenset((
+    "on", "in", "at", "into", "onto", "upon", "over", "under", "across",
+    "within", "between", "during", "against", "through", "toward", "towards",
+    "among", "without", "per", "about", "like", "than", "versus",
+))
+
+
+def _prep_fragment(words: list) -> int:
+    """How many trailing words form an ORPHANED prepositional fragment:
+    '<prep> <word>' or '<prep> <article> <word>' at the very end, where the final
+    word is a bare lowercase modifier (no digit, no capital). A digit-bearing or
+    capitalized head ('among the top 95%', 'over 40,000+ users', 'on AWS') reads
+    complete and stays. Returns 0 when the tail is fine."""
+    if len(words) < 2:
+        return 0
+    last = words[-1].strip(",;:")
+    if not last or not last.islower() or any(ch.isdigit() for ch in last):
+        return 0
+    if words[-2].lower().strip(",;:") in _PREP_INTROS:
+        return 2
+    if (len(words) >= 3 and words[-2].lower() in ("a", "an", "the")
+            and words[-3].lower().strip(",;:") in _PREP_INTROS):
+        return 3
+    return 0
+
 
 # A trailing BARE number/range with no unit ('took 1', 'took 1-2') — what a chopped
 # quantity leaves behind. '95%', '40,000+', '7.4x' carry a unit and are NOT bare.
@@ -98,7 +128,9 @@ def _bare_num_tail(words: list) -> bool:
 
 def _strip_dangling(text: str) -> str:
     """Drop trailing words/clauses that leave a sentence grammatically incomplete:
-    first any trailing pure stopword, then a trailing fragment introduced by a
+    first any trailing pure stopword, then an orphaned prepositional fragment
+    ('...regressions on categorical' -> '...regressions'; see _prep_fragment),
+    then a trailing fragment introduced by a
     clause connective (e.g. '...periods while maintaining' -> '...periods'), and
     finally a dangling BARE NUMBER left when a quantity was chopped mid-phrase
     (e.g. the model spelled '1-2 weeks' as '1 to 2 weeks' and the trim cut it to
@@ -108,6 +140,11 @@ def _strip_dangling(text: str) -> str:
     words = text.split()
     while len(words) > 3 and words[-1].lower().strip(",;:") in _TRAILING_STOPWORDS:
         words.pop()
+    # An orphaned '<prep> [article] <modifier>' tail ('...regressions on
+    # categorical') reads broken: drop the whole fragment.
+    k = _prep_fragment(words)
+    if k and len(words) - k >= 4:
+        words = words[:-k]
     for k in range(1, min(5, len(words))):
         if words[-k].lower().strip(",;:") in _CLAUSE_INTROS:
             candidate = words[:-k]
@@ -252,6 +289,12 @@ def tailor(
         log("filling underfull bullets from spare atoms…")
         compose.fill_underfull(jd, job_title, sel, bullets)
         _trim_to_caps(sel, bullets)
+
+    # Deterministic style gate: banned AI-tell phrasing (em dashes, contrast
+    # framing, buzzword verbs, ...) never reaches the page.
+    fixed = compose.enforce_style(jd, job_title, sel, bullets)
+    if fixed:
+        log(f"style gate: repaired {fixed} bullet(s).")
 
     log("compressing skills…")
     skill_lines = compose.compress_skills(jd, job_title, sel)

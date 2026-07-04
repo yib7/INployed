@@ -82,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         win = MainWindow(csv_paths)
         win.showMaximized()
+        win.start()  # load data AFTER the window paints, off the UI thread
         rc = app.exec()
     finally:
         lock.release()

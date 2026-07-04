@@ -463,6 +463,30 @@ def test_complete_to_count_short_token_exact_anchor_only():
     assert "K" not in out                                     # not in pool, no false substring
 
 
+# The top-up (pool completion) orders unused skills JD-relevant-first, then pool order.
+# alias_index is stubbed empty so relevance falls back to a literal JD term match -- the
+# ordering logic is isolated from the real master's alias layer.
+
+def test_complete_to_count_topup_orders_by_jd_relevance(monkeypatch):
+    """When the model under-returns, the fillers lead with the skills the JD actually
+    names (most frequent first), so the most relevant unused skills reach the page first."""
+    monkeypatch.setattr(compose.ats, "alias_index", lambda: {})
+    pool = ["Python", "SQL", "Kafka", "Airflow", "Spark"]
+    jd = "We run Kafka and Spark. Kafka Kafka streaming."     # Kafka x3, Spark x1, rest 0
+    out = compose._complete_to_count("Python", pool, 4, jd)
+    assert out[0] == "Python"                                 # model pick still leads
+    assert out[1:] == ["Kafka", "Spark", "SQL"]              # JD hits first (by freq), then pool order
+
+
+def test_complete_to_count_topup_pool_order_when_jd_matches_nothing(monkeypatch):
+    """A JD that names none of the pool skills leaves the fill in the user's pool order --
+    the relevance reordering never fires without a hit (regression guard for the default)."""
+    monkeypatch.setattr(compose.ats, "alias_index", lambda: {})
+    pool = ["Python", "SQL", "C", "Java", "R"]
+    out = compose._complete_to_count("Python", pool, 4, "totally unrelated prose")
+    assert out == ["Python", "SQL", "C", "Java"]              # no JD hit -> pool order preserved
+
+
 def test_finalize_skill_lines_drops_bottom_to_fit_one_line(monkeypatch):
     """SP1 + width measurement: when the chosen items overflow one printed line (by real
     rendered glyph width, not char count), the least-relevant tail is dropped until they
@@ -535,6 +559,37 @@ def test_word_trim_keeps_thousands_separator():
     out = rt_run._word_trim(text, 100)
     assert not out.endswith("4")
     assert out.split()[-1].lower() not in {"of", "top"}
+
+
+def test_word_trim_drops_orphaned_prepositional_phrase():
+    """The '...linear regressions on categorical.' bug: the line-width boundary
+    fell mid-word inside a prepositional phrase, the word-trim dropped the
+    partial word, and the orphaned modifier ('on categorical') printed because
+    'on' was not a recognized fragment intro. The trim must back out the whole
+    broken phrase and end at the last complete noun."""
+    text = ("Designed a guardrail that inspects data codebooks to prevent "
+            "statistically invalid operations like running linear regressions "
+            "on categorical data such as gender fields")
+    budget = text.find("data such") + 3           # cut = '...on categorical dat'
+    out = rt_run._word_trim(text, budget + 1)     # max_visible - 1 == budget
+    assert out.endswith("linear regressions"), out
+
+
+def test_strip_dangling_drops_prepositional_fragments():
+    """Preposition-introduced fragments read broken; drop them like the
+    of/with/for phrase intros already handled."""
+    assert rt_run._strip_dangling(
+        "prevent invalid operations like running linear regressions on categorical"
+    ).endswith("linear regressions")
+    assert rt_run._strip_dangling(
+        "prevent statistically invalid operations like running"
+    ).endswith("invalid operations")
+    assert rt_run._strip_dangling(
+        "cached the embedder and vector store in the local"
+    ).endswith("vector store")
+    # A capitalized or digit-bearing head reads complete and must survive.
+    keep = "deployed the scoring pipeline on AWS"
+    assert rt_run._strip_dangling(keep) == keep
 
 
 def test_trim_to_caps_leaves_short_bullets(monkeypatch):

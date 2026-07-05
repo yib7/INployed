@@ -93,6 +93,28 @@ def master_tmp_broken(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_apply_queue(tmp_path):
+    """SP3: MainWindow now mounts an ApplyQueuePanel that reads (and watches)
+    the apply-queue file and probes the master-password state on construction.
+    Point every test at a scratch queue and stub the panel's password seam so
+    no test ever touches the real %LOCALAPPDATA% queue or the Windows
+    Credential Manager. Tests that care set their own env/seam on top (their
+    monkeypatch runs later, so it wins).
+
+    Uses a PRIVATE MonkeyPatch instance, NOT the `monkeypatch` fixture: an
+    autouse conftest fixture requesting `monkeypatch` would instantiate the
+    shared instance first and so tear it down LAST — after module-level autouse
+    fixtures — breaking any module fixture that expects the test's patches to
+    be undone by its own teardown (e.g. test_active_verbs' cache_clear)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("APPLY_QUEUE_PATH", str(tmp_path / "apply_queue.json"))
+        panel_mod = sys.modules.get("qt.apply_queue_panel")
+        if panel_mod is not None:
+            mp.setattr(panel_mod, "_default_password_exists", lambda: False)
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _drain_qt_widgets():
     """Destroy widgets after each test so the shared QApplication doesn't leak them.
 

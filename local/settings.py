@@ -178,6 +178,18 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Tone used when generating the cover letter.",
           choices=("professional", "concise", "enthusiastic", "impactful")),
 
+    # --- Auto-apply: the batch queue knobs (config.json). Read by the dashboard's
+    # _queue_for_auto_apply and by apply_queue.build_context() for the agent run. ---
+    Field("auto_apply_batch_cap", "Max jobs queued per batch", "int", 10,
+          "Auto-apply", "config", min=1, max=25,
+          help="At most this many jobs go into the auto-apply queue per 'Queue for "
+               "auto-apply' action. ~10 keeps a batch reviewable in one sitting (every "
+               "application is parked at its review page for you — never submitted)."),
+    Field("auto_apply_inbox_url", "Signup inbox URL", "str", "https://mail.google.com",
+          "Auto-apply", "config",
+          help="The webmail inbox the auto-apply agent may open to click account-"
+               "verification emails from job portals. Must be signed in already in Chrome."),
+
     # --- Settings history: snapshot every Save so settings can be rolled back ---
     # All four live in local/config.json. Snapshots copy every settings file
     # (including the secret-bearing .env) into a git-ignored settings_archive/.

@@ -24,7 +24,7 @@ from vm_schedule import RUN_LABELS
 class JobsTab(QtWidgets.QWidget):
     def __init__(self, table_key: str, columns, *, on_open_url=None, on_set_status=None,
                  on_block=None, on_selection=None, on_delete=None, on_edit=None,
-                 on_generate_cover=None, cover_state=None,
+                 on_generate_cover=None, cover_state=None, on_queue_apply=None,
                  hidden_columns=None, save_hidden=None, parent=None):
         super().__init__(parent)
         self.table_key = table_key
@@ -35,6 +35,9 @@ class JobsTab(QtWidgets.QWidget):
         self._on_selection = on_selection or (lambda jid: None)
         self._on_delete = on_delete or (lambda ids: None)
         self._on_edit = on_edit or (lambda jid: None)
+        # "Queue for auto-apply (N)" menu item: fires with the FULL multi-selection.
+        # None (the default) means unwired — no menu item appears at all.
+        self._on_queue_apply = on_queue_apply
         # Cover-letter menu item: `cover_state(jid)` -> "missing" (offer Generate) /
         # "exists" (offer Regenerate) / None (no item). Both default unwired — other
         # callers construct JobsTab without them and see no menu item at all.
@@ -366,6 +369,11 @@ class JobsTab(QtWidgets.QWidget):
         open_act = menu.addAction("Open in browser")
         status_menu = menu.addMenu("Set status")
         status_acts = {status_menu.addAction(st): st for st in APP_STATUSES}
+        # Batch auto-apply queueing (SP3): only when the main window wired the
+        # callback; fires with every selected id, not just the clicked row.
+        queue_act = None
+        if self._on_queue_apply is not None:
+            queue_act = menu.addAction(f"Queue for auto-apply ({len(ids)})")
         menu.addSeparator()
         # Cover letter for one already-tailored job: Generate when none exists,
         # Regenerate when one does (the handler confirms first), nothing when the
@@ -387,6 +395,8 @@ class JobsTab(QtWidgets.QWidget):
             return
         if chosen is open_act:
             self._on_open_url(ids[0])
+        elif queue_act is not None and chosen is queue_act:
+            self._on_queue_apply(ids)
         elif cover_act is not None and chosen is cover_act:
             self._on_generate_cover(ids[0])
         elif chosen is block_act:

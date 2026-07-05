@@ -1,4 +1,5 @@
-"""SP2: the Qt shell builds with seven tabs, a dark theme, and a single-instance lock."""
+"""SP2: the Qt shell builds with its full tab set, a dark theme, and a
+single-instance lock. (Cycle 33 SP3 grew the set to eight — Auto-apply.)"""
 from PySide6 import QtGui, QtWidgets
 
 import app as qt_app
@@ -7,11 +8,12 @@ from qt import theme
 from qt.main_window import TAB_TITLES, MainWindow
 
 
-def test_seven_tabs_with_titles(qtbot):
+def test_eight_tabs_with_titles(qtbot):
     w = MainWindow()
     qtbot.addWidget(w)
-    assert w.tab_count() == 7
+    assert w.tab_count() == 8      # cycle 33 SP3 added the Auto-apply tab
     assert w.tab_titles() == TAB_TITLES
+    assert "Auto-apply" in TAB_TITLES
 
 
 def test_theme_is_dark(qapp):

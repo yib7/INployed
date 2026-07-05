@@ -38,25 +38,30 @@ if ! flock -n 9; then
     exit 0
 fi
 
-# Dead-man's switch: ping healthchecks.io on success, /fail on any error, so a
+# Dead-man's switch: ping healthchecks.io /start when the run begins and
+# /<exit-code> when it ends (0 = success, anything else = failure), so a
 # silently dying pipeline (billing lapse, Vertex 403, Bright Data outage) sends
-# an email instead of just rotting in the log. Create a free check at
-# https://healthchecks.io (schedule: twice daily, grace ~2h) and paste its ping
-# URL here. Empty = pings are skipped, everything else still works.
-HEALTHCHECK_URL="${HEALTHCHECK_URL:-}"   # e.g. https://hc-ping.com/<uuid>
+# an email instead of just rotting in the log. No-op when HEALTHCHECKS_URL is
+# unset or empty -- pings are simply skipped and everything else still works.
+# To enable: create a free check at https://healthchecks.io (schedule: twice
+# daily, grace ~2h), then set the ping URL in the cron environment (add a
+# HEALTHCHECKS_URL=https://hc-ping.com/<uuid> line at the top of the crontab)
+# or paste it into the default below. A ping failure never breaks the scrape.
+HEALTHCHECKS_URL="${HEALTHCHECKS_URL:-}"   # e.g. https://hc-ping.com/<uuid>
 ping_hc() {
-    if [ -n "$HEALTHCHECK_URL" ]; then
-        curl -fsS -m 10 --retry 3 "${HEALTHCHECK_URL}$1" >/dev/null 2>&1 || true
+    if [ -n "$HEALTHCHECKS_URL" ]; then
+        curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_URL}$1" >/dev/null 2>&1 || true
     fi
 }
 on_exit() {
     status=$?
     if [ "$status" -ne 0 ]; then
         echo "$(date -Is) run_scraper.sh FAILED (exit $status)" >> ~/scraper.log
-        ping_hc /fail
     fi
+    ping_hc "/$status"   # /0 on success, /<code> on failure; exit code unchanged
 }
 trap on_exit EXIT
+ping_hc /start
 
 # Keep scraper.log bounded: when it passes ~5 MB, keep only the last 5000 lines.
 LOG=~/scraper.log
@@ -113,4 +118,4 @@ if [ -f ~/run_stats.csv ]; then
     rclone copyto ~/run_stats.csv gdrive:LinkedInJobs/run_stats.csv --update
 fi
 
-ping_hc ""
+# Success ping is sent by the on_exit trap above (/0 via ping_hc).

@@ -7,6 +7,7 @@ or agent can paste it — the password itself is never printed, returned by a
 public function, or written to disk. Hermetic: the ledger goes to tmp_path, the
 keyring is a fake object, and the ctypes clipboard layer is monkeypatched.
 """
+import io
 import json
 import sys
 from pathlib import Path
@@ -143,6 +144,26 @@ def test_set_master_password_mismatch_stores_nothing(kr, monkeypatch, capsys):
     assert SECRET not in out.out + out.err
 
 
+def test_set_master_password_programmatic_path_never_prompts(kr, monkeypatch, capsys):
+    # SP3 wires this to QInputDialog: the dialog's value comes in as an argument
+    # and getpass must never fire (it would hang a GUI process).
+    def no_prompt(prompt):
+        raise AssertionError("getpass must not be called on the programmatic path")
+
+    monkeypatch.setattr(ats_accounts, "_getpass", no_prompt)
+    assert ats_accounts.set_master_password(SECRET) is True
+    assert kr.store[(ats_accounts.SERVICE, ats_accounts._MASTER_USER)] == SECRET
+    out = capsys.readouterr()
+    assert SECRET not in out.out + out.err          # never echoed
+
+
+def test_set_master_password_programmatic_rejects_blank(kr):
+    for bad in ("", "   ", "\t\n"):
+        with pytest.raises(ValueError):
+            ats_accounts.set_master_password(bad)
+    assert kr.store == {}                           # nothing stored
+
+
 def test_password_exists_false_when_keyring_missing(monkeypatch):
     monkeypatch.setattr(ats_accounts, "_keyring", lambda: None)
     assert ats_accounts.password_exists() is False
@@ -247,6 +268,51 @@ def test_cli_record_lookup_list_json(ledger, kr, capsys):
     assert ats_accounts.main(["list", "--json"]) == 0
     out = _assert_no_secret(capsys)
     assert "a.example.com" in out.out
+
+
+def test_cli_json_output_survives_cp1252_pipe(ledger, monkeypatch):
+    # Piped stdout on this machine defaults to cp1252; a ledger note with an
+    # emoji/arrow must not crash record/lookup/list (json ensure_ascii=False).
+    note = "✅ prêt → go"
+    ats_accounts.record("a.example.com", email="a@x.com", note=note)
+    buf = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(buf, encoding="cp1252"))
+    assert ats_accounts.main(["list", "--json"]) == 0
+    sys.stdout.flush()
+    data = json.loads(buf.getvalue().decode("utf-8"))
+    assert data["a.example.com"]["note"] == note
+    assert ats_accounts.main(["lookup", "a.example.com", "--json"]) == 0
+    sys.stdout.flush()          # second verb through the same cp1252 pipe: fine
+
+
+def test_cli_unexpected_error_secret_verb_prints_class_only(kr, clip, monkeypatch,
+                                                            capsys):
+    # Verbs that touch the secret must never interpolate str(e) — an exception
+    # message can carry the password (e.g. a keyring backend error).
+    def boom():
+        raise RuntimeError(f"clipboard exploded holding {SECRET}")
+
+    monkeypatch.setattr(ats_accounts, "copy_password_to_clipboard", boom)
+    assert ats_accounts.main(["clip-password"]) == 1
+    out = capsys.readouterr()
+    assert SECRET not in out.out + out.err
+    assert "RuntimeError" in out.err
+    assert "exploded" not in out.err                # class name ONLY
+    assert len(out.err.strip().splitlines()) == 1
+
+
+def test_cli_unexpected_error_ledger_verb_prints_message(ledger, monkeypatch,
+                                                         capsys):
+    def boom(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ats_accounts, "record", boom)
+    assert ats_accounts.main(["record", "--domain", "x.example.com",
+                              "--email", "a@x.com"]) == 1
+    err = capsys.readouterr().err
+    assert "ats_accounts: error: OSError: disk full" in err
+    assert "Traceback" not in err
+    assert len(err.strip().splitlines()) == 1
 
 
 def test_public_api_never_returns_the_password(kr, clip):

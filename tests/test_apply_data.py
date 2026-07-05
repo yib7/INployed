@@ -440,6 +440,63 @@ def test_refresh_standard_answers_unchanged_store_is_byte_identical(tmp_path):
     assert out.read_bytes() == before              # a no-change refresh is a no-op
 
 
+def _rewrite_eol(path, eol: bytes):
+    raw = path.read_bytes().replace(b"\r\n", b"\n")
+    if eol != b"\n":
+        raw = raw.replace(b"\n", eol)
+    path.write_bytes(raw)
+
+
+def test_refresh_standard_answers_preserves_lf_endings(tmp_path):
+    # A hand-curated apply.md saved with LF endings must come back LF: the
+    # splice contract says every byte outside the span is identical, and
+    # write_text's os.linesep translation used to CRLF-ify the whole file.
+    _seed_store(tmp_path, how_did_you_hear="LinkedIn")
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    _rewrite_eol(out, b"\n")
+    before = out.read_bytes()
+    assert b"\r" not in before
+    _seed_store(tmp_path, how_did_you_hear="Referral from a friend")
+    assert apply_data.refresh_standard_answers(tmp_path) == out
+    after = out.read_bytes()
+    assert b"\r" not in after                      # still LF everywhere
+    assert b"Referral from a friend" in after
+    start_b, sig_b = _spans(before)
+    start_a, sig_a = _spans(after)
+    assert before[:start_b] == after[:start_a]     # bytes outside span identical
+    assert before[sig_b:] == after[sig_a:]
+
+
+def test_refresh_standard_answers_lf_unchanged_store_is_byte_identical(tmp_path):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    _rewrite_eol(out, b"\n")
+    before = out.read_bytes()
+    assert apply_data.refresh_standard_answers(tmp_path) == out
+    assert out.read_bytes() == before
+
+
+def test_refresh_standard_answers_preserves_crlf_endings(tmp_path):
+    # Platform-independent pin of the CRLF case (on Windows write() already
+    # emits CRLF; on POSIX it wouldn't — force it so the pin holds everywhere).
+    _seed_store(tmp_path, how_did_you_hear="LinkedIn")
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    _rewrite_eol(out, b"\r\n")
+    before = out.read_bytes()
+    _seed_store(tmp_path, how_did_you_hear="Referral from a friend")
+    assert apply_data.refresh_standard_answers(tmp_path) == out
+    after = out.read_bytes()
+    assert after.count(b"\n") == after.count(b"\r\n")   # no bare LF introduced
+    assert b"Referral from a friend" in after
+    start_b, sig_b = _spans(before)
+    start_a, sig_a = _spans(after)
+    assert before[:start_b] == after[:start_a]
+    assert before[sig_b:] == after[sig_a:]
+
+
 def test_refresh_standard_answers_missing_file_returns_none(tmp_path):
     assert apply_data.refresh_standard_answers(tmp_path) is None
 

@@ -6,6 +6,7 @@ byte-0 file lock for cross-process mutations. Everything here is hermetic —
 every call passes an explicit tmp_path queue (or sets APPLY_QUEUE_PATH), so the
 real %LOCALAPPDATA%\\linkedin_watcher\\apply_queue.json is never touched.
 """
+import io
 import json
 import sys
 import threading
@@ -52,16 +53,43 @@ def test_load_missing_file_returns_fresh_queue(tmp_path):
     assert data == {"version": 1, "jobs": []}
 
 
-def test_load_corrupt_file_quarantines_and_recovers(tmp_path):
+def test_load_corrupt_lock_free_returns_fresh_without_rename(tmp_path):
+    # A lock-free reader must NEVER rename: it could race a lock-holding writer
+    # that already quarantined and rewrote a healthy queue (TOCTOU) and rename
+    # the VALID file into .corrupt-*, silently emptying the active queue.
     q = _q(tmp_path)
     q.write_text("{not json!!", encoding="utf-8")
     with pytest.warns(RuntimeWarning):
         data = apply_queue.load(q)
     assert data == {"version": 1, "jobs": []}
+    assert q.exists()
+    assert q.read_text(encoding="utf-8") == "{not json!!"
+    assert not list(tmp_path.glob("apply_queue.json.corrupt-*"))
+
+
+def test_load_corrupt_quarantines_when_asked(tmp_path):
+    # quarantine=True is the under-locked() flavor: rename aside + start fresh.
+    q = _q(tmp_path)
+    q.write_text("{not json!!", encoding="utf-8")
+    with pytest.warns(RuntimeWarning):
+        data = apply_queue.load(q, quarantine=True)
+    assert data == {"version": 1, "jobs": []}
     sidecars = list(tmp_path.glob("apply_queue.json.corrupt-*"))
     assert len(sidecars) == 1
     assert sidecars[0].read_text(encoding="utf-8") == "{not json!!"
     assert not q.exists()  # renamed away, next write starts fresh
+
+
+def test_locked_mutation_quarantines_corrupt_file(tmp_path):
+    q = _q(tmp_path)
+    q.write_text("{not json!!", encoding="utf-8")
+    with pytest.warns(RuntimeWarning):
+        apply_queue.enqueue(_entry("1"), path=q)   # mutation holds the lock
+    sidecars = list(tmp_path.glob("apply_queue.json.corrupt-*"))
+    assert len(sidecars) == 1
+    assert sidecars[0].read_text(encoding="utf-8") == "{not json!!"
+    data = apply_queue.load(q)                     # rewritten fresh + the entry
+    assert [e["job_posting_id"] for e in data["jobs"]] == ["1"]
 
 
 def test_load_wrong_shape_is_treated_as_corrupt(tmp_path):
@@ -70,7 +98,51 @@ def test_load_wrong_shape_is_treated_as_corrupt(tmp_path):
     with pytest.warns(RuntimeWarning):
         data = apply_queue.load(q)
     assert data["jobs"] == []
+    assert q.exists()                              # lock-free: left in place
+    with pytest.warns(RuntimeWarning):
+        data = apply_queue.load(q, quarantine=True)
+    assert data["jobs"] == []
     assert list(tmp_path.glob("apply_queue.json.corrupt-*"))
+
+
+def test_load_transient_oserror_retries_then_succeeds(tmp_path, monkeypatch):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    real = Path.read_text
+    calls = {"n": 0}
+
+    def flaky(self, *a, **kw):
+        if self == q:
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise PermissionError("AV scan holding the file")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    monkeypatch.setattr(apply_queue.time, "sleep", lambda s: None)
+    data = apply_queue.load(q)
+    assert [e["job_posting_id"] for e in data["jobs"]] == ["1"]
+    assert calls["n"] == 3
+
+
+def test_load_persistent_oserror_never_quarantines(tmp_path, monkeypatch):
+    # A transient read failure (AV scan, sharing violation) is NOT corruption:
+    # even the locked flavor must not rename a healthy queue over an OSError.
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    before = q.read_text(encoding="utf-8")
+
+    def always(self, *a, **kw):
+        raise PermissionError("sharing violation")
+
+    monkeypatch.setattr(Path, "read_text", always)
+    monkeypatch.setattr(apply_queue.time, "sleep", lambda s: None)
+    with pytest.warns(RuntimeWarning):
+        data = apply_queue.load(q, quarantine=True)
+    assert data == {"version": 1, "jobs": []}
+    monkeypatch.undo()
+    assert q.read_text(encoding="utf-8") == before          # untouched
+    assert not list(tmp_path.glob("apply_queue.json.corrupt-*"))
 
 
 # --- new_entry: every field always present -------------------------------------
@@ -223,6 +295,44 @@ def test_set_artifacts_ignores_unknown_keys_and_keeps_status(tmp_path):
     got = apply_queue.set_artifacts("1", {"folder": "C:/y", "evil": "x"}, path=q)
     assert got["status"] == "queued"           # already queued: no flip needed
     assert "evil" not in got["artifacts"]
+
+
+# --- hand-edited entries: mutations tolerate missing sub-keys ---------------------
+
+def _write_minimal_entry(q, status="queued"):
+    q.write_text(json.dumps({"version": 1, "jobs": [
+        {"job_posting_id": "h1", "status": status}]}), encoding="utf-8")
+
+
+def test_mutations_tolerate_minimal_hand_edited_entry(tmp_path):
+    q = _q(tmp_path)
+    _write_minimal_entry(q)
+    got = apply_queue.set_artifacts("h1", {"folder": "C:/x"}, path=q)   # no KeyError
+    assert got["artifacts"]["folder"] == "C:/x"
+    got = apply_queue.add_missing("h1", "Salary?", path=q)
+    assert got["missing_answers"] == [
+        {"question": "Salary?", "context": "", "suggestion": ""}]
+    got = apply_queue.update("h1", ats={"account_status": "existing"}, path=q)
+    assert got["ats"]["account_status"] == "existing"
+    got = apply_queue.finish("h1", "ready_to_submit", record="C:/x/rec.md", path=q)
+    assert got["artifacts"]["application_record"] == "C:/x/rec.md"
+    # the persisted entry now carries the full schema
+    stored = apply_queue.load(q)["jobs"][0]
+    for key in ("company", "title", "apply_url", "is_easy_apply", "batch_id",
+                "attempts", "claimed_by", "notes", "tab_note", "missing_answers",
+                "artifacts", "ats", "queued_at", "started_at", "finished_at",
+                "updated_at"):
+        assert key in stored, key
+
+
+def test_claim_tolerates_minimal_hand_edited_entry(tmp_path):
+    q = _q(tmp_path)
+    _write_minimal_entry(q)
+    got = apply_queue.claim(claimed_by="w", path=q)
+    assert got["job_posting_id"] == "h1"
+    assert got["status"] == "in_progress"
+    assert got["attempts"] == 1
+    assert got["artifacts"] == {k: "" for k in apply_queue.ARTIFACT_KEYS}
 
 
 # --- update / add_missing / finish ----------------------------------------------
@@ -516,6 +626,44 @@ def test_cli_lock_timeout_exits_3(tmp_path, capsys, monkeypatch):
     finally:
         release.set()
         t.join(timeout=5)
+
+
+def test_cli_claim_json_survives_cp1252_pipe(tmp_path, monkeypatch):
+    # On this machine sys.stdout.encoding is cp1252 when stdout is a pipe —
+    # exactly how the SP4 agent invokes every verb. Before the reconfigure fix,
+    # claim persisted the mutation then crashed with UnicodeEncodeError (exit 1,
+    # outside the 0/2/3/4 contract) and the agent never saw the entry it owns.
+    q = _q(tmp_path)
+    title = "✅ Data Engineer → NYC"        # ✅ … → : not in cp1252
+    apply_queue.enqueue(apply_queue.new_entry("9", company="Acme", title=title),
+                        path=q)
+    out_buf, err_buf = io.BytesIO(), io.BytesIO()
+    monkeypatch.setattr(sys, "stdout",
+                        io.TextIOWrapper(out_buf, encoding="cp1252"))
+    monkeypatch.setattr(sys, "stderr",
+                        io.TextIOWrapper(err_buf, encoding="cp1252"))
+    rc = apply_queue.main(["claim", "--queue", str(q), "--json"])
+    sys.stdout.flush()
+    assert rc == 0
+    got = json.loads(out_buf.getvalue().decode("utf-8"))
+    assert got["title"] == title
+    assert got["status"] == "in_progress"
+    # `list` prints the same title, and no longer crashes either
+    assert apply_queue.main(["list", "--queue", str(q)]) == 0
+    sys.stdout.flush()
+    assert out_buf.getvalue().decode("utf-8").count(title) == 2
+
+
+def test_cli_unexpected_error_exits_1_one_line(tmp_path, monkeypatch, capsys):
+    def boom(*a, **kw):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(apply_queue, "load", boom)
+    assert apply_queue.main(["list", "--queue", str(_q(tmp_path))]) == 1
+    err = capsys.readouterr().err
+    assert "apply_queue: error: RuntimeError: disk on fire" in err
+    assert "Traceback" not in err
+    assert len(err.strip().splitlines()) == 1
 
 
 def test_cli_context_json_has_five_keys_no_password(tmp_path, capsys, monkeypatch):

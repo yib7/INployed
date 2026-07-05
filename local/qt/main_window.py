@@ -1,11 +1,11 @@
-"""The dashboard main window: the seven-tab QTabWidget + a score-preview pane and
+"""The dashboard main window: the eight-tab QTabWidget + a score-preview pane and
 the global action bar.
 
 The three job tabs (High Score / All Jobs / Tracker) are real `JobsTab`s wired to
-the data and registry; Stats / Resume Data / Apply Answers / Settings are filled in
-later phases. Long-running actions (scrape, apply, tailor) run on a worker thread
-via `qt.workers.run_async`. The score preview rides in a vertical splitter and is
-shown only on the job tabs.
+the data and registry; Auto-apply mirrors the batch apply queue; Stats / Resume
+Data / Apply Answers / Settings are filled in later phases. Long-running actions
+(scrape, apply, tailor) run on a worker thread via `qt.workers.run_async`. The
+score preview rides in a vertical splitter and is shown only on the job tabs.
 """
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ from pathlib import Path
 import pandas as pd
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import apply_queue
+import ats_accounts
 import chrome
 import jobsdata
 import osopen
@@ -43,6 +45,7 @@ from jobsdata import (
 from qt import theme, workers
 from qt.answers_tab import AnswersEditor
 from qt.apply_panel import ApplyPanel
+from qt.apply_queue_panel import ApplyQueuePanel
 from qt.jobs_tab import JobsTab
 from qt.manual_add_dialog import ManualAddDialog
 from qt.resume_data_tab import ResumeDataEditor
@@ -57,6 +60,7 @@ TAB_TITLES = [
     "High Score (Unseen)",
     "All Jobs",
     "Tracker",
+    "Auto-apply",
     "Stats",
     "Resume Data",
     "Apply Answers",
@@ -157,6 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
             on_edit=self._edit_manual_job,
             on_generate_cover=self._generate_cover_for,
             cover_state=self._cover_state,
+            on_queue_apply=self._queue_for_auto_apply,
             hidden_columns=self.hidden_columns,
             save_hidden=self._save_hidden,
         )
@@ -314,9 +319,16 @@ class MainWindow(QtWidgets.QMainWindow):
                                          vm_panel_factory=self._make_vm_panel)
         self.resume_data_tab = ResumeDataEditor()
         self.answers_tab = AnswersEditor()
+        # The Auto-apply tab mirrors the batch apply queue (SP3). Its mutations
+        # ride the background write queue via _submit_queue_write; the queue
+        # path is resolved by apply_queue at call time (APPLY_QUEUE_PATH-aware).
+        self.apply_queue_panel = ApplyQueuePanel(
+            submit_write=self._submit_queue_write,
+            on_set_password=self._set_ats_password)
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
-                 "Tracker": self.tracker_tab, "Stats": self.stats_tab,
+                 "Tracker": self.tracker_tab, "Auto-apply": self.apply_queue_panel,
+                 "Stats": self.stats_tab,
                  "Resume Data": self.resume_data_tab, "Apply Answers": self.answers_tab,
                  "Settings": self.settings_tab}
         for title in TAB_TITLES:
@@ -379,6 +391,12 @@ class MainWindow(QtWidgets.QMainWindow):
         button("Resume folder", self._open_resume_folder)
         button("Find new jobs", self._run_scraper_dialog)
         button("Check setup", self._check_setup)
+        # Queue auto-apply rides beside Apply: same selection, but batch-queues it
+        # for the agent run instead of opening one application by hand.
+        self.btn_queue_apply = button("Queue auto-apply", self._queue_apply_selected)
+        self.btn_queue_apply.setToolTip(
+            "Add the selected job(s) to the auto-apply queue (untailored ones are "
+            "tailored first) — see the Auto-apply tab")
         # Apply is rightmost (and green only once the job is ready to apply to) — its
         # ready-state is the dashboard's "this one's good to go" signal.
         self.btn_apply = button("Apply", self._apply_selected)
@@ -1402,13 +1420,39 @@ class MainWindow(QtWidgets.QMainWindow):
         opts = {"cover_letter": cover, "ats_report": bool(cfg.get("tailor_ats_report", True)),
                 "prep_sheet": bool(cfg.get("tailor_prep_sheet", False)),
                 "tone": cfg.get("resume_tone", "professional")}
+        self._start_tailor(jobs, opts)
+
+    def _start_tailor(self, jobs: list[dict], opts: dict, on_finished=None) -> bool:
+        """Launch the tailor worker — the ONE shared path both the Tailor button
+        (`_tailor_selected`) and auto-apply queueing (`_queue_for_auto_apply`)
+        come through, so queue-chaining never duplicates the worker plumbing.
+
+        Returns False WITHOUT launching when a run is already in flight (the
+        `_tailoring` guard). `on_finished(results, exc)` — exactly one of the
+        two is None — fires on the UI thread AFTER the standard `_finish_tailor`
+        / `_finish_tailor_error` handling, so a chained step already sees the
+        registry's resume paths recorded."""
+        if getattr(self, "_tailoring", False):
+            return False
         self._tailoring = True
         self.btn_tailor.setEnabled(False)
         self._apply_auth_env()
         plural = "resume" if len(jobs) == 1 else "resumes in parallel"
         self._set_status(f"Tailoring {len(jobs)} {plural} …")
+
+        def done(results) -> None:
+            self._finish_tailor(results)
+            if on_finished is not None:
+                on_finished(results, None)
+
+        def error(exc: BaseException) -> None:
+            self._finish_tailor_error(exc)
+            if on_finished is not None:
+                on_finished(None, exc)
+
         workers.run_async(self, lambda: self._tailor_work(jobs, opts),
-                          on_done=self._finish_tailor, on_error=self._finish_tailor_error)
+                          on_done=done, on_error=error)
+        return True
 
     def _tailor_work(self, jobs: list[dict], opts: dict) -> list[dict]:
         """Tailor every selected job CONCURRENTLY (all at once) on a thread pool, and
@@ -1496,6 +1540,217 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tailor.setEnabled(True)
         QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {exc}")
         self._set_status(f"Tailor failed: {exc}")
+
+    # ---- batch auto-apply queueing (SP3) ---------------------------------------
+
+    def _submit_queue_write(self, fn, on_done=None, on_error=None) -> None:
+        """Run an apply-queue mutation on the background write queue.
+
+        Deliberately NOT `_enqueue_write` — its self-write suppression exists
+        for the source-CSV watcher, while the queue file has its own watcher
+        inside ApplyQueuePanel that SHOULD see these writes land. Late-binds
+        `self._writes` so tests that swap in an inline runner drive it too."""
+        self._writes.submit(
+            fn, on_done=on_done,
+            on_error=on_error or (lambda exc: self._set_status(
+                f"Apply-queue write failed: {exc}")))
+
+    def _queue_artifacts(self, folder) -> dict:
+        """The artifact paths a queue entry carries for a tailored folder.
+        Optional files not on disk map to "" so the agent never chases a path
+        that doesn't exist."""
+        from resume_tailor import output
+        folder = Path(folder)
+
+        def existing(name: str) -> str:
+            p = folder / name
+            try:
+                return str(p) if p.exists() else ""
+            except OSError:
+                return ""
+
+        return {
+            "folder": str(folder),
+            "resume_pdf": existing(output.resume_filename()),
+            "cover_letter_pdf": existing(output.cover_filename()),
+            "cover_letter_txt": existing(output.cover_txt_filename()),
+            "apply_md": existing("apply.md"),
+        }
+
+    def _queue_entry_for(self, jid: str, batch_id: str, status: str) -> dict:
+        """A fresh apply-queue entry for one job, from the loaded frame."""
+        row = self._row_for(jid)
+        easy = self._cell(row, "is_easy_apply").strip().lower() in ("true", "1", "yes")
+        return apply_queue.new_entry(
+            jid,
+            company=self._cell(row, "company_name"),
+            title=self._cell(row, "job_title"),
+            apply_url=self._url_by_id.get(jid) or self._cell(row, "url"),
+            is_easy_apply=easy,
+            batch_id=batch_id,
+            status=status)
+
+    def _queue_apply_selected(self) -> None:
+        """The action-bar 'Queue auto-apply' button: queue the selection."""
+        ids = self._selected_ids()
+        if not ids:
+            self._set_status("Select one or more jobs to queue for auto-apply.")
+            return
+        self._queue_for_auto_apply(ids)
+
+    def _queue_for_auto_apply(self, ids) -> None:
+        """'Queue for auto-apply' (context menu + action bar): skip jobs already
+        applied to, enforce the batch cap, enqueue apply-ready jobs with their
+        artifact paths, and offer ONE tailor-then-queue run for the rest (cover
+        letter included — that Gemini spend is consented by the Yes click)."""
+        seen: set[str] = set()
+        ids = [s for s in (str(i).strip() for i in (ids or []))
+               if s and not (s in seen or seen.add(s))]
+        if not ids:
+            self._set_status("Select one or more jobs to queue for auto-apply.")
+            return
+        try:
+            applied = {str(r.get("job_posting_id")) for r in self.registry.status_rows()
+                       if r.get("status") == "applied"}
+        except Exception:  # noqa: BLE001 - registry hiccup: skip nothing, queue on
+            applied = set()
+        notes: list[str] = []
+        skipped = [i for i in ids if i in applied]
+        if skipped:
+            notes.append(f"skipped {len(skipped)} already-applied")
+        remaining = [i for i in ids if i not in applied]
+        if not remaining:
+            self._set_status(f"Nothing to queue — skipped {len(skipped)} "
+                             "already-applied job(s).")
+            return
+        cfg = settings.load()
+        try:
+            cap = int(cfg.get("auto_apply_batch_cap", 10) or 10)
+        except (TypeError, ValueError):
+            cap = 10
+        if len(remaining) > cap:
+            notes.append(f"capped at {cap} (auto_apply_batch_cap)")
+            remaining = remaining[:cap]
+
+        ready: list[tuple[str, Path]] = []
+        not_ready: list[str] = []
+        for jid in remaining:
+            ok, folder = self._apply_ready(jid)
+            if ok and folder is not None:
+                ready.append((jid, folder))
+            else:
+                not_ready.append(jid)
+
+        batch_id = datetime.now().strftime("batch-%Y%m%d-%H%M%S")
+        for jid, folder in ready:
+            entry = self._queue_entry_for(jid, batch_id, "queued")
+            entry["artifacts"].update(self._queue_artifacts(folder))
+            self._submit_queue_write(lambda e=entry: apply_queue.enqueue(e))
+
+        started_tailor = False
+        if not_ready:
+            if getattr(self, "_tailoring", False):
+                notes.append(f"{len(not_ready)} not tailored — skipped while a "
+                             "tailor run is in flight")
+            elif QtWidgets.QMessageBox.question(
+                    self, "Queue for auto-apply",
+                    f"{len(not_ready)} job(s) aren't tailored yet. Tailor now "
+                    "(cover letter included — spends Gemini credit) and queue "
+                    "when done?") == QtWidgets.QMessageBox.StandardButton.Yes:
+                jobs = [j for j in (self._job_payload(i) for i in not_ready) if j]
+                missing = len(not_ready) - len(jobs)
+                if missing:
+                    notes.append(f"{missing} without job data — not queued")
+                if jobs:
+                    # Enqueue as "tailoring" FIRST so the panel shows them the
+                    # moment the worker starts; _finish_queue_tailor flips each
+                    # to "queued" (set_artifacts) or parks it "failed".
+                    for j in jobs:
+                        entry = self._queue_entry_for(
+                            str(j["job_posting_id"]), batch_id, "tailoring")
+                        self._submit_queue_write(lambda e=entry: apply_queue.enqueue(e))
+                    opts = {"cover_letter": True,
+                            "ats_report": bool(cfg.get("tailor_ats_report", True)),
+                            "prep_sheet": bool(cfg.get("tailor_prep_sheet", False)),
+                            "tone": cfg.get("resume_tone", "professional")}
+                    self._queue_tailor_pending = [str(j["job_posting_id"])
+                                                  for j in jobs]
+                    started_tailor = self._start_tailor(
+                        jobs, opts, on_finished=self._finish_queue_tailor)
+                    if not started_tailor:  # raced the guard: park them honestly
+                        self._finish_queue_tailor(None, RuntimeError(
+                            "a tailor run was already in flight"))
+            else:
+                notes.append(f"{len(not_ready)} not tailored — left out")
+
+        if not started_tailor:  # otherwise _start_tailor owns the status line
+            parts = ([f"Queued {len(ready)} job(s) for auto-apply"] if ready else [])
+            parts += notes
+            self._set_status((" · ".join(parts) + ".") if parts
+                             else "Nothing queued for auto-apply.")
+
+    def _finish_queue_tailor(self, results, exc=None) -> None:
+        """After a queue-chained tailor run (fires on the UI thread, AFTER the
+        standard _finish_tailor handling): success flips each entry
+        tailoring -> queued with its artifact paths (apply_queue.set_artifacts);
+        failure parks it `failed` with the reason in its notes."""
+        pending = [str(i) for i in getattr(self, "_queue_tailor_pending", []) or []]
+        self._queue_tailor_pending = []
+
+        def park_failed(jid: str, note: str) -> None:
+            self._submit_queue_write(
+                lambda: apply_queue.finish(jid, "failed", notes=note))
+
+        if exc is not None:
+            for jid in pending:
+                park_failed(jid, f"tailor failed: {exc}")
+            return
+        by_id = {str(r.get("id") or ""): r for r in (results or [])}
+        for jid in pending:
+            r = by_id.get(jid)
+            if r is None:
+                park_failed(jid, "tailor returned no result for this job")
+            elif r.get("dir"):
+                arts = self._queue_artifacts(r["dir"])
+                self._submit_queue_write(
+                    lambda jid=jid, arts=arts: apply_queue.set_artifacts(jid, arts))
+            else:
+                park_failed(jid, f"tailor failed: {r.get('error') or 'unknown error'}")
+
+    def _set_ats_password(self) -> None:
+        """Store the ONE master ATS password (typed twice, password-echo) in the
+        Windows Credential Manager via ats_accounts. The value goes straight
+        from the dialog into keyring — never to disk, logs, or the queue."""
+        echo = QtWidgets.QLineEdit.EchoMode.Password
+        first, ok = QtWidgets.QInputDialog.getText(
+            self, "Master ATS password", "New master password:", echo)
+        if not ok:
+            return
+        second, ok = QtWidgets.QInputDialog.getText(
+            self, "Master ATS password", "Repeat to confirm:", echo)
+        if not ok:
+            return
+        if not first.strip() or first != second:
+            QtWidgets.QMessageBox.warning(
+                self, "Master ATS password",
+                "The two entries were blank or didn't match — nothing was stored.")
+            return
+        try:
+            stored = ats_accounts.set_master_password(first)
+        except Exception as exc:  # noqa: BLE001 - keyring backend failure
+            QtWidgets.QMessageBox.warning(
+                self, "Master ATS password",
+                f"Could not store the password: {exc}")
+            return
+        if not stored:
+            QtWidgets.QMessageBox.warning(
+                self, "Master ATS password",
+                "Could not store the password (is the keyring package installed?).")
+            return
+        self._set_status("Master ATS password stored in Windows Credential Manager.")
+        panel = getattr(self, "apply_queue_panel", None)
+        if panel is not None:
+            panel.refresh_password_state()
 
     # ---- cover letter for an already-tailored job (right-click) ---------------
 

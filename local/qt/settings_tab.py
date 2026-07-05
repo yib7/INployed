@@ -30,6 +30,10 @@ SECTION_HELP = {
     "Scoring": ("Advanced — which models score jobs and the spend guards around them. The "
                 "defaults are tuned; changing the model names can silently break scoring."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
+    "Auto-apply": ("The batch auto-apply queue (Auto-apply tab): how many jobs one 'Queue for "
+                   "auto-apply' action may add, and which webmail inbox the agent may open for "
+                   "account-verification emails. Applications are parked at their review page — "
+                   "never submitted for you."),
     "Settings history": ("Every Save snapshots all your settings to a dated folder so you can "
                          "roll one back later with 'Restore from archive...' below. Snapshots "
                          "include your saved keys and live alongside your settings on this PC."),
@@ -38,8 +42,8 @@ SECTION_HELP = {
                            "no SSH password or key is ever stored."),
 }
 SECTION_ORDER = ["Credentials", "Connection & paths", "Engine",
-                 "Dashboard", "Scraper", "Scoring", "Resume", "Settings history",
-                 "VM (cloud scraper)"]
+                 "Dashboard", "Scraper", "Scoring", "Resume", "Auto-apply",
+                 "Settings history", "VM (cloud scraper)"]
 
 # Friendlier section headers shown in the UI. The dict KEYS above stay the canonical
 # section names (they must match settings.Field.section); this only changes the
@@ -59,6 +63,7 @@ SECTION_TAGLINE = {
     "Scraper": "What job searches to run",
     "Scoring": "Models & spend guards (advanced)",
     "Resume": "Projects shown, cover letter & artifacts",
+    "Auto-apply": "Batch cap & inbox for the apply agent",
     "Settings history": "Snapshot & restore your settings",
     "VM (cloud scraper)": "Manage the cloud job-discovery VM",
 }

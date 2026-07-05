@@ -50,11 +50,15 @@ def test_stats_freshness_badge_stale(qtbot):
 
 def test_refresh_stats_updates_freshness_badge(qtbot, monkeypatch):
     w = _win(qtbot)
+    # Hermetic: gdrive_root_dir([]) falls back to the user's real Drive folder, so
+    # without this stub the badge reflects whatever run_stats.csv is actually synced
+    # there (a real VM run makes it 'fresh'). Pin the test's stated case — no run
+    # stats found -> no run -> stale.
+    monkeypatch.setattr(mw, "gdrive_root_dir", lambda paths: None)
     captured = {}
     monkeypatch.setattr(w.stats_tab, "set_freshness",
                         lambda state, age: captured.update(state=state, age=age))
     w._refresh_stats()
-    # csv_paths=[] -> no run_stats -> no run -> stale
     assert captured["state"] == "stale"
 
 

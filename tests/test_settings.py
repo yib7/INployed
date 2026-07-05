@@ -302,3 +302,17 @@ def test_vm_enabled_is_a_config_bool_in_vm_section():
     assert f.type == "bool" and f.target == "config"
     assert f.section == "VM (cloud scraper)"
     assert settings.validate({"vm_enabled": True}) == {}
+
+
+def test_local_task_autosync_is_a_config_bool_defaulting_off(tmp_path):
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["local_task_autosync"]
+    assert f.type == "bool" and f.target == "config"
+    assert f.section == "VM (cloud scraper)"
+    assert settings.load(_targets(tmp_path))["local_task_autosync"] is False
+
+
+def test_local_task_offsets_is_an_editable_config_str(tmp_path):
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["local_task_offsets"]
+    assert f.type == "str" and f.target == "config"
+    assert f.section == "VM (cloud scraper)"
+    assert settings.load(_targets(tmp_path))["local_task_offsets"] == "30,50,70"

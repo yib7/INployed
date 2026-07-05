@@ -230,6 +230,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
     def refresh(self) -> None:
         """Reload the queue file (lock-free — never quarantine from a reader)
         and repaint the table, counts, and password state."""
+        # Snapshot the poll baseline BEFORE the read: a write landing while we
+        # load would otherwise hide in the load→snapshot window and (on a
+        # no-fs-events mount) stay invisible until some LATER write moved the
+        # sig again. Worst case with the pre-read baseline is one spare refresh.
+        sig = self._current_sig()
         data = apply_queue.load(self._queue_file())
         self._jobs = [e for e in data.get("jobs", []) if isinstance(e, dict)]
         self._fill_table()
@@ -237,6 +242,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._update_details()
         self.refresh_password_state()
         self._rearm_watcher()
+        self._mtime_sig = sig   # override _rearm_watcher's post-read snapshot
 
     def _fill_table(self) -> None:
         selected = self._selected_job_id()

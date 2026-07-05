@@ -1450,8 +1450,16 @@ class MainWindow(QtWidgets.QMainWindow):
             if on_finished is not None:
                 on_finished(None, exc)
 
-        workers.run_async(self, lambda: self._tailor_work(jobs, opts),
-                          on_done=done, on_error=error)
+        try:
+            workers.run_async(self, lambda: self._tailor_work(jobs, opts),
+                              on_done=done, on_error=error)
+        except Exception as exc:  # noqa: BLE001 - launch (thread spawn) failed; clear
+            self._tailoring = False  # the re-entry guard so Tailor isn't dead-locked
+            self.btn_tailor.setEnabled(True)  # (same shape as _generate_cover_for's)
+            if on_finished is not None:  # park queue-chained "tailoring" entries as
+                on_finished(None, RuntimeError(  # failed — orphans are unclaimable
+                    f"tailor launch failed: {exc}"))
+            raise
         return True
 
     def _tailor_work(self, jobs: list[dict], opts: dict) -> list[dict]:
@@ -1577,15 +1585,37 @@ class MainWindow(QtWidgets.QMainWindow):
             "apply_md": existing("apply.md"),
         }
 
-    def _queue_entry_for(self, jid: str, batch_id: str, status: str) -> dict:
-        """A fresh apply-queue entry for one job, from the loaded frame."""
+    def _queue_entry_for(self, jid: str, batch_id: str, status: str) -> dict | None:
+        """A fresh apply-queue entry for one job, from the loaded frame — with
+        the tracker-row / master-CSV fallback for ids the frames don't carry
+        (tracker-only jobs; the same fallback _generate_cover_for uses).
+        Returns None when no apply URL can be resolved ANYWHERE: an entry with
+        an empty apply_url would send the SP4 agent nowhere and burn one of
+        the job's attempts, so it must never reach the queue."""
         row = self._row_for(jid)
-        easy = self._cell(row, "is_easy_apply").strip().lower() in ("true", "1", "yes")
+        company = self._cell(row, "company_name")
+        title = self._cell(row, "job_title")
+        url = self._url_by_id.get(jid) or self._cell(row, "url")
+        easy_raw = self._cell(row, "is_easy_apply")
+        if not (company and title and url):
+            tracked = self._tracked.get(jid) or {}
+            company = company or str(tracked.get("company") or "")
+            title = title or str(tracked.get("job_title") or "")
+            url = url or str(tracked.get("url") or "")
+        if not (company and title and url):
+            master = jobsdata.master_row(jid) or {}
+            company = company or str(master.get("company_name") or "")
+            title = title or str(master.get("job_title") or "")
+            url = url or str(master.get("url") or "")
+            easy_raw = easy_raw or str(master.get("is_easy_apply") or "")
+        if not url.strip():
+            return None
+        easy = easy_raw.strip().lower() in ("true", "1", "yes")
         return apply_queue.new_entry(
             jid,
-            company=self._cell(row, "company_name"),
-            title=self._cell(row, "job_title"),
-            apply_url=self._url_by_id.get(jid) or self._cell(row, "url"),
+            company=company,
+            title=title,
+            apply_url=url,
             is_easy_apply=easy,
             batch_id=batch_id,
             status=status)
@@ -1642,10 +1672,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 not_ready.append(jid)
 
         batch_id = datetime.now().strftime("batch-%Y%m%d-%H%M%S")
+        queued_n = 0
+        no_data = 0
         for jid, folder in ready:
             entry = self._queue_entry_for(jid, batch_id, "queued")
+            if entry is None:      # no apply URL anywhere — refuse (see _queue_entry_for)
+                no_data += 1
+                continue
             entry["artifacts"].update(self._queue_artifacts(folder))
             self._submit_queue_write(lambda e=entry: apply_queue.enqueue(e))
+            queued_n += 1
+        if no_data:
+            notes.append(f"{no_data} without job data — not queued")
 
         started_tailor = False
         if not_ready:
@@ -1658,6 +1696,18 @@ class MainWindow(QtWidgets.QMainWindow):
                     "(cover letter included — spends Gemini credit) and queue "
                     "when done?") == QtWidgets.QMessageBox.StandardButton.Yes:
                 jobs = [j for j in (self._job_payload(i) for i in not_ready) if j]
+                # A job whose entry can't resolve an apply URL can never be
+                # queued after tailoring either — drop it BEFORE spending
+                # Gemini credit on it, and count it with the data-less ones.
+                entries: list[dict] = []
+                with_data: list[dict] = []
+                for j in jobs:
+                    entry = self._queue_entry_for(
+                        str(j["job_posting_id"]), batch_id, "tailoring")
+                    if entry is not None:
+                        entries.append(entry)
+                        with_data.append(j)
+                jobs = with_data
                 missing = len(not_ready) - len(jobs)
                 if missing:
                     notes.append(f"{missing} without job data — not queued")
@@ -1665,9 +1715,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Enqueue as "tailoring" FIRST so the panel shows them the
                     # moment the worker starts; _finish_queue_tailor flips each
                     # to "queued" (set_artifacts) or parks it "failed".
-                    for j in jobs:
-                        entry = self._queue_entry_for(
-                            str(j["job_posting_id"]), batch_id, "tailoring")
+                    for entry in entries:
                         self._submit_queue_write(lambda e=entry: apply_queue.enqueue(e))
                     opts = {"cover_letter": True,
                             "ats_report": bool(cfg.get("tailor_ats_report", True)),
@@ -1684,7 +1732,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 notes.append(f"{len(not_ready)} not tailored — left out")
 
         if not started_tailor:  # otherwise _start_tailor owns the status line
-            parts = ([f"Queued {len(ready)} job(s) for auto-apply"] if ready else [])
+            parts = ([f"Queued {queued_n} job(s) for auto-apply"] if queued_n else [])
             parts += notes
             self._set_status((" · ".join(parts) + ".") if parts
                              else "Nothing queued for auto-apply.")

@@ -19,7 +19,21 @@ from . import assets, compose, config
 from .compile import CompileResult, compile_tex
 from .latexutil import to_latex
 
-_TEMPLATE = r"""\documentclass[11pt]{letter}
+# A plain left-aligned business-letter layout (article, not the `letter` class)
+# so the header format and the closing gap are under our exact control:
+#
+#   Name (bold)
+#   Phone | Email
+#   Date
+#   Company
+#   Dear Hiring Team,
+#   <body>
+#   Sincerely,
+#   Name            (left-aligned, a small gap under "Sincerely,")
+#
+# Deliberately NO LinkedIn/GitHub in the header — the user wants phone + email
+# only. parskip gives the uniform blank-line spacing between blocks.
+_TEMPLATE = r"""\documentclass[11pt]{article}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
@@ -27,21 +41,25 @@ _TEMPLATE = r"""\documentclass[11pt]{letter}
 \usepackage{parskip}
 \usepackage{hyperref}
 \hypersetup{colorlinks=false, pdfborder={0 0 0}}
-
-\signature{__CANDIDATE_NAME__}
-\address{__CONTACT_BLOCK__}
-\date{\today}
+\pagenumbering{gobble}
 
 \begin{document}
-\begin{letter}{Hiring Team \\ __COMPANY_NAME__}
 
-\opening{Dear Hiring Team,}
+{\large\textbf{__CANDIDATE_NAME__}}
+
+__CONTACT_LINE__
+
+__DATE__
+
+__COMPANY_NAME__
+
+Dear Hiring Team,
 
 __BODY__
 
-\closing{Sincerely,}
+Sincerely,\\[6pt]
+__CANDIDATE_NAME__
 
-\end{letter}
 \end{document}
 """
 
@@ -92,17 +110,32 @@ def _education_context() -> str:
     return "; ".join(lines)
 
 
-def _contact_block() -> str:
-    """The \\address{} lines (email \\\\ phone \\\\ LinkedIn \\\\ GitHub) from the
-    master basics, links made absolute via assets.full_url and every value
-    escaped with to_latex, so the letter carries the candidate's contact info
-    top-right above the date and stays self-contained when separated from the
-    resume. Missing fields are simply skipped."""
+def _contact_values() -> list[str]:
+    """The header contact fields, in print order: phone then email. LinkedIn and
+    GitHub are intentionally excluded (the user wants them out of the letter).
+    Missing/blank fields are dropped. Raw (unescaped) — callers escape as needed."""
     basics = assets.load_master().get("basics", {}) or {}
-    values = (basics.get("email"), basics.get("phone"),
-              assets.full_url(basics.get("linkedin")),
-              assets.full_url(basics.get("github")))
-    return " \\\\ ".join(to_latex(v) for v in values if str(v or "").strip())
+    return [str(v).strip() for v in (basics.get("phone"), basics.get("email"))
+            if str(v or "").strip()]
+
+
+def _today_str() -> str:
+    """Today as 'Month D, YYYY' (no leading zero) — portable across OSes and shared
+    verbatim by the PDF header and the plain-text export so they never disagree."""
+    t = date.today()
+    return f"{calendar.month_name[t.month]} {t.day}, {t.year}"
+
+
+_SIGNOFF_RE = re.compile(r"^\s*sincerely[,!.]?\s*$", re.I)
+
+
+def _strip_trailing_signoff(body: str) -> str:
+    """Drop any trailing 'Sincerely, / Name' the model appended — the template and
+    the .txt export both supply the closing, so a model-added one would double it."""
+    lines = body.strip().splitlines()
+    if len(lines) >= 2 and _SIGNOFF_RE.match(lines[-2]):
+        return "\n".join(lines[:-2]).rstrip()
+    return body.strip()
 
 
 # One-line style instruction per Settings tone choice. The body's content rules
@@ -134,7 +167,10 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
         "and basics; never invent experience, numbers, or interest you can't support. "
         "No salutation and no sign-off (the template adds them). Plain text, paragraphs "
         "separated by a blank line. Warm but professional; write like a person, in "
-        "plain declarative sentences, no clichés. " + tone_directive(tone) + " "
+        "plain declarative sentences, no clichés. Show genuine but MEASURED interest: "
+        "never gush or over-sell — no exclamation-point excitement, no "
+        "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
+        "over-eager tone reads as AI-written. " + tone_directive(tone) + " "
         "Use the correct tense for education, based on the EDUCATION line: if the "
         "candidate has already graduated, NEVER say they are 'completing' or "
         "'finishing' their studies; refer to the degree as completed. "
@@ -167,7 +203,55 @@ EDUCATION: {_education_context()}
 
 Write the body now."""
     body = compose.call(system, user, config.TIER_PRO, json_out=False, temperature=0.4)
+    # Second (flash) pass: tighten cohesion/flow, strip any invented claim, and dial
+    # back over-the-top excitement — THEN the deterministic ban gate runs last, so the
+    # refine can never sneak banned phrasing past it.
+    body = refine_body(jd, job_title, company, body, bullets, tone=tone)
     return enforce_body_style(jd, job_title, company, body, bullets, tone=tone)
+
+
+def refine_body(jd: str, job_title: str, company: str, body: str,
+                bullets: Dict[str, str], tone: str = "professional") -> str:
+    """One flash-tier cohesion/grounding/tone pass over the generated body.
+
+    A final editor polish: make the paragraphs read as one connected argument,
+    keep it strictly grounded in the resume bullets (cut anything the draft
+    invented — no company/number/skill/claim that isn't supported), and pull an
+    over-eager, gushing tone back to measured, genuine interest (that AI-slop
+    over-excitement is exactly what the user flagged). Best-effort and advisory:
+    an empty result or a failed call leaves the original body untouched, and the
+    deterministic style gate still runs after this. Pure aside from the LLM call."""
+    body = (body or "").strip()
+    if not body:
+        return body
+    used = "\n".join(f"- {t}" for t in bullets.values())
+    system = (
+        "You are an editor doing a final polish pass on a cover-letter body. Improve "
+        "cohesion and flow so it reads as one connected argument, not stitched-together "
+        "sentences. Stay grounded: use ONLY facts already in the draft and the resume "
+        "bullets below; never add a company, number, skill, or claim that isn't "
+        "supported, and cut anything the draft invented. Keep the meaning and roughly "
+        "the same length; no salutation and no sign-off. Show genuine but MEASURED "
+        "interest: do NOT be over-the-top or gushing — no exclamation-point enthusiasm, "
+        "no 'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
+        "over-eager tone reads as AI-written. " + tone_directive(tone) + "\n"
+        "BANNED PHRASING (do not introduce any of these): " + compose.BANNED_PHRASING
+    )
+    user = f"""ROLE: {job_title} at {company}
+
+RESUME BULLETS (the only allowed source of facts):
+{used}
+
+COVER-LETTER DRAFT TO POLISH:
+{body}
+
+Return ONLY the revised body — same paragraph structure, no preamble, no sign-off."""
+    try:
+        refined = (compose.call(system, user, config.TIER_FLASH, json_out=False,
+                                temperature=0.3) or "").strip()
+    except Exception:  # noqa: BLE001 - refine is advisory; the draft still stands
+        return body
+    return refined or body
 
 
 def enforce_body_style(jd: str, job_title: str, company: str, body: str,
@@ -218,14 +302,30 @@ def _paragraphs(body: str) -> str:
     return "\n\n\\medskip\n\n".join(esc)
 
 
+def cover_letter_text(body: str, company: str) -> str:
+    """The cover letter as clean, copy-pasteable plain text (no LaTeX) — saved next
+    to the PDF so it can be dropped straight into an application form. Same header
+    and left-aligned closing as the PDF, blocks separated by a blank line. Raw text
+    (never escaped): reads the master basics for name + phone/email."""
+    name = _display_name()
+    contact = " | ".join(_contact_values())
+    body = _strip_trailing_signoff(body)
+    paras = [" ".join(p.split()) for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
+    blocks = [name]
+    if contact:
+        blocks.append(contact)
+    blocks += [_today_str(), company, "Dear Hiring Team,", *paras, "Sincerely,", name]
+    return "\n\n".join(blocks) + "\n"
+
+
 def render_cover_letter(body: str, company: str, tex_path: Path, work_dir: Path) -> Tuple[CompileResult, str]:
     # Drop any trailing "Sincerely, / Name" the model added; the template supplies it.
-    lines = body.strip().splitlines()
-    if len(lines) >= 2 and re.match(r"^\s*sincerely[,!.]?\s*$", lines[-2], re.I):
-        body = "\n".join(lines[:-2]).rstrip()
+    body = _strip_trailing_signoff(body)
+    contact_line = r" \textbar{} ".join(to_latex(v) for v in _contact_values())
     rendered = (
         _TEMPLATE.replace("__CANDIDATE_NAME__", to_latex(_display_name()))
-        .replace("__CONTACT_BLOCK__", _contact_block())
+        .replace("__CONTACT_LINE__", contact_line)
+        .replace("__DATE__", to_latex(_today_str()))
         .replace("__COMPANY_NAME__", to_latex(company))
         .replace("__BODY__", _paragraphs(body))
     )

@@ -120,6 +120,9 @@ def offline_tailor(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod.coverletter, "generate_body", fake_cover_body)
     monkeypatch.setattr(run_mod.coverletter, "render_cover_letter",
                         lambda *a, **k: (cl_result, ""))
+    monkeypatch.setattr(run_mod.coverletter, "cover_letter_text",
+                        lambda *a, **k: "cover txt")
+    monkeypatch.setattr(run_mod.output, "cover_txt_filename", lambda: "cover.txt")
     monkeypatch.setattr(run_mod.research, "company_blurb", lambda *a, **k: "")
 
     def fake_apply(*a, **k):

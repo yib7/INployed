@@ -26,6 +26,18 @@ def _noop(_msg: str) -> None:
     pass
 
 
+def _write_cover_txt(out_dir: Path, body: str, company: str,
+                     log: Callable[[str], None]) -> None:
+    """Save the copy-pasteable plain-text cover letter beside the PDF. Advisory:
+    a failure never sinks the (already-written) PDF, it just logs."""
+    try:
+        (out_dir / output.cover_txt_filename()).write_text(
+            coverletter.cover_letter_text(body, company), encoding="utf-8")
+        log("cover letter .txt written (copy-paste ready)")
+    except Exception as exc:  # noqa: BLE001 - the .txt is a convenience, never fatal
+        log(f"cover letter .txt skipped ({exc})")
+
+
 def _field(job: Dict[str, str], key: str) -> str:
     """Robust string getter: NaN floats / None (pandas rows) become ''."""
     v = job.get(key)
@@ -344,6 +356,7 @@ def tailor(
                 cl_res, _ = coverletter.render_cover_letter(body, company, cl_tex, tmp_path)
                 if cl_res.ok and cl_res.pdf_path:
                     shutil.copyfile(cl_res.pdf_path, out_dir / output.cover_filename())
+                    _write_cover_txt(out_dir, body, company, log)
                 else:
                     log(f"cover letter compile failed: {cl_res.error}")
             except Exception as exc:  # noqa: BLE001 - cover letter is optional, never fatal
@@ -433,6 +446,7 @@ def generate_cover_letter(
             raise RuntimeError(f"Cover letter compile failed: {cl_res.error}")
         dest = out_dir / output.cover_filename()
         shutil.copyfile(cl_res.pdf_path, dest)
+        _write_cover_txt(out_dir, body, company, log)
 
     log(f"done -> {dest}")
     log("token usage: " + llm.usage_summary())

@@ -153,6 +153,18 @@ def test_register_launch_error_is_not_ok(monkeypatch):
     assert not ok and "no schtasks" in msg
 
 
+def test_register_refuses_empty_times_without_calling_schtasks():
+    called = []
+
+    def fake_run(argv, **kw):
+        called.append(argv)
+        return _Res(0, "")
+
+    ok, msg = local_task.register([], runner=fake_run)
+    assert not ok and "no run times" in msg.lower()
+    assert called == []   # never shelled out to register a trigger-less task
+
+
 def test_default_times_are_the_live_registered_schedule():
     assert local_task.DEFAULT_TIMES == ["10:10", "10:20", "10:30",
                                         "19:10", "19:20", "19:30"]

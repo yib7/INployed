@@ -446,6 +446,26 @@ def test_generate_cover_launches_worker_with_master_row_fallback(qtbot, tmp_path
     assert w._covering is True
 
 
+def test_generate_cover_clears_covering_flag_if_launch_raises(qtbot, tmp_path,
+                                                              monkeypatch):
+    # If run_async itself throws (thread-spawn failure), the re-entry guard must
+    # not stick True — otherwise the menu item is dead until restart.
+    _tailored_folder(tmp_path, monkeypatch)
+    w = _win(qtbot)
+    w.registry.resume_path.return_value = str(tmp_path)
+    monkeypatch.setattr(mw.jobsdata, "master_row", lambda jid: {
+        "job_posting_id": jid, "company_name": "Acme", "job_title": "Engineer",
+        "job_description_formatted": "x" * 200, "url": "http://x"})
+
+    def boom(*a, **k):
+        raise RuntimeError("cannot start thread")
+
+    monkeypatch.setattr(mw.workers, "run_async", boom)
+    with pytest.raises(RuntimeError):
+        w._generate_cover_for("123")
+    assert w._covering is False
+
+
 def test_regenerate_cover_declined_confirm_is_noop(qtbot, tmp_path, monkeypatch):
     from resume_tailor import output
     _tailored_folder(tmp_path, monkeypatch)

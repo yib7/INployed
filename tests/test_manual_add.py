@@ -304,6 +304,26 @@ def test_delete_jobs_removes_everywhere_and_persists(tmp_path, monkeypatch):
     assert gids == {"manual-keep2"}                   # and from the gz bridge
 
 
+def test_delete_jobs_marks_removed_before_rewriting_csvs(tmp_path, monkeypatch):
+    # Regression: the removed_jobs hide-marker must be written BEFORE the (slow)
+    # CSV rewrite, so a reload racing the background delete filters the row out
+    # instead of resurrecting it. Assert the ordering invariant directly: at the
+    # moment the CSV drop runs, the id is already in removed_jobs.
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)   # isolate config.json
+    master = tmp_path / "linkedin_jobs_master.csv"
+    _seed(master, "manual-race1")
+    seen_when_dropping = {}
+    real_drop = jobsdata._drop_ids_from_csv
+
+    def spy(path, ids):
+        seen_when_dropping["removed"] = set(jobsdata.load_removed_jobs())
+        return real_drop(path, ids)
+
+    monkeypatch.setattr(jobsdata, "_drop_ids_from_csv", spy)
+    jobsdata.delete_jobs(["manual-race1"], master_csv=master)
+    assert "manual-race1" in seen_when_dropping["removed"]  # marker set first
+
+
 def test_load_files_hides_removed_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)
     f = tmp_path / "manual" / "manual_jobs_scored.csv.gz"

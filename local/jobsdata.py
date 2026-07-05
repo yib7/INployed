@@ -394,17 +394,22 @@ def _save_removed_jobs(ids: set[str]) -> None:
 def delete_jobs(ids, *, master_csv: Path | None = None) -> int:
     """Remove jobs from the LOCAL writable stores and remember them as removed.
 
-    Rewrites the local master + manual gz + local run files dropping these ids, then
-    records them in config.json 'removed_jobs' so a Drive-only copy also disappears
-    from the UI. Tracker status is cleared by the caller (the UI's seen registry).
-    Returns the count of distinct ids targeted."""
+    Records them in config.json 'removed_jobs' (so a Drive-only copy also disappears
+    from the UI), THEN rewrites the local master + manual gz + local run files
+    dropping these ids. Tracker status is cleared by the caller (the UI's seen
+    registry). Returns the count of distinct ids targeted."""
     ids = {str(i).strip() for i in (ids or []) if str(i).strip()}
     if not ids:
         return 0
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
+    # Record the hide-marker FIRST, before the slow multi-file rewrite. load_files
+    # filters removed_jobs, so this makes the deletion durable immediately: a reload
+    # racing the rewrite (the dashboard deletes on a background queue while the UI
+    # stays live) still hides the row instead of resurrecting it, and a row stays
+    # hidden even if a later rewrite fails. The CSV drop is then just space reclaim.
+    _save_removed_jobs(load_removed_jobs() | ids)
     for p in [master, *local_run_files(master.parent)]:
         _drop_ids_from_csv(p, ids)
-    _save_removed_jobs(load_removed_jobs() | ids)
     return len(ids)
 
 

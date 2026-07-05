@@ -51,6 +51,11 @@ def cover_filename() -> str:
     return f"{candidate_slug()}_Cover_Letter.pdf"
 
 
+def cover_txt_filename() -> str:
+    """Plain-text sibling of the cover-letter PDF, for easy copy-paste into forms."""
+    return f"{candidate_slug()}_Cover_Letter.txt"
+
+
 def base_dir(company: str, job_title: str) -> Path:
     """The canonical (un-nested) folder for a company+title, WITHOUT creating it
     or nesting a dated subfolder. Use this to LOCATE an already-tailored folder;

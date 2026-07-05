@@ -81,6 +81,10 @@ def _fake_master(monkeypatch):
 
 def test_generate_body_gates_model_output(monkeypatch):
     _fake_master(monkeypatch)
+    # Isolate the deterministic style gate: skip the (separately tested) flash
+    # refine pass so the two compose.call responses are generation + gate repair.
+    monkeypatch.setattr(coverletter, "refine_body",
+                        lambda jd, jt, co, body, bullets, **k: body)
     responses = ["I admire the team — its work is robust.",   # generation (slop)
                  "I admire the team and its published work."]  # repair (clean)
     monkeypatch.setattr(compose, "call", lambda *a, **k: responses.pop(0))

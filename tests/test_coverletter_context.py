@@ -148,8 +148,9 @@ def test_system_prompt_carries_tense_opener_and_metric_rules(monkeypatch):
     assert "same metric or number twice" in system
 
 
-# ── template contact block ────────────────────────────────────────────────────
-def test_rendered_letter_address_carries_escaped_contact_block(monkeypatch, tmp_path):
+# ── template header + closing ─────────────────────────────────────────────────
+def test_rendered_letter_header_is_phone_email_no_social(monkeypatch, tmp_path):
+    monkeypatch.setattr(coverletter, "date", _FrozenDate)
     monkeypatch.setattr(coverletter.assets, "load_master", lambda: {
         "basics": {"name": "Jane Doe", "email": "jane_doe@example.com",
                    "phone": "555-555-0100",
@@ -162,11 +163,34 @@ def test_rendered_letter_address_carries_escaped_contact_block(monkeypatch, tmp_
     _, rendered = coverletter.render_cover_letter(
         "First paragraph.\n\nSecond paragraph.", "Acme",
         tmp_path / "cl.tex", tmp_path)
-    assert "\\address{}" not in rendered
-    start = rendered.index("\\address{")
-    block = rendered[start:rendered.index("}", start)]
-    assert "jane\\_doe@example.com" in block          # to_latex escaping applied
-    assert "555-555-0100" in block
-    assert "https://linkedin.com/in/janedoe" in block  # full https via assets.full_url
-    assert "https://github.com/janedoe" in block
-    assert block.count("\\\\") == 3                    # four lines -> three breaks
+    # phone + email present and escaped, joined by a LaTeX pipe
+    assert "555-555-0100" in rendered
+    assert "jane\\_doe@example.com" in rendered
+    assert r"555-555-0100 \textbar{} jane\_doe@example.com" in rendered
+    # LinkedIn/GitHub deliberately gone from the letter
+    assert "linkedin" not in rendered.lower()
+    assert "github" not in rendered.lower()
+    # left-aligned article layout — none of the `letter`-class machinery
+    for cmd in ("\\address", "\\signature", "\\opening", "\\closing",
+                "\\begin{letter}"):
+        assert cmd not in rendered
+    # header order: name, contact, date, company, salutation
+    assert rendered.index("Jane Doe") < rendered.index("555-555-0100")
+    assert rendered.index("555-555-0100") < rendered.index("July 4, 2026")
+    assert rendered.index("July 4, 2026") < rendered.index("Acme")
+    assert rendered.index("Acme") < rendered.index("Dear Hiring Team,")
+
+
+def test_rendered_letter_closing_is_left_with_small_gap(monkeypatch, tmp_path):
+    monkeypatch.setattr(coverletter, "date", _FrozenDate)
+    monkeypatch.setattr(coverletter.assets, "load_master", lambda: {
+        "basics": {"name": "Jane Doe", "email": "j@x.co", "phone": "123"}})
+    monkeypatch.setattr(
+        coverletter, "compile_tex",
+        lambda tex, wd: types.SimpleNamespace(ok=True, pdf_path=None, error=""))
+    _, rendered = coverletter.render_cover_letter("Body.", "Acme",
+                                                  tmp_path / "cl.tex", tmp_path)
+    # "Sincerely," then a small forced break, then the name (both flush left)
+    assert "Sincerely,\\\\[6pt]\nJane Doe" in rendered
+    # name appears twice: header + signature
+    assert rendered.count("Jane Doe") == 2

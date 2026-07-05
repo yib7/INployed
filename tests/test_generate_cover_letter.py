@@ -92,6 +92,9 @@ def offline_cover(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod.coverletter, "render_cover_letter",
                         lambda *a, **k: (cl_result, ""))
     monkeypatch.setattr(run_mod.output, "cover_filename", lambda: "cover.pdf")
+    monkeypatch.setattr(run_mod.output, "cover_txt_filename", lambda: "cover.txt")
+    monkeypatch.setattr(run_mod.coverletter, "cover_letter_text",
+                        lambda body, company: f"TXT:{body}:{company}")
     return rec, out_dir
 
 
@@ -104,6 +107,15 @@ def test_happy_path_copies_pdf_and_returns_path(offline_cover):
     assert got.read_bytes() == b"%PDF-1.4 fake cover"
     assert rec["research"] == 1
     assert statuses  # progress was reported
+
+
+def test_writes_plain_text_sibling(offline_cover):
+    # A copy-paste-ready .txt lands beside the PDF, built from the generated body.
+    rec, out_dir = offline_cover
+    run_mod.generate_cover_letter(_JOB, out_dir, tone="professional")
+    txt = out_dir / "cover.txt"
+    assert txt.exists()
+    assert txt.read_text(encoding="utf-8") == "TXT:cover body:BigCo"
 
 
 def test_bullets_shape_matches_tailors_dict_of_texts(offline_cover):

@@ -412,3 +412,46 @@ def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
     selection/bullets are unavailable here, so the résumé sections carry a re-tailor
     note; everything else is rebuilt the same way write() does."""
     return write(job, Path(folder))
+
+
+# The Standard-answers span is delimited by its own heading and the signature
+# heading. The signature heading carries a long parenthetical suffix, so it is
+# matched as a line-start PREFIX — never the full text.
+_ANSWERS_HEADING_RE = re.compile(r"(?m)^## Standard answers[ \t]*$")
+_SIGNATURE_PREFIX_RE = re.compile(r"(?m)^## Electronic signature")
+
+
+def refresh_standard_answers(folder: Path) -> Optional[Path]:
+    """Re-render ONLY the `## Standard answers` section of `<folder>/apply.md`
+    from the current answer store and splice it in place.
+
+    Used when a job is requeued after the user fixed a missing answer: the
+    tailored résumé sections, the meta marker, and the signature block are
+    expensive/hand-curated, so everything OUTSIDE the span between the
+    `## Standard answers` heading and the `## Electronic signature` heading
+    stays byte-identical (`parse_resume_bullets` and cover-letter regen are
+    unaffected). Never calls write()/write_from_folder() — those would
+    regenerate the whole sheet and nuke the tailored content.
+
+    Returns the apply.md path, or None when the file or either heading is
+    absent (nothing is touched then).
+    """
+    path = Path(folder) / "apply.md"
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m_start = _ANSWERS_HEADING_RE.search(text)
+    if not m_start:
+        return None
+    m_sig = _SIGNATURE_PREFIX_RE.search(text, m_start.end())
+    if not m_sig:
+        return None
+    section = _standard_answer_lines(apply_answers.load())
+    # build_markdown separates the answers block from the signature heading with
+    # one blank line; reproduce it so an unchanged store round-trips byte-identical.
+    new_text = text[:m_start.start()] + section + "\n" + text[m_sig.start():]
+    path.write_text(new_text, encoding="utf-8")
+    return path

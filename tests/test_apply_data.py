@@ -379,3 +379,97 @@ def test_parse_resume_bullets_empty_and_sectionless_input():
     assert apply_data.parse_resume_bullets("") == []
     # bullets outside the three résumé sections never count
     assert apply_data.parse_resume_bullets("## Education\n- Uni — BS\n") == []
+
+
+# --- refresh_standard_answers: splice ONLY the Standard-answers section ----------
+
+def _seed_store(tmp_path, **overrides):
+    store = tmp_path / "apply_answers.json"
+    ans = apply_answers.seed_defaults()
+    by = {e["id"]: e for e in ans}
+    for key, val in overrides.items():
+        by[key]["answer"] = val
+    apply_answers.save(ans, store)
+    return store
+
+
+def _spans(raw: bytes):
+    """(start-of-Standard-answers, start-of-Electronic-signature) byte offsets."""
+    start = raw.index(b"## Standard answers")
+    sig = raw.index(b"## Electronic signature")
+    return start, sig
+
+
+def test_refresh_standard_answers_roundtrip_touches_only_the_span(tmp_path):
+    _seed_store(tmp_path, how_did_you_hear="LinkedIn")
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    before = out.read_bytes()
+    assert b"LinkedIn" in before
+
+    _seed_store(tmp_path, how_did_you_hear="Referral from a friend")
+    got = apply_data.refresh_standard_answers(tmp_path)
+    assert got == out
+
+    after = out.read_bytes()
+    text = after.decode("utf-8")
+    assert "Referral from a friend" in text
+    start_b, sig_b = _spans(before)
+    start_a, sig_a = _spans(after)
+    assert before[:start_b] == after[:start_a]     # everything above: byte-identical
+    assert before[sig_b:] == after[sig_a:]         # signature + marker: byte-identical
+    # the tailored résumé bullets survive the splice untouched
+    assert apply_data.parse_resume_bullets(text) == \
+        apply_data.parse_resume_bullets(before.decode("utf-8"))
+    assert apply_data.parse_resume_bullets(text) == [
+        "Built the ingestion pipeline fast.",
+        "Cut cloud spend 40%.",
+        "Shipped CoolApp end to end.",
+        "Grew membership threefold.",
+    ]
+    # the meta marker still round-trips
+    assert apply_data.parse_marker(text)["job_posting_id"] == "42"
+
+
+def test_refresh_standard_answers_unchanged_store_is_byte_identical(tmp_path):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    before = out.read_bytes()
+    assert apply_data.refresh_standard_answers(tmp_path) == out
+    assert out.read_bytes() == before              # a no-change refresh is a no-op
+
+
+def test_refresh_standard_answers_missing_file_returns_none(tmp_path):
+    assert apply_data.refresh_standard_answers(tmp_path) is None
+
+
+def test_refresh_standard_answers_missing_headings_returns_none(tmp_path):
+    md = tmp_path / "apply.md"
+    md.write_text("# Apply sheet\n\n## Candidate\n- **Name:** X\n", encoding="utf-8")
+    before = md.read_bytes()
+    assert apply_data.refresh_standard_answers(tmp_path) is None
+    assert md.read_bytes() == before               # untouched when it can't splice
+
+    # Standard answers present but no signature heading -> still None, untouched
+    md.write_text("## Standard answers\n- **Q** A\n", encoding="utf-8")
+    before = md.read_bytes()
+    assert apply_data.refresh_standard_answers(tmp_path) is None
+    assert md.read_bytes() == before
+
+
+def test_refresh_standard_answers_never_regenerates_tailored_content(tmp_path):
+    # A hand-edited résumé bullet outside the span must survive a refresh —
+    # proof the function splices instead of calling write_from_folder.
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    text = out.read_text(encoding="utf-8")
+    text = text.replace("Built the ingestion pipeline fast.",
+                        "Built the ingestion pipeline REALLY fast.")
+    out.write_text(text, encoding="utf-8")
+    _seed_store(tmp_path, how_did_you_hear="Referral")
+    apply_data.refresh_standard_answers(tmp_path)
+    refreshed = out.read_text(encoding="utf-8")
+    assert "Built the ingestion pipeline REALLY fast." in refreshed
+    assert "Referral" in refreshed

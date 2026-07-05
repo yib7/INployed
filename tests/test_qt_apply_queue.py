@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 from PySide6 import QtCore, QtWidgets
 
 REPO = Path(__file__).resolve().parent.parent
@@ -237,6 +238,62 @@ def test_queue_ready_job_enqueues_with_artifact_paths(qtbot, monkeypatch, tmp_pa
     assert arts["apply_md"] == str(folder / "apply.md")
 
 
+def test_queue_tracker_only_ready_job_falls_back_for_entry_data(qtbot, monkeypatch, tmp_path):
+    """A tracker-only id (in registry.status_rows(), absent from self.df) must
+    enqueue with a REAL apply_url/company/title via the master-CSV fallback —
+    not an empty entry the SP4 agent can't navigate (burns an attempt)."""
+    w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())      # df carries 1-3 only
+    jid = "T9"
+    w.registry.status_rows.return_value = [
+        {"job_posting_id": jid, "status": "saved", "status_date": "2026-07-01",
+         "applied_date": "", "followed_up_at": "",
+         "company": "", "job_title": "", "url": ""}]
+    folder = _ready_folder(tmp_path, monkeypatch, jid)
+    w.registry.resume_path.side_effect = \
+        lambda j: str(folder) if j == jid else None
+    monkeypatch.setattr(mw.jobsdata, "master_row",
+                        lambda j, **k: ({"company_name": "TrackCo",
+                                         "job_title": "Tracked Role",
+                                         "url": "https://x/t9",
+                                         "is_easy_apply": "True"}
+                                        if str(j) == jid else None))
+
+    w._queue_for_auto_apply([jid])
+
+    jobs = apply_queue.load(_qfile(tmp_path))["jobs"]
+    assert len(jobs) == 1
+    e = jobs[0]
+    assert e["job_posting_id"] == jid
+    assert e["status"] == "queued"
+    assert e["company"] == "TrackCo" and e["title"] == "Tracked Role"
+    assert e["apply_url"] == "https://x/t9"
+    assert e["is_easy_apply"] is True
+    assert e["artifacts"]["folder"] == str(folder)
+    assert "Queued 1" in w.statusBar().currentMessage()
+
+
+def test_queue_refuses_job_with_no_apply_url_anywhere(qtbot, monkeypatch, tmp_path):
+    """No df row, no tracker fields, no master row -> the entry would carry an
+    empty apply_url; it must NOT be enqueued, and the status line says so."""
+    w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())
+    jid = "T9"
+    w.registry.status_rows.return_value = [
+        {"job_posting_id": jid, "status": "saved", "status_date": "2026-07-01",
+         "applied_date": "", "followed_up_at": "",
+         "company": "", "job_title": "", "url": ""}]
+    folder = _ready_folder(tmp_path, monkeypatch, jid)          # apply-READY...
+    w.registry.resume_path.side_effect = \
+        lambda j: str(folder) if j == jid else None
+    monkeypatch.setattr(mw.jobsdata, "master_row", lambda j, **k: None)
+
+    w._queue_for_auto_apply([jid])
+
+    assert apply_queue.load(_qfile(tmp_path))["jobs"] == []     # ...but refused
+    msg = w.statusBar().currentMessage()
+    assert "without job data" in msg
+    assert "Queued" not in msg                                  # no "Queued 0"
+
+
 def test_queue_not_ready_yes_tailors_then_flips_to_queued(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())
     monkeypatch.setattr(QtWidgets.QMessageBox, "question",
@@ -366,6 +423,52 @@ def test_queue_respects_tailoring_guard(qtbot, monkeypatch, tmp_path):
     assert launched == []
 
 
+def test_queue_tailor_launch_failure_resets_guard_and_parks_entries(
+        qtbot, monkeypatch, tmp_path):
+    """run_async raising at LAUNCH (thread-spawn failure) must not strand the
+    UI: _tailoring resets, the button re-enables, and the just-enqueued
+    "tailoring" entries are parked failed (they'd be unclaimable otherwise)."""
+    w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(w, "_apply_auth_env", lambda: None)
+
+    def boom(*a, **k):
+        raise RuntimeError("thread spawn failed")
+
+    monkeypatch.setattr(mw.workers, "run_async", boom)
+
+    with pytest.raises(RuntimeError, match="thread spawn failed"):
+        w._queue_for_auto_apply(["1"])
+
+    assert w._tailoring is False                 # guard cleared -> not dead-locked
+    assert w.btn_tailor.isEnabled()
+    e = apply_queue.load(_qfile(tmp_path))["jobs"][0]
+    assert e["status"] == "failed"               # not orphaned as "tailoring"
+    assert "tailor launch failed" in e["notes"]
+    assert w._queue_tailor_pending == []
+
+
+def test_plain_tailor_launch_failure_resets_guard(qtbot, monkeypatch, tmp_path):
+    """The no-queue path through _start_tailor gets the same hardening: a
+    launch failure re-raises but leaves the Tailor button usable."""
+    w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())
+    monkeypatch.setattr(w, "_apply_auth_env", lambda: None)
+
+    def boom(*a, **k):
+        raise RuntimeError("thread spawn failed")
+
+    monkeypatch.setattr(mw.workers, "run_async", boom)
+
+    job = {"job_posting_id": "1", "job_title": "T", "company_name": "C"}
+    with pytest.raises(RuntimeError, match="thread spawn failed"):
+        w._start_tailor([job], {})
+
+    assert w._tailoring is False
+    assert w.btn_tailor.isEnabled()
+    assert apply_queue.load(_qfile(tmp_path))["jobs"] == []   # nothing enqueued
+
+
 # --- MainWindow: _set_ats_password ------------------------------------------------
 
 
@@ -449,6 +552,38 @@ def test_panel_refreshes_after_external_rewrite(qtbot, tmp_path):
     apply_queue.enqueue(apply_queue.new_entry("2", company="Globex", title="B"),
                         path=qfile)
     qtbot.waitUntil(lambda: p.table.rowCount() == 2, timeout=8000)
+
+
+def test_panel_poll_catches_write_landing_mid_refresh(qtbot, tmp_path, monkeypatch):
+    """A write landing in refresh()'s load->snapshot window must trip the NEXT
+    mtime poll. The baseline sig has to be captured BEFORE the load — snapshot
+    it after and the write hides until some later write (poll blind spot)."""
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
+                        path=qfile)
+    p = _panel(qtbot, qfile)
+    # No fs events or running timers in this test: the poll ALONE must catch it.
+    p._watcher.fileChanged.disconnect(p._on_fs_event)
+    p._watcher.directoryChanged.disconnect(p._on_fs_event)
+    p._poll.stop()
+    p._debounce.stop()
+
+    real_load = apply_queue.load
+
+    def load_then_external_write(path, **kw):
+        data = real_load(path, **kw)
+        # One-shot: restore the seam, THEN land an external write (the agent
+        # CLI) squarely between the panel's read and its mtime snapshot.
+        monkeypatch.setattr(aqp.apply_queue, "load", real_load)
+        apply_queue.enqueue(apply_queue.new_entry("2", company="Globex", title="B"),
+                            path=qfile)
+        return data
+
+    monkeypatch.setattr(aqp.apply_queue, "load", load_then_external_write)
+    p.refresh()
+    assert p.table.rowCount() == 1      # this repaint predates the write — fine
+    p._poll_for_changes()               # but the very next poll tick must see it
+    assert p.table.rowCount() == 2
 
 
 def test_panel_requeue_clears_missing_and_flips_status(qtbot, tmp_path):

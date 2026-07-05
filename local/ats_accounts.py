@@ -152,21 +152,29 @@ def password_exists() -> bool:
         return False
 
 
-def set_master_password() -> bool:
-    """Prompt (getpass, twice, must match) and store the master password in the
-    Credential Manager. The typed value is never echoed or printed."""
+def set_master_password(password: Optional[str] = None) -> bool:
+    """Store the master password in the Credential Manager.
+
+    password=None is the interactive path (getpass twice, must match — the CLI);
+    a str is the programmatic path (SP3's QInputDialog hands the typed value in,
+    no prompt ever fires). A programmatic empty/whitespace-only value raises
+    ValueError. The value is never echoed, printed, or returned either way."""
     kr = _keyring()
     if kr is None:
         print("keyring is not installed — run: pip install keyring",
               file=sys.stderr)
         return False
-    first = _getpass("New master password: ")
-    second = _getpass("Repeat to confirm: ")
-    if not first or first != second:
-        print("passwords empty or did not match — nothing stored.",
-              file=sys.stderr)
-        return False
-    kr.set_password(SERVICE, _MASTER_USER, first)
+    if password is None:
+        first = _getpass("New master password: ")
+        second = _getpass("Repeat to confirm: ")
+        if not first or first != second:
+            print("passwords empty or did not match — nothing stored.",
+                  file=sys.stderr)
+            return False
+        password = first
+    elif not str(password).strip():
+        raise ValueError("master password must not be empty or whitespace-only")
+    kr.set_password(SERVICE, _MASTER_USER, password)
     return True
 
 
@@ -304,9 +312,29 @@ def clear_clipboard_if_password() -> bool:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+# Verbs whose code path touches the secret: an unexpected exception there is
+# reported by CLASS NAME ONLY — str(e) from a keyring/clipboard backend could
+# carry the password itself.
+_SECRET_VERBS = frozenset(("set-password", "clip-password", "clip-clear"))
+
+
+def _force_utf8_stdio() -> None:
+    """Piped stdout/stderr on Windows default to cp1252, so a ledger note or
+    email with an emoji/arrow would UnicodeEncodeError mid-verb. Reconfigure
+    both streams to UTF-8 up front; errors="replace" so printing never raises."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Exit codes: 0 ok · 1 refused/unavailable (no password stored, mismatch,
-    keyring missing) · 2 lookup miss. NO verb ever outputs the password."""
+    keyring missing) or unexpected error (one line on stderr) · 2 lookup miss.
+    NO verb ever outputs the password."""
+    _force_utf8_stdio()
     ap = argparse.ArgumentParser(
         prog="ats_accounts",
         description="ATS account ledger + master-password clipboard transit "
@@ -340,6 +368,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--json", action="store_true")
 
     args = ap.parse_args(argv)
+    try:
+        return _run_verb(args)
+    except Exception as exc:
+        # Anything unexpected: one line on stderr, exit 1 — and for verbs that
+        # touch the secret, the exception CLASS name only (str(e) from a
+        # keyring/clipboard backend could carry the password).
+        detail = type(exc).__name__
+        if args.verb not in _SECRET_VERBS:
+            detail = f"{detail}: {exc}"
+        print(f"ats_accounts: error: {detail}", file=sys.stderr)
+        return 1
+
+
+def _run_verb(args: argparse.Namespace) -> int:
     lp = Path(args.ledger) if getattr(args, "ledger", None) else None
 
     if args.verb == "set-password":

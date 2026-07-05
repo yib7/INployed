@@ -416,9 +416,19 @@ def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
 
 # The Standard-answers span is delimited by its own heading and the signature
 # heading. The signature heading carries a long parenthetical suffix, so it is
-# matched as a line-start PREFIX — never the full text.
-_ANSWERS_HEADING_RE = re.compile(r"(?m)^## Standard answers[ \t]*$")
+# matched as a line-start PREFIX — never the full text. Both patterns run over
+# untranslated text (newline=""), so the heading match tolerates a trailing \r.
+_ANSWERS_HEADING_RE = re.compile(r"(?m)^## Standard answers[ \t]*\r?$")
 _SIGNATURE_PREFIX_RE = re.compile(r"(?m)^## Electronic signature")
+
+
+def _dominant_eol(text: str) -> str:
+    """The file's dominant line ending: "\\r\\n" when CRLF pairs outnumber bare
+    LFs, else "\\n". The splice renders its section in the file's own convention
+    — write_text's default os.linesep translation would CRLF-ify a whole
+    LF-saved file, violating the bytes-outside-the-span-identical contract."""
+    crlf = text.count("\r\n")
+    return "\r\n" if crlf > text.count("\n") - crlf else "\n"
 
 
 def refresh_standard_answers(folder: Path) -> Optional[Path]:
@@ -440,7 +450,10 @@ def refresh_standard_answers(folder: Path) -> Optional[Path]:
     if not path.exists():
         return None
     try:
-        text = path.read_text(encoding="utf-8")
+        # newline="": no universal-newline translation in, none out — the
+        # file's own line endings survive the round trip byte-for-byte.
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            text = fh.read()
     except OSError:
         return None
     m_start = _ANSWERS_HEADING_RE.search(text)
@@ -449,9 +462,13 @@ def refresh_standard_answers(folder: Path) -> Optional[Path]:
     m_sig = _SIGNATURE_PREFIX_RE.search(text, m_start.end())
     if not m_sig:
         return None
+    eol = _dominant_eol(text)
     section = _standard_answer_lines(apply_answers.load())
+    if eol != "\n":
+        section = section.replace("\n", eol)
     # build_markdown separates the answers block from the signature heading with
     # one blank line; reproduce it so an unchanged store round-trips byte-identical.
-    new_text = text[:m_start.start()] + section + "\n" + text[m_sig.start():]
-    path.write_text(new_text, encoding="utf-8")
+    new_text = text[:m_start.start()] + section + eol + text[m_sig.start():]
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        fh.write(new_text)
     return path

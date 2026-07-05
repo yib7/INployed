@@ -13,9 +13,11 @@ retried every LOCK_RETRY seconds until LOCK_TIMEOUT then QueueLockTimeout —
 wrapping a load -> mutate -> atomic_write_json cycle. READS are lock-free on
 purpose: atomic_write_json swaps the file in with os.replace, so a reader never
 sees a partial file, only the previous or the next complete state. A corrupt /
-unparseable queue is renamed to apply_queue.json.corrupt-<stamp> and the queue
-starts fresh (a RuntimeWarning says so) — the queue is re-buildable from the
-dashboard, never precious.
+unparseable queue starts fresh (a RuntimeWarning says so) and is renamed to
+apply_queue.json.corrupt-<stamp> by the next LOCKED mutation — lock-free
+readers never rename (they could race a writer that already quarantined and
+rewrote a healthy file). The queue is re-buildable from the dashboard, never
+precious.
 
 Entry lifecycle: tailoring -> queued -> in_progress -> ready_to_submit |
 needs_human | failed (the last three are terminal). Every entry always carries
@@ -175,21 +177,53 @@ def _quarantine(qp: Path) -> None:
         RuntimeWarning, stacklevel=3)
 
 
-def load(path: Optional[Path] = None) -> Dict[str, Any]:
+# How often load() retries a failed read before treating the queue as empty.
+_READ_TRIES = 3
+_READ_RETRY = 0.02        # seconds between attempts
+
+
+def load(path: Optional[Path] = None, *, quarantine: bool = False) -> Dict[str, Any]:
     """The queue dict ({"version": 1, "jobs": [...]}). Lock-free by design —
     atomic_write_json means a concurrent reader only ever sees a complete file.
-    Missing -> fresh; corrupt -> quarantined sidecar + fresh + RuntimeWarning."""
+
+    Missing -> fresh. A read OSError (AV scan, sharing violation) is NOT
+    corruption: it is retried briefly, then fresh is returned with the file
+    left untouched. A file that reads but doesn't parse to the right shape
+    returns fresh too, and is renamed aside (.corrupt-<stamp>) only when
+    quarantine=True — which callers may pass ONLY while holding locked():
+    a lock-free reader renaming could race a lock-holding writer that already
+    quarantined and rewrote a healthy queue, moving the VALID file aside."""
     qp = queue_path(path)
-    if not qp.exists():
+    raw = None
+    for attempt in range(_READ_TRIES):
+        if not qp.exists():
+            return _fresh()
+        try:
+            raw = qp.read_text(encoding="utf-8")
+            break
+        except OSError:
+            if attempt < _READ_TRIES - 1:
+                time.sleep(_READ_RETRY)
+    if raw is None:
+        warnings.warn(
+            f"apply queue {qp} could not be read (transient lock/AV?); "
+            "treating as empty, file left in place",
+            RuntimeWarning, stacklevel=2)
         return _fresh()
     try:
-        data = json.loads(qp.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(raw)
+    except ValueError:
         data = None
-    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+    if isinstance(data, dict) and isinstance(data.get("jobs"), list):
+        return data
+    if quarantine:
         _quarantine(qp)
-        return _fresh()
-    return data
+    else:
+        warnings.warn(
+            f"apply queue {qp} is corrupt/unparseable; treating as empty "
+            "(left in place — the next locked mutation quarantines it)",
+            RuntimeWarning, stacklevel=2)
+    return _fresh()
 
 
 def _save(data: Dict[str, Any], path: Optional[Path] = None) -> None:
@@ -198,10 +232,33 @@ def _save(data: Dict[str, Any], path: Optional[Path] = None) -> None:
     atomic_write_json(qp, data)
 
 
+def _normalize(e: Dict[str, Any]) -> Dict[str, Any]:
+    """Backfill missing schema keys on an entry IN PLACE (hand-edited queues:
+    a minimal {"job_posting_id", "status"} entry must not KeyError a mutation
+    like e["artifacts"][k]). Never invents timestamps; present keys win."""
+    base = new_entry(str(e.get("job_posting_id", "")),
+                     apply_url=str(e.get("apply_url") or ""))
+    base["queued_at"] = ""
+    base["updated_at"] = ""
+    for k, v in base.items():
+        e.setdefault(k, v)
+    if not isinstance(e.get("artifacts"), dict):
+        e["artifacts"] = {}
+    for k in ARTIFACT_KEYS:
+        e["artifacts"].setdefault(k, "")
+    if not isinstance(e.get("ats"), dict):
+        e["ats"] = {}
+    for k in ATS_KEYS:
+        e["ats"].setdefault(k, base["ats"][k])
+    if not isinstance(e.get("missing_answers"), list):
+        e["missing_answers"] = []
+    return e
+
+
 def _find(data: Dict[str, Any], job_id: str) -> Dict[str, Any]:
     for e in data["jobs"]:
         if str(e.get("job_posting_id")) == str(job_id):
-            return e
+            return _normalize(e)
     raise UnknownJobError(f"no queue entry with job_posting_id {job_id!r}")
 
 
@@ -263,7 +320,7 @@ def enqueue(entry: Dict[str, Any], path: Optional[Path] = None) -> Dict[str, Any
     unchanged (the job is already in flight); a terminal duplicate is replaced
     in place by the fresh entry (a re-run of a finished/failed job)."""
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         jid = str(entry.get("job_posting_id"))
         for i, e in enumerate(data["jobs"]):
             if str(e.get("job_posting_id")) == jid:
@@ -282,7 +339,7 @@ def set_artifacts(job_id: str, artifacts: Dict[str, str],
     """Fill artifact paths (unknown keys ignored). A "tailoring" entry becomes
     "queued" — the tailor is done, the job may now be claimed."""
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         for k in ARTIFACT_KEYS:
             if k in artifacts:
@@ -301,7 +358,7 @@ def claim(claimed_by: str = "agent", path: Optional[Path] = None
     ties). Sets in_progress / attempts+1 / started_at / claimed_by. Entries that
     are tailoring or terminal are never claimed. None when nothing is queued."""
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         best = None
         for e in data["jobs"]:
             if e.get("status") != "queued":
@@ -310,6 +367,7 @@ def claim(claimed_by: str = "agent", path: Optional[Path] = None
                 best = e
         if best is None:
             return None
+        _normalize(best)                     # hand-edited entries: full schema
         best["status"] = "in_progress"
         best["attempts"] = int(best.get("attempts", 0)) + 1
         best["claimed_by"] = str(claimed_by or "")
@@ -329,7 +387,7 @@ def update(job_id: str, path: Optional[Path] = None, *,
     known keys into the entry's ats dict. Status transitions live in claim /
     finish / requeue, never here."""
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         for key, val in (("notes", notes), ("tab_note", tab_note),
                          ("claimed_by", claimed_by), ("company", company),
@@ -354,7 +412,7 @@ def add_missing(job_id: str, question: str, context: str = "",
     """Append one missing-answer item ({question, context, suggestion}) — the
     agent's "this form asked something the answer store can't cover" report."""
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         e["missing_answers"].append({"question": str(question),
                                      "context": str(context or ""),
@@ -375,7 +433,7 @@ def finish(job_id: str, status: str, *, tab_note: str = "", record: str = "",
             f"finish() only accepts terminal statuses {sorted(TERMINAL)}, "
             f"not {status!r}")
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         e["status"] = status
         e["finished_at"] = _now()
@@ -402,7 +460,7 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
     requeue itself.
     """
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         e["status"] = "queued"
         e["missing_answers"] = []
@@ -427,7 +485,7 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
 
 def remove(job_id: str, path: Optional[Path] = None) -> None:
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         data["jobs"].remove(e)
         _save(data, path)
@@ -436,7 +494,7 @@ def remove(job_id: str, path: Optional[Path] = None) -> None:
 def clear_finished(path: Optional[Path] = None) -> int:
     """Drop every terminal entry; returns how many were removed."""
     with locked(path):
-        data = load(path)
+        data = load(path, quarantine=True)   # under locked(): may rename aside
         keep = [e for e in data["jobs"] if e.get("status") not in TERMINAL]
         removed = len(data["jobs"]) - len(keep)
         if removed:
@@ -500,6 +558,20 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+def _force_utf8_stdio() -> None:
+    """Piped stdout/stderr on Windows default to cp1252, so any job title with
+    an emoji/arrow would UnicodeEncodeError mid-verb — AFTER a claim already
+    persisted its mutation, leaving the agent without the entry it now owns.
+    Reconfigure both streams to UTF-8 up front; errors="replace" so printing
+    can never raise, whatever the terminal."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def _print_entry(e: Dict[str, Any], as_json: bool) -> None:
     if as_json:
         print(json.dumps(e, indent=2, ensure_ascii=False))
@@ -509,8 +581,10 @@ def _print_entry(e: Dict[str, Any], as_json: bool) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """Exit codes: 0 ok · 2 unknown job id · 3 lock timeout · 4 claim on an
-    empty queue. Every verb accepts --queue PATH to override the default."""
+    """Exit codes: 0 ok · 1 unexpected error (one line on stderr) · 2 unknown
+    job id · 3 lock timeout · 4 claim on an empty queue. Every verb accepts
+    --queue PATH to override the default."""
+    _force_utf8_stdio()
     ap = argparse.ArgumentParser(
         prog="apply_queue",
         description="Batch auto-apply queue (never submits an application).")
@@ -630,6 +704,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except QueueLockTimeout as exc:
         print(f"apply_queue: {exc}", file=sys.stderr)
         return 3
+    except Exception as exc:   # anything unexpected: one line, documented exit 1
+        print(f"apply_queue: error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

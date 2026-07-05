@@ -291,6 +291,18 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("VM_GCLOUD_PATH", "gcloud path", "path", "gcloud", "VM (cloud scraper)", "env",
           path_kind="file", optional=True,
           help="Path to the gcloud CLI. Leave as 'gcloud' if it's on your PATH."),
+    # --- Local watcher task: keep the LinkedInJobsWatcher scheduled task in step --
+    # with the VM schedule (local, non-secret; the VM tab's buttons use these too).
+    Field("local_task_autosync", "Auto-sync local watcher task", "bool", False,
+          "VM (cloud scraper)", "config",
+          help="When on, applying a schedule to the VM also re-registers the local "
+               "LinkedInJobsWatcher task so it checks for fresh results after each run. "
+               "Syncs off the VM's wall-clock run times, so it assumes the VM shares "
+               "your timezone. Off = the local task's triggers never move."),
+    Field("local_task_offsets", "Watcher check offsets (minutes)", "str", "30,50,70",
+          "VM (cloud scraper)", "config",
+          help="Minutes after each VM run time the local watcher checks for fresh "
+               "results, comma-separated (e.g. 30,50,70 = three checks per run)."),
 ]
 
 

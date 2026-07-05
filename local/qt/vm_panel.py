@@ -13,6 +13,8 @@ from typing import Callable
 
 from PySide6 import QtCore, QtWidgets
 
+import jobsdata
+import local_task
 import settings
 import vm_schedule
 import vm_sync
@@ -138,10 +140,36 @@ class VMPanel(QtWidgets.QWidget):
         push_btn.clicked.connect(self.push_config)
         v.addWidget(push_btn, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
 
-        self.set_times(["10:00", "19:00"])
+        # --- local watcher task ---
+        lt_head = QtWidgets.QLabel("Local watcher task")
+        lt_head.setProperty("heading", True)
+        v.addWidget(lt_head)
+        lt_note = QtWidgets.QLabel(
+            "The LinkedInJobsWatcher scheduled task checks for fresh results a few "
+            "minutes after each VM run (offsets in Settings above).")
+        lt_note.setProperty("muted", True)
+        lt_note.setWordWrap(True)
+        v.addWidget(lt_note)
+        lt_row = QtWidgets.QHBoxLayout()
+        self.sync_local_btn = QtWidgets.QPushButton("Sync local task now")
+        self.sync_local_btn.clicked.connect(self.sync_local_task)
+        lt_row.addWidget(self.sync_local_btn)
+        self.restore_local_btn = QtWidgets.QPushButton("Restore default local schedule")
+        self.restore_local_btn.clicked.connect(self.restore_local_task)
+        lt_row.addWidget(self.restore_local_btn)
+        lt_row.addStretch(1)
+        v.addLayout(lt_row)
+
+        self.set_times(self._seed_times())
         self._sync_weekday_enabled()
 
     # ---- helpers -------------------------------------------------------------
+
+    @staticmethod
+    def _seed_times() -> list[str]:
+        """Last times pushed to the VM (the panel never reads live VM state), or
+        the stock 10:00/19:00 pair before anything has ever been pushed."""
+        return jobsdata.load_vm_schedule_times() or ["10:00", "19:00"]
 
     def set_times(self, times: list[str]) -> None:
         for i, combo in enumerate(self.time_combos):
@@ -153,14 +181,15 @@ class VMPanel(QtWidgets.QWidget):
 
         The Settings form's 'Revert changes' calls this so the VM section rolls
         back alongside the rest of the form. The panel never loads live VM state,
-        so 'initial' is the default it constructs with.
+        so 'initial' is what it constructed with — the last-pushed times (or the
+        stock pair before anything was ever pushed).
         """
         self.freq.setCurrentIndex(0)
         self.weekday.setCurrentText("Monday")
         self.pause_time.setCurrentText(BLANK)
         tomorrow = date.today() + timedelta(days=1)
         self.pause_date.setDate(QtCore.QDate(tomorrow.year, tomorrow.month, tomorrow.day))
-        self.set_times(["10:00", "19:00"])  # also refreshes the crontab preview
+        self.set_times(self._seed_times())  # also refreshes the crontab preview
         self._sync_weekday_enabled()
 
     def _times(self) -> list[str]:
@@ -200,15 +229,21 @@ class VMPanel(QtWidgets.QWidget):
             return None
         return t
 
-    def _run(self, cmd: list[str]) -> None:
+    def _run_result(self, cmd: list[str]) -> tuple[bool, str]:
+        """Run `cmd` through the injectable runner; (ok, notify-ready text).
+        Doesn't notify itself, so a caller can fold follow-up work into one popup."""
         try:
             res = self._runner(cmd)
         except Exception as exc:  # noqa: BLE001
-            self._notify("VM", f"Command failed to launch: {exc}")
-            return
+            return False, f"Command failed to launch: {exc}"
         out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()
         ok = getattr(res, "returncode", 0) == 0
-        self._notify("VM", ("Done.\n\n" if ok else "Failed.\n\n") + out[:1200])
+        return ok, ("Done.\n\n" if ok else "Failed.\n\n") + out[:1200]
+
+    def _run(self, cmd: list[str]) -> bool:
+        ok, text = self._run_result(cmd)
+        self._notify("VM", text)
+        return ok
 
     # ---- actions -------------------------------------------------------------
 
@@ -227,7 +262,17 @@ class VMPanel(QtWidgets.QWidget):
         cron = self.crontab_text()
         if not self._confirm("Apply schedule", f"Replace the VM crontab with:\n\n{cron}\n\nProceed?"):
             return
-        self._run(t.install_crontab_cmd(cron))
+        ok, text = self._run_result(t.install_crontab_cmd(cron))
+        if ok:
+            times = self._times()
+            jobsdata.save_vm_schedule_times(times)   # seeds the editor next open
+            if bool(jobsdata._load_cfg().get("local_task_autosync", False)):
+                wok, wmsg = local_task.register(
+                    local_task.watcher_times(times, self._cfg_offsets()))
+                text += (("\n\nLocal watcher task synced too.\n" if wok
+                          else "\n\nBUT the local watcher task sync failed:\n")
+                         + wmsg[:400])
+        self._notify("VM", text)
 
     def pause(self):
         t = self._require_configured()
@@ -261,3 +306,42 @@ class VMPanel(QtWidgets.QWidget):
             return
         for local, remote in files:
             self._run(t.build_scp_cmd(str(local), remote))
+
+    # ---- local watcher task ----------------------------------------------------
+
+    @staticmethod
+    def _cfg_offsets() -> tuple[int, ...]:
+        """The watcher-check offsets from settings ('30,50,70'-style, junk-safe)."""
+        return local_task.parse_offsets(
+            jobsdata._load_cfg().get("local_task_offsets", "30,50,70"))
+
+    def sync_local_task(self):
+        """Re-register the local watcher task from the CURRENT combo times — the
+        manual fix for a stale schedule, no VM push (or auto-sync) required."""
+        times = self._times()
+        if not times:
+            self._notify("Local watcher task", "Pick at least one run time first.")
+            return
+        watcher = local_task.watcher_times(times, self._cfg_offsets())
+        if not self._confirm(
+                "Sync local task",
+                f"Re-register the local '{local_task.TASK_NAME}' task to check for "
+                f"results at:\n\n{', '.join(watcher)}\n\nProceed?"):
+            return
+        ok, msg = local_task.register(watcher)
+        self._notify("Local watcher task",
+                     ("Synced.\n\n" if ok else "Failed.\n\n") + msg[:1200])
+
+    def restore_local_task(self):
+        """Escape hatch: put the task back on its stock schedule and turn
+        auto-sync off, so nothing moves it again until the user opts back in."""
+        if not self._confirm(
+                "Restore default schedule",
+                f"Re-register '{local_task.TASK_NAME}' with its default times "
+                f"({', '.join(local_task.DEFAULT_TIMES)}) and turn auto-sync off?"):
+            return
+        ok, msg = local_task.register(list(local_task.DEFAULT_TIMES))
+        jobsdata._save_cfg({"local_task_autosync": False})
+        self._notify("Local watcher task",
+                     ("Default schedule restored; auto-sync is now off.\n\n" if ok
+                      else "Failed.\n\n") + msg[:1200])

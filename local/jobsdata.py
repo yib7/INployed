@@ -535,6 +535,19 @@ def save_hidden_columns(hidden: dict[str, list[str]]) -> None:
     _save_cfg({"hidden_columns": hidden})
 
 
+def load_vm_schedule_times() -> list[str]:
+    """The VM run times last PUSHED from the dashboard (config.json
+    'vm_schedule_times'). The VM panel never reads live VM state, so this is what
+    seeds its schedule editor on open; [] when never pushed (or hand-mangled)."""
+    raw = _load_cfg().get("vm_schedule_times")
+    return [str(t) for t in raw] if isinstance(raw, list) else []
+
+
+def save_vm_schedule_times(times) -> None:
+    """Record the VM run times just pushed (best-effort; never crashes the UI)."""
+    _save_cfg({"vm_schedule_times": [str(t) for t in times]})
+
+
 def load_collapsed_sections() -> list[str]:
     """Settings sections the user has collapsed, persisted in config.json under
     'settings_collapsed'. Shape-checked so a stale/hand-edited config can't crash."""

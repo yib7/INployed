@@ -1550,8 +1550,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_auth_env()
         self._set_status(f"Generating cover letter for {payload['company_name']} — "
                          f"{payload['job_title']} …")
-        workers.run_async(self, lambda: self._cover_work(payload, folder, tone),
-                          on_done=self._finish_cover, on_error=self._finish_cover_error)
+        try:
+            workers.run_async(self, lambda: self._cover_work(payload, folder, tone),
+                              on_done=self._finish_cover, on_error=self._finish_cover_error)
+        except Exception:  # noqa: BLE001 - launch (thread spawn) failed; clear the
+            self._covering = False  # re-entry guard so the menu item isn't dead-locked
+            raise
 
     def _cover_work(self, job: dict, folder, tone: str):
         from resume_tailor.run import generate_cover_letter

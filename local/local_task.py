@@ -114,6 +114,11 @@ def register(times, task_name: str = TASK_NAME, runner=None) -> tuple[bool, str]
     no separate delete step. Returns (ok, human-readable message); the temp file
     is always removed. `runner` is injectable so tests never touch Task Scheduler.
     """
+    if not list(times):
+        # A trigger-less task would silently never run on schedule; refuse rather
+        # than register a broken one. (Both callers already guard, but register is
+        # public.)
+        return False, "Refusing to register a task with no run times."
     runner = runner or subprocess.run
     exe_dir = Path(sys.executable).resolve().parent
     pythonw = exe_dir / "pythonw.exe"

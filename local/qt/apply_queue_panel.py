@@ -468,11 +468,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     def _copy_kickoff(self) -> None:
         QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND)
+        self._set_note("Kickoff command copied — paste into a terminal to start the run.")
 
     def _copy_kickoff_scoped(self) -> None:
         QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND_SCOPED)
-        self._set_note("Kickoff command copied — paste it into a PowerShell "
-                       "window with Chrome running.")
+        self._set_note("Scoped kickoff command copied — paste into a terminal to start the run.")
 
     def _queued_count(self) -> int:
         """The 'queued' status count from the same jobs list _update_counts

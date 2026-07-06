@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -409,3 +409,125 @@ def test_close_event_warns_when_drain_fails(qtbot, tmp_path, monkeypatch):
                         staticmethod(lambda *a, **k: warned.setdefault("text", a[2])))
     w.close()
     assert "2" in warned.get("text", "")        # user told about the pending writes
+
+
+# ---- closeEvent: don't strand an in-flight tailor run ------------------------
+
+
+def _close_evt():
+    return QtGui.QCloseEvent()
+
+
+class _FakeThread:
+    def __init__(self, running=True):
+        self._running = running
+
+    def isRunning(self):
+        return self._running
+
+
+def test_close_event_waits_for_tailor_when_user_confirms(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_tailor_in_flight", lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    awaited = []
+    monkeypatch.setattr(w, "_await_tailor",
+                        lambda *a, **k: awaited.append(True) or True)
+    monkeypatch.setattr(w._writes, "is_idle", lambda: True)   # skip the write drain
+    evt = _close_evt()
+    w.closeEvent(evt)
+    assert awaited == [True]                     # waited for the tailor to save
+    assert evt.isAccepted()                      # then closed
+
+
+def test_close_event_skips_wait_when_user_declines(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_tailor_in_flight", lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+    monkeypatch.setattr(w, "_await_tailor", lambda *a, **k: pytest.fail(
+        "must not wait when the user declines"))
+    monkeypatch.setattr(w._writes, "is_idle", lambda: True)
+    evt = _close_evt()
+    w.closeEvent(evt)
+    assert evt.isAccepted()                      # closes now; recovery heals next launch
+
+
+def test_close_event_cancel_keeps_window_open(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_tailor_in_flight", lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Cancel))
+    touched = []
+    monkeypatch.setattr(w._writes, "is_idle",
+                        lambda: touched.append(True) or True)
+    evt = _close_evt()
+    evt.accept()                                 # prove ignore() flips it back
+    w.closeEvent(evt)
+    assert not evt.isAccepted()                  # window stays open
+    assert touched == []                         # bailed before the write drain
+
+
+def test_close_event_warns_when_tailor_wait_times_out(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_tailor_in_flight", lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(w, "_await_tailor", lambda *a, **k: False)   # timed out
+    warned = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warned.setdefault("text", a[2])))
+    monkeypatch.setattr(w._writes, "is_idle", lambda: True)
+    evt = _close_evt()
+    w.closeEvent(evt)
+    assert "recovered" in warned.get("text", "").lower()
+    assert evt.isAccepted()                      # still closes — recovery is the net
+
+
+def test_close_event_no_tailor_prompt_when_idle(qtbot, monkeypatch):
+    w = _win(qtbot)                              # fresh window: no tailor in flight
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: pytest.fail("no tailor prompt when nothing is tailoring")))
+    monkeypatch.setattr(w._writes, "is_idle", lambda: True)
+    evt = _close_evt()
+    w.closeEvent(evt)
+    assert evt.isAccepted()
+
+
+def test_tailor_in_flight_true_only_with_flag_and_live_thread(qtbot):
+    w = _win(qtbot)
+    assert w._tailor_in_flight() is False         # no flag, no threads
+    w._tailoring = True
+    w._bg_threads = []                            # flag set but nothing running
+    assert w._tailor_in_flight() is False         # the console-wording-test case
+    w._bg_threads = [(_FakeThread(running=False), object())]
+    assert w._tailor_in_flight() is False         # thread already stopped
+    w._bg_threads = [(_FakeThread(running=True), object())]
+    assert w._tailor_in_flight() is True          # genuinely in flight
+    w._tailoring = False
+
+
+def test_await_tailor_returns_true_once_finalize_clears_flag(qtbot, monkeypatch):
+    w = _win(qtbot)
+    w._tailoring = True
+    app = QtWidgets.QApplication.instance()
+    calls = {"n": 0}
+
+    def fake_pe(*a, **k):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            w._tailoring = False                 # the finalize signal 'delivered'
+
+    monkeypatch.setattr(app, "processEvents", fake_pe)
+    assert w._await_tailor(timeout_ms=5000) is True
+    assert calls["n"] >= 2
+
+
+def test_await_tailor_times_out_if_flag_never_clears(qtbot, monkeypatch):
+    w = _win(qtbot)
+    w._tailoring = True
+    app = QtWidgets.QApplication.instance()
+    monkeypatch.setattr(app, "processEvents", lambda *a, **k: None)   # never clears
+    assert w._await_tailor(timeout_ms=50) is False
+    w._tailoring = False

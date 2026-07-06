@@ -54,7 +54,7 @@ KICKOFF_COMMAND = (
     f'"{KICKOFF_PROMPT}"'
 )
 
-# Safer alternative (the "Copy scoped command" button): same Opus drain, but instead
+# Safer alternative (the Start button's "Scoped" choice): same Opus drain, but instead
 # of bypassing ALL permission checks it pre-approves ONLY the tools the drain uses —
 # Bash scoped to `python …` (the two project CLIs), file read/write for the record,
 # Task to dispatch per-job subagents, and the browser MCP. Anything else (rm, curl, a
@@ -67,27 +67,32 @@ KICKOFF_COMMAND_SCOPED = (
 )
 
 
-def _kickoff_argv() -> list[str]:
-    """The argv that opens a NEW PowerShell console running KICKOFF_COMMAND.
+def _kickoff_argv(scoped: bool = False) -> list[str]:
+    """The argv that opens a NEW PowerShell console running the drain command.
 
-    Pure and testable — no subprocess call here. KICKOFF_COMMAND already embeds
-    KICKOFF_PROMPT and the quoted REPO_ROOT, and it contains its own double
-    quotes (`cd "<root>"` and `"<prompt>"`); base64 via -EncodedCommand sidesteps
-    PowerShell 5.1's quoting rules entirely (no re-tokenizing, no escaping
-    needed) and round-trips cleanly for the test to decode.
+    Pure and testable — no subprocess call here. `scoped=False` launches the
+    unattended KICKOFF_COMMAND (--dangerously-skip-permissions); `scoped=True`
+    launches KICKOFF_COMMAND_SCOPED (--allowedTools, which pauses on anything
+    outside the list). Both already embed KICKOFF_PROMPT and the quoted
+    REPO_ROOT and contain their own double quotes (`cd "<root>"` and
+    `"<prompt>"`); base64 via -EncodedCommand sidesteps PowerShell 5.1's quoting
+    rules entirely (no re-tokenizing, no escaping) and round-trips cleanly for
+    the test to decode.
     """
-    encoded = base64.b64encode(KICKOFF_COMMAND.encode("utf-16-le")).decode("ascii")
+    command = KICKOFF_COMMAND_SCOPED if scoped else KICKOFF_COMMAND
+    encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
     return ["powershell", "-NoExit", "-EncodedCommand", encoded]
 
 
-def _spawn_kickoff() -> None:
+def _spawn_kickoff(scoped: bool = False) -> None:
     """Default on_start_run: launch the drain in a brand-new, visible console.
+    `scoped` selects the safer allowlisted variant over the blanket bypass.
 
     The flag is guarded via getattr so importing this module on a non-Windows
     box (CI, a dev's Mac) never raises at import time.
     """
     subprocess.Popen(
-        _kickoff_argv(),
+        _kickoff_argv(scoped),
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 
@@ -119,8 +124,8 @@ def _run_inline(fn: Callable[[], Any],
 
 
 class ApplyQueuePanel(QtWidgets.QWidget):
-    """Header (counts / password state / kickoff) + queue table + details pane
-    + the Re-queue / Remove / Clear finished / Open buttons."""
+    """Header (counts / password state / Start auto-apply run) + queue table +
+    details pane + the Re-queue / Remove / Clear finished / Open buttons."""
 
     def __init__(self, queue_path: Path | str | None = None, *,
                  submit_write: Callable | None = None,
@@ -162,10 +167,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.start_run_btn = QtWidgets.QPushButton("Start auto-apply run")
         self.start_run_btn.setProperty("accent", True)
         self.start_run_btn.setToolTip(
-            "Launch an unattended auto-apply drain in a NEW terminal window — "
-            "click once, walk away. Works through up to batch_cap queued jobs; "
-            "every application is PARKED at its review page for your approval "
-            "— nothing is ever submitted.")
+            "Launch an auto-apply drain in a NEW terminal window — click once, "
+            "walk away. You pick how it runs: unattended (no approval prompts) "
+            "or scoped (safer — pre-approves only the tools it needs). Works "
+            "through up to batch_cap queued jobs; every application is PARKED at "
+            "its review page for your approval — nothing is ever submitted.")
         self.start_run_btn.clicked.connect(self._start_run)
         header.addWidget(self.start_run_btn)
         self.pw_label = QtWidgets.QLabel("")
@@ -176,24 +182,6 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "(Windows Credential Manager — never written to any file)")
         self.pw_btn.clicked.connect(lambda: self._on_set_password())
         header.addWidget(self.pw_btn)
-        self.kickoff_btn = QtWidgets.QPushButton("Copy kickoff command")
-        self.kickoff_btn.setProperty("accent", True)
-        self.kickoff_btn.setToolTip(
-            "Copy the PowerShell command that starts the auto-apply agent "
-            "session draining this queue. Runs UNATTENDED "
-            "(--dangerously-skip-permissions): no per-action approval prompts. "
-            "The skill's own safety rails still apply — it never submits, and "
-            "parks at review / on CAPTCHA / SSN / payment.")
-        self.kickoff_btn.clicked.connect(self._copy_kickoff)
-        header.addWidget(self.kickoff_btn)
-        self.kickoff_scoped_btn = QtWidgets.QPushButton("Copy scoped command")
-        self.kickoff_scoped_btn.setToolTip(
-            "Safer alternative: same Opus drain, but pre-approves ONLY the tools it "
-            "needs (project CLIs, file read/write, subagents, browser) instead of "
-            "bypassing ALL permission checks. Tighter blast radius; may pause if the "
-            "agent reaches for a tool outside the list.")
-        self.kickoff_scoped_btn.clicked.connect(self._copy_kickoff_scoped)
-        header.addWidget(self.kickoff_scoped_btn)
         v.addLayout(header)
 
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
@@ -466,14 +454,6 @@ class ApplyQueuePanel(QtWidgets.QWidget):
     def _open_record(self) -> None:
         self._open_artifact("application_record", "application record")
 
-    def _copy_kickoff(self) -> None:
-        QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND)
-        self._set_note("Kickoff command copied — paste into a terminal to start the run.")
-
-    def _copy_kickoff_scoped(self) -> None:
-        QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND_SCOPED)
-        self._set_note("Scoped kickoff command copied — paste into a terminal to start the run.")
-
     def _queued_count(self) -> int:
         """The 'queued' status count from the same jobs list _update_counts
         renders into counts_label — never re-parse that label's text."""
@@ -489,10 +469,38 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         except Exception:  # noqa: BLE001 - config hiccups must never block the button
             return queued
 
+    def _ask_run_mode(self, n: int) -> Optional[str]:
+        """Ask which permission mode to launch, returning 'unattended', 'scoped',
+        or None (cancelled). Three explicit buttons on a QMessageBox — tests
+        monkeypatch this method to choose a mode without driving a live modal."""
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Start auto-apply run")
+        box.setText(
+            f"Start an auto-apply run in a new terminal? It works through up to "
+            f"{n} queued job(s), parks each at its review page — nothing is ever "
+            f"submitted.\n\n"
+            f"Unattended: no per-action approval prompts (walk away).\n"
+            f"Scoped (safer): pre-approves only the tools the drain needs; it "
+            f"pauses if it reaches for anything else.")
+        unattended_btn = box.addButton(
+            "Unattended", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        scoped_btn = box.addButton(
+            "Scoped (safer)", QtWidgets.QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(scoped_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is unattended_btn:
+            return "unattended"
+        if clicked is scoped_btn:
+            return "scoped"
+        return None
+
     def _start_run(self) -> None:
-        """Guards, in order: password set -> queue non-empty -> confirm. Only
-        Yes on the confirm box calls the injected on_start_run (default:
-        _spawn_kickoff, a brand-new visible PowerShell console)."""
+        """Guards, in order: password set -> queue non-empty -> mode choice.
+        Only a chosen mode (unattended/scoped, not Cancel) calls the injected
+        on_start_run (default: _spawn_kickoff, a brand-new visible PowerShell
+        console), passing the scoped flag through to it."""
         try:
             has_password = bool(self._password_exists())
         except Exception:  # noqa: BLE001 - a keyring hiccup must never crash the panel
@@ -510,12 +518,10 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                 "Queue is empty — queue jobs from the Jobs tab first.")
             return
         n = self._batch_cap(queued)
-        answer = QtWidgets.QMessageBox.question(
-            self, "Start auto-apply run",
-            f"Start an unattended auto-apply run in a new terminal? It works "
-            f"through up to {n} queued job(s), parks each at its review page "
-            f"— nothing is ever submitted.")
-        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+        mode = self._ask_run_mode(n)
+        if mode is None:
             return
-        self._on_start_run()
-        self._set_note("Run started in a new terminal window.")
+        scoped = mode == "scoped"
+        self._on_start_run(scoped)
+        which = "scoped (safer)" if scoped else "unattended"
+        self._set_note(f"Auto-apply run started ({which}) in a new terminal window.")

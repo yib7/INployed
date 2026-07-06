@@ -2,8 +2,12 @@
 
 Exercises apply.md parsing, name splitting, and folder artifact discovery — no
 browser. The Playwright driving (fill_identity, upload_files, run) is validated in
-live runs, not here, exactly like apply_verify's locator wrappers.
+live runs, not here, exactly like apply_verify's locator wrappers. The one exception
+is ``run``'s report-before-hold ordering (test_run_report_written_before_hold),
+which stubs the whole ``playwright.sync_api`` module via ``sys.modules`` so it
+never launches a real browser either.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -125,3 +129,144 @@ def test_load_folder_discovers_pdfs(tmp_path):
 def test_load_folder_missing_applymd_is_tolerant(tmp_path):
     p = apply_playwright._load_folder(tmp_path)
     assert p["candidate"] == {} and p["resume"] == "" and p["cover"] == ""
+
+
+def test_write_report_roundtrip(tmp_path):
+    rd = tmp_path / ".apply_run"
+    report = {"url": "https://x.test", "status": "PARKED at review", "filled": {"email": "a@b.c"}}
+    out = apply_playwright._write_report(rd, report)
+    assert out == rd / "report.json"
+    assert json.loads(out.read_text(encoding="utf-8")) == report
+
+
+class _FakeLocator:
+    def __init__(self, count=0):
+        self._count = count
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return self._count
+
+    def is_visible(self):
+        return False
+
+    def click(self, timeout=None):
+        pass
+
+    def fill(self, value):
+        pass
+
+
+class _FakePage:
+    def __init__(self):
+        self.url = "https://boards.greenhouse.io/example/jobs/1"
+
+    def goto(self, url, wait_until=None, timeout=None):
+        pass
+
+    def wait_for_timeout(self, ms):
+        pass
+
+    def query_selector(self, selector):
+        return None
+
+    def get_by_label(self, label, exact=False):
+        return _FakeLocator(count=0)
+
+    def get_by_role(self, role, name=None, exact=False):
+        return _FakeLocator(count=0)
+
+    def set_input_files(self, selector, path):
+        pass
+
+    def inner_text(self, selector):
+        return "body text"
+
+
+class _FakeContext:
+    def __init__(self, page):
+        self._page = page
+
+    def new_page(self):
+        return self._page
+
+
+class _FakeBrowser:
+    def __init__(self, page):
+        self._ctx = _FakeContext(page)
+        self._connected = True
+
+    def new_context(self, viewport=None):
+        return self._ctx
+
+    def is_connected(self):
+        return self._connected
+
+    def close(self):
+        self._connected = False
+
+
+class _FakeChromium:
+    def __init__(self, page):
+        self._page = page
+
+    def launch(self, headless=False):
+        return _FakeBrowser(self._page)
+
+
+class _FakePlaywrightCM:
+    """Stands in for the ``with sync_playwright() as p:`` context manager."""
+
+    def __init__(self, page):
+        self._page = page
+
+    def __enter__(self):
+        return _SimpleNamespace(chromium=_FakeChromium(self._page))
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _SimpleNamespace:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def test_run_report_written_before_hold(tmp_path, monkeypatch):
+    """Stub the whole ``playwright.sync_api`` module (no real browser anywhere) and
+    confirm ``run(..., submit=False)`` writes report.json BEFORE the hold — verified
+    by making ``_hold`` itself assert the report already exists on disk."""
+    import types
+
+    folder = tmp_path / "job"
+    folder.mkdir()
+    (folder / "apply.md").write_text(
+        "## Candidate\n- **Name:** Jane Doe\n- **Email:** jane@example.com\n",
+        encoding="utf-8")
+
+    fake_page = _FakePage()
+    fake_module = types.ModuleType("playwright.sync_api")
+    fake_module.sync_playwright = lambda: _FakePlaywrightCM(fake_page)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_module)
+
+    run_dir = tmp_path / "rundir"
+    hold_calls = []
+
+    def fake_hold(browser):
+        # By the time _hold is called, report.json must already exist.
+        assert (run_dir / "report.json").exists()
+        hold_calls.append(True)
+
+    monkeypatch.setattr(apply_playwright, "_hold", fake_hold)
+
+    report = apply_playwright.run(
+        "https://boards.greenhouse.io/example/jobs/1", str(folder),
+        submit=False, run_dir=str(run_dir), hold=True, headless=True)
+
+    assert report["status"].startswith("PARKED at review")
+    assert hold_calls == [True]
+    written = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert written["status"] == report["status"]

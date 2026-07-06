@@ -251,6 +251,7 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
         if not submit:
             report["status"] = "PARKED at review - Submit NOT clicked, tab left open"
             _log(report["status"])
+            _write_report(rd, report)
             if hold:
                 _hold(browser)
             return report
@@ -262,6 +263,7 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
             _log("SUBMIT CLICKED")
         except Exception as e:  # noqa: BLE001
             report["status"] = f"submit click failed: {e}"
+            _write_report(rd, report)
             if hold:
                 _hold(browser)
             return report
@@ -271,6 +273,7 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
         report["code_gate"] = bool(code)
         if apply_verify.detect_code_gate(page) is not None and not code:
             report["status"] = "code gate appeared but no code arrived — parked"
+            _write_report(rd, report)
             if hold:
                 _hold(browser)
             return report
@@ -292,9 +295,23 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
         report["status"] = "submitted" if "received" in body.lower() \
             or "thank you for applying" in body.lower() else "submitted (unconfirmed)"
         _log(f"POST-SUBMIT: {report['status']}")
+        _write_report(rd, report)
         if hold:
             _hold(browser)
     return report
+
+
+def _write_report(rd: Path, report: Dict[str, Any]) -> Path:
+    """Write ``report`` to ``rd/report.json`` — the one-shot driver's machine-readable
+    signal. Called at EVERY terminal moment (park, code-gate park, submit-click
+    failure, post-submit) BEFORE any hold, so a watching orchestrator (or the
+    ``apply_driver`` ``park`` action's sibling signal) can read the outcome even
+    while this process is still holding the browser window open."""
+    rd = Path(rd)
+    rd.mkdir(parents=True, exist_ok=True)
+    report_path = rd / "report.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    return report_path
 
 
 def _hold(browser) -> None:

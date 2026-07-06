@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
@@ -435,7 +436,69 @@ class MainWindow(QtWidgets.QMainWindow):
     def start(self) -> None:
         """Kick off the first data load. Call this AFTER showing the window so it
         paints immediately; the load itself then runs off the UI thread."""
+        self._reconcile_orphaned_tailors()
         self.reload_data_async()
+
+    def _reconcile_orphaned_tailors(self) -> int:
+        """Adopt tailor runs whose UI-thread finalize was lost.
+
+        A queue-chained tailor writes its résumé folder on a worker thread and
+        only records the résumé (registry) + flips the entry tailoring -> queued
+        with its artifact paths back on the UI thread, in `_finish_tailor` /
+        `_finish_queue_tailor`. If the window closes (or otherwise exits) before
+        that `finished` signal is delivered, the folder is complete on disk but
+        the entry is stranded: either at "tailoring", or — if the user hit
+        Re-queue on it — "queued" yet still artifact-less (claimable with NO
+        résumé to upload). In both cases the résumé is unrecorded, so the job
+        never tints blue.
+
+        On launch this heals every such entry: a "tailoring" or "queued" entry
+        with an EMPTY folder artifact whose canonical folder is complete on disk
+        gets exactly what the lost callback would have done — record_resume +
+        set_artifacts (which also flips "tailoring" -> "queued"). Healthy
+        entries (folder already linked) and terminal ones are left untouched.
+        Best-effort: a bad/locked queue or half-written folder is skipped."""
+        from resume_tailor import output
+        try:
+            data = apply_queue.load()
+        except Exception:  # noqa: BLE001 - a bad/locked queue must not break startup
+            return 0
+        healed = 0
+        for e in data.get("jobs", []):
+            if not isinstance(e, dict) or e.get("status") not in ("tailoring", "queued"):
+                continue
+            if (e.get("artifacts") or {}).get("folder"):
+                continue   # already linked to a folder — healthy, leave it
+            jid = str(e.get("job_posting_id") or "")
+            company = str(e.get("company") or "")
+            title = str(e.get("title") or "")
+            if not jid or not (company or title):
+                continue
+            try:
+                folder = output.base_dir(company, title)
+                complete = (folder.is_dir()
+                            and (folder / output.resume_filename()).exists()
+                            and (folder / "apply.md").exists())
+            except OSError:
+                complete = False
+            if not complete:
+                continue   # still tailoring, or genuinely never finished — leave it
+            try:
+                self.registry.record_resume(jid, str(folder))
+            except Exception:  # noqa: BLE001 - bookkeeping only (mirrors _finish_tailor)
+                pass
+            arts = self._queue_artifacts(folder)
+            self._submit_queue_write(
+                lambda jid=jid, arts=arts: apply_queue.set_artifacts(jid, arts))
+            healed += 1
+        if healed:
+            self._set_status(
+                f"Recovered {healed} tailored job(s) that didn't finish saving "
+                "last session — now queued for auto-apply.")
+            panel = getattr(self, "apply_queue_panel", None)
+            if panel is not None:
+                panel.refresh()
+        return healed
 
     def _load_frames(self):
         """The blocking half of a reload, safe to run OFF the UI thread: read and
@@ -784,8 +847,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reload_data()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802 - Qt override
-        """Flush queued background writes before the window goes away, so a
-        mark-seen/delete clicked moments before closing still lands on disk."""
+        """Flush pending work before the window goes away.
+
+        Two things can be mid-flight at close: a résumé tailoring run (on a
+        worker thread — its finalize records the résumé + flips the queue entry
+        to "queued", and closing before that `finished` signal is delivered
+        strands it) and queued background CSV/queue writes. Wait for the tailor
+        first (its finalize enqueues writes), then drain the write queue."""
+        if self._tailor_in_flight():
+            resp = QtWidgets.QMessageBox.question(
+                self, "Tailoring in progress",
+                "A résumé tailoring run is still finishing.\n\n"
+                "Wait for it to save before closing? If you close now it is "
+                "recovered automatically on the next launch.",
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No
+                | QtWidgets.QMessageBox.StandardButton.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Yes)
+            if resp == QtWidgets.QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            if resp == QtWidgets.QMessageBox.StandardButton.Yes:
+                self._set_status("Finishing résumé tailoring …")
+                if not self._await_tailor():
+                    QtWidgets.QMessageBox.warning(
+                        self, "Tailoring still running",
+                        "The tailoring run didn't finish in time — it will be "
+                        "recovered on the next launch.")
         q = getattr(self, "_writes", None)
         if q is not None and not q.is_idle():
             self._set_status("Finishing background writes …")
@@ -795,6 +883,39 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"{q.pending_count()} background write(s) did not finish — the "
                     "files on disk may be missing your last mark-seen/delete.")
         super().closeEvent(event)
+
+    def _tailor_in_flight(self) -> bool:
+        """True only when a tailor run is genuinely still executing — the
+        `_tailoring` flag AND a live background thread. The flag alone can linger
+        set (e.g. if a launch stub never spawns a real worker), so closeEvent
+        gates its "wait for tailoring?" prompt on this to avoid blocking on a
+        run that isn't actually happening."""
+        if not getattr(self, "_tailoring", False):
+            return False
+        for thread, _worker in list(getattr(self, "_bg_threads", []) or []):
+            try:
+                if thread.isRunning():
+                    return True
+            except RuntimeError:   # the C++ QThread is already gone
+                pass
+        return False
+
+    def _await_tailor(self, timeout_ms: int = 120000) -> bool:
+        """Pump the UI event loop until an in-flight tailor run's finalize has
+        executed (it clears `_tailoring` in `_finish_tailor`) or the timeout
+        elapses. The tailor runs on its own QThread and progresses on its own;
+        pumping here only delivers its queued `finished` signal so
+        `_finish_tailor` / `_finish_queue_tailor` run on the UI thread BEFORE we
+        tear it down. Returns True once no tailor is in flight."""
+        app = QtWidgets.QApplication.instance()
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while getattr(self, "_tailoring", False):
+            if time.monotonic() > deadline:
+                return False
+            if app is None:
+                break
+            app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+        return not getattr(self, "_tailoring", False)
 
     # ---- mark seen (with undo / redo) ----------------------------------------
 

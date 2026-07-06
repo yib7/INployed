@@ -40,7 +40,29 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 KICKOFF_PROMPT = "Use the auto-apply skill: drain the apply queue"
 
 # PowerShell-safe (5.1: `;` chains, no `&&`; quoted path survives spaces).
-KICKOFF_COMMAND = f'cd "{REPO_ROOT}"; claude "{KICKOFF_PROMPT}"'
+# --model opus: run the drain (orchestrator AND the per-job subagents, which inherit
+#   the model) on Opus — the strongest judgment / form-fill accuracy / prompt-injection
+#   resistance, which matters most for an unattended, credential-touching run.
+# --dangerously-skip-permissions: runs UNATTENDED — Claude Code never stops to ask the
+#   user to approve each browser/file/CLI action. The skill's own safety rails (never
+#   submit, park at review, CAPTCHA/SSN/payment stop, per-job domain allowlist,
+#   secret-safe master-password paste) live in the skill logic and stay in force.
+KICKOFF_COMMAND = (
+    f'cd "{REPO_ROOT}"; claude --model opus --dangerously-skip-permissions '
+    f'"{KICKOFF_PROMPT}"'
+)
+
+# Safer alternative (the "Copy scoped command" button): same Opus drain, but instead
+# of bypassing ALL permission checks it pre-approves ONLY the tools the drain uses —
+# Bash scoped to `python …` (the two project CLIs), file read/write for the record,
+# Task to dispatch per-job subagents, and the browser MCP. Anything else (rm, curl, a
+# different MCP) still prompts, so the blast radius is far smaller than a blanket
+# bypass — at the cost of an occasional pause if the agent reaches outside the list.
+# The prompt is placed FIRST so the variadic --allowedTools can't swallow it.
+KICKOFF_COMMAND_SCOPED = (
+    f'cd "{REPO_ROOT}"; claude "{KICKOFF_PROMPT}" --model opus --allowedTools '
+    f'Read Glob Grep Write Edit Task "Bash(python:*)" "mcp__claude-in-chrome__*"'
+)
 
 COLUMNS = ("Company", "Title", "Status", "Attempts", "Missing", "Updated", "Note")
 
@@ -120,9 +142,20 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.kickoff_btn.setProperty("accent", True)
         self.kickoff_btn.setToolTip(
             "Copy the PowerShell command that starts the auto-apply agent "
-            "session draining this queue")
+            "session draining this queue. Runs UNATTENDED "
+            "(--dangerously-skip-permissions): no per-action approval prompts. "
+            "The skill's own safety rails still apply — it never submits, and "
+            "parks at review / on CAPTCHA / SSN / payment.")
         self.kickoff_btn.clicked.connect(self._copy_kickoff)
         header.addWidget(self.kickoff_btn)
+        self.kickoff_scoped_btn = QtWidgets.QPushButton("Copy scoped command")
+        self.kickoff_scoped_btn.setToolTip(
+            "Safer alternative: same Opus drain, but pre-approves ONLY the tools it "
+            "needs (project CLIs, file read/write, subagents, browser) instead of "
+            "bypassing ALL permission checks. Tighter blast radius; may pause if the "
+            "agent reaches for a tool outside the list.")
+        self.kickoff_scoped_btn.clicked.connect(self._copy_kickoff_scoped)
+        header.addWidget(self.kickoff_scoped_btn)
         v.addLayout(header)
 
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
@@ -169,7 +202,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                                  "Delete the selected entry from the queue")
         self.clear_btn = button(
             "Clear finished", self._clear_finished,
-            "Drop every ready_to_submit / needs_human / failed entry")
+            "Drop every ready_to_submit / submitted / needs_human / failed entry")
         self.open_folder_btn = button("Open job folder", self._open_folder)
         self.open_record_btn = button("Open application record", self._open_record)
         btns.addStretch(1)
@@ -397,5 +430,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
 
     def _copy_kickoff(self) -> None:
         QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND)
+
+    def _copy_kickoff_scoped(self) -> None:
+        QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND_SCOPED)
         self._set_note("Kickoff command copied — paste it into a PowerShell "
                        "window with Chrome running.")

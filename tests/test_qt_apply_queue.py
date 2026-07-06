@@ -30,6 +30,7 @@ from qt import apply_queue_panel as aqp  # noqa: E402
 from qt import main_window as mw  # noqa: E402
 from qt.apply_queue_panel import (  # noqa: E402
     KICKOFF_COMMAND,
+    KICKOFF_COMMAND_SCOPED,
     KICKOFF_PROMPT,
     ApplyQueuePanel,
 )
@@ -469,6 +470,119 @@ def test_plain_tailor_launch_failure_resets_guard(qtbot, monkeypatch, tmp_path):
     assert apply_queue.load(_qfile(tmp_path))["jobs"] == []   # nothing enqueued
 
 
+# --- MainWindow: _reconcile_orphaned_tailors (crash-safe finalize recovery) --------
+
+
+def _orphan_tailoring(qfile, jid, company, title, url="https://x/o"):
+    """Enqueue a "tailoring" entry as _queue_for_auto_apply does BEFORE the tailor
+    finishes — an orphan if the window closes before the finalize callback runs."""
+    apply_queue.enqueue(
+        apply_queue.new_entry(jid, company=company, title=title, apply_url=url,
+                              status="tailoring"), path=qfile)
+
+
+def _tailored_at_base(monkeypatch, tmp_path, company, title):
+    """A COMPLETE tailored folder at output.base_dir(company, title) under a tmp
+    OUTPUT_ROOT — what a lost-callback tailor run leaves stranded on disk."""
+    from resume_tailor import config, output
+    monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Cand")
+    monkeypatch.setattr(config, "OUTPUT_ROOT", tmp_path / "gen")
+    folder = output.base_dir(company, title)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in (output.resume_filename(), output.cover_filename(),
+                 output.cover_txt_filename(), "apply.md"):
+        (folder / name).write_text("x", encoding="utf-8")
+    return folder
+
+
+def test_reconcile_adopts_completed_orphan_tailoring_entry(qtbot, monkeypatch, tmp_path):
+    """A "tailoring" entry whose folder is complete on disk (finalize was lost)
+    is recovered: the résumé is recorded AND the entry flips tailoring -> queued
+    with its artifact paths — exactly what _finish_tailor/_finish_queue_tailor do."""
+    w = _win(qtbot, monkeypatch, tmp_path)
+    _orphan_tailoring(_qfile(tmp_path), "77", "Distyl", "Applied AI Researcher")
+    folder = _tailored_at_base(monkeypatch, tmp_path, "Distyl", "Applied AI Researcher")
+
+    healed = w._reconcile_orphaned_tailors()
+
+    assert healed == 1
+    w.registry.record_resume.assert_called_once_with("77", str(folder))
+    e = apply_queue.load(_qfile(tmp_path))["jobs"][0]
+    assert e["status"] == "queued"
+    assert e["queued_at"]                       # claimable now
+    assert e["artifacts"]["folder"] == str(folder)
+    assert e["artifacts"]["resume_pdf"].endswith("Cand_Resume.pdf")
+    assert e["artifacts"]["apply_md"] == str(folder / "apply.md")
+
+
+def test_reconcile_skips_orphan_with_no_completed_folder(qtbot, monkeypatch, tmp_path):
+    """A "tailoring" entry whose folder is missing/incomplete (the tailor really
+    didn't finish, or is still running elsewhere) is left untouched — never
+    adopted as complete, never recorded."""
+    from resume_tailor import config
+    w = _win(qtbot, monkeypatch, tmp_path)
+    monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Cand")
+    monkeypatch.setattr(config, "OUTPUT_ROOT", tmp_path / "gen")   # nothing on disk
+    _orphan_tailoring(_qfile(tmp_path), "77", "Distyl", "Applied AI Researcher")
+
+    healed = w._reconcile_orphaned_tailors()
+
+    assert healed == 0
+    w.registry.record_resume.assert_not_called()
+    assert apply_queue.load(_qfile(tmp_path))["jobs"][0]["status"] == "tailoring"
+
+
+def test_reconcile_backfills_requeued_orphan_missing_artifacts(qtbot, monkeypatch, tmp_path):
+    """The user's manual escape hatch, Re-queue, flips a stranded orphan to
+    "queued" but keeps its EMPTY artifacts — leaving it claimable with no résumé
+    to upload. Reconcile backfills that too: record the résumé + fill artifacts,
+    status staying "queued"."""
+    w = _win(qtbot, monkeypatch, tmp_path)
+    _orphan_tailoring(_qfile(tmp_path), "77", "Distyl", "Applied AI Researcher")
+    apply_queue.requeue("77", path=_qfile(tmp_path))          # user hits Re-queue
+    assert apply_queue.load(_qfile(tmp_path))["jobs"][0]["status"] == "queued"
+    folder = _tailored_at_base(monkeypatch, tmp_path, "Distyl", "Applied AI Researcher")
+
+    healed = w._reconcile_orphaned_tailors()
+
+    assert healed == 1
+    w.registry.record_resume.assert_called_once_with("77", str(folder))
+    e = apply_queue.load(_qfile(tmp_path))["jobs"][0]
+    assert e["status"] == "queued"
+    assert e["artifacts"]["folder"] == str(folder)
+    assert e["artifacts"]["apply_md"] == str(folder / "apply.md")
+
+
+def test_reconcile_leaves_healthy_folder_linked_entry_alone(qtbot, monkeypatch, tmp_path):
+    """An entry that already carries a folder artifact is healthy — reconcile
+    never re-records or touches it, even though its folder is complete."""
+    w = _win(qtbot, monkeypatch, tmp_path)
+    folder = _tailored_at_base(monkeypatch, tmp_path, "Distyl", "Applied AI Researcher")
+    entry = apply_queue.new_entry("77", company="Distyl", title="Applied AI Researcher",
+                                  apply_url="https://x/o", status="queued")
+    entry["artifacts"]["folder"] = str(folder)               # already linked
+    apply_queue.enqueue(entry, path=_qfile(tmp_path))
+
+    healed = w._reconcile_orphaned_tailors()
+
+    assert healed == 0
+    w.registry.record_resume.assert_not_called()
+    assert apply_queue.load(_qfile(tmp_path))["jobs"][0]["status"] == "queued"
+    assert folder.is_dir()
+
+
+def test_start_runs_the_orphan_reconciler(qtbot, monkeypatch, tmp_path):
+    """start() heals stranded tailor runs BEFORE the first data load, so a job
+    tailored in a prior (interrupted) session shows up queued on relaunch."""
+    w = _win(qtbot, monkeypatch, tmp_path)
+    called = []
+    monkeypatch.setattr(w, "_reconcile_orphaned_tailors",
+                        lambda: called.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    w.start()
+    assert called == [True]
+
+
 # --- MainWindow: _set_ats_password ------------------------------------------------
 
 
@@ -650,8 +764,26 @@ def test_kickoff_button_puts_exact_command_on_clipboard(qtbot, tmp_path):
     # SP4 mirrors the prompt constant; the command is PowerShell-shaped
     assert KICKOFF_PROMPT == "Use the auto-apply skill: drain the apply queue"
     assert KICKOFF_COMMAND.startswith("cd ")
-    assert f'claude "{KICKOFF_PROMPT}"' in KICKOFF_COMMAND
+    # Runs unattended on Opus: never stops for per-action approval prompts.
+    assert "--model opus" in KICKOFF_COMMAND
+    assert "--dangerously-skip-permissions" in KICKOFF_COMMAND
+    assert f'"{KICKOFF_PROMPT}"' in KICKOFF_COMMAND
     assert ";" in KICKOFF_COMMAND             # PowerShell chain, not && (5.1-safe)
+
+
+def test_scoped_kickoff_button_copies_allowlisted_command(qtbot, tmp_path):
+    p = _panel(qtbot, _qfile(tmp_path))
+    p.kickoff_scoped_btn.click()
+    assert QtWidgets.QApplication.clipboard().text() == KICKOFF_COMMAND_SCOPED
+    # The safer variant scopes tools instead of the blanket bypass.
+    assert "--model opus" in KICKOFF_COMMAND_SCOPED
+    assert "--allowedTools" in KICKOFF_COMMAND_SCOPED
+    assert "--dangerously-skip-permissions" not in KICKOFF_COMMAND_SCOPED
+    assert "Bash(python:*)" in KICKOFF_COMMAND_SCOPED
+    assert "mcp__claude-in-chrome__*" in KICKOFF_COMMAND_SCOPED
+    # Prompt must precede the variadic --allowedTools so it isn't swallowed as a tool.
+    assert (KICKOFF_COMMAND_SCOPED.index(KICKOFF_PROMPT)
+            < KICKOFF_COMMAND_SCOPED.index("--allowedTools"))
 
 
 def test_panel_password_label_flips_with_password_exists(qtbot, tmp_path, monkeypatch):

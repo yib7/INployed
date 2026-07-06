@@ -185,10 +185,23 @@ SETTINGS_SCHEMA: list[Field] = [
           help="At most this many jobs go into the auto-apply queue per 'Queue for "
                "auto-apply' action. ~10 keeps a batch reviewable in one sitting (every "
                "application is parked at its review page for you — never submitted)."),
-    Field("auto_apply_inbox_url", "Signup inbox URL", "str", "https://mail.google.com",
+    Field("auto_apply_inbox_url", "Fallback signup inbox URL", "str", "https://mail.google.com",
           "Auto-apply", "config",
-          help="The webmail inbox the auto-apply agent may open to click account-"
-               "verification emails from job portals. Must be signed in already in Chrome."),
+          help="Fallback webmail inbox the auto-apply agent opens for verification "
+               "emails when your signup email's domain isn't in 'Inbox by email domain' "
+               "below. Must be signed in already in Chrome."),
+    Field("auto_apply_inbox_map", "Inbox by email domain", "list",
+          ["gmail.com https://mail.google.com",
+           "outlook.com https://outlook.live.com/mail/",
+           "hotmail.com https://outlook.live.com/mail/",
+           "wm.edu https://outlook.office.com/mail/"],
+          "Auto-apply", "config",
+          help="One 'emaildomain webmail-url' per line, so the agent opens the RIGHT "
+               "inbox for the email it signs up with (e.g. an @wm.edu address is "
+               "Microsoft 365 / Outlook, not Gmail). The domain of your signup email "
+               "(basics.email) is looked up here first; unlisted domains use the "
+               "fallback inbox above. Whichever inbox is used must be signed in in Chrome. "
+               "Keep the provider defaults in sync with apply_queue.DEFAULT_INBOX_MAP."),
 
     # --- Settings history: snapshot every Save so settings can be rolled back ---
     # All four live in local/config.json. Snapshots copy every settings file

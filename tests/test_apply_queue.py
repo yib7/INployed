@@ -173,6 +173,20 @@ def test_new_entry_infers_ats_from_url():
         "https://boards.greenhouse.io/acme/jobs/1": "greenhouse",
         "https://jobs.lever.co/acme/1": "lever",
         "https://careers-acme.icims.com/jobs/1": "icims",
+        # Enterprise / legacy account-required ATSes:
+        "https://career41.sapsf.com/careers?company=acme": "successfactors",
+        "https://acme.taleo.net/careersection/1": "taleo",
+        "https://ehxx.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/x": "oracle",
+        "https://sjobs.brassring.com/TGnewUI/Search/Home/x": "brassring",
+        # Payroll-HR suites:
+        "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/x": "adp",
+        "https://recruiting.ultipro.com/ACM1234/JobBoard/x": "ukg",
+        "https://acme.dayforcehcm.com/CandidatePortal/x": "dayforce",
+        # Modern ATSes:
+        "https://jobs.smartrecruiters.com/Acme/123": "smartrecruiters",
+        "https://jobs.jobvite.com/acme/job/x": "jobvite",
+        "https://jobs.ashbyhq.com/acme/x": "ashby",
+        "https://apply.workable.com/acme/j/x": "workable",
         "https://apply.example.com/1": "other",
     }
     for url, system in cases.items():
@@ -388,6 +402,41 @@ def test_finish_rejects_non_terminal_status(tmp_path):
             apply_queue.finish("1", bad, path=q)
 
 
+def test_finish_accepts_submitted(tmp_path):
+    # "submitted" is the true terminal (application actually went in). It can be
+    # set directly, or by re-finishing a parked ready_to_submit entry after a
+    # human submits the tab.
+    q = _q(tmp_path)
+    assert "submitted" in apply_queue.TERMINAL
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.claim(path=q)
+    apply_queue.finish("1", "ready_to_submit", path=q)   # parked for review
+    got = apply_queue.finish("1", "submitted",           # human submitted it
+                             tab_note="https://x/confirm | Application received",
+                             path=q)
+    assert got["status"] == "submitted"
+    assert got["finished_at"]
+
+
+def test_clear_finished_sweeps_submitted(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.claim(path=q)
+    apply_queue.finish("1", "submitted", path=q)
+    assert apply_queue.clear_finished(path=q) == 1
+    assert apply_queue.load(q)["jobs"] == []
+
+
+def test_stats_counts_submitted(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.claim(path=q)
+    apply_queue.finish("1", "submitted", path=q)
+    s = apply_queue.stats(path=q)
+    assert s["submitted"] == 1
+    assert s["ready_to_submit"] == 0
+
+
 # --- requeue ---------------------------------------------------------------------
 
 def _finished_entry(q):
@@ -527,13 +576,68 @@ def test_build_context_reads_master_email_and_config(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_queue, "CONFIG_JSON", cfg)
     monkeypatch.setattr(rt_config, "OUTPUT_ROOT", tmp_path / "Generated_Resumes")
     ctx = apply_queue.build_context(path=_q(tmp_path))
-    assert ctx == {
-        "signup_email": "cand@example.com",
-        "inbox_url": "https://inbox.example",
-        "batch_cap": 4,
-        "output_root": str(tmp_path / "Generated_Resumes"),
-        "queue_path": str(_q(tmp_path)),
-    }
+    assert ctx["signup_email"] == "cand@example.com"
+    # example.com is not a known provider, so the single inbox_url is the fallback.
+    assert ctx["inbox_url"] == "https://inbox.example"
+    assert ctx["batch_cap"] == 4
+    assert ctx["output_root"] == str(tmp_path / "Generated_Resumes")
+    assert ctx["queue_path"] == str(_q(tmp_path))
+    # The effective domain->inbox map is exposed so the agent can resolve a
+    # different account email if it ever needs to.
+    assert ctx["inbox_map"]["gmail.com"] == "https://mail.google.com"
+
+
+def test_build_context_resolves_inbox_from_signup_domain(tmp_path, monkeypatch):
+    """A wm.edu signup email resolves to the Outlook inbox via the seeded map,
+    even though the single inbox_url is absent (would otherwise default to Gmail)."""
+    from resume_tailor import assets
+    monkeypatch.setattr(assets, "load_master",
+                        lambda: {"basics": {"email": "jane.doe@example.com"}})
+    monkeypatch.setattr(apply_queue, "CONFIG_JSON", tmp_path / "missing.json")
+    ctx = apply_queue.build_context(path=_q(tmp_path))
+    assert ctx["inbox_url"] == "https://outlook.office.com/mail/"
+    assert ctx["inbox_map"]["wm.edu"] == "https://outlook.office.com/mail/"
+
+
+def test_build_context_user_inbox_map_line_overrides_default(tmp_path, monkeypatch):
+    """A user 'domain url' line in auto_apply_inbox_map wins for that domain."""
+    from resume_tailor import assets
+    monkeypatch.setattr(assets, "load_master",
+                        lambda: {"basics": {"email": "me@wm.edu"}})
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({
+        "auto_apply_inbox_map": ["wm.edu https://mail.wm.edu/owa"],
+    }), encoding="utf-8")
+    monkeypatch.setattr(apply_queue, "CONFIG_JSON", cfg)
+    ctx = apply_queue.build_context(path=_q(tmp_path))
+    assert ctx["inbox_url"] == "https://mail.wm.edu/owa"
+    assert ctx["inbox_map"]["wm.edu"] == "https://mail.wm.edu/owa"
+
+
+def test_build_context_single_inbox_is_fallback_for_unmapped_domain(tmp_path, monkeypatch):
+    """An unmapped signup domain falls back to the single auto_apply_inbox_url."""
+    from resume_tailor import assets
+    monkeypatch.setattr(assets, "load_master",
+                        lambda: {"basics": {"email": "grad@acme.io"}})
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"auto_apply_inbox_url": "https://custom.inbox"}),
+                   encoding="utf-8")
+    monkeypatch.setattr(apply_queue, "CONFIG_JSON", cfg)
+    ctx = apply_queue.build_context(path=_q(tmp_path))
+    assert ctx["inbox_url"] == "https://custom.inbox"
+
+
+def test_build_context_tolerates_garbage_inbox_map(tmp_path, monkeypatch):
+    """A malformed inbox_map (not a list/dict) is ignored, not fatal; the seeded
+    default map still resolves a known provider."""
+    from resume_tailor import assets
+    monkeypatch.setattr(assets, "load_master",
+                        lambda: {"basics": {"email": "x@gmail.com"}})
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"auto_apply_inbox_map": "not-a-list"}), encoding="utf-8")
+    monkeypatch.setattr(apply_queue, "CONFIG_JSON", cfg)
+    ctx = apply_queue.build_context(path=_q(tmp_path))
+    assert ctx["inbox_url"] == "https://mail.google.com"
 
 
 def test_build_context_defaults_when_config_keys_absent(tmp_path, monkeypatch):
@@ -673,6 +777,6 @@ def test_cli_context_json_has_five_keys_no_password(tmp_path, capsys, monkeypatc
     monkeypatch.setattr(apply_queue, "CONFIG_JSON", tmp_path / "missing.json")
     assert apply_queue.main(["context", "--queue", str(_q(tmp_path)), "--json"]) == 0
     ctx = json.loads(capsys.readouterr().out)
-    assert set(ctx) == {"signup_email", "inbox_url", "batch_cap", "output_root",
-                        "queue_path"}
+    assert set(ctx) == {"signup_email", "inbox_url", "inbox_map", "batch_cap",
+                        "output_root", "queue_path"}
     assert "password" not in json.dumps(ctx).lower()

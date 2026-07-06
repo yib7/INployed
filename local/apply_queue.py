@@ -20,8 +20,12 @@ rewrote a healthy file). The queue is re-buildable from the dashboard, never
 precious.
 
 Entry lifecycle: tailoring -> queued -> in_progress -> ready_to_submit |
-needs_human | failed (the last three are terminal). Every entry always carries
-every field, so consumers never .get()-dance around missing keys.
+submitted | needs_human | failed (the last four are terminal). ready_to_submit
+is parked-for-human-review (the drain agent's success state — it never submits);
+submitted means the application actually went in, set either by an authorized
+end-to-end autonomous submit or by a human who submitted a parked tab and
+re-finished the entry. Every entry always carries every field, so consumers
+never .get()-dance around missing keys.
 
 This module NEVER returns, prints, or stores a password and never touches
 keyring — credentials are ats_accounts.py's job, and even there only the
@@ -51,13 +55,22 @@ from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 CONFIG_JSON = HERE / "config.json"
 
 STATUSES = ("tailoring", "queued", "in_progress",
-            "ready_to_submit", "needs_human", "failed")
-TERMINAL = frozenset(("ready_to_submit", "needs_human", "failed"))
+            "ready_to_submit", "submitted", "needs_human", "failed")
+TERMINAL = frozenset(("ready_to_submit", "submitted", "needs_human", "failed"))
 
 ARTIFACT_KEYS = ("folder", "resume_pdf", "cover_letter_pdf", "cover_letter_txt",
                  "apply_md", "application_record")
 ATS_KEYS = ("domain", "system", "account_status")
-ATS_SYSTEMS = ("linkedin", "workday", "greenhouse", "lever", "icims", "other")
+ATS_SYSTEMS = (
+    "linkedin", "workday", "greenhouse", "lever", "icims",
+    # Enterprise / legacy account-required ATSes (trusted for auto-signup):
+    "successfactors", "taleo", "oracle", "brassring",
+    # Payroll-HR suites (trusted for auto-signup):
+    "adp", "ukg", "dayforce",
+    # Modern ATSes (often accountless; trusted for auto-signup if they ask):
+    "smartrecruiters", "jobvite", "ashby", "workable",
+    "other",
+)
 
 # Sidecar-lock tuning. Module-level (not baked into signatures) so tests can
 # monkeypatch LOCK_TIMEOUT down instead of waiting out the real 5 s.
@@ -273,7 +286,19 @@ def infer_ats(apply_url: str) -> Dict[str, str]:
     system = "other"
     for token, name in (("linkedin", "linkedin"), ("workday", "workday"),
                         ("greenhouse", "greenhouse"), ("lever.co", "lever"),
-                        ("icims", "icims")):
+                        ("icims", "icims"),
+                        # Enterprise / legacy account-required ATSes:
+                        ("sapsf", "successfactors"),
+                        ("successfactors", "successfactors"),
+                        ("taleo", "taleo"), ("oraclecloud", "oracle"),
+                        ("brassring", "brassring"),
+                        # Payroll-HR suites:
+                        ("adp.com", "adp"), ("ultipro", "ukg"),
+                        ("ukg.com", "ukg"), ("dayforce", "dayforce"),
+                        # Modern ATSes:
+                        ("smartrecruiters", "smartrecruiters"),
+                        ("jobvite", "jobvite"), ("ashbyhq", "ashby"),
+                        ("workable.com", "workable")):
         if token in netloc:
             system = name
             break
@@ -425,9 +450,10 @@ def add_missing(job_id: str, question: str, context: str = "",
 def finish(job_id: str, status: str, *, tab_note: str = "", record: str = "",
            notes: Optional[str] = None, path: Optional[Path] = None
            ) -> Dict[str, Any]:
-    """Move an entry to a TERMINAL status (ready_to_submit | needs_human |
-    failed) and stamp finished_at. tab_note carries "final URL | page title" so
-    a human can find the parked tab; `record` is the application_record path."""
+    """Move an entry to a TERMINAL status (ready_to_submit | submitted |
+    needs_human | failed) and stamp finished_at. tab_note carries "final URL |
+    page title" so a human can find the parked tab; `record` is the
+    application_record path."""
     if status not in TERMINAL:
         raise ValueError(
             f"finish() only accepts terminal statuses {sorted(TERMINAL)}, "
@@ -517,12 +543,60 @@ def stats(path: Optional[Path] = None) -> Dict[str, int]:
     return out
 
 
+# Well-known email-provider → webmail inbox, so the drain agent opens the RIGHT
+# inbox for the signup email's domain. This encodes the non-obvious knowledge
+# that, e.g., an @wm.edu address is Microsoft 365 / Outlook, not Gmail. Users
+# extend or override it via config.json's "auto_apply_inbox_map" (settings field
+# "Inbox by email domain"); keep the provider rows in sync with settings.py's
+# field default.
+DEFAULT_INBOX_MAP: Dict[str, str] = {
+    "gmail.com": "https://mail.google.com",
+    "googlemail.com": "https://mail.google.com",
+    "outlook.com": "https://outlook.live.com/mail/",
+    "hotmail.com": "https://outlook.live.com/mail/",
+    "live.com": "https://outlook.live.com/mail/",
+    "msn.com": "https://outlook.live.com/mail/",
+    "wm.edu": "https://outlook.office.com/mail/",
+}
+DEFAULT_INBOX_URL = "https://mail.google.com"
+
+
+def _inbox_domain(email: str) -> str:
+    """The lowercased domain of an email address ('' when there is no '@')."""
+    addr = str(email or "").strip().lower()
+    return addr.rsplit("@", 1)[-1] if "@" in addr else ""
+
+
+def _parse_inbox_map(raw: Any) -> Dict[str, str]:
+    """User overrides for the domain→inbox map. Accepts a dict {domain: url} or a
+    list of "domain url" lines (the settings 'list' field shape). Malformed rows
+    are skipped, never fatal."""
+    pairs: List[Any] = []
+    if isinstance(raw, dict):
+        pairs = list(raw.items())
+    elif isinstance(raw, list):
+        for line in raw:
+            if isinstance(line, str):
+                parts = line.split()
+                if len(parts) >= 2:
+                    pairs.append((parts[0], parts[1]))
+    out: Dict[str, str] = {}
+    for dom, url in pairs:
+        if isinstance(dom, str) and isinstance(url, str) and dom.strip() and url.strip():
+            out[dom.strip().lower()] = url.strip()
+    return out
+
+
 def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
     """The batch-run context the agent needs before draining the queue.
 
-    signup_email comes from the master yaml (basics.email); inbox_url and
-    batch_cap from the dashboard config.json's auto_apply_* keys — tolerantly,
-    since SP3 hasn't added the Settings UI yet. Never anything secret-shaped.
+    signup_email comes from the master yaml (basics.email); batch_cap from the
+    dashboard config.json's auto_apply_* keys — tolerantly. inbox_url is resolved
+    from the signup email's domain via DEFAULT_INBOX_MAP + the user's
+    auto_apply_inbox_map (so an @wm.edu signup opens Outlook, not Gmail), falling
+    back to the single auto_apply_inbox_url then Gmail. The effective inbox_map is
+    returned too, so a subagent that uses a different account email can resolve
+    it. Never anything secret-shaped.
     """
     try:
         from resume_tailor import assets
@@ -535,9 +609,13 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
             cfg = {}
     except (OSError, ValueError):
         cfg = {}
-    inbox = cfg.get("auto_apply_inbox_url")
-    inbox = str(inbox).strip() if isinstance(inbox, str) and str(inbox).strip() \
-        else "https://mail.google.com"
+    inbox_map = {**DEFAULT_INBOX_MAP, **_parse_inbox_map(cfg.get("auto_apply_inbox_map"))}
+    single = cfg.get("auto_apply_inbox_url")
+    single = str(single).strip() if isinstance(single, str) and str(single).strip() else ""
+    # Resolve from the signup email's domain first (the map carries the
+    # non-obvious knowledge, e.g. @wm.edu → Outlook); fall back to the single
+    # configured inbox for unmapped domains, then to the Gmail default.
+    inbox = inbox_map.get(_inbox_domain(email)) or single or DEFAULT_INBOX_URL
     try:
         cap = int(cfg.get("auto_apply_batch_cap", 10))
     except (TypeError, ValueError):
@@ -550,6 +628,7 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
     return {
         "signup_email": email,
         "inbox_url": inbox,
+        "inbox_map": inbox_map,
         "batch_cap": cap,
         "output_root": output_root,
         "queue_path": str(queue_path(path)),

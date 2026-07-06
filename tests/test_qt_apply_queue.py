@@ -786,6 +786,120 @@ def test_scoped_kickoff_button_copies_allowlisted_command(qtbot, tmp_path):
             < KICKOFF_COMMAND_SCOPED.index("--allowedTools"))
 
 
+# --- ApplyQueuePanel: "Start auto-apply run" (SP8) ---------------------------------
+
+
+def test_panel_has_start_run_button(qtbot, tmp_path):
+    p = _panel(qtbot, _qfile(tmp_path))
+    assert p.start_run_btn.text() == "Start auto-apply run"
+    # accent-styled, FIRST among the header's buttons
+    header = p.layout().itemAt(0).layout()
+    header_buttons = [header.itemAt(i).widget() for i in range(header.count())
+                      if isinstance(header.itemAt(i).widget(), QtWidgets.QPushButton)]
+    assert header_buttons[0] is p.start_run_btn
+    assert p.start_run_btn.property("accent") is True
+    tip = p.start_run_btn.toolTip().lower()
+    assert "new terminal" in tip
+    assert "batch_cap" in tip or "batch cap" in tip
+    assert "park" in tip
+    assert "nothing is ever submitted" in tip or "never submitted" in tip
+
+
+def test_start_run_blocked_when_password_not_set(qtbot, tmp_path, monkeypatch):
+    spy = []
+    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda: spy.append(True),
+              password_exists=lambda: False)
+    warned = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warned.append(a)))
+    questioned = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: questioned.append(a)))
+
+    p.start_run_btn.click()
+
+    assert spy == []
+    assert len(warned) == 1
+    assert questioned == []
+
+
+def test_start_run_blocked_on_empty_queue(qtbot, tmp_path, monkeypatch):
+    spy = []
+    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda: spy.append(True),
+              password_exists=lambda: True)
+    informed = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: informed.append(a)))
+    questioned = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: questioned.append(a)))
+
+    p.start_run_btn.click()          # queue file has no jobs at all
+
+    assert spy == []
+    assert len(informed) == 1
+    assert questioned == []
+
+
+def test_start_run_confirm_yes_fires_spawn_once(qtbot, tmp_path, monkeypatch):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
+                        path=qfile)
+    apply_queue.enqueue(apply_queue.new_entry("2", company="Globex", title="B"),
+                        path=qfile)
+    spy = []
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+              password_exists=lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+
+    p.start_run_btn.click()
+
+    assert len(spy) == 1
+    assert "started" in p.status_label.text().lower()
+    assert "new terminal" in p.status_label.text().lower()
+
+
+def test_start_run_confirm_no_is_noop(qtbot, tmp_path, monkeypatch):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
+                        path=qfile)
+    spy = []
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+              password_exists=lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+
+    p.start_run_btn.click()
+
+    assert spy == []
+
+
+def test_kickoff_argv_contains_prompt_and_repo_root(qtbot, monkeypatch):
+    """Pure: no Popen anywhere. Asserts the argv is a list of str, and either an
+    element itself or the decoded -EncodedCommand payload carries KICKOFF_PROMPT
+    and the repo root path."""
+    called = []
+    monkeypatch.setattr(aqp.subprocess, "Popen",
+                        lambda *a, **k: called.append((a, k)))
+
+    argv = aqp._kickoff_argv()
+
+    assert isinstance(argv, list)
+    assert all(isinstance(a, str) for a in argv)
+    assert called == []          # pure - never spawns anything
+
+    payload = None
+    for i, a in enumerate(argv):
+        if a.lower() in ("-encodedcommand", "/encodedcommand"):
+            import base64
+            payload = base64.b64decode(argv[i + 1]).decode("utf-16-le")
+            break
+    haystack = payload if payload is not None else " ".join(argv)
+    assert KICKOFF_PROMPT in haystack
+    assert str(aqp.REPO_ROOT) in haystack
+
+
 def test_panel_password_label_flips_with_password_exists(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(aqp, "_default_password_exists", lambda: False)
     p = _panel(qtbot, _qfile(tmp_path))

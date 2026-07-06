@@ -786,6 +786,28 @@ def test_scoped_kickoff_button_copies_allowlisted_command(qtbot, tmp_path):
             < KICKOFF_COMMAND_SCOPED.index("--allowedTools"))
 
 
+def test_kickoff_button_shows_note_on_copy(qtbot, tmp_path):
+    """The primary 'Copy kickoff command' button shows a status note mentioning
+    'paste into a terminal', without saying 'scoped'."""
+    p = _panel(qtbot, _qfile(tmp_path))
+    p.kickoff_btn.click()
+    note = p.status_label.text()
+    assert "Kickoff command copied" in note
+    assert "paste into a terminal" in note
+    assert "scoped" not in note.lower()
+
+
+def test_scoped_kickoff_button_shows_distinct_note_on_copy(qtbot, tmp_path):
+    """The 'Copy scoped command' button shows a distinct status note that says
+    'Scoped' so the user knows which variant they copied."""
+    p = _panel(qtbot, _qfile(tmp_path))
+    p.kickoff_scoped_btn.click()
+    note = p.status_label.text()
+    assert "Scoped kickoff command copied" in note
+    assert "paste into a terminal" in note
+    assert "scoped" in note.lower()
+
+
 # --- ApplyQueuePanel: "Start auto-apply run" (SP8) ---------------------------------
 
 

@@ -22,7 +22,9 @@ synchronous inline runner.
 """
 from __future__ import annotations
 
+import base64
 import os
+import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -64,6 +66,31 @@ KICKOFF_COMMAND_SCOPED = (
     f'Read Glob Grep Write Edit Task "Bash(python:*)" "mcp__claude-in-chrome__*"'
 )
 
+
+def _kickoff_argv() -> list[str]:
+    """The argv that opens a NEW PowerShell console running KICKOFF_COMMAND.
+
+    Pure and testable — no subprocess call here. KICKOFF_COMMAND already embeds
+    KICKOFF_PROMPT and the quoted REPO_ROOT, and it contains its own double
+    quotes (`cd "<root>"` and `"<prompt>"`); base64 via -EncodedCommand sidesteps
+    PowerShell 5.1's quoting rules entirely (no re-tokenizing, no escaping
+    needed) and round-trips cleanly for the test to decode.
+    """
+    encoded = base64.b64encode(KICKOFF_COMMAND.encode("utf-16-le")).decode("ascii")
+    return ["powershell", "-NoExit", "-EncodedCommand", encoded]
+
+
+def _spawn_kickoff() -> None:
+    """Default on_start_run: launch the drain in a brand-new, visible console.
+
+    The flag is guarded via getattr so importing this module on a non-Windows
+    box (CI, a dev's Mac) never raises at import time.
+    """
+    subprocess.Popen(
+        _kickoff_argv(),
+        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+
+
 COLUMNS = ("Company", "Title", "Status", "Attempts", "Missing", "Updated", "Note")
 
 _DEBOUNCE_MS = 500     # coalesce a burst of fs events into one refresh
@@ -99,6 +126,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  submit_write: Callable | None = None,
                  on_set_password: Callable[[], None] | None = None,
                  password_exists: Callable[[], bool] | None = None,
+                 on_start_run: Callable[[], None] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._queue_override = Path(queue_path) if queue_path else None
@@ -106,6 +134,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._on_set_password = on_set_password or (lambda: None)
         # Late-bound default so a monkeypatched module seam takes effect.
         self._password_exists = password_exists or (lambda: _default_password_exists())
+        self._on_start_run = on_start_run or _spawn_kickoff
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
         self._build()
@@ -130,6 +159,15 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.counts_label.setProperty("muted", True)
         header.addWidget(self.counts_label)
         header.addStretch(1)
+        self.start_run_btn = QtWidgets.QPushButton("Start auto-apply run")
+        self.start_run_btn.setProperty("accent", True)
+        self.start_run_btn.setToolTip(
+            "Launch an unattended auto-apply drain in a NEW terminal window — "
+            "click once, walk away. Works through up to batch_cap queued jobs; "
+            "every application is PARKED at its review page for your approval "
+            "— nothing is ever submitted.")
+        self.start_run_btn.clicked.connect(self._start_run)
+        header.addWidget(self.start_run_btn)
         self.pw_label = QtWidgets.QLabel("")
         header.addWidget(self.pw_label)
         self.pw_btn = QtWidgets.QPushButton("Set…")
@@ -435,3 +473,49 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND_SCOPED)
         self._set_note("Kickoff command copied — paste it into a PowerShell "
                        "window with Chrome running.")
+
+    def _queued_count(self) -> int:
+        """The 'queued' status count from the same jobs list _update_counts
+        renders into counts_label — never re-parse that label's text."""
+        return sum(1 for e in self._jobs if e.get("status") == "queued")
+
+    def _batch_cap(self, queued: int) -> int:
+        """N for the confirm dialog: min(queued, configured batch cap), read
+        tolerantly — any exception (bad config.json, missing master yaml,
+        etc.) falls back to just the queued count."""
+        try:
+            cap = int(apply_queue.build_context()["batch_cap"])
+            return min(queued, cap)
+        except Exception:  # noqa: BLE001 - config hiccups must never block the button
+            return queued
+
+    def _start_run(self) -> None:
+        """Guards, in order: password set -> queue non-empty -> confirm. Only
+        Yes on the confirm box calls the injected on_start_run (default:
+        _spawn_kickoff, a brand-new visible PowerShell console)."""
+        try:
+            has_password = bool(self._password_exists())
+        except Exception:  # noqa: BLE001 - a keyring hiccup must never crash the panel
+            has_password = False
+        if not has_password:
+            QtWidgets.QMessageBox.warning(
+                self, "Master password not set",
+                "Set the master password first (the 'Set…' button above) — "
+                "the auto-apply run needs it to sign in to ATS accounts.")
+            return
+        queued = self._queued_count()
+        if queued == 0:
+            QtWidgets.QMessageBox.information(
+                self, "Queue is empty",
+                "Queue is empty — queue jobs from the Jobs tab first.")
+            return
+        n = self._batch_cap(queued)
+        answer = QtWidgets.QMessageBox.question(
+            self, "Start auto-apply run",
+            f"Start an unattended auto-apply run in a new terminal? It works "
+            f"through up to {n} queued job(s), parks each at its review page "
+            f"— nothing is ever submitted.")
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._on_start_run()
+        self._set_note("Run started in a new terminal window.")

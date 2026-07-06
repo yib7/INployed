@@ -757,25 +757,17 @@ def test_panel_open_buttons_use_artifact_paths(qtbot, tmp_path, monkeypatch):
     assert opened == [str(folder), str(record)]
 
 
-def test_kickoff_button_puts_exact_command_on_clipboard(qtbot, tmp_path):
-    p = _panel(qtbot, _qfile(tmp_path))
-    p.kickoff_btn.click()
-    assert QtWidgets.QApplication.clipboard().text() == KICKOFF_COMMAND
-    # SP4 mirrors the prompt constant; the command is PowerShell-shaped
+def test_kickoff_command_constants_shape():
+    """The two drain commands the Start button can launch are well-shaped: the
+    unattended variant bypasses prompts, the scoped variant allowlists tools."""
     assert KICKOFF_PROMPT == "Use the auto-apply skill: drain the apply queue"
+    # Unattended variant: blanket bypass on Opus, PowerShell-shaped (5.1-safe).
     assert KICKOFF_COMMAND.startswith("cd ")
-    # Runs unattended on Opus: never stops for per-action approval prompts.
     assert "--model opus" in KICKOFF_COMMAND
     assert "--dangerously-skip-permissions" in KICKOFF_COMMAND
     assert f'"{KICKOFF_PROMPT}"' in KICKOFF_COMMAND
     assert ";" in KICKOFF_COMMAND             # PowerShell chain, not && (5.1-safe)
-
-
-def test_scoped_kickoff_button_copies_allowlisted_command(qtbot, tmp_path):
-    p = _panel(qtbot, _qfile(tmp_path))
-    p.kickoff_scoped_btn.click()
-    assert QtWidgets.QApplication.clipboard().text() == KICKOFF_COMMAND_SCOPED
-    # The safer variant scopes tools instead of the blanket bypass.
+    # Scoped variant: allowlisted tools instead of the blanket bypass.
     assert "--model opus" in KICKOFF_COMMAND_SCOPED
     assert "--allowedTools" in KICKOFF_COMMAND_SCOPED
     assert "--dangerously-skip-permissions" not in KICKOFF_COMMAND_SCOPED
@@ -784,28 +776,6 @@ def test_scoped_kickoff_button_copies_allowlisted_command(qtbot, tmp_path):
     # Prompt must precede the variadic --allowedTools so it isn't swallowed as a tool.
     assert (KICKOFF_COMMAND_SCOPED.index(KICKOFF_PROMPT)
             < KICKOFF_COMMAND_SCOPED.index("--allowedTools"))
-
-
-def test_kickoff_button_shows_note_on_copy(qtbot, tmp_path):
-    """The primary 'Copy kickoff command' button shows a status note mentioning
-    'paste into a terminal', without saying 'scoped'."""
-    p = _panel(qtbot, _qfile(tmp_path))
-    p.kickoff_btn.click()
-    note = p.status_label.text()
-    assert "Kickoff command copied" in note
-    assert "paste into a terminal" in note
-    assert "scoped" not in note.lower()
-
-
-def test_scoped_kickoff_button_shows_distinct_note_on_copy(qtbot, tmp_path):
-    """The 'Copy scoped command' button shows a distinct status note that says
-    'Scoped' so the user knows which variant they copied."""
-    p = _panel(qtbot, _qfile(tmp_path))
-    p.kickoff_scoped_btn.click()
-    note = p.status_label.text()
-    assert "Scoped kickoff command copied" in note
-    assert "paste into a terminal" in note
-    assert "scoped" in note.lower()
 
 
 # --- ApplyQueuePanel: "Start auto-apply run" (SP8) ---------------------------------
@@ -825,101 +795,123 @@ def test_panel_has_start_run_button(qtbot, tmp_path):
     assert "batch_cap" in tip or "batch cap" in tip
     assert "park" in tip
     assert "nothing is ever submitted" in tip or "never submitted" in tip
+    # The copy-command buttons were folded into the Start button's mode choice.
+    assert not hasattr(p, "kickoff_btn")
+    assert not hasattr(p, "kickoff_scoped_btn")
 
 
 def test_start_run_blocked_when_password_not_set(qtbot, tmp_path, monkeypatch):
     spy = []
-    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda: spy.append(True),
+    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda scoped: spy.append(scoped),
               password_exists=lambda: False)
     warned = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
                         staticmethod(lambda *a, **k: warned.append(a)))
-    questioned = []
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
-                        staticmethod(lambda *a, **k: questioned.append(a)))
+    mode_calls = []
+    monkeypatch.setattr(p, "_ask_run_mode", lambda n: mode_calls.append(n))
 
     p.start_run_btn.click()
 
     assert spy == []
     assert len(warned) == 1
-    assert questioned == []
+    assert mode_calls == []           # never reached the mode dialog
 
 
 def test_start_run_blocked_on_empty_queue(qtbot, tmp_path, monkeypatch):
     spy = []
-    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda: spy.append(True),
+    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda scoped: spy.append(scoped),
               password_exists=lambda: True)
     informed = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         staticmethod(lambda *a, **k: informed.append(a)))
-    questioned = []
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
-                        staticmethod(lambda *a, **k: questioned.append(a)))
+    mode_calls = []
+    monkeypatch.setattr(p, "_ask_run_mode", lambda n: mode_calls.append(n))
 
     p.start_run_btn.click()          # queue file has no jobs at all
 
     assert spy == []
     assert len(informed) == 1
-    assert questioned == []
+    assert mode_calls == []           # never reached the mode dialog
 
 
-def test_start_run_confirm_yes_fires_spawn_once(qtbot, tmp_path, monkeypatch):
+def test_start_run_unattended_fires_spawn_with_false(qtbot, tmp_path, monkeypatch):
     qfile = _qfile(tmp_path)
     apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
                         path=qfile)
     apply_queue.enqueue(apply_queue.new_entry("2", company="Globex", title="B"),
                         path=qfile)
     spy = []
-    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+    p = _panel(qtbot, qfile, on_start_run=lambda scoped: spy.append(scoped),
               password_exists=lambda: True)
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
-                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(p, "_ask_run_mode", lambda n: "unattended")
 
     p.start_run_btn.click()
 
-    assert len(spy) == 1
-    assert "started" in p.status_label.text().lower()
-    assert "new terminal" in p.status_label.text().lower()
+    assert spy == [False]             # blanket-bypass variant
+    note = p.status_label.text().lower()
+    assert "started" in note
+    assert "unattended" in note
+    assert "new terminal" in note
 
 
-def test_start_run_confirm_no_is_noop(qtbot, tmp_path, monkeypatch):
+def test_start_run_scoped_fires_spawn_with_true(qtbot, tmp_path, monkeypatch):
     qfile = _qfile(tmp_path)
     apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
                         path=qfile)
     spy = []
-    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
+    p = _panel(qtbot, qfile, on_start_run=lambda scoped: spy.append(scoped),
               password_exists=lambda: True)
-    monkeypatch.setattr(QtWidgets.QMessageBox, "question",
-                        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+    monkeypatch.setattr(p, "_ask_run_mode", lambda n: "scoped")
 
     p.start_run_btn.click()
 
-    assert spy == []
+    assert spy == [True]              # safer allowlisted variant
+    assert "scoped" in p.status_label.text().lower()
 
 
-def test_kickoff_argv_contains_prompt_and_repo_root(qtbot, monkeypatch):
-    """Pure: no Popen anywhere. Asserts the argv is a list of str, and either an
-    element itself or the decoded -EncodedCommand payload carries KICKOFF_PROMPT
-    and the repo root path."""
+def test_start_run_cancel_is_noop_and_passes_cap(qtbot, tmp_path, monkeypatch):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
+                        path=qfile)
+    spy = []
+    seen = []
+    p = _panel(qtbot, qfile, on_start_run=lambda scoped: spy.append(scoped),
+              password_exists=lambda: True)
+    monkeypatch.setattr(p, "_ask_run_mode", lambda n: seen.append(n) or None)
+
+    p.start_run_btn.click()
+
+    assert spy == []                  # Cancel -> nothing launched
+    assert seen == [1]                # N = min(queued=1, batch cap) reaches the dialog
+
+
+def test_kickoff_argv_variants_carry_prompt_and_repo_root(qtbot, monkeypatch):
+    """Pure: no Popen anywhere. Both variants embed KICKOFF_PROMPT + the repo
+    root in the -EncodedCommand payload; scoped uses --allowedTools, unattended
+    uses --dangerously-skip-permissions."""
     called = []
     monkeypatch.setattr(aqp.subprocess, "Popen",
                         lambda *a, **k: called.append((a, k)))
 
-    argv = aqp._kickoff_argv()
+    def _payload(argv):
+        assert isinstance(argv, list)
+        assert all(isinstance(a, str) for a in argv)
+        for i, a in enumerate(argv):
+            if a.lower() in ("-encodedcommand", "/encodedcommand"):
+                import base64
+                return base64.b64decode(argv[i + 1]).decode("utf-16-le")
+        return " ".join(argv)
 
-    assert isinstance(argv, list)
-    assert all(isinstance(a, str) for a in argv)
-    assert called == []          # pure - never spawns anything
+    unattended = _payload(aqp._kickoff_argv())
+    scoped = _payload(aqp._kickoff_argv(scoped=True))
 
-    payload = None
-    for i, a in enumerate(argv):
-        if a.lower() in ("-encodedcommand", "/encodedcommand"):
-            import base64
-            payload = base64.b64decode(argv[i + 1]).decode("utf-16-le")
-            break
-    haystack = payload if payload is not None else " ".join(argv)
-    assert KICKOFF_PROMPT in haystack
-    assert str(aqp.REPO_ROOT) in haystack
+    assert called == []               # pure - never spawns anything
+    for hay in (unattended, scoped):
+        assert KICKOFF_PROMPT in hay
+        assert str(aqp.REPO_ROOT) in hay
+    assert "--dangerously-skip-permissions" in unattended
+    assert "--allowedTools" in scoped
+    assert "--dangerously-skip-permissions" not in scoped
 
 
 def test_panel_password_label_flips_with_password_exists(qtbot, tmp_path, monkeypatch):

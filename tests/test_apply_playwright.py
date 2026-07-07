@@ -270,3 +270,30 @@ def test_run_report_written_before_hold(tmp_path, monkeypatch):
     assert hold_calls == [True]
     written = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
     assert written["status"] == report["status"]
+
+
+def test_detach_spawns_child_without_detach_and_writes_pid(tmp_path, monkeypatch):
+    """--detach re-spawns this one-shot as a DETACHED child (so the parked window
+    outlives the calling agent), writes driver.pid + serve.log, and returns without
+    launching a browser itself. The child command must drop --detach (else it would
+    re-detach forever) and keep --url/--folder."""
+    seen = {}
+
+    class FakeProc:
+        pid = 7777
+
+    def fake_popen(args, stdout=None, stderr=None, stdin=None, **kwargs):
+        seen["args"] = list(args)
+        seen["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(apply_playwright.subprocess, "Popen", fake_popen)
+    rc = apply_playwright.main(
+        ["--url", "https://boards.greenhouse.io/x/jobs/1", "--folder", str(tmp_path),
+         "--detach"])
+    assert rc == 0
+    rd = tmp_path / ".apply_run"
+    assert (rd / "driver.pid").read_text().strip() == "7777"
+    assert (rd / "serve.log").exists()
+    assert "--detach" not in seen["args"]       # child actually runs the browser
+    assert "--url" in seen["args"] and "--folder" in seen["args"]

@@ -241,15 +241,29 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
     rd.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
-        ctx = browser.new_context(viewport={"width": 1400, "height": 1000})
-        page = ctx.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(3000)
+        browser = None
+        try:
+            browser = p.chromium.launch(headless=headless)
+            ctx = browser.new_context(viewport={"width": 1400, "height": 1000})
+            page = ctx.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
 
-        fill_identity(page, parsed, report)
-        upload_files(page, parsed.get("resume", ""), parsed.get("cover", ""), report)
-        _log(f"FILLED identity={list(report['filled'])} uploads={report['uploads']}")
+            fill_identity(page, parsed, report)
+            upload_files(page, parsed.get("resume", ""), parsed.get("cover", ""), report)
+            _log(f"FILLED identity={list(report['filled'])} uploads={report['uploads']}")
+        except Exception as exc:  # noqa: BLE001
+            # A launch / goto-timeout / fill / upload crash BEFORE any terminal
+            # branch would otherwise propagate with no report.json — leaving the
+            # claimed queue entry with no forensic signal. Honour _write_report's
+            # "called at EVERY terminal moment" contract: record the failure, hold
+            # the window if one opened, then re-raise so the CLI still exits nonzero.
+            report["status"] = f"failed: {exc}"
+            _log(report["status"])
+            _write_report(rd, report)
+            if hold and browser is not None:
+                _hold(browser)
+            raise
 
         if not submit:
             report["status"] = "PARKED at review - Submit NOT clicked, tab left open"

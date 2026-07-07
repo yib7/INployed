@@ -21,19 +21,35 @@ browser stays open and the serve loop stays alive so the human can review and
 submit. The loop exits 0 cleanly when the human closes the browser/page
 (Playwright's "target closed" error, detected on any page operation).
 
+PERSISTENCE: a headed browser dies with its serve process, and an agent's shells
+are ephemeral — so the drain must start the driver with ``launch`` (a DETACHED
+serve that outlives the subagent AND the orchestrator), never ``serve &`` inside a
+subagent (which is reaped the moment the job parks, closing the window before the
+human returns). If a parked window is ever gone anyway (crash, reboot, human closed
+it), ``reopen`` relaunches the SAME persistent profile at the parked URL, restoring
+the logged-in session where the run left off.
+
+UPLOADS: ``set_files`` drives a reachable ``<input type=file>`` (main frame, then any
+child frame). ``upload`` intercepts the browser's file chooser instead — the robust
+path for iframe/dynamically-created inputs and native OS file dialogs (SuccessFactors).
+
 CLI:
-    python local/apply_driver.py serve --workdir DIR [--headless]
-    python local/apply_driver.py send --workdir DIR '{"action":"goto","url":"..."}'
+    python local/apply_driver.py launch --workdir DIR [--headless]  # detached serve (survives the agent)
+    python local/apply_driver.py serve  --workdir DIR [--headless]  # foreground serve (tests / manual)
+    python local/apply_driver.py send   --workdir DIR '{"action":"goto","url":"..."}'
+    python local/apply_driver.py reopen --workdir DIR               # restore a parked window
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # Text Playwright uses (across versions) when an operation hits a closed
 # page/context/browser. Checked as a substring — version-tolerant, and lets a
@@ -143,8 +159,21 @@ def do(page, cmd: Dict[str, Any], workdir: Optional[Path] = None) -> Dict[str, A
         page.keyboard.press("Control+A")
         page.keyboard.press("Delete")
     elif a == "set_files":
-        page.set_input_files(cmd["selector"], cmd["paths"])
+        # Frame-aware: try the main frame, then any child frame (iframe-embedded
+        # upload widgets). For inputs that don't exist until a button is clicked, or
+        # that open a native OS dialog, use "upload" instead — it needs no reachable
+        # <input type=file> at all.
+        _set_files(page, cmd["selector"], cmd["paths"], cmd.get("timeout", 8000))
         page.wait_for_timeout(1500)
+    elif a == "upload":
+        # Robust upload: intercept the browser's file chooser instead of requiring a
+        # reachable <input type=file>. Works for iframe-embedded / dynamically-created
+        # inputs AND for "+"/"Upload" buttons that open a native OS file dialog
+        # (e.g. SuccessFactors "My Documents") — the exact case set_input_files can't
+        # reach. Trigger by CSS ("trigger") or by role+name ("trigger_text").
+        _upload_via_chooser(page, cmd)
+        page.wait_for_timeout(cmd.get("wait", 1500))
+        return dump(page, seq, workdir=workdir)
     elif a == "park":
         # Machine-readable park signal for the one-shot driver + orchestrator:
         # write parked.json and keep the loop (and the browser) alive.
@@ -159,6 +188,58 @@ def do(page, cmd: Dict[str, Any], workdir: Optional[Path] = None) -> Dict[str, A
     elif a == "quit":
         return {"seq": seq, "ok": True, "quit": True}
     return dump(page, seq, workdir=workdir)
+
+
+# ── upload helpers ─────────────────────────────────────────────────────────────
+
+def _child_frames(page) -> List[Any]:
+    """Every frame on the page except the main one (best-effort; never raises)."""
+    try:
+        frames = list(page.frames)
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        main = page.main_frame
+    except Exception:  # noqa: BLE001
+        main = None
+    return [f for f in frames if f is not main]
+
+
+def _set_files(page, selector: str, paths, timeout: int) -> None:
+    """``set_input_files`` on the main frame; on a miss, retry the same selector in
+    each child frame (upload widgets are frequently iframe-embedded). If no frame
+    has the input, re-raise the main-frame error so do()'s caller reports it — the
+    subagent should then fall back to the ``upload`` action."""
+    try:
+        page.set_input_files(selector, paths, timeout=timeout)
+        return
+    except Exception as e:  # noqa: BLE001
+        if _is_closed_error(e):
+            raise
+    for frame in _child_frames(page):
+        try:
+            frame.set_input_files(selector, paths, timeout=timeout)
+            return
+        except Exception:  # noqa: BLE001
+            continue
+    # Surface the real failure (main-frame miss) to the report.
+    page.set_input_files(selector, paths, timeout=timeout)
+
+
+def _upload_via_chooser(page, cmd: Dict[str, Any]) -> None:
+    """Click the upload trigger and satisfy the resulting file chooser with
+    ``cmd['paths']``. Intercepting the chooser works at the CDP layer regardless of
+    where (or whether) an ``<input type=file>`` lives in the DOM — iframe, shadow
+    DOM, created-on-click, or a native OS dialog."""
+    paths = cmd["paths"]
+    timeout = cmd.get("timeout", 15000)
+    with page.expect_file_chooser(timeout=timeout) as fc_info:
+        if cmd.get("trigger_text"):
+            page.get_by_role(cmd.get("role", "button"), name=cmd["trigger_text"],
+                             exact=cmd.get("exact", False)).first.click(timeout=timeout)
+        else:
+            page.locator(cmd["trigger"]).first.click(timeout=timeout)
+    fc_info.value.set_files(paths)
 
 
 # ── serve side ────────────────────────────────────────────────────────────────
@@ -262,6 +343,146 @@ def serve(workdir: str, headless: bool = False, page=None) -> int:
     return 0
 
 
+# ── detached launch / reopen (browser persistence) ─────────────────────────────
+#
+# WHY: a headed Playwright browser lives only as long as the process that launched
+# it (the `with sync_playwright()` block tears it down on exit). The runbook used to
+# start `serve` INSIDE the per-job subagent (`serve --workdir … &`); when the subagent
+# finished, that background process was reaped and the parked window died — long
+# before the human returned. `launch` runs `serve` as a DETACHED process so the window
+# outlives the agent; `reopen` restores it from the on-disk persistent profile if it
+# ever does close (crash, reboot, human closed it, or a job-object that killed the
+# detached child anyway). Detachment is best-effort across OS/job-object policy —
+# `reopen` is the guarantee that a parked run is never lost.
+
+
+def _detach_kwargs(breakaway: bool = True) -> Dict[str, Any]:
+    """Popen kwargs to spawn a child that outlives this process as far as the OS
+    allows. On Windows, also try to break away from a parent Job object (Claude
+    Code may run shells inside one that is kill-on-close); if breakaway is denied
+    the caller retries with ``breakaway=False``."""
+    if os.name == "nt":
+        detached_process = 0x00000008
+        create_new_process_group = 0x00000200
+        create_breakaway_from_job = 0x01000000
+        flags = detached_process | create_new_process_group
+        if breakaway:
+            flags |= create_breakaway_from_job
+        return {"creationflags": flags}
+    return {"start_new_session": True}
+
+
+def _driver_alive(workdir) -> Optional[int]:
+    """The live serve PID recorded in ``workdir/driver.pid``, or None if the file is
+    absent / unreadable / points at a dead process. Dependency-free liveness."""
+    pid_file = Path(workdir) / "driver.pid"
+    if not pid_file.exists():
+        return None
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return None
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return None
+        try:
+            code = wintypes.DWORD()
+            ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            if ok and code.value != still_active:
+                return None
+            return pid
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return pid
+    except ProcessLookupError:
+        return None
+    except PermissionError:  # exists, owned by another user
+        return pid
+    except OSError:
+        return None
+
+
+def _parked_url(workdir) -> Optional[str]:
+    """The URL from ``workdir/parked.json`` (where the job parked), or None."""
+    p = Path(workdir) / "parked.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8")).get("url")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def launch(workdir: str, headless: bool = False) -> int:
+    """Spawn a DETACHED ``serve`` process for ``workdir`` and return immediately.
+
+    The parked browser then belongs to an independent OS process, not to the agent
+    that called this, so it stays open after the agent's turn ends. The child's
+    output goes to ``workdir/serve.log`` (a detached process has no console), and its
+    PID is written to ``workdir/driver.pid`` for liveness checks and ``reopen``. If a
+    driver is already alive for this workdir, does nothing (relaunching would fight
+    the persistent-profile lock)."""
+    wd = Path(workdir)
+    wd.mkdir(parents=True, exist_ok=True)
+    existing = _driver_alive(wd)
+    if existing is not None:
+        print(f"driver already running pid={existing} workdir={wd}")
+        return 0
+    args = [sys.executable, str(Path(__file__).resolve()), "serve", "--workdir", str(wd)]
+    if headless:
+        args.append("--headless")
+    logf = open(wd / "serve.log", "ab")  # noqa: SIM115 — inherited by the child
+    try:
+        try:
+            proc = subprocess.Popen(args, stdout=logf, stderr=logf,
+                                    stdin=subprocess.DEVNULL, **_detach_kwargs(breakaway=True))
+        except OSError:
+            # Breakaway (or the flag set) rejected: best-effort detach without it.
+            proc = subprocess.Popen(args, stdout=logf, stderr=logf,
+                                    stdin=subprocess.DEVNULL, **_detach_kwargs(breakaway=False))
+    finally:
+        logf.close()
+    (wd / "driver.pid").write_text(str(proc.pid), encoding="utf-8")
+    print(f"driver launched pid={proc.pid} workdir={wd}")
+    return 0
+
+
+def reopen(workdir: str, headless: bool = False, timeout: float = 90.0) -> int:
+    """Restore a parked job's browser. If a detached driver is still alive, report
+    where it is and leave it (relaunching would lock-fight the profile). Otherwise
+    launch a fresh detached driver on the SAME persistent profile (``workdir/profile``
+    — the logged-in session survives on disk) and navigate back to the parked URL from
+    ``parked.json``, so the human resumes exactly where the run left off. Returns 0 on
+    success, 1 if there's nothing to reopen."""
+    wd = Path(workdir)
+    alive = _driver_alive(wd)
+    if alive is not None:
+        print(f"driver already open pid={alive} url={_parked_url(wd) or '(unknown)'} "
+              f"workdir={wd}")
+        return 0
+    if not wd.exists():
+        print(f"nothing to reopen: no workdir at {wd}")
+        return 1
+    launch(str(wd), headless=headless)
+    url = _parked_url(wd)
+    if url:
+        res = send(str(wd), {"action": "goto", "url": url, "wait": 3500}, timeout=timeout)
+        print(f"reopened at {url} (ok={res.get('ok')})")
+    else:
+        print("driver relaunched; no parked.json URL to restore — the profile session is intact")
+    return 0
+
+
 # ── send side ─────────────────────────────────────────────────────────────────
 
 def _next_seq(workdir: Path) -> int:
@@ -362,6 +583,16 @@ def main(argv=None) -> int:
     p_send.add_argument("--workdir", required=True, help="the serve process's workdir")
     p_send.add_argument("json_cmd", help='command JSON, e.g. \'{"action":"dump"}\'')
 
+    p_launch = sub.add_parser(
+        "launch", help="spawn a DETACHED serve process that outlives this agent")
+    p_launch.add_argument("--workdir", required=True, help="per-run directory (profile/cmd/out)")
+    p_launch.add_argument("--headless", action="store_true")
+
+    p_reopen = sub.add_parser(
+        "reopen", help="restore a parked browser (persistent profile -> parked URL)")
+    p_reopen.add_argument("--workdir", required=True, help="the parked job's driver workdir")
+    p_reopen.add_argument("--headless", action="store_true")
+
     args = ap.parse_args(argv)
 
     if args.cmd == "serve":
@@ -371,6 +602,12 @@ def main(argv=None) -> int:
         cmd = json.loads(args.json_cmd)
         res = send(args.workdir, cmd, print_summary=True)
         return 0 if res.get("error") != "timeout" else 1
+
+    if args.cmd == "launch":
+        return launch(args.workdir, headless=args.headless)
+
+    if args.cmd == "reopen":
+        return reopen(args.workdir, headless=args.headless)
 
     return 2
 

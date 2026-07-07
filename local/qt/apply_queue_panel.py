@@ -42,9 +42,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 KICKOFF_PROMPT = "Use the auto-apply skill: drain the apply queue"
 
 # PowerShell-safe (5.1: `;` chains, no `&&`; quoted path survives spaces).
-# --model opus: run the drain (orchestrator AND the per-job subagents, which inherit
-#   the model) on Opus — the strongest judgment / form-fill accuracy / prompt-injection
-#   resistance, which matters most for an unattended, credential-touching run.
+# --model opus: runs the ORCHESTRATOR (this drain session) on Opus — strongest judgment /
+#   prompt-injection resistance for an unattended, credential-touching coordinator. The
+#   per-job subagents it dispatches are pinned to claude-sonnet-5 by the skill (SKILL.md
+#   DRAIN LOOP step 3) — mechanical form-driving that doesn't need Opus — so this flag no
+#   longer governs them; change the subagent model in the skill, not here.
 # --dangerously-skip-permissions: runs UNATTENDED — Claude Code never stops to ask the
 #   user to approve each browser/file/CLI action. The skill's own safety rails (never
 #   submit, park at review, CAPTCHA/SSN/payment stop, per-job domain allowlist,

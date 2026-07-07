@@ -7,6 +7,7 @@ the module never requires Playwright to be installed.
 """
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -77,8 +78,48 @@ class FakePage:
     def keyboard(self):
         return _Keyboard(self)
 
-    def set_input_files(self, selector, paths):
+    def set_input_files(self, selector, paths, timeout=None):
         self.calls.append(("set_input_files", selector, paths))
+
+    def expect_file_chooser(self, timeout=None):
+        return _FileChooserCtx(self)
+
+
+class _FileChooser:
+    def __init__(self, page):
+        self.page = page
+
+    def set_files(self, paths):
+        self.page.calls.append(("chooser_set_files", paths))
+
+
+class _FileChooserCtx:
+    """Mimics Playwright's ``page.expect_file_chooser()`` context manager: yields an
+    info object whose ``.value`` is the file chooser."""
+
+    def __init__(self, page):
+        self.page = page
+        self.value = _FileChooser(page)
+
+    def __enter__(self):
+        self.page.calls.append(("expect_file_chooser",))
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FrameFake:
+    """A child frame that may or may not contain the requested file input."""
+
+    def __init__(self, page, has_input):
+        self.page = page
+        self.has_input = has_input
+
+    def set_input_files(self, selector, paths, timeout=None):
+        self.page.calls.append(("frame_set_input_files", selector, paths, self.has_input))
+        if not self.has_input:
+            raise RuntimeError("waiting for locator " + selector)
 
 
 class _Locator:
@@ -273,6 +314,120 @@ def test_is_closed_error_matches_target_closed_message():
     assert not apply_driver._is_closed_error(RuntimeError("some other error"))
 
 
+# ── upload: file chooser + iframe fallback ───────────────────────────────────
+
+def test_do_upload_uses_file_chooser(tmp_path):
+    page = FakePage()
+    apply_driver.do(page, {"seq": 20, "action": "upload", "trigger": "#add-doc",
+                           "paths": ["C:/tmp/resume.pdf"]}, workdir=tmp_path)
+    assert ("expect_file_chooser",) in page.calls
+    assert any(c[0] == "click" and c[2] == "#add-doc" for c in page.calls)
+    assert ("chooser_set_files", ["C:/tmp/resume.pdf"]) in page.calls
+
+
+def test_do_upload_by_role_trigger_text(tmp_path):
+    page = FakePage()
+    apply_driver.do(page, {"seq": 21, "action": "upload", "trigger_text": "Upload a Resume",
+                           "paths": ["r.pdf"]}, workdir=tmp_path)
+    assert any(c[0] == "get_by_role" and c[2] == "Upload a Resume" for c in page.calls)
+    assert ("chooser_set_files", ["r.pdf"]) in page.calls
+
+
+def test_do_set_files_falls_back_to_child_frame(tmp_path):
+    class FramePage(FakePage):
+        def __init__(self):
+            super().__init__()
+            self._main = object()
+            self._frame = _FrameFake(self, has_input=True)
+
+        def set_input_files(self, selector, paths, timeout=None):
+            self.calls.append(("set_input_files", selector, paths))
+            raise RuntimeError("waiting for locator input[type=file]")
+
+        @property
+        def frames(self):
+            return [self._main, self._frame]
+
+        @property
+        def main_frame(self):
+            return self._main
+
+    page = FramePage()
+    apply_driver.do(page, {"seq": 22, "action": "set_files", "selector": "#resume",
+                           "paths": ["C:/tmp/r.pdf"]})
+    # main frame missed; the child frame carrying the input succeeded.
+    assert ("set_input_files", "#resume", ["C:/tmp/r.pdf"]) in page.calls
+    assert ("frame_set_input_files", "#resume", ["C:/tmp/r.pdf"], True) in page.calls
+
+
+# ── persistence: liveness, detached launch, reopen ───────────────────────────
+
+def test_driver_alive_detects_live_and_dead_pid(tmp_path):
+    assert apply_driver._driver_alive(tmp_path) is None                 # no pidfile
+    (tmp_path / "driver.pid").write_text(str(os.getpid()), encoding="utf-8")
+    assert apply_driver._driver_alive(tmp_path) == os.getpid()          # our pid is alive
+    (tmp_path / "driver.pid").write_text("999999999", encoding="utf-8")
+    assert apply_driver._driver_alive(tmp_path) is None                 # unused pid is dead
+
+
+def test_launch_spawns_detached_and_writes_pid(tmp_path, monkeypatch):
+    seen = {}
+
+    class FakeProc:
+        pid = 4242
+
+    def fake_popen(args, stdout=None, stderr=None, stdin=None, **kwargs):
+        seen["args"] = list(args)
+        seen["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(apply_driver.subprocess, "Popen", fake_popen)
+    rc = apply_driver.launch(str(tmp_path))
+    assert rc == 0
+    assert (tmp_path / "driver.pid").read_text().strip() == "4242"
+    assert (tmp_path / "serve.log").exists()
+    assert "serve" in seen["args"] and "--workdir" in seen["args"]
+    if os.name == "nt":
+        assert seen["kwargs"].get("creationflags")            # detached creation flags
+    else:
+        assert seen["kwargs"].get("start_new_session") is True
+
+
+def test_launch_noops_when_driver_already_alive(tmp_path, monkeypatch):
+    (tmp_path / "driver.pid").write_text(str(os.getpid()), encoding="utf-8")
+    called = []
+    monkeypatch.setattr(apply_driver.subprocess, "Popen", lambda *a, **k: called.append(a))
+    rc = apply_driver.launch(str(tmp_path))
+    assert rc == 0
+    assert called == []   # an already-alive driver is not relaunched (avoids profile lock)
+
+
+def test_reopen_noop_when_already_alive(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(apply_driver, "_driver_alive", lambda wd: 1234)
+    launched = []
+    monkeypatch.setattr(apply_driver, "launch", lambda *a, **k: launched.append(a))
+    rc = apply_driver.reopen(str(tmp_path))
+    assert rc == 0 and launched == []
+    assert "already open" in capsys.readouterr().out
+
+
+def test_reopen_relaunches_and_navigates_when_dead(tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_driver, "_driver_alive", lambda wd: None)
+    (tmp_path / "parked.json").write_text(
+        json.dumps({"url": "https://ats.example/apply/99", "title": "Review"}),
+        encoding="utf-8")
+    launched, sent = [], []
+    monkeypatch.setattr(apply_driver, "launch",
+                        lambda wd, headless=False: launched.append(wd) or 0)
+    monkeypatch.setattr(apply_driver, "send",
+                        lambda wd, cmd, timeout=60.0: sent.append(cmd) or {"ok": True})
+    rc = apply_driver.reopen(str(tmp_path))
+    assert rc == 0
+    assert launched                                    # relaunched the detached driver
+    assert sent and sent[0]["action"] == "goto"
+    assert sent[0]["url"] == "https://ats.example/apply/99"
+
+
 # ── CLI --help smoke (no browser, no workdir needed) ────────────────────────
 
 def test_cli_serve_help_exits_zero():
@@ -285,5 +440,19 @@ def test_cli_serve_help_exits_zero():
 def test_cli_send_help_exits_zero():
     r = subprocess.run(
         [sys.executable, str(REPO / "local" / "apply_driver.py"), "send", "--help"],
+        capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0
+
+
+def test_cli_launch_help_exits_zero():
+    r = subprocess.run(
+        [sys.executable, str(REPO / "local" / "apply_driver.py"), "launch", "--help"],
+        capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0
+
+
+def test_cli_reopen_help_exits_zero():
+    r = subprocess.run(
+        [sys.executable, str(REPO / "local" / "apply_driver.py"), "reopen", "--help"],
         capture_output=True, text=True, timeout=30)
     assert r.returncode == 0

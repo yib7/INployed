@@ -22,7 +22,8 @@ end-to-end path: it clicks Submit, handles Greenhouse's emailed security-code ga
 reports the confirmation. Nothing here submits unless the CALLER passes ``submit=True``.
 
 CLI:
-    python local/apply_playwright.py --url <greenhouse-url> --folder <job-folder>   # park
+    python local/apply_playwright.py --url <greenhouse-url> --folder <job-folder>   # park (foreground)
+    python local/apply_playwright.py --url ... --folder ... --detach                # park, survives the agent
     python local/apply_playwright.py --url ... --folder ... --submit --run-dir <dir> # authorized e2e
 """
 from __future__ import annotations
@@ -30,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -39,6 +41,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import apply_driver  # noqa: E402  (same local/ dir; reuse _detach_kwargs — no heavy imports)
 import apply_verify  # noqa: E402  (same local/ dir; pure stdlib, safe at import time)
 
 # `- **Label:** value` — the shape every Candidate/Address/Standard-answer line uses.
@@ -323,6 +326,41 @@ def _hold(browser) -> None:
         pass
 
 
+def _spawn_detached(args) -> int:
+    """Re-run this one-shot as a DETACHED process so the parked browser outlives the
+    (ephemeral) agent that started it — the same fix apply_driver.launch applies to the
+    serve driver. Without this, backgrounding the one-shot inside a per-job subagent
+    (``… &``) means the window dies when the subagent is reaped, before the human
+    returns. NOTE: a Greenhouse fill has no server-side draft, so a lost window can only
+    be re-queued (no ``reopen`` recovery) — which is exactly why keeping it alive matters.
+    Child output → ``<run_dir>/serve.log``; pid → ``<run_dir>/driver.pid``."""
+    rd = Path(args.run_dir) if args.run_dir else (Path(args.folder) / ".apply_run")
+    rd.mkdir(parents=True, exist_ok=True)
+    child = [sys.executable, str(Path(__file__).resolve()),
+             "--url", args.url, "--folder", args.folder]  # NB: no --detach → child runs the browser
+    if args.submit:
+        child.append("--submit")
+    if args.run_dir:
+        child += ["--run-dir", args.run_dir]
+    if args.headless:
+        child.append("--headless")
+    if args.no_hold:
+        child.append("--no-hold")
+    logf = open(rd / "serve.log", "ab")  # noqa: SIM115 — inherited by the child
+    try:
+        try:
+            proc = subprocess.Popen(child, stdout=logf, stderr=logf, stdin=subprocess.DEVNULL,
+                                    **apply_driver._detach_kwargs(breakaway=True))
+        except OSError:
+            proc = subprocess.Popen(child, stdout=logf, stderr=logf, stdin=subprocess.DEVNULL,
+                                    **apply_driver._detach_kwargs(breakaway=False))
+    finally:
+        logf.close()
+    (rd / "driver.pid").write_text(str(proc.pid), encoding="utf-8")
+    print(f"apply_playwright launched detached pid={proc.pid} run_dir={rd}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="apply_playwright",
@@ -336,8 +374,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="handshake dir for the security-code exchange (submit mode)")
     ap.add_argument("--no-hold", action="store_true",
                     help="don't keep the browser open after finishing")
+    ap.add_argument("--detach", action="store_true",
+                    help="run detached so the parked window outlives the calling agent "
+                         "(spawns a child, writes driver.pid, returns immediately)")
     ap.add_argument("--headless", action="store_true")
     args = ap.parse_args(argv)
+    if args.detach:
+        return _spawn_detached(args)
     report = run(args.url, args.folder, submit=args.submit, run_dir=args.run_dir,
                  hold=not args.no_hold, headless=args.headless)
     print(json.dumps(report, indent=2, ensure_ascii=False))

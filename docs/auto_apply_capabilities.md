@@ -178,3 +178,45 @@ A plain absolute path to the tailored PDF just works. No folder-connect, no user
 - **Verify uploads by the filename chip, not the input** — Greenhouse swaps the `<input>` for a
   filename chip after attach, so re-reading the old input selector falsely reports "no file".
 
+---
+
+## UPDATE (2026-07-07): two follow-ups from the CITGO pilot
+
+The 2026-07-06 CITGO SuccessFactors pilot surfaced two defects, now fixed.
+
+### 1. `set_input_files` is not enough — some uploads need file-chooser interception
+
+`page.set_input_files(selector, path)` only works when a reachable `<input type=file>` exists
+in the frame you target. SuccessFactors' **"My Documents"** upload has NO such input in the main
+frame — the widget is iframe-embedded / created on click, and the "+" opens a **native OS file
+dialog**. `set_input_files` timed out ("waiting for locator input[type=file]") and the résumé
+never attached.
+
+**Fix — `apply_driver` `upload` action (file-chooser interception).** `with
+page.expect_file_chooser(): click(trigger)` then `chooser.set_files(paths)` hooks the browser's
+file chooser at the CDP layer, so it works **regardless of where (or whether) an `<input>`
+exists** — iframe, shadow DOM, created-on-click, or a native dialog. This is the general robust
+upload path; `set_files` (now also searching child iframes) remains for directly-addressable
+inputs (e.g. Greenhouse `#resume`). Tests: `tests/test_apply_driver.py`.
+
+### 2. A parked browser must outlive the agent — `launch` (detached) + `reopen`
+
+A headed Playwright browser dies with the process that launched it. The runbook launched the
+driver **inside the per-job subagent** (`serve … &`); when the subagent finished (parked,
+reported back), that background process was reaped and the browser closed — so the parked window
+was gone before the human returned, while the record still claimed it was "open" (blindly
+asserted, never verified). That wasted the whole run's tokens.
+
+**Fix:**
+- **`apply_driver launch`** starts `serve` as a **detached** process (Windows: DETACHED_PROCESS |
+  CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB, best-effort with a no-breakaway fallback;
+  POSIX: `start_new_session`), output → `serve.log`, pid → `driver.pid`. The window now outlives
+  the subagent AND the orchestrator. `apply_playwright --detach` does the same for the one-shot.
+- **`apply_driver reopen --workdir DIR`** is the guarantee: if a window is ever gone anyway, it
+  relaunches the SAME persistent profile (`DIR/profile`, logged-in session on disk) at
+  `parked.json`'s URL — restoring draft-saving ATSes (SuccessFactors/Workday/iCIMS) exactly where
+  the run left off. (A one-shot Greenhouse fill has no server draft → Re-queue instead.)
+- Detachment is **best-effort** across OS/job-object policy; `reopen` + the persistent profile are
+  what make "no wasted run" reliable. The skill now records the `reopen` command per parked job and
+  never claims "still open" without it.
+

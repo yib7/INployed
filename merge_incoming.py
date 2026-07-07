@@ -279,7 +279,13 @@ def main(
             # away to nothing on the rerun.
             for path, added in contributions:
                 _say(f"{path.name} merged ({added} new rows)")
-                path.unlink()
+                # A duplicate contribution path (or a file already swept) would
+                # otherwise crash the whole merge on the second unlink — guard it
+                # the same way the tmp-file cleanup above does.
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
     # ---- Stats files: same shape, but never fatal -- an unreadable existing
     # stats file only warns and leaves incoming stats queued for next time.

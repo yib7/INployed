@@ -258,6 +258,54 @@ def test_send_monotonic_seq_and_result(tmp_path, monkeypatch):
     assert (workdir / "seq.txt").read_text().strip() == "2"
 
 
+def test_next_seq_recovers_from_corrupt_seq_file(tmp_path):
+    """P2 #13: a hand-edited / corrupt seq.txt used to raise ValueError inside
+    int(...) and kill the serve loop. _next_seq must now recover — treat an
+    unparseable value as 0 and hand out 1 next — instead of crashing."""
+    workdir = tmp_path
+    (workdir / "seq.txt").write_text("not-a-number")
+    assert apply_driver._next_seq(workdir) == 1
+    assert (workdir / "seq.txt").read_text().strip() == "1"
+    # And it keeps counting monotonically from the recovered value.
+    assert apply_driver._next_seq(workdir) == 2
+
+
+def test_next_seq_empty_file_starts_at_one(tmp_path):
+    (tmp_path / "seq.txt").write_text("   ")
+    assert apply_driver._next_seq(tmp_path) == 1
+
+
+def test_next_seq_concurrent_no_duplicate(tmp_path):
+    """P2 #13/#16: two callers sharing a workdir (orchestrator + a subagent, or a
+    reopen racing a send) must never both get the same seq — a lost command. The
+    byte-0 lock around the read-modify-write serializes them, so N threads each
+    get a distinct seq and the file lands at N."""
+    import threading
+
+    workdir = tmp_path
+    n = 20
+    got: list = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(n)
+
+    def worker():
+        barrier.wait(timeout=10)
+        s = apply_driver._next_seq(workdir)
+        with lock:
+            got.append(s)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert len(got) == n
+    assert len(set(got)) == n                    # all distinct — no lost command
+    assert sorted(got) == list(range(1, n + 1))  # a clean 1..N run
+    assert int((workdir / "seq.txt").read_text().strip()) == n
+
+
 def test_send_utf8_safe_output(tmp_path, monkeypatch):
     # SuccessFactors-style page titles carry private-use glyphs; a STRICT cp1252
     # stdout raises UnicodeEncodeError on them unless the CLI's reconfigure

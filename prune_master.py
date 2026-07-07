@@ -61,7 +61,11 @@ def prune(master_csv: Path, *, retention_days=RETENTION_DAYS, now=None,
                     chunk.loc[aged, SUMMARY_COL] = ""
                 park = aged & _needs_rescore(chunk)  # can't score an empty desc — park it
                 if "filtered_out" in chunk.columns:
-                    chunk.loc[park, "filtered_out"] = "True"
+                    # Lowercase "true" to match the "true"/"1"/"yes" vocabulary the
+                    # _needs_rescore reader (and any future case-sensitive reader)
+                    # expects; the .str.lower() at read time already tolerates it,
+                    # but keep the written value consistent.
+                    chunk.loc[park, "filtered_out"] = "true"
                 if "reason" in chunk.columns:
                     chunk.loc[park, "reason"] = "pruned_no_desc"
                 parked += int(park.sum())

@@ -12,10 +12,13 @@ Pure pandas + pathlib: no Qt, no gcloud here (push argv/runner live in vm_sync).
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
@@ -89,7 +92,16 @@ def write_rows_outbox(ids, master_csv: Path | None = None,
         return None
     if "job_posting_id" not in df.columns:
         return None
-    rows = df[df["job_posting_id"].astype(str).isin(set(ids))]
+    id_set = set(ids)
+    have = set(df["job_posting_id"].astype(str))
+    not_found = id_set - have
+    if not_found:
+        # A local job that never landed in the master won't reach the VM — surface
+        # it so a lost row is visible instead of silently dropped.
+        log.warning("write_rows_outbox: %d of %d id(s) not in master, not queued: %s",
+                    len(not_found), len(id_set),
+                    ", ".join(sorted(not_found)[:20]))
+    rows = df[df["job_posting_id"].astype(str).isin(id_set)]
     if rows.empty:
         return None
     ob = Path(outbox_dir) if outbox_dir is not None else OUTBOX_DIR

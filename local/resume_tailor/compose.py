@@ -15,12 +15,15 @@ carries its source atom ids so a human can trace it back to the master yaml.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from math import ceil
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import assets, ats, config, layout, measure
 from .llm import as_dict, call
+
+log = logging.getLogger(__name__)
 
 _PRINCIPLE = (
     "ABSOLUTE RULE — select and re-phrase, never invent. You may ONLY restate facts "
@@ -651,7 +654,9 @@ Return ONLY JSON: {{"projects": [{{"project": "<name>", "lead": <number>}}, ...]
             lead = p.get("lead")
             if isinstance(lead, int) and not isinstance(lead, bool):
                 picks[p.get("project")] = lead
-    except Exception:  # noqa: BLE001 - ordering is advisory; fall back to file order
+    except Exception as exc:  # noqa: BLE001 - ordering is advisory; fall back to file order
+        log.warning("lead_with_overview: LLM ordering failed, falling back to "
+                    "file order: %s", exc)
         picks = {}
 
     for entry in candidates:
@@ -703,7 +708,9 @@ Return ONLY JSON: {{"briefs": [{{"block": "<block name>", "brief": "<1-2 sentenc
     try:
         out = as_dict(call(system, user, config.TIER_FLASH_LITE, json_out=True,
                            temperature=0.2), "briefs")
-    except Exception:  # noqa: BLE001 - cohesion is advisory; fall back to no briefs
+    except Exception as exc:  # noqa: BLE001 - cohesion is advisory; fall back to no briefs
+        log.warning("block_briefs: LLM briefing failed, falling back to no briefs: "
+                    "%s", exc)
         return {}
     names = {b["block"] for b in blocks}
     result: Dict[str, str] = {}

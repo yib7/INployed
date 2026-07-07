@@ -272,6 +272,79 @@ def test_run_report_written_before_hold(tmp_path, monkeypatch):
     assert written["status"] == report["status"]
 
 
+class _CrashingPage(_FakePage):
+    """A page whose goto() blows up — models a page-load timeout / launch failure
+    in the fill/upload phase that has no per-branch try/except of its own."""
+
+    def goto(self, url, wait_until=None, timeout=None):
+        raise RuntimeError("Timeout 60000ms exceeded while navigating")
+
+
+def test_run_crash_in_fill_phase_writes_failed_report(tmp_path, monkeypatch):
+    """P1: a crash during page-load/fill/upload (goto timeout, launch failure, an
+    uncaught fill/upload error) must STILL write report.json with a failed status —
+    the orchestrator polls report.json, and a claimed entry with no terminal signal
+    silently stalls the FIFO queue. The exception re-raises so the CLI exits nonzero,
+    but report.json is on disk first, before any hold."""
+    import types
+
+    folder = tmp_path / "job"
+    folder.mkdir()
+    (folder / "apply.md").write_text(
+        "## Candidate\n- **Name:** Jane Doe\n- **Email:** jane@example.com\n",
+        encoding="utf-8")
+
+    fake_page = _CrashingPage()
+    fake_module = types.ModuleType("playwright.sync_api")
+    fake_module.sync_playwright = lambda: _FakePlaywrightCM(fake_page)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_module)
+
+    run_dir = tmp_path / "rundir"
+    hold_calls = []
+
+    def fake_hold(browser):
+        # The failed report must already be on disk by the time we hold the window.
+        assert (run_dir / "report.json").exists()
+        hold_calls.append(True)
+
+    monkeypatch.setattr(apply_playwright, "_hold", fake_hold)
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        apply_playwright.run(
+            "https://boards.greenhouse.io/example/jobs/1", str(folder),
+            submit=False, run_dir=str(run_dir), hold=True, headless=True)
+
+    written = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert written["status"].startswith("failed:")
+    assert "Timeout" in written["status"]
+    assert hold_calls == [True]        # window held open after the failed report
+
+
+def test_run_crash_writes_report_even_without_hold(tmp_path, monkeypatch):
+    """The failed-report write does not depend on hold=True: a crash with hold=False
+    still records report.json and re-raises."""
+    import types
+
+    folder = tmp_path / "job"
+    folder.mkdir()
+    (folder / "apply.md").write_text(
+        "## Candidate\n- **Name:** Jane Doe\n", encoding="utf-8")
+
+    fake_module = types.ModuleType("playwright.sync_api")
+    fake_module.sync_playwright = lambda: _FakePlaywrightCM(_CrashingPage())
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_module)
+
+    run_dir = tmp_path / "rundir"
+    import pytest
+    with pytest.raises(RuntimeError):
+        apply_playwright.run(
+            "https://boards.greenhouse.io/example/jobs/1", str(folder),
+            submit=False, run_dir=str(run_dir), hold=False, headless=True)
+    written = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert written["status"].startswith("failed:")
+
+
 def test_detach_spawns_child_without_detach_and_writes_pid(tmp_path, monkeypatch):
     """--detach re-spawns this one-shot as a DETACHED child (so the parked window
     outlives the calling agent), writes driver.pid + serve.log, and returns without

@@ -482,8 +482,10 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
 
     refresh_answers=True re-splices the folder's apply.md Standard-answers
     section from the current store (apply_data.refresh_standard_answers) —
-    best-effort: a raised exception is logged to stderr and never fails the
-    requeue itself.
+    best-effort: a raised exception never fails the requeue itself, but is
+    surfaced IN-BAND on the entry's `notes` (so the dashboard panel shows it, not
+    only stderr) — otherwise a human sees a successful requeue and wrongly assumes
+    the answers regenerated.
     """
     with locked(path):
         data = load(path, quarantine=True)   # under locked(): may rename aside
@@ -504,8 +506,16 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
                 from resume_tailor import apply_data
                 apply_data.refresh_standard_answers(Path(folder))
             except Exception as exc:  # never fail the requeue over the sheet
+                msg = (f"WARNING: standard-answers refresh FAILED "
+                       f"({type(exc).__name__}: {exc}) — apply.md answers may be "
+                       f"stale; regenerate from the dashboard before draining.")
                 print(f"apply_queue: refresh_standard_answers failed for "
                       f"{folder}: {exc}", file=sys.stderr)
+                # Surface it on the entry so it's visible in the panel, not just stderr.
+                try:
+                    entry = update(job_id, path=path, notes=msg)
+                except Exception:  # never let the surfacing fail the requeue
+                    pass
     return entry
 
 

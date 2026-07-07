@@ -8,12 +8,15 @@ few times on transient errors, with backoff for 429s.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 from typing import Any, Optional
 
 from . import config
+
+log = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
@@ -75,10 +78,14 @@ def as_dict(out: Any, key: str = "") -> dict:
     if isinstance(out, list):
         dicts = [i for i in out if isinstance(i, dict)]
         if not dicts:
+            log.warning("as_dict: array response held no objects (key=%r); "
+                        "degrading to empty result", key)
             return {}
         if key and key not in dicts[0]:
             return {key: dicts}          # bare array: restore the dropped wrapper
         return dicts[0]                  # [{...}]: unwrap the object
+    log.warning("as_dict: unexpected root type %s (key=%r); degrading to empty "
+                "result", type(out).__name__, key)
     return {}
 
 
@@ -210,13 +217,21 @@ def _call_gemini(
             last_err = exc
             if _is_timeout(exc):
                 timed_out = True
+                log.warning("llm: %s timed out at %ss (attempt %d/%d); escalating "
+                            "timeout: %s", model, timeout_s, attempt + 1,
+                            len(schedule), exc)
                 continue  # escalate to the next (longer) timeout — no sleep
             timed_out = False
             err_str = str(exc).lower()
             if "429" in err_str or "quota" in err_str:
+                log.warning("llm: %s 429/quota (attempt %d/%d), sleeping 60s: %s",
+                            model, attempt + 1, len(schedule), exc)
                 time.sleep(60)
             else:
-                time.sleep(1.5 * (attempt + 1))
+                wait = 1.5 * (attempt + 1)
+                log.warning("llm: %s transient error (attempt %d/%d), sleeping "
+                            "%.1fs: %s", model, attempt + 1, len(schedule), wait, exc)
+                time.sleep(wait)
     if timed_out:
         raise LLMError(
             f"Gemini call timed out after {len(schedule)} attempts "

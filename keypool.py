@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
+import random
 import tempfile
 import time
 from collections import defaultdict, deque
@@ -22,6 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
+
+log = logging.getLogger(__name__)
 
 # Free-tier limits per key, per model. TPM (250k) is never binding at ~3-5k
 # tokens/call, so the pool gates on RPM + RPD only.
@@ -242,21 +246,30 @@ class KeyPool:
             except Exception as exc:  # noqa: BLE001
                 if _is_quota_error(exc):
                     if member["kind"] == "free":
+                        # limits is LIMITS.get(model, DEFAULT_LIMITS) — never None
+                        # (the `else 0` guard was dead code); rpd is always present.
                         async with self._lock:
                             self._state.set_exhausted(
-                                member["fp"], model, limits["rpd"] if limits else 0
+                                member["fp"], model, limits["rpd"]
                             )
                             self._state.save()
                         continue
                     transient += 1
                     if transient >= 4:
                         raise PoolError(f"Vertex quota error for {model}: {exc}")
-                    await asyncio.sleep(60)
+                    # Jitter so parallel workers on the VM don't wake in lockstep.
+                    wait = 60 + random.uniform(0, 0.5)
+                    log.warning("keypool: vertex quota/429 for %s (attempt %d/4), "
+                                "sleeping %.2fs: %s", model, transient, wait, exc)
+                    await asyncio.sleep(wait)
                     continue
                 transient += 1
                 if transient >= 3:
                     raise
-                await asyncio.sleep(1.5 * transient)
+                wait = 1.5 * transient + random.uniform(0, 0.5)
+                log.warning("keypool: transient error for %s (attempt %d/3), "
+                            "sleeping %.2fs: %s", model, transient, wait, exc)
+                await asyncio.sleep(wait)
                 continue
             if member["kind"] == "free":
                 self._free_calls += 1

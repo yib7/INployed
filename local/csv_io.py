@@ -5,6 +5,7 @@ so the is_seen column always reflects locally-tracked state.
 """
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -12,6 +13,8 @@ from pathlib import Path
 import pandas as pd
 
 from seen_db import SeenRegistry
+
+log = logging.getLogger(__name__)
 
 
 def read_csv_gz(path: Path) -> pd.DataFrame:
@@ -25,6 +28,12 @@ def read_csv_gz(path: Path) -> pd.DataFrame:
         # deliberately excludes is_seen; see its docstring). Every consumer here
         # tests astype(str) == "no", and NaN stringifies to "nan", not "no", so an
         # un-normalized blank silently hides the row from every high-score view.
+        n_nan = int(df["is_seen"].isna().sum())
+        if n_nan:
+            # Expected for fresh append-to-master rows, but a warn makes an
+            # unexpected upstream schema/merge blank visible instead of masked.
+            log.warning("read_csv_gz: is_seen had %d NaN value(s) in %s; "
+                        "defaulting them to 'no'", n_nan, path)
         df["is_seen"] = df["is_seen"].fillna("no")
     return df
 

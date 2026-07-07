@@ -46,6 +46,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -485,11 +486,81 @@ def reopen(workdir: str, headless: bool = False, timeout: float = 90.0) -> int:
 
 # ── send side ─────────────────────────────────────────────────────────────────
 
+# In-process guard: msvcrt/fcntl byte-0 locks serialize across PROCESSES but a
+# same-process second acquire raises "resource deadlock avoided", so pair the
+# file lock with a thread lock for the (orchestrator-thread + subagent-thread)
+# in-process case too.
+_SEQ_THREAD_LOCK = threading.Lock()
+
+# Cross-process seq lock tuning (mirrors apply_queue.locked's non-blocking retry
+# — LK_LOCK's own blocking retry raises on contention on Windows).
+_SEQ_LOCK_TIMEOUT = 5.0
+_SEQ_LOCK_RETRY = 0.01
+
+
+def _seq_lock_byte0(fh) -> None:
+    """One NON-blocking exclusive-lock attempt on byte 0 (raises OSError when held
+    elsewhere). msvcrt on Windows, fcntl elsewhere — same split as
+    apply_queue.locked / locks.SingleInstance."""
+    if os.name == "nt":
+        import msvcrt
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _seq_unlock_byte0(fh) -> None:
+    if os.name == "nt":
+        import msvcrt
+        fh.seek(0)
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 def _next_seq(workdir: Path) -> int:
+    """Monotonic per-workdir command sequence. The read-modify-write is guarded by
+    a thread lock (in-process) AND a sidecar byte-0 file lock (cross-process) so
+    two ``send()`` callers sharing a workdir (orchestrator + a subagent, or a
+    reopen racing a send) can't both read N and both write N+1, losing a command.
+    A hand-edited / corrupt seq.txt no longer kills the caller: an unparseable
+    value falls back to 0 (so the next seq is 1)."""
     seq_path = workdir / "seq.txt"
-    seq = (int(seq_path.read_text().strip()) + 1) if seq_path.exists() else 1
-    seq_path.write_text(str(seq))
-    return seq
+    lock_path = workdir / "seq.txt.lock"
+    with _SEQ_THREAD_LOCK:
+        fh = open(lock_path, "a+b")  # noqa: SIM115 — closed in finally
+        got = False
+        try:
+            deadline = time.monotonic() + _SEQ_LOCK_TIMEOUT
+            while True:
+                try:
+                    _seq_lock_byte0(fh)
+                    got = True
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        break  # give up the cross-process guard; thread lock still holds
+                    time.sleep(_SEQ_LOCK_RETRY)
+            try:
+                prev = int(seq_path.read_text().strip()) if seq_path.exists() else 0
+            except (ValueError, OSError):
+                prev = 0  # corrupt/hand-edited seq.txt — recover, don't crash the loop
+            seq = prev + 1
+            seq_path.write_text(str(seq))
+            return seq
+        finally:
+            if got:
+                try:
+                    _seq_unlock_byte0(fh)
+                except OSError:
+                    pass
+            fh.close()
 
 
 def _wait_for_result(workdir: Path, seq: int, timeout: float = 60.0) -> Optional[Dict[str, Any]]:

@@ -56,6 +56,44 @@ def test_extract_empty_returns_none():
     assert apply_verify.extract_code(None) is None
 
 
+# ---- realistic multi-token bodies: the code must beat footer/inline noise ----
+
+def test_extract_prefers_own_line_code_over_footer_zip(tmp_path=None):
+    # A realistic Greenhouse body: the code is alone on its own line, and the
+    # footer carries a digit-bearing ZIP ("10011") and a year ("2026"). The
+    # own-line token must win over any inline digit token.
+    body = (
+        "Hi Jane,\n\nYour security code is below:\n\nX7K9Q2\n\n"
+        "Enter it to continue.\n\n"
+        "© 2026 Greenhouse — 18 West 18th Street, New York, NY 10011"
+    )
+    assert apply_verify.extract_code(body) == "X7K9Q2"
+
+
+def test_extract_ignores_inline_order_number_without_code_context():
+    # No own-line code, no 'code' keyword: an order/confirmation number inline
+    # must NOT be mistaken for a security code — return None rather than a wrong
+    # token that would stall the form.
+    body = "Thanks for your order 483920. It ships from warehouse 10011 soon."
+    assert apply_verify.extract_code(body) is None
+
+
+def test_extract_after_code_keyword_beats_unrelated_digit_token():
+    # The token right after 'code' wins over an earlier unrelated digit token.
+    body = "Your account 55512 was updated. The code is 8842QX. Ignore other numbers."
+    assert apply_verify.extract_code(body) == "8842QX"
+
+
+def test_extract_length_hint_disambiguates_multi_token_body():
+    body = "Order 12345 confirmed. Security code: AB12CD34. Ref 99."
+    assert apply_verify.extract_code(body, length=8) == "AB12CD34"
+
+
+def test_extract_rejects_bare_year_token():
+    # A bare 4-digit year with no code context is not a code.
+    assert apply_verify.extract_code("Copyright 2026 Greenhouse") is None
+
+
 def test_handshake_request_then_await(tmp_path):
     apply_verify.request_code(tmp_path, {"company": "Gotion", "email": "jane.doe@example.com"})
     assert (tmp_path / apply_verify.REQUEST_FILE).exists()

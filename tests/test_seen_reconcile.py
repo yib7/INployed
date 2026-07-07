@@ -117,6 +117,53 @@ def test_export_import_roundtrip(tmp_path):
     fresh.close()
 
 
+def test_registry_opens_in_wal_mode(tmp_path):
+    """P2 #5: a file-backed registry runs in WAL so readers and the writer don't
+    block each other and a crash mid-write can't corrupt the DB."""
+    reg = SeenRegistry(tmp_path / "wal.db")
+    mode = reg._conn.execute("PRAGMA journal_mode").fetchone()[0]
+    reg.close()
+    assert mode.lower() == "wal"
+
+
+def test_import_rolls_back_on_mid_merge_failure(tmp_path, monkeypatch):
+    """P2 #6: a failure partway through import_from must roll the transaction
+    back — the registry is left exactly as it was, not half-merged — and re-raise."""
+    cur = SeenRegistry(tmp_path / "cur.db")
+    cur.mark(["local1"])
+    _put_status(cur, "keep", "applied", "2026-01-01")
+
+    bak = SeenRegistry(tmp_path / "bak.db")
+    bak.mark(["b1", "b2"])
+    _put_status(bak, "keep", "offer", "2099-12-31")   # would overwrite on success
+    bak.export_to(tmp_path / "snap.db")
+    bak.close()
+
+    # Corrupt the snapshot AFTER the tables import_from reads first (seen,
+    # app_status) but drop the one it reads LAST (resume_paths): the seen-INSERT
+    # and the app_status merge run, then `SELECT ... FROM bak.resume_paths` raises
+    # OperationalError mid-transaction — exactly the mid-merge failure #6 guards.
+    import sqlite3
+    scon = sqlite3.connect(tmp_path / "snap.db")
+    scon.execute("DROP TABLE resume_paths")
+    scon.commit()
+    scon.close()
+
+    import pytest
+    with pytest.raises(sqlite3.OperationalError):
+        cur.import_from(tmp_path / "snap.db")
+
+    # Nothing from the backup landed: seen set unchanged, status not overwritten.
+    assert cur.all_ids() == {"local1"}
+    rows = {r["job_posting_id"]: r for r in cur.status_rows()}
+    assert rows["keep"]["status"] == "applied"   # NOT overwritten to "offer"
+    # And the registry is still usable (the DETACH ran in finally; no dangling
+    # attach or half-open transaction).
+    cur.mark(["after"])
+    assert "after" in cur.all_ids()
+    cur.close()
+
+
 def test_import_merges_seen_union(tmp_path):
     cur = SeenRegistry(tmp_path / "cur.db")
     cur.mark(["1"])

@@ -483,6 +483,13 @@ def test_requeue_refresh_hook_failure_is_tolerated(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_data, "refresh_standard_answers", boom)
     got = apply_queue.requeue("1", refresh_answers=True, path=q)  # must not raise
     assert got["status"] == "queued"
+    # P2 #14: the failure is surfaced IN-BAND on the entry's notes (dashboard-
+    # visible), not only stderr — so a human doesn't assume the answers refreshed.
+    assert "refresh FAILED" in got["notes"]
+    assert "store on fire" in got["notes"]
+    # And it's persisted on the stored entry, not just the returned copy.
+    stored = apply_queue._find(apply_queue.load(q), "1")
+    assert "refresh FAILED" in stored["notes"]
 
 
 # --- remove / clear_finished / stats ----------------------------------------------
@@ -562,6 +569,47 @@ def test_mutation_under_held_lock_times_out(tmp_path, monkeypatch):
     finally:
         release.set()
         t.join(timeout=5)
+
+
+def test_concurrent_claim_never_double_claims(tmp_path):
+    """P2 #16 stress: N worker threads hammer claim() on a queue of N entries.
+    The cross-process byte-0 lock (load->mutate->atomic-write under locked())
+    must guarantee each entry is claimed by EXACTLY ONE thread — never two — and
+    that every entry ends in_progress. A race would hand the same job to two
+    workers (a double application) or leave an entry stuck queued."""
+    q = _q(tmp_path)
+    n = 12
+    for i in range(n):
+        apply_queue.enqueue(_entry(f"job{i}"), path=q)
+
+    claimed_ids: list = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(n)
+    errors: list = []
+
+    def worker(tag):
+        try:
+            barrier.wait(timeout=10)     # release all threads together
+            got = apply_queue.claim(claimed_by=f"w{tag}", path=q)
+            if got is not None:
+                with lock:
+                    claimed_ids.append(got["job_posting_id"])
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert not errors, f"claim raised under contention: {errors}"
+    # Every entry claimed exactly once — no duplicates, none missed.
+    assert sorted(claimed_ids) == sorted(f"job{i}" for i in range(n))
+    assert len(claimed_ids) == len(set(claimed_ids))
+    data = apply_queue.load(q)
+    assert all(e["status"] == "in_progress" for e in data["jobs"])
+    assert all(int(e["attempts"]) == 1 for e in data["jobs"])
 
 
 # --- build_context --------------------------------------------------------------------

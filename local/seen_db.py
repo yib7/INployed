@@ -33,6 +33,13 @@ class SeenRegistry:
     def __init__(self, db_path: Path | str | None = None) -> None:
         self.path = Path(db_path) if db_path else _default_db_path()
         self._conn = sqlite3.connect(self.path)
+        # WAL: readers (dashboard views) and the writer (watcher reconcile) no
+        # longer block each other, and a crash mid-write can't corrupt the DB.
+        # Best-effort — an in-memory or exotic-FS path may reject it.
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            pass
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS seen ("
             "  job_posting_id TEXT PRIMARY KEY,"
@@ -256,6 +263,15 @@ class SeenRegistry:
             )
             counts["resume_paths"] = cur.rowcount
             conn.commit()
+        except Exception:
+            # A mid-merge failure (e.g. a malformed backup row) must not leave a
+            # half-applied transaction live: roll it back so the registry is
+            # exactly as it was before the import, then re-raise.
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise
         finally:
             conn.execute("DETACH DATABASE bak")
         return counts

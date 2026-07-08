@@ -31,6 +31,17 @@ def test_scraper_and_scorer_cmd(qtbot):
     assert w.scorer_cmd()[-1].endswith("score_jobs.py")
 
 
+def test_scraper_and_scorer_cmds_run_unbuffered(qtbot):
+    # The children write to a pipe, which Python block-buffers: without -u,
+    # scrape.log stays empty for the whole run and a healthy scrape is
+    # indistinguishable from a dead one (which is how runs get orphaned by an
+    # impatient dashboard restart).
+    w = _win(qtbot)
+    assert "-u" in w.scraper_cmd(False)
+    assert "-u" in w.scraper_cmd(True)
+    assert "-u" in w.scorer_cmd()
+
+
 def test_scrape_env_points_at_drive_master(qtbot, monkeypatch, tmp_path):
     # Local-scrape cost fix: the child env points the scraper at the synced Drive master
     # so a local run also excludes (never re-bills) jobs the VM already collected.
@@ -880,6 +891,71 @@ def test_push_seen_ids_to_vm_pushes_when_configured(monkeypatch, tmp_path):
     MainWindow._push_seen_ids_to_vm(log)
     assert seen["p"] == path
     assert any("OK" in s for s in logs)
+
+
+# ── recovery: score run CSVs an interrupted scrape left behind ─────────────────
+# The scrape pipeline (scraper -> scorer -> UI refresh) lives in the dashboard
+# process; closing it orphans the run. The collected CSV survives on disk, so on
+# the next launch the dashboard offers to run the scoring step it missed.
+
+
+def test_offer_unscored_recovery_scores_on_confirm(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    orphan = tmp_path / "night" / "linkedin_jobs_2026-07-07_night.csv"
+    monkeypatch.setattr(mw.jobsdata, "unscored_run_csvs", lambda *a, **k: [orphan])
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    ran = {}
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None: ran.setdefault("fn", fn))
+    w.offer_unscored_recovery()
+    assert "fn" in ran                 # scoring worker launched
+    assert w._scraping is True         # guarded like a normal scrape run
+
+
+def test_offer_unscored_recovery_declined_is_noop(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    orphan = tmp_path / "night" / "linkedin_jobs_2026-07-07_night.csv"
+    monkeypatch.setattr(mw.jobsdata, "unscored_run_csvs", lambda *a, **k: [orphan])
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.No))
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda *a, **k: pytest.fail("declined -> no worker"))
+    w.offer_unscored_recovery()
+    assert getattr(w, "_scraping", False) is False
+
+
+def test_offer_unscored_recovery_silent_when_nothing_pending(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.jobsdata, "unscored_run_csvs", lambda *a, **k: [])
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: pytest.fail("no prompt when nothing is pending")))
+    w.offer_unscored_recovery()
+
+
+def test_offer_unscored_recovery_skipped_while_scraping(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    w._scraping = True
+    orphan = tmp_path / "night" / "x.csv"
+    monkeypatch.setattr(mw.jobsdata, "unscored_run_csvs", lambda *a, **k: [orphan])
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: pytest.fail("no prompt while a scrape is already running")))
+    w.offer_unscored_recovery()
+
+
+def test_score_only_work_runs_scorer_only_and_appends_log(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    (tmp_path / "scrape.log").write_text("earlier scrape\n", encoding="utf-8")
+    cmds = []
+    monkeypatch.setattr(mw.subprocess, "Popen",
+                        lambda cmd, **k: (cmds.append(cmd), _FakeProc(["scored ok\n"], 0))[1])
+    monkeypatch.setattr(MainWindow, "_push_seen_ids_to_vm",
+                        staticmethod(lambda log: None))
+    assert w._score_only_work() is True
+    assert len(cmds) == 1 and cmds[0][-1].endswith("score_jobs.py")  # no scraper rerun
+    text = (tmp_path / "scrape.log").read_text(encoding="utf-8")
+    assert "earlier scrape" in text and "scored ok" in text          # appended, not clobbered
 
 
 def test_push_seen_ids_to_vm_swallows_errors(monkeypatch):

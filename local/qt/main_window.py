@@ -854,6 +854,19 @@ class MainWindow(QtWidgets.QMainWindow):
         to "queued", and closing before that `finished` signal is delivered
         strands it) and queued background CSV/queue writes. Wait for the tailor
         first (its finalize enqueues writes), then drain the write queue."""
+        if self._scrape_in_flight():
+            resp = QtWidgets.QMessageBox.question(
+                self, "Job search in progress",
+                "A job search is still running. Closing the dashboard now "
+                "disconnects it: any jobs it collects won't be scored or shown "
+                "until you accept the recovery prompt on the next launch.\n\n"
+                "Close anyway?",
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Cancel)
+            if resp != QtWidgets.QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         if self._tailor_in_flight():
             resp = QtWidgets.QMessageBox.question(
                 self, "Tailoring in progress",
@@ -883,6 +896,20 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"{q.pending_count()} background write(s) did not finish — the "
                     "files on disk may be missing your last mark-seen/delete.")
         super().closeEvent(event)
+
+    def _scrape_in_flight(self) -> bool:
+        """True only when a scrape/score run is genuinely still executing — the
+        `_scraping` flag AND a live background thread, same gating rationale as
+        `_tailor_in_flight` (the flag alone can linger set)."""
+        if not getattr(self, "_scraping", False):
+            return False
+        for thread, _worker in list(getattr(self, "_bg_threads", []) or []):
+            try:
+                if thread.isRunning():
+                    return True
+            except RuntimeError:   # the C++ QThread is already gone
+                pass
+        return False
 
     def _tailor_in_flight(self) -> bool:
         """True only when a tailor run is genuinely still executing — the
@@ -1032,16 +1059,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- run scraper (spend-guarded) -----------------------------------------
 
+    # -u: the children write to a pipe, which Python block-buffers — without it
+    # scrape.log stays empty for the whole run and a healthy scrape looks dead.
     @staticmethod
     def scraper_cmd(bounded: bool) -> list[str]:
-        cmd = [_console_python(), "scraper.py"]
+        cmd = [_console_python(), "-u", "scraper.py"]
         if bounded:
             cmd += ["--max-keywords", "1", "--limit", "5"]
         return cmd
 
     @staticmethod
     def scorer_cmd() -> list[str]:
-        return [_console_python(), "score_jobs.py"]
+        return [_console_python(), "-u", "score_jobs.py"]
 
     @staticmethod
     def _scrape_log_path() -> Path:
@@ -1082,6 +1111,42 @@ class MainWindow(QtWidgets.QMainWindow):
         workers.run_async(self, lambda: self._scrape_work(choice == "bounded"),
                           on_done=self._after_scrape, on_error=self._after_scrape_error)
 
+    def offer_unscored_recovery(self) -> None:
+        """Offer to score run CSVs an interrupted scrape left behind.
+
+        The scrape pipeline (scraper -> scorer -> refresh) runs inside this
+        process, so closing the dashboard mid-run orphans it: the collected
+        `<label>/<run>.csv` survives on disk but was never scored, and unscored
+        CSVs are invisible to the dashboard. Called from app.main() once at
+        startup (never from __init__ — a modal there would hang headless tests).
+        """
+        if getattr(self, "_scraping", False):
+            return
+        try:
+            pending = jobsdata.unscored_run_csvs()
+        except OSError:
+            return
+        if not pending:
+            return
+        names = "\n".join(f"  •  {p.parent.name}/{p.name}" for p in pending)
+        resp = QtWidgets.QMessageBox.question(
+            self, "Unscored job-search results found",
+            "A previous job search was interrupted before its results were "
+            "scored, so they never appeared in the dashboard:\n\n"
+            f"{names}\n\n"
+            "Score them now? This only runs the scoring step (Gemini) — it does "
+            "not collect new jobs and costs no scraping credits.",
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.Yes)
+        if resp != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._scraping = True
+        self._set_status(
+            f"Scoring recovered job-search results … progress in {self._scrape_log_path()}")
+        workers.run_async(self, self._score_only_work,
+                          on_done=self._after_scrape, on_error=self._after_scrape_error)
+
     def _scrape_env(self) -> dict:
         """Environment for the local scrape subprocess: a copy of ours, plus a pointer to
         the synced Drive master so the scraper also excludes — and never re-bills — jobs
@@ -1105,37 +1170,56 @@ class MainWindow(QtWidgets.QMainWindow):
         Output is captured (the dashboard runs under pythonw with no console) so a
         failure surfaces the real error instead of a dead 'check the console'.
         """
-        repo = Path(__file__).resolve().parents[2]
         log_path = self._scrape_log_path()
         env = self._scrape_env()
         before = self._outbox_snapshot()
         with open(log_path, "w", encoding="utf-8", errors="replace") as log:
-            for cmd in (self.scraper_cmd(bounded), self.scorer_cmd()):
-                log.write(f"\n=== {' '.join(cmd)} ===\n")
-                log.flush()
-                proc = subprocess.Popen(
-                    cmd, cwd=str(repo), stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                    errors="replace", creationflags=_no_window_flag(), env=env)
-                captured: list[str] = []
-                if proc.stdout is not None:
-                    for line in proc.stdout:
-                        captured.append(line)
-                        log.write(line)
-                        log.flush()
-                rc = proc.wait()
-                if rc != 0:
-                    tail = "".join(captured).strip().splitlines()[-15:]
-                    raise RuntimeError(
-                        f"{Path(cmd[1]).name} failed (exit {rc}).\n\n"
-                        + ("\n".join(tail) if tail else "(no output captured)")
-                        + f"\n\nFull log: {log_path}")
+            self._run_pipeline((self.scraper_cmd(bounded), self.scorer_cmd()),
+                               log, log_path, env=env)
             # Both steps succeeded: push the freshly-collected ids to the VM (if
             # configured) so its next scheduled run doesn't re-collect — and re-bill —
             # what this run just pulled. Best-effort: never fail the scrape over a sync.
             self._push_seen_ids_to_vm(log)
             self._push_outbox_to_vm(log, before)
         return True
+
+    def _score_only_work(self):
+        """Recovery worker: run ONLY score_jobs.py (it picks up the newest unscored
+        run CSV itself). Appends to scrape.log — the earlier, interrupted run's
+        output is the context for what is being recovered, so keep it."""
+        log_path = self._scrape_log_path()
+        with open(log_path, "a", encoding="utf-8", errors="replace") as log:
+            self._run_pipeline((self.scorer_cmd(),), log, log_path)
+            # The recovered run's ids never made it to the VM either.
+            self._push_seen_ids_to_vm(log)
+        return True
+
+    def _run_pipeline(self, cmds, log, log_path, env=None) -> None:
+        """Run each command with the repo root as cwd, streaming combined
+        stdout+stderr to `log`; raise RuntimeError carrying the output tail when
+        one exits non-zero (the dashboard runs under pythonw — the log is the
+        only console there is)."""
+        repo = Path(__file__).resolve().parents[2]
+        for cmd in cmds:
+            log.write(f"\n=== {' '.join(cmd)} ===\n")
+            log.flush()
+            proc = subprocess.Popen(
+                cmd, cwd=str(repo), stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                errors="replace", creationflags=_no_window_flag(), env=env)
+            captured: list[str] = []
+            if proc.stdout is not None:
+                for line in proc.stdout:
+                    captured.append(line)
+                    log.write(line)
+                    log.flush()
+            rc = proc.wait()
+            if rc != 0:
+                tail = "".join(captured).strip().splitlines()[-15:]
+                raise RuntimeError(
+                    f"{Path(cmd[-1]).name} failed (exit {rc}).\n\n"
+                    + ("\n".join(tail) if tail else "(no output captured)")
+                    + f"\n\nFull log: {log_path}")
 
     @staticmethod
     def _push_seen_ids_to_vm(log) -> None:

@@ -286,6 +286,29 @@ def local_run_files(base: Path | None = None) -> list[Path]:
     return out
 
 
+def unscored_run_csvs(base: Path | None = None) -> list[Path]:
+    """Run-dir input CSVs with no `*_scored.csv.gz` sibling, oldest-first.
+
+    These are what an interrupted local scrape leaves behind: the scrape
+    pipeline (scraper -> scorer -> refresh) runs inside the dashboard process,
+    so closing the dashboard mid-run orphans it — the collected `<label>/<run>.csv`
+    survives on disk but the scoring step never ran, and unscored CSVs are
+    invisible to the dashboard. `MainWindow.offer_unscored_recovery()` uses this
+    on startup to offer running the missed scoring step (score_jobs.py scores the
+    newest one per invocation).
+    """
+    base = Path(base) if base is not None else REPO_ROOT
+    out: list[Path] = []
+    for label in RUN_LABELS:
+        d = base / label
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("*.csv")):
+            if not p.with_name(p.stem + "_scored.csv.gz").exists():
+                out.append(p)
+    return out
+
+
 # Score/scrape columns that should land in the persisted manual row so it carries
 # the same signal a scraped+scored row does. (job_posting_id is the dedup key.)
 _MANUAL_PERSIST_COLS = [

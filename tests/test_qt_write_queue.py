@@ -495,6 +495,43 @@ def test_close_event_no_tailor_prompt_when_idle(qtbot, monkeypatch):
     assert evt.isAccepted()
 
 
+# ---- closeEvent: don't silently orphan an in-flight scrape --------------------
+
+
+def test_close_event_scrape_cancel_keeps_window_open(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_scrape_in_flight", lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Cancel))
+    evt = _close_evt()
+    evt.accept()                                 # prove ignore() flips it back
+    w.closeEvent(evt)
+    assert not evt.isAccepted()                  # window stays open, scrape survives
+
+
+def test_close_event_scrape_confirm_closes(qtbot, monkeypatch):
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_scrape_in_flight", lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(w._writes, "is_idle", lambda: True)
+    evt = _close_evt()
+    w.closeEvent(evt)
+    assert evt.isAccepted()                      # user chose to close anyway
+
+
+def test_scrape_in_flight_true_only_with_flag_and_live_thread(qtbot):
+    w = _win(qtbot)
+    assert w._scrape_in_flight() is False        # no flag
+    w._scraping = True
+    w._bg_threads = []
+    assert w._scrape_in_flight() is False        # flag but no live thread
+    w._bg_threads = [(_FakeThread(running=True), None)]
+    assert w._scrape_in_flight() is True
+    w._bg_threads = [(_FakeThread(running=False), None)]
+    assert w._scrape_in_flight() is False
+
+
 def test_tailor_in_flight_true_only_with_flag_and_live_thread(qtbot):
     w = _win(qtbot)
     assert w._tailor_in_flight() is False         # no flag, no threads

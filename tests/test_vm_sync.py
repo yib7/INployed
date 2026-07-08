@@ -104,6 +104,12 @@ def test_changed_vm_files_flags_search_on_keyword_change():
     assert vm_sync.changed_vm_files(before, after) == {"search_config.json"}
 
 
+# Captured at import time — conftest's hermetic autouse fixture replaces
+# vm_sync.run_cmd with a blocked stub for every test, so the one test OF
+# run_cmd itself must hold the real function (module import runs first).
+_REAL_RUN_CMD = vm_sync.run_cmd
+
+
 def test_run_cmd_invokes_subprocess(monkeypatch):
     seen = {}
 
@@ -112,7 +118,7 @@ def test_run_cmd_invokes_subprocess(monkeypatch):
         return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     monkeypatch.setattr(vm_sync.subprocess, "run", _run)
-    res = vm_sync.run_cmd(["gcloud", "compute", "ssh"])
+    res = _REAL_RUN_CMD(["gcloud", "compute", "ssh"])
     # run_cmd launches via launch_argv (which on Windows bypasses the gcloud.cmd
     # batch wrapper); on a box without gcloud it's the same argv.
     assert seen["cmd"] == vm_sync.launch_argv(["gcloud", "compute", "ssh"])

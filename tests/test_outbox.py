@@ -205,3 +205,166 @@ def test_push_outbox_logs(tmp_path):
     log = io.StringIO()
     outbox.push_outbox(_vm_target(), outbox_dir=ob, runner=lambda cmd: _Res(0), log=log)
     assert "local_rows_1.csv.gz" in log.getvalue()
+
+
+# ---- prune_stats ------------------------------------------------------------
+
+def test_prune_stats_keeps_only_newest(tmp_path):
+    # Every local_stats file is a FULL copy of run_stats.csv (monotonic), so the
+    # newest supersedes the rest — pushing all of them is pure waste.
+    ob = tmp_path / "ob"
+    _queue(ob, ["local_stats_20260704-1.csv", "local_stats_20260705-1.csv",
+                "local_stats_20260706-1.csv", "local_rows_1.csv.gz"])
+    assert outbox.prune_stats(outbox_dir=ob) == 2
+    names = [p.name for p in outbox.pending_files(outbox_dir=ob)]
+    assert names == ["local_rows_1.csv.gz", "local_stats_20260706-1.csv"]
+
+
+def test_prune_stats_zero_or_one_file_is_noop(tmp_path):
+    ob = tmp_path / "ob"
+    assert outbox.prune_stats(outbox_dir=ob) == 0     # missing dir
+    _queue(ob, ["local_stats_1.csv"])
+    assert outbox.prune_stats(outbox_dir=ob) == 0
+    assert len(outbox.pending_files(outbox_dir=ob)) == 1
+
+
+def test_push_outbox_prunes_redundant_stats_first(tmp_path):
+    ob = tmp_path / "ob"
+    _queue(ob, ["local_stats_1.csv", "local_stats_2.csv", "local_stats_3.csv"])
+    calls = []
+
+    def runner(cmd):
+        calls.append(cmd)
+        return _Res(0)
+
+    pushed, kept = outbox.push_outbox(_vm_target(), outbox_dir=ob, runner=runner)
+    assert (pushed, kept) == (1, 0)                    # only the newest survived
+    assert len(calls) == 1 and "local_stats_3" in " ".join(calls[0])
+
+
+# ---- pushed-ids memory (in-flight to the VM, not yet visible in Drive) -------
+
+def _rows_gz(ob: Path, name: str, ids: list[str]) -> None:
+    ob.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"job_posting_id": ids}).to_csv(ob / name, index=False,
+                                                 compression="gzip")
+
+
+def test_push_outbox_records_pushed_row_ids(tmp_path):
+    ob = tmp_path / "ob"
+    _rows_gz(ob, "local_rows_1.csv.gz", ["11", "22"])
+    outbox.push_outbox(_vm_target(), outbox_dir=ob, runner=lambda cmd: _Res(0))
+    assert outbox.load_pushed_ids(outbox_dir=ob) == {"11", "22"}
+
+
+def test_push_outbox_failed_push_records_nothing(tmp_path):
+    ob = tmp_path / "ob"
+    _rows_gz(ob, "local_rows_1.csv.gz", ["11"])
+    outbox.push_outbox(_vm_target(), outbox_dir=ob, runner=lambda cmd: _Res(1))
+    assert outbox.load_pushed_ids(outbox_dir=ob) == set()
+
+
+def test_prune_pushed_ids_forgets_round_tripped(tmp_path):
+    outbox.record_pushed_ids(["1", "2", "3"], outbox_dir=tmp_path)
+    outbox.prune_pushed_ids({"2"}, outbox_dir=tmp_path)
+    assert outbox.load_pushed_ids(outbox_dir=tmp_path) == {"1", "3"}
+
+
+def test_load_pushed_ids_missing_or_corrupt_is_empty(tmp_path):
+    assert outbox.load_pushed_ids(outbox_dir=tmp_path) == set()
+    (tmp_path / "pushed_ids.json").write_text("{not json", encoding="utf-8")
+    assert outbox.load_pushed_ids(outbox_dir=tmp_path) == set()
+
+
+# ---- unsynced_master_ids (the catch-all sweep) --------------------------------
+
+def _gz_ids(path: Path, ids: list[str]) -> None:
+    pd.DataFrame({"job_posting_id": ids}).to_csv(path, index=False,
+                                                 compression="gzip")
+
+
+def test_unsynced_ids_local_minus_drive(tmp_path):
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": i} for i in ("1", "2", "3")])
+    drive = tmp_path / "drive.csv.gz"
+    _gz_ids(drive, ["1"])
+    got = outbox.unsynced_master_ids(drive, master_csv=master,
+                                     outbox_dir=tmp_path / "ob")
+    assert got == ["2", "3"]
+
+
+def test_unsynced_ids_fail_closed_when_drive_missing_or_unreadable(tmp_path):
+    # NEVER queue the whole local master just because the Drive copy couldn't
+    # be read — that would push thousands of already-synced rows.
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": "1"}])
+    assert outbox.unsynced_master_ids(tmp_path / "nope.csv.gz", master_csv=master,
+                                      outbox_dir=tmp_path / "ob") == []
+    bad = tmp_path / "drive.csv.gz"
+    bad.write_bytes(b"not a gzip at all")
+    assert outbox.unsynced_master_ids(bad, master_csv=master,
+                                      outbox_dir=tmp_path / "ob") == []
+    assert outbox.unsynced_master_ids(None, master_csv=master,
+                                      outbox_dir=tmp_path / "ob") == []
+
+
+def test_unsynced_ids_skips_pending_and_pushed(tmp_path):
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": i} for i in ("1", "2", "3", "4")])
+    drive = tmp_path / "drive.csv.gz"
+    _gz_ids(drive, ["1"])
+    ob = tmp_path / "ob"
+    _rows_gz(ob, "local_rows_1.csv.gz", ["2"])          # already queued
+    outbox.record_pushed_ids(["3"], outbox_dir=ob)      # in flight to the VM
+    assert outbox.unsynced_master_ids(drive, master_csv=master, outbox_dir=ob) == ["4"]
+
+
+def test_unsynced_ids_prunes_pushed_state_on_round_trip(tmp_path):
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": "1"}])
+    drive = tmp_path / "drive.csv.gz"
+    _gz_ids(drive, ["1"])
+    ob = tmp_path / "ob"
+    outbox.record_pushed_ids(["1", "9"], outbox_dir=ob)
+    outbox.unsynced_master_ids(drive, master_csv=master, outbox_dir=ob)
+    assert outbox.load_pushed_ids(outbox_dir=ob) == {"9"}  # "1" round-tripped
+
+
+# ---- sync_back ----------------------------------------------------------------
+
+def test_sync_back_queues_and_pushes(tmp_path):
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": "1", "job_title": "A"},
+                           {"job_posting_id": "2", "job_title": "B"}])
+    drive = tmp_path / "drive.csv.gz"
+    _gz_ids(drive, ["1"])
+    ob = tmp_path / "ob"
+    queued, pushed, kept = outbox.sync_back(
+        _vm_target(), drive, master_csv=master, outbox_dir=ob,
+        runner=lambda cmd: _Res(0))
+    assert (queued, pushed, kept) == (1, 1, 0)
+    assert outbox.pending_files(outbox_dir=ob) == []
+    assert outbox.load_pushed_ids(outbox_dir=ob) == {"2"}
+
+
+def test_sync_back_noop_when_in_sync(tmp_path):
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": "1"}])
+    drive = tmp_path / "drive.csv.gz"
+    _gz_ids(drive, ["1"])
+    got = outbox.sync_back(
+        _vm_target(), drive, master_csv=master, outbox_dir=tmp_path / "ob",
+        runner=lambda cmd: (_ for _ in ()).throw(AssertionError("nothing to push")))
+    assert got == (0, 0, 0)
+
+
+def test_sync_back_never_raises(tmp_path):
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": "1", "job_title": "A"},
+                           {"job_posting_id": "2", "job_title": "B"}])
+    drive = tmp_path / "drive.csv.gz"
+    _gz_ids(drive, ["1"])
+    got = outbox.sync_back(
+        _vm_target(), drive, master_csv=master, outbox_dir=tmp_path / "ob",
+        runner=lambda cmd: (_ for _ in ()).throw(RuntimeError("gcloud exploded")))
+    assert got[0] == 1 and got[1] == 0    # queued but nothing pushed; no raise

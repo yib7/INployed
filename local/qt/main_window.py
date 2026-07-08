@@ -1188,10 +1188,14 @@ class MainWindow(QtWidgets.QMainWindow):
         run CSV itself). Appends to scrape.log — the earlier, interrupted run's
         output is the context for what is being recovered, so keep it."""
         log_path = self._scrape_log_path()
+        before = self._outbox_snapshot()
         with open(log_path, "a", encoding="utf-8", errors="replace") as log:
             self._run_pipeline((self.scorer_cmd(),), log, log_path)
-            # The recovered run's ids never made it to the VM either.
+            # The recovered run's ids/rows never made it to the VM either — they
+            # ride the same post-scrape sync as a normal run, or the recovery
+            # stays local-only.
             self._push_seen_ids_to_vm(log)
+            self._push_outbox_to_vm(log, before)
         return True
 
     def _run_pipeline(self, cmds, log, log_path, env=None) -> None:
@@ -1269,13 +1273,15 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:  # noqa: BLE001 - best-effort
             return {}
 
-    @staticmethod
-    def _push_outbox_to_vm(log, before: dict) -> None:
+    def _push_outbox_to_vm(self, log, before: dict) -> None:
         """Best-effort post-scrape data sync: queue this run's new master rows (+ the
         run-stats file) in the outbox and push every pending outbox file to the VM's
-        ~/incoming/. Failures are logged to scrape.log and swallowed — a sync problem
-        never fails a scrape. Push still runs when the run added nothing, so files
-        queued by earlier failed pushes retry here."""
+        ~/incoming/. Also sweeps the local master for rows the Drive master lacks
+        (outbox.unsynced_master_ids) so rows collected outside this hook — a CLI
+        snapshot recovery, a push that never got retried — are queued too instead of
+        staying stranded on this PC. Failures are logged to scrape.log and swallowed —
+        a sync problem never fails a scrape. Push still runs when the run added
+        nothing, so files queued by earlier failed pushes retry here."""
         try:
             repo = Path(__file__).resolve().parents[2]
             if str(repo / "local") not in sys.path:
@@ -1283,6 +1289,14 @@ class MainWindow(QtWidgets.QMainWindow):
             import outbox
             import vm_sync
             ids = outbox.new_run_ids(before)
+            root = gdrive_root_dir(self.csv_paths)
+            if root is not None:
+                have = set(ids)
+                for jid in outbox.unsynced_master_ids(
+                        Path(root) / "linkedin_jobs_master.csv.gz"):
+                    if jid not in have:
+                        ids.append(jid)
+                        have.add(jid)
             if ids:
                 path = outbox.write_rows_outbox(ids)
                 log.write(f"\n=== outbox: queued {len(ids)} row id(s) -> "

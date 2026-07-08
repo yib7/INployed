@@ -25,7 +25,7 @@ try:
 except Exception:
     pass
 
-from PySide6 import QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtWidgets  # noqa: E402
 
 import jobsdata  # noqa: E402
 from jobsdata import UI_LOCK, _UILock, load_ui_scale_pct  # noqa: E402
@@ -83,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         win = MainWindow(csv_paths)
         win.showMaximized()
         win.start()  # load data AFTER the window paints, off the UI thread
+        # Once the event loop is up, offer to score results an interrupted scrape
+        # left behind (deliberately here, not in MainWindow.__init__: a modal
+        # during construction would hang the headless test suite).
+        QtCore.QTimer.singleShot(0, win.offer_unscored_recovery)
         rc = app.exec()
     finally:
         lock.release()

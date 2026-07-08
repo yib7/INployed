@@ -39,6 +39,26 @@ def test_empty_when_no_label_dirs(tmp_path):
     assert jobsdata.local_run_files(tmp_path) == []
 
 
+def test_unscored_run_csvs_finds_inputs_without_scored_sibling(tmp_path):
+    # An interrupted scrape leaves <label>/<run>.csv with no *_scored.csv.gz
+    # sibling (the scoring step died with the dashboard) — recovery needs to
+    # find exactly those.
+    scored_in = tmp_path / "night" / "linkedin_jobs_2026-07-03_night.csv"
+    scored_in.parent.mkdir(parents=True)
+    scored_in.write_text("job_posting_id\n1\n", encoding="utf-8")
+    _write_gz(tmp_path / "night" / "linkedin_jobs_2026-07-03_night_scored.csv.gz", ["1"])
+    orphan = tmp_path / "night" / "linkedin_jobs_2026-07-07_night.csv"
+    orphan.write_text("job_posting_id\n2\n", encoding="utf-8")
+
+    assert jobsdata.unscored_run_csvs(tmp_path) == [orphan]
+
+
+def test_unscored_run_csvs_empty_cases(tmp_path):
+    assert jobsdata.unscored_run_csvs(tmp_path) == []      # no label dirs at all
+    (tmp_path / "morning").mkdir()
+    assert jobsdata.unscored_run_csvs(tmp_path) == []      # empty label dir
+
+
 def test_local_runs_merge_into_load_files(tmp_path):
     # a Drive "master" + a local scored run -> both sets of jobs, deduped by id
     master = tmp_path / "linkedin_jobs_master.csv.gz"

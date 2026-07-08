@@ -182,9 +182,23 @@ class _FakeProc:
         return self._rc
 
 
+def _stub_vm_hooks(monkeypatch):
+    """These tests exercise the pipeline-run mechanics only. The real post-scrape
+    hooks read the 28 MB master, write REAL files into <repo>/outbox/, and spawn
+    gcloud — and the module-global Popen fake below leaks into vm_sync's
+    subprocess.run, so they'd 'push' with the fake. (That combination silently
+    queued 69 stats files over 2026-07-04..08.) Hook behavior is covered by
+    tests/test_qt_outbox_hooks.py."""
+    monkeypatch.setattr(MainWindow, "_push_seen_ids_to_vm",
+                        staticmethod(lambda log: None))
+    monkeypatch.setattr(MainWindow, "_push_outbox_to_vm",
+                        staticmethod(lambda log, before: None))
+
+
 def test_scrape_work_success_returns_true(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
     monkeypatch.setattr(mw.subprocess, "Popen",
                         lambda *a, **k: _FakeProc(["ok\n"], 0))
     assert w._scrape_work(True) is True
@@ -194,6 +208,7 @@ def test_scrape_work_success_returns_true(qtbot, monkeypatch, tmp_path):
 def test_scrape_work_raises_with_captured_output_on_failure(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     monkeypatch.setattr(mw, "APPDATA", tmp_path)
+    _stub_vm_hooks(monkeypatch)
     monkeypatch.setattr(mw.subprocess, "Popen",
                         lambda *a, **k: _FakeProc(["scraping...\n", "BOOM bad token\n"], 2))
     with pytest.raises(RuntimeError) as ei:
@@ -950,8 +965,7 @@ def test_score_only_work_runs_scorer_only_and_appends_log(qtbot, monkeypatch, tm
     cmds = []
     monkeypatch.setattr(mw.subprocess, "Popen",
                         lambda cmd, **k: (cmds.append(cmd), _FakeProc(["scored ok\n"], 0))[1])
-    monkeypatch.setattr(MainWindow, "_push_seen_ids_to_vm",
-                        staticmethod(lambda log: None))
+    _stub_vm_hooks(monkeypatch)
     assert w._score_only_work() is True
     assert len(cmds) == 1 and cmds[0][-1].endswith("score_jobs.py")  # no scraper rerun
     text = (tmp_path / "scrape.log").read_text(encoding="utf-8")

@@ -242,6 +242,41 @@ def launch_ui(csv_paths: list[Path]) -> None:
         subprocess.Popen(args, close_fds=True, start_new_session=True)
 
 
+# --------------------------------------------------------------------------- local -> VM sync-back
+
+def sync_back_to_vm(gdrive_root: Path) -> None:
+    """Best-effort local→VM data reconcile (see local/outbox.py).
+
+    Queues any local-master rows the Drive master lacks and pushes every pending
+    outbox file to the VM's ~/incoming/, where merge_incoming.py folds them into
+    the real master before the next scheduled scrape. Hanging this off the
+    watcher (6 scheduled fires/day + logon/unlock/resume) means locally
+    collected rows reach the shared master even when the dashboard's own
+    post-scrape push never ran — a CLI snapshot recovery, a crashed dashboard, a
+    push that failed with no retry. Skips without building a VMTarget when there
+    is nothing to do, and never raises: a sync problem must not break the
+    watcher's reconcile/launch duties."""
+    try:
+        import outbox
+        import vm_sync
+
+        drive_master = Path(gdrive_root) / "linkedin_jobs_master.csv.gz"
+        ids = outbox.unsynced_master_ids(drive_master)
+        pending = outbox.pending_files()
+        if not ids and not pending:
+            return
+        target = vm_sync.VMTarget.from_env()
+        if not target.configured():
+            log.info("sync-back: %d unsynced id(s), %d pending file(s) — no VM configured",
+                     len(ids), len(pending))
+            return
+        queued, pushed, kept = outbox.sync_back(target, drive_master)
+        log.info("sync-back: queued %d id(s); pushed %d, kept %d outbox file(s)",
+                 queued, pushed, kept)
+    except Exception:  # noqa: BLE001 - best-effort by contract
+        log.exception("sync-back failed — continuing")
+
+
 # --------------------------------------------------------------------------- main
 
 def main() -> int:
@@ -360,6 +395,10 @@ def main() -> int:
                     log.info("No unseen high-score rows — skipping UI launch.")
             else:
                 log.info("No file changes since last run — exiting silently.")
+
+            # Data flows the other way too: push anything this PC collected
+            # that the shared master doesn't have yet (see sync_back_to_vm).
+            sync_back_to_vm(gdrive_root)
 
             return 0
         finally:

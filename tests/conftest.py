@@ -115,6 +115,32 @@ def _hermetic_apply_queue(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_outbox_and_vm(tmp_path):
+    """No test may touch the real <repo>/outbox/ or spawn gcloud.
+
+    Any code path reaching outbox's module defaults (OUTBOX_DIR / RUN_STATS_CSV /
+    MASTER_CSV) or vm_sync.run_cmd from a test is a leak: between 2026-07-04 and
+    07-08 every full-suite run queued a REAL outbox/local_stats_*.csv (69 piled
+    up) and then 'pushed' them through a module-global subprocess fake. Redirect
+    the defaults into tmp and stub run_cmd with a fast deterministic failure.
+    Tests that need push mechanics inject runner=/their own monkeypatch (applied
+    later, so it wins). Same private-MonkeyPatch pattern as _hermetic_apply_queue."""
+    import subprocess as _subprocess
+
+    import outbox
+    import vm_sync
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(outbox, "OUTBOX_DIR", tmp_path / "hermetic_outbox")
+        mp.setattr(outbox, "RUN_STATS_CSV", tmp_path / "hermetic_run_stats.csv")
+        mp.setattr(outbox, "MASTER_CSV", tmp_path / "hermetic_master.csv")
+        blocked = _subprocess.CompletedProcess(
+            args=["blocked"], returncode=97, stdout="",
+            stderr="vm_sync.run_cmd blocked by conftest (hermetic tests)")
+        mp.setattr(vm_sync, "run_cmd", lambda cmd: blocked)
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _drain_qt_widgets():
     """Destroy widgets after each test so the shared QApplication doesn't leak them.
 

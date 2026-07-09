@@ -122,21 +122,6 @@ def test_write_creates_apply_md_not_json(tmp_path):
     assert "Uni" in text                                          # education
 
 
-def test_write_embeds_no_submit_playbook(tmp_path):
-    text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8").lower()
-    assert "never" in text and "submit" in text          # never-submit contract
-    assert "electronic signature" in text                # sign with name + date
-    assert "xxxxx" in text                               # placeholder-for-blocking-required
-    assert "captcha" in text and "password" in text      # safety walls preserved
-
-
-def test_write_playbook_notes_optional_unknowns_for_review(tmp_path):
-    text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
-    # Cycle 13 copy tweak: optional unknowns are now flagged for review too.
-    assert "note them for review too" in text
-    assert "Leave optional unknowns blank." not in text  # the bare old wording is gone
-
-
 def test_write_marker_roundtrips_job_identity(tmp_path):
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
     meta = apply_data.parse_marker(text)
@@ -177,11 +162,12 @@ def test_write_has_no_documents_or_upload_language(tmp_path):
     assert "## Work experience" in text                # ...but the résumé itself still renders
 
 
-def test_write_explains_when_to_use_as_fallback(tmp_path):
+def test_write_omits_human_playbook_sections(tmp_path):
+    # The sheet is now pure data — a subagent fills it, so the human-oriented
+    # "When to use this sheet" note and the form-filler PLAYBOOK are gone.
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
-    assert "When to use this sheet" in text            # purpose is spelled out
-    low = text.lower()
-    assert "auto-fill" in low and "by hand" in low     # fallback framing: normal=auto-fill, this=by hand
+    assert "When to use this sheet" not in text
+    assert "Instructions for the form-filler" not in text
 
 
 # --- résumé sections mirror this job's tailored résumé (deterministic) --------

@@ -117,6 +117,23 @@ def test_master_ids_no_extracted_date_column_keeps_all(monkeypatch, tmp_path):
     assert set(scraper._master_ids()) == {"a", "b", "c"}
 
 
+def test_master_ids_windowing_failure_degrades_to_keep_all(monkeypatch, tmp_path):
+    # Defensive (review finding #2): windowing is an optimization on top of the
+    # exclude set. If _window_ids ever raises (e.g. an unexpected extracted_date
+    # dtype), _master_ids degrades to keeping ALL master ids -- a superset never
+    # re-bills -- instead of letting the exception kill the pre-collection step.
+    master = _dated_master(tmp_path, [("old", _days_ago(400)), ("recent", _days_ago(1))])
+    monkeypatch.setattr(scraper, "MASTER_CSV", master)
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+
+    def _boom(df, window_days):
+        raise TypeError("simulated tz-aware/naive comparison failure")
+
+    monkeypatch.setattr(scraper, "_window_ids", _boom)
+    # both ids kept (the far-past "old" too) -- the whole set, not the windowed subset
+    assert set(scraper._master_ids()) == {"old", "recent"}
+
+
 def test_exclude_window_days_env_override_changes_cutoff(monkeypatch, tmp_path):
     # A 30-day-old id is inside the default 90-day window (kept) but outside a
     # 10-day override window (dropped) -- proving the env var moves the cutoff.

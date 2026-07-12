@@ -247,7 +247,14 @@ def _master_ids() -> list[str]:
             print(f"Could not read master for exclusions ({e}); using last-run ids")
             return load_previous_ids()
         if "job_posting_id" in df.columns and not df.empty:
-            return _window_ids(df, exclude_window_days())
+            try:
+                return _window_ids(df, exclude_window_days())
+            except (TypeError, ValueError, pd.errors.ParserError) as e:
+                # Windowing is an optimization on top of the exclude set; if it ever
+                # fails (e.g. an unexpected extracted_date dtype), degrade to keeping
+                # ALL master ids -- a superset never re-bills -- rather than dying.
+                print(f"Could not window exclude ids ({e}); keeping all master ids")
+                return df["job_posting_id"].dropna().astype(str).unique().tolist()
     return load_previous_ids()
 
 

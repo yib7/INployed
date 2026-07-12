@@ -145,3 +145,121 @@ def test_locks_single_instance_direct(tmp_path):
 
 def test_watcher_uses_shared_lock_class():
     assert watcher.SingleInstance is locks.SingleInstance
+
+
+# P2-3: load_state must tolerate a parseable-but-WRONG-SHAPE state.json. A
+# corrupt shape (a JSON list, or a dict whose reconciled_mtimes isn't a dict)
+# would make the downstream state["reconciled_mtimes"] access raise on EVERY
+# future fire — and the file is only rewritten on success, so the watcher would
+# be bricked permanently. load_state must fall back to / repair to the safe
+# default so that access never raises.
+
+_DEFAULT_STATE = {"reconciled_mtimes": {}, "acknowledged_on_startup": False}
+
+
+def _load_state_from(tmp_path, monkeypatch, payload: str) -> dict:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(watcher, "STATE_PATH", state_path)
+    return watcher.load_state()
+
+
+def test_load_state_json_list_returns_default(tmp_path, monkeypatch):
+    state = _load_state_from(tmp_path, monkeypatch, "[1, 2, 3]")
+    assert state == _DEFAULT_STATE
+    assert state["reconciled_mtimes"] == {}          # downstream access is safe
+
+
+def test_load_state_dict_missing_reconciled_mtimes_returns_default(tmp_path, monkeypatch):
+    state = _load_state_from(tmp_path, monkeypatch, json.dumps({"acknowledged_on_startup": True}))
+    assert isinstance(state.get("reconciled_mtimes"), dict)
+    assert state["reconciled_mtimes"] == {}          # downstream access is safe
+
+
+def test_load_state_non_dict_reconciled_mtimes_returns_default(tmp_path, monkeypatch):
+    state = _load_state_from(
+        tmp_path, monkeypatch,
+        json.dumps({"reconciled_mtimes": "oops", "acknowledged_on_startup": True}),
+    )
+    assert isinstance(state["reconciled_mtimes"], dict)
+    assert state["reconciled_mtimes"] == {}          # downstream access is safe
+
+
+def test_load_state_valid_dict_missing_ack_key_is_repaired(tmp_path, monkeypatch):
+    # A dict with a valid reconciled_mtimes but no acknowledged_on_startup is
+    # repaired in place (setdefault), not discarded — the mtimes are preserved.
+    state = _load_state_from(
+        tmp_path, monkeypatch, json.dumps({"reconciled_mtimes": {"a.csv.gz": 1.0}}),
+    )
+    assert state["reconciled_mtimes"] == {"a.csv.gz": 1.0}   # preserved
+    assert state["acknowledged_on_startup"] is False          # repaired
+
+
+def test_load_state_valid_state_round_trips_unchanged(tmp_path, monkeypatch):
+    good = {"reconciled_mtimes": {"a.csv.gz": 123.0}, "acknowledged_on_startup": True}
+    state = _load_state_from(tmp_path, monkeypatch, json.dumps(good))
+    assert state == good
+
+
+def test_load_state_unparseable_json_returns_default(tmp_path, monkeypatch):
+    # The already-handled corrupt (non-parseable) case must keep working.
+    state = _load_state_from(tmp_path, monkeypatch, "{not valid json")
+    assert state == _DEFAULT_STATE
+
+
+# P2-5: the watcher's config write must be single-key / read-FRESH so it can't
+# revert a key the dashboard (jobsdata._save_cfg) persisted between the watcher's
+# load and its write. atomic_write_json stops torn files, not lost updates — a
+# whole-dict write of the watcher's stale snapshot would silently drop the
+# dashboard's key.
+
+def test_save_config_key_preserves_concurrent_dashboard_keys(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.json"
+    monkeypatch.setattr(watcher, "CONFIG_PATH", cfg_path)
+    # dashboard has already persisted some keys
+    cfg_path.write_text(json.dumps({"min_score": 7, "followup_days": 9}), encoding="utf-8")
+
+    # watcher auto-detects gdrive_root and persists ONLY that key
+    watcher.save_config_key("gdrive_root", "E:/drive/LinkedInJobs")
+
+    saved = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert saved["gdrive_root"] == "E:/drive/LinkedInJobs"
+    assert saved["min_score"] == 7        # dashboard key survives
+    assert saved["followup_days"] == 9    # dashboard key survives
+
+
+def test_save_config_key_tolerates_missing_or_corrupt_file(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.json"
+    monkeypatch.setattr(watcher, "CONFIG_PATH", cfg_path)
+
+    # missing file -> writes a fresh single-key config
+    watcher.save_config_key("gdrive_root", "E:/drive")
+    assert json.loads(cfg_path.read_text(encoding="utf-8")) == {"gdrive_root": "E:/drive"}
+
+    # corrupt file -> treated as empty, not crash
+    cfg_path.write_text("{not json", encoding="utf-8")
+    watcher.save_config_key("gdrive_root", "F:/drive")
+    assert json.loads(cfg_path.read_text(encoding="utf-8")) == {"gdrive_root": "F:/drive"}
+
+
+def test_watcher_autodetect_does_not_revert_dashboard_write(tmp_path, monkeypatch):
+    """End-to-end race sim: the dashboard writes key K AFTER the watcher's load,
+    then the watcher runs its gdrive_root auto-detect write. K must survive — a
+    whole-dict write-back of the watcher's stale snapshot would revert it."""
+    cfg_path = tmp_path / "config.json"
+    monkeypatch.setattr(watcher, "CONFIG_PATH", cfg_path)
+
+    # 1. watcher loads config at startup (gdrive_root not set yet). Its snapshot
+    #    carries min_score=4 — what a whole-dict write-back would persist.
+    cfg_path.write_text(json.dumps({"gdrive_root": "", "min_score": 4}), encoding="utf-8")
+    watcher.load_config()
+
+    # 2. dashboard saves a NEW min_score AFTER the watcher's load
+    cfg_path.write_text(json.dumps({"gdrive_root": "", "min_score": 9}), encoding="utf-8")
+
+    # 3. watcher auto-detects gdrive_root and persists only that key
+    watcher.save_config_key("gdrive_root", "E:/drive")
+
+    saved = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert saved["gdrive_root"] == "E:/drive"
+    assert saved["min_score"] == 9    # NOT reverted to the watcher's stale snapshot (4)

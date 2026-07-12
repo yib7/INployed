@@ -55,3 +55,6 @@ local/settings_archive/
 
 # linked git worktrees (never committed)
 .worktrees/
+
+# offscreen UI screenshot output (tools/ui_screenshots.py)
+.screenshots/

@@ -64,7 +64,7 @@ flowchart TD
 
 ### 1. Prerequisites
 Only **Python 3.14** is needed to open the dashboard; it launches to a get-started
-panel with no keys set. Everything else below is optional and unlocks one feature, so
+panel with no keys set. Everything else below is optional and enables one feature, so
 install it only when you want that feature.
 - **Python 3.14** (the Qt UI installs via `pip` with the other deps, including PySide6).
 - *(Optional, for résumé PDF output)* **MiKTeX** (for `pdflatex`): `winget install MiKTeX.MiKTeX`.
@@ -172,15 +172,15 @@ Or, from a terminal:
 ```bash
 python local/app.py       # or double-click local/open_dashboard.pyw
 ```
-You get high-score triage, an application tracker with follow-up nudges, run stats, and
-the **Tailor resume** button (it runs in the background so the UI stays responsive).
-Select several jobs and it tailors them **all at once, in parallel**: a single failure is
-reported without sinking the rest, and a quick warning appears before very large batches.
-Tailoring streams **live progress in the status bar** (`Tailoring (2/3 done): … rephrasing
-bullets`) so a multi-minute run is never a silent freeze. The window opens **maximized**
-to use the whole screen. On a brand-new setup with no jobs yet, the High Score tab shows a
-short **get-started** panel (Open Settings · Find new jobs · Set up Resume Data) instead of a
-blank table.
+The window opens maximized and gives you high-score triage, an application tracker with
+follow-up nudges, and run stats. A few behaviors worth knowing:
+- **Tailor resume** runs in the background, so the UI stays responsive.
+- Select several jobs and it tailors them all at once, in parallel. A single failure is
+  reported without sinking the rest, and a quick warning appears before very large batches.
+- Tailoring streams live progress in the status bar (`Tailoring (2/3 done): … rephrasing
+  bullets`), so a multi-minute run is never a silent freeze.
+- On a brand-new setup with no jobs yet, the High Score tab shows a short get-started panel
+  (Open Settings · Find new jobs · Set up Resume Data) instead of a blank table.
 
 Each job tab keeps a tidy filter bar: a search box plus a **Filters** button that holds
 min-score / day / time / recommendation / Easy-Apply (on the Tracker, also *Follow-up due
@@ -202,17 +202,17 @@ strengths, and gaps for that posting. It appears only on the job-list tabs (**Hi
 Score / All Jobs / Tracker**) and hides itself elsewhere; **drag the divider above it**
 to make it taller or shorter.
 
-At-a-glance colors: a job whose tailored-résumé folder still exists on disk is
-tinted **blue** in the High Score / All Jobs lists (delete the folder and the
-tint clears on the next refresh), and in the **Tracker** an *applied* job is
-**blue** and a *rejected* one is **red**. Right-click any job → **Set status →**
-to mark it applied / interviewing / rejected / offer from any tab. Right-click also
-offers **Delete job** (any row) and **Edit job…** (for jobs you added by hand). An
-**Add job by hand** button (High Score / All Jobs toolbar) takes a pasted posting URL or
-job description and runs it through the same scoring + tailoring pipeline as a scraped
-job. A **Find new jobs** button (bottom action bar) kicks off a fresh discovery + score
-on demand. It asks first (a *small test run* or a *full run*) because finding jobs costs
-real money / API credits.
+At-a-glance colors: a job whose tailored-résumé folder still exists on disk is tinted
+**blue** in the High Score / All Jobs lists (delete the folder and the tint clears on the
+next refresh); in the **Tracker**, an *applied* job is **blue** and a *rejected* one is **red**.
+
+Right-click any job to work with it: **Set status →** marks it applied / interviewing /
+rejected / offer from any tab, and the menu also offers **Delete job** (any row) and
+**Edit job…** (for jobs you added by hand). An **Add job by hand** button (High Score /
+All Jobs toolbar) takes a pasted posting URL or job description and runs it through the same
+scoring + tailoring pipeline as a scraped job. A **Find new jobs** button (bottom action bar)
+kicks off a fresh discovery + score on demand; it asks first (a *small test run* or a
+*full run*) because finding jobs costs real money / API credits.
 
 The **Tracker** tab has **Export tracker… / Import tracker…** buttons. Your whole
 application history (seen-state, statuses, and tailored-résumé links) lives in a local
@@ -254,12 +254,14 @@ one group at a time:
 - **Connection & paths:** Google Cloud project + location, your name (for résumé
   filenames), the résumé output folder and `pdflatex` path (with **Browse…**
   buttons), and which Chrome profile to open links in.
-- **Engine:** which Gemini backend the tailor bills (Vertex project vs API key).
+- **Engine:** the tailor's **provider** (Gemini or Claude) and, on Gemini, which backend
+  it bills (Vertex project vs API key). See the Claude backend note below.
 - **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
   keywords, remote types, spend caps, artifact toggles, and more.
 - **Models:** the scorer's two stages **and** all three résumé-tailor stages
-  (fast / standard / deep) are **editable dropdowns** of the recent Gemini 3.x
-  models; pick one or type a custom id.
+  (fast / standard / deep) are **editable dropdowns**: the recent Gemini 3.x ids by
+  default, plus the Claude tier ids used when a provider is set to `claude`. Pick one or
+  type a custom id.
 - **VM (cloud job discovery):** an **Enable VM features** master toggle (off by default)
   plus the non-secret connection details for your GCP job-discovery VM (instance, zone,
   project, Linux user). Off hides the whole VM area and silences VM prompts; turn
@@ -277,6 +279,13 @@ Edits are written atomically (with a `.bak`) to your git-ignored `.env`,
 `local/config.json`, and `search_config.json` / `scoring_config.json` /
 `apply_config.json`. Environment variables still override a file, and an absent file
 falls back to built-in defaults, so the VM keeps running unchanged.
+
+> **Claude backend (optional).** The résumé tailor and the local job scorer can each run
+> on your Claude Code CLI subscription instead of Gemini. Set **Resume tailor provider** or
+> **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
+> headless CLI with your subscription auth (no API key) and prompt caching; the tailor tiers
+> map fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`, deep → `claude-opus-4-8`. The
+> cloud VM always scores with Gemini, regardless of this setting.
 
 ### Manage the VM from the dashboard
 If you run discovery + scoring on a GCP VM, the dashboard drives it without

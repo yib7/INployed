@@ -28,6 +28,34 @@ def test_engine_credential_warnings_flags_missing_vertex_project():
     assert jobsdata._engine_credential_warnings("vertex", project="my-proj", has_api_key=False) == []
 
 
+# --- _claude_cli_warnings truth table (SP5) -------------------------------------
+
+def test_claude_cli_warnings_cli_found_always_empty():
+    assert jobsdata._claude_cli_warnings("claude", "claude", cli_found=True) == []
+    assert jobsdata._claude_cli_warnings("gemini", "gemini", cli_found=True) == []
+
+
+def test_claude_cli_warnings_missing_cli_tailor_claude_only():
+    out = jobsdata._claude_cli_warnings("claude", "gemini", cli_found=False)
+    assert len(out) == 1
+    assert "tailor" in out[0].lower()
+
+
+def test_claude_cli_warnings_missing_cli_scoring_claude_only():
+    out = jobsdata._claude_cli_warnings("gemini", "claude", cli_found=False)
+    assert len(out) == 1
+    assert "fall back to Gemini" in out[0] or "fallback" in out[0].lower() or "fall back" in out[0].lower()
+
+
+def test_claude_cli_warnings_missing_cli_both_claude():
+    out = jobsdata._claude_cli_warnings("claude", "claude", cli_found=False)
+    assert len(out) == 2
+
+
+def test_claude_cli_warnings_missing_cli_neither_claude():
+    assert jobsdata._claude_cli_warnings("gemini", "gemini", cli_found=False) == []
+
+
 def test_projects_count_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)  # empty config.json dir
     assert jobsdata.load_projects_count() == (3, "max")

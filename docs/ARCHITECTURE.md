@@ -43,9 +43,10 @@ writes happen back on the UI thread (the SQLite connection is thread-affine), an
 warning precedes very large batches. Tailoring streams live per-job progress to the status bar
 via a `MainWindow.tailor_progress` Qt signal (the engine's `on_status` callback, queued cross-thread
 from the pool workers). See `MainWindow._tailor_work`/`_finish_tailor`. The
-**Apply** button is the rightmost action and turns green only when the selected job has both its
+**Apply** button (in the job detail card, beside **Tailor résumé** and **Open posting**) turns green
+only when the selected job has both its
 résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and swaps the bottom
-score preview for a right-side **Apply panel** (copyable doc paths + the apply sheet, with an
+detail card for a right-side **Apply panel** (copyable doc paths + the apply sheet, with an
 **Expand** button that pops it into a large resizable reader; the close button dismisses it, and
 **"I applied to this job"** confirms → records the job applied in the Tracker → closes).
 
@@ -147,7 +148,13 @@ re-runs the QSS cascade, so it stays live and cheap (the stylesheet is left unto
 font-weight rules still merge over the new font). Cell painting in the job tables is owned by
 **`local/qt/delegates.py:JobRowDelegate`** (category tint + selection lines + first-column stripe +
 score badges, deep-score mini-bars, status/reco pills, "Open ↗" links) reading a `TAG_ROLE` the
-model exposes. **Restart** (`MainWindow._restart_app`) flags the intent and closes the window;
+model exposes. The same semantic families feed the scale-aware widget kit in
+**`local/qt/chrome.py`** (`Pill` / `Chip` / `ChipBar` — used by the header **identity strip**
+with its jobs/unseen/tracked counters + freshness pill, the Tracker's status chip bar, and the
+auto-apply pipeline chips) and **`local/qt/detail_card.py:JobDetailCard`**, the bottom pane that
+replaced the plain score preview: title + meta, the Open posting / Tailor résumé / Apply action
+row, score/deep/applicants chips, the REASON lede with STRENGTHS/GAPS columns (a tracker variant
+swaps in status/follow-up pills and a NEXT STEP line), and a collapsed "Show description" JD snippet. **Restart** (`MainWindow._restart_app`) flags the intent and closes the window;
 `app.main` relaunches a fresh process after the single-instance lock is released.
 
 Each job tab folds its discovery filters (plus the Tracker's *Follow-up due

@@ -29,11 +29,11 @@ It is three cooperating pieces:
 
 ## Demo
 
-![Animated tour of the dashboard: the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Auto-apply tab shows the batch apply queue (queued, in progress, ready to submit, needs human); the Stats tab reports per-run pipeline metrics; the Resume Data tab holds the select-and-rephrase source of truth plus the Resume Layout bullet-sizing editor; the Apply Answers tab stores reusable application answers; and the Settings tab configures the whole pipeline.](docs/demo.gif)
+![Animated tour of the dashboard: a header strip counts jobs, unseen, and tracked applications and shows pipeline freshness; the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints, badges, and pills; selecting a job opens its detail card with the score breakdown (reason, strengths, gaps) and the tailor / apply actions; the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Auto-apply tab shows the batch apply queue (queued, in progress, ready to submit, needs human); the Stats tab reports per-run pipeline metrics; the Resume Data tab holds the select-and-rephrase source of truth plus the Resume Layout bullet-sizing editor; the Apply Answers tab stores reusable application answers; and the Settings tab configures the whole pipeline.](docs/demo.gif)
 
 A tour of the full loop: **High Score** ranks every discovered posting by a two-stage
 Gemini relevance score and color-codes the recommendation; selecting a job opens its
-**score breakdown** (reason, strengths, gaps); the **Tracker** follows each application
+**detail card** (reason, strengths, gaps, plus the tailor and apply actions); the **Tracker** follows each application
 from applied through interviewing, offer, or rejected; **Stats** reports per-run
 pipeline metrics; the **Resume Data** tab is the select-and-rephrase source of truth
 the tailor draws from (including the Resume Layout bullet-sizing editor); **Apply
@@ -174,7 +174,7 @@ python local/app.py       # or double-click local/open_dashboard.pyw
 ```
 The window opens maximized and gives you high-score triage, an application tracker with
 follow-up nudges, and run stats. A few behaviors worth knowing:
-- **Tailor resume** runs in the background, so the UI stays responsive.
+- **Tailor résumé** runs in the background, so the UI stays responsive.
 - Select several jobs and it tailors them all at once, in parallel. A single failure is
   reported without sinking the rest, and a quick warning appears before very large batches.
 - Tailoring streams live progress in the status bar (`Tailoring (2/3 done): … rephrasing
@@ -184,9 +184,11 @@ follow-up nudges, and run stats. A few behaviors worth knowing:
 
 Each job tab keeps a tidy filter bar: a search box plus a **Filters** button that holds
 min-score / day / time / recommendation / Easy-Apply (on the Tracker, also *Follow-up due
-only*), and shows how many are active. Each tab keys its rows to what matters there:
+only*), and shows how many are active. The Tracker adds a one-click **status chip bar**
+(All / Applied / Interviewing / Offer / Rejected / Follow-up due, each with a live count).
+Each tab keys its rows to what matters there:
 **High Score** tints by recommendation + tailored-résumé (green apply · blue résumé ready ·
-yellow consider · plain "don't consider"), the **Tracker** tints by application status +
+red tailor failed · yellow consider · plain "don't consider"), the **Tracker** tints by application status +
 follow-up (blue applied · orange follow-up due · pink follow-up sent · yellow interviewing ·
 green offer · red rejected), and **All Jobs** stays an untinted plain list. A small
 **color legend** under each table (except All Jobs) spells the meanings out.
@@ -197,8 +199,11 @@ a slider with `-` / `+` buttons (10% steps, 75-150%), or **Ctrl +** / **Ctrl -**
 **Ctrl 0** to reset to 100%); the change applies **immediately** and your choice is
 remembered. **Restart** closes and reopens the dashboard.
 
-Selecting a job opens a **score preview** at the bottom: the model's reasoning,
-strengths, and gaps for that posting. It appears only on the job-list tabs (**High
+Selecting a job opens a **detail card** at the bottom: the job's title and meta line,
+score / deep-score / applicants chips, the model's reasoning, strengths, and gaps, a
+collapsed job-description snippet, and the per-job actions (**Open posting**, **Tailor
+résumé**, **Apply**). On the Tracker it switches to a tracker variant with status and
+follow-up pills plus a suggested next step. It appears only on the job-list tabs (**High
 Score / All Jobs / Tracker**) and hides itself elsewhere; **drag the divider above it**
 to make it taller or shorter.
 
@@ -218,7 +223,7 @@ The **Tracker** tab has **Export tracker… / Import tracker…** buttons. Your 
 application history (seen-state, statuses, and tailored-résumé links) lives in a local
 SQLite file, so export a backup and import it on another machine. Import **merges** (a
 more recent status wins; nothing is deleted). The **Stats** tab shows a **freshness
-badge**: green when the latest pipeline run is recent, amber *"the cloud job search may
+badge** (mirrored in the window's header strip): green when the latest pipeline run is recent, amber *"the cloud job search may
 have failed"* once it's older than the **Flag data as stale after (hours)** setting
 (default 36), so a broken cron run doesn't go unnoticed.
 
@@ -342,12 +347,12 @@ fill the structured employment fields), and the active standard answers. It list
 files to upload**; it's built from the tailoring run's own output, so it mirrors the PDF
 exactly with no extra AI call. To apply:
 
-1. Tailor the résumé for the job (the **Tailor resume** button). Tailoring no longer pops
+1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card). Tailoring no longer pops
    open File Explorer by default; flip **Settings → Open output folder after tailoring**
    on if you want that.
-2. Click **Apply** in the dashboard. The Apply button is **green only once the job has
+2. Click **Apply** on the detail card. The Apply button is **green only once the job has
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
-   swaps the bottom score preview for a right-side **Apply panel** with the copyable
+   swaps the bottom detail card for a right-side **Apply panel** with the copyable
    résumé / cover-letter paths and the apply sheet **rendered as formatted markdown** (the
    **Copy apply sheet** button still copies the raw markdown source). An **Expand** button
    opens the sheet in a large, resizable window for easier reading. Closing the panel brings
@@ -419,12 +424,12 @@ The suite sets `QT_QPA_PLATFORM=offscreen` itself, so the same two commands work
 PowerShell, cmd, and bash. (CI exports it explicitly; see `.github/workflows/ci.yml`.)
 
 ## Screenshots
-![The High Score tab showing scored jobs with LLM relevance scores, deep scores, apply/consider/tailored color tints, a recommendation legend, and the selected job's score breakdown above the bottom action bar (representative sample data)](docs/dashboard.png)
+![The High Score tab showing scored jobs with score badges, deep-score bars, apply/consider/tailored recommendation pills and row tints, a color legend, and the selected job's detail card (reason, strengths, gaps, and the Tailor résumé / Apply actions) above the bottom action bar (representative sample data)](docs/dashboard.png)
 
 The **High Score** tab surfaces only unseen postings scoring ≥4, ordered by score then
-fewest applicants (the freshest apply window first). Selecting a row shows the model's
-full analysis (reason, strengths, gaps); the bottom bar drives résumé tailoring and the
-semi-automated apply flow. *(Shown with representative sample data.)*
+fewest applicants (the freshest apply window first). Selecting a row opens the job's
+detail card: the model's full analysis (reason, strengths, gaps) plus the **Tailor
+résumé** and **Apply** actions. *(Shown with representative sample data.)*
 
 ## Project layout
 ```

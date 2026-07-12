@@ -60,6 +60,17 @@ EXTERNAL_EXCLUDE_FILE = OUTPUT_DIR / "external_exclude_ids.json"
 # the full set), so the VM's exclusion is unchanged.
 EXTRA_MASTER_ENV = "LINKEDIN_EXTRA_MASTER"
 
+# Cap the exclude-id set to a recency window. The search filter is time_range="Past
+# 24 hours", so a posting scraped more than ~60 days ago can never reappear in a
+# fresh run -- keeping its id in jobs_to_not_include is pure payload. The full
+# cumulative set is embedded once per (keyword x remote) input (~40 inputs), so a
+# months-long history makes the Bright Data trigger POST grow monotonically until it
+# hard-fails the request-size limit and silently kills the cron before collection.
+# Ids whose extracted_date is older than this many days are dropped from the exclude
+# set. Overridable via the EXCLUDE_WINDOW_DAYS env var. See .env.example.
+EXCLUDE_WINDOW_DAYS_ENV = "EXCLUDE_WINDOW_DAYS"
+DEFAULT_EXCLUDE_WINDOW_DAYS = 90
+
 # Spammy aggregator companies to drop entirely — from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
 # Add more names here as needed. The dashboard's right-click "Block company"
@@ -174,22 +185,69 @@ def load_previous_ids() -> list[str]:
     return [str(x) for x in data] if isinstance(data, list) else []
 
 
+def exclude_window_days() -> int:
+    """Recency window (in days) for pruning the exclude-id set; default
+    DEFAULT_EXCLUDE_WINDOW_DAYS, overridable via the EXCLUDE_WINDOW_DAYS env var.
+
+    A missing, non-integer, or non-positive value falls back to the default: 0 or a
+    negative window would empty the exclude set and re-collect (and re-bill) every
+    posting -- the exact failure this guard prevents -- so we always fail toward the
+    safe default rather than an empty window."""
+    raw = os.environ.get(EXCLUDE_WINDOW_DAYS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_EXCLUDE_WINDOW_DAYS
+    try:
+        val = int(raw)
+    except ValueError:
+        print(f"Invalid {EXCLUDE_WINDOW_DAYS_ENV}={raw!r}; using default "
+              f"{DEFAULT_EXCLUDE_WINDOW_DAYS} days")
+        return DEFAULT_EXCLUDE_WINDOW_DAYS
+    if val <= 0:
+        print(f"{EXCLUDE_WINDOW_DAYS_ENV}={val} is not positive; using default "
+              f"{DEFAULT_EXCLUDE_WINDOW_DAYS} days")
+        return DEFAULT_EXCLUDE_WINDOW_DAYS
+    return val
+
+
+def _window_ids(df: pd.DataFrame, window_days: int) -> list[str]:
+    """Unique job_posting_ids in `df`, keeping only those scraped within the last
+    `window_days` days (per the extracted_date column).
+
+    Fail toward a SUPERSET -- an exclude set that is too SMALL re-bills already-
+    collected jobs, so when recency can't be determined we KEEP the id:
+      - No extracted_date column, or EVERY date unparseable -> keep ALL ids (degrade
+        to the pre-window keep-all behavior; never silently empty the set).
+      - A single row with a missing/unparseable extracted_date (NaT) -> KEEP that id
+        (an undated posting is treated as recent).
+    """
+    if "job_posting_id" not in df.columns or df.empty:
+        return []
+    if "extracted_date" not in df.columns:
+        return df["job_posting_id"].dropna().astype(str).unique().tolist()
+    dates = pd.to_datetime(df["extracted_date"], errors="coerce")
+    if dates.isna().all():
+        # No parseable dates at all -> can't window; keep everything.
+        return df["job_posting_id"].dropna().astype(str).unique().tolist()
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=window_days)
+    keep = dates.isna() | (dates >= cutoff)  # NaT (undated) rows are kept
+    return df.loc[keep, "job_posting_id"].dropna().astype(str).unique().tolist()
+
+
 def _master_ids() -> list[str]:
-    """Every job id recorded in this host's master (or the last-run JSON if the
-    master is missing/unreadable)."""
+    """Every job id recorded in this host's master, pruned to the recency window
+    (exclude_window_days) -- or the last-run JSON if the master is missing/unreadable."""
     if MASTER_CSV.exists():
         try:
             df = pd.read_csv(
                 MASTER_CSV,
-                usecols=lambda c: c == "job_posting_id",
+                usecols=lambda c: c in ("job_posting_id", "extracted_date"),
                 dtype=str,
             )
-            if "job_posting_id" in df.columns and not df.empty:
-                ids = df["job_posting_id"].dropna().astype(str).unique().tolist()
-                if ids:
-                    return ids
         except (OSError, ValueError, pd.errors.ParserError) as e:
             print(f"Could not read master for exclusions ({e}); using last-run ids")
+            return load_previous_ids()
+        if "job_posting_id" in df.columns and not df.empty:
+            return _window_ids(df, exclude_window_days())
     return load_previous_ids()
 
 
@@ -219,26 +277,28 @@ def load_extra_master_ids() -> list[str]:
         return []
     try:
         comp = "gzip" if path.suffix == ".gz" else "infer"
-        df = pd.read_csv(path, usecols=lambda c: c == "job_posting_id", dtype=str,
-                         compression=comp)
+        df = pd.read_csv(path, usecols=lambda c: c in ("job_posting_id", "extracted_date"),
+                         dtype=str, compression=comp)
     except (OSError, ValueError, pd.errors.ParserError) as e:
         print(f"Could not read extra master {path.name} for exclusions ({e}); ignoring")
         return []
     if "job_posting_id" not in df.columns or df.empty:
         return []
-    return df["job_posting_id"].dropna().astype(str).unique().tolist()
+    return _window_ids(df, exclude_window_days())
 
 
 def load_exclude_ids() -> list[str]:
     """Every job id this host knows to skip — a hard no-repeat guard. Bright Data
     bills per collection, so re-fetching a posting we already have is pure wasted
-    spend; and a listing open long enough to fall outside any recent-only window is
-    usually stale anyway, so there's no upside to re-collecting it. We exclude the
-    whole master, UNIONED with the extra master named by $LINKEDIN_EXTRA_MASTER (the
-    synced Drive master, so a LOCAL run skips what the VM already collected) and with
-    external_exclude_ids.json (ids collected on another machine — e.g. a manual local
-    run — and pushed here so a scheduled VM run skips them). Falls back to the last-run
-    JSON when this host's master is missing/unreadable."""
+    spend. We exclude this host's master (pruned to the last exclude_window_days by
+    extracted_date — the search is 'Past 24 hours', so an older posting can't reappear
+    and its id is only trigger-POST bloat), UNIONED with the extra master named by
+    $LINKEDIN_EXTRA_MASTER (the synced Drive master, likewise windowed, so a LOCAL run
+    skips what the VM already collected) and with external_exclude_ids.json (ids
+    collected on another machine — e.g. a manual local run — and pushed here so a
+    scheduled VM run skips them; these are freshly-collected this-session ids and are
+    NOT windowed). Falls back to the last-run JSON when this host's master is
+    missing/unreadable."""
     ids = list(_master_ids())
     seen = set(ids)
     for jid in load_extra_master_ids() + load_external_exclude_ids():

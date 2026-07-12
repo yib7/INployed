@@ -91,6 +91,25 @@ def save_config(cfg: dict) -> None:
     atomic_write_json(CONFIG_PATH, cfg)
 
 
+def save_config_key(key: str, value) -> None:
+    """Persist a single config key without clobbering a concurrent writer.
+
+    The dashboard (jobsdata._save_cfg) and this watcher both read-modify-write
+    config.json. Writing back the whole dict the watcher loaded at startup would
+    silently revert any key the dashboard saved between our load and our write —
+    atomic_write_json prevents torn files, not lost updates. So re-read the file
+    FRESH, set only this key, and atomic-write. gdrive_root auto-detect is the
+    one key the watcher owns."""
+    try:
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raw = {}
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+    raw[key] = value
+    atomic_write_json(CONFIG_PATH, raw)
+
+
 def detect_gdrive_root() -> str | None:
     if os.name == "nt":
         try:
@@ -116,13 +135,28 @@ def detect_gdrive_root() -> str | None:
 
 # --------------------------------------------------------------------------- state
 
+def _default_state() -> dict:
+    return {"reconciled_mtimes": {}, "acknowledged_on_startup": False}
+
+
 def load_state() -> dict:
     if STATE_PATH.exists():
         try:
-            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            pass
-    return {"reconciled_mtimes": {}, "acknowledged_on_startup": False}
+            return _default_state()
+        # A parseable-but-wrong-shape state.json (not a dict, or a
+        # reconciled_mtimes that isn't a dict) would make the downstream
+        # state["reconciled_mtimes"] access raise on every future fire — and the
+        # file is only rewritten on success, so the watcher would stay bricked.
+        # Fall back to the default instead of returning the bad shape as-is.
+        if not isinstance(state, dict) or not isinstance(state.get("reconciled_mtimes"), dict):
+            return _default_state()
+        # Otherwise repair a dict that's merely missing a key.
+        state.setdefault("reconciled_mtimes", {})
+        state.setdefault("acknowledged_on_startup", False)
+        return state
+    return _default_state()
 
 
 def save_state(state: dict) -> None:
@@ -293,7 +327,9 @@ def main() -> int:
             detected = detect_gdrive_root()
             if detected:
                 cfg["gdrive_root"] = detected
-                save_config(cfg)
+                # Persist ONLY the key we changed via a fresh read-merge-write so
+                # we don't revert a config key the dashboard saved concurrently.
+                save_config_key("gdrive_root", detected)
                 log.info("Auto-detected gdrive root: %s", detected)
             else:
                 log.error("Could not locate LinkedInJobs folder. Set 'gdrive_root' in %s.", CONFIG_PATH)

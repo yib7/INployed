@@ -462,6 +462,54 @@ def test_pool_stats_keys_and_cache_token_accumulation(monkeypatch):
     }
 
 
+def test_pool_stats_count_tokens_of_failed_json_extraction_attempts(monkeypatch, no_sleep):
+    """A json_mode attempt whose CLI call SUCCEEDED but whose result text was
+    unparseable still burned real subscription tokens -- those must land in the
+    stats() token counters even though a later retry supplies the result.
+    claude_calls keeps its semantics: successful generates only."""
+    calls = {"n": 0}
+
+    def fake_run_claude(system, user, model, *, json_mode=False, allow_websearch=False,
+                        timeout_s=claude_cli.DEFAULT_TIMEOUT_S):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return claude_cli.CLIResult("not json at all {{{", 10, 20, 30, 40)
+        return claude_cli.CLIResult('{"ok": 1}', 1, 2, 3, 4)
+
+    monkeypatch.setattr(claude_cli, "run_claude", fake_run_claude)
+    pool = claude_cli.ClaudePool(max_procs=2)
+    config = SimpleNamespace(system_instruction="sys", response_mime_type="application/json",
+                             response_schema=None)
+    resp = asyncio.run(pool.generate(model="m", contents="hi", config=config))
+    assert json.loads(resp.text) == {"ok": 1}
+    stats = pool.stats()
+    assert stats["claude_calls"] == 1  # one successful generate
+    assert stats["cache_read_tokens"] == 33   # 30 (failed extract) + 3 (success)
+    assert stats["cache_write_tokens"] == 44  # 40 + 4
+
+
+def test_pool_generate_rate_limit_exhaustion_raises_immediately(monkeypatch, no_sleep):
+    """After RATE_LIMIT_RETRIES backoff waits, a further rate-limit error must
+    raise (kind == 'rate_limit') -- NOT fall into the transient branch for
+    extra attempts."""
+    calls = {"n": 0}
+
+    def fake_run_claude(system, user, model, *, json_mode=False, allow_websearch=False,
+                        timeout_s=claude_cli.DEFAULT_TIMEOUT_S):
+        calls["n"] += 1
+        raise claude_cli.ClaudeCLIError("usage limit reached", kind="rate_limit")
+
+    monkeypatch.setattr(claude_cli, "run_claude", fake_run_claude)
+    pool = claude_cli.ClaudePool(max_procs=2)
+    config = SimpleNamespace(system_instruction="sys", response_mime_type=None,
+                             response_schema=None)
+    with pytest.raises(claude_cli.ClaudeCLIError) as exc_info:
+        asyncio.run(pool.generate(model="m", contents="hi", config=config))
+    assert exc_info.value.kind == "rate_limit"
+    assert len(no_sleep) == pool.RATE_LIMIT_RETRIES  # exactly 4 backoff waits
+    assert calls["n"] == pool.RATE_LIMIT_RETRIES + 1  # 5 attempts, then raise
+
+
 # --------------------------------------------------------------------------
 # ClaudePool: warm-up serialization gate
 # --------------------------------------------------------------------------

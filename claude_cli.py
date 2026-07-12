@@ -282,15 +282,20 @@ class ClaudePool:
                         run_claude, system, contents, model,
                         json_mode=json_mode, timeout_s=self._timeout_s,
                     )
-                text = extract_json_text(res.text) if json_mode else res.text
-                self._claude_calls += 1
+                # The CLI call happened and burned real subscription tokens --
+                # count them NOW, before JSON extraction can fail, so a
+                # bad_json attempt's tokens aren't dropped from stats().
                 self._cache_read_tokens += res.cache_read_tokens
                 self._cache_write_tokens += res.cache_write_tokens
+                text = extract_json_text(res.text) if json_mode else res.text
+                self._claude_calls += 1  # successful generates only
                 return _Resp(text, res.input_tokens, res.output_tokens)
             except ClaudeCLIError as exc:
                 if exc.kind == "not_found":
                     raise  # never retriable
-                if exc.kind == "rate_limit" and rl < self.RATE_LIMIT_RETRIES:
+                if exc.kind == "rate_limit":
+                    if rl >= self.RATE_LIMIT_RETRIES:
+                        raise  # backoff budget spent -- no transient attempts
                     rl += 1
                     await asyncio.sleep(
                         min(30.0 * 2 ** (rl - 1), 300.0) + random.uniform(0, 5)

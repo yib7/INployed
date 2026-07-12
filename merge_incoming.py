@@ -322,7 +322,15 @@ def main(
 
                 for path, added in contributions:
                     _say(f"{path.name} merged ({added} new rows)")
-                    path.unlink()
+                    # A delete failure here (already swept, locked, permissions)
+                    # must not propagate: merge runs BEFORE the scrape under set -e,
+                    # so an unguarded OSError would kill the day's run over a
+                    # bookkeeping delete. Per-file problems never fail the cron --
+                    # same guard as the rows path above.
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
 
     return 0
 

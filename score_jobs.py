@@ -163,13 +163,26 @@ def append_run_stats(stats: dict) -> None:
 
         if not RUN_STATS_CSV.exists() or existing_header != RUN_STATS_COLS:
             # Fresh file, or an older/narrower header -- rewrite with the current
-            # columns, backfilling anything the old rows lack.
-            with open(RUN_STATS_CSV, "w", encoding="utf-8", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=RUN_STATS_COLS, extrasaction="ignore")
-                w.writeheader()
-                for r in rows:
-                    w.writerow({c: r.get(c, 0) for c in RUN_STATS_COLS})
-                w.writerow(new_row)
+            # columns, backfilling anything the old rows lack. Atomic (same-dir
+            # tempfile + os.replace, mirroring _atomic_to_csv): a crash mid-rewrite
+            # then leaves the existing stats file whole, never a truncated partial.
+            fd, tmp = tempfile.mkstemp(prefix=RUN_STATS_CSV.stem + ".", suffix=".tmp",
+                                       dir=str(RUN_STATS_CSV.parent))
+            os.close(fd)
+            try:
+                with open(tmp, "w", encoding="utf-8", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=RUN_STATS_COLS, extrasaction="ignore")
+                    w.writeheader()
+                    for r in rows:
+                        w.writerow({c: r.get(c, 0) for c in RUN_STATS_COLS})
+                    w.writerow(new_row)
+                os.replace(tmp, RUN_STATS_CSV)
+            finally:
+                if os.path.exists(tmp):
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
         else:
             with open(RUN_STATS_CSV, "a", encoding="utf-8", newline="") as f:
                 w = csv.DictWriter(f, fieldnames=RUN_STATS_COLS, extrasaction="ignore")
@@ -701,7 +714,11 @@ def save_output(df: pd.DataFrame, input_csv: Path) -> Path:
     out_path = input_csv.with_name(input_csv.stem + "_scored.csv.gz")
     df = df.drop(columns=[c for c in ("job_description_formatted",) if c in df.columns])
     df["is_seen"] = "no"
-    df.to_csv(out_path, index=False, encoding="utf-8", compression="gzip")
+    # Atomic: latest_input_csv() skips any input whose _scored.csv.gz merely
+    # EXISTS, so a truncated gz from a crashed write would hide that input forever
+    # (and fail every dashboard/watcher read). compression="gzip" forwards through
+    # _atomic_to_csv's **kwargs to to_csv (explicit -> overrides tmp's .tmp suffix).
+    _atomic_to_csv(df, out_path, compression="gzip")
     update_master_scores(df)
     return out_path
 

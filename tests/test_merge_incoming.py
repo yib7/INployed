@@ -281,6 +281,29 @@ def test_incoming_vs_incoming_collision_first_file_wins(tmp_path, monkeypatch):
     assert not (inc / "local_rows_b.csv.gz").exists()
 
 
+def test_stats_unlink_oserror_does_not_fail_merge(tmp_path, monkeypatch):
+    # P2-2: merge runs BEFORE the scrape under `set -e`, so an unguarded OSError
+    # from the stats-file unlink would exit main() nonzero and kill the day's run
+    # over a bookkeeping delete. The delete failure must be swallowed (the module's
+    # "per-file problems never fail the cron" contract) and the merge still finish.
+    inc, master, stats = _setup(tmp_path)
+    inc.mkdir(parents=True)
+    pd.DataFrame([{"timestamp": "t1", "input_csv": "a.csv", "rows_in": 5}]).to_csv(
+        inc / "local_stats_x.csv", index=False)
+
+    real_unlink = Path.unlink
+
+    def flaky_unlink(self, *a, **k):
+        if self.name.startswith("local_stats_"):
+            raise OSError("simulated delete failure on the merged stats file")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+    assert merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats, min_age_seconds=0) == 0
+    assert len(pd.read_csv(stats)) == 1  # the stats write still landed despite the delete failure
+
+
 def test_unreadable_master_still_aborts_with_chunk_set(tmp_path, monkeypatch):
     # Confirm the exit-1-on-unreadable-master policy survives the rewrite even
     # when CHUNK is small enough to force streaming.

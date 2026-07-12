@@ -299,3 +299,79 @@ def test_load_resume_reads_existing_file(monkeypatch, tmp_path):
     resume_path.write_text("# My Resume\n", encoding="utf-8")
     monkeypatch.setattr(sj, "RESUME_PATH", resume_path)
     assert sj.load_resume() == "# My Resume\n"
+
+
+# P2-1: save_output's *_scored.csv.gz write must be atomic. This is the one with
+# teeth: latest_input_csv() skips any input whose _scored.csv.gz merely EXISTS, so
+# a truncated gz left by a crashed naked write hides that input forever (and every
+# dashboard/watcher read of the gz then fails). Atomic = a crash leaves either the
+# whole old file or the whole new one, never a truncated partial at the final path.
+
+def test_save_output_scored_gz_routes_through_atomic_helper(tmp_path, monkeypatch):
+    monkeypatch.setattr(sj, "MASTER_CSV", tmp_path / "linkedin_jobs_master.csv")  # no master -> merge no-ops
+    input_csv = tmp_path / "linkedin_jobs_2026-07-01_morning.csv"
+    input_csv.write_text("job_posting_id\n1\n", encoding="utf-8")
+
+    calls = []
+    real = sj._atomic_to_csv
+
+    def spy(df, path, **kwargs):
+        calls.append((Path(path), kwargs))
+        return real(df, path, **kwargs)
+
+    monkeypatch.setattr(sj, "_atomic_to_csv", spy)
+    out_path = sj.save_output(pd.DataFrame([{"job_posting_id": "1", "score": 5}]), input_csv)
+
+    # exactly the scored gz went through the atomic helper, with compression="gzip"
+    # reaching to_csv (helper forwards **kwargs), and it round-trips as real gzip.
+    assert (out_path, {"compression": "gzip"}) in calls
+    round_tripped = pd.read_csv(out_path, dtype={"job_posting_id": str}, compression="gzip")
+    assert round_tripped.iloc[0]["score"] == 5
+
+
+def test_save_output_crash_leaves_no_scored_gz_so_input_reoffered(tmp_path, monkeypatch):
+    monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(sj, "RUN_LABELS", ["morning"])
+    monkeypatch.setattr(sj, "MASTER_CSV", tmp_path / "linkedin_jobs_master.csv")
+    run_dir = tmp_path / "morning"
+    run_dir.mkdir()
+    input_csv = run_dir / "linkedin_jobs_2026-07-01_morning.csv"
+    input_csv.write_text("job_posting_id\n1\n", encoding="utf-8")
+
+    assert sj.latest_input_csv() == input_csv  # unscored input is offered
+
+    def boom_replace(*a, **k):
+        raise OSError("simulated crash right before the rename")
+
+    monkeypatch.setattr(os, "replace", boom_replace)
+    with pytest.raises(OSError):
+        sj.save_output(pd.DataFrame([{"job_posting_id": "1", "score": 5}]), input_csv)
+
+    out_path = input_csv.with_name(input_csv.stem + "_scored.csv.gz")
+    assert not out_path.exists()                                    # no truncated gz stranded
+    assert [p for p in run_dir.iterdir() if p.suffix == ".tmp"] == []
+    assert sj.latest_input_csv() == input_csv                       # input re-offered, not skipped
+
+
+def test_append_run_stats_self_heal_rewrite_is_atomic(tmp_path, monkeypatch):
+    import csv as _csv
+    old = tmp_path / "run_stats.csv"
+    old_cols = sj.RUN_STATS_COLS[:-2]  # older/narrower header -> triggers the self-heal rewrite
+    with open(old, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=old_cols)
+        w.writeheader()
+        w.writerow({c: 1 for c in old_cols})
+    before = old.read_bytes()
+    monkeypatch.setattr(sj, "RUN_STATS_CSV", old)
+
+    def boom_replace(*a, **k):
+        raise OSError("simulated crash mid self-heal rewrite")
+
+    monkeypatch.setattr(os, "replace", boom_replace)
+    # append_run_stats swallows OSError (stats bookkeeping never kills a run); the
+    # point here is the REWRITE is atomic -- it streams to a same-dir tmp then
+    # os.replace, so a crash leaves the existing file whole, never truncated.
+    sj.append_run_stats({c: 2 for c in sj.RUN_STATS_COLS})
+
+    assert old.read_bytes() == before                              # untouched: replace never landed
+    assert [p for p in tmp_path.iterdir() if p.name != "run_stats.csv"] == []

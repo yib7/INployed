@@ -793,6 +793,10 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     # unmocked critical() modal hung the suite forever.
     monkeypatch.setattr(mw.jobsdata, "_load_cfg", lambda: {"gemini_auth": "vertex"})
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    # Env provider overrides now feed Check-setup (env > file); clear them so this
+    # all-good case doesn't depend on the developer's shell exporting a provider.
+    monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
+    monkeypatch.delenv("SCORE_PROVIDER", raising=False)
     shown = {}
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         staticmethod(lambda *a, **k: shown.setdefault("info", True)))
@@ -802,6 +806,33 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     w._check_setup()
     assert shown.get("info")
     assert "critical" not in shown
+
+
+def test_check_setup_honors_env_provider_override(qtbot, monkeypatch):
+    """The runtime resolvers use env > file precedence, so Check-setup must too.
+    RESUME_TAILOR_PROVIDER=claude in the environment (config.json says gemini) with
+    no `claude` CLI on PATH must surface the claude-CLI-missing warning — a
+    file-only reader would miss it and disagree with what actually runs."""
+    w = _win(qtbot)
+    from resume_tailor import master_validate
+    monkeypatch.setattr(master_validate, "check_setup", lambda: {"master": [], "answers": []})
+    # Both files say gemini; only the env override should flip the tailor to claude.
+    monkeypatch.setattr(mw.jobsdata, "_load_cfg",
+                        lambda: {"tailor_provider": "gemini", "gemini_auth": "vertex"})
+    monkeypatch.setattr(mw.settings, "load", lambda: {"provider": "gemini"})
+    monkeypatch.setattr(mw.settings, "secret_status", lambda: {})
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("RESUME_TAILOR_PROVIDER", "claude")
+    monkeypatch.delenv("SCORE_PROVIDER", raising=False)
+    monkeypatch.setattr(mw.shutil, "which", lambda name: None)  # no `claude` on PATH
+    captured = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: captured.setdefault("msg", a[2])))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: captured.setdefault("info", True)))
+    w._check_setup()
+    assert "info" not in captured                     # a problem WAS surfaced
+    assert "Resume tailor provider is 'claude'" in captured["msg"]
 
 
 def test_first_run_hint_visible_without_data(qtbot):

@@ -2214,8 +2214,14 @@ class MainWindow(QtWidgets.QMainWindow):
             problems.extend(f"[{label}] {e}" for e in errs)
         try:
             cfg = jobsdata._load_cfg()
-            tailor_provider = str(cfg.get("tailor_provider", "gemini")).strip().lower()
             stored = settings.load()
+            # Match the runtime resolvers' env > file precedence
+            # (config.tailor_provider() / score_jobs.load_scoring_config()): an
+            # exported RESUME_TAILOR_PROVIDER / SCORE_PROVIDER wins at run time, so
+            # Check-setup must honour it too or its warnings won't match what runs.
+            tailor_provider = str(
+                os.environ.get("RESUME_TAILOR_PROVIDER")
+                or cfg.get("tailor_provider") or "gemini").strip().lower()
             if tailor_provider != "claude":  # gemini engine warnings only apply on gemini
                 auth = cfg.get("gemini_auth", "vertex")
                 project = stored.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get(
@@ -2225,7 +2231,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
                 problems.extend(f"[Engine] {w}" for w in
                                 jobsdata._engine_credential_warnings(auth, project, has_key))
-            scoring_provider = str(stored.get("provider", "gemini")).strip().lower()
+            scoring_provider = str(
+                os.environ.get("SCORE_PROVIDER")
+                or stored.get("provider") or "gemini").strip().lower()
             cli_found = shutil.which("claude") is not None
             problems.extend(f"[Engine] {w}" for w in jobsdata._claude_cli_warnings(
                 tailor_provider, scoring_provider, cli_found))

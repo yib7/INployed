@@ -9,7 +9,8 @@ cache-friendly prompt split (gemini bytes unchanged; claude system prompt
 carries the resume and is job-independent).
 
 Hermetic: a fake `claude_cli` module is injected into sys.modules for the
-make_pool tests (removed in a finally block); no real CLI/network calls.
+make_pool tests via monkeypatch.setitem (auto-reverted at test teardown); no
+real CLI/network calls.
 """
 import asyncio
 import json
@@ -177,6 +178,21 @@ def test_make_pool_claude_branch_honors_timeout_env(monkeypatch, tmp_path):
     pool = sj.make_pool()
     assert pool.timeout_s == 99
     assert pool.max_procs == 3
+
+
+def test_make_pool_claude_branch_garbage_timeout_falls_back(monkeypatch, tmp_path, capsys):
+    """A non-integer SCORE_CLAUDE_TIMEOUT_S must NOT crash make_pool (a local-only
+    provider choice must never brick a run): it warns and uses the 240s default."""
+    _install_fake_claude_cli(monkeypatch, cli_present=True)
+    monkeypatch.setattr(sj, "SCORING_PROVIDER", "claude")
+    monkeypatch.setattr(sj, "STAGE1_CONCURRENCY", 6)
+    monkeypatch.setattr(sj, "STAGE2_CONCURRENCY", 4)
+    monkeypatch.setenv("SCORE_CLAUDE_TIMEOUT_S", "not-a-number")
+    pool = sj.make_pool()
+    assert isinstance(pool, _FakeClaudePool)
+    assert pool.timeout_s == 240          # fell back to the default, no crash
+    assert pool.max_procs == 6
+    assert "Ignoring invalid SCORE_CLAUDE_TIMEOUT_S" in capsys.readouterr().out
 
 
 def test_make_pool_cli_missing_falls_back_to_gemini(monkeypatch, tmp_path, capsys):

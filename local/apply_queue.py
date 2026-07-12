@@ -377,19 +377,35 @@ def set_artifacts(job_id: str, artifacts: Dict[str, str],
         return dict(e)
 
 
+def _fifo_key(e: Dict[str, Any]) -> tuple:
+    """Claim ordering key. A blank/missing queued_at (a hand-edited or pre-schema
+    entry) is treated as newest-UNKNOWN — it sorts AFTER every real ISO timestamp
+    rather than before it. ('' would otherwise sort lexicographically before every
+    stamp, so a blank entry always jumped the queue.) The leading flag puts real
+    stamps (0) ahead of blanks (1); blanks all share ('', ) and tie, so the claim
+    loop's strict `<` leaves list (insertion) order to break the tie."""
+    qa = str(e.get("queued_at") or "")
+    return (0, qa) if qa else (1, "")
+
+
 def claim(claimed_by: str = "agent", path: Optional[Path] = None
           ) -> Optional[Dict[str, Any]]:
     """Claim the FIFO-oldest "queued" entry (by queued_at; list order breaks
-    ties). Sets in_progress / attempts+1 / started_at / claimed_by. Entries that
-    are tailoring or terminal are never claimed. None when nothing is queued."""
+    ties). A blank/missing queued_at sorts LAST (newest-unknown), so a
+    hand-edited or pre-schema entry never jumps ahead of genuinely-older jobs.
+    Sets in_progress / attempts+1 / started_at / claimed_by. Entries that are
+    tailoring or terminal are never claimed. None when nothing is queued."""
     with locked(path):
         data = load(path, quarantine=True)   # under locked(): may rename aside
         best = None
+        best_key = None
         for e in data["jobs"]:
             if e.get("status") != "queued":
                 continue
-            if best is None or e.get("queued_at", "") < best.get("queued_at", ""):
+            key = _fifo_key(e)
+            if best is None or key < best_key:
                 best = e
+                best_key = key
         if best is None:
             return None
         _normalize(best)                     # hand-edited entries: full schema

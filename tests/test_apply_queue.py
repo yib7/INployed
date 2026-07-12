@@ -260,6 +260,45 @@ def test_claim_fifo_oldest_first(tmp_path):
     assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "a"
 
 
+def test_claim_blank_queued_at_sorts_after_real_timestamps(tmp_path):
+    """P2-7: a blank queued_at (from a hand-edited / pre-schema entry) must NOT
+    jump the FIFO ahead of genuinely-queued jobs. '' sorts lexicographically
+    BEFORE every ISO stamp, so a blank entry used to be claimed first; the fix
+    treats blank as newest-unknown, sorting it AFTER every real timestamp. The
+    genuinely-oldest real-timestamp job is claimed first; the blank one last."""
+    q = _q(tmp_path)
+    for jid in ("old", "blank", "new"):
+        apply_queue.enqueue(_entry(jid), path=q)
+    _force_queued_at(q, {"old": "2026-07-04T10:00:00", "blank": "",
+                         "new": "2026-07-04T10:00:05"})
+    assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "old"
+    assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "new"
+    assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "blank"
+
+
+def test_claim_missing_queued_at_key_sorts_after_real(tmp_path):
+    """A pre-schema entry with NO queued_at key at all (not even '') must also
+    sort after a genuinely-queued job, not jump ahead of it."""
+    q = _q(tmp_path)
+    q.write_text(json.dumps({"version": 1, "jobs": [
+        {"job_posting_id": "legacy", "status": "queued"}]}), encoding="utf-8")
+    apply_queue.enqueue(_entry("real"), path=q)
+    _force_queued_at(q, {"real": "2026-07-04T10:00:00"})
+    assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "real"
+    assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "legacy"
+
+
+def test_claim_blank_queued_at_ties_break_by_list_order(tmp_path):
+    """Two blank-queued_at entries tie; the fix keeps a defined, stable order —
+    the earlier one in list (insertion) order is claimed first."""
+    q = _q(tmp_path)
+    for jid in ("first_blank", "second_blank"):
+        apply_queue.enqueue(_entry(jid), path=q)
+    _force_queued_at(q, {"first_blank": "", "second_blank": ""})
+    assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "first_blank"
+    assert apply_queue.claim(claimed_by="w", path=q)["job_posting_id"] == "second_blank"
+
+
 def test_claim_sets_progress_fields(tmp_path):
     q = _q(tmp_path)
     apply_queue.enqueue(_entry("1"), path=q)

@@ -20,8 +20,13 @@ from resume_tailor import config, llm  # noqa: E402
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
     # Logic tests: creds always "present", sleeps instant, usage clean.
+    # Also pins the provider to gemini so a developer's real local/config.json
+    # (tailor_provider: claude) can't reroute llm.call() around the faked
+    # `_invoke` seam these tests assert against.
     monkeypatch.setattr(llm, "_check_creds", lambda: None)
     monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(llm.config, "_config_json", lambda: {})
+    monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
     llm.reset_usage()
     yield
     llm.reset_usage()

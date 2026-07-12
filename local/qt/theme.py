@@ -47,6 +47,7 @@ BTN_HOVER = "#2d3340"
 # they key the application status + follow-up state.
 ROW_HAS_RESUME = "#1b3f63"   # tailored resume ready / applied (blue)
 ROW_REJECTED = "#5e1f26"     # rejected (red)
+ROW_TAILOR_FAILED = ROW_REJECTED  # failed tailor run — needs a re-run (red)
 ROW_APPLY = "#18482f"        # reco "apply" / offer (green)
 ROW_CONSIDER = "#4a3d16"     # reco "consider" / interviewing (yellow)
 ROW_FOLLOWUP = "#623813"     # follow-up due (orange)
@@ -56,6 +57,7 @@ _ROW_TINTS = {
     "has_resume": ROW_HAS_RESUME,
     "applied": ROW_HAS_RESUME,
     "rejected": ROW_REJECTED,
+    "tailor_failed": ROW_TAILOR_FAILED,
     "apply": ROW_APPLY,
     "offer": ROW_APPLY,
     "consider": ROW_CONSIDER,

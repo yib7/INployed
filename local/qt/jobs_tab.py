@@ -47,6 +47,7 @@ class JobsTab(QtWidgets.QWidget):
         self._save_hidden = save_hidden or (lambda key, hidden: None)
         self._base = pd.DataFrame()
         self._resume_ids = frozenset()
+        self._failed_ids = frozenset()   # jobs whose last tailor run failed (red)
         self._empty_widget = None
         self._extra_filter_active: list = []  # predicates from add_filter_row, for the badge
 
@@ -230,9 +231,11 @@ class JobsTab(QtWidgets.QWidget):
 
     # ---- data feed -----------------------------------------------------------
 
-    def set_source_df(self, df: pd.DataFrame | None, resume_ids=frozenset()) -> None:
+    def set_source_df(self, df: pd.DataFrame | None, resume_ids=frozenset(),
+                      failed_ids=frozenset()) -> None:
         self._base = df if df is not None else pd.DataFrame()
         self._resume_ids = frozenset(resume_ids)
+        self._failed_ids = frozenset(failed_ids)
         self._refresh_day_combo()
         self._apply_filters()
 
@@ -246,7 +249,7 @@ class JobsTab(QtWidgets.QWidget):
             self._base, self.search.text().strip().lower(), self.minscore.currentText(),
             self.day.currentText(), self.time.currentText(), self.reco.currentText(),
             self.easy.currentText(), col)
-        self.model.set_dataframe(view, self._resume_ids)
+        self.model.set_dataframe(view, self._resume_ids, self._failed_ids)
         total = 0 if self._base is None or self._base.empty else len(self._base)
         self.count_label.setText(f"{len(view)} of {total} shown")
         self._update_filters_label()
@@ -430,6 +433,7 @@ def legend_items_for(table_key: str):
     return [
         (theme.ROW_APPLY, "Apply"),
         (theme.ROW_HAS_RESUME, "Tailored (resume ready)"),
+        (theme.ROW_TAILOR_FAILED, "Tailor failed (re-run)"),
         (theme.ROW_CONSIDER, "Consider"),
         (theme.SURFACE, "Don't consider"),
     ]

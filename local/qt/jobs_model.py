@@ -43,7 +43,8 @@ class JobsTableModel(QtCore.QAbstractTableModel):
 
     # ---- population ----------------------------------------------------------
 
-    def set_dataframe(self, df: pd.DataFrame | None, resume_ids=frozenset()) -> None:
+    def set_dataframe(self, df: pd.DataFrame | None, resume_ids=frozenset(),
+                      failed_ids=frozenset()) -> None:
         self.beginResetModel()
         n = 0 if df is None else len(df)
         self._nrows = n
@@ -63,27 +64,31 @@ class JobsTableModel(QtCore.QAbstractTableModel):
             followups = (df["follow_up"].astype(str).str.strip().tolist()
                          if "follow_up" in df.columns else [""] * n)
             rids = set(resume_ids)
+            fids = set(failed_ids)
             self._tags = [
                 self._row_tag(self._mode, self._ids[i], recos[i], statuses[i],
-                              followups[i], rids)
+                              followups[i], rids, fids)
                 for i in range(n)
             ]
         self.endResetModel()
 
     @staticmethod
     def _row_tag(mode: str, jid: str, reco: str, status: str, followup: str,
-                 resume_ids: set) -> str:
+                 resume_ids: set, failed_ids: set = frozenset()) -> str:
         """The row's color tag, by tab.
 
         - "all": never tinted — a plain list to scan every job.
         - "tracker": application status + follow-up state (see `_tracker_tag`).
-        - "high"/unseen (default): a tailored resume wins, then the
-          recommendation; a "skip" reco is the untinted "don't consider" default.
+        - "high"/unseen (default): a FAILED tailor run wins (red — the row
+          needs a re-run), then a tailored resume, then the recommendation; a
+          "skip" reco is the untinted "don't consider" default.
         """
         if mode == "all":
             return ""
         if mode == "tracker":
             return JobsTableModel._tracker_tag(status, followup)
+        if jid and jid in failed_ids:
+            return "tailor_failed"
         if jid and jid in resume_ids:
             return "has_resume"
         if reco == "apply":

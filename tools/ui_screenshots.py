@@ -82,7 +82,14 @@ def _jobs_df() -> pd.DataFrame:
             "url": f"https://example.com/jobs/{jid}",
             "job_posted_date": "2026-07-09",
             "is_easy_apply": bool(i % 2),
-            "job_summary": f"Synthetic summary for {title} at {company}.",
+            "job_base_pay_range": "$105k–$135k" if i % 2 == 0 else "",
+            "reason": (f"Synthetic reason: {title} matches the LLM-pipeline "
+                       "experience; domain framing is learnable."),
+            "strengths": ("Built an LLM draft-validate-stream product|"
+                          "Schema-grounded prompting matches their stack|"
+                          "Python depth across the listed requirements"),
+            "gaps": "No fintech / compliance background",
+            "job_summary": f"Synthetic summary for {title} at {company}. " * 4,
             "job_description": f"Synthetic description for {title} at {company}. " * 8,
             "job_description_formatted": f"Synthetic formatted JD for {title}.",
         })
@@ -169,6 +176,15 @@ def _capture_all(app, win: MainWindow, prefix: str, tag: str, scales) -> int:
         theme.set_scale(app, scale)
         for title in TAB_TITLES:
             win.tabs.setCurrentWidget(win._tab_widgets[title])
+            if title == "Tracker":
+                # Re-fire the selection WITH the Tracker tab current so the
+                # detail card renders its tracker variant (status/follow-up
+                # pills + NEXT STEP), not the discovery one it got when the
+                # row was first selected under another tab.
+                table = win.tracker_tab.table
+                if table.model().rowCount() > 0:
+                    table.clearSelection()
+                    table.selectRow(0)
             win.resize(1600, 1000)
             app.processEvents()
             out = OUT_DIR / f"{prefix}_{tag}{SLUGS[title]}_{scale}.png"

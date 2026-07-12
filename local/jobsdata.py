@@ -945,3 +945,62 @@ def job_detail_segments(row, snapshot: dict | None = None) -> list[tuple[str, st
         segs.append(("\nJD snippet  ", "h"))
         segs.append((jd[:700] + ("…" if len(jd) > 700 else ""), "muted"))
     return segs
+
+
+def job_detail_fields(row, snapshot: dict | None = None) -> dict:
+    """The job-detail-card content as a flat dict (cycle 40 restyle).
+
+    Lives ALONGSIDE `job_detail_segments` (which stays — it is test-coupled and
+    still feeds plain-text renderings); this is the structured source the Qt
+    `JobDetailCard` lays out natively. `row` is a pandas Series (or None);
+    `snapshot` is the tracker row dict used when the job is no longer in the
+    loaded data. Returns {} when there is nothing to show.
+
+    Keys: title, company, location, url, score, deep_score, recommendation,
+    applicants, salary, posted, reason, strengths (list), gaps (list), jd
+    (<=700-char snippet), snapshot_only (bool), note (snapshot-only hint)."""
+    def cell(col: str) -> str:
+        if row is None:
+            return ""
+        v = row.get(col, "")
+        return "" if pd.isna(v) else str(v)
+
+    if row is None:
+        if snapshot:
+            return {
+                "title": str(snapshot.get("job_title") or "?"),
+                "company": str(snapshot.get("company") or "?"),
+                "location": "",
+                "url": str(snapshot.get("url") or ""),
+                "score": "", "deep_score": "", "recommendation": "",
+                "applicants": "", "salary": "", "posted": "",
+                "reason": "", "strengths": [], "gaps": [], "jd": "",
+                "snapshot_only": True,
+                "note": "No longer in the loaded data (tracker snapshot only).",
+            }
+        return {}
+
+    posted = cell("job_posted_date").strip()
+    jd = cell("job_summary").strip()
+    if len(jd) < 40:
+        raw = cell("job_description_formatted")
+        jd = re.sub(r"<[^>]+>", " ", raw)
+        jd = re.sub(r"\s+", " ", jd).strip()
+    return {
+        "title": cell("job_title") or "?",
+        "company": cell("company_name") or "?",
+        "location": cell("job_location").strip(),
+        "url": cell("url").strip(),
+        "score": cell("score").strip(),
+        "deep_score": cell("deep_score").strip(),
+        "recommendation": cell("recommendation").strip(),
+        "applicants": (cell("applicants") or cell("job_num_applicants")).strip(),
+        "salary": cell("job_base_pay_range").strip(),
+        "posted": posted[:10] if posted else "",
+        "reason": cell("reason").strip(),
+        "strengths": [s.strip() for s in cell("strengths").split("|") if s.strip()],
+        "gaps": [g.strip() for g in cell("gaps").split("|") if g.strip()],
+        "jd": jd[:700] + ("…" if len(jd) > 700 else ""),
+        "snapshot_only": False,
+        "note": "",
+    }

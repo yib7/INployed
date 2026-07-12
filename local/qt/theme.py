@@ -280,6 +280,14 @@ def _qss() -> str:
     QPushButton[tier="destructive"]:disabled {{ background: transparent;
                   color: {TEXT_DISABLED}; border-color: transparent; }}
 
+    /* Accent text button ("Open posting ↗" on the detail card). */
+    QPushButton[tier="link"] {{ background: transparent; color: {ACCENT};
+                  border: 1px solid transparent; }}
+    QPushButton[tier="link"]:hover {{ background: {rgba(ACCENT, 0.10)}; }}
+    QPushButton[tier="link"]:pressed {{ background: {rgba(ACCENT, 0.16)}; }}
+    QPushButton[tier="link"]:disabled {{ background: transparent;
+                  color: {TEXT_DISABLED}; }}
+
     QPushButton[applyReady="true"] {{ background: {GOOD}; color: #ffffff;
                   border: 1px solid {GOOD}; }}
     QPushButton[applyReady="true"]:hover {{ background: {GOOD_HOVER};
@@ -340,8 +348,22 @@ def _qss() -> str:
     QFrame[callout="warning"] {{ background: {rgba(AMBER, 0.08)};
         border: 1px solid {rgba(AMBER, 0.45)};
         border-radius: {RADII["card"]}px; }}
-    QFrame[strip="true"] {{ background: {WINDOW}; border: 0; }}
+    QFrame[strip="true"] {{ background: {WINDOW}; border: 0;
+        border-bottom: 1px solid {BORDER}; }}
     QWidget[chipbar="true"] {{ background: transparent; }}
+    /* The global `QWidget {{ background: WINDOW }}` rule would paint WINDOW
+       patches over PANEL cards — plain containers/labels inside a card (or a
+       warning callout) go transparent instead. Inputs/buttons keep their own
+       surfaces (their type rules stay untouched). */
+    QFrame[card="true"] QLabel, QFrame[card="true"] QCheckBox,
+    QFrame[card="true"] QSlider, QFrame[card="true"] .QWidget,
+    QFrame[callout="warning"] QLabel, QFrame[callout="warning"] .QWidget {{
+        background: transparent; }}
+    QFrame[divider="true"] {{ background: {BORDER_SOFT}; border: 0; }}
+    QLabel[storageTag="true"] {{ color: {FAINT}; border: 1px solid {BORDER};
+        border-radius: 4px; padding: 0px 5px; background: transparent; }}
+    QLabel[countBadge="true"] {{ background: {PANEL}; border: 1px solid {BORDER};
+        border-radius: {RADII["control"]}px; padding: 2px 9px; }}
 
     QSplitter::handle {{ background: {BORDER}; }}
     QSplitter::handle:horizontal {{ width: 4px; }}

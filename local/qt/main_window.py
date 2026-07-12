@@ -48,13 +48,14 @@ from qt import theme, workers
 from qt.answers_tab import AnswersEditor
 from qt.apply_panel import ApplyPanel
 from qt.apply_queue_panel import ApplyQueuePanel
+from qt.chrome import IdentityStrip
+from qt.detail_card import JobDetailCard
 from qt.jobs_tab import JobsTab
 from qt.manual_add_dialog import ManualAddDialog
 from qt.resume_data_tab import ResumeDataEditor
 from qt.settings_tab import SettingsForm
-from qt.stats_tab import StatsTab
+from qt.stats_tab import StatsTab, _human_age
 from qt.vm_panel import VMPanel
-from qt.widgets import ScorePreview
 from resume_trash import recycle_resume_folder
 from seen_db import SeenRegistry
 
@@ -236,7 +237,7 @@ class MainWindow(QtWidgets.QMainWindow):
         h = QtWidgets.QHBoxLayout(bar)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)
-        h.addWidget(QtWidgets.QLabel("Interface size:"))
+        h.addWidget(QtWidgets.QLabel("Interface size"))
         minus = QtWidgets.QPushButton("-")
         minus.setFixedWidth(26)
         minus.setToolTip("Smaller (-10%)")
@@ -324,6 +325,11 @@ class MainWindow(QtWidgets.QMainWindow):
         vbox = QtWidgets.QVBoxLayout(central)
         vbox.setContentsMargins(8, 8, 8, 8)
 
+        # Identity strip: wordmark + freshness pill + jobs/unseen/tracked counts.
+        self.identity_strip = IdentityStrip()
+        vbox.addWidget(self.identity_strip)
+        self._last_run_label = ""  # freshness text shared with the status bar
+
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setDocumentMode(True)
 
@@ -361,13 +367,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.high_tab.set_empty_widget(self._build_empty_hint())
 
-        self.preview = ScorePreview()
+        # The job detail card replaces the old ScorePreview — same `self.preview`
+        # attribute so the splitter wiring + _apply_preview_visibility stand.
+        # The card OWNS the Tailor/Apply buttons now; alias them so every
+        # existing enable/repolish path keeps the same object identities.
+        self.preview = JobDetailCard(
+            on_open=self._open_url,
+            on_tailor=self._tailor_selected,
+            on_apply=self._apply_selected,
+            on_open_resume=self._open_resume_folder,
+            on_followed_up=self._tracker_followed_up)
+        self.btn_tailor = self.preview.tailor_btn
+        self.btn_apply = self.preview.apply_btn
+        self.btn_apply.setEnabled(False)
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.splitter.addWidget(self.tabs)
         self.splitter.addWidget(self.preview)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
-        self.splitter.setSizes([720, 200])
+        self.splitter.setSizes([640, 300])  # the detail card needs ~300px @100%
 
         # The Apply panel rides to the RIGHT of the tabs+preview column; it opens
         # (and the preview hides) when the user clicks Apply, and closes back to the
@@ -408,22 +426,17 @@ class MainWindow(QtWidgets.QMainWindow):
             bar.addWidget(b)
             return b
 
-        self.btn_tailor = button("Tailor resume", self._tailor_selected, accent=True)
+        # Tailor/Apply live on the job detail card now (Phase 3c) — the bar keeps
+        # the selection-utility actions, with Find new jobs as its primary.
         button("Mark seen (selected)", self._mark_seen_selected)
         self.btn_undo_seen = button("Undo seen", self._undo_seen)
         button("Resume folder", self._open_resume_folder)
-        button("Find new jobs", self._run_scraper_dialog)
         button("Check setup", self._check_setup)
-        # Queue auto-apply rides beside Apply: same selection, but batch-queues it
-        # for the agent run instead of opening one application by hand.
         self.btn_queue_apply = button("Queue auto-apply", self._queue_apply_selected)
         self.btn_queue_apply.setToolTip(
             "Add the selected job(s) to the auto-apply queue (untailored ones are "
             "tailored first) — see the Auto-apply tab")
-        # Apply is rightmost (and green only once the job is ready to apply to) — its
-        # ready-state is the dashboard's "this one's good to go" signal.
-        self.btn_apply = button("Apply", self._apply_selected)
-        self.btn_apply.setEnabled(False)
+        button("Find new jobs", self._run_scraper_dialog, accent=True)
 
         # One bottom panel: the interface-size control and a Restart button ride in
         # the same bar as the actions (they used to be a separate status-bar strip).
@@ -433,6 +446,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bar.addWidget(sep)
         bar.addWidget(self._build_scale_bar())
         self.btn_restart = button("Restart", self._restart_app)
+        self.btn_restart.setProperty("tier", "tertiary")
         self.btn_restart.setToolTip("Close and reopen the dashboard")
 
         self._action_bar = bar
@@ -541,8 +555,22 @@ class MainWindow(QtWidgets.QMainWindow):
             df, _ = reconcile_is_seen(df, self.registry)
         self.df = df
         self._apply_df_views()
-        total = 0 if df.empty else len(df)
-        self._set_status(f"{total:,} jobs · {len(self.df_high)} unseen >=4")
+        self._set_status(self._summary_line())
+
+    def _summary_line(self) -> str:
+        """The persistent status-bar summary: counts + discovery freshness."""
+        total = 0 if self.df.empty else len(self.df)
+        parts = [f"{total:,} jobs", f"{len(self.df_high)} unseen ≥ {self.min_score}"]
+        if self._last_run_label:
+            parts.append(f"last discovery run {self._last_run_label}")
+        return " · ".join(parts)
+
+    def _update_identity_counts(self) -> None:
+        strip = getattr(self, "identity_strip", None)
+        if strip is None:
+            return
+        total = 0 if self.df.empty else len(self.df)
+        strip.set_counts(total, len(self.df_high), len(self._tracked))
 
     def _apply_df_views(self) -> None:
         """Refresh everything derived from the in-memory `self.df` — row/url maps,
@@ -648,6 +676,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cols = [c for c, _ in TRACKER_COLUMNS] + ["job_posting_id"]
         tdf = pd.DataFrame(recs) if recs else pd.DataFrame(columns=cols)
         self.tracker_tab.set_source_df(tdf, self._resume_ids())
+        self._update_identity_counts()
 
     def _resume_ids(self) -> frozenset:
         # Only ids whose tailored folder still EXISTS on disk are tinted blue, so a
@@ -779,7 +808,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_tab_changed(self) -> None:
         self._apply_preview_visibility()
-        self._refresh_apply_button()
+        # Re-render the detail card from the NEW tab's selection so its variant
+        # (discovery vs tracker) always matches the tab it is shown under; this
+        # also recomputes the Apply button state (_show_preview does both).
+        tab = self._active_jobs_tab()
+        ids = tab.selected_ids() if tab is not None else []
+        self._show_preview(ids[0] if ids else "")
         # vm_enabled may have changed in Settings — re-evaluate the resume.md push button.
         self.resume_data_tab._refresh_push_state()
 
@@ -792,10 +826,51 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_preview(self, jid: str) -> None:
         self._update_apply_button(jid)
         if not jid:
-            self.preview.show_segments([])
+            self.preview.set_empty()
             return
-        segs = jobsdata.job_detail_segments(self._row_for(jid), self._tracked.get(jid))
-        self.preview.show_segments(segs)
+        fields = jobsdata.job_detail_fields(self._row_for(jid), self._tracked.get(jid))
+        tracker = (self._tracker_card_info(jid)
+                   if self.tabs.currentWidget() is self.tracker_tab else None)
+        self.preview.set_fields(fields, jid=jid, tracker=tracker)
+
+    def _tracker_card_info(self, jid: str) -> dict | None:
+        """The tracker-variant card data for one tracked job: status, days since
+        applying, follow-up state, and a synthesized NEXT STEP line."""
+        r = self._tracked.get(jid)
+        if r is None:
+            return None
+        status = str(r.get("status") or "")
+        days_n = None
+        if r.get("applied_date"):
+            try:
+                days_n = (date.today() - date.fromisoformat(r["applied_date"])).days
+            except ValueError:
+                pass
+        follow = ""
+        if r.get("followed_up_at"):
+            follow = "done"
+        elif status == "applied" and days_n is not None and days_n >= self.followup_days:
+            follow = "DUE"
+        if follow == "DUE":
+            next_step = (f"No reply in {days_n} day(s) — send a short follow-up "
+                         "note, then Mark followed up.")
+        elif follow == "done":
+            next_step = "Followed up — awaiting a reply."
+        elif status == "interviewing":
+            next_step = "Interview ahead — generate an Interview prep sheet."
+        elif status == "offer":
+            next_step = "Offer open — respond and update the status."
+        elif status == "rejected":
+            next_step = "Rejected — no action needed."
+        elif status == "applied" and days_n is not None:
+            wait = max(0, self.followup_days - days_n)
+            next_step = (f"Applied {days_n} day(s) ago — follow up in {wait} "
+                         "day(s) if there is no reply.")
+        else:
+            next_step = ""
+        return {"status": status, "applied_date": r.get("applied_date") or "",
+                "days": "" if days_n is None else str(days_n),
+                "follow_up": follow, "next_step": next_step}
 
     # ---- apply readiness (button enable + green) -----------------------------
 
@@ -2374,6 +2449,14 @@ class MainWindow(QtWidgets.QMainWindow):
         threshold = int(settings.load().get("stale_after_hours", 36) or 36)
         state, age = jobsdata.run_staleness(newest, datetime.now(), threshold)
         self.stats_tab.set_freshness(state, age)
+        # Mirror the freshness onto the identity strip + status-bar summary.
+        self._last_run_label = ("never" if age == float("inf")
+                                else _human_age(age))
+        label = ("Fresh — last run " if state == "fresh"
+                 else "Stale — last run ") + self._last_run_label
+        strip = getattr(self, "identity_strip", None)
+        if strip is not None:
+            strip.set_freshness(state, label)
 
     @staticmethod
     def _stats_summary(stats_df: pd.DataFrame) -> str:

@@ -56,8 +56,11 @@ SCORING_CONFIG_FILE = "scoring_config.json"
 # Built-in defaults, keyed by config name -> (env var name, default value, kind).
 # kind drives coercion: "str" leaves the value alone, "int" casts via int().
 _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
+    "provider": ("SCORE_PROVIDER", "gemini", "str"),
     "stage1_model": ("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite", "str"),
     "stage2_model": ("SCORE_STAGE2_MODEL", "gemini-3.5-flash", "str"),
+    "stage1_model_claude": ("SCORE_STAGE1_MODEL_CLAUDE", "claude-haiku-4-5", "str"),
+    "stage2_model_claude": ("SCORE_STAGE2_MODEL_CLAUDE", "claude-sonnet-5", "str"),
     "stage1_concurrency": ("SCORE_STAGE1_CONCURRENCY", 6, "int"),
     "stage2_concurrency": ("SCORE_STAGE2_CONCURRENCY", 4, "int"),
     "stage2_threshold": ("SCORE_STAGE2_THRESHOLD", 4, "int"),
@@ -99,9 +102,21 @@ def load_scoring_config() -> dict:
     return cfg
 
 
+def _active_scoring(cfg: dict) -> tuple[str, str, str]:
+    """(provider, stage1_model, stage2_model) resolved from `cfg`.
+
+    Anything but exactly "claude" (after strip/lower) resolves to "gemini"
+    with the Gemini stage models -- this pins the VM's behavior, since the
+    VM ships no scoring_config.json and provider always defaults "gemini".
+    """
+    provider = "claude" if str(cfg.get("provider", "")).strip().lower() == "claude" else "gemini"
+    if provider == "claude":
+        return provider, cfg["stage1_model_claude"], cfg["stage2_model_claude"]
+    return provider, cfg["stage1_model"], cfg["stage2_model"]
+
+
 _SCORING = load_scoring_config()
-STAGE1_MODEL = _SCORING["stage1_model"]
-STAGE2_MODEL = _SCORING["stage2_model"]
+SCORING_PROVIDER, STAGE1_MODEL, STAGE2_MODEL = _active_scoring(_SCORING)
 STAGE1_CONCURRENCY = _SCORING["stage1_concurrency"]
 STAGE2_CONCURRENCY = _SCORING["stage2_concurrency"]
 STAGE2_THRESHOLD = _SCORING["stage2_threshold"]
@@ -250,7 +265,13 @@ _DEGREE_SOFTENER = (
 
 STAGE1_SYSTEM = "You honestly evaluate how well a new-grad candidate fits early-career roles. Return JSON only."
 
-STAGE1_TEMPLATE = """\
+# Split at the resume/job boundary so the Claude lane can send the resume half
+# (stable across every job in a run) via --system-prompt and the job half
+# (volatile per job) via stdin -- see the module-level caching note and
+# score_stage1/score_stage2 below. RESUME + JOB is a plain string
+# concatenation of the two literals below, so on the gemini path
+# STAGE1_TEMPLATE.format(...) is byte-identical to before the split.
+STAGE1_TEMPLATE_RESUME = """\
 Rate how well this job matches the resume below, on a 1-5 scale.
 
 CANDIDATE CONTEXT (read this before scoring):
@@ -283,15 +304,20 @@ Resume:
 {resume}
 ---
 
+"""
+
+STAGE1_TEMPLATE_JOB = """\
 Job description:
 ---
 {job}
 ---
 """
 
+STAGE1_TEMPLATE = STAGE1_TEMPLATE_RESUME + STAGE1_TEMPLATE_JOB
+
 STAGE2_SYSTEM = "You provide candid, detailed job-fit analysis. Return JSON only."
 
-STAGE2_TEMPLATE = """\
+STAGE2_TEMPLATE_RESUME = """\
 This job passed Stage 1 as a strong/good match for the candidate. Give an in-depth fit analysis: deep score 1-10, key strengths, gaps, and a recommendation.
 
 TODAY'S DATE IS {today}. Judge every date in the resume and the job posting relative to that date, NOT relative to your training data: the candidate's May 2026 graduation is in the past and the degree is COMPLETED. Never list graduation timing, "degree in progress," or "has not graduated yet" as a gap.
@@ -305,11 +331,16 @@ Resume:
 {resume}
 ---
 
+"""
+
+STAGE2_TEMPLATE_JOB = """\
 Job description:
 ---
 {job}
 ---
 """
+
+STAGE2_TEMPLATE = STAGE2_TEMPLATE_RESUME + STAGE2_TEMPLATE_JOB
 
 STAGE1_SCHEMA = {
     "type": "object",
@@ -340,10 +371,31 @@ def today_str() -> str:
     return f"{now:%B} {now.day}, {now.year}"
 
 
-def make_pool() -> KeyPool:
-    """Build the rotating key pool: GEMINI_API_KEYS (free tier) plus a Vertex
-    backstop from GOOGLE_CLOUD_PROJECT. Exits with a clear message if neither is
-    configured."""
+def make_pool():
+    """Build the scoring pool for SCORING_PROVIDER.
+
+    "claude" tries the local `claude_cli.ClaudePool` first; a missing
+    claude_cli.py (not shipped to the VM) or a missing `claude` CLI on PATH
+    prints a warning and falls through to Gemini -- this branch must NEVER
+    sys.exit, so a local-only provider choice pushed to the VM via
+    scoring_config.json can't brick an unattended run. The final fallback
+    (KeyPool.from_env, GEMINI_API_KEYS + Vertex) is unchanged from before and
+    is the only branch that may exit, exactly as today.
+    """
+    if SCORING_PROVIDER == "claude":
+        try:
+            import claude_cli  # lazy: file absent on the VM; branch unreachable there
+        except ImportError:
+            print("Scoring provider is 'claude' but claude_cli.py is missing "
+                  "(VM/standalone install?) -- falling back to Gemini.")
+        else:
+            if claude_cli.find_claude() is not None:
+                timeout_s = int(os.environ.get("SCORE_CLAUDE_TIMEOUT_S", "240"))
+                return claude_cli.ClaudePool(
+                    timeout_s=timeout_s,
+                    max_procs=max(STAGE1_CONCURRENCY, STAGE2_CONCURRENCY))
+            print("Scoring provider is 'claude' but the `claude` CLI is not on "
+                  "PATH -- falling back to Gemini.")
     try:
         return KeyPool.from_env(state_path=OUTPUT_DIR / "score_state.json")
     except PoolError as e:
@@ -470,13 +522,23 @@ def pick_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
 
 async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
-        prompt = STAGE1_TEMPLATE.format(resume=resume, job=job_md, today=today_str())
+        today = today_str()
+        if SCORING_PROVIDER == "claude":
+            # Cache-friendly split: the resume half (stable across every job
+            # in a run) rides system_instruction (the CLI's cache
+            # breakpoint), the job half (volatile) rides contents/stdin.
+            system_instruction = STAGE1_SYSTEM + STAGE1_TEMPLATE_RESUME.format(
+                resume=resume, today=today)
+            contents = STAGE1_TEMPLATE_JOB.format(job=job_md)
+        else:
+            system_instruction = STAGE1_SYSTEM
+            contents = STAGE1_TEMPLATE.format(resume=resume, job=job_md, today=today)
         try:
             resp = await pool.generate(
                 model=STAGE1_MODEL,
-                contents=prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
-                    system_instruction=STAGE1_SYSTEM,
+                    system_instruction=system_instruction,
                     temperature=0.0,
                     response_mime_type="application/json",
                     response_schema=STAGE1_SCHEMA,
@@ -492,13 +554,20 @@ async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
 
 async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, job_md: str) -> dict:
     async with sem:
-        prompt = STAGE2_TEMPLATE.format(resume=resume, job=job_md, today=today_str())
+        today = today_str()
+        if SCORING_PROVIDER == "claude":
+            system_instruction = STAGE2_SYSTEM + STAGE2_TEMPLATE_RESUME.format(
+                resume=resume, today=today)
+            contents = STAGE2_TEMPLATE_JOB.format(job=job_md)
+        else:
+            system_instruction = STAGE2_SYSTEM
+            contents = STAGE2_TEMPLATE.format(resume=resume, job=job_md, today=today)
         try:
             resp = await pool.generate(
                 model=STAGE2_MODEL,
-                contents=prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
-                    system_instruction=STAGE2_SYSTEM,
+                    system_instruction=system_instruction,
                     temperature=0.2,
                     response_mime_type="application/json",
                     response_schema=STAGE2_SCHEMA,

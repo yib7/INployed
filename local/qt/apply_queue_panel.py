@@ -33,6 +33,8 @@ from PySide6 import QtCore, QtWidgets
 import apply_queue
 import ats_accounts
 import osopen
+from qt import theme
+from qt.delegates import TAG_ROLE, JobRowDelegate
 
 # The repo root (this file lives in <root>/local/qt/) — the kickoff command
 # cd's here so `claude` picks up the repo's .claude/skills/auto-apply skill.
@@ -101,6 +103,9 @@ def _spawn_kickoff(scoped: bool = False) -> None:
 
 
 COLUMNS = ("Company", "Title", "Status", "Attempts", "Missing", "Updated", "Note")
+# Column ids the row delegate keys its renderers on (status pill + dot,
+# right-aligned mono counts, mono muted timestamp), 1:1 with COLUMNS.
+COLUMN_IDS = ("company", "title", "status", "attempts", "missing", "updated", "note")
 
 _DEBOUNCE_MS = 500     # coalesce a burst of fs events into one refresh
 _POLL_MS = 5000        # mtime-poll fallback when no fs events arrive
@@ -210,12 +215,18 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setAlternatingRowColors(True)
+        # The delegate paints the cells (status tint from TAG_ROLE, pills,
+        # separators) — zebra/grid off so nothing repaints over its layers.
+        self.table.setItemDelegate(JobRowDelegate(
+            list(COLUMN_IDS), kind="apply", parent=self.table))
+        self.table.setAlternatingRowColors(False)
+        self.table.setShowGrid(False)
+        theme.register_table(self.table)
         self.table.verticalHeader().setVisible(False)
         self.table.setWordWrap(False)
         hh = self.table.horizontalHeader()
         hh.setStretchLastSection(True)
-        for i, w in enumerate((150, 220, 110, 70, 60, 150, 200)):
+        for i, w in enumerate((150, 220, 150, 70, 60, 150, 200)):
             self.table.setColumnWidth(i, w)
         self.table.itemSelectionChanged.connect(self._update_details)
         v.addWidget(self.table, 1)
@@ -346,8 +357,13 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                     str(e.get("updated_at", "")),
                     str(e.get("notes", "")),
                 )
+                status = str(e.get("status", ""))
                 for c, text in enumerate(cells):
                     item = QtWidgets.QTableWidgetItem(text)
+                    # Paint-time row tag: the delegate tints the whole row and
+                    # pills the Status cell from it. DisplayRole stays the RAW
+                    # status text (test-coupled; the pill label is paint-only).
+                    item.setData(TAG_ROLE, status)
                     if c == 0:
                         item.setData(QtCore.Qt.ItemDataRole.UserRole,
                                      str(e.get("job_posting_id", "")))

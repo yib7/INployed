@@ -29,7 +29,7 @@ It is three cooperating pieces:
 
 ## Demo
 
-![Animated tour of the dashboard: the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Stats tab reports per-run pipeline metrics; the Resume Data tab holds the select-and-rephrase source of truth plus the Resume Layout bullet-sizing editor; the Apply Answers tab stores reusable application answers; and the Settings tab configures the whole pipeline.](docs/demo.gif)
+![Animated tour of the dashboard: the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints; selecting a job reveals its score breakdown (reason, strengths, gaps); the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Auto-apply tab shows the batch apply queue (queued, in progress, ready to submit, needs human); the Stats tab reports per-run pipeline metrics; the Resume Data tab holds the select-and-rephrase source of truth plus the Resume Layout bullet-sizing editor; the Apply Answers tab stores reusable application answers; and the Settings tab configures the whole pipeline.](docs/demo.gif)
 
 A tour of the full loop: **High Score** ranks every discovered posting by a two-stage
 Gemini relevance score and color-codes the recommendation; selecting a job opens its

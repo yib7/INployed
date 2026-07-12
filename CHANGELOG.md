@@ -6,6 +6,72 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-12
+
+The biggest release since 1.0: an optional **Claude subscription backend** for résumé
+tailoring and local scoring, a **batch auto-apply queue** subsystem, a **unified master**
+so local scrapes feed the cloud pipeline, **bounded-memory** VM master I/O with retention,
+and a large dashboard + cover-letter pass. All prior work since 1.4.0 is folded in here.
+
+### Added
+- **Claude subscription backend (optional).** The résumé tailor and the *local* job scorer
+  can each run on your Claude Code CLI subscription instead of Gemini, selected by Settings
+  provider dropdowns (`tailor_provider` / `provider`, both default `gemini`). It drives the
+  headless CLI with subscription auth (no API key) through a new stdlib-only `claude_cli.py`
+  transport with a KeyPool-shaped `ClaudePool`, prompt caching (stable content on the cache
+  breakpoint, per-item data on stdin) and a per-(model, system) warm-up gate so a batch pays
+  the cache write once. Tier map: fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`,
+  deep → `claude-opus-4-8`. The cloud VM always scores with Gemini and falls back safely if a
+  Claude config ever reaches it.
+- **Auto-apply batch queue.** A new **Auto-apply** tab mirrors a batch apply queue
+  (`Queue auto-apply` adds tailored jobs; the tab tracks queued / in progress / ready to
+  submit / needs human), backed by a lock-guarded, atomic queue store and an ATS-accounts
+  ledger that keeps passwords in the OS credential manager only. Draining runs the same
+  parks-at-review, never-auto-submits flow one job at a time (advanced/optional path).
+- **Unified master.** Local scrapes and hand-added jobs now feed the cloud master through a
+  durable local outbox that pushes to the VM's `incoming/`, which `merge_incoming.py` drains
+  into the master (master-wins, chunked) — so a job discovered locally is never stranded.
+- **VM master retention + bounded memory.** `run_scraper.sh` merges `incoming/` before
+  scraping; master append / rescore / merge are chunked for bounded memory, and
+  `prune_master.py` keeps a rolling 3-day description-retention window.
+- **healthchecks.io dead-man's switch** for the VM scraper so a missed cron run is noticed.
+- **Cover letters** got a right-click "Generate cover letter" on an already-tailored job, a
+  reworked left-aligned header, a copy-pasteable `.txt` export, a second cohesion pass, and
+  graduation/tense-aware context.
+- Dashboard: three-state Easy Apply filter, "Add job by hand", and a local watcher task that
+  can auto-sync to the VM schedule.
+
+### Changed
+- Delete / mark-seen / set-status are now **optimistic**: the in-memory view updates instantly
+  and the ~27 MB gzipped CSVs are rewritten on a single-flight background queue, so the UI no
+  longer freezes on those actions.
+- **Delete** moves a job's `Generated_Resumes` folder to the Recycle Bin and clears its
+  registry row.
+- `apply.md` is now pure data (full `https://` contact links, no project dates, an Awards
+  sub-bullet) with the form-filler playbook moved out of the sheet.
+- Résumé-tailor and scorer prompts render byte-identically on the Gemini path; the Claude path
+  splits the scorer prompt at the résumé/job boundary for cache reuse.
+
+### Fixed
+- `apply_playwright.run()` now writes a terminal `report.json` on **every** exit — a
+  fill/upload-phase crash records `failed:`, and a post-submit crash records
+  `submitted (unconfirmed)` — so a crashed run can't leave the queue stuck or cause a
+  double-apply.
+- `seen.db` self-heals a malformed database (quarantine-and-recreate + atomic `app_status`
+  backup/restore); the pytest suite is fully hermetic (redirected app-data, no real DB/logs).
+- Local "Find new jobs" survives the dashboard closing, streams live progress, and recovers
+  orphaned tailor/scrape runs at launch.
+- `make_pool` tolerates a garbage timeout env value; Check setup honors the same env>file
+  provider precedence the runtime uses.
+- Observability + robustness batches from the code audit: logged swallowed LLM failures,
+  retry jitter, guarded reads, and closed local→VM sync gaps.
+
+### Docs
+- README documents the Claude backend and the Auto-apply tab, clarifies which prerequisites
+  are optional (only Python 3.14 is needed to open the dashboard), and ships a refreshed,
+  higher-frame demo GIF and screenshot. Removed internal planning/spike docs from the tree.
+- Dependency version-health audit (all pins on stable GA releases; model ids current).
+
 ## [1.4.0] - 2026-07-02
 
 ### Added

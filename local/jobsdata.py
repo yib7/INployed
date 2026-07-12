@@ -82,7 +82,7 @@ ALL_COLUMNS = [
 ]
 
 TRACKER_COLUMNS = [
-    ("status", 90),
+    ("status", 110),
     ("status_date", 95),
     ("applied_date", 95),
     ("days", 46),

@@ -16,6 +16,7 @@ from PySide6 import QtCore
 
 from jobsdata import COLUMN_LABELS
 from qt import theme
+from qt.delegates import TAG_ROLE
 
 # Columns whose values sort numerically rather than as text.
 NUMERIC_COLS = {
@@ -39,6 +40,10 @@ class JobsTableModel(QtCore.QAbstractTableModel):
         self._col_lists: list[list[str]] = []
         self._ids: list[str] = []
         self._tags: list[str] = []
+        # Paint-time tags for the delegate (TAG_ROLE). Same as _tags except a
+        # "skip" reco gets the neutral "Don't consider" tint on the high tab —
+        # _tags/row_tag()/BackgroundRole keep the legacy "" there (test-pinned).
+        self._paint_tags: list[str] = []
         self._nrows = 0
 
     # ---- population ----------------------------------------------------------
@@ -50,6 +55,7 @@ class JobsTableModel(QtCore.QAbstractTableModel):
         self._nrows = n
         if df is None or df.empty:
             self._col_lists, self._ids, self._tags = [], [], []
+            self._paint_tags = []
         else:
             self._col_lists = [
                 df[c].astype(str).tolist() if c in df.columns else [""] * n
@@ -69,6 +75,11 @@ class JobsTableModel(QtCore.QAbstractTableModel):
                 self._row_tag(self._mode, self._ids[i], recos[i], statuses[i],
                               followups[i], rids, fids)
                 for i in range(n)
+            ]
+            self._paint_tags = [
+                tag or ("skip" if self._mode not in ("all", "tracker")
+                        and recos[i] == "skip" else "")
+                for i, tag in enumerate(self._tags)
             ]
         self.endResetModel()
 
@@ -135,6 +146,8 @@ class JobsTableModel(QtCore.QAbstractTableModel):
         if role == _BACKGROUND:
             color = theme.row_color(self._tags[r])
             return color if color.isValid() else None
+        if role == TAG_ROLE:
+            return self._paint_tags[r]
         if role == SORT_ROLE:
             val = self._col_lists[c][r]
             if self._columns[c] in NUMERIC_COLS:

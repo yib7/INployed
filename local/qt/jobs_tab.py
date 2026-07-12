@@ -15,6 +15,7 @@ from PySide6 import QtCore, QtWidgets
 import jobsdata
 from jobsdata import COLUMN_LABELS, LABEL_TO_COLUMN
 from qt import theme
+from qt.delegates import JobRowDelegate
 from qt.jobs_model import SORT_ROLE, JobsTableModel
 from qt.widgets import ColorLegend
 from seen_db import APP_STATUSES
@@ -120,12 +121,24 @@ class JobsTab(QtWidgets.QWidget):
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table.setAlternatingRowColors(True)
+        # The delegate owns ALL cell painting (category tint + selection lines +
+        # stripes + badges/pills) — zebra and the native grid are off so nothing
+        # paints over its layers; hover events reach it via WA_Hover.
+        self.table.setItemDelegate(JobRowDelegate(
+            self.col_ids,
+            kind="tracker" if self.table_key == "tracker" else "jobs",
+            parent=self.table))
+        self.table.setAlternatingRowColors(False)
+        self.table.setShowGrid(False)
+        self.table.viewport().setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_Hover, True)
+        theme.register_table(self.table)
         self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
         self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.doubleClicked.connect(self._on_double_click)
+        self.table.clicked.connect(self._on_click)
         self.table.selectionModel().selectionChanged.connect(self._on_select)
         self.table.setSortingEnabled(True)
         # Start in the model's default order (sort_query); a header click sorts.
@@ -333,6 +346,16 @@ class JobsTab(QtWidgets.QWidget):
 
     def _on_double_click(self, index) -> None:
         jid = self.model.job_id(self.proxy.mapToSource(index).row())
+        if jid:
+            self._on_open_url(jid)
+
+    def _on_click(self, index) -> None:
+        """A single click on the url column ("Open ↗") opens the job — the raw
+        URL is never shown; double-click anywhere still opens it too."""
+        src = self.proxy.mapToSource(index)
+        if self.model.column_id(src.column()) != "url":
+            return
+        jid = self.model.job_id(src.row())
         if jid:
             self._on_open_url(jid)
 

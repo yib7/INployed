@@ -9,6 +9,7 @@ import pandas as pd
 from PySide6 import QtWidgets
 
 from jobsdata import STATS_COLUMNS
+from qt import theme
 from qt.jobs_model import JobsTableModel
 
 
@@ -31,7 +32,8 @@ class StatsTab(QtWidgets.QWidget):
         self.table = QtWidgets.QTableView()
         self.table.setModel(self.model)
         self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
+        self.table.setAlternatingRowColors(False)
+        theme.register_table(self.table)
         self.table.horizontalHeader().setStretchLastSection(True)
         for i, (_, w) in enumerate(STATS_COLUMNS):
             self.table.setColumnWidth(i, w)
@@ -50,7 +52,6 @@ class StatsTab(QtWidgets.QWidget):
 
     def set_freshness(self, state: str, age_hours: float) -> None:
         """Show a fresh/stale badge for the latest pipeline run."""
-        from qt import theme
         if state == "fresh":
             self.badge.setText(f"● Fresh — last run {_human_age(age_hours)}")
             color = theme.GOOD

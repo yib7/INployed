@@ -6,6 +6,53 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-12
+
+A hardening release. No new features, just bug fixes and safety guards from a code audit.
+The main one wires the VM's retention prune into the cron run so the master's
+stored descriptions stop growing without bound. The VM-side fixes take effect only after
+redeploying the scripts (and `prune_master.py`) to the VM.
+
+### Changed
+- The scraper caps its "already collected, don't re-fetch" exclude-id set to a recency
+  window (`EXCLUDE_WINDOW_DAYS`, default 90). The search only looks back 24 hours, so an
+  older id is dead weight in the trigger payload; capping the set keeps the Bright Data
+  trigger request from eventually overflowing its size limit. Windowing fails toward a
+  superset (undated rows are kept) and degrades to keep-all on any error, so it never
+  drops an id it should have excluded.
+- Both scorer system prompts (Stage 1 and Stage 2) now state that the job description is
+  untrusted data and that any instructions inside it are to be ignored, so a posting can't
+  steer the model.
+- `resume_tailor.run --csv` no longer defaults to a hardcoded drive path. It resolves the
+  master from your synced Drive folder or the repo root, and asks for an explicit `--csv`
+  with a clear message when it can't find one, so the CLI isn't tied to one machine.
+- Smaller cleanups: the company blocklist is read once per master rewrite instead of once
+  per chunk; a dead branch was removed from the key-pool selector; unused engine-label
+  maps were deleted; and the apply-flow test fixtures use a synthetic identity, so no
+  personal data ships in the public tree.
+
+### Fixed
+- The VM retention prune is now actually run. `prune_master.py` was written and tested but
+  nothing ever invoked it, so the master's stored HTML descriptions grew without bound.
+  `run_scraper.sh` now runs it after scoring, best-effort so a prune problem never fails
+  the run.
+- `update_master_scores` raises a clear, actionable error when the existing master is
+  unreadable, matching the scraper and merge paths, instead of a raw pandas error thrown
+  after the scored file was already written. It also reads the `1.0` and trailing-space
+  spellings of `filtered_out` as filtered, so those rows stop being re-scored on every run.
+- The key pool rolls its per-day usage counters over at Pacific midnight. A run that
+  crossed midnight kept counting against the previous day, so it under-used the free-tier
+  quota and spilled to paid Vertex; it now reloads the day's state and attributes usage to
+  the right date.
+- The apply queue orders blank-`queued_at` entries fairly. A hand-edited or pre-schema
+  entry now sorts last instead of jumping ahead of genuinely older queued jobs.
+- The watcher validates the shape of `state.json` before using it, so a bad hand-edit
+  can't brick scheduled runs, and it writes one config key at a time to avoid a
+  lost-update race with the dashboard.
+- Every mid-run pipeline write goes through a temp file and an atomic replace, so a crash
+  partway through can't leave a half-written master or state file. The incoming-merge step
+  also no longer aborts the day's run when it can't delete an already-merged incoming file.
+
 ## [1.5.0] - 2026-07-12
 
 The biggest release since 1.0: an optional **Claude subscription backend** for résumé
@@ -307,7 +354,9 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/yib7/INployed/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/yib7/INployed/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/yib7/INployed/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/yib7/INployed/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/yib7/INployed/compare/v1.1.2...v1.2.0

@@ -6,6 +6,11 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-12
+
+A visual release: the dashboard gets a full token-driven restyle. No pipeline, scoring, or
+résumé-engine behavior changes; the `.env` keys and config schema are untouched.
+
 ### Changed
 - Dashboard restyle: a token-driven dark theme (`local/qt/theme.py`) with named
   surfaces/borders/semantic colors, a type-role scale (multipliers of the live base size,
@@ -23,6 +28,10 @@ All notable changes to INployed are recorded here. The format follows
 
 ### Removed
 - The old plain-text `ScorePreview` pane (replaced by the job detail card).
+
+### Docs
+- README screenshot and demo GIF regenerated for the restyled UI, and the feature
+  descriptions (job detail card, status chips, identity strip) updated to match.
 
 ## [1.5.1] - 2026-07-12
 
@@ -372,7 +381,8 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/yib7/INployed/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/yib7/INployed/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/yib7/INployed/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/yib7/INployed/compare/v1.3.0...v1.4.0

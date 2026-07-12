@@ -28,20 +28,20 @@ Generated 2026-07-05.
 - **Name:** Jane Doe
 - **Email:** jane.doe@example.com
 - **Phone:** 555-555-0100
-- **Location:** Anytown, VA
-- **LinkedIn:** https://linkedin.com/in/Jane
-- **GitHub / Portfolio:** https://github.com/yib7
+- **Location:** Anytown, CA
+- **LinkedIn:** https://linkedin.com/in/janedoe
+- **GitHub / Portfolio:** https://github.com/janedoe
 
 ### Address
-- **Full:** 123 Main Street, Anytown, Virginia ST 00000, United States
+- **Full:** 123 Main Street, Anytown, California 12345, United States
 - **Street:** 123 Main Street
 - **City:** Anytown
-- **State / Province:** Virginia
-- **ZIP / Postal:** ST 00000
+- **State / Province:** California
+- **ZIP / Postal:** 12345
 - **Country:** United States
 
 ## Education
-- College of William & Mary — B.S. Computer Science
+- State University — B.S. Computer Science
 
 ## Standard answers
 - **Are you legally authorized to work in the US?** Yes
@@ -76,8 +76,8 @@ def test_parse_candidate_block():
     assert c["name"] == "Jane Doe"
     assert c["email"] == "jane.doe@example.com"
     assert c["phone"] == "555-555-0100"
-    assert c["linkedin"] == "https://linkedin.com/in/Jane"
-    assert c["github / portfolio"] == "https://github.com/yib7"
+    assert c["linkedin"] == "https://linkedin.com/in/janedoe"
+    assert c["github / portfolio"] == "https://github.com/janedoe"
 
 
 def test_parse_address_block():
@@ -85,7 +85,7 @@ def test_parse_address_block():
     a = p["address"]
     assert a["country"] == "United States"
     assert a["street"] == "123 Main Street"
-    assert a["zip / postal"] == "ST 00000"
+    assert a["zip / postal"] == "12345"
 
 
 def test_parse_standard_answers_keep_question_text():

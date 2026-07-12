@@ -679,7 +679,7 @@ def test_build_context_resolves_inbox_from_signup_domain(tmp_path, monkeypatch):
     even though the single inbox_url is absent (would otherwise default to Gmail)."""
     from resume_tailor import assets
     monkeypatch.setattr(assets, "load_master",
-                        lambda: {"basics": {"email": "jane.doe@example.com"}})
+                        lambda: {"basics": {"email": "me@wm.edu"}})
     monkeypatch.setattr(apply_queue, "CONFIG_JSON", tmp_path / "missing.json")
     ctx = apply_queue.build_context(path=_q(tmp_path))
     assert ctx["inbox_url"] == "https://outlook.office.com/mail/"

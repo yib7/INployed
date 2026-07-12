@@ -10,10 +10,12 @@ root. Idempotent (overwrites), quiet on success -- prints one summary line.
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -31,6 +33,10 @@ import pandas as pd  # noqa: E402
 from PySide6 import QtWidgets  # noqa: E402
 
 import apply_queue  # noqa: E402
+import resume_md  # noqa: E402
+import settings as _settings  # noqa: E402
+from resume_tailor import apply_answers as _apply_answers  # noqa: E402
+from resume_tailor import config as _rt_config  # noqa: E402
 from qt import theme  # noqa: E402
 from qt.jobs_tab import JobsTab  # noqa: E402
 from qt.main_window import TAB_TITLES, MainWindow  # noqa: E402
@@ -60,6 +66,16 @@ _JOBS = [
     ("j5", 3, 2.5, "consider", "yes", 8,   "BI Developer",           "Hooli"),
     ("j6", 2, 1.0, "skip",     "yes", 0,   "Junior Analyst",         "Pied Piper"),
     ("j7", 1, 0.0, "skip",     "no",  240, "Sales Engineer",         "Vandelay Industries"),
+    # Extra unseen high-scorers so the High Score tab reads like a real run.
+    ("j8",  5, 9.1, "apply",    "no", 5,  "LLM Application Engineer", "Signalcraft AI"),
+    ("j9",  5, 8.6, "apply",    "no", 9,  "Machine Learning Engineer", "Helios Data Labs"),
+    ("j10", 5, 8.2, "apply",    "no", 14, "Applied Scientist",        "Vectorly"),
+    ("j11", 4, 7.7, "apply",    "no", 18, "Data Platform Engineer",   "Copperleaf Systems"),
+    ("j12", 4, 7.3, "apply",    "no", 26, "ML Engineer, Ranking",     "Umbra Analytics"),
+    ("j13", 4, 6.9, "consider", "no", 33, "Decision Scientist",       "Aurora Insights"),
+    ("j14", 4, 6.4, "consider", "no", 41, "NLP Engineer",             "Larkspur Bio"),
+    ("j15", 4, 6.1, "consider", "no", 64, "GenAI Engineer",           "Sundial Commerce"),
+    ("j16", 4, 5.8, "consider", "no", 88, "Quantitative Analyst",     "Quanta Metrics"),
 ]
 
 
@@ -146,9 +162,73 @@ def _queue_jobs() -> list[dict]:
     return entries
 
 
+def _write_run_stats(path: Path) -> None:
+    """Synthetic run_stats.csv so the Stats tab + freshness chip render populated."""
+    cols = ["timestamp", "input_csv", "rows_in", "filtered_out", "llm_scored",
+            "llm_errors", "stage2_done", "rescore_attempted", "rescore_scored",
+            "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls"]
+    now = datetime.now()
+    rows = []
+    for i in range(6, -1, -1):  # 7 runs, oldest first, newest ~3h ago
+        ts = now - timedelta(hours=3 + 12 * i)
+        rows.append({
+            "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%S"),
+            "input_csv": f"synthetic_run_{7 - i}.csv",
+            "rows_in": 140 + 9 * i, "filtered_out": 96 + 7 * i,
+            "llm_scored": 44 + 2 * i, "llm_errors": 0,
+            "stage2_done": 11 + i, "rescore_attempted": 2, "rescore_scored": 2,
+            "llm_calls": 46 + 2 * i, "prompt_tokens": 118_000 + 4_000 * i,
+            "output_tokens": 9_200 + 300 * i, "free_calls": 30, "vertex_calls": 16 + 2 * i,
+        })
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        w.writerows(rows)
+
+
 def _write_queue(path: Path, jobs: list[dict]) -> None:
     path.write_text(json.dumps({"version": 1, "jobs": jobs}, indent=1),
                     encoding="utf-8")
+
+
+def _sanitize_personal_tabs(tmp_dir: Path) -> None:
+    """Point the Resume Data + Apply Answers editors at fictional files so no
+    real personal data (the user's yaml / answer store) can appear in a grab."""
+    example = REPO / "resume_tailor_files" / "master_experience.example.yaml"
+    synth_yaml = tmp_dir / "master_experience.yaml"
+    synth_yaml.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    _rt_config.MASTER_YAML = synth_yaml
+    resume_md.MASTER_YAML_PATH = synth_yaml
+    store = tmp_dir / "apply_answers.json"
+    answers = _apply_answers.load_with_defaults(path=store)  # defaults only
+    fictional = {
+        "years_experience": "3", "street_address": "100 Example Street",
+        "city": "Springfield", "state": "Illinois", "zip": "00000",
+        "country": "United States", "how_heard": "LinkedIn",
+    }
+    for e in answers:
+        if e["id"] in fictional:
+            e["answer"] = fictional[e["id"]]
+    _apply_answers.save(answers, path=store)
+    _apply_answers.STORE_PATH = store
+    # Settings tab: read every backing file from the temp dir, never the real
+    # .env / config.json (keeps project ids, names, and machine paths out).
+    env_path = tmp_dir / ".env"
+    env_path.write_text(
+        "BRIGHT_DATA_API_TOKEN=synthetic-placeholder-token\n"
+        "BRIGHT_DATA_DATASET_ID=gd_exampledataset0001\n"
+        "GEMINI_API_KEYS=synthetic-placeholder-key\n"
+        "GOOGLE_CLOUD_PROJECT=example-project\n"
+        "RESUME_TAILOR_CANDIDATE=Jane_Doe\n"
+        "RESUME_TAILOR_OUTPUT=C:/Users/jane/Downloads/Generated_Resumes\n",
+        encoding="utf-8")
+    for target in list(_settings.TARGET_FILES):
+        if target == "env":
+            _settings.TARGET_FILES[target] = env_path
+        else:
+            p = tmp_dir / f"synthetic_{target}.json"
+            p.write_text("{}", encoding="utf-8")
+            _settings.TARGET_FILES[target] = p
 
 
 def _registry(resume_dir: Path) -> MagicMock:
@@ -208,6 +288,7 @@ def main() -> int:
     os.environ["APPLY_QUEUE_PATH"] = str(queue_path)
     resume_dir = tmp_dir / "resume_j1"
     resume_dir.mkdir()
+    _sanitize_personal_tabs(tmp_dir)
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     theme.apply_theme(app)
@@ -223,16 +304,21 @@ def main() -> int:
     # app uses so high/all/tracker/stats all refresh consistently.
     win.min_score = 4
     win.df = _jobs_df()
+    # Point the Stats tab at a synthetic run_stats.csv (never the user's real
+    # Drive folder -- pin the root resolver to the temp dir) so the metrics
+    # table and the "Fresh" chip render instead of the not-synced placeholder.
+    _write_run_stats(tmp_dir / "run_stats.csv")
+    from qt import main_window as _mw  # noqa: E402
+    _mw.gdrive_root_dir = lambda _paths: tmp_dir
     win._apply_df_views()
+    win._refresh_stats()
     _write_queue(queue_path, _queue_jobs())
     win.apply_queue_panel.refresh()
     _select_row0(win)
     app.processEvents()
     written += _capture_all(app, win, prefix, "", SCALES)
 
-    # Note limits of the offscreen capture rather than pretending otherwise.
-    print(f"{written} PNG(s) written to {OUT_DIR} (prefix '{prefix}'). "
-          "Stats tab shows its placeholder (no run_stats.csv in synthetic mode).")
+    print(f"{written} PNG(s) written to {OUT_DIR} (prefix '{prefix}').")
     return 0
 
 

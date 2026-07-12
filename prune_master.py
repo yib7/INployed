@@ -34,8 +34,13 @@ def _aged_mask(chunk: pd.DataFrame, cutoff) -> pd.Series:
 
 def _needs_rescore(chunk: pd.DataFrame) -> pd.Series:
     score = pd.to_numeric(chunk.get("score"), errors="coerce")
+    # Accept the historical float-upcast ("1.0") and trailing-space ("True ")
+    # spellings too (a .strip()-normalised, false-family-safe set), else those
+    # rows read as NOT filtered and get re-parked/retried forever. Keep IDENTICAL
+    # to score_jobs.rows_needing_rescore.
     filtered = (chunk.get("filtered_out", pd.Series(False, index=chunk.index))
-                .fillna(False).astype(str).str.lower().isin(("true", "1", "yes")))
+                .fillna(False).astype(str).str.strip().str.lower()
+                .isin(("true", "1", "1.0", "yes")))
     return score.isna() & ~filtered
 
 def prune(master_csv: Path, *, retention_days=RETENTION_DAYS, now=None,

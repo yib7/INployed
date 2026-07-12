@@ -30,7 +30,6 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Optional
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: no console flash
 DEFAULT_TIMEOUT_S = 180
@@ -51,7 +50,7 @@ class ClaudeCLIError(RuntimeError):
         self.kind = kind
 
 
-def find_claude() -> Optional[str]:
+def find_claude() -> str | None:
     """Path to the `claude` executable, or None if not on PATH.
 
     `shutil.which` resolves `claude.cmd` / `claude.exe` on Windows and the
@@ -60,7 +59,7 @@ def find_claude() -> Optional[str]:
     return shutil.which("claude")
 
 
-def is_rate_limit_message(text: Optional[str]) -> bool:
+def is_rate_limit_message(text: str | None) -> bool:
     """True if `text` looks like a Claude Code usage/rate-limit message."""
     t = (text or "").lower()
     return any(

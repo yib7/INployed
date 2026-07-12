@@ -352,6 +352,19 @@ def claude_model_for(tier: str) -> str:
     return os.getenv(env, default) if env else default
 
 
+def _parse_timeouts(raw: str, default: list[int]) -> list[int]:
+    """Parse comma-separated timeout values from a string. Returns default if
+    parsing fails or produces no positive values."""
+    if not raw or not raw.strip():
+        return default
+    try:
+        vals = [int(x.strip()) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        return default
+    vals = [v for v in vals if v > 0]
+    return vals if vals else default
+
+
 def claude_timeout_schedule() -> list[int]:
     """Escalating per-attempt Claude CLI timeouts, default [180, 300] (CLI
     cold-start + opus latency; Gemini's 60s first slot would burn attempts).
@@ -374,19 +387,6 @@ def model_for(tier: str) -> str:
     unrecognized tier falls back to the flash model."""
     env, default = _TIER_ENV.get(tier, (None, MODEL_FLASH))
     return os.getenv(env, default) if env else default
-
-
-def _parse_timeouts(raw: str, default: list[int]) -> list[int]:
-    """Parse comma-separated timeout values from a string. Returns default if
-    parsing fails or produces no positive values."""
-    if not raw or not raw.strip():
-        return default
-    try:
-        vals = [int(x.strip()) for x in raw.split(",") if x.strip()]
-    except ValueError:
-        return default
-    vals = [v for v in vals if v > 0]
-    return vals if vals else default
 
 
 def tailor_timeout_schedule() -> list[int]:

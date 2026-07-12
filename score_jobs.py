@@ -390,7 +390,13 @@ def make_pool():
                   "(VM/standalone install?) -- falling back to Gemini.")
         else:
             if claude_cli.find_claude() is not None:
-                timeout_s = int(os.environ.get("SCORE_CLAUDE_TIMEOUT_S", "240"))
+                raw_timeout = os.environ.get("SCORE_CLAUDE_TIMEOUT_S", "240")
+                try:
+                    timeout_s = int(raw_timeout)
+                except ValueError:
+                    print(f"Ignoring invalid SCORE_CLAUDE_TIMEOUT_S={raw_timeout!r} "
+                          "-- using 240s.")
+                    timeout_s = 240
                 return claude_cli.ClaudePool(
                     timeout_s=timeout_s,
                     max_procs=max(STAGE1_CONCURRENCY, STAGE2_CONCURRENCY))

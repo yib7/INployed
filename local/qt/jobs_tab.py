@@ -70,7 +70,7 @@ class JobsTab(QtWidgets.QWidget):
         layout.addLayout(bar)
 
         self.search = QtWidgets.QLineEdit()
-        self.search.setPlaceholderText("Search title / company / URL...")
+        self.search.setPlaceholderText("Search title / company…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._debounced_filter)
         bar.addWidget(QtWidgets.QLabel("Search:"))
@@ -455,10 +455,10 @@ def legend_items_for(table_key: str):
         ]
     return [
         (theme.ROW_APPLY, "Apply"),
-        (theme.ROW_HAS_RESUME, "Tailored (resume ready)"),
-        (theme.ROW_TAILOR_FAILED, "Tailor failed (re-run)"),
+        (theme.ROW_HAS_RESUME, "Tailored — resume ready"),
+        (theme.ROW_TAILOR_FAILED, "Tailor failed — re-run"),
         (theme.ROW_CONSIDER, "Consider"),
-        (theme.SURFACE, "Don't consider"),
+        (theme.ROW_SKIP, "Don't consider"),
     ]
 
 

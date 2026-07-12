@@ -40,9 +40,9 @@ UI_LOCK = APPDATA / "ui.lock"
 # polished instead of exposing raw snake_case field names.
 COLUMN_LABELS = {
     "score": "Score", "deep_score": "Deep", "recommendation": "Reco",
-    "applicants": "Applicants", "is_seen": "Seen", "extracted_date": "Scraped",
+    "applicants": "Applicants", "is_seen": "Seen", "extracted_date": "Found",
     "run_label": "Run", "job_title": "Title", "company_name": "Company",
-    "job_location": "Location", "url": "URL", "job_posted_date": "Posted",
+    "job_location": "Location", "url": "Link", "job_posted_date": "Posted",
     "status": "Status", "status_date": "Updated", "applied_date": "Applied",
     "days": "Days", "follow_up": "Follow-up", "resume": "Resume",
     "source": "Source",

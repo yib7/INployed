@@ -101,7 +101,7 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("stale_after_hours", "Flag data as stale after (hours)", "int", 36,
           "Dashboard", "config",
           help="The Stats tab warns that the pipeline may have failed when the newest run is "
-               "older than this. The cloud scraper runs a few times a day, so 36h means a missed "
+               "older than this. Discovery runs a few times a day, so 36h means a missed "
                "day stands out.", min=6, max=336),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
@@ -245,15 +245,15 @@ SETTINGS_SCHEMA: list[Field] = [
     # secret=True fields show their saved value in the GUI (read straight from the
     # local .env) and write whatever the box holds — clearing it removes the key.
     # Field.key is the exact environment-variable name the pipeline reads.
-    Field("BRIGHT_DATA_API_TOKEN", "Bright Data API token", "str", "",
+    Field("BRIGHT_DATA_API_TOKEN", "Job-data API token", "str", "",
           "Credentials", "env", secret=True, optional=True,
-          help="Needed to run the scraper. Bright Data dashboard - Account settings - API tokens."),
-    Field("BRIGHT_DATA_DATASET_ID", "Bright Data dataset ID", "str", "",
+          help="Needed for job discovery. Create one in your job-data API dashboard - API tokens."),
+    Field("BRIGHT_DATA_DATASET_ID", "Job-data dataset ID", "str", "",
           "Credentials", "env", optional=True,
-          help="The id of your LinkedIn-jobs dataset in Bright Data (not secret - an identifier)."),
+          help="The job-postings dataset to query - an identifier, not a secret."),
     Field("GEMINI_API_KEYS", "Gemini API keys (job scorer)", "str", "",
           "Credentials", "env", secret=True, optional=True,
-          help="Powers the JOB SCORER, which rates every scraped job. A pool of one or more keys, "
+          help="Powers the JOB SCORER, which rates every collected job. A pool of one or more keys, "
                "comma-separated with no spaces, that it rotates through to spread rate limits. This "
                "is SEPARATE from the resume-tailor key below. Get keys at aistudio.google.com; leave "
                "blank to score with your Google Cloud project instead."),
@@ -334,19 +334,19 @@ SETTINGS_SCHEMA: list[Field] = [
     # vm_enabled is the section master switch (local, non-secret bool in config.json):
     # off (the default) hides the whole VM area in the GUI and silences push prompts.
     Field("vm_enabled", "Enable VM features", "bool", False, "VM (cloud scraper)", "config",
-          help="Turn on to manage a cloud scraper VM from here (schedule, pause, push config). "
+          help="Turn on to manage a cloud job-discovery VM from here (schedule, pause, push config). "
                "Off hides all VM settings and never prompts to push — leave off if you don't use a VM."),
     Field("VM_INSTANCE", "VM instance name", "str", "", "VM (cloud scraper)", "env",
           optional=True,
-          help="GCP instance running the scraper (e.g. scraper-vm). Blank = VM actions disabled."),
+          help="GCP instance that runs job discovery (e.g. scraper-vm). Blank = VM actions disabled."),
     Field("VM_ZONE", "VM zone", "str", "", "VM (cloud scraper)", "env", optional=True,
           help="Compute zone, e.g. us-east1-c."),
     Field("VM_PROJECT", "GCP project", "str", "", "VM (cloud scraper)", "env", optional=True,
           help="GCP project id the instance lives in (optional if gcloud has a default)."),
     Field("VM_USER", "VM Linux user", "str", "", "VM (cloud scraper)", "env", optional=True,
-          help="Linux account on the VM that owns the scraper (run_scraper.sh, crontab, data)."),
+          help="Linux account on the VM that owns the discovery run (run_scraper.sh, crontab, data)."),
     Field("VM_REMOTE_DIR", "VM home dir", "str", "~", "VM (cloud scraper)", "env",
-          help="Remote dir the scraper files live in. Usually ~ (the Linux user's home)."),
+          help="Remote dir the discovery files live in. Usually ~ (the Linux user's home)."),
     Field("VM_GCLOUD_PATH", "gcloud path", "path", "gcloud", "VM (cloud scraper)", "env",
           path_kind="file", optional=True,
           help="Path to the gcloud CLI. Leave as 'gcloud' if it's on your PATH."),

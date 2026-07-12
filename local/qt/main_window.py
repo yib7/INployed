@@ -1295,7 +1295,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "scored, so they never appeared in the dashboard:\n\n"
             f"{names}\n\n"
             "Score them now? This only runs the scoring step (Gemini) — it does "
-            "not collect new jobs and costs no scraping credits.",
+            "not collect new jobs and costs no discovery credits.",
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.Yes)

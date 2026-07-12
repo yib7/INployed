@@ -6,6 +6,24 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Dashboard restyle: a token-driven dark theme (`local/qt/theme.py`) with named
+  surfaces/borders/semantic colors, a type-role scale (multipliers of the live base size,
+  so the Interface size slider keeps working), and a custom table delegate that paints
+  category row tints, selection lines, score badges, deep-score mini-bars, status pills,
+  and "Open ↗" links. New identity strip (job/unseen/tracked counts + freshness), job
+  detail card with strengths/gaps columns and a collapsed description toggle, tracker
+  pipeline chips, a restyled auto-apply panel, and card-style Settings sections with
+  secrets masked by default.
+- UI copy pass: vendor-neutral wording throughout (job "discovery" instead of
+  scraper/vendor names — settings labels, help text, and dialogs; the underlying `.env`
+  keys and config schema are unchanged), "Found"/"Link" column headers (were
+  "Scraped"/"URL"), clearer High Score legend labels including a neutral "Don't consider"
+  swatch, and a shorter search placeholder.
+
+### Removed
+- The old plain-text `ScorePreview` pane (replaced by the job detail card).
+
 ## [1.5.1] - 2026-07-12
 
 A hardening release. No new features, just bug fixes and safety guards from a code audit.

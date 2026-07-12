@@ -2,8 +2,8 @@
 
 Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
-checkboxes / multiline list / path+Browse / credential (shown, with a Hide
-toggle) / entry), a muted "(filename)" storage tag, a collapsible VM section
+checkboxes / multiline list / path+Browse / credential (masked by default, with
+a Hide toggle) / entry), a muted "(filename)" storage tag, a collapsible VM section
 gated by a master checkbox, and Save / Revert changes / Restore from archive /
 Restore defaults. Save validates via `settings.validate`/`settings.save`, reports
 a changed-field summary, and never echoes a secret value into that summary.
@@ -21,9 +21,9 @@ from qt import theme
 from qt.widgets import CollapsibleSection
 
 SECTION_HELP = {
-    "Credentials": ("API keys and tokens, saved to your private .env file on this PC. The saved "
-                    "value is shown here so you can check it without opening the file — edit it to "
-                    "change it, clear the box to remove it, or tick Hide to mask it from view."),
+    "Credentials": ("API keys and tokens, saved to your private .env file on this PC. Saved "
+                    "values are masked by default — untick Hide to reveal one, edit it to "
+                    "change it, or clear the box to remove it."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
     "Engine": "Which Gemini backend the resume tailor bills.",
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
@@ -57,7 +57,7 @@ SECTION_DISPLAY = {
 # Short one-liners shown next to each section header — always visible, even when the
 # section is collapsed, so a user knows what to expand without clicking through.
 SECTION_TAGLINE = {
-    "Credentials": "API keys & tokens",
+    "Credentials": "API keys & tokens — saved to your private .env file on this PC",
     "Connection & paths": "Project, your name, file locations",
     "Engine": "Which Gemini backend the tailor bills",
     "Dashboard": "How jobs are surfaced & tracked",

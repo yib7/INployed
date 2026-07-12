@@ -19,7 +19,7 @@ pypdf==6.14.2
 PyYAML==6.0.3
 ruamel.yaml==0.19.1
 python-dotenv==1.2.2   # auto-loads .env so secrets stay out of the repo
-tzdata==2026.2         # IANA tz database for zoneinfo on Windows (Pacific RPD reset)
+tzdata==2026.3         # IANA tz database for zoneinfo on Windows (Pacific RPD reset); data refresh 2026-07-12
 
 # desktop UI (local dashboard); abi3 wheels run on Python 3.14
 PySide6==6.11.1

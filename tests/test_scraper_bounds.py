@@ -56,21 +56,107 @@ def _master(tmp_path, *ids):
     return master
 
 
-def test_load_exclude_ids_returns_every_master_id(monkeypatch, tmp_path):
-    # Hard cost guard: an already-scraped posting must NEVER be re-collected or
-    # re-billed, no matter how long ago it was scraped. load_exclude_ids returns
-    # every master id — years-old, recent, and undated alike — not just a window.
+def _days_ago(n: int) -> str:
+    """An extracted_date string (YYYY-MM-DD, matching scraper.py's own format) n
+    days before now — used so recency tests never rot as the calendar advances."""
+    return (pd.Timestamp.now() - pd.Timedelta(days=n)).strftime("%Y-%m-%d")
+
+
+def _dated_master(tmp_path, rows):
+    """A master from (id, extracted_date) pairs; an empty date -> an undated row."""
     master = tmp_path / "linkedin_jobs_master.csv"
-    master.write_text(
-        "job_posting_id,extracted_date\n"
-        "old,2020-01-01\n"
-        "recent,2026-06-23\n"
-        "undated,\n",
-        encoding="utf-8",
-    )
+    body = "job_posting_id,extracted_date\n" + "".join(f"{jid},{dt}\n" for jid, dt in rows)
+    master.write_text(body, encoding="utf-8")
+    return master
+
+
+def test_load_exclude_ids_windows_out_stale_ids(monkeypatch, tmp_path):
+    # P1-2 step 2: the search filter is time_range="Past 24 hours", so a posting
+    # scraped long ago can't reappear -- keeping its id in the exclude set is pure
+    # payload that eventually overflows Bright Data's trigger-POST size limit. So a
+    # far-past id is DROPPED, while a recent id (still re-collectable) and an undated
+    # row (treated as recent -- superset fail direction) are kept.
+    master = _dated_master(tmp_path, [
+        ("old", _days_ago(400)),
+        ("recent", _days_ago(3)),
+        ("undated", ""),
+    ])
     monkeypatch.setattr(scraper, "MASTER_CSV", master)
     monkeypatch.setattr(scraper, "EXTERNAL_EXCLUDE_FILE", tmp_path / "external_exclude_ids.json")
-    assert set(scraper.load_exclude_ids()) == {"old", "recent", "undated"}
+    monkeypatch.delenv(scraper.EXTRA_MASTER_ENV, raising=False)
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert set(scraper.load_exclude_ids()) == {"recent", "undated"}
+
+
+def test_master_ids_excludes_stale_keeps_recent(monkeypatch, tmp_path):
+    # _master_ids applies the same window: a far-past id is gone, a recent one stays.
+    monkeypatch.setattr(scraper, "MASTER_CSV",
+                        _dated_master(tmp_path, [("old", _days_ago(365)), ("recent", _days_ago(1))]))
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    ids = set(scraper._master_ids())
+    assert "recent" in ids
+    assert "old" not in ids
+
+
+def test_master_ids_keeps_undated_row(monkeypatch, tmp_path):
+    # Superset-fail rule: a row whose extracted_date is missing/unparseable (NaT) is
+    # KEPT -- an undated id is treated as recent so we never under-exclude and re-bill.
+    monkeypatch.setattr(scraper, "MASTER_CSV",
+                        _dated_master(tmp_path, [("undated", ""), ("garbage", "not-a-date")]))
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert set(scraper._master_ids()) == {"undated", "garbage"}
+
+
+def test_master_ids_no_extracted_date_column_keeps_all(monkeypatch, tmp_path):
+    # A master with NO extracted_date column at all can't be windowed -> degrade to the
+    # pre-window keep-ALL behavior (never silently empty the exclude set).
+    master = tmp_path / "linkedin_jobs_master.csv"
+    master.write_text("job_posting_id\na\nb\nc\n", encoding="utf-8")
+    monkeypatch.setattr(scraper, "MASTER_CSV", master)
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert set(scraper._master_ids()) == {"a", "b", "c"}
+
+
+def test_exclude_window_days_env_override_changes_cutoff(monkeypatch, tmp_path):
+    # A 30-day-old id is inside the default 90-day window (kept) but outside a
+    # 10-day override window (dropped) -- proving the env var moves the cutoff.
+    monkeypatch.setattr(scraper, "MASTER_CSV", _dated_master(tmp_path, [("mid", _days_ago(30))]))
+
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert set(scraper._master_ids()) == {"mid"}          # default 90 -> kept
+
+    monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", "10")
+    assert scraper._master_ids() == []                    # window 10 -> dropped
+
+
+def test_exclude_window_days_default_and_env(monkeypatch):
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert scraper.exclude_window_days() == 90            # default
+    monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", "30")
+    assert scraper.exclude_window_days() == 30            # honored
+
+
+def test_exclude_window_days_invalid_falls_back_to_default(monkeypatch):
+    # A garbage / non-positive value must never empty the window (that would re-bill
+    # every posting) -- it falls back to the safe default instead.
+    for bad in ("banana", "0", "-5", ""):
+        monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", bad)
+        assert scraper.exclude_window_days() == 90
+
+
+def test_load_extra_master_ids_windows_stale(monkeypatch, tmp_path):
+    # The extra (synced Drive) master is windowed the same way _master_ids is.
+    extra = tmp_path / "drive_master.csv"
+    extra.write_text(
+        "job_posting_id,extracted_date\n"
+        f"xold,{_days_ago(200)}\n"
+        f"xnew,{_days_ago(2)}\n"
+        "xun,\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(extra))
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert set(scraper.load_extra_master_ids()) == {"xnew", "xun"}
 
 
 def test_load_exclude_ids_unions_external_file(monkeypatch, tmp_path):

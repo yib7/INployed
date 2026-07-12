@@ -205,8 +205,10 @@ def test_main_window_has_queue_button_tab_and_wiring(qtbot, monkeypatch, tmp_pat
     texts = [bar.itemAt(i).widget().text() for i in range(bar.count())
              if isinstance(bar.itemAt(i).widget(), QtWidgets.QPushButton)]
     assert "Queue auto-apply" in texts
-    # the button sits beside Apply (immediately before it)
-    assert texts.index("Queue auto-apply") == texts.index("Apply") - 1
+    # Apply moved onto the job detail card (restyle 3c); Queue auto-apply sits
+    # immediately before the bar's primary (Find new jobs).
+    assert "Apply" not in texts
+    assert texts.index("Queue auto-apply") == texts.index("Find new jobs") - 1
     assert "Auto-apply" in w.tab_titles()
     assert isinstance(w._tab_widgets["Auto-apply"], ApplyQueuePanel)
     # every jobs tab fires the queue callback (context-menu wiring)

@@ -126,7 +126,7 @@ def test_scale_bar_and_restart_live_in_one_bottom_action_bar(qtbot):
     scale_holder = w._scale_slider.parentWidget()
     assert scale_holder in bar_widgets                     # scale lives in the action bar
     texts = [x.text() for x in bar_widgets if isinstance(x, QtWidgets.QPushButton)]
-    assert "Restart" in texts and "Tailor resume" in texts  # one bar holds both
+    assert "Restart" in texts and "Find new jobs" in texts  # one bar holds both
     # the steppers use plain ASCII - / + symbols
     step_texts = {b.text() for b in scale_holder.findChildren(QtWidgets.QPushButton)}
     assert "-" in step_texts and "+" in step_texts
@@ -358,16 +358,21 @@ def test_apply_work_opens_url(qtbot, monkeypatch):
     assert opened == ["https://x/1"]
 
 
-def test_apply_button_is_rightmost(qtbot):
-    # Apply is the last of the job-action buttons. A separator then the utility
-    # cluster (interface size + Restart) follows it in the same bottom bar.
+def test_bar_primary_is_find_new_jobs_and_apply_lives_on_card(qtbot):
+    # Restyle 3c: Tailor/Apply moved onto the job detail card (same object
+    # identities via the btn_tailor/btn_apply aliases); the bottom bar's
+    # rightmost job action — and its primary — is now Find new jobs. A
+    # separator then the utility cluster (interface size + Restart) follows.
     w = _win(qtbot)
     items = [w._action_bar.itemAt(i).widget() for i in range(w._action_bar.count())]
     # the VLine separator is a plain QFrame (QLabel also subclasses QFrame, so match
     # the exact type) that splits the job actions from the utility cluster.
     sep_idx = next(i for i, x in enumerate(items) if type(x) is QtWidgets.QFrame)
     action_btns = [b for b in items[:sep_idx] if isinstance(b, QtWidgets.QPushButton)]
-    assert action_btns[-1].text() == "Apply"
+    assert action_btns[-1].text() == "Find new jobs"
+    assert action_btns[-1].property("accent") is True
+    assert w.btn_apply is w.preview.apply_btn      # identity preserved on the card
+    assert w.btn_tailor is w.preview.tailor_btn
 
 
 def test_apply_button_disabled_without_resume(qtbot):

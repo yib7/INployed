@@ -301,3 +301,50 @@ def test_usage_state_save_content_round_trips(tmp_path):
     assert on_disk["date"] == st.date
     assert on_disk["usage"]["fpA:gemini-3.5-flash"] == 2
     assert on_disk["usage"]["fpB:gemini-3.1-flash-lite"] == 500
+
+
+# --- P2-4: RPD state must roll over at Pacific midnight mid-process ----------
+
+def test_select_frees_exhausted_key_after_pacific_midnight(tmp_path, monkeypatch):
+    # A long-running process that crosses midnight Pacific: a key exhausted on
+    # day D must become selectable on D+1 (real Gemini quota reset), without
+    # restarting the process.
+    monkeypatch.setattr(keypool, "pacific_today", lambda: "2020-01-01")
+    free = {"client": _client(lambda *_: _resp("FREE")), "kind": "free", "fp": "fp1"}
+    pool = _pool([free], tmp_path)  # state.date pinned to day D
+    assert pool._state.date == "2020-01-01"
+    pool._state.set_exhausted("fp1", FLASH, keypool.LIMITS[FLASH]["rpd"])
+    pool._state.save()
+    # Day D: no free RPD headroom, no vertex backstop -> nothing usable.
+    assert pool._select(FLASH, keypool.LIMITS[FLASH])[0] == "none"
+
+    # Cross midnight into D+1.
+    monkeypatch.setattr(keypool, "pacific_today", lambda: "2020-01-02")
+    kind, idx, _ = pool._select(FLASH, keypool.LIMITS[FLASH])
+    assert kind == "free" and idx == 0
+    # State rolled over: new day, exhausted usage cleared.
+    assert pool._state.date == "2020-01-02"
+    assert pool._state.get("fp1", FLASH) == 0
+
+
+def test_generate_rolls_over_and_attributes_usage_to_new_day(tmp_path, monkeypatch):
+    monkeypatch.setattr(keypool, "pacific_today", lambda: "2020-01-01")
+    free = {"client": _client(lambda *_: _resp("FREE")), "kind": "free", "fp": "fp1"}
+    pool = _pool([free], tmp_path)
+    pool._state.set_exhausted("fp1", FLASH, keypool.LIMITS[FLASH]["rpd"])
+    pool._state.save()
+    # Day D with the only free key exhausted and no vertex -> PoolError.
+    try:
+        asyncio.run(pool.generate(model=FLASH, contents="x", config=None))
+        assert False, "expected PoolError while exhausted on day D"
+    except keypool.PoolError:
+        pass
+
+    # New day: the same key is used again, and usage is attributed to D+1.
+    monkeypatch.setattr(keypool, "pacific_today", lambda: "2020-01-02")
+    resp = asyncio.run(pool.generate(model=FLASH, contents="x", config=None))
+    assert resp.text == "FREE"
+    assert pool.stats() == {"free_calls": 1, "vertex_calls": 0}
+    on_disk = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
+    assert on_disk["date"] == "2020-01-02"
+    assert on_disk["usage"]["fp1:" + FLASH] == 1

@@ -35,10 +35,10 @@ LIMITS: dict[str, dict[str, int]] = {
 }
 
 # Conservative gate for any model not listed above (e.g. gemini-3.1-pro-preview,
-# offered in the Settings UI dropdowns but never given explicit LIMITS). Without
-# this, _select's `limits is None` branch handed out free keys ungated, and a
-# real 429 looped with no sleep (set_exhausted was a no-op since _select never
-# checked state when limits was None).
+# offered in the Settings UI dropdowns but never given explicit LIMITS). generate
+# passes LIMITS.get(model, DEFAULT_LIMITS), so _select always has a concrete rpm/
+# rpd to gate on; without this fallback an unlisted model would go ungated and a
+# real 429 would loop with no RPD accounting.
 DEFAULT_LIMITS = {"rpm": 5, "rpd": 100}
 
 _PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -140,7 +140,7 @@ class KeyPool:
     def stats(self) -> dict:
         return {"free_calls": self._free_calls, "vertex_calls": self._vertex_calls}
 
-    def _select(self, model: str, limits: Optional[dict]) -> tuple[str, int, float]:
+    def _select(self, model: str, limits: dict) -> tuple[str, int, float]:
         """Pick a member. Returns (kind, idx, wait):
         ("free", idx, 0)   reserve and call a free key;
         ("vertex", idx, 0) use the Vertex backstop;
@@ -149,6 +149,14 @@ class KeyPool:
         Free keys are preferred; we only wait for a throttled free key or fall to
         Vertex once no free key has RPD headroom -- preserving free quota.
         """
+        # Free-tier RPD resets at midnight America/Los_Angeles. A process that
+        # runs across that boundary must roll the counters over to the new day
+        # -- reloading any state another process already wrote for today -- so
+        # keys exhausted yesterday free up and today's usage is attributed under
+        # today's date. Without this, a run started near midnight keeps counting
+        # against the old date, under-uses free quota, and spills to paid Vertex.
+        if self._state.date != pacific_today():
+            self._state.load()
         now = time.monotonic()
         soonest: Optional[float] = None
         vertex_idx: Optional[int] = None
@@ -156,8 +164,6 @@ class KeyPool:
             if m["kind"] == "vertex":
                 vertex_idx = idx
                 continue
-            if limits is None:
-                return ("free", idx, 0.0)
             if self._state.get(m["fp"], model) >= limits["rpd"]:
                 continue
             dq = self._rpm[(idx, model)]

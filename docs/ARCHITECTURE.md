@@ -22,6 +22,7 @@ A two-stage Gemini filter. Stage 1 (cheap flash-lite) does a fast relevance pass
 stage 2 (flash) deep-scores the survivors. A deterministic `min_required_years`
 regex pre-filter drops over-senior roles *before* any LLM sees them (this is the
 load-bearing, heavily-tested function; see `tests/test_min_required_years.py`).
+Locally the scorer can run through the Claude Code CLI instead (Settings → Scoring provider); the VM always scores with Gemini.
 
 ### 3. Dashboard (`local/app.py` + `local/qt/`) + résumé engine (`local/resume_tailor/`)
 PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
@@ -156,7 +157,7 @@ bullet must be traceable to a fact ("atom") the user actually wrote in
 | Module | Role |
 |--------|------|
 | `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. |
-| `llm.py` | The single Gemini transport (`call()` → `_call_gemini`). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
+| `llm.py` | The single LLM transport: Gemini (`call()` → `_call_gemini`) or the local Claude Code CLI when the provider is 'claude' (dispatch in `call()`; `claude -p` subprocess, same rate-limit budget). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
 | `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config) and the LaTeX preamble. |
 | `compose.py` | The LLM stages: `select` → `rephrase` → `compress_skills`, plus the deterministic `methods_line` (the optional 5th "Methods" skills line: concepts from the master's `concepts_and_methodologies` pool that the JD actually references, printed in the JD's own spelling on an alias hit). |
 | `layout.py` | The hard layout spec: per-bullet printed-line budgets and fill floors (single-line ≥75%, multi-line last line ≥50%), all calibrated to the template. |

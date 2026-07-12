@@ -48,7 +48,7 @@ from qt import theme, workers
 from qt.answers_tab import AnswersEditor
 from qt.apply_panel import ApplyPanel
 from qt.apply_queue_panel import ApplyQueuePanel
-from qt.chrome import IdentityStrip
+from qt.chrome import ChipBar, IdentityStrip
 from qt.detail_card import JobDetailCard
 from qt.jobs_tab import JobsTab
 from qt.manual_add_dialog import ManualAddDialog
@@ -353,7 +353,8 @@ class MainWindow(QtWidgets.QMainWindow):
             submit_write=self._submit_queue_write,
             on_set_password=self._set_ats_password,
             on_mark_applied=self._apply_queue_mark_applied,
-            on_mark_seen=self._apply_queue_mark_seen)
+            on_mark_seen=self._apply_queue_mark_seen,
+            on_answer_now=lambda: self._show_tab("Apply Answers"))
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
                  "Tracker": self.tracker_tab, "Auto-apply": self.apply_queue_panel,
@@ -460,6 +461,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # It's a filter, so it lives in the Filters popup (and counts toward the badge).
         self.tracker_tab.add_filter_row(
             self.tracker_due_only, is_active=self.tracker_due_only.isChecked)
+        # Pipeline chip bar (Phase 3d): exclusive status chips below the filter
+        # bar. "Follow-up due" PROXIES the (test-coupled) popup checkbox above.
+        self._tracker_status_filter = "all"
+        self.tracker_chips = ChipBar(
+            [("all", "All", None),
+             ("applied", "Applied", theme.SEMANTICS["accent"]["base"]),
+             ("interviewing", "Interviewing", theme.SEMANTICS["warning"]["base"]),
+             ("offer", "Offer", theme.SEMANTICS["success"]["base"]),
+             ("rejected", "Rejected", theme.SEMANTICS["danger"]["base"]),
+             ("due", "Follow-up due", theme.SEMANTICS["followup"]["base"])],
+            on_change=self._on_tracker_chip)
+        self.tracker_chips.set_checked("all")
+        self.tracker_tab.layout().insertWidget(1, self.tracker_chips)
         # Set status lives on the right-click menu (it was redundant as a button here).
         self.tracker_tab.add_toolbar_button("Mark followed up", self._tracker_followed_up)
         self.tracker_tab.add_toolbar_button("Interview prep", self._tracker_prep)
@@ -671,12 +685,52 @@ class MainWindow(QtWidgets.QMainWindow):
                 "url": r.get("url") or self._cell(row, "url"),
                 "resume": "✓" if jid in rpaths else "",
             })
+        # Pipeline chip counts come from the UNFILTERED recs (each chip shows
+        # its full bucket size, whatever is currently selected).
+        counts = Counter(r["status"] for r in recs)
+        chip_counts = {"all": len(recs),
+                       "due": sum(1 for r in recs if r["follow_up"] == "DUE")}
+        for key in ("applied", "interviewing", "offer", "rejected"):
+            chip_counts[key] = counts.get(key, 0)
+        status_f = getattr(self, "_tracker_status_filter", "all")
+        if status_f != "all":
+            recs = [r for r in recs if r["status"] == status_f]
         if getattr(self, "tracker_due_only", None) is not None and self.tracker_due_only.isChecked():
             recs = [r for r in recs if r["follow_up"] == "DUE"]
+        chips = getattr(self, "tracker_chips", None)
+        if chips is not None:
+            chips.set_counts(chip_counts)
+            self._sync_tracker_chip_selection()
         cols = [c for c, _ in TRACKER_COLUMNS] + ["job_posting_id"]
         tdf = pd.DataFrame(recs) if recs else pd.DataFrame(columns=cols)
         self.tracker_tab.set_source_df(tdf, self._resume_ids())
         self._update_identity_counts()
+
+    def _on_tracker_chip(self, key: str) -> None:
+        """A pipeline chip was clicked. Status chips drive `_tracker_status_filter`;
+        the "Follow-up due" chip proxies the (test-coupled) `tracker_due_only`
+        checkbox in the Filters popup — the checkbox stays the single source of
+        truth for the due-only filter."""
+        self._tracker_status_filter = (
+            key if key in ("applied", "interviewing", "offer", "rejected") else "all")
+        want_due = key == "due"
+        if self.tracker_due_only.isChecked() != want_due:
+            self.tracker_due_only.setChecked(want_due)  # fires _refresh_tracker
+        else:
+            self._refresh_tracker()
+
+    def _sync_tracker_chip_selection(self) -> None:
+        """Mirror the live filter state back onto the chips (e.g. the user
+        toggled the due-only checkbox directly in the Filters popup)."""
+        chips = getattr(self, "tracker_chips", None)
+        if chips is None:
+            return
+        if self.tracker_due_only.isChecked():
+            key = "due"
+        else:
+            status_f = getattr(self, "_tracker_status_filter", "all")
+            key = status_f if status_f != "all" else "all"
+        chips.set_checked(key)   # silent — never re-fires _on_tracker_chip
 
     def _resume_ids(self) -> frozenset:
         # Only ids whose tailored folder still EXISTS on disk are tinted blue, so a

@@ -22,10 +22,12 @@ def _targets(tmp_path):
 def test_renders_widgets_by_type(qtbot, tmp_path):
     form = SettingsForm(targets=_targets(tmp_path))
     qtbot.addWidget(form)
-    # secret -> visible line (value read from the local .env) with a Hide toggle
+    # secret -> masked line by default (restyle 3f, locked user decision) with
+    # a Hide toggle that starts CHECKED; unticking it reveals the saved value.
     assert "GEMINI_API_KEYS" in form._secret_edits
-    assert form._secret_edits["GEMINI_API_KEYS"].echoMode() == QtWidgets.QLineEdit.EchoMode.Normal
+    assert form._secret_edits["GEMINI_API_KEYS"].echoMode() == QtWidgets.QLineEdit.EchoMode.Password
     assert "GEMINI_API_KEYS" in form._secret_hides
+    assert form._secret_hides["GEMINI_API_KEYS"].isChecked()
     # list + multichoice rendered into their containers
     assert "keywords" in form._lists
     assert "remote_types" in form._multi
@@ -84,10 +86,13 @@ def test_secret_collect_writes_box_as_is(qtbot, tmp_path):
     assert values["GEMINI_API_KEYS"] == ""            # cleared box -> removes the key
 
 
-def test_secret_hide_toggle_masks_box(qtbot, tmp_path):
+def test_secret_hide_toggle_reveals_and_remasks_box(qtbot, tmp_path):
+    # Masked by default (restyle 3f): Password echo until Hide is unticked.
     form = SettingsForm(targets=_targets(tmp_path))
     qtbot.addWidget(form)
     edit = form._secret_edits["GEMINI_API_KEYS"]
+    assert edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
+    form._secret_hides["GEMINI_API_KEYS"].setChecked(False)
     assert edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Normal
     form._secret_hides["GEMINI_API_KEYS"].setChecked(True)
     assert edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Password

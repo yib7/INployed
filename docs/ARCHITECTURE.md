@@ -9,10 +9,14 @@ reopening this repo cold. This doc is about *how the code is shaped and why*.
 The discovery step is an async Bright Data client. Triggers keyword × remote-type searches, polls the
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
 appends to a cumulative master CSV. Two cost-aware details worth remembering:
-- It excludes every job id already in the master from re-collection (Bright Data
-  bills per collected posting, so re-fetching a job we already have wastes money,
-  and a posting still live weeks later is usually stale anyway). See
-  `load_exclude_ids()`.
+- It excludes job ids already collected within a recency window — the last
+  `EXCLUDE_WINDOW_DAYS` days (default 90) — from re-collection (Bright Data bills
+  per collected posting, so re-fetching a job we already have wastes money). The set
+  is windowed rather than unbounded: the search only looks back 24h, so a posting
+  older than the window can't reappear and its id is pure payload — capping it keeps
+  the Bright Data trigger POST from eventually overflowing its request-size limit.
+  Windowing fails toward a superset (undated/unparseable rows are kept), so it never
+  drops an id it should have excluded. See `load_exclude_ids()` / `_window_ids()`.
 - `--snapshot <id>` re-downloads an already-collected (already-billed) snapshot
   without triggering a new collection: the recovery path when a run dies after
   billing.

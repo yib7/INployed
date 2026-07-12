@@ -666,7 +666,20 @@ def update_master_scores(scored: pd.DataFrame) -> None:
     s["job_posting_id"] = s["job_posting_id"].astype(str)
     s = s.drop_duplicates(subset=["job_posting_id"], keep="last").set_index("job_posting_id")
 
-    header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
+    # Validate readability up front so a corrupt-but-present master raises a
+    # loud, actionable error (never a raw pandas ParserError out of save_output
+    # -> main after the scored gz is already written). Same guard/message idiom
+    # as scraper.append_to_master and merge_incoming's master probe.
+    def _unreadable(e):
+        return OSError(
+            f"cannot update {MASTER_CSV.name}: existing master is unreadable ({e}). "
+            f"This run's scores are still saved to the run-dir _scored.csv.gz; fix "
+            f"or restore {MASTER_CSV} and rerun to fold them into the master."
+        )
+    try:
+        header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
+    except (OSError, ValueError, pd.errors.ParserError) as e:
+        raise _unreadable(e) from e
     if "job_posting_id" not in header:
         return
     add_cols = [c for c in cols if c not in header]
@@ -675,7 +688,20 @@ def update_master_scores(scored: pd.DataFrame) -> None:
     os.close(fd)
     wrote_header = False
     try:
-        for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
+        # Lazily stream one chunk at a time (memory bounded). A row deep in the
+        # stream with the wrong field count only trips the parser here (the
+        # nrows=0 header read above passes), so convert those parse errors on the
+        # READ (next(reader)) to the same actionable OSError. Write-side errors
+        # (to_csv/os.replace OSError, update TypeError) are raised in the loop
+        # body, are NOT parse errors, and still propagate unrelabelled.
+        reader = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK)
+        while True:
+            try:
+                chunk = next(reader)
+            except StopIteration:
+                break
+            except (pd.errors.ParserError, UnicodeDecodeError, pd.errors.EmptyDataError) as e:
+                raise _unreadable(e) from e
             chunk["job_posting_id"] = chunk["job_posting_id"].astype(str)
             for c in add_cols:
                 chunk[c] = pd.NA
@@ -813,9 +839,14 @@ def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
         score = pd.to_numeric(master["score"], errors="coerce")
     else:
         score = pd.Series(float("nan"), index=master.index)
+    # Accept the historical float-upcast ("1.0") and trailing-space ("True ")
+    # spellings too, else those rows read as NOT filtered, have no score, and
+    # get retried by the rescore pass every run forever. .strip() normalises the
+    # whitespace; the set stays false-family-safe ("false"/"0"/"0.0"/"" excluded).
+    # Keep IDENTICAL to prune_master._needs_rescore.
     filtered = (
         master.get("filtered_out", pd.Series(False, index=master.index))
-        .fillna(False).astype(str).str.lower().isin(("true", "1", "yes"))
+        .fillna(False).astype(str).str.strip().str.lower().isin(("true", "1", "1.0", "yes"))
     )
     reason = master.get("reason", pd.Series("", index=master.index)).fillna("").astype(str)
     reco = master.get("recommendation", pd.Series("", index=master.index)).fillna("").astype(str)

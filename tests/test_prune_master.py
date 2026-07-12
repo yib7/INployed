@@ -61,3 +61,18 @@ def test_fallback_to_posted_date(tmp_path):
     pm.prune(p, retention_days=3, now=NOW)
     df = pd.read_csv(p, dtype=str)
     assert df.loc[0, "job_description_formatted"] in ("", "nan") or pd.isna(df.loc[0, "job_description_formatted"])
+
+# P2-11: filtered_out truth-vocabulary must recognise the float-upcast ("1.0")
+# and trailing-space ("True ") spellings prune itself may have to skip -- kept
+# consistent with score_jobs.rows_needing_rescore so prune-written filtered rows
+# are not re-parked/retried forever.
+def test_needs_rescore_treats_float_and_padded_filtered_out_as_filtered():
+    chunk = pd.DataFrame([
+        {"job_posting_id": "1", "score": "", "filtered_out": "1.0"},
+        {"job_posting_id": "2", "score": "", "filtered_out": "True "},
+        {"job_posting_id": "3", "score": "", "filtered_out": "False"},
+    ])
+    needs = pm._needs_rescore(chunk)
+    assert not bool(needs.iloc[0])   # "1.0" -> already filtered
+    assert not bool(needs.iloc[1])   # "True " -> already filtered
+    assert bool(needs.iloc[2])       # "False" + unscored -> needs rescore

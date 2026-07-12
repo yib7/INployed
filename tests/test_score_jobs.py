@@ -213,6 +213,60 @@ def test_update_master_scores_leaves_master_untouched_on_replace_failure(tmp_pat
     assert master.read_bytes() == before            # untouched: os.replace never landed
 
 
+# P2-6: a corrupt-but-present master must raise an actionable OSError (fix/restore),
+# not a raw pandas ParserError/UnicodeDecodeError out of save_output -> main after
+# the scored gz is already written. Mirrors scraper.append_to_master's guard.
+
+def test_update_master_scores_unreadable_master_raises_actionable_oserror(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    master.write_bytes(b"\x00\x01\x02not,a\ncsv,file,with,too,many,fields\n\xff\xfe\n")
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    scored = pd.DataFrame([{"job_posting_id": "1", "score": 5, "recommendation": "apply"}])
+    with pytest.raises(OSError) as exc:
+        sj.update_master_scores(scored)
+
+    # An actionable recovery message, NOT a raw pandas parse traceback.
+    assert not isinstance(exc.value, pd.errors.ParserError)
+    msg = str(exc.value)
+    assert "unreadable" in msg
+    assert "linkedin_jobs_master.csv" in msg
+    # no stray tmp file left behind in the master's directory
+    leftovers = [p for p in tmp_path.iterdir() if p.name != "linkedin_jobs_master.csv"]
+    assert leftovers == []
+
+
+def test_update_master_scores_corrupt_row_midstream_raises_actionable_oserror(tmp_path, monkeypatch):
+    # Header parses fine (nrows=0 read passes) but a row deep in the stream has
+    # the wrong field count -- the ParserError only surfaces during the chunked
+    # read loop, which must still be converted to the actionable OSError.
+    master = tmp_path / "linkedin_jobs_master.csv"
+    master.write_text("job_posting_id,job_title\n1,A\n2,B,EXTRA,FIELDS\n", encoding="utf-8")
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    scored = pd.DataFrame([{"job_posting_id": "1", "score": 5}])
+    with pytest.raises(OSError) as exc:
+        sj.update_master_scores(scored)
+    assert not isinstance(exc.value, pd.errors.ParserError)
+    assert "unreadable" in str(exc.value)
+
+
+# P2-11: historical filtered_out spellings from a float upcast ("1.0") or an
+# older writer ("True " with a trailing space) must read as ALREADY-filtered so
+# the rescore pass never retries them forever, burning RESCORE_CAP slots.
+
+def test_rows_needing_rescore_treats_float_and_padded_filtered_out_as_filtered():
+    master = pd.DataFrame([
+        {"job_posting_id": "1", "score": "", "filtered_out": "1.0", "reason": ""},
+        {"job_posting_id": "2", "score": "", "filtered_out": "True ", "reason": ""},
+        {"job_posting_id": "3", "score": "", "filtered_out": "False", "reason": ""},
+    ])
+    out_ids = set(sj.rows_needing_rescore(master)["job_posting_id"])
+    assert "1" not in out_ids   # "1.0" (float upcast) -> filtered, never retried
+    assert "2" not in out_ids   # "True " (trailing space) -> filtered, never retried
+    assert "3" in out_ids       # genuinely unfiltered + unscored -> needs rescore
+
+
 # P2-6: SCORE_COLS must fold ALL mechanical-filter columns into the master, not
 # just a subset -- else the master's filter record is partial/inconsistent.
 

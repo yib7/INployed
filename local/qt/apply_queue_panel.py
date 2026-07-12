@@ -23,6 +23,7 @@ synchronous inline runner.
 from __future__ import annotations
 
 import base64
+import html
 import os
 import subprocess
 from pathlib import Path
@@ -34,7 +35,8 @@ import apply_queue
 import ats_accounts
 import osopen
 from qt import theme
-from qt.delegates import TAG_ROLE, JobRowDelegate
+from qt.chrome import ChipBar, Pill
+from qt.delegates import STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
 
 # The repo root (this file lives in <root>/local/qt/) — the kickoff command
 # cd's here so `claude` picks up the repo's .claude/skills/auto-apply skill.
@@ -132,6 +134,167 @@ def _run_inline(fn: Callable[[], Any],
         on_done(result)
 
 
+class _DetailsPanel(QtWidgets.QFrame):
+    """The structured details card under the queue table (Phase 3e).
+
+    Replaces the old read-only QPlainTextEdit: header (title + status pill),
+    muted meta line, a WHY PAUSED/NOTES lede, a warning callout listing the
+    missing answers with an "Answer now" jump to the Apply Answers tab, and a
+    mono artifacts block. `toPlainText()` mirrors the SAME composed text the
+    old pane held (test-coupled — e.g. missing questions must appear in it).
+    """
+
+    _EMPTY = ("Select a queued application to see its status, answers, "
+              "and history.")
+
+    def __init__(self, on_answer_now: Callable[[], None] | None = None,
+                 parent=None) -> None:
+        super().__init__(parent)
+        self.setProperty("card", True)
+        self._plain = ""
+        v = QtWidgets.QVBoxLayout(self)
+        v.setContentsMargins(14, 10, 14, 10)
+        v.setSpacing(6)
+
+        self.empty_label = QtWidgets.QLabel(self._EMPTY)
+        self.empty_label.setStyleSheet(f"color: {theme.FAINT};")
+        self.empty_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(self.empty_label)
+
+        self._content = QtWidgets.QWidget()
+        v.addWidget(self._content)
+        cv = QtWidgets.QVBoxLayout(self._content)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(6)
+
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(10)
+        self.title_label = QtWidgets.QLabel("")
+        theme.set_type_role(self.title_label, "section")
+        head.addWidget(self.title_label)
+        self.status_pill = Pill("", "neutral")
+        head.addWidget(self.status_pill)
+        head.addStretch(1)
+        self.open_record_btn = QtWidgets.QPushButton("Open application record ↗")
+        self.open_record_btn.setProperty("tier", "link")
+        head.addWidget(self.open_record_btn)
+        self.open_folder_btn = QtWidgets.QPushButton("Open job folder")
+        head.addWidget(self.open_folder_btn)
+        cv.addLayout(head)
+
+        self.meta_label = QtWidgets.QLabel("")
+        self.meta_label.setProperty("muted", True)
+        cv.addWidget(self.meta_label)
+
+        self.lede_label = QtWidgets.QLabel("")
+        self.lede_label.setWordWrap(True)
+        self.lede_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        cv.addWidget(self.lede_label)
+
+        self.callout = QtWidgets.QFrame()
+        self.callout.setProperty("callout", "warning")
+        wh = QtWidgets.QHBoxLayout(self.callout)
+        wh.setContentsMargins(12, 8, 12, 8)
+        wh.setSpacing(10)
+        self.callout_label = QtWidgets.QLabel("")
+        self.callout_label.setWordWrap(True)
+        wh.addWidget(self.callout_label, 1)
+        self.answer_now_btn = QtWidgets.QPushButton("Answer now")
+        self.answer_now_btn.setToolTip(
+            "Open the Apply Answers tab — save the missing answer(s) to the "
+            "answer bank, then Re-queue this job")
+        self.answer_now_btn.clicked.connect(on_answer_now or (lambda: None))
+        wh.addWidget(self.answer_now_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        cv.addWidget(self.callout)
+
+        self.artifacts_label = QtWidgets.QLabel("")
+        self.artifacts_label.setWordWrap(True)
+        self.artifacts_label.setProperty("muted", True)
+        theme.set_type_role(self.artifacts_label, "mono")
+        cv.addWidget(self.artifacts_label)
+
+        self.set_entry(None)
+
+    # -- content --------------------------------------------------------------
+
+    def set_entry(self, e: Optional[Dict[str, Any]]) -> None:
+        if e is None:
+            self._plain = ""
+            self._content.setVisible(False)
+            self.empty_label.setVisible(True)
+            return
+        self.empty_label.setVisible(False)
+        self._content.setVisible(True)
+
+        status = str(e.get("status", ""))
+        self.title_label.setText(f"{e.get('company', '')} — {e.get('title', '')}")
+        self.status_pill.setText(STATUS_LABELS.get(status, status.capitalize()))
+        self.status_pill.set_family(STATUS_TAGS.get(status, "neutral"))
+
+        meta = [m for m in (str(e.get("apply_url", "")),
+                            f"{e.get('attempts', 0)} attempt(s)") if m]
+        if e.get("updated_at"):
+            meta.append(f"updated {e['updated_at']}")
+        self.meta_label.setText(" · ".join(meta))
+
+        lede_tag = {"needs_human": "WHY PAUSED", "failed": "WHY FAILED"}.get(
+            status, "NOTES")
+        lede_parts = [p for p in (str(e.get("notes") or ""),
+                                  str(e.get("tab_note") or "")) if p]
+        lede = " — ".join(lede_parts)
+        if lede:
+            self.lede_label.setText(
+                f'<span style="color:{theme.MUTED};font-weight:600;'
+                f'letter-spacing:0.4px">{lede_tag}</span>&nbsp;&nbsp;'
+                f'<span style="color:{theme.TEXT_SECONDARY}">'
+                f'{html.escape(lede)}</span>')
+        self.lede_label.setVisible(bool(lede))
+
+        missing = e.get("missing_answers") or []
+        questions: List[str] = []
+        for m in missing:
+            if isinstance(m, dict):
+                q = m.get("question", "")
+                extra = " — ".join(x for x in (m.get("context", ""),
+                                               m.get("suggestion", "")) if x)
+                questions.append(f"{q}" + (f"  ({extra})" if extra else ""))
+            else:
+                questions.append(str(m))
+        if questions:
+            listed = "<br>".join(
+                f'&nbsp;•&nbsp;{html.escape(q)}' for q in questions)
+            self.callout_label.setText(
+                f'<b>Missing answer{"s" if len(questions) > 1 else ""}</b><br>'
+                f'{listed}<br>'
+                f'<span style="color:{theme.MUTED}">Your answer is saved to the '
+                f'answer bank and reused on future applications.</span>')
+        self.callout.setVisible(bool(questions))
+
+        arts = e.get("artifacts") or {}
+        shown = [(k, val) for k, val in arts.items() if val]
+        self.artifacts_label.setText(
+            "\n".join(f"{k}: {val}" for k, val in shown))
+        self.artifacts_label.setVisible(bool(shown))
+
+        # Plain-text mirror — SAME composition the old QPlainTextEdit held.
+        lines = [f"{e.get('company', '')} — {e.get('title', '')}  [{status}]",
+                 f"Apply URL: {e.get('apply_url', '')}"]
+        if e.get("notes"):
+            lines.append(f"Notes: {e['notes']}")
+        if e.get("tab_note"):
+            lines.append(f"Parked tab: {e['tab_note']}")
+        if questions:
+            lines.append("Missing answers:")
+            lines.extend(f"  • {q}" for q in questions)
+        if shown:
+            lines.append("Artifacts:")
+            lines.extend(f"  {k}: {val}" for k, val in shown)
+        self._plain = "\n".join(lines)
+
+    def toPlainText(self) -> str:  # noqa: N802 (mirrors the old QPlainTextEdit API)
+        return self._plain
+
+
 class ApplyQueuePanel(QtWidgets.QWidget):
     """Header (counts / password state / Start auto-apply run) + queue table +
     details pane + the Re-queue / Remove / Clear finished / Open buttons."""
@@ -143,6 +306,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  on_start_run: Callable[[], None] | None = None,
                  on_mark_applied: Callable[[Dict[str, Any]], None] | None = None,
                  on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
+                 on_answer_now: Callable[[], None] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._queue_override = Path(queue_path) if queue_path else None
@@ -153,6 +317,9 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._on_start_run = on_start_run or _spawn_kickoff
         self._on_mark_applied = on_mark_applied or (lambda _e: None)
         self._on_mark_seen = on_mark_seen or (lambda _e: None)
+        # "Answer now" on the missing-answers callout — the main window wires
+        # this to switch to the Apply Answers tab.
+        self._on_answer_now = on_answer_now or (lambda: None)
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
         self._build()
@@ -172,11 +339,51 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
 
+        # Header: status chips + counts caption | master-password cluster | Start.
         header = QtWidgets.QHBoxLayout()
+        self.status_chips = ChipBar(
+            [(s, STATUS_LABELS.get(s, s.capitalize()),
+              theme.SEMANTICS[STATUS_TAGS[s]]["base"])
+             for s in ("queued", "in_progress", "ready_to_submit", "needs_human")],
+            checkable=False)
+        header.addWidget(self.status_chips)
         self.counts_label = QtWidgets.QLabel("")
         self.counts_label.setProperty("muted", True)
         header.addWidget(self.counts_label)
         header.addStretch(1)
+
+        # Master-password cluster: caption/state label + SET pill + compact
+        # buttons in one bordered frame. pw_label keeps its exact text contract
+        # ("Master password: SET/NOT SET") as the cluster's accessible label.
+        cluster = QtWidgets.QFrame()
+        cluster.setProperty("card", True)
+        ch = QtWidgets.QHBoxLayout(cluster)
+        ch.setContentsMargins(12, 4, 8, 4)
+        ch.setSpacing(8)
+        self.pw_label = QtWidgets.QLabel("")
+        self.pw_label.setProperty("muted", True)
+        ch.addWidget(self.pw_label)
+        self.pw_pill = Pill("NOT SET", "neutral")
+        ch.addWidget(self.pw_pill)
+        self.pw_btn = QtWidgets.QPushButton("Set…")
+        self.pw_btn.setToolTip(
+            "Store the ONE master password every auto-created ATS account uses "
+            "(Windows Credential Manager — never written to any file)")
+        self.pw_btn.clicked.connect(lambda: self._on_set_password())
+        ch.addWidget(self.pw_btn)
+        self.copy_pw_btn = QtWidgets.QPushButton("Copy")
+        self.copy_pw_btn.setToolTip(
+            "Copy the master password to the clipboard for a manual login — it is "
+            "never shown on screen. Clears from the clipboard when you click Clear.")
+        self.copy_pw_btn.clicked.connect(self._copy_password)
+        ch.addWidget(self.copy_pw_btn)
+        self.clear_pw_btn = QtWidgets.QPushButton("Clear")
+        self.clear_pw_btn.setProperty("tier", "destructive")
+        self.clear_pw_btn.setToolTip("Clear the master password from the clipboard.")
+        self.clear_pw_btn.clicked.connect(self._clear_password)
+        ch.addWidget(self.clear_pw_btn)
+        header.addWidget(cluster)
+
         self.start_run_btn = QtWidgets.QPushButton("Start auto-apply run")
         self.start_run_btn.setProperty("accent", True)
         self.start_run_btn.setToolTip(
@@ -187,24 +394,6 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "its review page for your approval — nothing is ever submitted.")
         self.start_run_btn.clicked.connect(self._start_run)
         header.addWidget(self.start_run_btn)
-        self.pw_label = QtWidgets.QLabel("")
-        header.addWidget(self.pw_label)
-        self.pw_btn = QtWidgets.QPushButton("Set…")
-        self.pw_btn.setToolTip(
-            "Store the ONE master password every auto-created ATS account uses "
-            "(Windows Credential Manager — never written to any file)")
-        self.pw_btn.clicked.connect(lambda: self._on_set_password())
-        header.addWidget(self.pw_btn)
-        self.copy_pw_btn = QtWidgets.QPushButton("Copy password")
-        self.copy_pw_btn.setToolTip(
-            "Copy the master password to the clipboard for a manual login — it is "
-            "never shown on screen. Clears from the clipboard when you click Clear.")
-        self.copy_pw_btn.clicked.connect(self._copy_password)
-        header.addWidget(self.copy_pw_btn)
-        self.clear_pw_btn = QtWidgets.QPushButton("Clear")
-        self.clear_pw_btn.setToolTip("Clear the master password from the clipboard.")
-        self.clear_pw_btn.clicked.connect(self._clear_password)
-        header.addWidget(self.clear_pw_btn)
         v.addLayout(header)
 
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
@@ -231,21 +420,24 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.table.itemSelectionChanged.connect(self._update_details)
         v.addWidget(self.table, 1)
 
-        details_label = QtWidgets.QLabel("Details")
-        details_label.setProperty("muted", True)
-        v.addWidget(details_label)
-        self.details = QtWidgets.QPlainTextEdit()
-        self.details.setReadOnly(True)
-        self.details.setMaximumHeight(160)
+        # Structured details panel (replaces the old plain-text pane; it keeps a
+        # `toPlainText()` mirror of the same composed text — test-coupled).
+        self.details = _DetailsPanel(on_answer_now=lambda: self._on_answer_now())
+        self.open_folder_btn = self.details.open_folder_btn
+        self.open_record_btn = self.details.open_record_btn
+        self.open_folder_btn.clicked.connect(self._open_folder)
+        self.open_record_btn.clicked.connect(self._open_record)
         v.addWidget(self.details)
 
         btns = QtWidgets.QHBoxLayout()
 
-        def button(text, slot, tip=""):
+        def button(text, slot, tip="", tier=""):
             b = QtWidgets.QPushButton(text)
             b.clicked.connect(slot)
             if tip:
                 b.setToolTip(tip)
+            if tier:
+                b.setProperty("tier", tier)
             btns.addWidget(b)
             return b
 
@@ -253,19 +445,20 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "Re-queue", self._requeue,
             "Send the selected job back to 'queued' (clears its missing answers "
             "and refreshes its apply.md standard answers)")
-        self.remove_btn = button("Remove", self._remove,
-                                 "Delete the selected entry from the queue")
         self.mark_applied_btn = button(
             "Mark applied", self._mark_applied,
             "Move to the Tracker as applied and remove from the queue")
         self.dont_apply_btn = button(
             "Don't apply", self._dont_apply,
-            "Mark seen (keeps it in All Jobs) and remove from the queue")
+            "Mark seen (keeps it in All Jobs) and remove from the queue",
+            tier="tertiary")
         self.clear_btn = button(
             "Clear finished", self._clear_finished,
-            "Drop every ready_to_submit / submitted / needs_human / failed entry")
-        self.open_folder_btn = button("Open job folder", self._open_folder)
-        self.open_record_btn = button("Open application record", self._open_record)
+            "Drop every ready_to_submit / submitted / needs_human / failed entry",
+            tier="tertiary")
+        self.remove_btn = button("Remove from queue", self._remove,
+                                 "Delete the selected entry from the queue",
+                                 tier="destructive")
         btns.addStretch(1)
         v.addLayout(btns)
 
@@ -385,6 +578,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         parts = [f"{s}: {n}" for s, n in counts.items() if n]
         parts.append(f"total: {len(self._jobs)}")
         self.counts_label.setText(" · ".join(parts))
+        self.status_chips.set_counts(counts)
 
     def refresh_password_state(self) -> None:
         try:
@@ -393,6 +587,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             exists = False
         self.pw_label.setText("Master password: SET" if exists
                               else "Master password: NOT SET")
+        self.pw_pill.setText("SET" if exists else "NOT SET")
+        self.pw_pill.set_family("success" if exists else "neutral")
         self.copy_pw_btn.setEnabled(exists)
 
     # ---- selection / details --------------------------------------------------------
@@ -415,34 +611,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         return None
 
     def _update_details(self) -> None:
-        e = self._selected_entry()
-        if e is None:
-            self.details.setPlainText("")
-            return
-        lines = [f"{e.get('company', '')} — {e.get('title', '')}  "
-                 f"[{e.get('status', '')}]",
-                 f"Apply URL: {e.get('apply_url', '')}"]
-        if e.get("notes"):
-            lines.append(f"Notes: {e['notes']}")
-        if e.get("tab_note"):
-            lines.append(f"Parked tab: {e['tab_note']}")
-        missing = e.get("missing_answers") or []
-        if missing:
-            lines.append("Missing answers:")
-            for m in missing:
-                if isinstance(m, dict):
-                    q = m.get("question", "")
-                    extra = " — ".join(x for x in (m.get("context", ""),
-                                                   m.get("suggestion", "")) if x)
-                    lines.append(f"  • {q}" + (f"  ({extra})" if extra else ""))
-                else:
-                    lines.append(f"  • {m}")
-        arts = e.get("artifacts") or {}
-        shown = [(k, v) for k, v in arts.items() if v]
-        if shown:
-            lines.append("Artifacts:")
-            lines.extend(f"  {k}: {v}" for k, v in shown)
-        self.details.setPlainText("\n".join(lines))
+        self.details.set_entry(self._selected_entry())
 
     # ---- actions (all mutations ride submit_write) -----------------------------------
 

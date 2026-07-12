@@ -120,6 +120,53 @@ def test_due_only_filters_tracker(qtbot):
     assert w.tracker_tab.model.rowCount() == 1     # only the overdue one
 
 
+def test_tracker_chip_filters_by_status_and_counts(qtbot):
+    # Cycle 40 3d: the pipeline ChipBar filters the recs list (not the proxy)
+    # and each chip shows its FULL bucket count regardless of the selection.
+    old = (date.today() - timedelta(days=99)).isoformat()
+    rows = [
+        {"job_posting_id": "1", "status": "applied", "applied_date": old},
+        {"job_posting_id": "2", "status": "interviewing", "applied_date": old},
+        {"job_posting_id": "3", "status": "offer", "applied_date": old},
+    ]
+    w = _win(qtbot, status_rows=rows)
+    w._refresh_tracker()
+    assert w.tracker_tab.model.rowCount() == 3
+    assert w.tracker_chips.chip("all").count() == 3
+    assert w.tracker_chips.chip("applied").count() == 1
+    assert w.tracker_chips.chip("due").count() == 1     # only "applied" goes DUE
+
+    w.tracker_chips.chip("applied").click()             # filter to applied
+    assert w.tracker_tab.model.rowCount() == 1
+    assert w.tracker_chips.chip("all").count() == 3     # counts stay unfiltered
+
+    w.tracker_chips.chip("all").click()
+    assert w.tracker_tab.model.rowCount() == 3
+
+
+def test_followup_due_chip_proxies_the_popup_checkbox(qtbot):
+    # The "Follow-up due" chip PROXIES tracker_due_only — the checkbox stays in
+    # the Filters popup (test-coupled) and remains the filter's source of truth.
+    old = (date.today() - timedelta(days=99)).isoformat()
+    today = date.today().isoformat()
+    rows = [
+        {"job_posting_id": "1", "status": "applied", "applied_date": old},
+        {"job_posting_id": "2", "status": "applied", "applied_date": today},
+    ]
+    w = _win(qtbot, status_rows=rows)
+    w._refresh_tracker()
+    w.tracker_chips.chip("due").click()
+    assert w.tracker_due_only.isChecked()               # chip drove the checkbox
+    assert w.tracker_tab.model.rowCount() == 1
+    w.tracker_chips.chip("all").click()
+    assert not w.tracker_due_only.isChecked()           # cleared on leaving "due"
+    assert w.tracker_tab.model.rowCount() == 2
+    # and the checkbox drives the chip back (popup direction)
+    w.tracker_due_only.setChecked(True)
+    assert w.tracker_chips.checked_key() == "due"
+    assert w.tracker_tab.model.rowCount() == 1
+
+
 def test_apply_auth_env_sets_var(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(mw.jobsdata, "_load_cfg", lambda: {"gemini_auth": "api_key"})

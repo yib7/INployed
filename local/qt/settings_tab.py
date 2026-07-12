@@ -17,6 +17,7 @@ from PySide6 import QtCore, QtWidgets
 import jobsdata
 import settings
 import settings_archive
+from qt import theme
 from qt.widgets import CollapsibleSection
 
 SECTION_HELP = {
@@ -139,10 +140,22 @@ class SettingsForm(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         outer.addWidget(scroll)
-        body = QtWidgets.QWidget()
-        self._body = QtWidgets.QVBoxLayout(body)
-        self._body.setContentsMargins(16, 12, 16, 12)
-        scroll.setWidget(body)
+        # The form lives in a centered, max-width column of section cards
+        # (restyle 3f) so a full-width window doesn't stretch every input.
+        host = QtWidgets.QWidget()
+        hl = QtWidgets.QHBoxLayout(host)
+        hl.setContentsMargins(16, 12, 16, 12)
+        column = QtWidgets.QWidget()
+        column.setMaximumWidth(1160)
+        self._body = QtWidgets.QVBoxLayout(column)
+        self._body.setContentsMargins(0, 0, 0, 0)
+        self._body.setSpacing(14)
+        # Zero-stretch spacers: the column grows first (to its 1160 cap), THEN
+        # the leftover splits equally between the two spacers — centered.
+        hl.addStretch(0)
+        hl.addWidget(column, 1)
+        hl.addStretch(0)
+        scroll.setWidget(host)
 
         stored = settings.load(self.targets)
         self._opening_values = dict(stored)
@@ -237,8 +250,10 @@ class SettingsForm(QtWidgets.QWidget):
         h = QtWidgets.QHBoxLayout(cell)
         h.setContentsMargins(0, 0, 0, 0)
         h.addWidget(QtWidgets.QLabel(f.label))
-        tag = QtWidgets.QLabel(f"({settings.storage_location(f)})")
-        tag.setProperty("muted", True)
+        # Storage tag as a small mono bordered chip (".env" / "config.json").
+        tag = QtWidgets.QLabel(settings.storage_location(f))
+        tag.setProperty("storageTag", True)
+        theme.set_type_role(tag, "mono")
         h.addWidget(tag)
         return cell
 
@@ -366,20 +381,23 @@ class SettingsForm(QtWidgets.QWidget):
         return cell
 
     def _secret_widget(self, f, value):
-        """A secret field shows its saved value in plain text (it comes straight
-        from the local .env — nothing leaves this PC). Edit it to change it, clear
-        the box to remove the key, or tick Hide to mask it from onlookers."""
+        """A secret field is MASKED by default (restyle 3f — locked user
+        decision): the saved value is present in the box (straight from the
+        local .env — nothing leaves this PC) but shown as dots until the Hide
+        toggle is unticked. Edit it to change it, clear the box to remove the
+        key."""
         cell = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(cell)
         h.setContentsMargins(0, 0, 0, 0)
         edit = QtWidgets.QLineEdit("" if value is None else str(value))
-        edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Normal)
+        edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         edit.setPlaceholderText("not set")
         h.addWidget(edit, 1)
         hide = QtWidgets.QCheckBox("Hide")
         hide.toggled.connect(lambda on, e=edit: e.setEchoMode(
             QtWidgets.QLineEdit.EchoMode.Password if on
             else QtWidgets.QLineEdit.EchoMode.Normal))
+        hide.setChecked(True)
         h.addWidget(hide)
         self._secret_edits[f.key] = edit
         self._secret_hides[f.key] = hide
@@ -387,17 +405,19 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _add_buttons(self):
         bar = QtWidgets.QHBoxLayout()
-        save = QtWidgets.QPushButton("Save")
+        save = QtWidgets.QPushButton("Save settings")
         save.setProperty("accent", True)
         save.clicked.connect(self.save)
         bar.addWidget(save)
-        revert = QtWidgets.QPushButton("Revert changes")
+        revert = QtWidgets.QPushButton("Discard changes")
+        revert.setProperty("tier", "tertiary")
         revert.clicked.connect(self.revert)
         bar.addWidget(revert)
         archive = QtWidgets.QPushButton("Restore from archive…")
         archive.clicked.connect(self.open_archive)
         bar.addWidget(archive)
         restore = QtWidgets.QPushButton("Restore defaults")
+        restore.setProperty("tier", "tertiary")
         restore.clicked.connect(self.restore_defaults)
         bar.addWidget(restore)
         self.status = QtWidgets.QLabel("")
@@ -532,11 +552,12 @@ class SettingsForm(QtWidgets.QWidget):
             return False
 
     def _sync_secret_boxes(self, values_now: dict) -> None:
-        """Set each secret box to its current stored value and un-hide it."""
+        """Set each secret box to its current stored value, re-masked (secrets
+        are masked by default; only an explicit Hide-untick reveals them)."""
         for key, edit in self._secret_edits.items():
             v = values_now.get(key, "")
             edit.setText("" if v is None else str(v))
-            self._secret_hides[key].setChecked(False)
+            self._secret_hides[key].setChecked(True)
 
     def _repopulate(self, value_for: Callable[[settings.Field], object]) -> None:
         for f in settings.SETTINGS_SCHEMA:

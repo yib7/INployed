@@ -356,7 +356,7 @@ exactly with no extra AI call. To apply:
    résumé / cover-letter paths and the apply sheet **rendered as formatted markdown** (the
    **Copy apply sheet** button still copies the raw markdown source). An **Expand** button
    opens the sheet in a large, resizable window for easier reading. Closing the panel brings
-   the score preview back; **"I applied to this job"** confirms, adds the
+   the detail card back; **"I applied to this job"** confirms, adds the
    job to your Tracker as *applied*, and closes the panel (the right-click → *Set status →
    applied* still works too).
 3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome

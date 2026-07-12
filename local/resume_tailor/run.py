@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Callable, Dict, Optional
@@ -454,7 +455,36 @@ def generate_cover_letter(
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
-_DEFAULT_CSV = "E:/My Drive/LinkedInJobs/linkedin_jobs_master.csv.gz"
+_MASTER_NAMES = ("linkedin_jobs_master.csv.gz", "linkedin_jobs_master.csv")
+
+
+def _default_csv() -> Optional[str]:
+    """Resolve the master CSV without baking in a machine-specific drive letter.
+
+    Preference order: the synced Drive root jobsdata discovers from config.json's
+    ``gdrive_root`` (machine-independent — the same lookup the dashboard uses),
+    then the repo-root master scraper.py writes. Returns None when neither
+    resolves, so the CLI can require an explicit ``--csv`` with a clear message
+    instead of a confusing file-not-found on a hardcoded path.
+    """
+    candidates: list[Path] = []
+    try:
+        local_dir = Path(__file__).resolve().parents[1]  # .../local
+        if str(local_dir) not in sys.path:
+            sys.path.insert(0, str(local_dir))
+        import jobsdata  # local sibling module (unavailable on the bare VM)
+
+        root = jobsdata.gdrive_root_dir([])
+        if root:
+            candidates += [Path(root) / n for n in _MASTER_NAMES]
+    except Exception:  # noqa: BLE001 - jobsdata missing -> fall through to repo root
+        pass
+    repo_root = Path(__file__).resolve().parents[2]  # repo root
+    candidates += [repo_root / n for n in _MASTER_NAMES]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
 
 
 def _job_from_csv(job_id: str, csv_path: str) -> Dict[str, str]:
@@ -481,7 +511,9 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(description="Tailor a resume for one scraped job.")
     ap.add_argument("--job-id", required=True, help="job_posting_id from the master CSV")
-    ap.add_argument("--csv", default=_DEFAULT_CSV, help="path to the master CSV(.gz)")
+    ap.add_argument("--csv", default=None,
+                    help="path to the master CSV(.gz); auto-resolved from your "
+                         "synced Drive / repo-root master when omitted")
     ap.add_argument("--cover-letter", action="store_true", help="also generate a cover letter")
     ap.add_argument("--ats-report", dest="ats_report", action="store_true", default=True,
                     help="write ats_report.txt keyword coverage (default on)")
@@ -494,7 +526,11 @@ def main() -> None:
                     help="tone used when generating the cover letter")
     args = ap.parse_args()
 
-    job = _job_from_csv(args.job_id, args.csv)
+    csv_path = args.csv or _default_csv()
+    if not csv_path:
+        ap.error("could not locate the master CSV automatically; pass --csv <path> "
+                 "(e.g. the linkedin_jobs_master.csv.gz in your synced Drive folder).")
+    job = _job_from_csv(args.job_id, csv_path)
     print(f"Tailoring: {job['job_title']} @ {job['company_name']}")
     out = tailor(
         job,

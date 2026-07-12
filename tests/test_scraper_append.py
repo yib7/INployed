@@ -53,6 +53,38 @@ def test_blocklist_refilters_whole_master(tmp_path, monkeypatch):
     assert pd.read_csv(m, dtype=str)["job_posting_id"].tolist() == ["2"]
 
 
+# P2-12: the blocklist is read from disk ONCE per master rewrite, not per 2000-row
+# chunk. An explicit `blocklist=` bypasses the disk read entirely; append_to_master
+# loads it once and threads it through every chunk.
+
+def test_drop_blocklisted_with_explicit_list_never_reads_disk(monkeypatch):
+    def boom():
+        raise AssertionError("load_blocklist() must not be called when a list is passed")
+    monkeypatch.setattr(scraper, "load_blocklist", boom)
+    df = pd.DataFrame({"job_posting_id": ["1", "2"], "company_name": ["BadCorp", "GoodCo"]})
+    out = scraper.drop_blocklisted_companies(df, ["badcorp"])
+    assert out["job_posting_id"].tolist() == ["2"]                # filtered without disk read
+
+
+def test_append_to_master_loads_blocklist_once_across_chunks(tmp_path, monkeypatch):
+    existing = pd.DataFrame({"job_posting_id": ["1", "2", "3", "4"],
+                             "company_name": ["a", "b", "c", "d"]})
+    new = pd.DataFrame({"job_posting_id": ["5"], "company_name": ["e"]})
+    m = tmp_path / "master.csv"
+    existing.to_csv(m, index=False)
+    monkeypatch.setattr(scraper, "MASTER_CSV", m)
+    monkeypatch.setattr(scraper, "CHUNK", 2)                      # force multiple chunks
+    calls = {"n": 0}
+
+    def counting_load():
+        calls["n"] += 1
+        return ["nomatch"]
+
+    monkeypatch.setattr(scraper, "load_blocklist", counting_load)
+    scraper.append_to_master(new)
+    assert calls["n"] == 1                                        # once, not per chunk
+
+
 def test_unreadable_master_still_raises(tmp_path, monkeypatch):
     m = tmp_path / "master.csv"
     m.write_bytes(b"\x00\x01 not,csv\n\"unterminated")

@@ -111,10 +111,6 @@ STATS_COLUMNS = [
 ]
 
 
-_ENGINE_LABELS = {"vertex": "Engine: Vertex Gemini", "api_key": "Engine: Gemini API key"}
-_LABEL_TO_AUTH = {v: k for k, v in _ENGINE_LABELS.items()}
-
-
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 # Which job ids a run file contains never changes (only its is_seen column gets

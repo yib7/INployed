@@ -72,6 +72,22 @@ def test_set_scale_clamps_extremes(qtbot):
         theme.set_scale(app, 1.0)
 
 
+def test_widget_created_after_rescale_gets_control_font(qtbot):
+    # Per-class app fonts (restyle cycle): a QPushButton created AFTER set_scale
+    # must resolve the "control" type role (0.93 x live base) with no explicit
+    # setFont — this is what keeps dialogs/popups built post-rescale on-scale.
+    app = _app()
+    try:
+        theme.set_scale(app, 1.2)
+        btn = QtWidgets.QPushButton("x")
+        qtbot.addWidget(btn)
+        btn.ensurePolished()  # font resolution happens at polish (as before display)
+        expected = theme.BASE_FONT_PT * 1.2 * theme.TYPE_SCALE["control"]
+        assert btn.font().pointSizeF() == pytest.approx(expected, rel=1e-3)
+    finally:
+        theme.set_scale(app, 1.0)
+
+
 def test_apply_theme_accepts_scale(qtbot):
     app = _app()
     try:

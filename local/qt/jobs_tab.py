@@ -171,6 +171,7 @@ class JobsTab(QtWidgets.QWidget):
         self._filters_btn.clicked.connect(self._toggle_filters_popup)
 
         self._filters_popup = QtWidgets.QWidget(self, QtCore.Qt.WindowType.Popup)
+        theme.add_popup_shadow(self._filters_popup)
         self._filters_form = QtWidgets.QFormLayout(self._filters_popup)
         self._filters_form.addRow("Min score:", self.minscore)
         self._filters_form.addRow("Day:", self.day)
@@ -392,6 +393,7 @@ class JobsTab(QtWidgets.QWidget):
         if not ids:
             return
         menu = QtWidgets.QMenu(self)
+        theme.add_popup_shadow(menu)
         open_act = menu.addAction("Open in browser")
         status_menu = menu.addMenu("Set status")
         status_acts = {status_menu.addAction(st): st for st in APP_STATUSES}

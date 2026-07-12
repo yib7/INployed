@@ -459,6 +459,18 @@ def register_table(view: QtWidgets.QTableView) -> None:
     _apply_table_metrics(view, _current_scale)
 
 
+def add_popup_shadow(widget: QtWidgets.QWidget) -> None:
+    """Install the app's ONE drop shadow — floating popups/menus only (the
+    FLOATING layer): offset (0, 8), blur 24, ink rgba(1,4,9,0.55). Each popup
+    gets its own effect instance (a QGraphicsEffect can only serve one widget);
+    the parameters here are the single source of truth."""
+    effect = QtWidgets.QGraphicsDropShadowEffect(widget)
+    effect.setOffset(0, 8)
+    effect.setBlurRadius(24)
+    effect.setColor(QtGui.QColor(1, 4, 9, round(0.55 * 255)))
+    widget.setGraphicsEffect(effect)
+
+
 def _clamp_scale(scale: float) -> float:
     try:
         s = float(scale)

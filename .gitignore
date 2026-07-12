@@ -39,6 +39,7 @@ outbox/
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 
 # ── OS / editor / IDE ────────────────────────────────────────────────────────
 .DS_Store

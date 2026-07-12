@@ -284,37 +284,50 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
             if hold:
                 _hold(browser)
             return report
-        page.wait_for_timeout(4000)
+        # Submit has been CLICKED. From here on, a crash (code-gate handling,
+        # resubmit, or reading the confirmation body) must NOT propagate without a
+        # report — the application may already be in, and an orchestrator that reads
+        # no terminal signal could wrongly re-queue a live submission. Record an
+        # unconfirmed-submit report, then re-raise so the CLI still exits nonzero.
+        try:
+            page.wait_for_timeout(4000)
 
-        code = _handle_code_gate(page, rd, {"url": url, "folder": folder})
-        report["code_gate"] = bool(code)
-        if apply_verify.detect_code_gate(page) is not None and not code:
-            report["status"] = "code gate appeared but no code arrived — parked"
+            code = _handle_code_gate(page, rd, {"url": url, "folder": folder})
+            report["code_gate"] = bool(code)
+            if apply_verify.detect_code_gate(page) is not None and not code:
+                report["status"] = "code gate appeared but no code arrived — parked"
+                _write_report(rd, report)
+                if hold:
+                    _hold(browser)
+                return report
+            if code:
+                for name in ("Resubmit application", "Submit application",
+                             "Resubmit", "Submit"):
+                    try:
+                        b = page.get_by_role("button", name=name, exact=False)
+                        if b.count() and b.first.is_visible():
+                            b.first.click()
+                            _log(f"RESUBMIT CLICKED ({name})")
+                            break
+                    except Exception:  # noqa: BLE001
+                        pass
+                page.wait_for_timeout(5000)
+
+            body = page.inner_text("body")
+            report["confirmation"] = body[:300].replace("\n", " ")
+            report["status"] = "submitted" if "received" in body.lower() \
+                or "thank you for applying" in body.lower() else "submitted (unconfirmed)"
+            _log(f"POST-SUBMIT: {report['status']}")
             _write_report(rd, report)
             if hold:
                 _hold(browser)
-            return report
-        if code:
-            for name in ("Resubmit application", "Submit application",
-                         "Resubmit", "Submit"):
-                try:
-                    b = page.get_by_role("button", name=name, exact=False)
-                    if b.count() and b.first.is_visible():
-                        b.first.click()
-                        _log(f"RESUBMIT CLICKED ({name})")
-                        break
-                except Exception:  # noqa: BLE001
-                    pass
-            page.wait_for_timeout(5000)
-
-        body = page.inner_text("body")
-        report["confirmation"] = body[:300].replace("\n", " ")
-        report["status"] = "submitted" if "received" in body.lower() \
-            or "thank you for applying" in body.lower() else "submitted (unconfirmed)"
-        _log(f"POST-SUBMIT: {report['status']}")
-        _write_report(rd, report)
-        if hold:
-            _hold(browser)
+        except Exception as exc:  # noqa: BLE001
+            report["status"] = f"submitted (unconfirmed — post-submit crash: {exc})"
+            _log(report["status"])
+            _write_report(rd, report)
+            if hold and browser is not None:
+                _hold(browser)
+            raise
     return report
 
 

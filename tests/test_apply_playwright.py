@@ -345,6 +345,58 @@ def test_run_crash_writes_report_even_without_hold(tmp_path, monkeypatch):
     assert written["status"].startswith("failed:")
 
 
+class _PostSubmitCrashPage(_FakePage):
+    """Submit click succeeds, but reading the confirmation body blows up — models a
+    crash in the post-submit window (browser closed, detached frame, etc.) AFTER the
+    application may already have been submitted."""
+
+    def inner_text(self, selector):
+        raise RuntimeError("Target page, context or browser has been closed")
+
+
+def test_run_post_submit_crash_writes_unconfirmed_report(tmp_path, monkeypatch):
+    """P1: a crash AFTER the Submit click (code-gate handling, resubmit, or reading the
+    confirmation body) must still write report.json — marked 'submitted (unconfirmed
+    ...)' so the orchestrator never re-queues a possibly-live submission — then re-raise.
+    Losing the already-clicked-Submit fact risks a double-apply."""
+    import types
+
+    folder = tmp_path / "job"
+    folder.mkdir()
+    (folder / "apply.md").write_text(
+        "## Candidate\n- **Name:** Jane Doe\n- **Email:** jane@example.com\n",
+        encoding="utf-8")
+
+    fake_page = _PostSubmitCrashPage()
+    fake_module = types.ModuleType("playwright.sync_api")
+    fake_module.sync_playwright = lambda: _FakePlaywrightCM(fake_page)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_module)
+    # No emailed code gate here — keep _handle_code_gate quick + deterministic so the
+    # crash lands on inner_text (the confirmation read), squarely in the post-submit window.
+    monkeypatch.setattr(apply_playwright.apply_verify, "detect_code_gate",
+                        lambda page: None)
+
+    run_dir = tmp_path / "rundir"
+    hold_calls = []
+
+    def fake_hold(browser):
+        assert (run_dir / "report.json").exists()
+        hold_calls.append(True)
+
+    monkeypatch.setattr(apply_playwright, "_hold", fake_hold)
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        apply_playwright.run(
+            "https://boards.greenhouse.io/example/jobs/1", str(folder),
+            submit=True, run_dir=str(run_dir), hold=True, headless=True)
+
+    written = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert written["status"].startswith("submitted (unconfirmed")
+    assert "post-submit crash" in written["status"]
+    assert hold_calls == [True]       # window held open after the unconfirmed report
+
+
 def test_detach_spawns_child_without_detach_and_writes_pid(tmp_path, monkeypatch):
     """--detach re-spawns this one-shot as a DETACHED child (so the parked window
     outlives the calling agent), writes driver.pid + serve.log, and returns without

@@ -327,6 +327,39 @@ def gemini_auth() -> str:
     return "api_key" if val == "api_key" else "vertex"
 
 
+def tailor_provider() -> str:
+    """'gemini' (default) or 'claude'. Live: env > local/config.json > 'gemini'."""
+    val = os.getenv("RESUME_TAILOR_PROVIDER") or _config_json().get("tailor_provider")
+    val = val.strip().lower() if isinstance(val, str) else "gemini"
+    return "claude" if val == "claude" else "gemini"
+
+
+CLAUDE_MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-4-5")
+CLAUDE_MODEL_FLASH      = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "claude-sonnet-5")
+CLAUDE_MODEL_PRO        = os.getenv("RESUME_TAILOR_CLAUDE_MODEL_PRO", "claude-opus-4-8")
+
+_CLAUDE_TIER_ENV = {
+    TIER_FLASH_LITE: ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", CLAUDE_MODEL_FLASH_LITE),
+    TIER_FLASH:      ("RESUME_TAILOR_CLAUDE_MODEL_FLASH", CLAUDE_MODEL_FLASH),
+    TIER_PRO:        ("RESUME_TAILOR_CLAUDE_MODEL_PRO", CLAUDE_MODEL_PRO),
+}
+
+
+def claude_model_for(tier: str) -> str:
+    """Concrete Claude model for a tier, resolved live like model_for()
+    (config.py:330). Unknown tier falls back to the flash (sonnet) model."""
+    env, default = _CLAUDE_TIER_ENV.get(tier, (None, CLAUDE_MODEL_FLASH))
+    return os.getenv(env, default) if env else default
+
+
+def claude_timeout_schedule() -> list[int]:
+    """Escalating per-attempt Claude CLI timeouts, default [180, 300] (CLI
+    cold-start + opus latency; Gemini's 60s first slot would burn attempts).
+    Override RESUME_TAILOR_CLAUDE_TIMEOUTS='180,300'; garbage falls back."""
+    raw = os.getenv("RESUME_TAILOR_CLAUDE_TIMEOUTS", "")
+    return _parse_timeouts(raw, [180, 300])
+
+
 def model_for(tier: str) -> str:
     """Concrete Gemini model id for a tier token.
 
@@ -343,6 +376,19 @@ def model_for(tier: str) -> str:
     return os.getenv(env, default) if env else default
 
 
+def _parse_timeouts(raw: str, default: list[int]) -> list[int]:
+    """Parse comma-separated timeout values from a string. Returns default if
+    parsing fails or produces no positive values."""
+    if not raw or not raw.strip():
+        return default
+    try:
+        vals = [int(x.strip()) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        return default
+    vals = [v for v in vals if v > 0]
+    return vals if vals else default
+
+
 def tailor_timeout_schedule() -> list[int]:
     """Per-attempt Gemini-call timeouts in seconds, escalating. Default 60/120/180.
 
@@ -353,12 +399,4 @@ def tailor_timeout_schedule() -> list[int]:
     to the default. Not a Settings GUI field on purpose — a value a non-technical
     user could set to 0 is a footgun (see DECISIONS); power users still get the env."""
     raw = os.getenv("RESUME_TAILOR_TIMEOUTS", "")
-    if raw.strip():
-        try:
-            vals = [int(x.strip()) for x in raw.split(",") if x.strip()]
-        except ValueError:
-            vals = []
-        vals = [v for v in vals if v > 0]
-        if vals:
-            return vals
-    return [60, 120, 180]
+    return _parse_timeouts(raw, [60, 120, 180])

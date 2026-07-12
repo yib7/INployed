@@ -1,3 +1,8 @@
+import asyncio
+import json
+import os
+from pathlib import Path
+
 import pandas as pd
 import pytest
 import scraper
@@ -55,3 +60,82 @@ def test_unreadable_master_still_raises(tmp_path, monkeypatch):
     # a genuinely unreadable master must not be silently treated as empty
     with pytest.raises(OSError):
         scraper.append_to_master(pd.DataFrame({"job_posting_id": ["9"]}))
+
+
+# P2-1: the external-exclude JSON dump and the per-run CSV write are copied to
+# the VM and must survive a crash/kill mid-write. Both must route through the
+# module's atomic helpers (same-dir tempfile + os.replace), never a naked write
+# that can leave a truncated file behind.
+
+def test_write_external_exclude_ids_routes_through_atomic_json(tmp_path, monkeypatch):
+    target = tmp_path / "external_exclude_ids.json"
+    monkeypatch.setattr(scraper, "load_exclude_ids", lambda: ["1", "2", "3"])
+    calls = []
+    real = scraper._atomic_write_json
+
+    def spy(path, data):
+        calls.append((Path(path), list(data)))
+        return real(path, data)
+
+    monkeypatch.setattr(scraper, "_atomic_write_json", spy)
+    out = scraper.write_external_exclude_ids(target)
+    assert out == target
+    assert calls == [(target, ["1", "2", "3"])]                 # atomic helper used
+    assert json.loads(target.read_text(encoding="utf-8")) == ["1", "2", "3"]
+
+
+def test_write_external_exclude_ids_leaves_old_file_on_crash(tmp_path, monkeypatch):
+    target = tmp_path / "external_exclude_ids.json"
+    target.write_text('["old"]', encoding="utf-8")
+    before = target.read_bytes()
+    monkeypatch.setattr(scraper, "load_exclude_ids", lambda: ["new1", "new2"])
+
+    def boom_replace(*a, **k):
+        raise OSError("simulated crash right before the rename")
+
+    monkeypatch.setattr(os, "replace", boom_replace)
+    with pytest.raises(OSError):
+        scraper.write_external_exclude_ids(target)
+    assert target.read_bytes() == before                        # old file intact
+    leftovers = [p for p in tmp_path.iterdir() if p.name != "external_exclude_ids.json"]
+    assert leftovers == []                                      # tmp cleaned up
+
+
+def test_run_dir_csv_written_atomically(tmp_path, monkeypatch):
+    # main()'s run-dir CSV write must go through _atomic_to_csv (same-dir tmp +
+    # os.replace), never a naked df.to_csv straight onto the final path (a crash
+    # there would strand a truncated CSV that crashes the scoring step).
+    label = scraper.RUN_LABELS[0]
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "last_run_job_ids.json")
+    monkeypatch.setattr(scraper, "require_credentials", lambda: None)
+    monkeypatch.setattr(scraper, "load_search_config",
+                        lambda: {"limit_per_input": 5, "keywords": ["k"], "remote_types": ["remote"]})
+    monkeypatch.setattr(scraper, "load_blocklist", lambda: [])
+    monkeypatch.setattr(scraper, "append_to_master", lambda df: len(df))
+
+    async def fake_download(session, snapshot_id):
+        return [{"job_posting_id": "1", "job_title": "A"},
+                {"job_posting_id": "2", "job_title": "B"}]
+
+    monkeypatch.setattr(scraper, "download", fake_download)
+
+    spied = []
+    real = scraper._atomic_to_csv
+
+    def spy(df, path, **kwargs):
+        spied.append(Path(path))
+        return real(df, path, **kwargs)
+
+    monkeypatch.setattr(scraper, "_atomic_to_csv", spy)
+
+    # snapshot_id set -> recovery path (no trigger/billing, no network)
+    asyncio.run(scraper.main(snapshot_id="snap-recover", run_label=label))
+
+    run_dir = tmp_path / label
+    written = list(run_dir.glob(f"linkedin_jobs_*_{label}.csv"))
+    assert len(written) == 1
+    assert written[0] in spied                                  # atomic helper used
+    assert [p for p in run_dir.iterdir() if p.suffix == ".tmp"] == []
+    got = pd.read_csv(written[0], dtype={"job_posting_id": str})
+    assert sorted(got["job_posting_id"]) == ["1", "2"]

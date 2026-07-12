@@ -336,8 +336,7 @@ def write_external_exclude_ids(path: Path | None = None) -> Path:
     the whole set each time is idempotent + monotonic, so a prior run's ids can't slip
     through. Returns the written path."""
     target = path or EXTERNAL_EXCLUDE_FILE
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(load_exclude_ids(), f)
+    _atomic_write_json(target, load_exclude_ids())
     return target
 
 
@@ -636,7 +635,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     run_dir.mkdir(exist_ok=True)
     csv_path = run_dir / f"linkedin_jobs_{date_str}_{run_label}.csv"
 
-    df.to_csv(csv_path, index=False, encoding="utf-8")
+    _atomic_to_csv(df, csv_path)  # atomic: a truncated run CSV would crash the scoring step
 
     if "job_posting_id" in df.columns:
         save_current_ids(df["job_posting_id"].astype(str).tolist())

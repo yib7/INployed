@@ -1,9 +1,13 @@
-"""Thin synchronous LLM transport for the resume tailor (Gemini only).
+"""Thin synchronous LLM transport for the resume tailor -- two providers.
 
-Gemini is reached via Vertex AI (default) or a dedicated API key, selected by
-config.gemini_auth(). One public entry-point: call(system, user, tier, **kwargs).
-JSON mode returns parsed Python; text mode returns a stripped string. Retries a
-few times on transient errors, with backoff for 429s.
+Gemini (default) is reached via Vertex AI or a dedicated API key, selected by
+config.gemini_auth(). The optional "claude" provider (config.tailor_provider())
+runs the headless Claude Code CLI (`claude -p`) on the user's subscription via
+the root-level claude_cli.py transport. One public entry-point:
+call(system, user, tier, **kwargs) dispatches to whichever provider is
+configured. JSON mode returns parsed Python; text mode returns a stripped
+string. Retries a few times on transient errors, with backoff for 429s /
+rate-limit responses.
 """
 from __future__ import annotations
 
@@ -111,7 +115,15 @@ def call(
     max_output_tokens: Optional[int] = None,
     tools: Optional[list] = None,
 ) -> Any:
-    """Run one Gemini generation. `tier` resolves to a concrete model id."""
+    """Run one LLM generation. `tier` resolves to a concrete model id for
+    whichever provider is configured (config.tailor_provider(): 'gemini'
+    default, or 'claude')."""
+    if config.tailor_provider() == "claude":
+        return _call_claude(
+            system, user, config.claude_model_for(tier),
+            json_out=json_out, temperature=temperature,
+            max_output_tokens=max_output_tokens, tools=tools,
+        )
     model = config.model_for(tier)
     return _call_gemini(
         system, user, model,
@@ -292,3 +304,122 @@ def _call_gemini(
     raise LLMError(f"Gemini call failed after retries ({model}): {last_err}")
 
 
+def _claude_cli():
+    """Lazy import of the root-level claude_cli module (config.SCRAPE_DIR IS
+    the repo root -- same sys.path pattern as local/manual_add.py:30-34).
+    Imported lazily (not at module load) so llm.py stays importable even in
+    contexts where the repo root isn't yet on sys.path, and so tests can stub
+    this function without a real claude_cli import."""
+    import sys
+
+    root = str(config.SCRAPE_DIR)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import claude_cli
+    return claude_cli
+
+
+def _invoke_claude(
+    system: str,
+    user: str,
+    model: str,
+    *,
+    json_out: bool,
+    tools: Optional[list],
+    timeout_s: float,
+):
+    """One raw `claude -p` invocation with a bounded timeout. Returns a
+    claude_cli.CLIResult. Split out so the retry/escalation logic in
+    `_call_claude` is unit-testable without the real CLI."""
+    cc = _claude_cli()
+    return cc.run_claude(
+        system, user, model,
+        json_mode=json_out, allow_websearch=bool(tools), timeout_s=timeout_s,
+    )
+
+
+def _call_claude(
+    system: str,
+    user: str,
+    model: str,
+    *,
+    json_out: bool = False,
+    temperature: float = 0.2,
+    max_output_tokens: Optional[int] = None,
+    tools: Optional[list] = None,
+) -> Any:
+    """Run one Claude Code CLI generation, mirroring `_call_gemini`'s retry
+    envelope: a per-call timeout that ESCALATES across attempts
+    (config.claude_timeout_schedule(), default 180->300s -- the CLI's cold
+    start + opus latency make Gemini's 60s first slot waste attempts), and a
+    429/usage-limit error that reuses the SAME schedule slot through its own
+    RATE_LIMIT_MAX_RETRIES budget instead of burning a timeout attempt.
+
+    `temperature` / `max_output_tokens` are accepted for signature parity with
+    `_call_gemini` and IGNORED -- the print-mode CLI exposes neither. A
+    non-empty `tools` enables the CLI's WebSearch tool (the mapping
+    research.py's Gemini GoogleSearch grounding uses on the Claude lane)."""
+    cc = _claude_cli()
+    if cc.find_claude() is None:                       # fail fast, no retries
+        raise LLMError(
+            "Resume tailor provider is 'claude' but the `claude` CLI is not "
+            "on PATH. Install Claude Code and run `claude` once to log in, "
+            "or set the provider back to 'gemini' in Settings."
+        )
+    schedule = config.claude_timeout_schedule()
+    last_err: Optional[Exception] = None
+    timed_out = False
+    rl_used = 0
+    idx = 0
+    while idx < len(schedule):
+        timeout_s = schedule[idx]
+        try:
+            res = _invoke_claude(
+                system, user, model,
+                json_out=json_out, tools=tools, timeout_s=timeout_s,
+            )
+            USAGE.append({
+                "model": f"claude:{model}",
+                "in": res.input_tokens,
+                "out": res.output_tokens,
+                "cache_read": res.cache_read_tokens,
+                "cache_write": res.cache_write_tokens,
+            })
+            return _extract_json(res.text) if json_out else res.text
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            kind = getattr(exc, "kind", "")
+            if kind == "timeout" or (not kind and _is_timeout(exc)):
+                timed_out = True
+                log.warning("llm: claude %s timed out at %ss (attempt %d/%d); "
+                            "escalating timeout: %s", model, timeout_s, idx + 1,
+                            len(schedule), exc)
+                idx += 1
+                continue  # escalate to the next (longer) timeout — no sleep
+            timed_out = False
+            if kind == "rate_limit" or _is_rate_limit(exc):
+                if rl_used >= RATE_LIMIT_MAX_RETRIES:
+                    raise LLMError(
+                        f"Claude rate/usage limit persisted through {rl_used} "
+                        f"waits ({model}); giving up (a subscription window "
+                        f"limit resets on its own -- retry later): {exc}"
+                    ) from exc
+                wait = _rate_limit_delay(exc, rl_used)
+                log.warning("llm: claude %s rate-limited (wait %d/%d), "
+                            "holding off %.0fs: %s", model, rl_used + 1,
+                            RATE_LIMIT_MAX_RETRIES, wait, exc)
+                time.sleep(wait)
+                rl_used += 1
+                continue  # retry the SAME schedule slot
+            wait = 1.5 * (idx + 1)
+            log.warning("llm: claude %s transient error (attempt %d/%d), "
+                        "sleeping %.1fs: %s", model, idx + 1, len(schedule),
+                        wait, exc)
+            time.sleep(wait)
+            idx += 1
+    if timed_out:
+        raise LLMError(
+            f"Claude CLI timed out after {len(schedule)} attempts "
+            f"(last timeout {schedule[-1]}s, model {model}): {last_err}"
+        )
+    raise LLMError(f"Claude call failed after retries ({model}): {last_err}")

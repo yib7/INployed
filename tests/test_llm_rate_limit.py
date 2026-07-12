@@ -22,11 +22,17 @@ from resume_tailor import llm  # noqa: E402
 
 @pytest.fixture
 def sleeps(monkeypatch):
-    """Creds present, sleeps recorded (not slept), jitter zeroed."""
+    """Creds present, sleeps recorded (not slept), jitter zeroed.
+
+    Also pins the provider to gemini regardless of a developer's real
+    local/config.json / env — otherwise a `tailor_provider: claude` on disk
+    would reroute llm.call() around this fixture's faked `_invoke` seam."""
     recorded: list[float] = []
     monkeypatch.setattr(llm, "_check_creds", lambda: None)
     monkeypatch.setattr(llm.time, "sleep", lambda s: recorded.append(s))
     monkeypatch.setattr(llm.random, "uniform", lambda a, b: 0.0)
+    monkeypatch.setattr(llm.config, "_config_json", lambda: {})
+    monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
     llm.reset_usage()
     yield recorded
     llm.reset_usage()

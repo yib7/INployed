@@ -149,6 +149,46 @@ def test_generate_no_concepts_pool_is_noop():
     assert "Concepts & Methodologies" not in md
 
 
+def test_default_llm_call_routes_to_claude_when_provider_is_claude(monkeypatch):
+    # provider=claude -> _default_llm_call must reach llm._call_claude with the
+    # flash-tier Claude model, NOT the Gemini model id passed in `model`.
+    from resume_tailor import config, llm
+
+    monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {"tailor_provider": "claude"})
+    captured = {}
+
+    def fake_call_claude(system, user, model, **kwargs):
+        captured.update(system=system, user=user, model=model, kwargs=kwargs)
+        return "claude output"
+
+    monkeypatch.setattr(llm, "_call_claude", fake_call_claude)
+    out = resume_md._default_llm_call("sys", "usr", "gemini-3.5-flash")
+    assert out == "claude output"
+    assert captured["model"] == config.claude_model_for(config.TIER_FLASH)
+    assert captured["system"] == "sys"
+    assert captured["user"] == "usr"
+
+
+def test_default_llm_call_routes_to_gemini_by_default(monkeypatch):
+    from resume_tailor import config, llm
+
+    monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    captured = {}
+
+    def fake_call_gemini(system, user, model, **kwargs):
+        captured.update(system=system, user=user, model=model, kwargs=kwargs)
+        return "gemini output"
+
+    monkeypatch.setattr(llm, "_call_gemini", fake_call_gemini)
+    out = resume_md._default_llm_call("sys", "usr", "gemini-3.5-flash")
+    assert out == "gemini output"
+    assert captured["model"] == "gemini-3.5-flash"       # the passed model id, unchanged
+    assert captured["system"] == "sys"
+    assert captured["user"] == "usr"
+
+
 def test_push_argv_targets_resume_md_on_vm():
     import vm_sync
     t = vm_sync.VMTarget(instance="vm", zone="z", user="u", remote_dir="~")

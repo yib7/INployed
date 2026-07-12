@@ -10,6 +10,7 @@ score preview rides in a vertical splitter and is shown only on the job tabs.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -2212,14 +2213,22 @@ class MainWindow(QtWidgets.QMainWindow):
                             ("Apply answers", result.get("answers", []))):
             problems.extend(f"[{label}] {e}" for e in errs)
         try:
-            auth = jobsdata._load_cfg().get("gemini_auth", "vertex")
+            cfg = jobsdata._load_cfg()
+            tailor_provider = str(cfg.get("tailor_provider", "gemini")).strip().lower()
             stored = settings.load()
-            project = stored.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get(
-                "GOOGLE_CLOUD_PROJECT", "")
-            has_key = settings.secret_status().get("RESUME_TAILOR_GEMINI_API_KEY", False) or bool(
-                os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
-            problems.extend(f"[Engine] {w}"
-                            for w in jobsdata._engine_credential_warnings(auth, project, has_key))
+            if tailor_provider != "claude":  # gemini engine warnings only apply on gemini
+                auth = cfg.get("gemini_auth", "vertex")
+                project = stored.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get(
+                    "GOOGLE_CLOUD_PROJECT", "")
+                has_key = settings.secret_status().get(
+                    "RESUME_TAILOR_GEMINI_API_KEY", False) or bool(
+                        os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
+                problems.extend(f"[Engine] {w}" for w in
+                                jobsdata._engine_credential_warnings(auth, project, has_key))
+            scoring_provider = str(stored.get("provider", "gemini")).strip().lower()
+            cli_found = shutil.which("claude") is not None
+            problems.extend(f"[Engine] {w}" for w in jobsdata._claude_cli_warnings(
+                tailor_provider, scoring_provider, cli_found))
         except Exception:  # noqa: BLE001
             pass
         if not problems:

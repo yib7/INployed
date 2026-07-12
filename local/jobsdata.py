@@ -504,6 +504,23 @@ def _engine_credential_warnings(auth: str, project: str, has_api_key: bool) -> l
     return []
 
 
+def _claude_cli_warnings(tailor_provider: str, scoring_provider: str,
+                          cli_found: bool) -> list[str]:
+    """Warn when a provider is 'claude' but the CLI isn't installed. Pure (caller
+    passes shutil.which('claude') is not None) so it unit-tests like
+    _engine_credential_warnings."""
+    if cli_found:
+        return []
+    out = []
+    if tailor_provider == "claude":
+        out.append("Resume tailor provider is 'claude' but the `claude` CLI is not "
+                    "on PATH. Install Claude Code and run `claude` once to log in.")
+    if scoring_provider == "claude":
+        out.append("Scoring provider is 'claude' but the `claude` CLI is not on "
+                    "PATH -- local scoring will fall back to Gemini.")
+    return out
+
+
 def load_min_score(default: int = 4) -> int:
     try:
         return int(_load_cfg().get("min_score", default))

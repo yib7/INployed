@@ -63,6 +63,9 @@ ENV_TARGETS = {"env"}
 # new model id is never blocked — and a wrong pick can't silently break scoring.
 GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro-preview")
 
+# Claude model ids offered in the Claude model dropdowns (also editable_choice).
+CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8")
+
 
 # Backing files, keyed by Field.target. The Scraper/Scoring sections write the
 # root-level configs that scraper.py / score_jobs.py read standalone on the VM.
@@ -147,6 +150,17 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Advanced: deeper model for jobs that pass the Stage-2 threshold. Pick from "
                "the list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
+    Field("provider", "Scoring provider", "choice", "gemini", "Scoring", "scoring",
+          help="Which AI service scores jobs when scoring runs ON THIS PC. 'claude' uses "
+               "your local Claude Code CLI (subscription). The cloud VM always scores "
+               "with Gemini regardless of this setting. Applies from the next scoring run.",
+          choices=("gemini", "claude")),
+    Field("stage1_model_claude", "Stage-1 model (Claude)", "editable_choice",
+          "claude-haiku-4-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
+          help="Used only when Scoring provider is 'claude'."),
+    Field("stage2_model_claude", "Stage-2 model (Claude)", "editable_choice",
+          "claude-sonnet-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
+          help="Used only when Scoring provider is 'claude'."),
     Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
           help="Parallel Stage-1 LLM calls.", min=1, max=50, slider=True),
     Field("stage2_concurrency", "Stage-2 concurrency", "int", 4, "Scoring", "scoring",
@@ -280,6 +294,14 @@ SETTINGS_SCHEMA: list[Field] = [
                "Gemini API key (above) - pick this if you don't have a Cloud project.",
           choices=("vertex", "api_key")),
 
+    Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
+          "Engine", "config",
+          help="Which AI service tailors resumes. 'gemini' uses the Google engine above. "
+               "'claude' runs your locally installed Claude Code CLI on your claude.ai "
+               "subscription (run `claude` once to log in). Takes effect on the next "
+               "tailor run -- no restart.",
+          choices=("gemini", "claude")),
+
     # --- Resume tailor models: which Gemini model each tailoring stage uses, ----
     # written to .env (read by local/resume_tailor/config.py as RESUME_TAILOR_MODEL_*).
     # Editable dropdowns: pick a 3.x model or type a custom id.
@@ -293,6 +315,18 @@ SETTINGS_SCHEMA: list[Field] = [
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           help="Highest-quality tier — set to gemini-3.1-pro-preview for the strongest "
                "writing (slower / pricier)."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
+          "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
+          help="Claude provider only: cheapest tier (bullet selection / quick stages). "
+               "Restart the dashboard after changing (.env is read at startup)."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model — standard (writing)",
+          "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
+          help="Claude provider only: re-phrasing bullets and the cover letter. "
+               "Restart the dashboard after changing (.env is read at startup)."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
+          "editable_choice", "claude-opus-4-8", "Engine", "env", choices=CLAUDE_MODELS,
+          help="Claude provider only: highest-quality tier (rephrase / cover letter). "
+               "Restart the dashboard after changing (.env is read at startup)."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your

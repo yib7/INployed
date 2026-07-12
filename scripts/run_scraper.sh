@@ -102,6 +102,9 @@ python ~/scraper.py >> ~/scraper.log 2>&1
 #    then retries master rows whose scoring previously failed.
 python ~/score_jobs.py >> ~/scraper.log 2>&1
 
+# 2.5 Retention: blank descriptions older than the window; best-effort, never fails the run
+python ~/prune_master.py --master ~/linkedin_jobs_master.csv >> ~/scraper.log 2>&1 || echo "$(date -Is) prune_master non-fatal (exit $?)" >> ~/scraper.log
+
 # 3. Sync — only the scored .csv.gz files (one per run-label dir)
 for label in morning afternoon evening night; do
     rclone copy ~/"$label" gdrive:LinkedInJobs/"$label" --include "*_scored.csv.gz" --update

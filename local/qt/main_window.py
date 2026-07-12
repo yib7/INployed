@@ -76,6 +76,18 @@ PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 # local load). Below it, just go.
 PARALLEL_WARN_THRESHOLD = 5
 
+# Cap on concurrently-running tailor jobs. Uncapped (a 14-job batch = 14
+# threads, each making several Gemini calls at once) the batch stampedes the
+# per-minute quota: every thread 429s together, retries together, and the
+# unlucky tail exhausts its retries and fails. Four keeps the pipeline busy
+# while staying under free-tier RPM limits; the rest of the batch queues.
+MAX_PARALLEL_TAILORS = 4
+
+
+def _tailor_pool_size(n_jobs: int) -> int:
+    """Worker-thread count for a tailor batch of `n_jobs`."""
+    return max(1, min(n_jobs, MAX_PARALLEL_TAILORS))
+
 
 def _console_python(exe: str | None = None) -> str:
     """The console Python to run child scripts with.
@@ -107,6 +119,12 @@ class MainWindow(QtWidgets.QMainWindow):
     # (the ThreadPoolExecutor workers are plain threads — direct widget calls from
     # them would be unsafe).
     tailor_progress = QtCore.Signal(str)
+    # One per-job outcome dict ({"id", "label", "dir", "error"}) the moment that
+    # job finishes, queued onto the UI thread. The registry is written per job so
+    # an interrupted batch (crash, power loss) keeps every result already done —
+    # the July 8 batch crash lost all 12 finished resumes because bookkeeping
+    # only happened after the WHOLE batch completed.
+    tailor_job_done = QtCore.Signal(object)
 
     def __init__(self, csv_paths: list[Path] | None = None, registry=None,
                  parent: QtWidgets.QWidget | None = None) -> None:
@@ -142,6 +160,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # stay on the UI thread — the connection is thread-affine and they're fast.
         self._writes = workers.SerialTaskQueue(self)
         self.tailor_progress.connect(self._set_status)
+        self.tailor_job_done.connect(self._on_tailor_job_done)
 
         self._build()
         self._setup_fs_watcher()
@@ -325,7 +344,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # path is resolved by apply_queue at call time (APPLY_QUEUE_PATH-aware).
         self.apply_queue_panel = ApplyQueuePanel(
             submit_write=self._submit_queue_write,
-            on_set_password=self._set_ats_password)
+            on_set_password=self._set_ats_password,
+            on_mark_applied=self._apply_queue_mark_applied,
+            on_mark_seen=self._apply_queue_mark_seen)
         self._tab_widgets: dict[str, QtWidgets.QWidget] = {}
         pages = {"High Score (Unseen)": self.high_tab, "All Jobs": self.all_tab,
                  "Tracker": self.tracker_tab, "Auto-apply": self.apply_queue_panel,
@@ -535,8 +556,9 @@ class MainWindow(QtWidgets.QMainWindow):
                            if not df.empty and "url" in df.columns else {})
         self.df_high = filter_high_unseen(df, self.min_score)
         resume_ids = self._resume_ids()
-        self.high_tab.set_source_df(self.df_high, resume_ids)
-        self.all_tab.set_source_df(df, resume_ids)
+        failed_ids = self._tailor_failure_ids()
+        self.high_tab.set_source_df(self.df_high, resume_ids, failed_ids)
+        self.all_tab.set_source_df(df, resume_ids, failed_ids)
         self._refresh_tracker()
         self._refresh_stats()
         self._refresh_apply_button()  # a freshly tailored job may now be apply-ready
@@ -632,6 +654,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # the registry row — the tint returns if the folder comes back).
         try:
             return frozenset(jobsdata.live_resume_ids(self.registry.resume_paths()))
+        except Exception:  # noqa: BLE001 - cosmetic; never break the view
+            return frozenset()
+
+    def _tailor_failure_ids(self) -> frozenset:
+        # Jobs whose most recent tailor run failed — tinted red ("re-run me")
+        # until a later run succeeds (record_resume clears the flag).
+        try:
+            return frozenset(self.registry.tailor_failure_ids())
         except Exception:  # noqa: BLE001 - cosmetic; never break the view
             return frozenset()
 
@@ -1453,6 +1483,7 @@ class MainWindow(QtWidgets.QMainWindow):
             try:
                 self.registry.clear_status(jid)       # drop any tracker status too
                 self.registry.clear_resume_path(jid)  # résumé link is stale either way
+                self.registry.clear_tailor_failure(jid)  # deleted job needs no re-run flag
             except Exception:  # noqa: BLE001 - bookkeeping only
                 pass
         # Optimistic: drop the rows from the in-memory frame and repaint now; the
@@ -1613,9 +1644,10 @@ class MainWindow(QtWidgets.QMainWindow):
         trivially testable). Returns True to proceed."""
         return QtWidgets.QMessageBox.question(
             self, "Tailor many resumes at once?",
-            f"About to tailor {n} resumes in parallel — they run at the same time, each "
-            f"making its own Gemini calls and launching pdflatex. Large batches can hit API "
-            f"limits or strain your PC. Continue?"
+            f"About to tailor {n} resumes ({MAX_PARALLEL_TAILORS} at a time), each "
+            f"making its own Gemini calls and launching pdflatex. If the API rate-limits, "
+            f"jobs wait it out and retry; any job that still fails turns red in the "
+            f"Unseen tab for a re-run. Continue?"
         ) == QtWidgets.QMessageBox.StandardButton.Yes
 
     def _tailor_selected(self) -> None:
@@ -1654,6 +1686,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_tailoring", False):
             return False
         self._tailoring = True
+        self._tailor_recorded = set()   # job ids bookkept by _on_tailor_job_done
         self.btn_tailor.setEnabled(False)
         self._apply_auth_env()
         plural = "resume" if len(jobs) == 1 else "resumes in parallel"
@@ -1724,11 +1757,42 @@ class MainWindow(QtWidgets.QMainWindow):
                           "dir": None, "error": str(exc)}
             with done_lock:
                 done += 1
+            # Queued to the UI thread: the registry records this job NOW, so an
+            # interrupted batch keeps everything already finished.
+            self.tailor_job_done.emit(result)
             self.tailor_progress.emit(f"Tailoring ({done}/{n} done): {label} finished")
             return result
 
-        with ThreadPoolExecutor(max_workers=max(1, n)) as pool:
+        with ThreadPoolExecutor(max_workers=_tailor_pool_size(n)) as pool:
             return list(pool.map(one, jobs))
+
+    def _record_tailor_result(self, result: dict) -> bool:
+        """Write ONE job's outcome to the registry (UI thread only): success
+        records the resume folder (clearing any old red flag), failure records
+        the red 'tailor failed — re-run' flag the unseen tab shows. True when
+        the write landed."""
+        jid = (result or {}).get("id")
+        if not jid:
+            return False
+        try:
+            if result.get("dir"):
+                self.registry.record_resume(jid, str(result["dir"]))
+            else:
+                self.registry.record_tailor_failure(
+                    jid, str(result.get("error") or "unknown error"))
+        except Exception:  # noqa: BLE001 - bookkeeping only; the view heals on reload
+            return False
+        return True
+
+    def _on_tailor_job_done(self, result: dict) -> None:
+        """Bookkeep ONE finished tailor job (queued here, the UI thread, from a
+        pool thread the moment the job ends). Incremental on purpose — a batch
+        interrupted at job 12 of 14 must keep those 12 results; the July 8 crash
+        lost all of them because bookkeeping waited for the whole batch."""
+        if self._record_tailor_result(result):
+            rec = getattr(self, "_tailor_recorded", None)
+            if rec is not None:
+                rec.add(result["id"])
 
     def _finish_tailor(self, results: list[dict]) -> None:
         self._tailoring = False
@@ -1736,13 +1800,14 @@ class MainWindow(QtWidgets.QMainWindow):
         results = results or []
         oks = [r for r in results if r.get("dir")]
         fails = [r for r in results if not r.get("dir")]
-        # Registry writes on the UI thread (this slot runs there) — no cross-thread SQLite.
-        for r in oks:
-            if r.get("id"):
-                try:
-                    self.registry.record_resume(r["id"], str(r["dir"]))
-                except Exception:  # noqa: BLE001 - bookkeeping only
-                    pass
+        # Normally every result was already bookkept per job (the queued
+        # _on_tailor_job_done deliveries precede this callback — same FIFO
+        # event queue). Catch up on any that weren't, e.g. a registry hiccup
+        # mid-batch or a test driving this callback directly.
+        recorded = getattr(self, "_tailor_recorded", set())
+        for r in results:
+            if r.get("id") and r["id"] not in recorded:
+                self._record_tailor_result(r)
         total = len(results)
         if fails:
             lines = "\n".join(f"  - {r['label']}: {r['error']}" for r in fails)
@@ -1983,6 +2048,40 @@ class MainWindow(QtWidgets.QMainWindow):
                     lambda jid=jid, arts=arts: apply_queue.set_artifacts(jid, arts))
             else:
                 park_failed(jid, f"tailor failed: {r.get('error') or 'unknown error'}")
+
+    def _apply_queue_mark_applied(self, entry: dict) -> None:
+        """Auto-apply panel action: record a queued job as applied in the tracker,
+        mark it seen (applied implies seen — matches _mark_applied_from_panel), and
+        drop it from the queue. Queue write rides _submit_queue_write."""
+        jid = str(entry.get("job_posting_id") or "").strip()
+        if not jid:
+            return
+        self.registry.set_status(jid, "applied",
+                                 company=entry.get("company", ""),
+                                 job_title=entry.get("title", ""),
+                                 url=entry.get("apply_url", ""))
+        self._mark_ids_seen([jid])
+        self._submit_queue_write(
+            lambda: apply_queue.remove(jid),
+            on_done=lambda _r: self.apply_queue_panel.refresh())
+        self._refresh_tracker()
+
+    def _apply_queue_mark_seen(self, entry: dict) -> None:
+        """Auto-apply panel action: mark a queued job seen (no status → it stays
+        under All Jobs) and drop it from the queue. The job may already be gone."""
+        jid = str(entry.get("job_posting_id") or "").strip()
+        if not jid:
+            return
+        self._mark_ids_seen([jid])
+
+        def _remove() -> None:
+            try:
+                apply_queue.remove(jid)
+            except apply_queue.UnknownJobError:
+                pass
+
+        self._submit_queue_write(
+            _remove, on_done=lambda _r: self.apply_queue_panel.refresh())
 
     def _set_ats_password(self) -> None:
         """Store the ONE master ATS password (typed twice, password-echo) in the

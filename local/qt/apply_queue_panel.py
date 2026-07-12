@@ -42,21 +42,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 KICKOFF_PROMPT = "Use the auto-apply skill: drain the apply queue"
 
 # PowerShell-safe (5.1: `;` chains, no `&&`; quoted path survives spaces).
-# --model opus: runs the ORCHESTRATOR (this drain session) on Opus — strongest judgment /
-#   prompt-injection resistance for an unattended, credential-touching coordinator. The
-#   per-job subagents it dispatches are pinned to claude-sonnet-5 by the skill (SKILL.md
-#   DRAIN LOOP step 3) — mechanical form-driving that doesn't need Opus — so this flag no
-#   longer governs them; change the subagent model in the skill, not here.
+# --model sonnet: runs the ORCHESTRATOR (this drain session) on Sonnet. The orchestrator only
+#   delegates — claim a job, dispatch a per-job subagent, collect its one-paragraph report, run
+#   the watchdogs; it never browses the web or pastes the master password itself (the per-job
+#   subagents do), so its prompt-injection surface is low and Sonnet is sufficient for the
+#   coordination while costing far less than Opus. The per-job subagents are independently
+#   pinned to claude-sonnet-5 by the skill (SKILL.md DRAIN LOOP step 3); this flag governs only
+#   the orchestrator — change the subagent model in the skill, not here.
 # --dangerously-skip-permissions: runs UNATTENDED — Claude Code never stops to ask the
 #   user to approve each browser/file/CLI action. The skill's own safety rails (never
 #   submit, park at review, CAPTCHA/SSN/payment stop, per-job domain allowlist,
 #   secret-safe master-password paste) live in the skill logic and stay in force.
 KICKOFF_COMMAND = (
-    f'cd "{REPO_ROOT}"; claude --model opus --dangerously-skip-permissions '
+    f'cd "{REPO_ROOT}"; claude --model sonnet --dangerously-skip-permissions '
     f'"{KICKOFF_PROMPT}"'
 )
 
-# Safer alternative (the Start button's "Scoped" choice): same Opus drain, but instead
+# Safer alternative (the Start button's "Scoped" choice): same Sonnet drain, but instead
 # of bypassing ALL permission checks it pre-approves ONLY the tools the drain uses —
 # Bash scoped to `python …` (the two project CLIs), file read/write for the record,
 # Task to dispatch per-job subagents, and the browser MCP. Anything else (rm, curl, a
@@ -64,7 +66,7 @@ KICKOFF_COMMAND = (
 # bypass — at the cost of an occasional pause if the agent reaches outside the list.
 # The prompt is placed FIRST so the variadic --allowedTools can't swallow it.
 KICKOFF_COMMAND_SCOPED = (
-    f'cd "{REPO_ROOT}"; claude "{KICKOFF_PROMPT}" --model opus --allowedTools '
+    f'cd "{REPO_ROOT}"; claude "{KICKOFF_PROMPT}" --model sonnet --allowedTools '
     f'Read Glob Grep Write Edit Task "Bash(python:*)" "mcp__claude-in-chrome__*"'
 )
 
@@ -134,6 +136,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  on_set_password: Callable[[], None] | None = None,
                  password_exists: Callable[[], bool] | None = None,
                  on_start_run: Callable[[], None] | None = None,
+                 on_mark_applied: Callable[[Dict[str, Any]], None] | None = None,
+                 on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
                  parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._queue_override = Path(queue_path) if queue_path else None
@@ -142,6 +146,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # Late-bound default so a monkeypatched module seam takes effect.
         self._password_exists = password_exists or (lambda: _default_password_exists())
         self._on_start_run = on_start_run or _spawn_kickoff
+        self._on_mark_applied = on_mark_applied or (lambda _e: None)
+        self._on_mark_seen = on_mark_seen or (lambda _e: None)
         self._jobs: List[Dict[str, Any]] = []
         self._mtime_sig: tuple | None = None
         self._build()
@@ -184,6 +190,16 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "(Windows Credential Manager — never written to any file)")
         self.pw_btn.clicked.connect(lambda: self._on_set_password())
         header.addWidget(self.pw_btn)
+        self.copy_pw_btn = QtWidgets.QPushButton("Copy password")
+        self.copy_pw_btn.setToolTip(
+            "Copy the master password to the clipboard for a manual login — it is "
+            "never shown on screen. Clears from the clipboard when you click Clear.")
+        self.copy_pw_btn.clicked.connect(self._copy_password)
+        header.addWidget(self.copy_pw_btn)
+        self.clear_pw_btn = QtWidgets.QPushButton("Clear")
+        self.clear_pw_btn.setToolTip("Clear the master password from the clipboard.")
+        self.clear_pw_btn.clicked.connect(self._clear_password)
+        header.addWidget(self.clear_pw_btn)
         v.addLayout(header)
 
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
@@ -228,6 +244,12 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "and refreshes its apply.md standard answers)")
         self.remove_btn = button("Remove", self._remove,
                                  "Delete the selected entry from the queue")
+        self.mark_applied_btn = button(
+            "Mark applied", self._mark_applied,
+            "Move to the Tracker as applied and remove from the queue")
+        self.dont_apply_btn = button(
+            "Don't apply", self._dont_apply,
+            "Mark seen (keeps it in All Jobs) and remove from the queue")
         self.clear_btn = button(
             "Clear finished", self._clear_finished,
             "Drop every ready_to_submit / submitted / needs_human / failed entry")
@@ -355,6 +377,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             exists = False
         self.pw_label.setText("Master password: SET" if exists
                               else "Master password: NOT SET")
+        self.copy_pw_btn.setEnabled(exists)
 
     # ---- selection / details --------------------------------------------------------
 
@@ -432,6 +455,35 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self._submit_write(lambda: apply_queue.remove(jid, path=qp),
                            on_done=lambda _r: self.refresh(),
                            on_error=self._write_failed)
+
+    def _mark_applied(self) -> None:
+        e = self._selected_entry()
+        if e is None:
+            self._set_note("Select a row to mark applied.")
+            return
+        self._on_mark_applied(e)
+        self._set_note(f"Marked applied — {e.get('company', '')} moved to the Tracker.")
+
+    def _dont_apply(self) -> None:
+        e = self._selected_entry()
+        if e is None:
+            self._set_note("Select a row first.")
+            return
+        self._on_mark_seen(e)
+        self._set_note(
+            f"Won't apply — {e.get('company', '')} removed from the queue (still under All Jobs).")
+
+    def _copy_password(self) -> None:
+        if ats_accounts.copy_password_to_clipboard():
+            self._set_note("Master password copied to the clipboard — paste it, then click Clear.")
+        else:
+            self._set_note("No master password stored — click 'Set…' first.")
+
+    def _clear_password(self) -> None:
+        if ats_accounts.clear_clipboard_if_password():
+            self._set_note("Clipboard cleared.")
+        else:
+            self._set_note("Clipboard left untouched (nothing to clear).")
 
     def _clear_finished(self) -> None:
         qp = self._queue_file()

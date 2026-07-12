@@ -10,6 +10,7 @@ matters (it's the difference between a 4-minute suite and a CI hang).
 """
 import os
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -18,6 +19,23 @@ import pytest
 # Qt GUI tests run headless (CI has no display). Must be set before the first
 # QApplication is created anywhere in the session.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Isolate the whole suite from the user's REAL %LOCALAPPDATA%\linkedin_watcher\.
+#
+# seen_db.SeenRegistry() (the application tracker + generated-résumé index),
+# watcher.py (LOG_PATH/STATE_PATH, bound at *import* time — line 43 even mkdir's
+# the dir) and the apply-queue / ats-accounts stores all derive their on-disk
+# location from LOCALAPPDATA. A test that constructs any of them without an
+# explicit tmp path reads AND writes the user's live files. That happened: pytest
+# runs (some from worktrees) opened the real seen.db concurrently with the running
+# dashboard + scheduled watcher and corrupted it twice (2026-06-28, 2026-07-07);
+# app_status — the one table with no self-heal — was wiped both times. Redirect
+# LOCALAPPDATA to a throwaway dir for the whole session, BEFORE any `local/` module
+# is imported, so no test can ever touch the real profile. Subprocesses spawned by
+# tests inherit this env, closing the subprocess-monkeypatch pollution hole too.
+# Individual tests may still monkeypatch their own LOCALAPPDATA on top.
+# tests/test_hermetic_appdata.py fails loudly if this redirect is ever removed.
+os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="inployed-test-appdata-")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
 

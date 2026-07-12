@@ -602,6 +602,39 @@ def test_set_ats_password_happy_path(qtbot, monkeypatch, tmp_path):
     assert stored == ["fake-pw"]      # the dialog string goes straight through
 
 
+def test_apply_queue_mark_applied_sets_status_seen_and_removes(qtbot, monkeypatch, tmp_path):
+    import os
+    from pathlib import Path
+    w = _win(qtbot, monkeypatch, tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry(
+        "42", company="Acme", title="Analyst", apply_url="https://x/42"))  # default path = env qfile
+    status_calls, seen_calls = [], []
+    monkeypatch.setattr(w.registry, "set_status", lambda *a, **k: status_calls.append((a, k)))
+    monkeypatch.setattr(w, "_mark_ids_seen", lambda ids, **k: seen_calls.append(list(ids)))
+    monkeypatch.setattr(w, "_refresh_tracker", lambda: None)
+    w._apply_queue_mark_applied(
+        {"job_posting_id": "42", "company": "Acme", "title": "Analyst", "apply_url": "https://x/42"})
+    assert status_calls and status_calls[0][0][0] == "42" and status_calls[0][0][1] == "applied"
+    assert seen_calls == [["42"]]                       # applied implies seen
+    assert apply_queue.load(Path(os.environ["APPLY_QUEUE_PATH"]))["jobs"] == []   # removed inline
+
+
+def test_apply_queue_mark_seen_marks_seen_and_removes_without_status(qtbot, monkeypatch, tmp_path):
+    import os
+    from pathlib import Path
+    w = _win(qtbot, monkeypatch, tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry(
+        "42", company="Acme", title="Analyst", apply_url="https://x/42"))
+    status_calls, seen_calls = [], []
+    monkeypatch.setattr(w.registry, "set_status", lambda *a, **k: status_calls.append((a, k)))
+    monkeypatch.setattr(w, "_mark_ids_seen", lambda ids, **k: seen_calls.append(list(ids)))
+    w._apply_queue_mark_seen(
+        {"job_posting_id": "42", "company": "Acme", "title": "Analyst", "apply_url": "https://x/42"})
+    assert status_calls == []                           # no status → stays under All Jobs
+    assert seen_calls == [["42"]]
+    assert apply_queue.load(Path(os.environ["APPLY_QUEUE_PATH"]))["jobs"] == []
+
+
 def test_set_ats_password_mismatch_blank_and_cancel_abort(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot, monkeypatch, tmp_path)
     stored = []
@@ -761,14 +794,14 @@ def test_kickoff_command_constants_shape():
     """The two drain commands the Start button can launch are well-shaped: the
     unattended variant bypasses prompts, the scoped variant allowlists tools."""
     assert KICKOFF_PROMPT == "Use the auto-apply skill: drain the apply queue"
-    # Unattended variant: blanket bypass on Opus, PowerShell-shaped (5.1-safe).
+    # Unattended variant: blanket bypass on Sonnet, PowerShell-shaped (5.1-safe).
     assert KICKOFF_COMMAND.startswith("cd ")
-    assert "--model opus" in KICKOFF_COMMAND
+    assert "--model sonnet" in KICKOFF_COMMAND
     assert "--dangerously-skip-permissions" in KICKOFF_COMMAND
     assert f'"{KICKOFF_PROMPT}"' in KICKOFF_COMMAND
     assert ";" in KICKOFF_COMMAND             # PowerShell chain, not && (5.1-safe)
     # Scoped variant: allowlisted tools instead of the blanket bypass.
-    assert "--model opus" in KICKOFF_COMMAND_SCOPED
+    assert "--model sonnet" in KICKOFF_COMMAND_SCOPED
     assert "--allowedTools" in KICKOFF_COMMAND_SCOPED
     assert "--dangerously-skip-permissions" not in KICKOFF_COMMAND_SCOPED
     assert "Bash(python:*)" in KICKOFF_COMMAND_SCOPED
@@ -929,6 +962,48 @@ def test_panel_set_password_button_fires_injected_callback(qtbot, tmp_path):
     p = _panel(qtbot, _qfile(tmp_path), on_set_password=lambda: fired.append(True))
     p.pw_btn.click()
     assert fired == [True]
+
+
+def test_panel_mark_applied_button_fires_injected_callback(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry(
+        "1", company="Acme", title="A", apply_url="https://x/1"), path=qfile)
+    got = []
+    p = _panel(qtbot, qfile, on_mark_applied=lambda e: got.append(e))
+    p.table.selectRow(0)
+    p.mark_applied_btn.click()
+    assert got and got[0]["job_posting_id"] == "1"
+
+
+def test_panel_dont_apply_button_fires_injected_callback(qtbot, tmp_path):
+    qfile = _qfile(tmp_path)
+    apply_queue.enqueue(apply_queue.new_entry(
+        "1", company="Acme", title="A", apply_url="https://x/1"), path=qfile)
+    got = []
+    p = _panel(qtbot, qfile, on_mark_seen=lambda e: got.append(e))
+    p.table.selectRow(0)
+    p.dont_apply_btn.click()
+    assert got and got[0]["job_posting_id"] == "1"
+
+
+def test_panel_copy_password_button_copies_and_confirms(qtbot, tmp_path, monkeypatch):
+    called = []
+    monkeypatch.setattr(aqp.ats_accounts, "copy_password_to_clipboard",
+                        lambda: called.append(True) or True)
+    p = _panel(qtbot, _qfile(tmp_path), password_exists=lambda: True)  # enables copy_pw_btn
+    p.copy_pw_btn.click()
+    assert called == [True]
+    note = p.status_label.text()
+    assert "copied" in note.lower()
+    # secret-safety: the confirmation is generic — it renders no password value.
+    assert "password" in note.lower() and ":" not in note  # a plain confirmation, not a value dump
+
+
+def test_panel_copy_password_refused_when_unset(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(aqp.ats_accounts, "copy_password_to_clipboard", lambda: False)
+    p = _panel(qtbot, _qfile(tmp_path), password_exists=lambda: True)
+    p.copy_pw_btn.click()
+    assert "set" in p.status_label.text().lower()   # "click 'Set…' first"
 
 
 def test_panel_mutations_go_through_injected_submit_write(qtbot, tmp_path):

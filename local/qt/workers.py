@@ -1,12 +1,21 @@
 """Run a blocking callable off the UI thread, Qt-style.
 
 Replaces the old Tk `threading.Thread` + `root.after(0, ...)` marshaling: a
-`Worker` runs `fn()` on a `QThread` and emits `finished(result)` / `failed(exc)`
-back on the UI thread (Qt queues cross-thread signals). `run_async` wires it up,
-keeps references alive until the thread ends, and returns the (thread, worker).
+`Worker` runs `fn()` on a `QThread` and emits `finished(result)` / `failed(exc)`,
+which `run_async` marshals back onto the OWNER's thread before invoking the
+callbacks. The marshaling needs a real QObject receiver (`_Relay`): PySide6
+invokes a plain-callable slot directly in the EMITTING thread, so connecting
+`worker.finished` straight to the Python closure ran every callback on the
+worker thread — model resets, dialogs and registry writes executed off the UI
+thread, which corrupted Qt's heap and produced the recurring Qt6Core.dll
+crashes (access violation in QCoreApplication::notifyInternal2 / 0xc0000409 in
+QtPrivate::sizedFree) during batch tailor runs. A QObject slot, by contrast,
+gets an auto-QUEUED connection to the receiver's thread — the behavior the
+whole dashboard was written against.
 
 Tests monkeypatch `run_async` with a synchronous stand-in, so handlers stay
-testable without real threads.
+testable without real threads; tests/test_qt_workers_affinity.py exercises the
+real threaded path and pins the callbacks-on-owner-thread contract.
 """
 from __future__ import annotations
 
@@ -35,34 +44,94 @@ class Worker(QtCore.QObject):
             self.finished.emit(result)
 
 
+class _Relay(QtCore.QObject):
+    """UI-thread landing pad for a worker's completion signals.
+
+    Created (parentless) on the caller's thread, so `worker.finished ->
+    self._done` is an auto-QUEUED connection and the Python callbacks run on
+    that thread. Connecting the worker signals to the callbacks directly would
+    run them on the WORKER thread — PySide6 calls non-QObject slots in the
+    emitting thread (see module docstring for the crash history that caused).
+    Deliberately NOT parented to the owner: a GC'd owner would take the relay's
+    C++ half with it and the cleanup slot would never run; `_LIVE` keeps the
+    relay alive exactly until the thread's `finished` is delivered.
+    """
+
+    def __init__(self,
+                 on_done: Callable[[object], None] | None,
+                 on_error: Callable[[BaseException], None] | None,
+                 cleanup: Callable[[], None] | None = None) -> None:
+        super().__init__()
+        self._on_done = on_done
+        self._on_error = on_error
+        self._cleanup_fn = cleanup
+
+    @QtCore.Slot(object)
+    def _done(self, result: object) -> None:
+        if self._on_done is not None:
+            self._on_done(result)
+
+    @QtCore.Slot(object)
+    def _error(self, exc: BaseException) -> None:
+        if self._on_error is not None:
+            self._on_error(exc)
+
+    @QtCore.Slot()
+    def _thread_finished(self) -> None:
+        if self._cleanup_fn is not None:
+            self._cleanup_fn()
+        self.deleteLater()
+
+
+# Every in-flight (thread, worker, relay) trio, alive until the thread's
+# `finished` has been delivered on the owner's thread. Without this, the only
+# Python references live in `owner._bg_threads` — and when the owner is
+# garbage-collected right after a task completes (a test's local owner, a
+# closing dialog), shiboken deletes the C++ QThread while its OS thread is
+# still winding down: qFatal("QThread: Destroyed while thread is still
+# running") aborts the process. Object lifetime must not depend on the
+# owner's GC timing.
+_LIVE: set = set()
+
+
 def run_async(owner: QtCore.QObject, fn: Callable[[], object],
               on_done: Callable[[object], None] | None = None,
               on_error: Callable[[BaseException], None] | None = None):
-    """Run `fn()` on a worker thread; call `on_done`/`on_error` on the UI thread.
+    """Run `fn()` on a worker thread; call `on_done`/`on_error` on `owner`'s thread.
 
-    `owner` keeps a reference to the live threads (in `owner._bg_threads`) so they
-    aren't garbage-collected mid-run.
+    `owner` keeps a reference to the live threads (in `owner._bg_threads`) so
+    callers can see what's in flight; `_LIVE` guarantees the Qt objects survive
+    until the thread has actually finished.
     """
     thread = QtCore.QThread()
     worker = Worker(fn)
     worker.moveToThread(thread)
-    thread.started.connect(worker.run)
-    if on_done is not None:
-        worker.finished.connect(on_done)
-    if on_error is not None:
-        worker.failed.connect(on_error)
-    worker.finished.connect(thread.quit)
-    worker.failed.connect(thread.quit)
-    thread.finished.connect(worker.deleteLater)
-    thread.finished.connect(thread.deleteLater)
 
     bag = getattr(owner, "_bg_threads", None)
     if bag is None:
         bag = []
         owner._bg_threads = bag
-    bag.append((thread, worker))
-    thread.finished.connect(lambda: bag.remove((thread, worker)) if (thread, worker) in bag else None)
 
+    def _cleanup() -> None:
+        if (thread, worker) in bag:
+            bag.remove((thread, worker))
+        _LIVE.discard(trio)
+
+    relay = _Relay(on_done, on_error, cleanup=_cleanup)
+    trio = (thread, worker, relay)
+    thread.started.connect(worker.run)
+    worker.finished.connect(relay._done)
+    worker.failed.connect(relay._error)
+    worker.finished.connect(thread.quit)
+    worker.failed.connect(thread.quit)
+    thread.finished.connect(worker.deleteLater)
+    thread.finished.connect(thread.deleteLater)
+    # Bound-QObject slot => queued onto the relay's (owner's) thread; the plain
+    # lambda this replaces ran on the dying worker thread itself.
+    thread.finished.connect(relay._thread_finished)
+
+    bag.append((thread, worker))
+    _LIVE.add(trio)
     thread.start()
     return thread, worker
 

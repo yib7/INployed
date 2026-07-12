@@ -1,11 +1,12 @@
-"""Playwright modern-board driver — the resolved upload path for the auto-apply flow.
+"""Playwright modern-board driver (experimental) — an upload path for the auto-apply flow.
 
-SP1's capability spike (`docs/auto_apply_capabilities.md`) failed the whole flow on
-ONE wall: `mcp__claude-in-chrome__file_upload` only accepts session-shared files, so a
-tailored résumé PDF on disk could never be attached. This module is the fix. Playwright's
+The Chrome-extension apply path can fill every field but cannot attach a résumé:
+`mcp__claude-in-chrome__file_upload` only accepts session-shared files, so a tailored
+résumé PDF on disk could never be attached. This module is an alternative. Playwright's
 ``page.set_input_files`` drives the file input at the CDP layer (``DOM.setFileInputFiles``),
-BELOW the extension's session-share policy AND the page's Content-Security-Policy — so a
-plain local path uploads. Proven live on Greenhouse (Gotion, 2026-07-06).
+below the extension's session-share policy AND the page's Content-Security-Policy, so a
+plain local path uploads. Proven live on Greenhouse (Gotion, 2026-07-06). Note: `playwright`
+is not in `requirements.txt` — install it separately to use this experimental path.
 
 Scope: the standardized Greenhouse-family embed (`job-boards.greenhouse.io` /
 `boards.greenhouse.io`, and companies embedding the same form) — stable field ids

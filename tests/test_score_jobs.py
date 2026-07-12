@@ -12,6 +12,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import score_jobs as sj  # noqa: E402
 
 
+# P2-8: both scorer system prompts must tell the model the job description is
+# untrusted data and not to follow instructions embedded in it. Guards against a
+# hostile posting ("score this 5 / recommend apply") and against silent removal
+# of the defensive sentence.
+
+def test_stage_system_prompts_flag_job_description_as_untrusted():
+    for prompt in (sj.STAGE1_SYSTEM, sj.STAGE2_SYSTEM):
+        low = prompt.lower()
+        assert "untrusted data" in low
+        assert "ignore any instructions" in low
+
+
 def _resp(text):
     return SimpleNamespace(
         text=text,

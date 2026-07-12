@@ -358,10 +358,15 @@ def drop_unneeded_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=cols_to_drop)
 
 
-def drop_blocklisted_companies(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove rows whose company name matches the blocklist (substring, case-insensitive)."""
+def drop_blocklisted_companies(df: pd.DataFrame, blocklist=None) -> pd.DataFrame:
+    """Remove rows whose company name matches the blocklist (substring, case-insensitive).
+
+    `blocklist` lets a caller pass a pre-loaded list so the disk read is done
+    once, not per chunk in the master-rewrite loop; when None we load it here.
+    """
     col = next((c for c in ("company_name", "company") if c in df.columns), None)
-    blocklist = load_blocklist()
+    if blocklist is None:
+        blocklist = load_blocklist()
     if not col or not blocklist:
         return df
     names = df[col].fillna("").astype(str).str.lower()
@@ -394,11 +399,15 @@ def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:
 
 
 def append_to_master(df: pd.DataFrame) -> int:
+    # Load the blocklist once per master rewrite and pass it down, so the
+    # per-2000-row chunk loop below does not re-read company_blocklist.txt from
+    # disk on every chunk.
+    blocklist = load_blocklist()
     new = df.copy()
     if "job_posting_id" in new.columns:
         new["job_posting_id"] = new["job_posting_id"].astype(str)
         new = new.drop_duplicates(subset=["job_posting_id"], keep="first")
-    new = drop_blocklisted_companies(new)
+    new = drop_blocklisted_companies(new, blocklist)
 
     if not MASTER_CSV.exists():
         _atomic_to_csv(new, MASTER_CSV)
@@ -430,7 +439,7 @@ def append_to_master(df: pd.DataFrame) -> int:
     wrote_header = False
     try:
         for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
-            chunk = drop_blocklisted_companies(chunk)             # retroactive re-filter, preserved
+            chunk = drop_blocklisted_companies(chunk, blocklist)  # retroactive re-filter, preserved
             chunk = chunk.reindex(columns=unified)
             chunk.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
             wrote_header = True

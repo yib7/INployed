@@ -126,24 +126,34 @@ edited in the same tab's projects control (`_projects_control`) via the "Bullets
 tiers are typed as `projects:bullets` pairs and round-tripped by `jobsdata.load/save_project_bullet_tiers`.
 With zero jobs loaded the High Score tab shows a first-run get-started hint (`JobsTab.set_empty_widget`).
 
-A few **readability** affordances. One persisted **interface scale** (`ui_scale_pct` in `config.json`)
-sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control (slider + `-`/`+`,
-10% steps, 75-150%; `MainWindow._apply_scale`), or by the **Ctrl +/-/0** shortcuts
+A few **readability** affordances. The look is driven by a **design-token module** (`local/qt/theme.py`):
+named surface/border/text colors plus a `SEMANTICS` dict (accent / success / warning / danger /
+followup / followup_sent / neutral, each with base, hover, and tint alphas) that every row tint,
+pill, and badge derives from; the legacy `ROW_*` constants are pre-composed blends of those tokens,
+so legend swatches and tests keep working. Fonts go through **type roles** (title / section / body /
+control / caption / mono), each a *multiplier* of the live base size — never absolute px — assigned
+per widget class or via `theme.set_type_role`. One persisted **interface scale** (`ui_scale_pct` in
+`config.json`) sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control
+(slider + `-`/`+`, 10% steps, 75-150%; `MainWindow._apply_scale`), or by the **Ctrl +/-/0** shortcuts
 (`_setup_zoom_shortcuts`). That control lives, together with the action buttons and a
-**Restart** button, in a single bottom bar (`_build_action_bar`). `set_scale` bumps the application
-**font** and then pushes it onto each live widget (`app.allWidgets()`): a global stylesheet pins each
-widget's font at polish time, so `app.setFont()` alone shows the change only after a restart, and
-re-applying the stylesheet to force it synchronously re-polishes *every* widget (hidden tabs included),
-which was the lag. Setting the font per-widget only marks them dirty, so Qt defers the relayout to the
-visible ones and never re-runs the QSS cascade, so it stays live and cheap (the stylesheet is left
-untouched; its heading font-weight rules still merge over the new font). **Restart**
-(`MainWindow._restart_app`) flags the intent and closes the window; `app.main` relaunches a fresh
-process after the single-instance lock is released.
+**Restart** button, in a single bottom bar (`_build_action_bar`). `set_scale` sets the application
+body font plus per-class fonts (so dialogs created *after* a rescale are right), then pushes each
+live widget's role font onto it (`app.allWidgets()`) and resizes registered table rows/headers
+(`theme.register_table`): a global stylesheet pins each widget's font at polish time, so
+`app.setFont()` alone shows the change only after a restart, and re-applying the stylesheet to force
+it synchronously re-polishes *every* widget (hidden tabs included), which was the lag. Setting the
+font per-widget only marks them dirty, so Qt defers the relayout to the visible ones and never
+re-runs the QSS cascade, so it stays live and cheap (the stylesheet is left untouched; its heading
+font-weight rules still merge over the new font). Cell painting in the job tables is owned by
+**`local/qt/delegates.py:JobRowDelegate`** (category tint + selection lines + first-column stripe +
+score badges, deep-score mini-bars, status/reco pills, "Open ↗" links) reading a `TAG_ROLE` the
+model exposes. **Restart** (`MainWindow._restart_app`) flags the intent and closes the window;
+`app.main` relaunches a fresh process after the single-instance lock is released.
 
 Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
 only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge. Row
 tints are **tab-specific** (`JobsTableModel(mode=...)` keyed off `table_key`): High Score keys the
-recommendation + tailored-résumé (green apply / blue résumé-ready / yellow consider / untinted
+recommendation + tailored-résumé (green apply / blue résumé-ready / yellow consider / neutral gray
 "don't consider"), the Tracker keys the application status + follow-up state (blue applied / orange
 follow-up due / pink follow-up sent / yellow interviewing / green offer / red rejected), and All Jobs
 is a deliberately untinted plain list. Each tinted tab shows a matching `ColorLegend`

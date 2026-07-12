@@ -63,12 +63,15 @@ flowchart TD
 ## Quick start
 
 ### 1. Prerequisites
+Only **Python 3.14** is needed to open the dashboard; it launches to a get-started
+panel with no keys set. Everything else below is optional and unlocks one feature, so
+install it only when you want that feature.
 - **Python 3.14** (the Qt UI installs via `pip` with the other deps, including PySide6).
-- **MiKTeX** (for `pdflatex`): `winget install MiKTeX.MiKTeX`. The résumé engine
-  compiles LaTeX to PDF. (Set `PDFLATEX_PATH` if it isn't on `PATH`.)
-- **A Google Cloud project** with Vertex AI enabled (for Gemini scoring + tailoring),
-  plus the **[gcloud CLI](https://cloud.google.com/sdk/docs/install)** for the
-  `gcloud auth` login step (and the optional VM controls).
+- *(Optional, for résumé PDF output)* **MiKTeX** (for `pdflatex`): `winget install MiKTeX.MiKTeX`.
+  The résumé engine compiles LaTeX to PDF. (Set `PDFLATEX_PATH` if it isn't on `PATH`.)
+- *(Optional, for LLM scoring + tailoring)* **A Google Cloud project** with Vertex AI
+  enabled, plus the **[gcloud CLI](https://cloud.google.com/sdk/docs/install)** for the
+  `gcloud auth` login step (and the VM controls).
 - *(Optional, for scraping your own jobs)* a **Bright Data** account + LinkedIn dataset.
 
 > **Platform:** Windows is the primary target. The `Open INployed Dashboard.cmd`

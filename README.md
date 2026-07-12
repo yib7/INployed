@@ -371,6 +371,13 @@ placeholder it flags for you. Manage your reusable answers (including address) i
 
 CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
 
+**Batch queue (advanced).** The **Auto-apply** tab is a live view of a batch apply
+queue: **Queue auto-apply** adds the selected tailored jobs, and the tab tracks each one
+(queued, in progress, ready to submit, needs human). Draining the queue runs the same
+semi-automated, **parks-at-review, never-auto-submits** flow one job at a time as an agent
+session, so it's an optional power-user path. For everyday use, the per-job **Apply** flow
+above is the recommended way in.
+
 ---
 
 ## How the résumé engine stays honest

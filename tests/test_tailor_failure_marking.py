@@ -17,7 +17,6 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-from PySide6 import QtCore
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))

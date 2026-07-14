@@ -49,8 +49,12 @@ RESUME_PATH = OUTPUT_DIR / "resume.md"
 # Root-level scoring_config.json lets a local user (or the dashboard's Settings
 # tab) retune the scorer without editing this file. Precedence is
 # env > config-file > built-in default: an env var (exported by run_scraper.sh
-# on the VM) always wins, then the file, then today's constant. The VM runs with
-# NO such file, so absent it the scorer behaves exactly as before.
+# on the VM) always wins, then the file, then today's constant. The dashboard's
+# "Push config to VM" DOES scp this file (including `provider`) to the VM —
+# but claude_cli.py isn't shipped to the VM (and no `claude` CLI is installed
+# there), so make_pool() below silently falls back to Gemini regardless of a
+# pushed `provider: claude`. Absent the file entirely, the scorer behaves
+# exactly as before.
 SCORING_CONFIG_FILE = "scoring_config.json"
 
 # Built-in defaults, keyed by config name -> (env var name, default value, kind).

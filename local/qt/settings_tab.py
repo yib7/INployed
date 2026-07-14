@@ -1,4 +1,4 @@
-"""Schema-driven settings form (Qt) — the Settings tab and the standalone window.
+"""Schema-driven settings form (Qt) — mounted as the dashboard's Settings tab.
 
 Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
@@ -25,7 +25,8 @@ SECTION_HELP = {
                     "values are masked by default — untick Hide to reveal one, edit it to "
                     "change it, or clear the box to remove it."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
-    "Engine": "Which Gemini backend the resume tailor bills.",
+    "Engine": ("Which AI service (Gemini or Claude) tailors résumés, how the Gemini side "
+               "bills (Cloud project vs API key), and which model each tailoring stage runs."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     "Scoring": ("Advanced — which models score jobs and the spend guards around them. The "
@@ -59,11 +60,11 @@ SECTION_DISPLAY = {
 SECTION_TAGLINE = {
     "Credentials": "API keys & tokens — saved to your private .env file on this PC",
     "Connection & paths": "Project, your name, file locations",
-    "Engine": "Which Gemini backend the tailor bills",
+    "Engine": "Tailor AI service, billing & per-stage models",
     "Dashboard": "How jobs are surfaced & tracked",
     "Scraper": "What job searches to run",
     "Scoring": "Models & spend guards (advanced)",
-    "Resume": "Projects shown, cover letter & artifacts",
+    "Resume": "Cover letter, ATS report & prep-sheet toggles",
     "Auto-apply": "Batch cap & inbox for the apply agent",
     "Settings history": "Snapshot & restore your settings",
     "VM (cloud scraper)": "Manage the cloud job-discovery VM",
@@ -119,7 +120,6 @@ class SettingsForm(QtWidgets.QWidget):
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._secret_hides: dict[str, QtWidgets.QCheckBox] = {}
-        self._warns: dict[str, QtWidgets.QLabel] = {}  # slider warn labels, keyed by field
         self._collapse: dict[str, QtWidgets.QWidget] = {}  # gate-section -> gated sub-container (VM)
         self._gate_keys: dict[str, str] = {}  # gate_key -> section
         self._vm_panel: QtWidgets.QWidget | None = None  # the VM ops panel, if mounted
@@ -337,21 +337,7 @@ class SettingsForm(QtWidgets.QWidget):
         col.addWidget(row)
         self._getters[f.key] = lambda s=slider: str(s.value())
         self._setters[f.key] = lambda v, s=slider: s.setValue(int(v) if str(v).strip() else int(f.default))
-        if getattr(f, "warn_above", None) is not None:
-            self._attach_slider_warning(col, slider, f)
         return cell
-
-    def _attach_slider_warning(self, col, slider, f):
-        """Show f.warn_text under the slider whenever its value exceeds f.warn_above —
-        a live, amber caution (used by the one-page projects cap)."""
-        warn = QtWidgets.QLabel(f.warn_text or "")
-        warn.setWordWrap(True)
-        warn.setProperty("warn", True)
-        col.addWidget(warn)
-        threshold = float(f.warn_above)
-        warn.setVisible(slider.value() > threshold)
-        slider.valueChanged.connect(lambda v, lab=warn: lab.setVisible(v > threshold))
-        self._warns[f.key] = warn
 
     def _multichoice_widget(self, f, value):
         cell = QtWidgets.QWidget()
@@ -468,11 +454,6 @@ class SettingsForm(QtWidgets.QWidget):
                 return int(text), None
             except ValueError:
                 return raw, f"{f.label}: must be a whole number."
-        if f.type == "float":
-            try:
-                return float(text), None
-            except ValueError:
-                return raw, f"{f.label}: must be a number."
         return text, None
 
     @staticmethod

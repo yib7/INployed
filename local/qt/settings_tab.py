@@ -1,4 +1,4 @@
-"""Schema-driven settings form (Qt) — the Settings tab and the standalone window.
+"""Schema-driven settings form (Qt) — mounted as the dashboard's Settings tab.
 
 Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
@@ -120,7 +120,6 @@ class SettingsForm(QtWidgets.QWidget):
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
         self._secret_hides: dict[str, QtWidgets.QCheckBox] = {}
-        self._warns: dict[str, QtWidgets.QLabel] = {}  # slider warn labels, keyed by field
         self._collapse: dict[str, QtWidgets.QWidget] = {}  # gate-section -> gated sub-container (VM)
         self._gate_keys: dict[str, str] = {}  # gate_key -> section
         self._vm_panel: QtWidgets.QWidget | None = None  # the VM ops panel, if mounted
@@ -338,21 +337,7 @@ class SettingsForm(QtWidgets.QWidget):
         col.addWidget(row)
         self._getters[f.key] = lambda s=slider: str(s.value())
         self._setters[f.key] = lambda v, s=slider: s.setValue(int(v) if str(v).strip() else int(f.default))
-        if getattr(f, "warn_above", None) is not None:
-            self._attach_slider_warning(col, slider, f)
         return cell
-
-    def _attach_slider_warning(self, col, slider, f):
-        """Show f.warn_text under the slider whenever its value exceeds f.warn_above —
-        a live, amber caution (used by the one-page projects cap)."""
-        warn = QtWidgets.QLabel(f.warn_text or "")
-        warn.setWordWrap(True)
-        warn.setProperty("warn", True)
-        col.addWidget(warn)
-        threshold = float(f.warn_above)
-        warn.setVisible(slider.value() > threshold)
-        slider.valueChanged.connect(lambda v, lab=warn: lab.setVisible(v > threshold))
-        self._warns[f.key] = warn
 
     def _multichoice_widget(self, f, value):
         cell = QtWidgets.QWidget()
@@ -469,11 +454,6 @@ class SettingsForm(QtWidgets.QWidget):
                 return int(text), None
             except ValueError:
                 return raw, f"{f.label}: must be a whole number."
-        if f.type == "float":
-            try:
-                return float(text), None
-            except ValueError:
-                return raw, f"{f.label}: must be a number."
         return text, None
 
     @staticmethod

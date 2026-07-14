@@ -206,8 +206,11 @@ SETTINGS_SCHEMA: list[Field] = [
                "below. Must be signed in already in Chrome."),
     Field("auto_apply_inbox_map", "Inbox by email domain", "list",
           ["gmail.com https://mail.google.com",
+           "googlemail.com https://mail.google.com",
            "outlook.com https://outlook.live.com/mail/",
            "hotmail.com https://outlook.live.com/mail/",
+           "live.com https://outlook.live.com/mail/",
+           "msn.com https://outlook.live.com/mail/",
            "wm.edu https://outlook.office.com/mail/"],
           "Auto-apply", "config",
           help="One 'emaildomain webmail-url' per line, so the agent opens the RIGHT "

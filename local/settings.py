@@ -38,7 +38,7 @@ ROOT = HERE.parent
 class Field:
     key: str            # config key (for env-target fields this is the ENV var name)
     label: str          # UI label
-    type: str           # "int"|"float"|"str"|"bool"|"choice"|"multichoice"|"path"|"list"
+    type: str           # "int"|"str"|"bool"|"choice"|"multichoice"|"path"|"list"
     default: Any
     section: str        # "Dashboard"|"Scraper"|"Scoring"|"Resume"|"Apply"|"Credentials"|...
     target: str         # backing-file id (TARGET_FILES): config|search|scoring|apply|env
@@ -50,8 +50,6 @@ class Field:
     path_kind: str = "dir"      # for type=="path": "dir" picks a folder, "file" picks a file
     optional: bool = False      # UI hint: blank is fine (no value needed to run)
     slider: bool = False        # UI hint: render a bounded int as a drag slider (needs min+max)
-    warn_above: float | None = None  # slider only: show warn_text live when value exceeds this
-    warn_text: str = ""              # the caution shown under the slider past warn_above
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
@@ -93,11 +91,6 @@ SETTINGS_SCHEMA: list[Field] = [
           help="How long a freshly synced file must stop changing before the dashboard "
                "opens it — stops it reading a half-downloaded file. 30 is fine for most.",
           min=1, max=600),
-    Field("tailor_open_folder", "Open output folder after tailoring", "bool", False,
-          "Dashboard", "config",
-          help="When on, the tailored résumé's folder opens in File Explorer after each run. "
-               "Off (default) keeps the screen tidy when you tailor several jobs at once — reach "
-               "the folder from the Apply panel's 'Open folder' button or the path in the status bar."),
     Field("stale_after_hours", "Flag data as stale after (hours)", "int", 36,
           "Dashboard", "config",
           help="The Stats tab warns that the pipeline may have failed when the newest run is "
@@ -128,7 +121,9 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("country", "Country code", "str", "US", "Scraper", "search",
           help="Two-letter country code (e.g. US, GB, CA)."),
     Field("time_range", "Time range", "choice", "Past 24 hours", "Scraper", "search",
-          help="Only collect postings newer than this.",
+          help="Only collect postings newer than this. Widening beyond 'Past 24 hours' "
+               "raises the chance of re-collecting (and re-paying for) postings older "
+               "than the 90-day exclude window.",
           choices=("Past 24 hours", "Past week", "Past month", "Any time")),
     Field("job_type", "Job type", "choice", "Full-time", "Scraper", "search",
           help="Employment type to search for.",
@@ -152,8 +147,9 @@ SETTINGS_SCHEMA: list[Field] = [
                "breaks scoring."),
     Field("provider", "Scoring provider", "choice", "gemini", "Scoring", "scoring",
           help="Which AI service scores jobs when scoring runs ON THIS PC. 'claude' uses "
-               "your local Claude Code CLI (subscription). The cloud VM always scores "
-               "with Gemini regardless of this setting. Applies from the next scoring run.",
+               "your local Claude Code CLI (subscription). This setting IS pushed to the "
+               "cloud VM, but the VM has no claude CLI installed, so it silently falls back "
+               "to Gemini regardless. Applies from the next scoring run.",
           choices=("gemini", "claude")),
     Field("stage1_model_claude", "Stage-1 model (Claude)", "editable_choice",
           "claude-haiku-4-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
@@ -180,9 +176,13 @@ SETTINGS_SCHEMA: list[Field] = [
     # Layout controls live in the Resume Data tab's "Resume Layout (bullet sizing)"
     # section: per-bullet line budgets AND the project count + at-most/exactly-N
     # mode (jobsdata.save_projects_count). Required sections come from the
-    # master_experience yaml `tailor:` block. Here: artifact toggles and tone only.
-    Field("tailor_cover_letter", "Generate cover letter", "bool", False, "Resume", "config",
-          help="When tailoring, also generate a cover letter PDF."),
+    # master_experience yaml `tailor:` block. Here: artifact toggles, tone, and
+    # post-tailor UX only.
+    Field("tailor_open_folder", "Open output folder after tailoring", "bool", False,
+          "Resume", "config",
+          help="When on, the tailored résumé's folder opens in File Explorer after each run. "
+               "Off (default) keeps the screen tidy when you tailor several jobs at once — reach "
+               "the folder from the Apply panel's 'Open folder' button or the path in the status bar."),
     Field("tailor_ats_report", "Write ATS report", "bool", True, "Resume", "config",
           help="Write ats_report.txt (keyword coverage) for each tailored résumé."),
     Field("tailor_prep_sheet", "Generate interview-prep sheet", "bool", False, "Resume", "config",
@@ -203,7 +203,8 @@ SETTINGS_SCHEMA: list[Field] = [
           "Auto-apply", "config",
           help="Fallback webmail inbox the auto-apply agent opens for verification "
                "emails when your signup email's domain isn't in 'Inbox by email domain' "
-               "below. Must be signed in already in Chrome."),
+               "below. Must be signed in already in Chrome. Keep the default in sync with "
+               "apply_queue.DEFAULT_INBOX_URL."),
     Field("auto_apply_inbox_map", "Inbox by email domain", "list",
           ["gmail.com https://mail.google.com",
            "googlemail.com https://mail.google.com",
@@ -251,9 +252,6 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("BRIGHT_DATA_API_TOKEN", "Job-data API token", "str", "",
           "Credentials", "env", secret=True, optional=True,
           help="Needed for job discovery. Create one in your job-data API dashboard - API tokens."),
-    Field("BRIGHT_DATA_DATASET_ID", "Job-data dataset ID", "str", "",
-          "Credentials", "env", optional=True,
-          help="The job-postings dataset to query - an identifier, not a secret."),
     Field("GEMINI_API_KEYS", "Gemini API keys (job scorer)", "str", "",
           "Credentials", "env", secret=True, optional=True,
           help="Powers the JOB SCORER, which rates every collected job. A pool of one or more keys, "
@@ -268,13 +266,18 @@ SETTINGS_SCHEMA: list[Field] = [
                "(engine 'vertex')."),
 
     # --- Connection & paths: non-secret identity / locations, also in .env -----
+    Field("BRIGHT_DATA_DATASET_ID", "Job-data dataset ID", "str", "",
+          "Connection & paths", "env", optional=True,
+          help="The job-postings dataset to query - an identifier, not a secret."),
     Field("GOOGLE_CLOUD_PROJECT", "Google Cloud project ID", "str", "",
           "Connection & paths", "env", optional=True,
           help="Project with Vertex AI enabled (for Gemini scoring + tailoring). Leave blank "
                "if you use the Gemini API keys (job scorer) above instead."),
     Field("GOOGLE_CLOUD_LOCATION", "Google Cloud location", "choice", "global",
           "Connection & paths", "env",
-          help="Vertex AI region. 'global' works for most users.",
+          help="Vertex AI region. 'global' works for most users. Left blank, the résumé "
+               "tailor falls back to 'global' but the job scorer falls back to "
+               "'us-central1' — set this explicitly to keep the two in sync.",
           choices=("global", "us-central1", "us-east1", "us-west1", "europe-west1")),
     Field("RESUME_TAILOR_CANDIDATE", "Your name (resume filenames)", "str", "Your_Name",
           "Connection & paths", "env",
@@ -290,7 +293,9 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Open job links in the Chrome profile signed in to this Google account. "
                "Blank = your default browser."),
 
-    # --- Engine: which Gemini backend the resume tailor bills (local/config.json) -
+    # --- Engine: which AI service tailors résumés (gemini/claude provider switch,
+    # local/config.json), which Google billing method the Gemini side uses, and
+    # the per-stage Gemini + Claude model pickers (.env). ---------------------
     Field("gemini_auth", "Resume tailor engine", "choice", "vertex",
           "Engine", "config",
           help="'vertex' bills your Google Cloud project (above). 'api_key' uses the single "
@@ -316,7 +321,8 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Default model — re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          help="Highest-quality tier — set to gemini-3.1-pro-preview for the strongest "
+          help="Deliberately defaults to the same standard flash model as above to keep "
+               "costs down — set to gemini-3.1-pro-preview yourself for the strongest "
                "writing (slower / pricier)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
@@ -448,8 +454,6 @@ def _coerce_ok(f: Field, value: Any) -> bool:
     if f.type == "int":
         # bool is a subclass of int; reject it for int fields.
         return isinstance(value, int) and not isinstance(value, bool)
-    if f.type == "float":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
     if f.type == "bool":
         return isinstance(value, bool)
     if f.type in ("str", "path"):
@@ -478,7 +482,7 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
         if not _coerce_ok(f, value):
             errors[key] = f"Expected {f.type}, got {type(value).__name__}."
             continue
-        if f.type in ("int", "float"):
+        if f.type == "int":
             if f.min is not None and value < f.min:
                 errors[key] = f"Must be >= {f.min}."
             elif f.max is not None and value > f.max:

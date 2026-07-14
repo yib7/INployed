@@ -25,7 +25,8 @@ SECTION_HELP = {
                     "values are masked by default — untick Hide to reveal one, edit it to "
                     "change it, or clear the box to remove it."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
-    "Engine": "Which Gemini backend the resume tailor bills.",
+    "Engine": ("Which AI service (Gemini or Claude) tailors résumés, how the Gemini side "
+               "bills (Cloud project vs API key), and which model each tailoring stage runs."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     "Scoring": ("Advanced — which models score jobs and the spend guards around them. The "
@@ -59,11 +60,11 @@ SECTION_DISPLAY = {
 SECTION_TAGLINE = {
     "Credentials": "API keys & tokens — saved to your private .env file on this PC",
     "Connection & paths": "Project, your name, file locations",
-    "Engine": "Which Gemini backend the tailor bills",
+    "Engine": "Tailor AI service, billing & per-stage models",
     "Dashboard": "How jobs are surfaced & tracked",
     "Scraper": "What job searches to run",
     "Scoring": "Models & spend guards (advanced)",
-    "Resume": "Projects shown, cover letter & artifacts",
+    "Resume": "Cover letter, ATS report & prep-sheet toggles",
     "Auto-apply": "Batch cap & inbox for the apply agent",
     "Settings history": "Snapshot & restore your settings",
     "VM (cloud scraper)": "Manage the cloud job-discovery VM",

@@ -275,10 +275,10 @@ def test_storage_location_maps_each_target():
     assert settings.STORAGE_LABELS["apply"] == "apply_config.json"
 
 
-def test_tailor_open_folder_is_a_dashboard_bool_defaulting_off(tmp_path):
+def test_tailor_open_folder_is_a_resume_bool_defaulting_off(tmp_path):
     f = {x.key: x for x in settings.SETTINGS_SCHEMA}["tailor_open_folder"]
     assert f.type == "bool" and f.target == "config"
-    assert f.section == "Dashboard"
+    assert f.section == "Resume"  # résumé-tailor UX, not dashboard surfacing/tracking
     assert f.default is False
     assert settings.load(_targets(tmp_path))["tailor_open_folder"] is False
     assert settings.validate({"tailor_open_folder": True}) == {}

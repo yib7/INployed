@@ -11,9 +11,9 @@ load/validate/save that:
   * write atomically with a .bak backup so a crash mid-write can't corrupt
     config.json.
 
-SP2 only backs onto the "config" target (local/config.json). The schema is a
-flat list of Field rows grouped by `section` so the UI can render one labelled
-input per row; SP3 will add Scraper / Scoring / Resume fields and new targets.
+The schema is a flat list of Field rows grouped by `section`, backing onto
+five target files (config / search / scoring / apply / env — see
+TARGET_FILES), so the Qt Settings tab can render one labelled input per row.
 Every public function accepts an optional `targets` mapping so tests can point
 the backing files at a tmp directory.
 """

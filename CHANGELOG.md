@@ -6,6 +6,28 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-15
+
+A settings-audit and hardening pass, plus a scoring-doc correction. No pipeline, scoring, or
+résumé-engine behavior changes for an existing saved config.
+
+### Fixed
+- `auto_apply_inbox_map`'s built-in default was missing three webmail-domain rows
+  (`googlemail.com`, `live.com`, `msn.com`) that `apply_queue.DEFAULT_INBOX_MAP` already
+  carried; the two are now pinned in sync by a test.
+- Dropped the dead `tailor_cover_letter` setting (no code path ever read it — every tailor
+  call site prompts live instead) and relocated `tailor_open_folder` to the Resume section
+  and `BRIGHT_DATA_DATASET_ID` to Connection & paths, where they actually belong.
+- Removed the dead slider-warning UI machinery (`warn_above`/`warn_text`) and an unreachable
+  `float` Field-type branch from the settings schema and form.
+- Corrected several stale Settings-tab help strings and module docstrings (Engine section,
+  Resume tagline, `GOOGLE_CLOUD_LOCATION` region-fallback drift, provider push-to-VM
+  behavior) to match current behavior.
+
+### Docs
+- `score_jobs.py`: clarified that the VM's Gemini-only fallback fires because `claude_cli.py`
+  isn't shipped there, not because the pushed `provider` setting is ignored.
+
 ## [1.6.0] - 2026-07-12
 
 A visual release: the dashboard gets a full token-driven restyle. No pipeline, scoring, or

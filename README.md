@@ -256,13 +256,14 @@ so a non-technical user can set things up without touching a file. Each section 
 not editing (the tagline still tells you what each collapsed section is for) and tackle
 one group at a time:
 
-- **Credentials:** Bright Data token + dataset, the Gemini API-key pool, and the
-  résumé-tailor API key. Each box shows its saved value (read straight from your
-  local `.env`) so you can check it without opening the file. Edit to change it,
-  clear it to remove the key, or tick *Hide* to mask it from onlookers.
-- **Connection & paths:** Google Cloud project + location, your name (for résumé
-  filenames), the résumé output folder and `pdflatex` path (with **Browse…**
-  buttons), and which Chrome profile to open links in.
+- **Credentials:** the job-data (Bright Data) API token, the Gemini API-key pool,
+  and the résumé-tailor API key. Each box holds the saved value (read straight from
+  your local `.env`), masked by default — untick *Hide* to reveal one, edit it to
+  change it, or clear the box to remove the key.
+- **Connection & paths:** the job-postings dataset ID, Google Cloud project +
+  location, your name (for résumé filenames), the résumé output folder and
+  `pdflatex` path (with **Browse…** buttons), and which Chrome profile to open
+  links in.
 - **Engine:** the tailor's **provider** (Gemini or Claude) and, on Gemini, which backend
   it bills (Vertex project vs API key). See the Claude backend note below.
 - **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
@@ -271,6 +272,9 @@ one group at a time:
   (fast / standard / deep) are **editable dropdowns**: the recent Gemini 3.x ids by
   default, plus the Claude tier ids used when a provider is set to `claude`. Pick one or
   type a custom id.
+- **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
+  inbox the apply agent opens for verification emails; plus a snapshot of your
+  settings on every Save, restorable from **Restore from archive…**.
 - **VM (cloud job discovery):** an **Enable VM features** master toggle (off by default)
   plus the non-secret connection details for your GCP job-discovery VM (instance, zone,
   project, Linux user). Off hides the whole VM area and silences VM prompts; turn

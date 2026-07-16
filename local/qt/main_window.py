@@ -239,6 +239,7 @@ class MainWindow(QtWidgets.QMainWindow):
         h.setSpacing(4)
         h.addWidget(QtWidgets.QLabel("Interface size"))
         minus = QtWidgets.QPushButton("-")
+        minus.setProperty("compact", True)  # zero side padding so the glyph fits
         minus.setFixedWidth(26)
         minus.setToolTip("Smaller (-10%)")
         minus.clicked.connect(lambda: self._nudge_scale(-10))
@@ -253,6 +254,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._scale_slider.valueChanged.connect(self._on_scale_slider)
         h.addWidget(self._scale_slider)
         plus = QtWidgets.QPushButton("+")
+        plus.setProperty("compact", True)  # zero side padding so the glyph fits
         plus.setFixedWidth(26)
         plus.setToolTip("Larger (+10%)")
         plus.clicked.connect(lambda: self._nudge_scale(10))

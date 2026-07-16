@@ -205,9 +205,10 @@ is what lets the same code produce anyone's résumé; see `tests/test_tailor_con
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
 `settings.py` is one schema (`SETTINGS_SCHEMA`) describing every user-editable
 option (key, type, default, validation, backing file). The dashboard's **Settings**
-tab auto-renders it grouped by section (Dashboard / Scraper / Scoring / Résumé /
-Apply) inside a scrollable canvas. `load`/`save` read and atomically write (with a
-`.bak`) `local/config.json`, plus the git-ignored root-level `search_config.json`
+tab auto-renders it grouped by collapsible section (Credentials / Connection & paths /
+Engine / Dashboard / Job discovery / Scoring / Résumé / Auto-apply / Settings history /
+VM) inside a scrollable canvas. `load`/`save` read and atomically write (with a
+`.bak`) the git-ignored `.env` and `local/config.json`, plus the root-level `search_config.json`
 (read by `scraper.py`), `scoring_config.json` (read by `score_jobs.py`), and
 `apply_config.json` (read by `apply_data.py`). The VM-standalone scraper/scorer never
 import `local/`; they read their own JSON with **env-override > file > built-in-default**

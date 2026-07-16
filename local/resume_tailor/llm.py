@@ -77,7 +77,9 @@ def _extract_json(text: str) -> Any:
                     return json.loads(text[i : j + 1])
                 except json.JSONDecodeError:
                     continue
-        raise LLMError(f"Model did not return valid JSON. Got:\n{text[:500]}")
+        # `from None`: the message already carries the offending payload; the
+        # internal JSONDecodeError chain is noise in the user-facing dialog/CLI.
+        raise LLMError(f"Model did not return valid JSON. Got:\n{text[:500]}") from None
 
 
 def as_dict(out: Any, key: str = "") -> dict:

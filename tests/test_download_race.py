@@ -73,3 +73,50 @@ if __name__ == "__main__":
     test_download_waits_out_building_race()
     test_download_returns_immediately_when_ready()
     print("DOWNLOAD RACE TESTS OK")
+
+
+# -- exception chaining on the bounded-retry raises (audit P2 #4) --------------
+
+import aiohttp  # noqa: E402
+import pytest  # noqa: E402
+
+
+class ErrorSession:
+    """Every get() raises a transient client error."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def get(self, _url):
+        self.calls += 1
+        raise aiohttp.ClientError("503 upstream hiccup")
+
+
+def test_wait_until_ready_retry_exhaustion_chains_cause(monkeypatch):
+    monkeypatch.setattr(scraper, "POLL_INTERVAL", 0)
+    with pytest.raises(RuntimeError, match="Progress polling failed") as ei:
+        asyncio.run(scraper.wait_until_ready(ErrorSession(), "snap_x"))
+    assert isinstance(ei.value.__cause__, aiohttp.ClientError)
+
+
+def test_wait_until_ready_timeout_during_errors_chains_cause(monkeypatch):
+    monkeypatch.setattr(scraper, "POLL_INTERVAL", 0)
+    monkeypatch.setattr(scraper, "MAX_WAIT_MINUTES", -1)   # deadline already past
+    with pytest.raises(RuntimeError, match="Timeout") as ei:
+        asyncio.run(scraper.wait_until_ready(ErrorSession(), "snap_x"))
+    assert isinstance(ei.value.__cause__, aiohttp.ClientError)
+
+
+def test_download_retry_exhaustion_chains_cause(monkeypatch):
+    monkeypatch.setattr(scraper, "POLL_INTERVAL", 0)
+    with pytest.raises(RuntimeError, match="Snapshot download failed") as ei:
+        asyncio.run(scraper.download(ErrorSession(), "snap_x"))
+    assert isinstance(ei.value.__cause__, aiohttp.ClientError)
+
+
+def test_download_timeout_during_errors_chains_cause(monkeypatch):
+    monkeypatch.setattr(scraper, "POLL_INTERVAL", 0)
+    monkeypatch.setattr(scraper, "MAX_WAIT_MINUTES", -1)
+    with pytest.raises(RuntimeError, match="Timeout") as ei:
+        asyncio.run(scraper.download(ErrorSession(), "snap_x"))
+    assert isinstance(ei.value.__cause__, aiohttp.ClientError)

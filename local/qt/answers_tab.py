@@ -98,7 +98,12 @@ class AnswersEditor(QtWidgets.QWidget):
         h.setContentsMargins(0, 0, 0, 0)
         question = QtWidgets.QLineEdit(str(entry.get("question", "")))
         answer = QtWidgets.QLineEdit(str(entry.get("answer", "")))
+        # Rows sit under shared column headers, so the inputs carry no
+        # per-widget label -- give assistive tech the column names.
+        question.setAccessibleName("Question")
+        answer.setAccessibleName("Answer")
         kind = QtWidgets.QComboBox()
+        kind.setAccessibleName("Kind")
         kind.addItems(list(apply_answers.KINDS))
         kind.setCurrentText(str(entry.get("kind", "open-ended")))
         delete = QtWidgets.QPushButton("Delete")

@@ -253,6 +253,11 @@ def _qss() -> str:
     QPushButton:disabled {{ background: {PANEL}; color: {TEXT_DISABLED};
                   border-color: {BORDER_SOFT}; }}
 
+    /* Compact square button (the scale bar's -/+): the default 12px side
+       padding + 1px borders consume a 26px fixed width entirely and clip the
+       glyph to nothing -- drop the horizontal padding so it renders. */
+    QPushButton[compact="true"] {{ padding: 6px 0px; }}
+
     QPushButton[accent="true"] {{ background: {ACCENT}; color: #ffffff;
                   border: 1px solid {ACCENT}; }}
     QPushButton[accent="true"]:hover {{ background: {ACCENT_HOVER};

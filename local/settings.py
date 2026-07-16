@@ -59,6 +59,10 @@ ENV_TARGETS = {"env"}
 # Gemini model ids offered in the model dropdowns (the recent 3.x family). These
 # are EDITABLE dropdowns ("editable_choice"): pick one or type a custom id, so a
 # new model id is never blocked — and a wrong pick can't silently break scoring.
+# The pro tier is the "-preview" id on purpose: Google has not shipped a stable
+# GA gemini-3.1-pro (and gemini-3.5-pro doesn't resolve on Vertex projects), so
+# the preview id is the only pro-tier option. It is never a default — only an
+# opt-in "max quality" choice.
 GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro-preview")
 
 # Claude model ids offered in the Claude model dropdowns (also editable_choice).
@@ -434,8 +438,11 @@ def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
 def secret_status(targets: dict[str, Path] | None = None) -> dict[str, bool]:
     """{key: is-it-set} for every secret Field, WITHOUT returning the value.
 
-    The config GUI uses this to show "configured / not set" next to a masked,
-    write-only secret box — so a stored token is never loaded into a widget.
+    The config GUI uses this to show "configured / not set" next to each secret
+    box. Note the boxes themselves DO hold the stored values (loaded masked by
+    default, with a per-field Hide toggle, and revealed in plaintext when a
+    settings snapshot is loaded for review) — this helper is just the cheap
+    set/unset probe for status labels, not a no-secrets-in-widgets guarantee.
     """
     targets = _resolve_targets(targets)
     cache: dict[str, dict[str, Any]] = {}

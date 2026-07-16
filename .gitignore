@@ -34,6 +34,14 @@ score_state.json
 company_blocklist.txt
 # local scrape rows queued for the VM (deleted after confirmed push)
 outbox/
+# local pipeline output dirs: per-run-label scrape/score results and
+# manually-added jobs (real scraped data — the *.csv rules above already
+# cover their contents; this keeps stray non-CSV run files out too)
+morning/
+afternoon/
+evening/
+night/
+manual/
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/

@@ -94,13 +94,15 @@ cd INployed
 ```
 This writes a git-ignored `.env` (your keys), `local/config.json` (dashboard
 preferences), and a starter `resume_tailor_files/master_experience.yaml`. Re-run it
-any time to revisit settings; nothing is overwritten without `-Force`.
+any time to revisit settings; nothing is overwritten without `-Force`. (If PowerShell
+refuses to run scripts — the stock Windows default — run it once as
+`powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`.)
 
-Then install dependencies (if you skipped `-InstallDeps`) and authenticate:
+Then install dependencies (if you skipped `-InstallDeps`):
 ```powershell
 python -m venv venv; .\venv\Scripts\activate   # (optional) keep deps in a project venv
 python -m pip install -r requirements.txt
-gcloud auth application-default login
+gcloud auth application-default login   # (optional) only for Vertex AI scoring / tailoring
 ```
 
 **Prefer a GUI to editing `.env` by hand?** Once dependencies are installed, launch
@@ -243,6 +245,8 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
 - **Hands-off (recommended for daily use):** run that pair on a small GCP VM via
   cron and sync results to Google Drive, then drive the schedule, pauses, and config
   pushes from the dashboard's **Settings → VM (cloud job discovery)** section (below).
+  (This path needs the **Google Drive desktop app** on your PC so the VM's output
+  folder syncs down; the local CLI path above doesn't.)
 
 ### Configure everything from the Settings tab (no file editing)
 Open the dashboard (`python local/app.py`) and click the **Settings** tab: one
@@ -252,13 +256,14 @@ so a non-technical user can set things up without touching a file. Each section 
 not editing (the tagline still tells you what each collapsed section is for) and tackle
 one group at a time:
 
-- **Credentials:** Bright Data token + dataset, the Gemini API-key pool, and the
-  résumé-tailor API key. Each box shows its saved value (read straight from your
-  local `.env`) so you can check it without opening the file. Edit to change it,
-  clear it to remove the key, or tick *Hide* to mask it from onlookers.
-- **Connection & paths:** Google Cloud project + location, your name (for résumé
-  filenames), the résumé output folder and `pdflatex` path (with **Browse…**
-  buttons), and which Chrome profile to open links in.
+- **Credentials:** the job-data (Bright Data) API token, the Gemini API-key pool,
+  and the résumé-tailor API key. Each box holds the saved value (read straight from
+  your local `.env`), masked by default — untick *Hide* to reveal one, edit it to
+  change it, or clear the box to remove the key.
+- **Connection & paths:** the job-postings dataset ID, Google Cloud project +
+  location, your name (for résumé filenames), the résumé output folder and
+  `pdflatex` path (with **Browse…** buttons), and which Chrome profile to open
+  links in.
 - **Engine:** the tailor's **provider** (Gemini or Claude) and, on Gemini, which backend
   it bills (Vertex project vs API key). See the Claude backend note below.
 - **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
@@ -267,6 +272,9 @@ one group at a time:
   (fast / standard / deep) are **editable dropdowns**: the recent Gemini 3.x ids by
   default, plus the Claude tier ids used when a provider is set to `claude`. Pick one or
   type a custom id.
+- **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
+  inbox the apply agent opens for verification emails; plus a snapshot of your
+  settings on every Save, restorable from **Restore from archive…**.
 - **VM (cloud job discovery):** an **Enable VM features** master toggle (off by default)
   plus the non-secret connection details for your GCP job-discovery VM (instance, zone,
   project, Linux user). Off hides the whole VM area and silences VM prompts; turn
@@ -444,7 +452,7 @@ local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
 local/chrome.py         open job/resume links in the configured Chrome profile
 local/vm_schedule.py    pure crontab / pause / run-label generators
-local/vm_sync.py        gcloud ssh/scp argv builders + settings->VM change detection
+local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
 local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)

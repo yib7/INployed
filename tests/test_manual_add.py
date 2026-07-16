@@ -369,3 +369,45 @@ def test_master_row_returns_full_row_or_none(tmp_path, monkeypatch):
     assert row and row["job_title"] == "DA" and row["company_name"] == "Acme"
     assert "full jd text" in str(row["job_description_formatted"]).lower()
     assert jobsdata.master_row("nope", master_csv=master) is None
+
+
+def _big_master(path, n, jd="JD text " * 10):
+    pd.DataFrame({
+        "job_posting_id": [f"job-{i}" for i in range(n)],
+        "job_title": [f"Title {i}" for i in range(n)],
+        "company_name": [f"Co {i}" for i in range(n)],
+        "score": [None if i % 2 else i for i in range(n)],  # NaN half the rows
+        "job_description_formatted": [f"{jd}{i}" for i in range(n)],
+    }).to_csv(path, index=False)
+
+
+def test_master_row_finds_id_deep_in_multichunk_file(tmp_path, monkeypatch):
+    # UI-thread safety (audit P1): master_row must stream in bounded chunks, not
+    # read the whole master. A row deep in a multi-chunk file must still be found
+    # with the same shape as before (all columns, NaN -> "").
+    monkeypatch.setattr(jobsdata, "_MASTER_ROW_CHUNK", 10)
+    master = tmp_path / "linkedin_jobs_master.csv"
+    _big_master(master, 55)
+    row = jobsdata.master_row("job-53", master_csv=master)   # chunk 6 of 6
+    assert row["job_title"] == "Title 53" and row["company_name"] == "Co 53"
+    assert row["score"] == ""                                # NaN -> "" preserved
+    assert row["job_description_formatted"].endswith("53")
+    assert jobsdata.master_row("job-999", master_csv=master) is None
+
+
+def test_master_row_reads_chunked_and_stops_at_first_hit(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobsdata, "_MASTER_ROW_CHUNK", 10)
+    master = tmp_path / "linkedin_jobs_master.csv"
+    _big_master(master, 55)
+    chunks_read = []
+    real_read_csv = jobsdata.pd.read_csv
+
+    def spy(*a, **kw):
+        assert kw.get("chunksize"), "master_row must pass chunksize (bounded read)"
+        reader = real_read_csv(*a, **kw)
+        return (chunks_read.append(1) or c for c in reader)
+
+    monkeypatch.setattr(jobsdata.pd, "read_csv", spy)
+    row = jobsdata.master_row("job-3", master_csv=master)    # lives in chunk 1
+    assert row and row["job_title"] == "Title 3"
+    assert len(chunks_read) == 1                             # stopped after first hit

@@ -4,7 +4,34 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.2] - 2026-07-16
+
+A portfolio ship-checklist pass: first-run experience, accessibility, and setup-accuracy
+fixes. No pipeline, scoring, or résumé-engine behavior changes for an existing saved config.
+
+### Fixed
+- First launch with no data now opens the get-started dashboard instead of an empty table,
+  and the `.cmd` launcher finds a project-local venv before falling back to the system Python.
+- The dashboard's `master_row` lookup streams the master CSV in bounded chunks and stops at
+  the first id hit, instead of reading the whole file on the UI thread.
+- The scale bar's `-`/`+` buttons rendered as blank squares (default button padding consumed
+  the entire fixed width); a compact stylesheet tier restores the glyphs.
+- Settings and Apply Answers form inputs now carry explicit accessible names, so screen
+  readers announce them (no visual change).
+- `apply_driver` reads/writes its `seq.txt` counter with explicit UTF-8 encoding.
+- Explicit exception chaining (`from exc` / `from None`) at the seven wrap-and-raise sites,
+  so logs keep the root cause and user-facing errors stay clean.
+- Removed the dead `vm_sync.changed_vm_files` helper and its tests.
+
+### Changed
+- Send2Trash 1.8.3 → 2.1.0; `requests` and the optional extras are now declared in
+  `requirements.txt`; the Gemini pro-preview model pin is documented next to the setting.
+- Demo GIF and dashboard screenshot regenerated to the current Settings layout.
+
+### Docs
+- README setup accuracy: gcloud marked optional, PowerShell execution-policy note, the
+  Google Drive desktop-app requirement stated on the hands-off path, and Settings copy
+  matched to the current layout (masked credentials, dataset ID under Connection & paths).
 
 ## [1.6.1] - 2026-07-15
 

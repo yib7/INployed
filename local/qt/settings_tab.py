@@ -259,6 +259,10 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _add_field(self, form: QtWidgets.QFormLayout, f, value):
         widget = self._make_widget(f, value)
+        # The visible label lives in a composite cell (label + storage chip),
+        # which QFormLayout can't expose as the field's label to assistive
+        # tech -- name the input explicitly so screen readers announce it.
+        widget.setAccessibleName(f.label)
         form.addRow(self._label_cell(f), widget)
         if f.help:
             help_lab = QtWidgets.QLabel(f.help)
@@ -600,7 +604,8 @@ class ArchiveDialog(QtWidgets.QDialog):
         v = QtWidgets.QVBoxLayout(self)
         intro = QtWidgets.QLabel(
             "Saved snapshots (newest first). Load one into the form to review, then Save to apply it. "
-            "Secrets are restored too, but are never shown here.")
+            "Secrets are restored too — loading un-masks them in the form so you can review "
+            "exactly what would be saved.")
         intro.setWordWrap(True)
         intro.setProperty("muted", True)
         v.addWidget(intro)

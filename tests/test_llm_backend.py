@@ -88,8 +88,13 @@ def test_extract_json_embedded_in_prose():
 
 
 def test_extract_json_invalid_raises():
-    with pytest.raises(llm.LLMError):
+    with pytest.raises(llm.LLMError) as ei:
         llm._extract_json("not json at all")
+    # Deliberately raised `from None`: the LLMError message already embeds the
+    # offending payload, so the internal JSONDecodeError chain is suppressed to
+    # keep the user-facing error clean.
+    assert ei.value.__suppress_context__ is True
+    assert ei.value.__cause__ is None
 
 
 # -- usage_summary ------------------------------------------------------------

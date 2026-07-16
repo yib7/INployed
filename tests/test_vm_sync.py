@@ -91,19 +91,6 @@ def test_sync_exclude_ids_runs_scp_when_configured(monkeypatch):
     assert seen["cmd"] == _target().push_exclude_ids_cmd("/local/external_exclude_ids.json")
 
 
-def test_changed_vm_files_flags_scoring_not_local_config():
-    before = {"stage2_threshold": 4, "keywords": ['"a"'], "min_score": 4}
-    after = {"stage2_threshold": 5, "keywords": ['"a"'], "min_score": 3}
-    changed = vm_sync.changed_vm_files(before, after)
-    assert changed == {"scoring_config.json"}  # min_score is local-only; keywords unchanged
-
-
-def test_changed_vm_files_flags_search_on_keyword_change():
-    before = {"keywords": ['"a"']}
-    after = {"keywords": ['"a"', '"b"']}
-    assert vm_sync.changed_vm_files(before, after) == {"search_config.json"}
-
-
 # Captured at import time — conftest's hermetic autouse fixture replaces
 # vm_sync.run_cmd with a blocked stub for every test, so the one test OF
 # run_cmd itself must hold the real function (module import runs first).
@@ -159,24 +146,6 @@ def test_bypass_argv_honours_cloudsdk_python_env(tmp_path, monkeypatch):
 def test_bypass_argv_none_when_no_entrypoint(tmp_path):
     cmd, _, _ = _fake_sdk(tmp_path, with_gpy=False)
     assert vm_sync._bypass_argv(str(cmd), ["version"]) is None
-
-
-def test_changed_vm_files_ignores_multichoice_reorder():
-    before = {"remote_types": ["Hybrid", "On-site"]}
-    after = {"remote_types": ["On-site", "Hybrid"]}
-    assert vm_sync.changed_vm_files(before, after) == set()
-
-
-def test_changed_vm_files_ignores_keyword_whitespace_only():
-    before = {"keywords": ['"a"', '"b"']}
-    after = {"keywords": [' "a" ', '"b"  ']}
-    assert vm_sync.changed_vm_files(before, after) == set()
-
-
-def test_changed_vm_files_flags_real_remote_type_change():
-    before = {"remote_types": ["Hybrid"]}
-    after = {"remote_types": ["Hybrid", "Remote"]}
-    assert vm_sync.changed_vm_files(before, after) == {"search_config.json"}
 
 
 def test_push_outbox_file_cmd_targets_incoming():

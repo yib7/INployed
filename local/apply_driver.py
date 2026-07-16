@@ -548,11 +548,12 @@ def _next_seq(workdir: Path) -> int:
                         break  # give up the cross-process guard; thread lock still holds
                     time.sleep(_SEQ_LOCK_RETRY)
             try:
-                prev = int(seq_path.read_text().strip()) if seq_path.exists() else 0
+                prev = (int(seq_path.read_text(encoding="utf-8").strip())
+                        if seq_path.exists() else 0)
             except (ValueError, OSError):
                 prev = 0  # corrupt/hand-edited seq.txt — recover, don't crash the loop
             seq = prev + 1
-            seq_path.write_text(str(seq))
+            seq_path.write_text(str(seq), encoding="utf-8")
             return seq
         finally:
             if got:

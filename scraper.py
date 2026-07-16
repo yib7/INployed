@@ -523,10 +523,11 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
             # One transient 5xx must not abort a snapshot that's already billed.
             failures += 1
             if failures >= MAX_POLL_FAILURES:
-                raise RuntimeError(f"Progress polling failed {failures}x in a row: {e}")
+                raise RuntimeError(f"Progress polling failed {failures}x in a row: {e}") from e
             print(f"  poll error ({e}); retrying ({failures}/{MAX_POLL_FAILURES})")
             if asyncio.get_event_loop().time() > deadline:
-                raise RuntimeError(f"Timeout after {MAX_WAIT_MINUTES} min while polling")
+                raise RuntimeError(
+                    f"Timeout after {MAX_WAIT_MINUTES} min while polling") from e
             await asyncio.sleep(POLL_INTERVAL)
             continue
         status = data.get("status")
@@ -565,10 +566,11 @@ async def download(session: aiohttp.ClientSession, snapshot_id: str) -> list[dic
             # Transient network/5xx errors: retry a bounded number of times.
             failures += 1
             if failures >= MAX_POLL_FAILURES:
-                raise RuntimeError(f"Snapshot download failed {failures}x in a row: {e}")
+                raise RuntimeError(f"Snapshot download failed {failures}x in a row: {e}") from e
             print(f"  download error ({e}); retrying ({failures}/{MAX_POLL_FAILURES})")
             if asyncio.get_event_loop().time() > deadline:
-                raise RuntimeError(f"Timeout after {MAX_WAIT_MINUTES} min downloading snapshot")
+                raise RuntimeError(
+                    f"Timeout after {MAX_WAIT_MINUTES} min downloading snapshot") from e
             await asyncio.sleep(POLL_INTERVAL)
             continue
 

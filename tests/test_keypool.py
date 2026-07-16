@@ -348,3 +348,23 @@ def test_generate_rolls_over_and_attributes_usage_to_new_day(tmp_path, monkeypat
     on_disk = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
     assert on_disk["date"] == "2020-01-02"
     assert on_disk["usage"]["fp1:" + FLASH] == 1
+
+
+def test_vertex_quota_pool_error_chains_the_quota_exception(tmp_path, monkeypatch):
+    # After the bounded retries, the PoolError must carry the underlying quota
+    # error as its explicit __cause__ (raise ... from exc), not just implicit
+    # context -- the root cause must survive into logs.
+    async def no_sleep(_):
+        return None
+    monkeypatch.setattr(keypool.asyncio, "sleep", no_sleep)
+
+    def boom(*_):
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
+    vertex = {"client": _client(boom), "kind": "vertex", "fp": None}
+    pool = _pool([vertex], tmp_path)
+    try:
+        asyncio.run(pool.generate(model=FLASH, contents="x", config=None))
+        assert False, "expected PoolError"
+    except keypool.PoolError as e:
+        assert "quota" in str(e).lower()
+        assert isinstance(e.__cause__, RuntimeError)

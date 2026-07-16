@@ -432,23 +432,35 @@ def delete_jobs(ids, *, master_csv: Path | None = None) -> int:
     return len(ids)
 
 
+# Rows per chunk for master_row's streaming scan (test-patched to force multi-chunk).
+_MASTER_ROW_CHUNK = 2000
+
+
 def master_row(jid, *, master_csv: Path | None = None) -> dict | None:
     """The full master-CSV row for a job id (incl. job_description_formatted) or None.
-    Used to prefill the edit dialog with the stored fields + JD."""
+    Used to prefill the edit dialog with the stored fields + JD.
+
+    Callers sit on the UI thread, so this streams the master in bounded chunks and
+    stops at the first hit (same idiom as score_jobs._load_rows_by_id) instead of
+    parsing the whole file — a full-column read of the master froze the window."""
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
     if not master.exists():
         return None
+    want = str(jid)
     try:
-        df = pd.read_csv(master, dtype={"job_posting_id": str})
+        for chunk in pd.read_csv(master, dtype={"job_posting_id": str},
+                                 chunksize=_MASTER_ROW_CHUNK):
+            if "job_posting_id" not in chunk.columns:
+                return None
+            hit = chunk[chunk["job_posting_id"].astype(str) == want]
+            if hit.empty:
+                continue
+            row = hit.iloc[0].to_dict()
+            return {k: ("" if (isinstance(v, float) and pd.isna(v)) else v)
+                    for k, v in row.items()}
     except (OSError, ValueError):
         return None
-    if "job_posting_id" not in df.columns:
-        return None
-    hit = df[df["job_posting_id"].astype(str) == str(jid)]
-    if hit.empty:
-        return None
-    row = hit.iloc[0].to_dict()
-    return {k: ("" if (isinstance(v, float) and pd.isna(v)) else v) for k, v in row.items()}
+    return None
 
 
 def update_manual_job(record: dict, *, old_id=None, master_csv: Path | None = None) -> bool:

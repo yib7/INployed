@@ -23,7 +23,7 @@ tzdata==2026.3         # IANA tz database for zoneinfo on Windows (Pacific RPD r
 
 # desktop UI (local dashboard); abi3 wheels run on Python 3.14
 PySide6==6.11.1
-Send2Trash==1.8.3      # deleting a job moves its tailored-résumé folder to the Recycle Bin
+Send2Trash==2.1.0      # deleting a job moves its tailored-résumé folder to the Recycle Bin
 keyring==25.7.0        # ATS master password lives in the Windows Credential Manager (ats_accounts.py)
 
 # only needed to run scraper.py locally (it normally runs on the VM)

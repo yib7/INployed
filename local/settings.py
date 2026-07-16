@@ -59,6 +59,10 @@ ENV_TARGETS = {"env"}
 # Gemini model ids offered in the model dropdowns (the recent 3.x family). These
 # are EDITABLE dropdowns ("editable_choice"): pick one or type a custom id, so a
 # new model id is never blocked — and a wrong pick can't silently break scoring.
+# The pro tier is the "-preview" id on purpose: Google has not shipped a stable
+# GA gemini-3.1-pro (and gemini-3.5-pro doesn't resolve on Vertex projects), so
+# the preview id is the only pro-tier option. It is never a default — only an
+# opt-in "max quality" choice.
 GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro-preview")
 
 # Claude model ids offered in the Claude model dropdowns (also editable_choice).

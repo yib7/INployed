@@ -4,7 +4,7 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.2] - 2026-07-16
 
 A portfolio ship-checklist pass: first-run experience, accessibility, and setup-accuracy
 fixes. No pipeline, scoring, or résumé-engine behavior changes for an existing saved config.

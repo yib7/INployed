@@ -10,6 +10,13 @@ REM ===========================================================================
 setlocal
 set "APP=%~dp0local\open_dashboard.pyw"
 
+REM If the README's optional project venv exists, use its windowed Python so
+REM the dependencies installed there are found (a global pythonw wouldn't see them).
+if exist "%~dp0venv\Scripts\pythonw.exe" (
+    start "" "%~dp0venv\Scripts\pythonw.exe" "%APP%"
+    goto :end
+)
+
 REM Prefer the windowed Python (no console window). Fall back through the
 REM Windows "py" launcher, then plain python as a last resort.
 where pythonw >nul 2>nul

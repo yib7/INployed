@@ -25,7 +25,7 @@ def _resolve_sources() -> tuple[list[Path], str | None]:
     + Drive auto-detection so both entry points agree on where the data lives.
 
     Note: app.main owns the local-runs fold now, so _resolve_sources returns
-    Drive-only sources (or empty if no Drive but local files exist)."""
+    Drive-only sources (or empty if no Drive folder is found)."""
     from watcher import (  # imported lazily so a bad import still hits the logger
         detect_gdrive_root,
         latest_for_ui,
@@ -33,20 +33,14 @@ def _resolve_sources() -> tuple[list[Path], str | None]:
         load_config,
     )
 
-    import jobsdata  # repo-root scored files from a LOCAL "Run scraper"
-
     cfg = load_config()
     root = cfg.get("gdrive_root") or detect_gdrive_root()
     if not root:
-        # No Drive folder. If local files exist, return empty (app.main will fold them in);
-        # else return the usual error.
-        if jobsdata.local_run_files():
-            return [], None
-        return [], (
-            "Could not find the LinkedInJobs folder.\n\n"
-            "Make sure Google Drive is running and synced, or set 'gdrive_root' in:\n"
-            f"{HERE / 'config.json'}"
-        )
+        # No Drive folder (fresh install, or Drive not running and never configured).
+        # Open the dashboard anyway: app.main folds in any local scrape/manual files,
+        # and with no data at all the High Score tab shows its get-started panel —
+        # a first run must open a window, never an error popup.
+        return [], None
     root = Path(root)
     master = root / "linkedin_jobs_master.csv.gz"
     if master.exists():

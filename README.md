@@ -245,6 +245,8 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
 - **Hands-off (recommended for daily use):** run that pair on a small GCP VM via
   cron and sync results to Google Drive, then drive the schedule, pauses, and config
   pushes from the dashboard's **Settings → VM (cloud job discovery)** section (below).
+  (This path needs the **Google Drive desktop app** on your PC so the VM's output
+  folder syncs down; the local CLI path above doesn't.)
 
 ### Configure everything from the Settings tab (no file editing)
 Open the dashboard (`python local/app.py`) and click the **Settings** tab: one

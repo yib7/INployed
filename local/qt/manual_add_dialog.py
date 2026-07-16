@@ -3,8 +3,8 @@
 A thin shell over `manual_add` — it collects input, validates the required fields for
 the chosen action, then hands the values back to the caller (MainWindow) which runs
 the parse -> score -> (tailor) -> append pipeline on a worker thread. All the real
-logic lives in the toolkit-agnostic `manual_add` module (per CLAUDE.md: keep
-Qt-agnostic logic out of widgets).
+logic lives in the toolkit-agnostic `manual_add` module (project convention:
+keep Qt-agnostic logic out of widgets).
 
 Two actions on add:
   * "Just score"     — score the résumé against the job and add it to the dataset

@@ -3,7 +3,7 @@
 The dashboard's manual-entry form (qt/manual_add_dialog.py) collects either a
 pasted job description (plus optional link/company/title) or a job URL, then hands
 the input here. This module is pure Python with no Qt dependency, so the widget
-stays a thin shell and the logic is unit-testable (per CLAUDE.md).
+stays a thin shell and the logic is unit-testable.
 
 A manually-added job flows through the SAME pipeline as a scraped one:
 

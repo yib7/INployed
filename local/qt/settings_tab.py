@@ -600,7 +600,8 @@ class ArchiveDialog(QtWidgets.QDialog):
         v = QtWidgets.QVBoxLayout(self)
         intro = QtWidgets.QLabel(
             "Saved snapshots (newest first). Load one into the form to review, then Save to apply it. "
-            "Secrets are restored too, but are never shown here.")
+            "Secrets are restored too — loading un-masks them in the form so you can review "
+            "exactly what would be saved.")
         intro.setWordWrap(True)
         intro.setProperty("muted", True)
         v.addWidget(intro)

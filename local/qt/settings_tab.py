@@ -259,6 +259,10 @@ class SettingsForm(QtWidgets.QWidget):
 
     def _add_field(self, form: QtWidgets.QFormLayout, f, value):
         widget = self._make_widget(f, value)
+        # The visible label lives in a composite cell (label + storage chip),
+        # which QFormLayout can't expose as the field's label to assistive
+        # tech -- name the input explicitly so screen readers announce it.
+        widget.setAccessibleName(f.label)
         form.addRow(self._label_cell(f), widget)
         if f.help:
             help_lab = QtWidgets.QLabel(f.help)

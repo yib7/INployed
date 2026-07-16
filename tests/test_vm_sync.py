@@ -1,6 +1,6 @@
 """gcloud-based VM sync core (local/vm_sync.py).
 
-Pure argv builders + change detection. No real gcloud ever runs (the runner is
+Pure argv builders. No real gcloud ever runs (the runner is
 mocked); no secret is read — only non-secret connection identifiers.
 """
 import sys

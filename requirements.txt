@@ -29,6 +29,17 @@ keyring==25.7.0        # ATS master password lives in the Windows Credential Man
 # only needed to run scraper.py locally (it normally runs on the VM)
 aiohttp==3.14.1
 
+# fetches the posting when you paste a URL into "Add job by hand" (local/manual_add.py).
+# Also pulled in transitively by google-genai; pinned here because we import it directly.
+requests==2.34.2
+
+# NOT installed by this file (optional, install only if you use the feature):
+#   * playwright — the advanced Auto-apply queue driver (local/apply_driver.py /
+#     apply_playwright.py) imports it lazily: pip install playwright, then
+#     playwright install chromium. The everyday per-job Apply flow needs neither.
+#   * Pillow — maintainers only: regenerates the desktop icon
+#     (python local/assets/make_icon.py).
+
 # dev / tests (python -m pytest tests/ -v)
 pytest==9.1.1
 pytest-qt==4.5.0       # qtbot fixtures for the Qt UI tests (offscreen, no display)

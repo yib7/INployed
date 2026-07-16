@@ -94,13 +94,15 @@ cd INployed
 ```
 This writes a git-ignored `.env` (your keys), `local/config.json` (dashboard
 preferences), and a starter `resume_tailor_files/master_experience.yaml`. Re-run it
-any time to revisit settings; nothing is overwritten without `-Force`.
+any time to revisit settings; nothing is overwritten without `-Force`. (If PowerShell
+refuses to run scripts — the stock Windows default — run it once as
+`powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`.)
 
-Then install dependencies (if you skipped `-InstallDeps`) and authenticate:
+Then install dependencies (if you skipped `-InstallDeps`):
 ```powershell
 python -m venv venv; .\venv\Scripts\activate   # (optional) keep deps in a project venv
 python -m pip install -r requirements.txt
-gcloud auth application-default login
+gcloud auth application-default login   # (optional) only for Vertex AI scoring / tailoring
 ```
 
 **Prefer a GUI to editing `.env` by hand?** Once dependencies are installed, launch

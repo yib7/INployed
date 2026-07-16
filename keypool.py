@@ -262,7 +262,8 @@ class KeyPool:
                         continue
                     transient += 1
                     if transient >= 4:
-                        raise PoolError(f"Vertex quota error for {model}: {exc}")
+                        raise PoolError(
+                            f"Vertex quota error for {model}: {exc}") from exc
                     # Jitter so parallel workers on the VM don't wake in lockstep.
                     wait = 60 + random.uniform(0, 0.5)
                     log.warning("keypool: vertex quota/429 for %s (attempt %d/4), "

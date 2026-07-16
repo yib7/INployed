@@ -438,6 +438,8 @@ def test_pool_generate_bad_json_retries_then_raises_claude_cli_error(monkeypatch
     with pytest.raises(claude_cli.ClaudeCLIError) as exc_info:
         asyncio.run(pool.generate(model="m", contents="hi", config=config))
     assert exc_info.value.kind == "bad_json"
+    # Explicit chain: the wrapped extract_json_text ValueError is the cause.
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 # --------------------------------------------------------------------------

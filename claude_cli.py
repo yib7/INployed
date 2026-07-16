@@ -307,5 +307,5 @@ class ClaudePool:
             except ValueError as exc:  # extract_json_text failure
                 transient += 1
                 if transient >= self.TRANSIENT_RETRIES:
-                    raise ClaudeCLIError(f"non-JSON output: {exc}", kind="bad_json")
+                    raise ClaudeCLIError(f"non-JSON output: {exc}", kind="bad_json") from exc
                 await asyncio.sleep(1.5 * transient)

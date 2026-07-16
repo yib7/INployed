@@ -25,8 +25,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# Overridable for tests / dry runs (the scheduler harness registers a throwaway
-# name first, verifies, and deletes it before touching the real task).
+# Overridable for tests / dry runs (a dry run can register a throwaway name
+# first, verify, and delete it before touching the real task).
 TASK_NAME = "LinkedInJobsWatcher"
 
 # The schedule setup_tasks.ps1 registered and the machine is running today —

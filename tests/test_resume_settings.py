@@ -1,4 +1,4 @@
-"""Tests for the Résumé/tailor Settings section (SP3 T3.4).
+"""Tests for the Résumé/tailor Settings section.
 
 The three "Resume" Fields are artifact toggles + a cover-letter tone knob, all
 backed by local/config.json (target "config"). Defaults must reproduce today's
@@ -6,10 +6,10 @@ behaviour: ATS on, prep on-demand, professional tone. These exercise the schema
 + load/save round-trip against a temp config dir so nothing touches the real
 config.json.
 
-Note: `tailor_cover_letter` was removed from the schema (settings audit SP3,
-audit-findings.md item under §1) — no consumer ever read it; every tailor
-call site prompts live via QMessageBox or hardcodes the value instead. The
-key may still linger harmlessly in an existing config.json (merge semantics).
+Note: `tailor_cover_letter` was removed from the schema in the settings-page
+audit — no consumer ever read it; every tailor call site prompts live via
+QMessageBox or hardcodes the value instead. The key may still linger
+harmlessly in an existing config.json (merge semantics).
 """
 import sys
 from pathlib import Path

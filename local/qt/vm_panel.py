@@ -295,14 +295,14 @@ class VMPanel(QtWidgets.QWidget):
             return
         self._run(t.resume_cmd())
 
-    def push_config(self):
+    def push_config(self, skip_confirm: bool = False):
         t = self._require_configured()
         if not t:
             return
         files = [(settings.TARGET_FILES[k], remote)
                  for k, remote in vm_sync.TARGET_REMOTE_FILE.items()]
         names = ", ".join(remote for _, remote in files)
-        if not self._confirm("Push config", f"Copy {names} to the VM?"):
+        if not skip_confirm and not self._confirm("Push config", f"Copy {names} to the VM?"):
             return
         for local, remote in files:
             self._run(t.build_scp_cmd(str(local), remote))

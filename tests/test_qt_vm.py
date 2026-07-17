@@ -105,6 +105,36 @@ def test_push_config_runs_scp_per_file(qtbot):
     assert len(scps) == len(vm_sync.TARGET_REMOTE_FILE)
 
 
+def test_push_config_skip_confirm_runs_scp_without_confirming(qtbot):
+    # SP3: a save-time auto-push bypasses the confirm but still scp's every file.
+    confirms, cmds = [], []
+    panel = VMPanel(
+        runner=lambda cmd: cmds.append(cmd) or types.SimpleNamespace(returncode=0, stdout="", stderr=""),
+        confirm=lambda title, msg: confirms.append((title, msg)) or True,
+        notify=lambda title, msg: None,
+        target_factory=lambda: _FakeTarget(),
+    )
+    qtbot.addWidget(panel)
+    panel.push_config(skip_confirm=True)
+    scps = [c for c in cmds if c[:2] == ["gcloud", "scp"]]
+    assert len(scps) == len(vm_sync.TARGET_REMOTE_FILE)   # every file still pushed
+    assert confirms == []                                 # confirm was skipped
+
+
+def test_push_config_default_still_confirms(qtbot):
+    # The button path (no arg) must keep confirming before it pushes.
+    confirms = []
+    panel = VMPanel(
+        runner=lambda cmd: types.SimpleNamespace(returncode=0, stdout="", stderr=""),
+        confirm=lambda title, msg: confirms.append((title, msg)) or True,
+        notify=lambda title, msg: None,
+        target_factory=lambda: _FakeTarget(),
+    )
+    qtbot.addWidget(panel)
+    panel.push_config()
+    assert confirms                                       # default path confirmed
+
+
 # --- SP7: local watcher task sync -------------------------------------------------
 
 WATCHER_SIX = ["12:30", "12:50", "13:10", "20:30", "20:50", "21:10"]

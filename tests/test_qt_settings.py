@@ -160,6 +160,99 @@ def test_revert_resets_vm_panel(qtbot, tmp_path):
     assert form._vm_panel._times() == ["10:00", "19:00"]  # back to its initial schedule
 
 
+# --- SP3: prompt to push config to the VM after a VM-read setting changes -------
+
+class _StubVMPanel:
+    """Records push_config calls so a test can assert the save-time auto-push."""
+
+    def __init__(self):
+        self.pushed = []
+
+    def push_config(self, skip_confirm=False):
+        self.pushed.append(skip_confirm)
+
+
+def _stub_question(monkeypatch, answer):
+    """Stub QMessageBox.question to a fixed answer; return the recorded calls."""
+    calls = []
+
+    def q(parent, title, text, *a, **k):
+        calls.append((title, text))
+        return answer
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(q))
+    return calls
+
+
+def test_no_vm_push_prompt_when_vm_disabled(qtbot, tmp_path, monkeypatch):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    _quiet_info(monkeypatch)
+    calls = _stub_question(monkeypatch, QtWidgets.QMessageBox.StandardButton.Yes)
+    form._setters["drop_easy_apply"](True)            # a VM-read setting changed...
+    # ...but vm_enabled defaults off, so no push prompt appears.
+    assert form.save() is True
+    assert calls == []
+
+
+def test_vm_push_prompt_yes_calls_panel_push(qtbot, tmp_path, monkeypatch):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    stub = _StubVMPanel()
+    form._vm_panel = stub
+    _quiet_info(monkeypatch)
+    calls = _stub_question(monkeypatch, QtWidgets.QMessageBox.StandardButton.Yes)
+    form._setters["vm_enabled"](True)
+    form._setters["drop_easy_apply"](True)
+    assert form.save() is True
+    assert calls                                       # the push prompt was shown
+    assert any("score_jobs.py" in text for _, text in calls)  # drop_easy_apply reminder
+    assert stub.pushed == [True]                       # pushed with skip_confirm=True
+
+
+def test_vm_push_prompt_no_does_not_push(qtbot, tmp_path, monkeypatch):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    stub = _StubVMPanel()
+    form._vm_panel = stub
+    _quiet_info(monkeypatch)
+    calls = _stub_question(monkeypatch, QtWidgets.QMessageBox.StandardButton.No)
+    form._setters["vm_enabled"](True)
+    form._setters["drop_easy_apply"](True)
+    assert form.save() is True
+    assert calls                                       # prompt still shown
+    assert stub.pushed == []                           # ...but declined, so no push
+
+
+def test_no_vm_push_prompt_for_non_vm_field_change(qtbot, tmp_path, monkeypatch):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    stub = _StubVMPanel()
+    form._vm_panel = stub
+    _quiet_info(monkeypatch)
+    calls = _stub_question(monkeypatch, QtWidgets.QMessageBox.StandardButton.Yes)
+    form._setters["vm_enabled"](True)                  # VM on...
+    form._setters["min_score"](5)                      # ...but only a config-target field changed
+    assert form.save() is True
+    assert calls == []
+    assert stub.pushed == []
+
+
+def test_vm_push_prompt_yes_without_panel_shows_info(qtbot, tmp_path, monkeypatch):
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    form._vm_panel = None                              # no VM ops panel mounted
+    infos = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda parent, title, text, *a, **k: infos.append((title, text))))
+    _stub_question(monkeypatch, QtWidgets.QMessageBox.StandardButton.Yes)
+    form._setters["vm_enabled"](True)
+    form._setters["drop_easy_apply"](True)
+    assert form.save() is True
+    # the saved-summary info + the "use the Push button" info both fired
+    assert any("Push config to VM" in title for title, _ in infos)
+
+
 # --- collapsible sections (cycle 16 SP4) ----------------------------------------
 
 def test_collapsible_section_toggles_body(qtbot):

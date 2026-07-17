@@ -17,6 +17,7 @@ from PySide6 import QtCore, QtWidgets
 import jobsdata
 import settings
 import settings_archive
+import vm_sync
 from qt import theme
 from qt.widgets import CollapsibleSection
 
@@ -516,9 +517,61 @@ class SettingsForm(QtWidgets.QWidget):
         else:
             QtWidgets.QMessageBox.information(
                 self, "Settings", "No changes to save — your settings are unchanged.")
+        self._maybe_prompt_vm_push(before, values, summary)
         if self.on_saved:
             self.on_saved()
         return True
+
+    @staticmethod
+    def _value_changed(f: settings.Field, old, new) -> bool:
+        """Did a field's value change between two settings dicts? Mirrors the
+        per-type comparison in `_changed_summary` (set-wise for multichoice,
+        normalised for lists, string-wise for secrets)."""
+        if f.type == "multichoice":
+            return set(old or []) != set(new or [])
+        if f.type == "list":
+            return ([str(x).strip() for x in (old or [])]
+                    != [str(x).strip() for x in (new or [])])
+        if f.secret:
+            return str(old) != str(new)
+        return old != new
+
+    def _maybe_prompt_vm_push(self, before: dict, values: dict, summary: list[str]) -> None:
+        """After a Save that changed something, if VM features are on and a changed
+        setting is one the VM reads from its OWN config copy (a 'search'/'scoring'
+        target — see vm_sync.TARGET_REMOTE_FILE), offer to push the updated config
+        up to the VM. Nothing else reminds the user their VM config has drifted."""
+        if not summary or not values.get("vm_enabled"):
+            return
+        by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+        changed_vm: set[str] = set()
+        for key in values:
+            f = by_key.get(key)
+            if f is None or f.target not in vm_sync.TARGET_REMOTE_FILE:
+                continue  # unknown key or a setting the VM doesn't read — ignore
+            if self._value_changed(f, before.get(key, f.default), values[key]):
+                changed_vm.add(key)
+        if not changed_vm:
+            return
+        text = ("You changed settings the VM reads from its config copy. Push the "
+                "updated config to the VM now?")
+        if "drop_easy_apply" in changed_vm:
+            text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "
+                     "(there is no automated code push) — run:\n"
+                     "  gcloud compute scp score_jobs.py <user>@<vm>:~ --zone=<zone>")
+        if QtWidgets.QMessageBox.question(
+                self, "Push config to VM?", text,
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if self._vm_panel is not None:
+            self._vm_panel.push_config(skip_confirm=True)
+        else:
+            QtWidgets.QMessageBox.information(
+                self, "Push config to VM?",
+                "Turn on the VM section and use its 'Push config to VM' button to "
+                "copy the updated config up.")
 
     def _archive_after_save(self, values: dict) -> bool:
         """Snapshot all settings then apply the prune policy. Never raises into Save —

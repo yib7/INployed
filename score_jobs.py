@@ -150,6 +150,7 @@ RUN_STATS_COLS = [
     "timestamp", "input_csv", "rows_in", "filtered_out", "llm_scored",
     "llm_errors", "stage2_done", "rescore_attempted", "rescore_scored",
     "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls",
+    "easy_apply_dropped",
 ]
 
 # Aggregate token spend across both stages and both passes (fresh + rescore).
@@ -635,7 +636,7 @@ CHUNK = 2000  # Chunked streaming row count for update_master_scores (memory bou
 SCORE_COLS = [
     "score", "reason", "deep_score", "strengths", "gaps", "recommendation",
     "filter_junk_title", "filter_junk_desc", "filter_too_many_years",
-    "filter_clearance", "filter_degree", "filtered_out", "is_seen",
+    "filter_clearance", "filter_degree", "filter_easy_apply", "filtered_out", "is_seen",
 ]
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
 
@@ -768,17 +769,32 @@ def save_output(df: pd.DataFrame, input_csv: Path) -> Path:
     return out_path
 
 
-def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None) -> pd.DataFrame:
-    """Add job_description_md + the mechanical-filter columns."""
+def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
+                       drop_easy_apply: bool | None = None) -> pd.DataFrame:
+    """Add job_description_md + the mechanical-filter columns.
+
+    `drop_easy_apply=None` resolves to the module default DROP_EASY_APPLY; an
+    explicit bool overrides it (keeps tests monkeypatch-free).
+    """
+    if drop_easy_apply is None:
+        drop_easy_apply = DROP_EASY_APPLY
     df["job_description_md"] = df[desc_col].apply(html_to_md)
     df["filter_junk_title"] = df[title_col].apply(is_junk_title) if title_col else False
     df["filter_junk_desc"] = df["job_description_md"].apply(is_junk_desc)
     df["filter_too_many_years"] = df["job_description_md"].apply(has_too_many_years)
     df["filter_clearance"] = df["job_description_md"].apply(requires_clearance)
     df["filter_degree"] = df["job_description_md"].apply(requires_advanced_degree)
+    # Added UNCONDITIONALLY (all-False when off / column absent) so the scored-CSV
+    # and master schema is stable either way. Truthiness mirrors the dashboard's
+    # normalization in local/jobsdata.py (is_easy_apply -> str -> lower -> in set).
+    if drop_easy_apply and "is_easy_apply" in df.columns:
+        df["filter_easy_apply"] = (df["is_easy_apply"].astype(str).str.strip()
+                                   .str.lower().isin(("true", "1", "yes")))
+    else:
+        df["filter_easy_apply"] = False
     df["filtered_out"] = (
         df["filter_junk_title"] | df["filter_junk_desc"] | df["filter_too_many_years"]
-        | df["filter_clearance"] | df["filter_degree"]
+        | df["filter_clearance"] | df["filter_degree"] | df["filter_easy_apply"]
     )
     # An unscoreable (empty/missing) description would otherwise be retried by
     # the rescore pass forever — park it as filtered.
@@ -975,6 +991,9 @@ async def main() -> None:
                 df = df.rename(columns={id_col: "job_posting_id"})
 
             df = add_filter_columns(df, desc_col, title_col)
+            n_easy = int(df["filter_easy_apply"].sum())
+            if n_easy > 0:
+                print(f"Easy Apply drop: {n_easy} job(s) filtered before scoring")
             merged = await run_scoring(pool, resume, df)
             out = save_output(merged, csv_path)
             n_scored = merged["score"].notna().sum()
@@ -983,6 +1002,7 @@ async def main() -> None:
             print(f"  Stage 1 scored: {n_scored}, Stage 2 deep-analyzed: {n_deep}")
             stats["rows_in"] = len(merged)
             stats["filtered_out"] = int(merged["filtered_out"].sum())
+            stats["easy_apply_dropped"] = int(merged["filter_easy_apply"].sum())
             stats["llm_scored"] = int(n_scored)
             stats["llm_errors"] = int(
                 merged["reason"].fillna("").astype(str).str.startswith("ERROR:").sum()

@@ -104,3 +104,51 @@ def test_add_filter_columns_flags_clearance_and_degree():
     assert list(out["filter_clearance"]) == [False, True, False, False]
     assert list(out["filter_degree"]) == [False, False, True, False]
     assert list(out["filtered_out"]) == [False, True, True, False]
+
+
+# --- Easy Apply filter (SP2) -------------------------------------------------
+# Clean, non-junk, >=40-char descriptions + benign titles so the OTHER
+# mechanical filters stay all-False and filtered_out reflects ONLY Easy Apply.
+
+def _easy_apply_frame(easy_vals):
+    n = len(easy_vals)
+    return pd.DataFrame(
+        {
+            "desc": [
+                "We are hiring a backend software engineer to build web apps and REST APIs."
+            ] * n,
+            "title": ["Software Engineer"] * n,
+            "is_easy_apply": easy_vals,
+        }
+    )
+
+
+def test_add_filter_columns_easy_apply_on_flags_truthy_rows():
+    # str(True)->"True"->lower "true" matches; "false"/None/False do not.
+    df = _easy_apply_frame([True, False, "true", "false", None])
+    out = add_filter_columns(df, "desc", "title", drop_easy_apply=True)
+    assert list(out["filter_easy_apply"]) == [True, False, True, False, False]
+    # Other filters are all-False for these rows, so filtered_out == the flag.
+    assert list(out["filtered_out"]) == [True, False, True, False, False]
+
+
+def test_add_filter_columns_easy_apply_off_never_flags():
+    df = _easy_apply_frame([True, False, "true", "false", None])
+    out = add_filter_columns(df, "desc", "title", drop_easy_apply=False)
+    assert list(out["filter_easy_apply"]) == [False, False, False, False, False]
+    assert list(out["filtered_out"]) == [False, False, False, False, False]
+
+
+def test_add_filter_columns_easy_apply_missing_column_is_all_false():
+    # No is_easy_apply column at all: the column is still added (all-False),
+    # no KeyError, so the scored-CSV/master schema stays stable.
+    df = pd.DataFrame(
+        {
+            "desc": ["We are hiring a backend software engineer building web apps and APIs."],
+            "title": ["Software Engineer"],
+        }
+    )
+    out = add_filter_columns(df, "desc", "title", drop_easy_apply=True)
+    assert "filter_easy_apply" in out.columns
+    assert list(out["filter_easy_apply"]) == [False]
+    assert list(out["filtered_out"]) == [False]

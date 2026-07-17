@@ -135,7 +135,7 @@ def test_make_pool_delegates(monkeypatch):
 def test_append_run_stats_migrates_old_header(tmp_path, monkeypatch):
     import csv as _csv
     old = tmp_path / "run_stats.csv"
-    old_cols = sj.RUN_STATS_COLS[:-2]  # header before free_calls/vertex_calls were added
+    old_cols = sj.RUN_STATS_COLS[:-3]  # header before free_calls/vertex_calls/easy_apply_dropped
     with open(old, "w", encoding="utf-8", newline="") as f:
         w = _csv.DictWriter(f, fieldnames=old_cols)
         w.writeheader()
@@ -284,7 +284,7 @@ def test_rows_needing_rescore_treats_float_and_padded_filtered_out_as_filtered()
 
 def test_score_cols_include_all_filter_columns():
     for col in ("filter_junk_title", "filter_junk_desc", "filter_too_many_years",
-               "filter_clearance", "filter_degree", "filtered_out"):
+               "filter_clearance", "filter_degree", "filter_easy_apply", "filtered_out"):
         assert col in sj.SCORE_COLS, col
 
 

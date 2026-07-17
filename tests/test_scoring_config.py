@@ -26,7 +26,7 @@ def _clear_env(monkeypatch):
         "SCORE_STAGE1_MODEL", "SCORE_STAGE2_MODEL",
         "SCORE_STAGE1_CONCURRENCY", "SCORE_STAGE2_CONCURRENCY",
         "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
-        "SCORE_MIN_FILTER_YEARS",
+        "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY",
     ):
         monkeypatch.delenv(k, raising=False)
 
@@ -71,3 +71,38 @@ def test_env_overrides_config_file(monkeypatch, tmp_path):
     cfg = score_jobs.load_scoring_config()
     assert cfg["stage2_threshold"] == 5   # env beats the file's 3
     assert cfg["min_filter_years"] == 0   # env beats the file's 2
+
+
+# --- drop_easy_apply: a "bool"-kind key, coerced from JSON bools AND env strings.
+
+
+def test_drop_easy_apply_default_false_when_absent(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["drop_easy_apply"] is False
+
+
+def test_drop_easy_apply_config_file_true(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"drop_easy_apply": True})  # JSON bool from the file
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["drop_easy_apply"] is True
+
+
+def test_drop_easy_apply_env_beats_file_false(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"drop_easy_apply": False})
+    monkeypatch.setenv("SCORE_DROP_EASY_APPLY", "1")  # env string beats the file
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["drop_easy_apply"] is True
+
+
+def test_drop_easy_apply_env_zero_is_false(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("SCORE_DROP_EASY_APPLY", "0")  # "0" must coerce to False
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["drop_easy_apply"] is False

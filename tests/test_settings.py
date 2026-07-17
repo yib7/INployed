@@ -323,3 +323,30 @@ def test_inbox_map_default_matches_apply_queue():
     f = next(f for f in settings.SETTINGS_SCHEMA if f.key == "auto_apply_inbox_map")
     schema_map = dict(line.split(None, 1) for line in f.default)
     assert schema_map == apply_queue.DEFAULT_INBOX_MAP
+
+
+def test_drop_easy_apply_is_a_scraper_section_scoring_target_bool(tmp_path):
+    # Deliberate split: section "Scraper" (so it renders under Job discovery) but
+    # target "scoring" (stored in scoring_config.json, which the VM push ships).
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["drop_easy_apply"]
+    assert f.type == "bool"
+    assert f.default is False
+    assert f.section == "Scraper"
+    assert f.target == "scoring"
+    assert settings.load(_all_targets(tmp_path))["drop_easy_apply"] is False
+    assert settings.validate({"drop_easy_apply": True}) == {}
+
+
+def test_drop_easy_apply_save_roundtrips_to_scoring_config(tmp_path):
+    targets = _all_targets(tmp_path)
+    values = settings.load(targets)
+    values["drop_easy_apply"] = True
+    settings.save(values, targets)
+    on_disk = json.loads(targets["scoring"].read_text(encoding="utf-8"))
+    assert on_disk["drop_easy_apply"] is True
+    assert settings.load(targets)["drop_easy_apply"] is True
+    # flipping back to False persists as False, not a lingering True
+    values = settings.load(targets)
+    values["drop_easy_apply"] = False
+    settings.save(values, targets)
+    assert settings.load(targets)["drop_easy_apply"] is False

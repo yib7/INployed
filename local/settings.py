@@ -137,6 +137,12 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Seniority filter.",
           choices=("Internship", "Entry level", "Associate",
                    "Mid-Senior level", "Director", "Executive")),
+    Field("drop_easy_apply", "Drop Easy Apply jobs before scoring", "bool", False,
+          "Scraper", "scoring",
+          help="When on, Easy Apply jobs are filtered out before AI scoring (saves "
+               "scoring tokens). They stay in the master list as filtered so they are "
+               "never re-collected or re-billed. If you use the cloud VM, push config "
+               "to the VM after changing this, and re-upload score_jobs.py once."),
 
     # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
     Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.1-flash-lite",

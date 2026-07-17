@@ -58,7 +58,8 @@ RESUME_PATH = OUTPUT_DIR / "resume.md"
 SCORING_CONFIG_FILE = "scoring_config.json"
 
 # Built-in defaults, keyed by config name -> (env var name, default value, kind).
-# kind drives coercion: "str" leaves the value alone, "int" casts via int().
+# kind drives coercion: "str" leaves the value alone, "int" casts via int(),
+# "bool" routes through _as_bool() (env strings like "1"/"true" AND JSON bools).
 _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "provider": ("SCORE_PROVIDER", "gemini", "str"),
     "stage1_model": ("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite", "str"),
@@ -75,7 +76,15 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "rescore_cap": ("SCORE_RESCORE_CAP", 200, "int"),
     # The seniority cutoff: roles requiring >= this many years are filtered out.
     "min_filter_years": ("SCORE_MIN_FILTER_YEARS", 1, "int"),
+    # When on, Easy Apply jobs are dropped before scoring (saves scoring tokens).
+    "drop_easy_apply": ("SCORE_DROP_EASY_APPLY", False, "bool"),
 }
+
+
+def _as_bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("true", "1", "yes", "on")
 
 
 def load_scoring_config() -> dict:
@@ -102,7 +111,12 @@ def load_scoring_config() -> dict:
             value = raw[key]
         else:
             value = default
-        cfg[key] = int(value) if kind == "int" else value
+        if kind == "int":
+            cfg[key] = int(value)
+        elif kind == "bool":
+            cfg[key] = _as_bool(value)
+        else:
+            cfg[key] = value
     return cfg
 
 
@@ -126,6 +140,7 @@ STAGE2_CONCURRENCY = _SCORING["stage2_concurrency"]
 STAGE2_THRESHOLD = _SCORING["stage2_threshold"]
 MAX_SCORED_PER_RUN = _SCORING["max_scored_per_run"]
 RESCORE_CAP = _SCORING["rescore_cap"]
+DROP_EASY_APPLY = _SCORING["drop_easy_apply"]
 
 # Per-run metrics appended to run_stats.csv (uploaded to Drive by run_scraper.sh,
 # shown in the dashboard's Stats tab). One row per score_jobs.py invocation, so

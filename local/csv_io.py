@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from jsonutil import replace_with_retry
 from seen_db import SeenRegistry
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,10 @@ def write_csv_gz_atomic(df: pd.DataFrame, path: Path, *, compression: str | None
     stores this was written for); pass compression=None for a plain CSV so
     local/jobsdata.py's master-CSV writers (_drop_ids_from_csv, _append_dedup_csv)
     can reuse the same atomic tmp+replace helper instead of a naked to_csv.
+
+    The replace goes through jsonutil.replace_with_retry so a lock-free concurrent
+    reader on Windows can't fail a master rewrite with a transient PermissionError
+    (the master CSV is read lock-free by load_files/master_row/reconcile_file).
     """
     fd, tmp_name = tempfile.mkstemp(
         prefix=path.stem + ".",
@@ -55,7 +60,7 @@ def write_csv_gz_atomic(df: pd.DataFrame, path: Path, *, compression: str | None
     tmp_path = Path(tmp_name)
     try:
         df.to_csv(tmp_path, index=False, encoding="utf-8", compression=compression)
-        os.replace(tmp_path, path)
+        replace_with_retry(tmp_path, path)
     finally:
         if tmp_path.exists():
             try:

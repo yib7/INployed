@@ -18,6 +18,7 @@ Replaces the old apply_data.json — nothing here ever submits.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -428,6 +429,19 @@ def refresh_standard_answers(folder: Path) -> Optional[Path]:
     # build_markdown separates the answers block from the signature heading with
     # one blank line; reproduce it so an unchanged store round-trips byte-identical.
     new_text = text[:m_start.start()] + section + eol + text[m_sig.start():]
-    with path.open("w", encoding="utf-8", newline="") as fh:
-        fh.write(new_text)
+    # Atomic tmp+replace so a crash mid-rewrite leaves the prior apply.md fully
+    # intact, never a truncated file. newline="" keeps the file's own EOLs
+    # byte-for-byte; the replace shares jsonutil's Windows lock-retry.
+    from jsonutil import replace_with_retry
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
+            fh.write(new_text)
+        replace_with_retry(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     return path

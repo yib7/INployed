@@ -22,6 +22,23 @@ _REPLACE_TRIES = 5
 _REPLACE_RETRY = 0.02     # seconds between attempts
 
 
+def replace_with_retry(src, dst, *, retries: int = _REPLACE_TRIES) -> None:
+    """`os.replace(src, dst)` with the bounded Windows-lock retry (see the module
+    comment). Retries a transiently locked destination `retries` times, sleeping
+    `_REPLACE_RETRY` between attempts, then re-raises the OSError. The single
+    shared retrying-replace used by every atomic tmp+replace writer here
+    (atomic_write_json, csv_io.write_csv_gz_atomic, the apply.md / outbox rows
+    writers) so the fix lives in exactly one place."""
+    for attempt in range(retries):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(_REPLACE_RETRY)
+
+
 def atomic_write_json(path: Path, data: Any) -> None:
     """Serialize `data` to `path` atomically via a same-dir temp file + replace.
 
@@ -37,14 +54,7 @@ def atomic_write_json(path: Path, data: Any) -> None:
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        for attempt in range(_REPLACE_TRIES):
-            try:
-                os.replace(tmp, path)
-                break
-            except OSError:
-                if attempt == _REPLACE_TRIES - 1:
-                    raise
-                time.sleep(_REPLACE_RETRY)
+        replace_with_retry(tmp, path)
     finally:
         if tmp.exists():
             try:

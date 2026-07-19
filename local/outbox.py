@@ -108,7 +108,10 @@ def write_rows_outbox(ids, master_csv: Path | None = None,
     ob = Path(outbox_dir) if outbox_dir is not None else OUTBOX_DIR
     ob.mkdir(parents=True, exist_ok=True)
     path = ob / f"local_rows_{_stamp()}.csv.gz"
-    rows.to_csv(path, index=False, compression="gzip")
+    # Atomic tmp+replace: a truncated rows file gets quarantined VM-side, so a
+    # mid-write crash must never leave a partial local_rows_*.csv.gz behind.
+    import csv_io
+    csv_io.write_csv_gz_atomic(rows, path)
     return path
 
 

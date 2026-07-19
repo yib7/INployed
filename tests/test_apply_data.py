@@ -501,6 +501,34 @@ def test_refresh_standard_answers_missing_headings_returns_none(tmp_path):
     assert md.read_bytes() == before
 
 
+def test_refresh_standard_answers_atomic_preserves_file_on_write_failure(tmp_path, monkeypatch):
+    # P2-28: apply.md must be rewritten atomically (tmp + retrying replace) so a
+    # crash at the rename leaves the previous apply.md fully intact, never a
+    # truncated file. Fail the shared replace and assert the original survives.
+    import jsonutil
+    _seed_store(tmp_path, how_did_you_hear="LinkedIn")
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    before = out.read_bytes()
+
+    # Reseed the store to a new value BEFORE patching os.replace: the patch
+    # below hits the shared os module, so any os.replace after it (incl.
+    # apply_answers.save) would fail. refresh must then try (and fail) to write
+    # this new value into apply.md.
+    _seed_store(tmp_path, how_did_you_hear="Referral from a friend")
+
+    def boom(src, dst, *a, **k):
+        raise OSError("crash right at the rename")
+    monkeypatch.setattr(jsonutil.os, "replace", boom)
+    monkeypatch.setattr(jsonutil, "_REPLACE_RETRY", 0)   # don't sleep in tests
+
+    with pytest.raises(OSError):
+        apply_data.refresh_standard_answers(tmp_path)
+
+    assert out.read_bytes() == before                    # untouched, not truncated
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
 def test_refresh_standard_answers_never_regenerates_tailored_content(tmp_path):
     # A hand-edited résumé bullet outside the span must survive a refresh —
     # proof the function splices instead of calling write_from_folder.

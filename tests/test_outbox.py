@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -98,6 +99,28 @@ def test_rows_outbox_unique_filenames(tmp_path):
     a = outbox.write_rows_outbox(["11"], master_csv=master, outbox_dir=tmp_path / "ob")
     b = outbox.write_rows_outbox(["11"], master_csv=master, outbox_dir=tmp_path / "ob")
     assert a != b  # two adds in the same second must not overwrite each other
+
+
+def test_rows_outbox_write_is_atomic_no_partial_file_on_failure(tmp_path, monkeypatch):
+    # P2-28: the outbox rows file must be written via an atomic tmp+replace so a
+    # mid-write failure can never leave a truncated local_rows_*.csv.gz that the
+    # VM merge would fold in. Simulate a to_csv that writes partial bytes to
+    # whatever path it is handed, then raises: with the atomic path that path is
+    # a throwaway tmp (cleaned up), so the real outbox file is never created.
+    master = tmp_path / "master.csv"
+    _write_master(master, [{"job_posting_id": "11", "job_title": "SWE"}])
+    ob = tmp_path / "ob"
+
+    def partial_then_boom(self, path_or_buf, *a, **k):
+        Path(path_or_buf).write_bytes(b"truncated-partial")
+        raise ValueError("crash after a partial write")
+    monkeypatch.setattr(pd.DataFrame, "to_csv", partial_then_boom)
+
+    with pytest.raises(ValueError):
+        outbox.write_rows_outbox(["11"], master_csv=master, outbox_dir=ob)
+
+    assert list(ob.glob("local_rows_*")) == []   # no truncated outbox file survived
+    assert list(ob.iterdir()) == []              # not even a stray .tmp left behind
 
 
 # ---- write_stats_outbox -----------------------------------------------------

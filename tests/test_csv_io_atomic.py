@@ -4,6 +4,7 @@ atomic tmp+os.replace helper for PLAIN csv writes, not just gz. Default stays gz
 so both existing call sites (csv_io.reconcile_file, qt/main_window._write_is_seen)
 keep working unchanged.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import csv_io  # noqa: E402
+import jsonutil  # noqa: E402
 
 
 def test_write_csv_gz_atomic_default_is_still_gzip(tmp_path):
@@ -41,6 +43,36 @@ def test_write_csv_gz_atomic_plain_csv_is_atomic_no_leftovers(tmp_path):
     df = pd.DataFrame([{"job_posting_id": "1"}])
     csv_io.write_csv_gz_atomic(df, path, compression=None)
     leftovers = [p for p in tmp_path.iterdir() if p.name != "out.csv"]
+    assert leftovers == []
+
+
+def test_write_csv_gz_atomic_retries_replace_past_transient_lock(tmp_path, monkeypatch):
+    # P1-3: the CSV writer must share jsonutil's bounded os.replace retry so a
+    # lock-free concurrent reader on Windows can't fail a master rewrite with a
+    # transient PermissionError. Mirror the jsonutil regression test: the flaky
+    # replace lives in jsonutil (the shared helper), proving csv_io routes
+    # through it rather than doing its own single unretried replace.
+    path = tmp_path / "master.csv"
+    path.write_text("job_posting_id\n1\n", encoding="utf-8")
+    real = os.replace
+    calls = {"n": 0}
+
+    def flaky(src, dst, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError("reader holds the destination open")
+        return real(src, dst, *a, **kw)
+
+    monkeypatch.setattr(jsonutil.os, "replace", flaky)
+    monkeypatch.setattr(jsonutil, "_REPLACE_RETRY", 0)   # don't sleep in tests
+
+    df = pd.DataFrame([{"job_posting_id": "2"}])
+    csv_io.write_csv_gz_atomic(df, path, compression=None)
+
+    assert calls["n"] == 3
+    round_tripped = pd.read_csv(path, dtype={"job_posting_id": str})
+    assert list(round_tripped["job_posting_id"]) == ["2"]
+    leftovers = [p for p in tmp_path.iterdir() if p.name != "master.csv"]
     assert leftovers == []
 
 

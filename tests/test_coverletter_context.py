@@ -118,7 +118,10 @@ def _capture_prompts(monkeypatch):
     def fake_call(system, user, *a, **k):
         seen.setdefault("system", system)
         seen.setdefault("user", user)
-        return "I shipped the viewer with 178 tests."
+        # Grounded relative to the stub bullets ("did a thing") so the letter
+        # grounding gate (verify.letter_unseen) passes — these tests only assert
+        # what rode in the prompts.
+        return "I did a thing and it went well."
 
     monkeypatch.setattr(compose, "call", fake_call)
     return seen

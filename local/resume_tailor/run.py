@@ -17,7 +17,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from . import apply_data, ats, compose, config, coverletter, llm, measure, output, research
+from . import (apply_data, ats, compose, config, coverletter, llm, measure, output,
+               research, verify)
 from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
@@ -283,12 +284,19 @@ def tailor(
     log("framing each block for cohesion…")
     briefs = compose.block_briefs(jd, job_title, sel)
     bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
+    # Deterministic grounding gate (audit P1-2): every bullet's distinctive tokens
+    # must trace to its own group's atoms — a hallucinated or JD-injected fact is
+    # dropped here, never printed. Re-checked after every later bullet-mutating
+    # pass, reverting to the last grounded text instead of dropping when possible.
+    verify.enforce_grounded(sel, bullets, log=log)
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
     # Guarantee every tailored bullet opens with a DISTINCT action verb — none reused, none
     # colliding with a verbatim block's opener (verbatim text is reserved, never modified).
     reserved = frozenset(compose.leading_verb(t) for t in verbatim.values())
+    grounded_snap = dict(bullets)
     compose.dedupe_leading_verbs(bullets, compose.group_map(sel), jd, reserved=reserved)
+    verify.enforce_grounded(sel, bullets, fallback=grounded_snap, log=log)
     if verbatim:
         bullets.update(verbatim)
         log(f"using {len(verbatim)} verbatim bullet(s) (untailored, as typed).")
@@ -300,14 +308,18 @@ def tailor(
     # material), then re-trim the (over)filled bullets back to a clean line boundary.
     if config.fill_underfull_enabled():
         log("filling underfull bullets from spare atoms…")
+        grounded_snap = dict(bullets)
         compose.fill_underfull(jd, job_title, sel, bullets)
         _trim_to_caps(sel, bullets)
+        verify.enforce_grounded(sel, bullets, fallback=grounded_snap, log=log)
 
     # Deterministic style gate: banned AI-tell phrasing (em dashes, contrast
     # framing, buzzword verbs, ...) never reaches the page.
+    grounded_snap = dict(bullets)
     fixed = compose.enforce_style(jd, job_title, sel, bullets)
     if fixed:
         log(f"style gate: repaired {fixed} bullet(s).")
+    verify.enforce_grounded(sel, bullets, fallback=grounded_snap, log=log)
 
     log("compressing skills…")
     skill_lines = compose.compress_skills(jd, job_title, sel)

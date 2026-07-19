@@ -13,8 +13,9 @@ import os
 import re
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ruamel.yaml import YAML
 
@@ -82,15 +83,46 @@ def _load_doc(path: Path):
         return y, y.load(fh)
 
 
-def _write_doc(y: YAML, doc: Any, path: Path) -> None:
-    """Atomically write `doc`, backing any existing file up to `<name>.bak` first,
-    then clear the assets caches so readers see the new content."""
+# ── shared atomic write + timestamped backup ring ─────────────────────────────
+# Both writers of master_experience.yaml (this module and master_gaps.apply_to_file)
+# route through _atomic_replace so a crash mid-write can never truncate the
+# hand-maintained source of truth. _backup_ring keeps the stable `<name>.bak`
+# (latest good copy, referenced by the revert flow and CLI messages) plus a small
+# timestamped ring so a *second* bad save doesn't clobber the last good backup.
+_BAK_RING_KEEP = 5
+
+
+def _backup_ring(path: Path) -> None:
+    """Back `path` up before it is replaced: refresh the stable `<name>.bak` and
+    drop a timestamped `<name>.bak.<YYYYMMDD-HHMMSS-us>` ring entry, pruning the
+    ring to the newest `_BAK_RING_KEEP`. No-op if the file doesn't exist yet."""
+    if not path.exists():
+        return
+    shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    shutil.copy2(str(path), str(path.with_name(path.name + ".bak." + stamp)))
+    ring = sorted(path.parent.glob(path.name + ".bak.*"))  # timestamp sorts chronologically
+    for old in ring[:-_BAK_RING_KEEP]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def _atomic_replace(path: Path, write_fn: Callable[[Any], None], *,
+                    binary: bool = False, backup: bool = True) -> None:
+    """Write `path` atomically: dump to a sibling tempfile via `write_fn(fh)`, back
+    the existing file up (stable .bak + timestamped ring), then `os.replace` the temp
+    into place. If `write_fn` or the replace fails, the tempfile is removed and the
+    original file survives intact (old-or-new, never a truncation)."""
+    mode = "wb" if binary else "w"
+    encoding = None if binary else "utf-8"
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".master_", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            y.dump(doc, fh)
-        if path.exists():
-            shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
+        with os.fdopen(fd, mode, encoding=encoding) as fh:
+            write_fn(fh)
+        if backup:
+            _backup_ring(path)
         os.replace(tmp, str(path))
     except Exception:
         try:
@@ -98,6 +130,19 @@ def _write_doc(y: YAML, doc: Any, path: Path) -> None:
         except OSError:
             pass
         raise
+
+
+def atomic_write_text(path: Path, text: str, *, backup: bool = True) -> None:
+    """Atomically write `text` to `path` with the same tempfile + backup ring the
+    other master_experience.yaml writers use. Public so master_gaps.apply_to_file
+    shares one crash-safe write path. Does NOT clear caches — the caller owns that."""
+    _atomic_replace(path, lambda fh: fh.write(text), backup=backup)
+
+
+def _write_doc(y: YAML, doc: Any, path: Path) -> None:
+    """Atomically write `doc` (backing the existing file up first), then clear the
+    assets caches so readers see the new content."""
+    _atomic_replace(path, lambda fh: y.dump(doc, fh))
     for fn in _CACHED:
         fn.cache_clear()
 
@@ -229,19 +274,7 @@ def restore_bytes(data: bytes, path: Optional[Path] = None) -> None:
     """Overwrite the master file with raw bytes (the editor's "revert to opening
     state"), backing up the current file to `<name>.bak` first and clearing caches."""
     target = _path(path)
-    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".master_", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-        if target.exists():
-            shutil.copy2(str(target), str(target.with_name(target.name + ".bak")))
-        os.replace(tmp, str(target))
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    _atomic_replace(target, lambda fh: fh.write(data), binary=True)
     for fn in _CACHED:
         fn.cache_clear()
 

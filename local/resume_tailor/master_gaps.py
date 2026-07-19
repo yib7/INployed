@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from . import assets, ats, config
-from .llm import call
+from . import assets, ats, config, master_edit
+from .llm import LLMError, call
 
 
 @dataclass
@@ -89,8 +89,8 @@ def screen_candidates(candidates: List[str]) -> List[str]:
     )
     try:
         out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
-    except Exception:
-        return []
+    except LLMError:
+        return []                       # LLM-boundary failure: suggest nothing, not junk
     kept = out.get("keep", []) if isinstance(out, dict) else []
     # Only allow items that were actually offered (model must not add new ones).
     offered = {c.lower(): c for c in candidates}
@@ -119,11 +119,11 @@ def place_skills(skills: List[str], buckets: List[str]) -> Dict[str, List[str]]:
     )
     try:
         out = call(system, user, config.TIER_FLASH_LITE, json_out=True, temperature=0.0)
-        raw = out.get("assignments", {}) if isinstance(out, dict) else {}
-        if isinstance(raw, dict):
-            mapping = {str(k): str(v) for k, v in raw.items()}
-    except Exception:
-        mapping = {}
+    except LLMError:
+        out = {}                        # LLM-boundary failure: everything falls to the default bucket
+    raw = out.get("assignments", {}) if isinstance(out, dict) else {}
+    if isinstance(raw, dict):
+        mapping = {str(k): str(v) for k, v in raw.items()}
     for skill in skills:
         bucket = mapping.get(skill)
         if bucket not in valid:
@@ -152,17 +152,28 @@ def _find_skills_block(text: str) -> int:
     return m.end()
 
 
-def _bucket_span(text: str, skills_start: int, bucket: str) -> Optional[tuple[int, int]]:
+def _skills_section_end(text: str, skills_start: int) -> int:
+    """Char index where the top-level `skills:` section ends: the start of the next
+    top-level key (a column-0 `key:` line), or EOF. The real layout has
+    `skill_aliases:`/`skill_aliases_match_only:` after `skills:`, so bucket scans
+    MUST stop here or an insertion could leak into a following section's flow list."""
+    m = re.search(r"(?m)^[A-Za-z_][\w-]*\s*:", text[skills_start:])
+    return skills_start + m.start() if m else len(text)
+
+
+def _bucket_span(text: str, skills_start: int, section_end: int,
+                 bucket: str) -> Optional[tuple[int, int]]:
     """(start, end) char span of `bucket: [ ... ]` (single- or multi-line flow list)
-    located within the skills section. None if the bucket isn't present as a flow list."""
-    m = re.search(rf"(?m)^( *){re.escape(bucket)}:\s*\[", text[skills_start:])
+    located within the skills section [skills_start, section_end). None if the bucket
+    isn't present as a flow list inside that section."""
+    m = re.search(rf"(?m)^( *){re.escape(bucket)}:\s*\[", text[skills_start:section_end])
     if not m:
         return None
     start = skills_start + m.start()
     # Walk to the matching closing bracket (skill names never contain brackets).
     depth = 0
     i = skills_start + m.end() - 1  # at the opening '['
-    while i < len(text):
+    while i < section_end:
         if text[i] == "[":
             depth += 1
         elif text[i] == "]":
@@ -194,13 +205,14 @@ def preview_additions(placements: Dict[str, List[str]],
         master_text = config.MASTER_YAML.read_text(encoding="utf-8")
     new_text = master_text
     skills_start = _find_skills_block(new_text)
+    section_end = _skills_section_end(new_text, skills_start)
     skipped: List[str] = []
     # Apply right-to-left by span so earlier offsets stay valid.
     spans: List[tuple[int, str, List[str]]] = []
     for bucket, items in placements.items():
         if not items:
             continue
-        span = _bucket_span(new_text, skills_start, bucket)
+        span = _bucket_span(new_text, skills_start, section_end, bucket)
         if span is None:
             skipped.append(bucket)
             continue
@@ -219,21 +231,42 @@ def preview_additions(placements: Dict[str, List[str]],
 def apply_to_file(placements: Dict[str, List[str]], path: Optional[Path] = None,
                   *, backup: bool = True) -> str:
     """Write the confirmed additions into master_experience.yaml, preserving all
-    comments. Backs the file up to <name>.bak first. Returns the unified diff."""
+    comments. The write is atomic (tempfile + os.replace) with a timestamped backup
+    ring, sharing master_edit's crash-safe path. Returns the unified diff."""
     path = path or config.MASTER_YAML
     original = path.read_text(encoding="utf-8")
     new_text, diff = preview_additions(placements, original)
     if new_text == original:
         return diff
-    if backup:
-        path.with_suffix(path.suffix + ".bak").write_text(original, encoding="utf-8")
-    path.write_text(new_text, encoding="utf-8")
+    master_edit.atomic_write_text(path, new_text, backup=backup)
     assets.load_master.cache_clear()
     assets.skill_aliases.cache_clear()
     assets.skill_aliases_match_only.cache_clear()
     assets.atoms_by_id.cache_clear()
     assets.blocks.cache_clear()
     return diff
+
+
+# ── confirm-then-apply gate ───────────────────────────────────────────────────
+def _confirm_placements(placements: Dict[str, List[str]], *, assume_yes: bool,
+                        prompt=input) -> Dict[str, List[str]]:
+    """Filter `placements` to only the skills the user confirms they truly have.
+
+    The gap flow's promise is confirm-THEN-apply: `screen_candidates` keeps
+    *plausible* skills, not *owned* ones, so folding them all in unchecked would
+    let the master gain a skill the candidate never confirmed — breaking the
+    "never invent" rule for every later tailor run. With `assume_yes` (the explicit
+    --yes/--force acknowledgment) keep all; otherwise ask per item and drop any the
+    user does not affirmatively accept."""
+    if assume_yes:
+        return placements
+    confirmed: Dict[str, List[str]] = {}
+    for bucket, items in placements.items():
+        for item in items:
+            ans = prompt(f"Add '{item}' to [{bucket}]? Only if you genuinely have it [y/N]: ")
+            if str(ans).strip().lower() in ("y", "yes"):
+                confirmed.setdefault(bucket, []).append(item)
+    return confirmed
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -247,6 +280,9 @@ def main() -> None:
     ap.add_argument("--jd-file", required=True, help="path to a job-description text file")
     ap.add_argument("--apply", action="store_true",
                     help="write the proposed additions (otherwise just preview the diff)")
+    ap.add_argument("--yes", "--force", action="store_true", dest="assume_yes",
+                    help="skip per-item confirmation with --apply — you acknowledge you "
+                         "genuinely have EVERY listed skill")
     args = ap.parse_args()
 
     jd = Path(args.jd_file).read_text(encoding="utf-8")
@@ -260,7 +296,11 @@ def main() -> None:
     _new, diff = preview_additions(prop.placements)
     print("\nProposed change:\n" + (diff or "(nothing to change)"))
     if args.apply:
-        apply_to_file(prop.placements)
+        to_apply = _confirm_placements(prop.placements, assume_yes=args.assume_yes)
+        if not to_apply:
+            print("\nNothing confirmed — master file unchanged.")
+            return
+        apply_to_file(to_apply)
         print("\nApplied. Backup written to master_experience.yaml.bak — review and re-tailor.")
     else:
         print("\nPreview only. Re-run with --apply to write (a .bak backup is made).")

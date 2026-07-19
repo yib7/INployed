@@ -231,6 +231,9 @@ def test_fetch_url_text_strips_html(monkeypatch):
         text = html
 
     import requests
+    # This test exercises HTML stripping, not host policy — allow the stub host
+    # (P2-16 otherwise blocks unresolvable hosts, fail-closed).
+    monkeypatch.setattr(manual_add, "_host_is_private", lambda h: False)
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
     out = manual_add.fetch_url_text("https://x/1")
     assert "Data Analyst" in out
@@ -411,3 +414,61 @@ def test_master_row_reads_chunked_and_stops_at_first_hit(tmp_path, monkeypatch):
     row = jobsdata.master_row("job-3", master_csv=master)    # lives in chunk 1
     assert row and row["job_title"] == "Title 3"
     assert len(chunks_read) == 1                             # stopped after first hit
+
+
+# ── SSRF hardening (audit P2-16) + dead-branch cleanup (P2-3) ─────────────────
+
+def test_fetch_url_text_rejects_private_and_metadata_hosts(monkeypatch):
+    """A pasted "job link" pointing at localhost / RFC1918 / the cloud metadata
+    endpoint must be refused BEFORE any request is sent."""
+    import requests
+
+    called = []
+    monkeypatch.setattr(requests, "get",
+                        lambda *a, **k: called.append(a) or None)
+    for url in ("http://169.254.169.254/latest/meta-data/",
+                "http://127.0.0.1:8080/secret",
+                "http://localhost/admin",
+                "http://10.0.0.5/x", "http://192.168.1.1/x"):
+        assert manual_add.fetch_url_text(url) == ""
+    assert called == []            # refused BEFORE any request went out
+
+
+def test_fetch_url_text_rejects_redirect_to_private_host(monkeypatch):
+    import requests
+
+    class _Redir:
+        status_code = 302
+        headers = {"Location": "http://127.0.0.1/loot"}
+        text = ""
+
+    monkeypatch.setattr(manual_add, "_host_is_private", lambda h: h != "x")
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Redir())
+    assert manual_add.fetch_url_text("https://x/1") == ""
+
+
+def test_fetch_url_text_caps_response_size(monkeypatch):
+    import requests
+
+    class _Big:
+        status_code = 200
+        headers = {}
+
+        def iter_content(self, chunk_size=8192, decode_unicode=False):
+            for _ in range(4):     # 4 x 4MB > the 5MB cap
+                yield "A" * (4 * 1024 * 1024)
+
+    monkeypatch.setattr(manual_add, "_host_is_private", lambda h: False)
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Big())
+    out = manual_add.fetch_url_text("https://x/1")
+    # never buffers unbounded: whatever comes back is at most the cap
+    assert len(out) <= manual_add._MAX_FETCH_BYTES
+
+
+def test_guess_title_company_uses_raw_lines():
+    # P2-3: the old first branch split _strip_html output on newlines that
+    # _strip_html had already collapsed — dead code. The raw-line path is the
+    # real behavior and must keep working.
+    title, company = manual_add._guess_title_company(
+        "Data Analyst\nAcme Corp\nBuild dashboards.")
+    assert title == "Data Analyst" and company == "Acme Corp"

@@ -72,10 +72,10 @@ def _guess_title_company(jd_text: str) -> tuple[str, str]:
     title, the second as the company. The form lets the user override both, so
     this just spares them typing for a clean copy-paste. Never raises.
     """
-    lines = [ln.strip() for ln in _strip_html(jd_text).split("\n") if ln.strip()]
-    # _strip_html collapses newlines, so fall back to splitting the raw text.
-    if len(lines) < 2:
-        lines = [ln.strip() for ln in str(jd_text or "").splitlines() if ln.strip()]
+    # _strip_html collapses all whitespace, so line structure only survives in
+    # the RAW text (the old stripped-then-split branch was dead — audit P2-3).
+    lines = [_strip_html(ln) for ln in str(jd_text or "").splitlines()
+             if _strip_html(ln)]
     title = lines[0][:120] if lines else ""
     company = lines[1][:120] if len(lines) > 1 else ""
     return title, company
@@ -131,29 +131,100 @@ def build_job_record(
 
 # ── optional free URL fetch (NEVER Bright Data; best-effort) ───────────────────
 
+# SSRF + robustness guards for the free GET (audit P2-16): the URL is pasted user
+# input, so it must not reach loopback/private/link-local/metadata hosts (blind
+# SSRF), redirects must be re-validated against the same blocklist (an external
+# URL can 302 internal), and the body is streamed with a byte cap so a huge page
+# can't balloon the dashboard's memory.
+_MAX_FETCH_BYTES = 5 * 1024 * 1024
+_MAX_REDIRECTS = 3
+
+
+def _host_is_private(host: str) -> bool:
+    """True when `host` resolves ONLY-or-at-all to a non-public address (private,
+    loopback, link-local incl. 169.254.169.254, reserved, multicast, unspecified)
+    or cannot be resolved — fail closed."""
+    import ipaddress
+    import socket
+    if not host:
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return True
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(str(info[4][0]))
+        except ValueError:
+            return True
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
+            return True
+    return False
+
+
+def _url_allowed(url: str) -> bool:
+    from urllib.parse import urlparse
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return False
+    return not _host_is_private(urlparse(url).hostname or "")
+
+
+def _read_capped(resp) -> str:
+    """The response body, streamed up to _MAX_FETCH_BYTES (never unbounded)."""
+    chunks: list[str] = []
+    total = 0
+    iterator = getattr(resp, "iter_content", None)
+    if iterator is None:      # plain stub/legacy response — truncate its text
+        return (resp.text or "")[:_MAX_FETCH_BYTES]
+    for chunk in iterator(chunk_size=65536, decode_unicode=True):
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode("utf-8", "replace")
+        chunks.append(chunk)
+        total += len(chunk)
+        if total >= _MAX_FETCH_BYTES:
+            break
+    return "".join(chunks)[:_MAX_FETCH_BYTES]
+
+
 def fetch_url_text(url: str, *, timeout: float = 10.0) -> str:
     """A single lightweight, free HTTP GET of a page's visible text, or "".
 
     This is the ONLY network path here and it is strictly optional: a job site that
     blocks scraping (most do) just yields "" and the caller falls back to requiring
     a pasted JD. It never uses the paid Bright Data scraper. Any failure (no
-    requests lib, network error, non-2xx, tiny body) returns "" — never raises.
+    requests lib, network error, non-2xx, blocked host, tiny body) returns "" —
+    never raises. Private/metadata hosts are refused, each redirect target is
+    re-validated, and the body is streamed with a byte cap (audit P2-16).
     """
     url = (url or "").strip()
-    if not (url.startswith("http://") or url.startswith("https://")):
+    if not _url_allowed(url):
         return ""
     try:
         import requests
     except ImportError:
         return ""
     try:
-        resp = requests.get(
-            url, timeout=timeout,
-            headers={"User-Agent": "Mozilla/5.0 (INployed manual-add)"},
-        )
-        if resp.status_code >= 300:
-            return ""
-        body = resp.text or ""
+        body = ""
+        for _hop in range(_MAX_REDIRECTS + 1):
+            resp = requests.get(
+                url, timeout=timeout, stream=True, allow_redirects=False,
+                headers={"User-Agent": "Mozilla/5.0 (INployed manual-add)"},
+            )
+            status = getattr(resp, "status_code", 599)
+            if 300 <= status < 400:
+                target = str((getattr(resp, "headers", {}) or {}).get("Location", ""))
+                from urllib.parse import urljoin
+                url = urljoin(url, target)
+                if not _url_allowed(url):   # a redirect must not pivot internal
+                    return ""
+                continue
+            if status >= 300 or resp is None:
+                return ""
+            body = _read_capped(resp)
+            break
+        else:
+            return ""                       # too many redirects
     except Exception:  # noqa: BLE001 - any fetch problem is a non-fatal fallback
         return ""
     # Drop script/style blocks before stripping the remaining tags.

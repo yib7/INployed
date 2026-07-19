@@ -625,7 +625,17 @@ def send(workdir: str, cmd: Dict[str, Any], timeout: float = 60.0,
     seq = _next_seq(wd)
     cmd = dict(cmd)
     cmd["seq"] = seq
-    (wd / "cmd.json").write_text(json.dumps(cmd), encoding="utf-8")
+    # Seq allocation is locked, but the single cmd.json slot was not (audit
+    # P2-30): a concurrent sender could overwrite a not-yet-claimed command,
+    # which then silently never executes (its sender just times out). The serve
+    # loop DELETES cmd.json when it claims a command, so wait briefly for the
+    # slot to free before writing ours. The drain is single-consumer, so this
+    # closes the realistic overwrite window without a protocol change.
+    cmd_path = wd / "cmd.json"
+    slot_deadline = time.monotonic() + min(10.0, max(0.5, timeout / 2))
+    while cmd_path.exists() and time.monotonic() < slot_deadline:
+        time.sleep(0.05)
+    cmd_path.write_text(json.dumps(cmd), encoding="utf-8")
     res = _wait_for_result(wd, seq, timeout=timeout)
     if res is None:
         res = {"seq": seq, "ok": False, "error": "timeout"}

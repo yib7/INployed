@@ -1248,6 +1248,11 @@ def _finalize_skill_lines(out: Dict[str, Any], jd: str = "") -> List[Dict[str, s
     lines: List[Dict[str, str]] = []
     for label, _keys in _SKILL_BUCKETS:
         raw = out.get(label)
+        # A common model shape drift returns the line as a JSON array instead of
+        # a comma string ("Languages": ["Python","SQL"]); join it rather than
+        # discarding the model's relevance ranking (audit P2-2).
+        if isinstance(raw, list):
+            raw = ", ".join(str(x) for x in raw if str(x).strip())
         picked = _complete_to_count(raw if isinstance(raw, str) else "",
                                     pools.get(label, []), targets.get(label, 0), jd)
         if swap:

@@ -56,7 +56,6 @@ def _to_plain(text: str) -> str:
             from markdownify import markdownify
             return markdownify(text, heading_style="ATX").strip()
         except ImportError:
-            import re
             return re.sub(r"<[^>]+>", " ", text).strip()
     return text
 

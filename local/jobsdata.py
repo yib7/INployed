@@ -235,7 +235,14 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
     combined = combined.drop_duplicates(subset=["job_posting_id"], keep="last")
     removed = load_removed_jobs()  # user-deleted ids stay hidden even if Drive still has them
     if removed:
+        present = set(combined["job_posting_id"].astype(str))
         combined = combined[~combined["job_posting_id"].astype(str).isin(removed)]
+        # Prune marker ids no source still carries (audit P2-30): once the Drive
+        # sync has physically dropped the row everywhere, the hide-marker has done
+        # its job — without this, config.json's removed_jobs only ever grows.
+        stale = removed - present
+        if stale:
+            _save_removed_jobs(removed - stale)
     combined = add_extracted_date(combined, lambda: extraction_dates_from_runs(paths))
     # Display-friendly applicant count (Bright Data's job_num_applicants): used
     # to prioritize the apply window — fewer applicants = better odds.

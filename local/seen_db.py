@@ -70,7 +70,8 @@ class SeenRegistry:
             "CREATE TABLE IF NOT EXISTS app_status ("
             "  job_posting_id TEXT PRIMARY KEY,"
             "  status         TEXT NOT NULL,"
-            "  status_date    TEXT NOT NULL,"   # ISO date of the last status change
+            "  status_date    TEXT NOT NULL,"   # ISO date of the last status change (display)
+            "  status_ts      TEXT,"            # full ISO timestamp — merge tie-break (P2-6)
             "  applied_date   TEXT,"            # ISO date first marked applied
             "  followed_up_at TEXT,"            # ISO date a follow-up nudge was sent
             "  company        TEXT DEFAULT ''," # snapshot — survives master turnover
@@ -78,6 +79,12 @@ class SeenRegistry:
             "  url            TEXT DEFAULT ''"
             ")"
         )
+        # Older DBs predate status_ts (audit P2-6: day-granular status_date makes
+        # same-day cross-machine merges machine-order dependent) — add in place.
+        try:
+            self._conn.execute("ALTER TABLE app_status ADD COLUMN status_ts TEXT")
+        except sqlite3.OperationalError:
+            pass  # already present
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS resume_paths ("
             "  job_posting_id TEXT PRIMARY KEY,"
@@ -235,19 +242,22 @@ class SeenRegistry:
         if status not in APP_STATUSES:
             raise ValueError(f"status must be one of {APP_STATUSES}, got {status!r}")
         today = date.today().isoformat()
+        now_ts = datetime.now().isoformat(timespec="seconds")
         applied = today if status == "applied" else None
         self._conn.execute(
-            "INSERT INTO app_status (job_posting_id, status, status_date, applied_date,"
-            "                        company, job_title, url)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO app_status (job_posting_id, status, status_date, status_ts,"
+            "                        applied_date, company, job_title, url)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(job_posting_id) DO UPDATE SET"
             "   status      = excluded.status,"
             "   status_date = excluded.status_date,"
+            "   status_ts   = excluded.status_ts,"
             "   applied_date = COALESCE(app_status.applied_date, excluded.applied_date),"
             "   company   = CASE WHEN excluded.company   != '' THEN excluded.company   ELSE app_status.company   END,"
             "   job_title = CASE WHEN excluded.job_title != '' THEN excluded.job_title ELSE app_status.job_title END,"
             "   url       = CASE WHEN excluded.url       != '' THEN excluded.url       ELSE app_status.url       END",
-            (str(job_posting_id), status, today, applied, company, job_title, url),
+            (str(job_posting_id), status, today, now_ts, applied, company,
+             job_title, url),
         )
         self._conn.commit()
         self._write_backup()
@@ -391,38 +401,56 @@ class SeenRegistry:
             )
             counts["seen"] = cur.rowcount
 
+            # A backup made before the status_ts column (P2-6) lacks it — select
+            # NULL in its place so old exports still merge.
+            bak_cols = {r[1] for r in conn.execute(
+                "PRAGMA bak.table_info(app_status)").fetchall()}
+            ts_sel = "status_ts" if "status_ts" in bak_cols else "NULL"
             bak_rows = conn.execute(
                 "SELECT job_posting_id, status, status_date, applied_date,"
-                "       followed_up_at, company, job_title, url FROM bak.app_status"
+                f"       followed_up_at, company, job_title, url, {ts_sel}"
+                " FROM bak.app_status"
             ).fetchall()
-            for (jid, status, sdate, applied, follow, company, title, url) in bak_rows:
+            for (jid, status, sdate, applied, follow, company, title, url,
+                 sts) in bak_rows:
                 ex = conn.execute(
                     "SELECT status, status_date, applied_date, followed_up_at,"
-                    "       company, job_title, url FROM app_status"
+                    "       company, job_title, url, status_ts FROM app_status"
                     " WHERE job_posting_id = ?", (jid,)
                 ).fetchone()
                 if ex is None:
                     conn.execute(
                         "INSERT INTO app_status (job_posting_id, status, status_date,"
-                        " applied_date, followed_up_at, company, job_title, url)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (jid, status, sdate, applied, follow, company, title, url),
+                        " status_ts, applied_date, followed_up_at, company,"
+                        " job_title, url)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (jid, status, sdate, sts, applied, follow, company, title,
+                         url),
                     )
                 else:
-                    ex_status, ex_sdate, ex_applied, ex_follow, ex_co, ex_title, ex_url = ex
-                    if (sdate or "") > (ex_sdate or ""):
-                        new_status, new_sdate = status, sdate
+                    (ex_status, ex_sdate, ex_applied, ex_follow, ex_co, ex_title,
+                     ex_url, ex_sts) = ex
+                    # Tie-break on the full timestamp when available (P2-6): a
+                    # same-day status change made on another machine can now win
+                    # the merge. Timestamps and dates compare lexicographically;
+                    # a bare date sorts before that day's timestamps, so the
+                    # side that recorded a time wins a same-day tie. Falls back
+                    # to the old date-only comparison when neither side has one.
+                    incoming_key = (sts or sdate or "")
+                    existing_key = (ex_sts or ex_sdate or "")
+                    if incoming_key > existing_key:
+                        new_status, new_sdate, new_sts = status, sdate, sts
                     else:
-                        new_status, new_sdate = ex_status, ex_sdate
+                        new_status, new_sdate, new_sts = ex_status, ex_sdate, ex_sts
                     applied_opts = [d for d in (applied, ex_applied) if d]
                     new_applied = min(applied_opts) if applied_opts else None
                     follow_opts = [d for d in (follow, ex_follow) if d]
                     new_follow = max(follow_opts) if follow_opts else None
                     conn.execute(
-                        "UPDATE app_status SET status=?, status_date=?, applied_date=?,"
-                        " followed_up_at=?, company=?, job_title=?, url=?"
-                        " WHERE job_posting_id=?",
-                        (new_status, new_sdate, new_applied, new_follow,
+                        "UPDATE app_status SET status=?, status_date=?, status_ts=?,"
+                        " applied_date=?, followed_up_at=?, company=?, job_title=?,"
+                        " url=? WHERE job_posting_id=?",
+                        (new_status, new_sdate, new_sts, new_applied, new_follow,
                          ex_co or company, ex_title or title, ex_url or url, jid),
                     )
                 counts["status"] += 1

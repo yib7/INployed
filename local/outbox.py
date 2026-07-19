@@ -35,22 +35,26 @@ def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 
 
-def snapshot_run_files(base: Path | None = None) -> dict[Path, float]:
-    """{scored-run-file: mtime} for every local run file, taken BEFORE a scrape so
-    new_run_ids can tell which files the scrape produced or rewrote (a same-day
-    re-run overwrites the same filename, so presence alone is not enough)."""
+def snapshot_run_files(base: Path | None = None) -> dict[Path, tuple[float, int]]:
+    """{scored-run-file: (mtime, size)} for every local run file, taken BEFORE a
+    scrape so new_run_ids can tell which files the scrape produced or rewrote (a
+    same-day re-run overwrites the same filename, so presence alone is not
+    enough). Size rides along (audit P2-12): a rewrite landing within one mtime
+    tick — or on a coarse-resolution filesystem — would otherwise read as
+    unchanged and its fresh rows would wait for the sweep."""
     import jobsdata
 
-    out: dict[Path, float] = {}
+    out: dict[Path, tuple[float, int]] = {}
     for p in jobsdata.local_run_files(base):
         try:
-            out[p] = p.stat().st_mtime
+            st = p.stat()
+            out[p] = (st.st_mtime, st.st_size)
         except OSError:
             pass
     return out
 
 
-def new_run_ids(before: dict[Path, float], base: Path | None = None) -> list[str]:
+def new_run_ids(before: dict, base: Path | None = None) -> list[str]:
     """job_posting_ids from run files that appeared or changed since `before`."""
     import jobsdata
 
@@ -58,10 +62,13 @@ def new_run_ids(before: dict[Path, float], base: Path | None = None) -> list[str
     seen: set[str] = set()
     for p in jobsdata.local_run_files(base):
         try:
-            mtime = p.stat().st_mtime
+            st = p.stat()
+            sig = (st.st_mtime, st.st_size)
         except OSError:
             continue
-        if p in before and before[p] == mtime:
+        prev = before.get(p)
+        # Tolerate a pre-P2-12 float (mtime-only) snapshot from an old caller.
+        if prev == sig or (isinstance(prev, float) and prev == sig[0]):
             continue
         try:
             df = pd.read_csv(p, usecols=lambda c: c == "job_posting_id", dtype=str,

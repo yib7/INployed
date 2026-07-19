@@ -109,6 +109,13 @@ def run_claude(
             "\n\nRespond with ONLY valid JSON -- no prose, no markdown, "
             "no code fences."
         )
+    # KNOWN LIMIT (audit P2-17): the system prompt (the full résumé + schema)
+    # rides in argv, so it is visible in local process listings for the life of
+    # each call, and a very large prompt risks the ~32k Windows command-line
+    # cap. Accepted: local-machine exposure only (no secrets in the résumé
+    # text), and the CLI offers no stdin/file channel for the system prompt —
+    # the user prompt already rides stdin below. Revisit if the CLI grows a
+    # --system-prompt-file flag.
     argv = [
         exe, "-p", "--output-format", "json", "--model", model,
         "--system-prompt", sys_prompt, "--exclude-dynamic-system-prompt-sections",

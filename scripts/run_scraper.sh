@@ -109,20 +109,24 @@ python ~/score_jobs.py >> ~/scraper.log 2>&1
 #     confirm `ls ~/prune_master.py` on the VM and grep the log for a real prune line, not 127.
 python ~/prune_master.py --master ~/linkedin_jobs_master.csv >> ~/scraper.log 2>&1 || echo "$(date -Is) prune_master non-fatal (exit $?)" >> ~/scraper.log
 
-# 3. Sync — only the scored .csv.gz files (one per run-label dir)
-for label in morning afternoon evening night; do
-    rclone copy ~/"$label" gdrive:LinkedInJobs/"$label" --include "*_scored.csv.gz" --update
-done
-
-# 4. Master CSV upload — runs after every scrape (morning + evening)
+# 3. Master CSV upload FIRST (audit P2-29) — the cumulative master is the most
+#    important artifact, so it must not be gated behind the more failure-prone
+#    per-label copies (one Drive throttle there used to skip it via set -e).
 gzip -c ~/linkedin_jobs_master.csv > /tmp/linkedin_jobs_master.csv.gz
 rclone copyto /tmp/linkedin_jobs_master.csv.gz gdrive:LinkedInJobs/linkedin_jobs_master.csv.gz --update
 rm /tmp/linkedin_jobs_master.csv.gz
 
-# 5. Run-metrics upload — score_jobs.py appends one row per run; the dashboard's
+# 4. Run-metrics upload — score_jobs.py appends one row per run; the dashboard's
 #    Stats tab reads this file from the synced Drive folder.
 if [ -f ~/run_stats.csv ]; then
     rclone copyto ~/run_stats.csv gdrive:LinkedInJobs/run_stats.csv --update
 fi
+
+# 5. Sync the scored .csv.gz files (one per run-label dir). Non-fatal per label:
+#    a transient rclone hiccup logs a warning and the next run's --update retries.
+for label in morning afternoon evening night; do
+    rclone copy ~/"$label" gdrive:LinkedInJobs/"$label" --include "*_scored.csv.gz" --update \
+        || echo "$(date -Is) label sync non-fatal ($label, exit $?)" >> ~/scraper.log
+done
 
 # Success ping is sent by the on_exit trap above (/0 via ping_hc).

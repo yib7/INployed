@@ -7,11 +7,13 @@ filter. Extracted from the old `ui.py` so it survives the UI toolkit swap.
 """
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import os
 import re
 import sys
+import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -22,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
+from jsonutil import atomic_write_json, replace_with_retry  # noqa: E402  (needs HERE on sys.path)
 from csv_io import read_csv_gz, write_csv_gz_atomic  # noqa: E402
 from locks import SingleInstance  # noqa: E402  (shared single-instance lock)
 from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
@@ -343,26 +345,73 @@ def _append_dedup_csv(record: dict, path: Path, *, compression=None) -> bool:
         return _append_dedup_csv_locked(record, jid, path, compression)
 
 
+# Rows per chunk for the streaming master rewrites (test-patched).
+_RW_CHUNK = 5000
+
+
+def _open_text_writer(tmp_path: Path, compression):
+    if compression == "gzip":
+        return gzip.open(tmp_path, "wt", encoding="utf-8", newline="")
+    return open(tmp_path, "w", encoding="utf-8", newline="")
+
+
 def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) -> bool:
+    """Streaming append (audit P2-21/BACKLOG): the master is copied chunk-by-chunk
+    to a tempfile (dedup keep="first" on job_posting_id, columns unified with the
+    new record), the new row lands at the end unless its id already exists, and
+    the tempfile atomically replaces the master. Only an id set is held in
+    memory — never the master's ~90 MB of text columns."""
     new_df = pd.DataFrame([record])
     new_df["job_posting_id"] = new_df["job_posting_id"].astype(str)
-    if path.exists():
-        try:
-            existing = pd.read_csv(path, dtype={"job_posting_id": str},
-                                   compression=compression)
-        except (OSError, ValueError) as e:
-            # NEVER treat an unreadable-but-existing store as empty -- overwriting
-            # it would silently destroy the cumulative master.
-            raise OSError(f"cannot append to {path.name}: existing file unreadable ({e})") from e
-    else:
-        existing = pd.DataFrame()
-    already = (not existing.empty and "job_posting_id" in existing.columns
-               and jid in set(existing["job_posting_id"].astype(str)))
-    combined = pd.concat([existing, new_df], ignore_index=True) if not existing.empty else new_df
-    combined["job_posting_id"] = combined["job_posting_id"].astype(str)
-    combined = combined.drop_duplicates(subset=["job_posting_id"], keep="first")
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_csv_gz_atomic(combined, path, compression=compression)
+    if not path.exists():
+        write_csv_gz_atomic(new_df, path, compression=compression)
+        return True
+    try:
+        header = pd.read_csv(path, nrows=0, compression=compression)
+    except (OSError, ValueError) as e:
+        # NEVER treat an unreadable-but-existing store as empty -- overwriting
+        # it would silently destroy the cumulative master.
+        raise OSError(f"cannot append to {path.name}: existing file unreadable ({e})") from e
+    unified = list(header.columns) + [c for c in new_df.columns
+                                      if c not in header.columns]
+    fd, tmp_name = tempfile.mkstemp(prefix=path.stem + ".", suffix=".append.tmp",
+                                    dir=str(path.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    already = False
+    seen_ids: set[str] = set()
+    try:
+        try:
+            with _open_text_writer(tmp_path, compression) as out:
+                wrote_header = False
+                for chunk in pd.read_csv(path, dtype={"job_posting_id": str},
+                                         compression=compression,
+                                         chunksize=_RW_CHUNK):
+                    if "job_posting_id" in chunk.columns:
+                        jids = chunk["job_posting_id"].astype(str)
+                        keep = ~jids.isin(seen_ids)   # dedup keep="first"
+                        chunk = chunk[keep]
+                        kept_ids = set(jids[keep])
+                        seen_ids |= kept_ids
+                        if jid in kept_ids:
+                            already = True            # existing row wins
+                    chunk = chunk.reindex(columns=unified)
+                    chunk.to_csv(out, index=False, header=not wrote_header)
+                    wrote_header = True
+                if not already:
+                    new_df.reindex(columns=unified).to_csv(
+                        out, index=False, header=not wrote_header)
+        except (OSError, ValueError) as e:
+            raise OSError(f"cannot append to {path.name}: existing file "
+                          f"unreadable ({e})") from e
+        replace_with_retry(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
     return not already
 
 
@@ -408,16 +457,38 @@ def _drop_ids_from_csv(path: Path, ids: set[str]) -> None:
         return
     compression = "gzip" if path.suffix == ".gz" else None
     with _MASTER_WRITE_LOCK:
+        # Streaming rewrite (audit P2-21/BACKLOG): chunked copy to a tempfile,
+        # atomically swapped in only when a target row was actually dropped.
+        fd, tmp_name = tempfile.mkstemp(prefix=path.stem + ".", suffix=".drop.tmp",
+                                        dir=str(path.parent))
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        total = kept = 0
         try:
-            df = pd.read_csv(path, dtype={"job_posting_id": str}, compression=compression)
-        except (OSError, ValueError):
-            return
-        if "job_posting_id" not in df.columns:
-            return
-        keep = df[~df["job_posting_id"].astype(str).isin(ids)]
-        if len(keep) == len(df):
-            return  # this file held none of the targets
-        write_csv_gz_atomic(keep, path, compression=compression)
+            try:
+                with _open_text_writer(tmp_path, compression) as out:
+                    wrote_header = False
+                    for chunk in pd.read_csv(path, dtype={"job_posting_id": str},
+                                             compression=compression,
+                                             chunksize=_RW_CHUNK):
+                        if "job_posting_id" not in chunk.columns:
+                            return
+                        total += len(chunk)
+                        chunk = chunk[~chunk["job_posting_id"].astype(str).isin(ids)]
+                        kept += len(chunk)
+                        chunk.to_csv(out, index=False, header=not wrote_header)
+                        wrote_header = True
+            except (OSError, ValueError):
+                return
+            if kept == total:
+                return  # this file held none of the targets
+            replace_with_retry(tmp_path, path)
+        finally:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
 
 
 def load_removed_jobs() -> set[str]:

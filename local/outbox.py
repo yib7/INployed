@@ -25,6 +25,8 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 OUTBOX_DIR = REPO_ROOT / "outbox"
 MASTER_CSV = REPO_ROOT / "linkedin_jobs_master.csv"
+# Rows per chunk for the by-id master scan (test-patched to force multi-chunk).
+_ROWS_CHUNK = 5000
 RUN_STATS_CSV = REPO_ROOT / "run_stats.csv"
 
 
@@ -87,14 +89,23 @@ def write_rows_outbox(ids, master_csv: Path | None = None,
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
     if not master.exists():
         return None
+    # Chunked by-id scan (audit P2-22, the score_jobs._load_rows_by_id idiom):
+    # only the matching rows are ever held, not the whole ~90 MB master frame.
+    id_set = set(ids)
+    parts: list[pd.DataFrame] = []
+    have: set[str] = set()
     try:
-        df = pd.read_csv(master, dtype={"job_posting_id": str})
+        for chunk in pd.read_csv(master, dtype={"job_posting_id": str},
+                                 chunksize=_ROWS_CHUNK):
+            if "job_posting_id" not in chunk.columns:
+                return None
+            jid = chunk["job_posting_id"].astype(str)
+            hit = chunk[jid.isin(id_set)]
+            if not hit.empty:
+                parts.append(hit)
+                have.update(hit["job_posting_id"].astype(str))
     except (OSError, ValueError, pd.errors.ParserError):
         return None
-    if "job_posting_id" not in df.columns:
-        return None
-    id_set = set(ids)
-    have = set(df["job_posting_id"].astype(str))
     not_found = id_set - have
     if not_found:
         # A local job that never landed in the master won't reach the VM — surface
@@ -102,9 +113,9 @@ def write_rows_outbox(ids, master_csv: Path | None = None,
         log.warning("write_rows_outbox: %d of %d id(s) not in master, not queued: %s",
                     len(not_found), len(id_set),
                     ", ".join(sorted(not_found)[:20]))
-    rows = df[df["job_posting_id"].astype(str).isin(id_set)]
-    if rows.empty:
+    if not parts:
         return None
+    rows = pd.concat(parts, ignore_index=True)
     ob = Path(outbox_dir) if outbox_dir is not None else OUTBOX_DIR
     ob.mkdir(parents=True, exist_ok=True)
     path = ob / f"local_rows_{_stamp()}.csv.gz"

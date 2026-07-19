@@ -5,6 +5,7 @@ so the is_seen column always reflects locally-tracked state.
 """
 from __future__ import annotations
 
+import gzip
 import logging
 import os
 import tempfile
@@ -84,10 +85,45 @@ def reconcile_is_seen(df: pd.DataFrame, registry: SeenRegistry) -> tuple[pd.Data
     return df, n
 
 
+# Rows per chunk for reconcile_file's streaming rewrite (test-patched).
+_RECONCILE_CHUNK = 5000
+
+
 def reconcile_file(path: Path, registry: SeenRegistry) -> int:
-    """Read + reconcile + write back. Returns rows changed (0 if no rewrite needed)."""
-    df = read_csv_gz(path)
-    df, n = reconcile_is_seen(df, registry)
-    if n:
-        write_csv_gz_atomic(df, path)
-    return n
+    """Read + reconcile + write back. Returns rows changed (0 if no rewrite needed).
+
+    Streams the file in bounded chunks (audit P2-21): the watcher runs this
+    against the ~90 MB decompressed master on every fire, and the old full
+    read + full rewrite held the whole frame in memory. The rewrite lands via
+    tmp + retrying replace, and is skipped entirely when nothing changed."""
+    seen_ids = registry.all_ids()
+    compression = "gzip" if str(path).endswith(".gz") else None
+    fd, tmp_name = tempfile.mkstemp(prefix=path.stem + ".", suffix=".reconcile.tmp",
+                                    dir=str(path.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    total = 0
+    try:
+        opener = (lambda: gzip.open(tmp_path, "wt", encoding="utf-8", newline="")
+                  ) if compression else (
+                  lambda: open(tmp_path, "w", encoding="utf-8", newline=""))
+        with opener() as out:
+            wrote_header = False
+            for chunk in pd.read_csv(path, dtype={"job_posting_id": str},
+                                     chunksize=_RECONCILE_CHUNK):
+                if "is_seen" in chunk.columns:
+                    chunk["is_seen"] = chunk["is_seen"].fillna("no")
+                if seen_ids and "job_posting_id" in chunk.columns:
+                    chunk, n = reconcile_is_seen(chunk, registry)
+                    total += n
+                chunk.to_csv(out, index=False, header=not wrote_header)
+                wrote_header = True
+        if total:
+            replace_with_retry(tmp_path, path)
+        return total
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass

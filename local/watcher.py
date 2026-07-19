@@ -220,17 +220,31 @@ def master_is_stale(age_h: float, cfg: dict) -> bool:
     return age_h > threshold
 
 
+# Rows per chunk for the high-score probe (test-patched to force multi-chunk).
+_SCAN_CHUNK = 5000
+
+
 def has_unseen_high_score(path: Path, min_score: int) -> bool:
+    """Whether any row is unseen with score >= min_score.
+
+    Reads ONLY the two needed columns, in bounded chunks, stopping at the first
+    hit (audit P2-21): this fires 6+ times a day against a ~90 MB decompressed
+    master, so a full-frame load here was the watcher's biggest allocation."""
     try:
-        df = read_csv_gz(path)
+        for chunk in pd.read_csv(path, usecols=["score", "is_seen"],
+                                 chunksize=_SCAN_CHUNK):
+            score = pd.to_numeric(chunk["score"], errors="coerce").fillna(0)
+            # Mirror read_csv_gz's normalization: a NaN is_seen counts as "no"
+            # (fresh append-to-master rows land blank; see csv_io.read_csv_gz).
+            seen = chunk["is_seen"].fillna("no").astype(str)
+            if bool(((score >= min_score) & (seen == "no")).any()):
+                return True
+        return False
     except (OSError, ValueError) as e:
+        # ValueError also covers a master missing either usecols column, which
+        # the old code answered False for.
         log.warning("Could not read %s: %s", path, e)
         return False
-    if "score" not in df.columns or "is_seen" not in df.columns:
-        return False
-    score = pd.to_numeric(df["score"], errors="coerce").fillna(0)
-    mask = (score >= min_score) & (df["is_seen"].astype(str) == "no")
-    return bool(mask.any())
 
 
 # --------------------------------------------------------------------------- UI launch

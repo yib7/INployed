@@ -27,10 +27,26 @@ def test_label_for_hour_buckets():
 
 def test_build_crontab_daily_two_times():
     cron = vs.build_crontab(["10:00", "19:00"])
-    lines = [ln for ln in cron.splitlines() if ln.strip()]
+    # Schedule lines only (drop the managed-block marker comments).
+    lines = [ln for ln in cron.splitlines() if ln.strip() and not ln.startswith("#")]
     assert len(lines) == 2
     assert lines[0].startswith("0 10 * * *") and "run_scraper.sh" in lines[0]
     assert lines[1].startswith("0 19 * * *")
+
+
+def test_build_crontab_wraps_in_managed_markers():
+    # Exactly one INPLOYED-SCHEDULE block so a push can strip+replace just it.
+    cron = vs.build_crontab(["10:00"])
+    assert cron.count(vs.SCHEDULE_BEGIN) == 1
+    assert cron.count(vs.SCHEDULE_END) == 1
+    assert vs.SCHEDULE_BEGIN in cron.splitlines()[0]
+
+
+def test_build_crontab_biweekly_uses_epoch_week_parity():
+    # Epoch-week parity survives year boundaries; ISO week number (%V) does not.
+    cron = vs.build_crontab(["08:30"], freq="biweekly", weekday=1)
+    assert r"date +\%s" in cron and "604800" in cron
+    assert r"date +\%V" not in cron
 
 
 def test_build_crontab_weekly_sets_weekday():

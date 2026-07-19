@@ -23,6 +23,14 @@ MAX_TIMES_PER_DAY = 6
 MIN_GAP_MINUTES = 120
 DEFAULT_CMD = "~/run_scraper.sh"
 
+# Markers fencing the lines this app owns in the VM crontab. A schedule push
+# strips any existing block between these and appends a fresh one, so user-added
+# lines outside the markers (HEALTHCHECKS_URL=, GOOGLE_CLOUD_PROJECT=) survive
+# every "Apply schedule to VM". Kept here — beside the generator — so vm_sync's
+# merge and this module's build_crontab agree on one spelling.
+SCHEDULE_BEGIN = "# INPLOYED-SCHEDULE-BEGIN"
+SCHEDULE_END = "# INPLOYED-SCHEDULE-END"
+
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -59,18 +67,24 @@ def build_crontab(times, cmd: str = DEFAULT_CMD, freq: str = "daily",
     """Render crontab lines for the given run times.
 
     weekday: 0=Sun .. 6=Sat (cron convention), used by weekly/biweekly. Biweekly
-    guards the command so it fires only on even ISO week numbers (every other
-    week) — '%' is escaped as '\\%' because cron treats it specially.
+    guards the command so it fires only on even weeks (every other week). Parity
+    keys on an absolute epoch-week count ((now / 604800) % 2), not the ISO week
+    number, which resets 52/53 -> 01 and would double-fire or skip once a year.
+    '%' is escaped as '\\%' because cron treats a bare '%' as a newline.
+
+    The rendered lines are fenced in SCHEDULE_BEGIN/SCHEDULE_END markers so a
+    push can replace just this block and leave the rest of the crontab alone.
     """
     dow = "*" if freq == "daily" else str(weekday)
-    lines: list[str] = []
+    lines: list[str] = [SCHEDULE_BEGIN]
     for t in times:
         h, m = (int(x) for x in str(t).strip().split(":"))
         when = f"{m} {h} * * {dow}"
         if freq == "biweekly":
-            lines.append(rf"{when} [ $(( $(date +\%V) \% 2 )) -eq 0 ] && {cmd}")
+            lines.append(rf"{when} [ $(( ($(date +\%s) / 604800) \% 2 )) -eq 0 ] && {cmd}")
         else:
             lines.append(f"{when} {cmd}")
+    lines.append(SCHEDULE_END)
     return "\n".join(lines)
 
 

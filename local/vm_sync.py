@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import settings
+from vm_schedule import SCHEDULE_BEGIN, SCHEDULE_END
 
 # Settings whose backing file lives on the VM (the scraper reads them there).
 # Maps a Field.target -> the remote filename to push.
@@ -41,6 +42,34 @@ INCOMING_REMOTE_DIR = "incoming"
 # VM connection identifiers (all NON-secret), read from the .env via settings.
 VM_KEYS = ("VM_GCLOUD_PATH", "VM_INSTANCE", "VM_ZONE", "VM_PROJECT", "VM_USER",
            "VM_REMOTE_DIR")
+
+
+def merge_crontab(existing: str, managed_block: str) -> str:
+    """Combine an existing VM crontab with a freshly-generated managed block.
+
+    Strips any prior SCHEDULE_BEGIN..END block from `existing` (so re-applying a
+    schedule never stacks duplicate blocks) and appends `managed_block`. Every
+    line OUTSIDE the markers is preserved verbatim — notably the user-added
+    HEALTHCHECKS_URL= and GOOGLE_CLOUD_PROJECT= env lines run_scraper.sh reads,
+    which a whole-crontab replace used to wipe on every schedule push.
+
+    Pure text, so the round-trip is unit-testable without a live VM.
+    `install_crontab_cmd` runs the equivalent (sed strip + append) on the VM."""
+    kept: list[str] = []
+    in_block = False
+    for line in existing.splitlines():
+        if line.strip() == SCHEDULE_BEGIN:
+            in_block = True
+            continue
+        if in_block:
+            if line.strip() == SCHEDULE_END:
+                in_block = False
+            continue
+        kept.append(line)
+    while kept and not kept[-1].strip():  # tidy trailing blanks before the block
+        kept.pop()
+    block = managed_block.strip("\n")
+    return ("\n".join(kept) + "\n" + block + "\n") if kept else block + "\n"
 
 
 @dataclass(frozen=True)
@@ -113,10 +142,20 @@ class VMTarget:
         return self.build_ssh_cmd("rm -f ~/pause_until && echo RESUMED")
 
     def install_crontab_cmd(self, crontab_text: str) -> list[str]:
-        """ssh argv that replaces the VM crontab with `crontab_text`."""
-        q = shlex.quote(crontab_text + "\n")
+        """ssh argv that MERGES the managed schedule block into the VM crontab
+        instead of replacing the whole thing. Fetches the current crontab
+        (tolerating "no crontab yet"), strips any prior SCHEDULE_BEGIN..END
+        block, and appends the freshly-generated one, so user-added env lines
+        outside the markers (HEALTHCHECKS_URL=, GOOGLE_CLOUD_PROJECT=) survive.
+
+        The strip+append runs on the VM (sed over the piped `crontab -l`) because
+        the current crontab lives there; `merge_crontab` below is the same
+        contract in pure Python, unit-tested without a live VM."""
+        q = shlex.quote(crontab_text.strip("\n") + "\n")
+        strip = f"sed '/{SCHEDULE_BEGIN}/,/{SCHEDULE_END}/d'"
         return self.build_ssh_cmd(
-            f"printf '%s' {q} | crontab - && echo CRONTAB_INSTALLED && crontab -l")
+            f"( crontab -l 2>/dev/null | {strip}; printf '%s' {q} ) | crontab - "
+            "&& echo CRONTAB_INSTALLED && crontab -l")
 
     def push_exclude_ids_cmd(self, local_path: str) -> list[str]:
         """scp argv that uploads the seen/exclude id file to the VM, where the

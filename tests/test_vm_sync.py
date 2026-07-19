@@ -62,6 +62,45 @@ def test_set_pause_and_resume_and_crontab_are_ssh():
     assert "crontab -" in t.install_crontab_cmd("0 10 * * * ~/run_scraper.sh")[-1]
 
 
+def test_merge_crontab_preserves_env_lines_and_replaces_block():
+    # A push must keep every line OUTSIDE the managed markers (the healthcheck
+    # and project env lines the docs tell users to add) and swap only the block.
+    import vm_schedule
+    existing = (
+        "HEALTHCHECKS_URL=https://hc-ping.com/abc\n"
+        "GOOGLE_CLOUD_PROJECT=example-gcp-project\n"
+        f"{vm_schedule.SCHEDULE_BEGIN}\n"
+        "0 8 * * * ~/run_scraper.sh\n"
+        f"{vm_schedule.SCHEDULE_END}\n"
+    )
+    combined = vm_sync.merge_crontab(existing, vm_schedule.build_crontab(["19:00"]))
+    assert "HEALTHCHECKS_URL=https://hc-ping.com/abc" in combined
+    assert "GOOGLE_CLOUD_PROJECT=example-gcp-project" in combined
+    assert "0 8 * * *" not in combined            # old schedule gone
+    assert "0 19 * * *" in combined               # new schedule in
+    assert combined.count(vm_schedule.SCHEDULE_BEGIN) == 1  # no duplicate blocks
+    assert combined.count(vm_schedule.SCHEDULE_END) == 1
+
+
+def test_merge_crontab_appends_when_no_prior_block():
+    import vm_schedule
+    existing = "HEALTHCHECKS_URL=https://hc-ping.com/abc\n"
+    combined = vm_sync.merge_crontab(existing, vm_schedule.build_crontab(["10:00"]))
+    assert "HEALTHCHECKS_URL=https://hc-ping.com/abc" in combined
+    assert combined.count(vm_schedule.SCHEDULE_BEGIN) == 1
+    assert "0 10 * * *" in combined
+
+
+def test_install_crontab_cmd_merges_not_replaces():
+    # The remote command fetches the existing crontab and strips only the managed
+    # block instead of blindly overwriting the whole crontab.
+    remote = _target().install_crontab_cmd("0 10 * * * ~/run_scraper.sh")[-1]
+    assert "crontab -l" in remote                       # fetch current
+    assert "INPLOYED-SCHEDULE-BEGIN" in remote          # target the managed block
+    assert "INPLOYED-SCHEDULE-END" in remote
+    assert "crontab -" in remote                        # still installs
+
+
 def test_push_exclude_ids_cmd_targets_remote_file():
     # The seen-id file lands at the VM home (relative dest for "~", same as configs).
     cmd = _target().push_exclude_ids_cmd("/local/external_exclude_ids.json")

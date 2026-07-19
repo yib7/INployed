@@ -441,8 +441,8 @@ def test_queue_tailor_launch_failure_resets_guard_and_parks_entries(
 
     monkeypatch.setattr(mw.workers, "run_async", boom)
 
-    with pytest.raises(RuntimeError, match="thread spawn failed"):
-        w._queue_for_auto_apply(["1"])
+    w._queue_for_auto_apply(["1"])   # P2-11: surfaces in the status bar, no re-raise
+    assert "thread spawn failed" in w.statusBar().currentMessage()
 
     assert w._tailoring is False                 # guard cleared -> not dead-locked
     assert w.btn_tailor.isEnabled()
@@ -454,7 +454,8 @@ def test_queue_tailor_launch_failure_resets_guard_and_parks_entries(
 
 def test_plain_tailor_launch_failure_resets_guard(qtbot, monkeypatch, tmp_path):
     """The no-queue path through _start_tailor gets the same hardening: a
-    launch failure re-raises but leaves the Tailor button usable."""
+    launch failure surfaces in the status bar (P2-11: no re-raise into the Qt
+    event loop) and leaves the Tailor button usable."""
     w = _win(qtbot, monkeypatch, tmp_path, df=_jobs_df())
     monkeypatch.setattr(w, "_apply_auth_env", lambda: None)
 
@@ -464,8 +465,8 @@ def test_plain_tailor_launch_failure_resets_guard(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(mw.workers, "run_async", boom)
 
     job = {"job_posting_id": "1", "job_title": "T", "company_name": "C"}
-    with pytest.raises(RuntimeError, match="thread spawn failed"):
-        w._start_tailor([job], {})
+    assert w._start_tailor([job], {}) is False   # P2-11: reported, not re-raised
+    assert "thread spawn failed" in w.statusBar().currentMessage()
 
     assert w._tailoring is False
     assert w.btn_tailor.isEnabled()

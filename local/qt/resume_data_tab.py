@@ -318,7 +318,11 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
         vb_cb.toggled.connect(_apply_mode)
         _apply_mode(vb_cb.isChecked())
-        self._verbatim_edits[name] = (vb_cb, vb_edit)
+        # Keyed by (section, idx), NOT name: two entries with the same org (or two
+        # unnamed entries) must not clobber each other's editor widgets — only the
+        # last block would survive Save (audit P2-5). The name rides in the value
+        # because the persisted store is name-keyed.
+        self._verbatim_edits[(section, idx)] = (name, vb_cb, vb_edit)
 
         bar = QtWidgets.QHBoxLayout()
         bar.addStretch(1)
@@ -331,11 +335,21 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def _gather_verbatim(self) -> dict:
         """Verbatim blocks to persist: keep saved keys for blocks not shown, and for
         each shown block set its non-empty lines when 'don't tailor' is checked, else
-        drop it (revert to normal tailoring)."""
+        drop it (revert to normal tailoring). The persisted store is name-keyed, so
+        when two same-named entries are both checked their lines are merged (in
+        entry order, deduped) rather than the later one silently replacing the
+        earlier one's bullets (audit P2-5)."""
         out = dict(jobsdata.load_verbatim_blocks())
-        for name, (cb, edit) in self._verbatim_edits.items():
+        checked: dict[str, list] = {}
+        for _key, (name, cb, edit) in self._verbatim_edits.items():
             lines = [ln.strip() for ln in edit.toPlainText().splitlines() if ln.strip()]
             if cb.isChecked() and lines:
+                merged = checked.setdefault(name, [])
+                merged.extend(ln for ln in lines if ln not in merged)
+            elif name not in checked:
+                checked.setdefault(name, [])
+        for name, lines in checked.items():
+            if lines:
                 out[name] = lines
             else:
                 out.pop(name, None)
@@ -800,11 +814,17 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
     # ---- resume.md generator -------------------------------------------------
 
-    def _refresh_push_state(self) -> None:
+    def refresh_push_state(self) -> None:
+        """Public slot: re-evaluate the resume.md push button (vm_enabled /
+        VMTarget). Driven by the settings-saved path, not tab switches — it does
+        settings.load() + VMTarget.from_env() per call (audit P2-30)."""
         import vm_sync
         cfg = settings.load()
         on = bool(cfg.get("vm_enabled")) and vm_sync.VMTarget.from_env().configured()
         self.btn_push_md.setEnabled(on)
+
+    # Backward-compatible alias (pre-audit callers/tests used the private name).
+    _refresh_push_state = refresh_push_state
 
     def _generate(self) -> None:
         model = self.md_model.currentText().strip() or "gemini-3.5-flash"

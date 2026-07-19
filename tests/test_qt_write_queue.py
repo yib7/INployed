@@ -176,7 +176,7 @@ def test_mark_ids_seen_is_optimistic_and_enqueues_one_write(qtbot, tmp_path, mon
     runner = _HeldRunner()
     monkeypatch.setattr(workers, "run_async", runner)
     reloaded = []
-    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(True))
     writes = []
     monkeypatch.setattr(w, "_write_is_seen",
                         lambda ids, value, paths=None: writes.append((list(ids), value)))
@@ -377,7 +377,7 @@ def test_failed_background_write_warns_and_resyncs_from_disk(qtbot, tmp_path, mo
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
                         staticmethod(lambda *a, **k: warned.setdefault("text", a[2])))
     reloaded = []
-    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(True))
 
     w._mark_ids_seen(["1"])
     runner.complete_next()

@@ -223,7 +223,7 @@ def test_after_scrape_merges_local_run_files(qtbot, monkeypatch, tmp_path):
     new_file = tmp_path / "evening" / "x_scored.csv.gz"
     monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [new_file])
     reloaded = []
-    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(True))
     w._scraping = True
     w._after_scrape(True)
     assert new_file in w.csv_paths  # local scrape output now a dashboard source
@@ -709,7 +709,7 @@ def test_finish_tailor_records_successes_and_reports(qtbot, monkeypatch, tmp_pat
     w = _win(qtbot)
     monkeypatch.setattr(mw.osopen, "open_path", lambda *_: None)
     reloaded = []
-    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(1))
+    monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(1))
     shown = {}
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
                         staticmethod(lambda *a, **k: shown.setdefault("text", a[2])))

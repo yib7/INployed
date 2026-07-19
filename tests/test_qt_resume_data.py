@@ -195,8 +195,11 @@ def test_verbatim_block_toggle_and_save(qtbot, master_tmp, tmp_path, monkeypatch
     import jobsdata
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)
     ed = _editor(qtbot, master_tmp)
-    assert "Example Corp" in ed._verbatim_edits         # experience block has the toggle
-    cb, edit = ed._verbatim_edits["Example Corp"]
+    # P2-5: editors are keyed by (section, idx) so same-named entries can't
+    # clobber each other; the persisted-store name rides in the value.
+    by_name = {nm: (cb, edit) for (nm, cb, edit) in ed._verbatim_edits.values()}
+    assert "Example Corp" in by_name                     # experience block has the toggle
+    cb, edit = by_name["Example Corp"]
     assert cb.isChecked() is False                       # default: tailored
     cb.setChecked(True)
     edit.setPlainText("My exact bullet one\n   \nMy exact bullet two")  # blank line dropped
@@ -210,7 +213,7 @@ def test_verbatim_block_prefills_and_unchecking_reverts(qtbot, master_tmp, tmp_p
     monkeypatch.setattr(jobsdata, "HERE", tmp_path)
     jobsdata.save_verbatim_blocks({"Example Corp": ["Saved bullet"]})
     ed = _editor(qtbot, master_tmp)
-    cb, edit = ed._verbatim_edits["Example Corp"]
+    cb, edit = {nm: (c, e) for (nm, c, e) in ed._verbatim_edits.values()}["Example Corp"]
     assert cb.isChecked() is True                        # prefilled from saved verbatim
     assert edit.toPlainText() == "Saved bullet"
     cb.setChecked(False)                                 # off -> revert to normal tailoring

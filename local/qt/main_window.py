@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections import Counter
+from collections import Counter, namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
@@ -72,6 +72,16 @@ TAB_TITLES = [
 
 # Tabs where a selected row has an analysis worth previewing.
 PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
+
+# The off-thread reload payload: the merged job frame + resume-path map, plus the
+# run_stats frame and staleness threshold read alongside them so no UI-thread
+# repaint ever touches the Drive-synced stats file (audit P1-5).
+LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours")
+
+# How long a cached resume-folder disk probe stays valid (audit P2-24: resume
+# folders can live under the Drive root, so per-selection stats must not hit the
+# filesystem on every click). Cleared outright on every _apply_frames.
+_DISK_CACHE_TTL_S = 20.0
 
 # Tailoring is parallel (all selected at once). Above this many, warn first — a big
 # fan-out means that many simultaneous Gemini calls + pdflatex processes (API limits /
@@ -283,8 +293,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_scale(self._ui_scale_pct + delta)
 
     def _apply_scale(self, pct: int) -> None:
-        """Clamp to [50, 200], re-scale the live UI (font only — fast), sync the bar,
-        and persist the choice via jobsdata."""
+        """Clamp to [theme.MIN_SCALE, theme.MAX_SCALE] (75..150%), re-scale the
+        live UI (font only — fast), sync the bar, and persist via jobsdata."""
         pct = max(75, min(150, int(pct)))
         self._ui_scale_pct = pct
         theme.set_scale(QtWidgets.QApplication.instance(), pct / 100.0)
@@ -554,16 +564,33 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _load_frames(self):
         """The blocking half of a reload, safe to run OFF the UI thread: read and
-        merge the source files and drop blocklisted rows. Touches neither Qt nor the
-        SQLite registry (both thread-affine) — those wait for _apply_frames."""
+        merge the source files, drop blocklisted rows, and read run_stats.csv +
+        the staleness threshold (audit P1-5 — previously a synchronous Drive read
+        on every UI-thread repaint). Touches neither Qt nor the SQLite registry
+        (both thread-affine) — those wait for _apply_frames."""
         df, id_to_path = load_files(self.csv_paths)
         df = drop_blocklisted(df, load_local_blocklist(self.csv_paths))
-        return df, id_to_path
+        stats_df = None
+        root = gdrive_root_dir(self.csv_paths)
+        stats_path = (root / "run_stats.csv") if root else None
+        if stats_path and stats_path.exists():
+            try:
+                stats_df = pd.read_csv(stats_path)
+            except (OSError, ValueError, pd.errors.ParserError):
+                stats_df = None
+        stale_hours = int(settings.load().get("stale_after_hours", 36) or 36)
+        return LoadedFrames(df, id_to_path, stats_df, stale_hours)
 
     def _apply_frames(self, loaded) -> None:
         """The UI-thread half of a reload: overlay the seen registry, install the
-        frame, and refresh every derived view."""
-        df, id_to_path = loaded
+        frame (+ the off-thread stats read), and refresh every derived view."""
+        if isinstance(loaded, LoadedFrames):
+            df, id_to_path = loaded.df, loaded.id_to_path
+            self._stats_df = loaded.stats
+            self._stale_hours = loaded.stale_hours
+        else:  # bare (df, id_to_path) — older callers/tests
+            df, id_to_path = loaded
+        self._disk_cache = {}   # resume-folder stats may be stale (audit P2-24)
         self.id_to_path = id_to_path
         if not df.empty:
             if "is_seen" not in df.columns:
@@ -734,14 +761,32 @@ class MainWindow(QtWidgets.QMainWindow):
             key = status_f if status_f != "all" else "all"
         chips.set_checked(key)   # silent — never re-fires _on_tracker_chip
 
+    def _disk_cached(self, key, compute):
+        """Serve `compute()` through the short-TTL disk-probe cache (audit P2-24):
+        resume folders can live under the Drive root, so per-selection existence
+        checks must not stat the filesystem on every click. `_apply_frames`
+        clears the cache outright, so a reload always re-probes."""
+        cache = getattr(self, "_disk_cache", None)
+        if cache is None:
+            cache = self._disk_cache = {}
+        hit = cache.get(key)
+        now = time.monotonic()
+        if hit is not None and now - hit[1] < _DISK_CACHE_TTL_S:
+            return hit[0]
+        value = compute()
+        cache[key] = (value, now)
+        return value
+
     def _resume_ids(self) -> frozenset:
         # Only ids whose tailored folder still EXISTS on disk are tinted blue, so a
         # folder deleted by hand drops its tint on the next reload (jobsdata keeps
         # the registry row — the tint returns if the folder comes back).
-        try:
-            return frozenset(jobsdata.live_resume_ids(self.registry.resume_paths()))
-        except Exception:  # noqa: BLE001 - cosmetic; never break the view
-            return frozenset()
+        def probe() -> frozenset:
+            try:
+                return frozenset(jobsdata.live_resume_ids(self.registry.resume_paths()))
+            except Exception:  # noqa: BLE001 - cosmetic; never break the view
+                return frozenset()
+        return self._disk_cached("resume_ids", probe)
 
     def _tailor_failure_ids(self) -> frozenset:
         # Jobs whose most recent tailor run failed — tinted red ("re-run me")
@@ -870,8 +915,10 @@ class MainWindow(QtWidgets.QMainWindow):
         tab = self._active_jobs_tab()
         ids = tab.selected_ids() if tab is not None else []
         self._show_preview(ids[0] if ids else "")
-        # vm_enabled may have changed in Settings — re-evaluate the resume.md push button.
-        self.resume_data_tab._refresh_push_state()
+        # The resume.md push-button state is driven by the settings-saved path
+        # (_on_settings_saved → refresh_push_state), not by tab switches — the old
+        # per-switch refresh did settings.load() + VMTarget.from_env() on every
+        # tab change (audit P2-30).
 
     def _apply_preview_visibility(self) -> None:
         title = self.tabs.tabText(self.tabs.currentIndex())
@@ -932,9 +979,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_ready(self, jid: str) -> tuple[bool, Path | None]:
         """A job is ready to apply to when its tailored folder holds BOTH the
-        résumé PDF and apply.md on disk. Returns (ready, folder)."""
+        résumé PDF and apply.md on disk. Returns (ready, folder). Served through
+        the short-TTL disk cache — selection changes must not stat Drive."""
         if not jid:
             return False, None
+        return self._disk_cached(("apply_ready", jid),
+                                 lambda: self._apply_ready_probe(jid))
+
+    def _apply_ready_probe(self, jid: str) -> tuple[bool, Path | None]:
         try:
             path = self.registry.resume_path(jid)
         except Exception:  # noqa: BLE001 - cosmetic; never break the view
@@ -1006,7 +1058,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self, "Background write failed",
             f"Could not update the job files ({description}): {exc}\n\n"
             "Reloading the dashboard from disk.")
-        self.reload_data()
+        self.reload_data_async()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802 - Qt override
         """Flush pending work before the window goes away.
@@ -1198,7 +1250,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except OSError as exc:
             self._set_status(f"Could not block {company}: {exc}")
             return
-        self.reload_data()
+        self.reload_data_async()
         self._set_status(f"Blocked {company} — hidden now and skipped on the next job search.")
 
     def _save_hidden(self, key: str, hidden: list[str]) -> None:
@@ -1498,7 +1550,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for p in jobsdata.local_run_files():
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
-        self.reload_data()
+        self.reload_data_async()
         self._set_status("Job search + score complete — dashboard refreshed.")
 
     def _after_scrape_error(self, exc) -> None:
@@ -1583,7 +1635,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for p in jobsdata.local_run_files():
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
-        self.reload_data()
+        self.reload_data_async()
         title = rec.get("job_title", "job")
         company = rec.get("company_name", "")
         score = rec.get("score", "")
@@ -1696,7 +1748,7 @@ class MainWindow(QtWidgets.QMainWindow):
         record.setdefault("source", "manual")
         record.setdefault("run_label", "manual")
         jobsdata.update_manual_job(record, old_id=jid)
-        self.reload_data()
+        self.reload_data_async()
         self._set_status(f"Updated job: {vals['title']} @ {vals['company']}.")
 
     # ---- apply (open posting for review; never submits) -----------------------
@@ -1857,7 +1909,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if on_finished is not None:  # park queue-chained "tailoring" entries as
                 on_finished(None, RuntimeError(  # failed — orphans are unclaimable
                     f"tailor launch failed: {exc}"))
-            raise
+            # Surface in the status bar instead of re-raising into the Qt event
+            # loop, where the exception would just be printed and swallowed
+            # (audit P2-11).
+            self._set_status(f"Could not start tailoring: {exc}")
+            return False
         return True
 
     def _tailor_work(self, jobs: list[dict], opts: dict) -> list[dict]:
@@ -1971,7 +2027,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 osopen.open_path(last)
             except OSError:
                 pass
-        self.reload_data()
+        self.reload_data_async()
 
     def _finish_tailor_error(self, exc) -> None:
         self._tailoring = False
@@ -2116,6 +2172,7 @@ class MainWindow(QtWidgets.QMainWindow):
             notes.append(f"{no_data} without job data — not queued")
 
         started_tailor = False
+        tailor_launch_failed = False
         if not_ready:
             if getattr(self, "_tailoring", False):
                 notes.append(f"{len(not_ready)} not tailored — skipped while a "
@@ -2155,13 +2212,15 @@ class MainWindow(QtWidgets.QMainWindow):
                                                   for j in jobs]
                     started_tailor = self._start_tailor(
                         jobs, opts, on_finished=self._finish_queue_tailor)
-                    if not started_tailor:  # raced the guard: park them honestly
-                        self._finish_queue_tailor(None, RuntimeError(
-                            "a tailor run was already in flight"))
+                    if not started_tailor:  # raced the guard / spawn failed:
+                        tailor_launch_failed = True  # keep _start_tailor's error
+                        self._finish_queue_tailor(None, RuntimeError(  # park honestly
+                            "a tailor run was already in flight"))     # (no-op if already parked)
             else:
                 notes.append(f"{len(not_ready)} not tailored — left out")
 
-        if not started_tailor:  # otherwise _start_tailor owns the status line
+        if not started_tailor and not tailor_launch_failed:
+            # otherwise _start_tailor owns the status line
             parts = ([f"Queued {queued_n} job(s) for auto-apply"] if queued_n else [])
             parts += notes
             self._set_status((" · ".join(parts) + ".") if parts
@@ -2496,14 +2555,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- stats + calibration -------------------------------------------------
 
     def _refresh_stats(self) -> None:
-        stats_df = None
-        root = gdrive_root_dir(self.csv_paths)
-        path = (root / "run_stats.csv") if root else None
-        if path and path.exists():
-            try:
-                stats_df = pd.read_csv(path)
-            except (OSError, ValueError, pd.errors.ParserError):
-                stats_df = None
+        """Render the Stats tab from the CACHED run_stats frame `_load_frames`
+        read off-thread (audit P1-5): this runs on every mark-seen/undo/delete
+        repaint, so it must never do a synchronous Drive read itself."""
+        stats_df = getattr(self, "_stats_df", None)
         summary = "run_stats.csv not synced yet — metrics appear after the next VM run."
         table_df = pd.DataFrame()
         newest = None
@@ -2516,7 +2571,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except ValueError:
                 newest = None
         self.stats_tab.set_stats(table_df, summary, self._calibration_text())
-        threshold = int(settings.load().get("stale_after_hours", 36) or 36)
+        threshold = int(getattr(self, "_stale_hours", 36) or 36)
         state, age = jobsdata.run_staleness(newest, datetime.now(), threshold)
         self.stats_tab.set_freshness(state, age)
         # Mirror the freshness onto the identity strip + status-bar summary.
@@ -2564,8 +2619,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Re-read the values the dashboard caches from config and refresh."""
         self.min_score = load_min_score()
         self.followup_days = load_followup_days()
-        self.resume_data_tab._refresh_push_state()  # vm_enabled may have changed
-        self.reload_data()
+        self.resume_data_tab.refresh_push_state()  # vm_enabled may have changed
+        self.reload_data_async()
 
     # ---- engine env ----------------------------------------------------------
 

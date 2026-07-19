@@ -226,6 +226,11 @@ class JobDetailCard(QtWidgets.QFrame):
         self.desc_toggle.toggled.connect(self._on_desc_toggled)
         v.addWidget(self.desc_toggle, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         self.desc_label = QtWidgets.QLabel("")
+        # The JD is raw scraped text: force plain text so angle-bracket content
+        # (<b>, <img>) renders verbatim instead of being rich-text interpreted
+        # (audit P2-19). Sibling fields are html.escape()d; this one is long free
+        # text, so the format switch is the safer guarantee.
+        self.desc_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.desc_label.setWordWrap(True)
         self.desc_label.setProperty("muted", True)
         self.desc_label.setVisible(False)

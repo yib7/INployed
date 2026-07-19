@@ -198,7 +198,7 @@ def test_finish_manual_add_records_resume_and_reloads(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(mw.jobsdata, "local_run_files", lambda *a, **k: [])
     reloaded = []
-    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(True))
     w._manual_adding = True
     w._finish_manual_add({
         "record": {"job_posting_id": "manual-1", "job_title": "DA",
@@ -302,7 +302,7 @@ def test_delete_jobs_confirms_clears_and_refreshes(qtbot, monkeypatch):
     monkeypatch.setattr(mw.jobsdata, "delete_jobs",
                         lambda ids, **k: deleted.update(ids=list(ids)) or len(list(ids)))
     reloaded = []
-    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(True))
     w._delete_jobs(["manual-1", "123"])
     assert deleted["ids"] == ["manual-1", "123"]
     w.registry.clear_status.assert_any_call("manual-1")
@@ -370,7 +370,7 @@ def test_delete_jobs_survives_recycle_error(qtbot, monkeypatch):
 
     monkeypatch.setattr(mw, "recycle_resume_folder", boom)
     reloaded = []
-    monkeypatch.setattr(w, "reload_data", lambda: reloaded.append(True))
+    monkeypatch.setattr(w, "reload_data_async", lambda: reloaded.append(True))
     w._delete_jobs(["x"])
     assert deleted["ids"] == ["x"]                    # delete went through
     w.registry.clear_status.assert_any_call("x")      # cleanup still ran

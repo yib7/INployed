@@ -1261,9 +1261,22 @@ class MainWindow(QtWidgets.QMainWindow):
             return "full"
         return None
 
-    def _run_scraper_dialog(self) -> None:
+    def _pipeline_busy(self) -> str | None:
+        """Why the scrape/score pipeline is unavailable, or None when it's free.
+
+        A scrape run and a manual add share scrape.log and the post-run outbox
+        push, so they are mutually exclusive: whichever is in flight blocks the
+        other (audit P2-27). One check, used by every entry point."""
         if getattr(self, "_scraping", False):
-            self._set_status("A job search is already running.")
+            return "A job search is already running."
+        if getattr(self, "_manual_adding", False):
+            return "A manual job add is still running."
+        return None
+
+    def _run_scraper_dialog(self) -> None:
+        busy = self._pipeline_busy()
+        if busy:
+            self._set_status(busy)
             return
         choice = self._confirm_scrape()
         if not choice:
@@ -1282,7 +1295,7 @@ class MainWindow(QtWidgets.QMainWindow):
         CSVs are invisible to the dashboard. Called from app.main() once at
         startup (never from __init__ — a modal there would hang headless tests).
         """
-        if getattr(self, "_scraping", False):
+        if self._pipeline_busy():
             return
         try:
             pending = jobsdata.unscored_run_csvs()
@@ -1502,8 +1515,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Reuses the exact scoring (score_jobs) + tailoring (resume_tailor) pipelines a
         scraped job goes through; only the input differs (a paste/URL, not Bright
         Data). The heavy work runs on a worker thread so the window never freezes."""
-        if getattr(self, "_manual_adding", False):
-            self._set_status("A manual add is already running.")
+        busy = self._pipeline_busy()
+        if busy:
+            self._set_status(busy)
             return
         dlg = ManualAddDialog(self)
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:

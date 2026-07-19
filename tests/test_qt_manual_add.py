@@ -6,6 +6,7 @@ call happens.
 """
 from unittest.mock import MagicMock
 
+import pytest
 from PySide6 import QtWidgets
 
 import manual_add
@@ -410,3 +411,40 @@ def test_edit_manual_job_prefills_and_updates_keeping_id(qtbot, monkeypatch):
     assert rec["company_name"] == "NewCo"
     assert rec["score"] == 5                          # score carried over (field-fix only)
     assert updated["kw"].get("old_id") == "manual-abc"
+
+
+# ── scrape and manual-add are mutually exclusive (audit P2-27) ────────────────
+
+def test_manual_add_refused_while_scraping(qtbot, monkeypatch):
+    """Both actions write the shared scrape.log and push the same outbox, so a
+    manual add must be refused while a scrape/score run is in flight."""
+    w = _win(qtbot)
+    w._scraping = True
+    monkeypatch.setattr(ManualAddDialog, "exec",
+                        lambda self: pytest.fail("dialog must not open while scraping"))
+    ran = []
+    monkeypatch.setattr(mw.workers, "run_async", lambda *a, **k: ran.append(True))
+    w._add_manual_job_dialog()
+    assert ran == [] and not getattr(w, "_manual_adding", False)
+    assert w.statusBar().currentMessage()          # told the user why
+
+
+def test_scrape_refused_while_manual_adding(qtbot, monkeypatch):
+    w = _win(qtbot)
+    w._manual_adding = True
+    monkeypatch.setattr(w, "_confirm_scrape",
+                        lambda: pytest.fail("scrape dialog must not open during a manual add"))
+    ran = []
+    monkeypatch.setattr(mw.workers, "run_async", lambda *a, **k: ran.append(True))
+    w._run_scraper_dialog()
+    assert ran == [] and not getattr(w, "_scraping", False)
+
+
+def test_unscored_recovery_skipped_while_manual_adding(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    w._manual_adding = True
+    monkeypatch.setattr(mw.jobsdata, "unscored_run_csvs",
+                        lambda *a, **k: [tmp_path / "night" / "x.csv"])
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(
+        lambda *a, **k: pytest.fail("no recovery prompt during a manual add")))
+    w.offer_unscored_recovery()

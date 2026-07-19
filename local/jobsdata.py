@@ -8,9 +8,11 @@ filter. Extracted from the old `ui.py` so it survives the UI toolkit swap.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -316,6 +318,17 @@ _MANUAL_PERSIST_COLS = [
 ]
 
 
+log = logging.getLogger(__name__)
+
+# Serializes every read-modify-write of the LOCAL master CSV (and its manual-gz
+# sibling). The dashboard deletes on a background write queue while manual-add
+# runs on its own worker thread, so without this two writers can both read the
+# master at N rows and the second atomic replace silently drops the first
+# writer's change (audit P2-25). RLock because update_manual_job holds it across
+# its drop + re-append sequence, which re-enters the helpers below.
+_MASTER_WRITE_LOCK = threading.RLock()
+
+
 def _append_dedup_csv(record: dict, path: Path, *, compression=None) -> bool:
     """Append one job record to a CSV, deduping on job_posting_id (keep="first").
 
@@ -326,6 +339,11 @@ def _append_dedup_csv(record: dict, path: Path, *, compression=None) -> bool:
     jid = str(record.get("job_posting_id", "")).strip()
     if not jid:
         return False
+    with _MASTER_WRITE_LOCK:
+        return _append_dedup_csv_locked(record, jid, path, compression)
+
+
+def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) -> bool:
     new_df = pd.DataFrame([record])
     new_df["job_posting_id"] = new_df["job_posting_id"].astype(str)
     if path.exists():
@@ -367,14 +385,19 @@ def append_manual_job(record: dict, *, master_csv: Path | None = None) -> bool:
     if record.get("job_description_formatted"):
         row["job_description_formatted"] = record["job_description_formatted"]
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
-    added = _append_dedup_csv(row, master, compression=None)
-    # The gz copy never carries the raw JD (the scored run files don't either).
-    gz_row = {k: v for k, v in row.items() if k != "job_description_formatted"}
-    manual_gz = (master.parent / "manual" / "manual_jobs_scored.csv.gz")
-    try:
-        _append_dedup_csv(gz_row, manual_gz, compression="gzip")
-    except OSError:
-        pass  # the canonical master append is what matters; the gz is a convenience
+    with _MASTER_WRITE_LOCK:   # master + gz land as one unit vs. other writers
+        added = _append_dedup_csv(row, master, compression=None)
+        # The gz copy never carries the raw JD (the scored run files don't either).
+        gz_row = {k: v for k, v in row.items() if k != "job_description_formatted"}
+        manual_gz = (master.parent / "manual" / "manual_jobs_scored.csv.gz")
+        try:
+            _append_dedup_csv(gz_row, manual_gz, compression="gzip")
+        except OSError as e:
+            # The canonical master append is what matters, but a silently missing
+            # gz row makes the master and the dashboard bridge diverge — say so.
+            log.warning("manual job %s: gz bridge append failed (%s) — master and "
+                        "manual/manual_jobs_scored.csv.gz now differ", row.get(
+                            "job_posting_id", "?"), e)
     return added
 
 
@@ -384,16 +407,17 @@ def _drop_ids_from_csv(path: Path, ids: set[str]) -> None:
     if not path.exists() or not ids:
         return
     compression = "gzip" if path.suffix == ".gz" else None
-    try:
-        df = pd.read_csv(path, dtype={"job_posting_id": str}, compression=compression)
-    except (OSError, ValueError):
-        return
-    if "job_posting_id" not in df.columns:
-        return
-    keep = df[~df["job_posting_id"].astype(str).isin(ids)]
-    if len(keep) == len(df):
-        return  # this file held none of the targets
-    write_csv_gz_atomic(keep, path, compression=compression)
+    with _MASTER_WRITE_LOCK:
+        try:
+            df = pd.read_csv(path, dtype={"job_posting_id": str}, compression=compression)
+        except (OSError, ValueError):
+            return
+        if "job_posting_id" not in df.columns:
+            return
+        keep = df[~df["job_posting_id"].astype(str).isin(ids)]
+        if len(keep) == len(df):
+            return  # this file held none of the targets
+        write_csv_gz_atomic(keep, path, compression=compression)
 
 
 def load_removed_jobs() -> set[str]:
@@ -427,8 +451,9 @@ def delete_jobs(ids, *, master_csv: Path | None = None) -> int:
     # stays live) still hides the row instead of resurrecting it, and a row stays
     # hidden even if a later rewrite fails. The CSV drop is then just space reclaim.
     _save_removed_jobs(load_removed_jobs() | ids)
-    for p in [master, *local_run_files(master.parent)]:
-        _drop_ids_from_csv(p, ids)
+    with _MASTER_WRITE_LOCK:   # the multi-file drop is one unit vs. other writers
+        for p in [master, *local_run_files(master.parent)]:
+            _drop_ids_from_csv(p, ids)
     return len(ids)
 
 
@@ -470,13 +495,14 @@ def update_manual_job(record: dict, *, old_id=None, master_csv: Path | None = No
     on the existing buttons. Returns append result (True when it lands fresh)."""
     master = Path(master_csv) if master_csv is not None else MASTER_CSV
     drop = {str(d).strip() for d in (old_id, record.get("job_posting_id")) if str(d or "").strip()}
-    if drop:
-        for p in [master, *local_run_files(master.parent)]:
-            _drop_ids_from_csv(p, drop)
-        rem = load_removed_jobs() - drop  # editing resurrects a previously-removed id
-        if rem != load_removed_jobs():
-            _save_removed_jobs(rem)
-    return append_manual_job(record, master_csv=master_csv)
+    with _MASTER_WRITE_LOCK:   # drop + re-append is one unit vs. other writers
+        if drop:
+            for p in [master, *local_run_files(master.parent)]:
+                _drop_ids_from_csv(p, drop)
+            rem = load_removed_jobs() - drop  # editing resurrects a previously-removed id
+            if rem != load_removed_jobs():
+                _save_removed_jobs(rem)
+        return append_manual_job(record, master_csv=master_csv)
 
 
 def _load_cfg() -> dict:

@@ -344,3 +344,24 @@ def test_load_rows_by_id_returns_only_requested(tmp_path, monkeypatch):
     assert list(got.columns) == list(master_df.columns)
     assert got.loc[got["job_posting_id"] == "1", "job_title"].iloc[0] == "title 1"
     assert got.loc[got["job_posting_id"] == "7", "job_title"].iloc[0] == "title 7"
+
+
+def test_master_rewrite_is_byte_stable_for_untouched_rows(tmp_path, monkeypatch):
+    """Audit P2-26: with dtype=str + keep_default_na=False, a rewrite must not
+    reformat untouched values ("True " keeps its space, "1" never becomes
+    "1.0", leading-zero ids survive)."""
+    m = tmp_path / "master.csv"
+    m.write_text(
+        "job_posting_id,job_title,score,filtered_out\n"
+        "007,a,1,True \n"
+        "2,b,,\n",
+        encoding="utf-8")
+    monkeypatch.setattr(score_jobs, "MASTER_CSV", m)
+    scored = pd.DataFrame({"job_posting_id": ["2"], "score": [5],
+                           "reason": ["good fit"]})
+    score_jobs.update_master_scores(scored)
+    out = m.read_text(encoding="utf-8")
+    assert "007,a,1,True " in out          # untouched row round-trips byte-stable
+    assert "1.0" not in out                # no float upcast of the stored "1"
+    back = pd.read_csv(m, dtype=str, keep_default_na=False)
+    assert back.loc[back["job_posting_id"] == "2", "score"].iloc[0] == "5"

@@ -255,7 +255,11 @@ def main(
                 try:
                     wrote_header = False
                     if master_csv.exists():
-                        for chunk in pd.read_csv(master_csv, dtype={"job_posting_id": str}, chunksize=CHUNK):
+                        # dtype=str + keep_default_na=False (audit P2-26):
+                        # byte-stable master round-trip, like prune_master.py.
+                        for chunk in pd.read_csv(master_csv, dtype=str,
+                                                 keep_default_na=False,
+                                                 chunksize=CHUNK):
                             chunk = chunk.reindex(columns=unified)
                             chunk.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
                             wrote_header = True

@@ -448,6 +448,12 @@ def latest_input_csv() -> Path | None:
     time) avoids the label flipping when a run is triggered manually. Inputs whose
     _scored.csv.gz output already exists are skipped so a no-new-jobs run never
     rescores an old file.
+
+    INTENDED drain rate (audit P2-14): ONE pending input per invocation. A
+    multi-day backlog (VM down, then restored) drains at the twice-daily run
+    cadence; meanwhile the master rescore pass picks up the older runs' rows once
+    they reach the master, so nothing is stranded — only delayed. A backlog is
+    surfaced with a log line below so it is visible in scraper.log.
     """
     candidates: list[Path] = []
     for label in RUN_LABELS:
@@ -462,6 +468,10 @@ def latest_input_csv() -> Path | None:
             candidates.append(p)
     if not candidates:
         return None
+    if len(candidates) > 1:
+        print(f"NOTE: {len(candidates)} unscored inputs pending; scoring the "
+              "newest — older ones drain one per run (rescore pass covers their "
+              "master rows meanwhile).")
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
@@ -714,7 +724,15 @@ def update_master_scores(scored: pd.DataFrame) -> None:
         # READ (next(reader)) to the same actionable OSError. Write-side errors
         # (to_csv/os.replace OSError, update TypeError) are raised in the loop
         # body, are NOT parse errors, and still propagate unrelabelled.
-        reader = pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK)
+        # dtype=object + keep_default_na=False (audit P2-26): the master must
+        # round-trip byte-stable through rewrites — inferred dtypes reformat
+        # values (1 -> "1.0") and risk id-like leading-zero loss. object (not
+        # pandas' strict `str`) because chunk.update(s) below writes the scored
+        # frame's raw ints/bools into these columns. prune_master.py reads
+        # dtype=str (pure pass-through); the normalization sets
+        # (rows_needing_rescore / _needs_rescore) tolerate "" like NaN.
+        reader = pd.read_csv(MASTER_CSV, dtype=object, keep_default_na=False,
+                             chunksize=CHUNK)
         while True:
             try:
                 chunk = next(reader)
@@ -971,6 +989,12 @@ async def main() -> None:
             df = pd.read_csv(csv_path, dtype={"job_posting_id": str})
         except pd.errors.EmptyDataError:
             df = pd.DataFrame()
+        except (pd.errors.ParserError, OSError, UnicodeDecodeError, ValueError) as e:
+            # An unreadable input must not kill the whole run: the rescore pass
+            # below is the self-heal for rows that never got scored (audit P2-7).
+            print(f"WARNING: could not read {csv_path.name} ({e}) — "
+                  "skipping fresh scoring, continuing to the rescore pass.")
+            df = pd.DataFrame()
         if df.empty:
             print("Input CSV is empty — nothing to score.")
         else:
@@ -1004,8 +1028,14 @@ async def main() -> None:
             stats["filtered_out"] = int(merged["filtered_out"].sum())
             stats["easy_apply_dropped"] = int(merged["filter_easy_apply"].sum())
             stats["llm_scored"] = int(n_scored)
+            # Stage-1 failures land in `reason`, Stage-2 failures in
+            # `recommendation` (audit P2-8) — count both, else deep-analysis
+            # errors are invisible in run stats.
             stats["llm_errors"] = int(
                 merged["reason"].fillna("").astype(str).str.startswith("ERROR:").sum()
+            ) + int(
+                merged.get("recommendation", pd.Series("", index=merged.index))
+                .fillna("").astype(str).str.startswith("ERROR:").sum()
             )
             stats["stage2_done"] = int(n_deep)
 

@@ -96,8 +96,44 @@ class UsageState:
     def set_exhausted(self, fp: str, model: str, limit: int) -> None:
         self.usage[self._k(fp, model)] = limit
 
-    def save(self) -> None:
+    # Save every N reservations rather than every call: the write happens inside
+    # the pool's async lock, so per-call file IO blocks the event loop, and the
+    # RPD counter tolerates a small undercount on crash (audit P2-23). Exhaustion
+    # marks and pool teardown always force a save.
+    _SAVE_EVERY = 10
+
+    def __init_debounce(self) -> None:
+        if not hasattr(self, "_unsaved"):
+            self._unsaved = 0
+
+    def maybe_save(self) -> None:
+        self.__init_debounce()
+        self._unsaved += 1
+        if self._unsaved >= self._SAVE_EVERY:
+            self.save()
+
+    def _merge_disk(self) -> None:
+        """Fold the on-disk counters into memory (per-key max) before writing, so
+        two concurrent scoring processes don't last-writer-wins each other's RPD
+        counts into avoidable 429s (audit P2-23). Both sides only increment, so
+        max is the conservative union."""
         try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if data.get("date") != self.date or not isinstance(data.get("usage"), dict):
+            return
+        for k, v in data["usage"].items():
+            try:
+                self.usage[str(k)] = max(int(v), int(self.usage.get(str(k), 0)))
+            except (TypeError, ValueError):
+                continue
+
+    def save(self) -> None:
+        self.__init_debounce()
+        self._unsaved = 0
+        try:
+            self._merge_disk()
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp_name = tempfile.mkstemp(
                 prefix=f".{self.path.name}.", suffix=".tmp", dir=str(self.path.parent)
@@ -136,6 +172,10 @@ class KeyPool:
         self._lock = asyncio.Lock()
         self._free_calls = 0
         self._vertex_calls = 0
+        # Saves are debounced (P2-23), so flush the tail when the process exits —
+        # an unattended VM run must still persist its final RPD counts.
+        import atexit
+        atexit.register(state.save)
 
     def stats(self) -> dict:
         return {"free_calls": self._free_calls, "vertex_calls": self._vertex_calls}
@@ -183,7 +223,7 @@ class KeyPool:
         self._rpm[(idx, model)].append(time.monotonic())
         m = self._members[idx]
         self._state.incr(m["fp"], model)
-        self._state.save()
+        self._state.maybe_save()   # debounced; atexit + exhaustion marks force it
 
     @classmethod
     def from_env(cls, *, state_path: Path | str | None = None) -> "KeyPool":
@@ -233,7 +273,11 @@ class KeyPool:
 
     async def generate(self, *, model: str, contents: Any, config: Any) -> Any:
         limits = LIMITS.get(model, DEFAULT_LIMITS)
-        transient = 0
+        # Separate retry budgets (audit P2-1): Vertex quota/429s get 4 long-sleep
+        # attempts, generic transient errors get 3 short ones. One shared counter
+        # made two 429s + one transient error give up early under mixed failures.
+        quota_retries = 0
+        transient_retries = 0
         while True:
             async with self._lock:
                 kind, idx, wait = self._select(model, limits)
@@ -260,22 +304,22 @@ class KeyPool:
                             )
                             self._state.save()
                         continue
-                    transient += 1
-                    if transient >= 4:
+                    quota_retries += 1
+                    if quota_retries >= 4:
                         raise PoolError(
                             f"Vertex quota error for {model}: {exc}") from exc
                     # Jitter so parallel workers on the VM don't wake in lockstep.
                     wait = 60 + random.uniform(0, 0.5)
                     log.warning("keypool: vertex quota/429 for %s (attempt %d/4), "
-                                "sleeping %.2fs: %s", model, transient, wait, exc)
+                                "sleeping %.2fs: %s", model, quota_retries, wait, exc)
                     await asyncio.sleep(wait)
                     continue
-                transient += 1
-                if transient >= 3:
+                transient_retries += 1
+                if transient_retries >= 3:
                     raise
-                wait = 1.5 * transient + random.uniform(0, 0.5)
+                wait = 1.5 * transient_retries + random.uniform(0, 0.5)
                 log.warning("keypool: transient error for %s (attempt %d/3), "
-                            "sleeping %.2fs: %s", model, transient, wait, exc)
+                            "sleeping %.2fs: %s", model, transient_retries, wait, exc)
                 await asyncio.sleep(wait)
                 continue
             if member["kind"] == "free":

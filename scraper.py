@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 
@@ -445,7 +446,10 @@ def append_to_master(df: pd.DataFrame) -> int:
     total = 0
     wrote_header = False
     try:
-        for chunk in pd.read_csv(MASTER_CSV, dtype={"job_posting_id": str}, chunksize=CHUNK):
+        # dtype=str + keep_default_na=False (audit P2-26): byte-stable master
+        # round-trip — matches prune_master.py's reader.
+        for chunk in pd.read_csv(MASTER_CSV, dtype=str, keep_default_na=False,
+                                 chunksize=CHUNK):
             chunk = drop_blocklisted_companies(chunk, blocklist)  # retroactive re-filter, preserved
             chunk = chunk.reindex(columns=unified)
             chunk.to_csv(tmp, mode="a", header=not wrote_header, index=False, encoding="utf-8")
@@ -497,9 +501,11 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> lis
 
 async def trigger(session: aiohttp.ClientSession, payload: dict,
                   limit_per_input: int = LIMIT_PER_INPUT) -> str:
+    # quote() the configured id (audit P2-20): a malformed value then fails as a
+    # clean API error instead of silently mangling the query string.
     url = (
         "https://api.brightdata.com/datasets/v3/scrape"
-        f"?dataset_id={DATASET_ID}"
+        f"?dataset_id={urllib.parse.quote(str(DATASET_ID), safe='')}"
         f"&type=discover_new&discover_by=keyword&limit_per_input={limit_per_input}"
     )
     async with session.post(url, json=payload) as resp:

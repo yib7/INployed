@@ -345,6 +345,7 @@ def test_generate_rolls_over_and_attributes_usage_to_new_day(tmp_path, monkeypat
     resp = asyncio.run(pool.generate(model=FLASH, contents="x", config=None))
     assert resp.text == "FREE"
     assert pool.stats() == {"free_calls": 1, "vertex_calls": 0}
+    pool._state.save()   # P2-23: saves are debounced; flush before reading disk
     on_disk = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
     assert on_disk["date"] == "2020-01-02"
     assert on_disk["usage"]["fp1:" + FLASH] == 1
@@ -368,3 +369,65 @@ def test_vertex_quota_pool_error_chains_the_quota_exception(tmp_path, monkeypatc
     except keypool.PoolError as e:
         assert "quota" in str(e).lower()
         assert isinstance(e.__cause__, RuntimeError)
+
+
+# -- audit P2-1: separate quota vs transient retry budgets ---------------------
+
+def test_mixed_quota_and_transient_errors_use_separate_budgets(tmp_path, monkeypatch):
+    """Two vertex 429s then two generic transient errors must still succeed on
+    the fifth call: the old SHARED counter hit the transient threshold (3) after
+    429+429+error and gave up with only one generic failure observed."""
+    calls = {"n": 0}
+
+    def responder(*_):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise RuntimeError("429 RESOURCE_EXHAUSTED quota")
+        if calls["n"] <= 4:
+            raise RuntimeError("503 transient hiccup")
+        return _resp("OK")
+
+    vertex = {"client": _client(responder), "kind": "vertex", "fp": None}
+    pool = _pool([vertex], tmp_path)
+
+    async def no_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(keypool.asyncio, "sleep", no_sleep)
+    resp = asyncio.run(pool.generate(model=FLASH, contents="x", config=None))
+    assert resp.text == "OK" and calls["n"] == 5
+
+
+# -- audit P2-23: debounced saves + concurrent-process merge -------------------
+
+def test_usage_state_maybe_save_debounces(tmp_path):
+    p = tmp_path / "s.json"
+    st = keypool.UsageState(p)
+    st.load()
+    for _ in range(keypool.UsageState._SAVE_EVERY - 1):
+        st.incr("fp1", "m")
+        st.maybe_save()
+    assert not p.exists()              # under the threshold: no write yet
+    st.incr("fp1", "m")
+    st.maybe_save()
+    assert p.exists()                  # threshold reached: flushed
+
+
+def test_save_merges_concurrent_process_counters(tmp_path):
+    """Two processes sharing score_state.json must not last-writer-wins each
+    other's RPD counts (undercounting risks avoidable 429s)."""
+    p = tmp_path / "s.json"
+    a = keypool.UsageState(p)
+    a.load()
+    a.incr("fp1", "m", 5)
+    a.save()
+    b = keypool.UsageState(p)
+    b.load()                           # b sees fp1=5
+    a.incr("fp1", "m", 3)              # a: fp1=8 (in memory)
+    b.incr("fp2", "m", 2)
+    b.save()                           # disk: fp1=5, fp2=2
+    a.save()                           # merge: must keep fp2 AND a's higher fp1
+    c = keypool.UsageState(p)
+    c.load()
+    assert c.get("fp1", "m") == 8
+    assert c.get("fp2", "m") == 2

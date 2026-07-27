@@ -29,7 +29,7 @@ It is three cooperating pieces:
 
 ## Demo
 
-![Animated tour of the dashboard: a header strip counts jobs, unseen, and tracked applications and shows pipeline freshness; the High Score tab ranks discovered jobs by a two-stage LLM relevance score with apply / consider / tailored color tints, badges, and pills; selecting a job opens its detail card with the score breakdown (reason, strengths, gaps) and the tailor / apply actions; the All Jobs and Tracker tabs follow every posting and each application through applied, interviewing, offer, and rejected; the Auto-apply tab shows the batch apply queue (queued, in progress, ready to submit, needs human); the Stats tab reports per-run pipeline metrics; the Resume Data tab holds the select-and-rephrase source of truth plus the Resume Layout bullet-sizing editor; the Apply Answers tab stores reusable application answers; and the Settings tab configures the whole pipeline.](docs/demo.gif)
+![Animated tour of the INployed dashboard, eight screens in turn: High Score (LLM-ranked postings with score badges, recommendation pills, and a detail card of reason, strengths, and gaps), All Jobs, Tracker, Auto-apply, Stats, Resume Data, Apply Answers, and Settings.](docs/demo.gif)
 
 A tour of the full loop: **High Score** ranks every discovered posting by a two-stage
 Gemini relevance score and color-codes the recommendation; selecting a job opens its
@@ -119,7 +119,7 @@ blank table, so you can confirm the install worked before configuring anything.
 In the running dashboard, open the **Settings** tab and fill in the **Credentials**
 section. One form covers every key, path, and option the project has; nothing needs to be
 edited by hand. See
-[Configure everything from the Settings tab](#configure-everything-from-the-settings-tab-no-file-editing).
+[Configure everything from the Settings tab](docs/USER_GUIDE.md#configure-everything-from-the-settings-tab-no-file-editing).
 
 You need an account for each feature you want:
 
@@ -160,282 +160,44 @@ The [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate instal
 
 ---
 
-## Using it
+## What it does
 
-### Tailor a résumé for one job (CLI)
-The résumé-tailor CLI lives in the `resume_tailor` package, so run it from `local/`:
-```bash
-cd local
-python -m resume_tailor.run --job-id <job_posting_id> --cover-letter
-```
-Output (in `~/Downloads/Generated_Resumes/<Company>/<Title>/`): a one-page PDF, its
-`.tex` source, `ats_report.txt` (keyword coverage), an optional cover letter, and
-`apply.md` (a self-contained apply sheet you paste into Claude-in-Chrome).
+- **Triage.** The **High Score** tab ranks unseen postings by the two-stage score and tints
+  each row by recommendation (apply / consider / skip) and by whether a tailored résumé
+  already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
+- **Tailor.** One click writes a one-page LaTeX résumé for that posting, plus an optional
+  cover letter, an ATS keyword report, and an interview-prep sheet. Batches run in parallel
+  in the background with live progress.
+- **Track.** Applications move through applied → interviewing → offer / rejected, with
+  follow-up nudges. The whole history is a local SQLite file you can export and import.
+- **Apply.** Every tailored folder gets a self-contained `apply.md` sheet that a
+  browser agent fills page by page and then **stops at the review screen** — it never logs
+  in and never clicks submit.
+- **Operate.** Settings is one schema-driven form over every key, path, and tunable the
+  project has (no file editing), including the schedule, pause, and config pushes for the
+  cloud discovery VM. Stats reports per-run cost and volume, with a staleness badge when a
+  cron run goes missing.
 
-### Fine-tune the résumé layout
-The **Resume Data** tab has a collapsible **Resume Layout** editor for how many bullets
-each section/project gets and how long each one runs. Give a section or project a
-comma-separated list of per-bullet printed-line counts. For example, `2, 2, 1` means three
-bullets sized 2 / 2 / 1 lines (each 1 to 3, up to 5 bullets), and the one-page tailor
-honors it. A **"Bullets by strength"** box sizes projects by how strongly each ranks for
-*this* job instead of a flat count: type tiers as `projects:bullets` pairs (e.g.
-`2:3, 2:2, 1:1`) and the strongest-matching projects earn the extra bullets. A master
-**"Apply custom bullet layout"** checkbox turns the whole feature on or off: unchecked,
-the engine uses its built-in defaults but your saved targets are kept, so you can
-**A/B test** whether your custom layout helps without throwing the configuration away.
+Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
-### Find skills you forgot to list
-The JD-gap helper surfaces skills a posting wants that aren't yet in your master
-file, screens them to genuine non-identifying skills, and (only on your
-confirmation) folds them into the right bucket with a reviewable diff + backup.
-Run it from `local/`:
-```bash
-cd local
-python -m resume_tailor.master_gaps --jd-file job.txt          # preview
-python -m resume_tailor.master_gaps --jd-file job.txt --apply  # write (.bak made)
-```
+---
 
-### Run the dashboard
-Launch it the way Step 4 describes: double-click `Open INployed Dashboard.cmd`.
-The window opens maximized and gives you high-score triage, an application tracker with
-follow-up nudges, and run stats. A few behaviors worth knowing:
-- **Tailor résumé** runs in the background, so the UI stays responsive.
-- Select several jobs and it tailors them all at once, in parallel. A single failure is
-  reported without sinking the rest, and a quick warning appears before very large batches.
-- Tailoring streams live progress in the status bar (`Tailoring (2/3 done): … rephrasing
-  bullets`), so a multi-minute run is never a silent freeze.
-- The Step 4 get-started panel lists its three next actions (Open Settings · Find new jobs ·
-  Set up Resume Data) and is replaced by the job table as soon as you have scored jobs.
+## Limitations
 
-Each job tab keeps a tidy filter bar: a search box plus a **Filters** button that holds
-min-score / day / time / recommendation / Easy-Apply (on the Tracker, also *Follow-up due
-only*), and shows how many are active. The Tracker adds a one-click **status chip bar**
-(All / Applied / Interviewing / Offer / Rejected / Follow-up due, each with a live count).
-Each tab keys its rows to what matters there:
-**High Score** tints by recommendation + tailored-résumé (green apply · blue résumé ready ·
-red tailor failed · yellow consider · plain "don't consider"), the **Tracker** tints by application status +
-follow-up (blue applied · orange follow-up due · pink follow-up sent · yellow interviewing ·
-green offer · red rejected), and **All Jobs** stays an untinted plain list. A small
-**color legend** under each table (except All Jobs) spells the meanings out.
-
-The actions, the interface-size control, and a **Restart** button all share **one bottom
-bar**. You can size the whole interface to your display from the **Interface size** control:
-a slider with `-` / `+` buttons (10% steps, 75-150%), or **Ctrl +** / **Ctrl -** (and
-**Ctrl 0** to reset to 100%); the change applies **immediately** and your choice is
-remembered. **Restart** closes and reopens the dashboard.
-
-Selecting a job opens a **detail card** at the bottom: the job's title and meta line,
-score / deep-score / applicants chips, the model's reasoning, strengths, and gaps, a
-collapsed job-description snippet, and the per-job actions (**Open posting**, **Tailor
-résumé**, **Apply**). On the Tracker it switches to a tracker variant with status and
-follow-up pills plus a suggested next step. It appears only on the job-list tabs (**High
-Score / All Jobs / Tracker**) and hides itself elsewhere; **drag the divider above it**
-to make it taller or shorter.
-
-At-a-glance colors: a job whose tailored-résumé folder still exists on disk is tinted
-**blue** in the High Score / All Jobs lists (delete the folder and the tint clears on the
-next refresh); in the **Tracker**, an *applied* job is **blue** and a *rejected* one is **red**.
-
-Right-click any job to work with it: **Set status →** marks it applied / interviewing /
-rejected / offer from any tab, and the menu also offers **Delete job** (any row) and
-**Edit job…** (for jobs you added by hand). An **Add job by hand** button (High Score /
-All Jobs toolbar) takes a pasted posting URL or job description and runs it through the same
-scoring + tailoring pipeline as a scraped job. A **Find new jobs** button (bottom action bar)
-kicks off a fresh discovery + score on demand; it asks first (a *small test run* or a
-*full run*) because finding jobs costs real money / API credits.
-
-The **Tracker** tab has **Export tracker… / Import tracker…** buttons. Your whole
-application history (seen-state, statuses, and tailored-résumé links) lives in a local
-SQLite file, so export a backup and import it on another machine. Import **merges** (a
-more recent status wins; nothing is deleted). The **Stats** tab shows a **freshness
-badge** (mirrored in the window's header strip): green when the latest pipeline run is recent, amber *"the cloud job search may
-have failed"* once it's older than the **Flag data as stale after (hours)** setting
-(default 36), so a broken cron run doesn't go unnoticed.
-
-### Get fresh jobs
-- **From the dashboard:** click **Find new jobs** and choose a *small test run* or a
-  *full run*. It runs `scraper.py` then `score_jobs.py` in the background and
-  refreshes the view when done.
-- **On-demand (local CLI):** run your own pipeline, then open the dashboard:
-  ```bash
-  python scraper.py                              # full run (needs Bright Data keys in .env)
-  python scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
-  python score_jobs.py                           # needs Vertex AI / ADC (auto-loads .env locally)
-  ```
-  `--max-keywords N` / `--limit N` cap a run's cost: the discovery service bills per
-  collected posting, so the full keyword list (the VM default) can collect
-  thousands. Use the caps for a quick check.
-- **Hands-off (recommended for daily use):** run that pair on a small GCP VM via
-  cron and sync results to Google Drive, then drive the schedule, pauses, and config
-  pushes from the dashboard's **Settings → VM (cloud job discovery)** section (below).
-  (This path needs the **Google Drive desktop app** on your PC so the VM's output
-  folder syncs down; the local CLI path above doesn't.)
-
-### Configure everything from the Settings tab (no file editing)
-Open the dashboard (`python local/app.py`) and click the **Settings** tab: one
-schema-driven form that edits every tunable the project has, grouped and explained,
-so a non-technical user can set things up without touching a file. Each section has a
-**collapsible header** with a one-line tagline, so you can fold away the parts you're
-not editing (the tagline still tells you what each collapsed section is for) and tackle
-one group at a time:
-
-- **Credentials:** the job-data (Bright Data) API token, the Gemini API-key pool,
-  and the résumé-tailor API key. Each box holds the saved value (read straight from
-  your local `.env`), masked by default — untick *Hide* to reveal one, edit it to
-  change it, or clear the box to remove the key.
-- **Connection & paths:** the job-postings dataset ID, Google Cloud project +
-  location, your name (for résumé filenames), the résumé output folder and
-  `pdflatex` path (with **Browse…** buttons), and which Chrome profile to open
-  links in.
-- **Engine:** the tailor's **provider** (Gemini or Claude) and, on Gemini, which backend
-  it bills (Vertex project vs API key). See the Claude backend note below.
-- **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
-  keywords, remote types, spend caps, artifact toggles, and more.
-- **Models:** the scorer's two stages **and** all three résumé-tailor stages
-  (fast / standard / deep) are **editable dropdowns**: the recent Gemini 3.x ids by
-  default, plus the Claude tier ids used when a provider is set to `claude`. Pick one or
-  type a custom id.
-- **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
-  inbox the apply agent opens for verification emails; plus a snapshot of your
-  settings on every Save, restorable from **Restore from archive…**.
-- **VM (cloud job discovery):** an **Enable VM features** master toggle (off by default)
-  plus the non-secret connection details for your GCP job-discovery VM (instance, zone,
-  project, Linux user). Off hides the whole VM area and silences VM prompts; turn
-  it on to reveal the controls (see *Manage the VM* below).
-
-Guard rails keep it hard to break: fixed-choice fields are **dropdowns** (no
-typos), bounded numbers are **sliders**, multi-select fields are **checkboxes**,
-every field has a one-line explanation **and a muted tag naming the file its value
-is saved to** (e.g. `(.env)`, `(search_config.json)`) so you can find it yourself,
-numbers are range-checked on Save, there's a **Revert changes** button (undo your edits
-back to how the form opened) alongside **Restore defaults**, and **Save tells you exactly
-which fields changed** (secrets shown as *updated* / *cleared*, never the value).
-
-Edits are written atomically (with a `.bak`) to your git-ignored `.env`,
-`local/config.json`, and `search_config.json` / `scoring_config.json` /
-`apply_config.json`. Environment variables still override a file, and an absent file
-falls back to built-in defaults, so the VM keeps running unchanged.
-
-> **Claude backend (optional).** The résumé tailor and the local job scorer can each run
-> on your Claude Code CLI subscription instead of Gemini. Set **Resume tailor provider** or
-> **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
-> headless CLI with your subscription auth (no API key) and prompt caching; the tailor tiers
-> map fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`, deep → `claude-opus-5`. The
-> cloud VM always scores with Gemini, regardless of this setting.
-
-### What leaves your machine
-There is no analytics, no crash reporting, and no phone-home. The only outbound
-traffic is the work you asked for, and each destination gets only what it needs:
-
-| Destination | When | What it receives |
-| --- | --- | --- |
-| Bright Data | you run job discovery | your search keywords and the dataset ID |
-| Google Gemini (Vertex or API key) | scoring and résumé tailoring | the job description, your `resume.md` / `master_experience.yaml` content |
-| Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
-| the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
-| healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code — no job data, no identifiers |
-
-The healthchecks ping is a dead-man's switch so a silently failing cron run emails
-you instead of rotting in the log. It is off unless you set `HEALTHCHECKS_URL`
-yourself (see `scripts/run_scraper.sh`); unset, `ping_hc` is a no-op.
-
-Your credentials never cross providers: the Gemini and Bright Data secrets are
-stripped from the environment before the `claude` CLI is launched, the ATS master
-password lives in the Windows Credential Manager and only ever exits to the
-clipboard, and nothing is written to the repo — secrets stay in your git-ignored
-`.env`.
-
-### Manage the VM from the dashboard
-If you run discovery + scoring on a GCP VM, the dashboard drives it without
-SSH-by-hand; there's **no separate VM tab**. In
-**Settings**, turn on **Enable VM features** (off by default) and fill the VM
-section (instance, zone, project, Linux user); these non-secret identifiers are
-saved to your git-ignored `.env`. Authentication is your existing
-`gcloud auth login`; **no SSH password or key is ever stored.** The VM controls
-then appear at the bottom of Settings, letting you:
-
-- **Schedule:** pick the run times from the **Run 1-6** hour dropdowns (up to 6/day, at
-  least 2 h apart) and a frequency (daily / weekly / biweekly). Each picked time becomes
-  its **own** `crontab` line in a live preview, and on **Apply schedule to VM** it's
-  installed over `gcloud compute ssh`.
-  Each run is labelled by time of day: **morning / afternoon / evening / night**.
-- **Pause:** set an *until* date (optionally a time) and **Pause VM**: discovery
-  skips every run until then, then resumes on its own (no API spend while paused).
-  **Resume now** clears it.
-- **Push config to VM:** copy your current `search_config.json` / `scoring_config.json`
-  up with one click. And whenever you save a setting that **actually changes** a file
-  the VM reads, the dashboard asks if you'd like to push the changed file(s) right
-  then; re-saving the same values (or any non-VM setting) never prompts.
-
-Every VM action asks for confirmation first and runs through `gcloud`; nothing
-happens automatically. With **Enable VM features** off, none of these prompts ever
-appear.
-
-### Keep the scorer's résumé in sync (`resume.md`)
-The scorer matches every job against `resume.md`. When you edit your **Resume Data**
-(the master experience file), regenerate `resume.md` so the two stay in step. The
-**Resume Data** tab shows an **amber warning banner** whenever `resume.md` is older than
-your data (so the scorer isn't quietly matching against a stale résumé), with a one-click
-**Regenerate resume.md**. To regenerate: on the
-**Resume Data** tab, pick a model (`gemini-3.5-flash` by default, or 3.1 flash-lite /
-3.1 pro) and click **Generate from my data**. It uses Gemini to rebuild `resume.md`
-**faithfully, selecting and rephrasing your data, never inventing.** You **review (and
-can edit) the result before it's saved**; saving backs up the old file to `resume.md.bak`.
-If VM features are on, it then offers to push the new `resume.md` to the VM, and a
-**Push resume.md to VM** button does the same anytime (greyed out when VM features are
-off). *(Generating makes a Gemini API call; the push runs `gcloud`, both only on your
-click, each after a confirm.)*
-
-### Apply to a job (semi-automated, in Chrome)
-Every tailored résumé folder gets a self-contained **`apply.md`** apply sheet. It's a
-**fallback for application portals that don't auto-fill the form from your uploaded
-résumé**: when a portal parses your résumé upload into its own fields you don't need it;
-use it to fill the fields **by hand** when that doesn't work.
-
-The sheet opens with a "when to use this sheet" note and the fill-it-out instructions,
-then your candidate basics + structured address, education, **this job's tailored résumé
-translated into markdown** (the work experience, projects, leadership, and skills that
-actually landed on the PDF: company names, titles, dates, and every bullet, so Claude can
-fill the structured employment fields), and the active standard answers. It lists **no
-files to upload**; it's built from the tailoring run's own output, so it mirrors the PDF
-exactly with no extra AI call. To apply:
-
-1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card). Tailoring no longer pops
-   open File Explorer by default; flip **Settings → Open output folder after tailoring**
-   on if you want that.
-2. Click **Apply** on the detail card. The Apply button is **green only once the job has
-   both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
-   swaps the bottom detail card for a right-side **Apply panel** with the copyable
-   résumé / cover-letter paths and the apply sheet **rendered as formatted markdown** (the
-   **Copy apply sheet** button still copies the raw markdown source). An **Expand** button
-   opens the sheet in a large, resizable window for easier reading. Closing the panel brings
-   the detail card back; **"I applied to this job"** confirms, adds the
-   job to your Tracker as *applied*, and closes the panel (the right-click → *Set status →
-   applied* still works too).
-3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome
-   extension connected**, paste the apply sheet into the chat and let Claude fill the
-   Greenhouse / Lever / Ashby / Workday / generic form **page by page until the final
-   Submit screen, then it stops for you to review and send.**
-
-**What it will and won't do (safety):** the sheet's instructions tell the form-filler to
-fill every field it can and flag the rest; it **never logs in, never creates accounts,
-never enters passwords / payment / SSN / government IDs, never solves CAPTCHAs, and never
-clicks the final submit.** At a login / account / verification / CAPTCHA wall it pauses and
-asks you to do that one step, then resumes. Where the form asks for an electronic signature
-it types your name + today's date; a required field with no answer gets a `XXXXX`
-placeholder it flags for you. Manage your reusable answers (including address) in the
-**Apply Answers** tab: add your own, and mark each *fixed* (never changed) or *open-ended*
-(adaptable per job).
-
-CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
-
-**Batch queue (advanced).** The **Auto-apply** tab is a live view of a batch apply
-queue: **Queue auto-apply** adds the selected tailored jobs, and the tab tracks each one
-(queued, in progress, ready to submit, needs human). Draining the queue runs the same
-semi-automated, **parks-at-review, never-auto-submits** flow one job at a time as an agent
-session, so it's an optional power-user path. For everyday use, the per-job **Apply** flow
-above is the recommended way in.
-
+- **Windows-first.** The dashboard, launcher, and setup script are tested on Windows only;
+  Linux runs the pipeline scripts (that is the VM), macOS is untested.
+- **Costs money to run at full tilt.** Job discovery bills per collected posting and scoring
+  bills per token, so an unbounded run is the expensive path. The caps
+  (`--max-keywords`, `--limit`, the spend guards) exist because of that.
+- **Single-user by design.** No accounts, no server, no multi-tenancy: it reads one person's
+  master experience file and writes to one local SQLite file.
+- **Discovery is one vendor deep.** Postings come from a Bright Data LinkedIn dataset; a
+  broken dataset or a schema change stops the front of the pipeline.
+- **Not an auto-submitter, and not a résumé writer.** The apply flow parks at review, and
+  the tailor can only select and rephrase facts you wrote yourself — it will never fill a
+  thin experience file with impressive-sounding text.
+- **Next:** more discovery sources behind the same normalizer, and a scoring calibration
+  loop that learns from tracker outcomes instead of a fixed rubric.
 ---
 
 ## How the résumé engine stays honest
@@ -450,6 +212,28 @@ The composition pipeline (in `local/resume_tailor/`) is built around one rule,
 3. **layout**: bullets are driven to exact printed-line budgets so the résumé
    fills one page cleanly (single-line bullets ≥75% full, no stubby lines).
 4. **compile**: render LaTeX and enforce one page.
+
+```mermaid
+flowchart LR
+    Y[("master_experience.yaml<br/>your atoms")] --> S["select (flash)<br/>choose + group atoms"]
+    JD["job description"] --> S
+    S --> R["rephrase (pro)<br/>one bullet per group"]
+    R --> V{"verify.py<br/>every distinctive token<br/>traces to an atom?"}
+    V -->|yes| LO["layout<br/>fit exact line budgets"]
+    V -->|no| RV["revert to last grounded<br/>text, else drop"]
+    RV --> LO
+    LO --> C["compile LaTeX<br/>enforce one page"]
+    C --> P["tailored PDF"]
+```
+
+**A deterministic backstop enforces it** (`local/resume_tailor/verify.py`). A job
+description is untrusted internet text riding inside the generation prompt, so the prompt
+alone is not a guarantee. After generation, and with no LLM involved, every bullet's
+distinctive tokens — numbers, proper nouns, tool names — must trace back to the atoms that
+bullet was built from. One that introduces an unseen token is reverted to its last grounded
+version, or dropped. The module's own docstring states what the gate does *not* catch (an
+invented claim made of ordinary lowercase words has no distinctive token to check), because
+a guarantee is only worth its stated edges.
 
 The skills section follows the same rule. A **Methods** line surfaces the concept
 keywords an ATS screens for ("ETL", "A/B testing", "data analysis") drawn only from
@@ -477,7 +261,7 @@ The suite sets `QT_QPA_PLATFORM=offscreen` itself, so the same two commands work
 PowerShell, cmd, and bash. (CI exports it explicitly; see `.github/workflows/ci.yml`.)
 
 ## Screenshots
-![The High Score tab showing scored jobs with score badges, deep-score bars, apply/consider/tailored recommendation pills and row tints, a color legend, and the selected job's detail card (reason, strengths, gaps, and the Tailor résumé / Apply actions) above the bottom action bar (representative sample data)](docs/dashboard.png)
+![The High Score tab: scored job rows tinted by recommendation, with score badges, deep-score bars, and apply / consider / tailored pills, above the selected job’s detail card showing the score reason, strengths, gaps, and the Tailor résumé and Apply buttons. Representative sample data.](docs/dashboard.png)
 
 The **High Score** tab surfaces only unseen postings scoring ≥4, ordered by score then
 fewest applicants (the freshest apply window first). Selecting a row opens the job's
@@ -490,9 +274,14 @@ Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
 scraper.py              job discovery (fetches + normalizes postings)
 score_jobs.py           two-stage Gemini relevance scorer
 run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
+keypool.py              Gemini key/credential pool + rotation for the scorer
+claude_cli.py           optional Claude Code CLI backend (tailor + local scorer)
+merge_incoming.py       folds locally-added jobs into the master CSV on the VM
+prune_master.py         retention prune: blanks old jobs' full HTML description (the master's biggest column)
 scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
 scripts/setup.ps1       first-run config writer (.env / config.json / master_experience.yaml)
-scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots for the docs
+scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots (synthetic data)
+scripts/build_demo_media.py assembles docs/demo.gif + docs/dashboard.png from those shots
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
@@ -503,7 +292,7 @@ local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashb
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
-docs/                   ARCHITECTURE (code tour), CREDITS (attribution)
+docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CREDITS (attribution)
 ```
 
 ## License

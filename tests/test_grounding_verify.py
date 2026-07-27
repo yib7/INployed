@@ -182,3 +182,38 @@ def test_generate_body_raises_when_repair_cannot_ground(monkeypatch):
     with pytest.raises(llm.LLMError):
         coverletter.generate_body("plain jd", "Engineer", "Acme",
                                   {"a1": "Built dashboards in Tableau"})
+
+
+# ── C6-10: nested mapping fields are part of an atom's own payload ────────────
+
+_NESTED_ATOMS = {
+    "n1": {
+        "what": "Rebuilt the ingest path",
+        # master_experience.yaml permits a nested mapping. group_source_text used
+        # to collect only str and list fields, so these figures — the user's OWN
+        # written facts — read as ungrounded and the gate dropped the bullet.
+        "metrics": {"throughput": "40,000 rows nightly", "latency": "p99 220ms"},
+        "stack": {"languages": ["Python"], "stores": {"primary": "PostgreSQL"}},
+        "_block": "Globex",
+    },
+}
+
+
+def test_group_source_text_collects_nested_mapping_fields(monkeypatch):
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: dict(_NESTED_ATOMS))
+    src = verify.group_source_text(["n1"], extra="Globex")
+    for fragment in ("40,000", "220ms", "Python", "PostgreSQL"):
+        assert fragment in src, f"{fragment!r} missing from {src!r}"
+
+
+def test_nested_metrics_do_not_trip_the_gate(monkeypatch):
+    """The regression this guards: a legitimate bullet quoting the atom's own
+    nested figures was being reverted or dropped as a fabrication."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: dict(_NESTED_ATOMS))
+    src = verify.group_source_text(["n1"], extra="Globex")
+    assert verify.unseen_tokens(
+        "Rebuilt the ingest path in Python to PostgreSQL, moving 40,000 rows "
+        "nightly at p99 220ms", src) == []
+    # and a genuine fabrication is still caught
+    assert "Kubernetes" in verify.unseen_tokens(
+        "Rebuilt the ingest path on Kubernetes", src)

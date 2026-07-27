@@ -19,6 +19,26 @@ verb) are never traced, matching is case-insensitive substring for words (so
 "SQL" is grounded by "PostgreSQL", but claiming "PostgreSQL" over a bare "SQL"
 atom is not), and numbers must match on their own digit boundaries ("40" is NOT
 grounded by "40,000" — a different figure is a different claim).
+
+What this gate does NOT catch (audit C6-11 — stated so nobody reads it as
+airtight):
+
+  * Only DISTINCTIVE tokens are traced — numbers, and words carrying a capital
+    or internal case. An invented claim phrased entirely in lowercase common
+    words ("led the team of engineers") has no distinctive token to check and
+    passes. The gate stops fabricated *credentials, figures and proper nouns*,
+    which is the injection payload that matters; it is not a general truth check.
+  * The first word of each sentence is skipped, because that slot is the
+    generated action verb. A proper noun that lands sentence-initially is
+    therefore untraced.
+  * For the COVER LETTER, `letter_allowed_source` deliberately whitelists the
+    whole job description, since a letter is expected to echo the posting. A
+    fabricated fact planted IN the JD can therefore pass the letter gate by
+    design. JD-borne injection is fenced at the prompt instead; the resume
+    bullets, which are the artifact that gets submitted, do NOT whitelist the JD.
+
+The résumé-bullet path is the strict one. Treat the letter gate as a
+from-nowhere filter, not an injection defence.
 """
 from __future__ import annotations
 
@@ -99,15 +119,29 @@ def group_source_text(ids: Iterable[str], extra: str = "") -> str:
     and list fields of its own atoms, plus `extra` (entry/block names)."""
     parts: List[str] = [extra or ""]
     catalog = assets.atoms_by_id()
+
+    def _walk(val: Any) -> None:
+        """Collect every leaf scalar. Atom fields are usually strings or lists,
+        but master_experience.yaml allows a nested mapping (e.g. a `metrics:`
+        block). The old flat pass skipped dicts entirely (audit C6-10), so an
+        atom that recorded its numbers under `metrics:` had its OWN figures
+        treated as ungrounded and its legitimate bullet dropped."""
+        if isinstance(val, dict):
+            for k, v in val.items():
+                if not str(k).startswith("_"):
+                    _walk(v)
+        elif isinstance(val, (list, tuple, set)):
+            for v in val:
+                _walk(v)
+        elif val is not None and not isinstance(val, bool):
+            parts.append(str(val))
+
     for aid in ids:
         atom: Dict[str, Any] = catalog.get(aid) or {}
         for key, val in atom.items():
             if key.startswith("_"):
                 continue
-            if isinstance(val, str):
-                parts.append(val)
-            elif isinstance(val, list):
-                parts.extend(str(x) for x in val)
+            _walk(val)
     return "\n".join(p for p in parts if p)
 
 

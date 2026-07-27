@@ -307,9 +307,14 @@ def main() -> int:
     # Point the Stats tab at a synthetic run_stats.csv (never the user's real
     # Drive folder -- pin the root resolver to the temp dir) so the metrics
     # table and the "Fresh" chip render instead of the not-synced placeholder.
-    _write_run_stats(tmp_dir / "run_stats.csv")
+    stats_path = tmp_dir / "run_stats.csv"
+    _write_run_stats(stats_path)
     from qt import main_window as _mw  # noqa: E402
     _mw.gdrive_root_dir = lambda _paths: tmp_dir
+    # _refresh_stats renders from the CACHED frame `_load_frames` reads
+    # off-thread; no loader runs here, so install it directly (patching
+    # gdrive_root_dir alone leaves the tab on its "not synced yet" placeholder).
+    win._stats_df = pd.read_csv(stats_path)
     win._apply_df_views()
     win._refresh_stats()
     _write_queue(queue_path, _queue_jobs())

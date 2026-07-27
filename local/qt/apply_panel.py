@@ -79,6 +79,7 @@ class ApplyPanel(QtWidgets.QWidget):
         # markdown source via copy_sheet() — see self._raw_md. Read-only by default;
         # don't follow links (this is a static preview, not a browser).
         self._sheet = QtWidgets.QTextBrowser()
+        self._sheet.setAccessibleName("Apply sheet")
         self._sheet.setOpenLinks(False)
         self._sheet.setOpenExternalLinks(False)
         v.addWidget(self._sheet, 1)
@@ -102,6 +103,7 @@ class ApplyPanel(QtWidgets.QWidget):
         lab.setProperty("muted", True)
         lab.setFixedWidth(96)
         edit = QtWidgets.QLineEdit()
+        edit.setAccessibleName(label)
         edit.setReadOnly(True)
         copy = QtWidgets.QPushButton("Copy")
         copy.setFixedWidth(56)

@@ -81,6 +81,7 @@ class JobsTab(QtWidgets.QWidget):
         bar.addWidget(self.search, 1)
 
         self.search_col = QtWidgets.QComboBox()
+        self.search_col.setAccessibleName("Search in column")
         self.search_col.addItem("All")
         self.search_col.addItems([COLUMN_LABELS.get(c, c) for c in self.col_ids])
         self.search_col.currentIndexChanged.connect(self._apply_filters)
@@ -91,18 +92,23 @@ class JobsTab(QtWidgets.QWidget):
         # live in a single "Filters" popup so the bar stays readable. The widgets
         # and their signals are unchanged — only their parent moves into the popup.
         self.minscore = QtWidgets.QComboBox()
+        self.minscore.setAccessibleName("Minimum score")
         self.minscore.addItems(["Any", "1", "2", "3", "4", "5"])
         self.minscore.currentIndexChanged.connect(self._apply_filters)
         self.day = QtWidgets.QComboBox()
+        self.day.setAccessibleName("Day")
         self.day.addItem("All")
         self.day.currentIndexChanged.connect(self._apply_filters)
         self.time = QtWidgets.QComboBox()
+        self.time.setAccessibleName("Run time")
         self.time.addItems(["All", *RUN_LABELS])
         self.time.currentIndexChanged.connect(self._apply_filters)
         self.reco = QtWidgets.QComboBox()
+        self.reco.setAccessibleName("Recommendation")
         self.reco.addItems(["All", "apply", "consider", "skip"])
         self.reco.currentIndexChanged.connect(self._apply_filters)
         self.easy = QtWidgets.QComboBox()
+        self.easy.setAccessibleName("Easy Apply")
         self.easy.addItems(["All", "Easy Apply", "Not Easy Apply"])
         self.easy.currentIndexChanged.connect(self._apply_filters)
         self._build_filters_popup()
@@ -161,9 +167,9 @@ class JobsTab(QtWidgets.QWidget):
         hh.setSortIndicatorShown(True)
         hh.setSectionsClickable(True)
         hh.sectionClicked.connect(self._on_header_clicked)
-        hh.setStretchLastSection(True)
         hh.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         self._set_column_widths(columns_with_widths(self.table_key, self.col_ids))
+        self._update_stretch()
         layout.addWidget(self.table, 1)
 
         # A compact, tab-specific key for the row tints. The All Jobs tab is a
@@ -231,6 +237,24 @@ class JobsTab(QtWidgets.QWidget):
     def _set_column_widths(self, widths: list[int]) -> None:
         for i, w in enumerate(widths):
             self.table.setColumnWidth(i, w)
+
+    def _update_stretch(self) -> None:
+        """Spend the table's spare width on Title, not on the trailing Link
+        column. Link holds one fixed-width "Open" link, so stretching the last
+        section (Qt's default) left a dead gutter hundreds of pixels wide on a
+        normal window while job titles truncated. Falls back to the default when
+        Title is hidden."""
+        hh = self.table.horizontalHeader()
+        interactive = QtWidgets.QHeaderView.ResizeMode.Interactive
+        idx = self.col_ids.index("job_title") if "job_title" in self.col_ids else -1
+        for i in range(len(self.col_ids)):
+            if hh.sectionResizeMode(i) != interactive:
+                hh.setSectionResizeMode(i, interactive)
+        if idx < 0 or self.table.isColumnHidden(idx):
+            hh.setStretchLastSection(True)
+            return
+        hh.setStretchLastSection(False)
+        hh.setSectionResizeMode(idx, QtWidgets.QHeaderView.ResizeMode.Stretch)
 
     def add_toolbar_button(self, label: str, callback, accent: bool = False):
         """Add an extra action button to the filter bar (before the count label)."""
@@ -347,6 +371,7 @@ class JobsTab(QtWidgets.QWidget):
     def _apply_column_visibility(self) -> None:
         for i, cid in enumerate(self.col_ids):
             self.table.setColumnHidden(i, cid in self._hidden)
+        self._update_stretch()
 
     def set_column_hidden(self, cid: str, hidden: bool) -> None:
         """Hide/show one column; never lets every column be hidden (blank table)."""

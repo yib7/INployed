@@ -6,11 +6,37 @@ and calls `set_stats`. Reuses `JobsTableModel` for the read-only metrics grid.
 from __future__ import annotations
 
 import pandas as pd
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from jobsdata import STATS_COLUMNS
 from qt import theme
 from qt.jobs_model import JobsTableModel
+
+# Every metrics column except the two identifiers is a count -> right-align it
+# and group the thousands, so token counts stay scannable down the column.
+_TEXT_COLUMNS = {"timestamp", "input_csv"}
+
+
+class _MetricDelegate(QtWidgets.QStyledItemDelegate):
+    """Right-aligns numeric metric cells and renders 118000 as 118,000."""
+
+    def __init__(self, columns: list[str], parent=None):
+        super().__init__(parent)
+        self._columns = columns
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        col = index.column()
+        if not (0 <= col < len(self._columns)):
+            return
+        if self._columns[col] in _TEXT_COLUMNS:
+            return
+        option.displayAlignment = (QtCore.Qt.AlignmentFlag.AlignRight
+                                   | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        try:
+            option.text = f"{int(float(option.text)):,}"
+        except (TypeError, ValueError):
+            pass
 
 
 class StatsTab(QtWidgets.QWidget):
@@ -28,13 +54,18 @@ class StatsTab(QtWidgets.QWidget):
         self.summary.setWordWrap(True)
         v.addWidget(self.summary)
 
-        self.model = JobsTableModel([c for c, _ in STATS_COLUMNS])
+        stats_cols = [c for c, _ in STATS_COLUMNS]
+        self.model = JobsTableModel(stats_cols)
         self.table = QtWidgets.QTableView()
         self.table.setModel(self.model)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(False)
         theme.register_table(self.table)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self._delegate = _MetricDelegate(stats_cols, self.table)
+        self.table.setItemDelegate(self._delegate)
+        # Stretching the last section made "Out tok" a half-empty column the
+        # width of the window; leave the spare width as table background.
+        self.table.horizontalHeader().setStretchLastSection(False)
         for i, (_, w) in enumerate(STATS_COLUMNS):
             self.table.setColumnWidth(i, w)
         v.addWidget(self.table, 1)

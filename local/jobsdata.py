@@ -68,7 +68,7 @@ HIGH_SCORE_COLUMNS = [
     ("job_title", 250),
     ("company_name", 170),
     ("job_location", 140),
-    ("url", 240),
+    ("url", 90),
 ]
 
 ALL_COLUMNS = [
@@ -81,7 +81,7 @@ ALL_COLUMNS = [
     ("job_title", 240),
     ("company_name", 170),
     ("job_location", 140),
-    ("url", 220),
+    ("url", 90),
     ("job_posted_date", 120),
 ]
 
@@ -95,8 +95,8 @@ TRACKER_COLUMNS = [
     ("deep_score", 70),
     ("job_title", 240),
     ("company_name", 170),
-    ("url", 220),
-    ("resume", 60),
+    ("url", 90),
+    ("resume", 80),
 ]
 
 STATS_COLUMNS = [

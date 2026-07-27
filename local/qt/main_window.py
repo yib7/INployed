@@ -259,6 +259,7 @@ class MainWindow(QtWidgets.QMainWindow):
         minus.clicked.connect(lambda: self._nudge_scale(-10))
         h.addWidget(minus)
         self._scale_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._scale_slider.setAccessibleName("Interface size")
         self._scale_slider.setMinimum(75)
         self._scale_slider.setMaximum(150)
         self._scale_slider.setSingleStep(10)
@@ -432,8 +433,14 @@ class MainWindow(QtWidgets.QMainWindow):
         tip = QtWidgets.QLabel("Ctrl/Shift-click for multiple · Ctrl+A selects all · "
                                "double-click opens · right-click for status (incl. applied) / block")
         tip.setProperty("muted", True)
-        bar.addWidget(tip)
-        bar.addStretch(1)
+        # The hint is the one thing in this bar that may be clipped when the
+        # window is narrow (Ignored = no minimum), so the controls to its right
+        # keep their full width instead of every element shrinking together.
+        tip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                          QtWidgets.QSizePolicy.Policy.Preferred)
+        # It also carries the bar's only stretch, so it shows in full on a wide
+        # window and simply gives ground as the window narrows.
+        bar.addWidget(tip, 1)
 
         def button(text, slot, accent=False):
             b = QtWidgets.QPushButton(text)
@@ -461,7 +468,12 @@ class MainWindow(QtWidgets.QMainWindow):
         sep.setFrameShape(QtWidgets.QFrame.Shape.VLine)
         sep.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         bar.addWidget(sep)
-        bar.addWidget(self._build_scale_bar())
+        scale_bar = self._build_scale_bar()
+        # Never squeeze the scale control: at a 1024-wide window the label used
+        # to clip to "Inter" and the readout to "110".
+        scale_bar.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
+                                QtWidgets.QSizePolicy.Policy.Preferred)
+        bar.addWidget(scale_bar)
         self.btn_restart = button("Restart", self._restart_app)
         self.btn_restart.setProperty("tier", "tertiary")
         self.btn_restart.setToolTip("Close and reopen the dashboard")
@@ -2027,7 +2039,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._record_tailor_result(r)
         total = len(results)
         if fails:
-            lines = "\n".join(f"  - {r['label']}: {r['error']}" for r in fails)
+            lines = "\n".join(
+                f"  - {r.get('label') or r.get('id') or 'job'}: "
+                f"{r.get('error') or 'unknown error'}" for r in fails)
             QtWidgets.QMessageBox.warning(
                 self, "Tailor resume",
                 f"Tailored {len(oks)} of {total} resume(s).\n\nFailed:\n{lines}")

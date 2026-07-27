@@ -28,6 +28,18 @@ NUMERIC_COLS = {
 SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 _DISPLAY = QtCore.Qt.ItemDataRole.DisplayRole
 _BACKGROUND = QtCore.Qt.ItemDataRole.BackgroundRole
+_ALIGNMENT = QtCore.Qt.ItemDataRole.TextAlignmentRole
+
+# Header labels align with the cells beneath them (Qt centres every header by
+# default, which reads as a misalignment once a column is wide): badge columns
+# are painted centred, counts are painted right, everything else left.
+_HEADER_CENTER = frozenset({"score", "deep_score", "recommendation",
+                            "status", "follow_up"})
+_HEADER_RIGHT = frozenset({
+    "applicants", "days", "attempts", "missing", "rows_in", "filtered_out",
+    "llm_scored", "llm_errors", "stage2_done", "rescore_attempted",
+    "rescore_scored", "llm_calls", "prompt_tokens", "output_tokens",
+})
 
 
 class JobsTableModel(QtCore.QAbstractTableModel):
@@ -159,12 +171,22 @@ class JobsTableModel(QtCore.QAbstractTableModel):
         return None
 
     def headerData(self, section, orientation, role=_DISPLAY):
-        if role != _DISPLAY:
+        if orientation != QtCore.Qt.Orientation.Horizontal:
+            return section + 1 if role == _DISPLAY else None
+        if not (0 <= section < len(self._columns)):
             return None
-        if orientation == QtCore.Qt.Orientation.Horizontal:
-            cid = self._columns[section]
+        cid = self._columns[section]
+        if role == _DISPLAY:
             return COLUMN_LABELS.get(cid, cid)
-        return section + 1
+        if role == _ALIGNMENT:
+            if cid in _HEADER_CENTER:
+                h = QtCore.Qt.AlignmentFlag.AlignHCenter
+            elif cid in _HEADER_RIGHT:
+                h = QtCore.Qt.AlignmentFlag.AlignRight
+            else:
+                h = QtCore.Qt.AlignmentFlag.AlignLeft
+            return h | QtCore.Qt.AlignmentFlag.AlignVCenter
+        return None
 
     # ---- helpers used by the tab/tests --------------------------------------
 

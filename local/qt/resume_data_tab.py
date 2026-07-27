@@ -137,6 +137,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         title.setProperty("heading", True)
         bar.addWidget(title)
         self.md_model = QtWidgets.QComboBox()
+        self.md_model.setAccessibleName("Scorer résumé model")
         self.md_model.setEditable(True)
         self.md_model.addItems(list(settings.GEMINI_MODELS))
         self.md_model.setCurrentText("gemini-3.5-flash")
@@ -295,6 +296,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         vh_cap.setWordWrap(True)
         vh.addWidget(vh_cap)
         vb_edit = QtWidgets.QPlainTextEdit("\n".join(str(b) for b in saved_vb))
+        vb_edit.setAccessibleName("Verbatim bullets")
         vb_edit.setPlaceholderText("One bullet per line, e.g.\n"
                                    "Led a team of 5 to ship X\nBuilt Y, cutting Z by 30%")
         vb_edit.setMinimumHeight(110)

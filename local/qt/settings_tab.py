@@ -302,6 +302,7 @@ class SettingsForm(QtWidgets.QWidget):
             return self._multichoice_widget(f, value)
         if f.type == "list":
             txt = QtWidgets.QPlainTextEdit()
+            txt.setAccessibleName(f.label)
             txt.setMinimumHeight(150)
             txt.setPlainText("\n".join(str(v) for v in (value if isinstance(value, list) else [])))
             self._lists[f.key] = txt
@@ -327,6 +328,7 @@ class SettingsForm(QtWidgets.QWidget):
         h = QtWidgets.QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
         slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        slider.setAccessibleName(f.label)
         slider.setMinimum(int(f.min))
         slider.setMaximum(int(f.max))
         try:
@@ -363,6 +365,7 @@ class SettingsForm(QtWidgets.QWidget):
         h = QtWidgets.QHBoxLayout(cell)
         h.setContentsMargins(0, 0, 0, 0)
         edit = QtWidgets.QLineEdit("" if value is None else str(value))
+        edit.setAccessibleName(f.label)
         h.addWidget(edit, 1)
         browse = QtWidgets.QPushButton("Browse…")
         browse.clicked.connect(lambda: self._browse(edit, f.path_kind))
@@ -668,6 +671,7 @@ class ArchiveDialog(QtWidgets.QDialog):
         v.addWidget(self.listw, 1)
 
         self.preview = QtWidgets.QPlainTextEdit()
+        self.preview.setAccessibleName("File preview")
         self.preview.setReadOnly(True)
         self.preview.setMaximumHeight(150)
         v.addWidget(self.preview)

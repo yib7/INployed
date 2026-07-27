@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from csv_io import read_csv_gz, reconcile_file  # noqa: E402
+from csv_io import reconcile_file  # noqa: E402
 from jsonutil import atomic_write_json  # noqa: E402
 from locks import SingleInstance  # noqa: E402  (shared single-instance lock)
 from seen_db import SeenRegistry  # noqa: E402

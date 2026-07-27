@@ -74,7 +74,10 @@ def test_concurrent_append_and_delete_lose_no_row(tmp_path, monkeypatch):
             errors.append(e)
 
     ta, td = threading.Thread(target=appender), threading.Thread(target=deleter)
-    ta.start(); td.start(); ta.join(30); td.join(30)
+    ta.start()
+    td.start()
+    ta.join(30)
+    td.join(30)
     assert not errors
     assert _master_ids(master) == set(keep_ids)
 

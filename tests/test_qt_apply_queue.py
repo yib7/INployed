@@ -19,7 +19,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 from PySide6 import QtCore, QtWidgets
 
 REPO = Path(__file__).resolve().parent.parent

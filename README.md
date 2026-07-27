@@ -74,12 +74,20 @@ install it only when you want that feature.
   `gcloud auth` login step (and the VM controls).
 - *(Optional, for scraping your own jobs)* a **Bright Data** account + LinkedIn dataset.
 
-> **Platform:** Windows is the primary target. The `Open INployed Dashboard.cmd`
-> launcher, the `setup.ps1` wizard, and the optional Task Scheduler / GCP-VM
-> automation are Windows-first. The dashboard and résumé engine themselves are
-> cross-platform Python + Qt, so on **macOS / Linux** you can install the deps with
-> `pip` and run `python local/app.py` directly (use MacTeX / TeX Live for `pdflatex`
-> instead of MiKTeX).
+> **Platform support — what is actually tested:**
+>
+> | | Status |
+> |---|---|
+> | **Windows 10/11** | Supported. Dashboard + full test suite run here, and CI runs the suite on `windows-latest` every push. |
+> | **Linux** | Supported for the **pipeline scripts only** (`scraper.py`, `score_jobs.py`) — that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
+> | **macOS** | Untested. Not claimed. |
+>
+> The `Open INployed Dashboard.cmd` launcher, the `setup.ps1` wizard, and the
+> optional Task Scheduler / GCP-VM automation are Windows-only. The dashboard and
+> résumé engine are plain Python + Qt with no Windows-specific dependency, so
+> `pip install -r requirements.txt && python local/app.py` will most likely work on
+> macOS or Linux (use MacTeX / TeX Live for `pdflatex` instead of MiKTeX) — but
+> nobody has run it there, so treat it as unverified rather than supported.
 
 ### 2. One-command setup
 ```powershell

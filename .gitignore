@@ -1,5 +1,15 @@
 # ── Secrets / credentials ────────────────────────────────────────────────────
 .env
+# Any .env variant (.env.local, .env.vm, …) — but keep the committed template.
+.env.*
+!.env.example
+# Keys, certs, and service-account JSON, wherever they land.
+*.pem
+*.key
+*.p12
+*.pfx
+service-account*.json
+credentials.json
 # Backups written next to atomically-saved configs (.env.bak holds secrets;
 # config.json.bak etc. mirror git-ignored configs); never commit them.
 *.bak
@@ -48,6 +58,17 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+# The optional project-local venv the README and the .cmd launcher look for.
+venv/
+.venv/
+env/
+# Packaging artifacts (no packaging step today; here so one can't slip in).
+build/
+dist/
+*.egg-info/
 
 # ── OS / editor / IDE ────────────────────────────────────────────────────────
 .DS_Store

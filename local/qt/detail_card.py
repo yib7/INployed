@@ -1,4 +1,4 @@
-"""The job detail card (cycle 40, Phase 3b) — replaces the plain ScorePreview.
+"""The job detail card — replaces the plain ScorePreview.
 
 `JobDetailCard` is a `QFrame[card="true"]` that renders one selected job:
 title + meta line, the action row (Open posting / Tailor / Apply — the main

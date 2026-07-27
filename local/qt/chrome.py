@@ -1,4 +1,4 @@
-"""Screen chrome for the restyled dashboard (cycle 40, Phase 3a).
+"""Screen chrome for the restyled dashboard.
 
 Small custom-painted widgets that QSS can't express because their radii and
 paddings track the live ui-scale (the stylesheet is static and never

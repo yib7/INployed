@@ -1,10 +1,10 @@
 """The "Auto-apply" tab: a live, read-only mirror of the batch auto-apply queue.
 
-The queue file itself (SP2's local/apply_queue.py) is the single source of
+The queue file itself (local/apply_queue.py) is the single source of
 truth shared with the agent CLI; this panel only *displays* it and offers the
 few human controls around it — Re-queue / Remove / Clear finished, opening a
 job's artifacts, the master-password state, and "Copy kickoff command" (the
-exact PowerShell line that starts the SP4 drain session).
+exact PowerShell line that starts the apply-agent drain session).
 
 Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True — the
 panel must never rename a file a locked writer owns). A QFileSystemWatcher
@@ -42,7 +42,7 @@ from qt.delegates import STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
 # cd's here so `claude` picks up the repo's .claude/skills/auto-apply skill.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# SP4's skill mirrors this prompt verbatim — keep the two in sync.
+# the apply agent's skill mirrors this prompt verbatim — keep the two in sync.
 KICKOFF_PROMPT = "Use the auto-apply skill: drain the apply queue"
 
 # PowerShell-safe (5.1: `;` chains, no `&&`; quoted path survives spaces).

@@ -7,7 +7,7 @@ entry carries metadata the dashboard and the apply skill both use:
      "kind":   "fixed" | "open-ended",       # fixed = never altered (auth, EEO);
                                               # open-ended = lightly adaptable per job
      "status": "active"}                      # always active — the needs-review status was
-                                              # retired in cycle 13 (validate() still tolerates
+                                              # retired (validate() still tolerates
                                               # a legacy value so an old store loads)
 
 `answer` is always stored as a string (keeps the dashboard table editor simple);
@@ -36,7 +36,7 @@ REPO_ROOT = PKG_DIR.parent.parent                  # scrape_data
 STORE_PATH = REPO_ROOT / "apply_answers.json"
 
 KINDS = ("fixed", "open-ended")
-# "needs-review" is retired (cycle 13) — the editor only ever writes "active". It
+# "needs-review" is retired — the editor only ever writes "active". It
 # stays accepted here so an old store that still carries it loads without erroring;
 # such a row migrates to "active" the next time the editor saves.
 STATUSES = ("active", "needs-review")

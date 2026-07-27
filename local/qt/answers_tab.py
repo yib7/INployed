@@ -4,7 +4,7 @@ A table over `apply_answers.json`: one row per screening-question answer (questi
 answer, kind fixed/open-ended). Add / edit / delete. Save validates via
 `apply_answers.validate` and backs up to `.bak`; "Revert to opening state" restores
 the snapshot taken when the editor opened. Every row is saved active — the
-needs-review status (and its filter) was retired in cycle 13.
+needs-review status (and its filter) was retired.
 """
 from __future__ import annotations
 

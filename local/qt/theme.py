@@ -1,4 +1,4 @@
-"""Token-driven dark theme for the Qt dashboard (restyle cycle 40).
+"""Token-driven dark theme for the Qt dashboard.
 
 Single source of truth for the design tokens (surfaces, borders, text tiers,
 semantic color families, type scale, metric sizes) plus a Fusion-based dark

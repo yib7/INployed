@@ -397,7 +397,7 @@ class JobsTab(QtWidgets.QWidget):
         open_act = menu.addAction("Open in browser")
         status_menu = menu.addMenu("Set status")
         status_acts = {status_menu.addAction(st): st for st in APP_STATUSES}
-        # Batch auto-apply queueing (SP3): only when the main window wired the
+        # Batch auto-apply queueing : only when the main window wired the
         # callback; fires with every selected id, not just the clicked row.
         queue_act = None
         if self._on_queue_apply is not None:

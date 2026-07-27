@@ -1,4 +1,4 @@
-"""Row delegate for the job tables (restyle cycle 40, Phase 2).
+"""Row delegate for the job tables.
 
 `JobRowDelegate` paints EVERY cell itself and never calls `super().paint()`:
 under Fusion + a stylesheet, `CE_ItemViewItem` re-enters the QSS path and

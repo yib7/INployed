@@ -1,4 +1,4 @@
-"""ATS-account ledger + master-password clipboard transit (SP2).
+"""ATS-account ledger + master-password clipboard transit.
 
 Job portals (Workday, iCIMS, ...) force per-company accounts. The design here
 keeps ONE master password in the Windows Credential Manager (service
@@ -156,7 +156,7 @@ def set_master_password(password: Optional[str] = None) -> bool:
     """Store the master password in the Credential Manager.
 
     password=None is the interactive path (getpass twice, must match — the CLI);
-    a str is the programmatic path (SP3's QInputDialog hands the typed value in,
+    a str is the programmatic path (the dashboard QInputDialog hands the typed value in,
     no prompt ever fires). A programmatic empty/whitespace-only value raises
     ValueError. The value is never echoed, printed, or returned either way."""
     kr = _keyring()

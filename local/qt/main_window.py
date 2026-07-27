@@ -358,7 +358,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                          vm_panel_factory=self._make_vm_panel)
         self.resume_data_tab = ResumeDataEditor()
         self.answers_tab = AnswersEditor()
-        # The Auto-apply tab mirrors the batch apply queue (SP3). Its mutations
+        # The Auto-apply tab mirrors the batch apply queue. Its mutations
         # ride the background write queue via _submit_queue_write; the queue
         # path is resolved by apply_queue at call time (APPLY_QUEUE_PATH-aware).
         self.apply_queue_panel = ApplyQueuePanel(
@@ -2035,7 +2035,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {exc}")
         self._set_status(f"Tailor failed: {exc}")
 
-    # ---- batch auto-apply queueing (SP3) ---------------------------------------
+    # ---- batch auto-apply queueing ---------------------------------------
 
     def _submit_queue_write(self, fn, on_done=None, on_error=None) -> None:
         """Run an apply-queue mutation on the background write queue.
@@ -2076,7 +2076,7 @@ class MainWindow(QtWidgets.QMainWindow):
         the tracker-row / master-CSV fallback for ids the frames don't carry
         (tracker-only jobs; the same fallback _generate_cover_for uses).
         Returns None when no apply URL can be resolved ANYWHERE: an entry with
-        an empty apply_url would send the SP4 agent nowhere and burn one of
+        an empty apply_url would send the apply agent nowhere and burn one of
         the job's attempts, so it must never reach the queue."""
         row = self._row_for(jid)
         company = self._cell(row, "company_name")

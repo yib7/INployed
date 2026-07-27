@@ -1,7 +1,7 @@
-"""The batch auto-apply queue: an atomic JSON store + the agent CLI (SP2).
+"""The batch auto-apply queue: an atomic JSON store + the agent CLI.
 
-Two processes share this queue: the dashboard (SP3) enqueues jobs while the
-tailor runs, and the apply agent (SP4) drains it — `claim` one job, fill the
+Two processes share this queue: the dashboard enqueues jobs while the
+tailor runs, and the apply agent drains it — `claim` one job, fill the
 application in Chrome, `finish` it parked at the review page (never submitted).
 The store lives beside seen.db in %LOCALAPPDATA%\\linkedin_watcher\\
 (apply_queue.json; APPLY_QUEUE_PATH overrides, read at call time so tests stay
@@ -50,7 +50,7 @@ if str(HERE) not in sys.path:
 
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 
-# Dashboard config (auto_apply_* keys land here via SP3's Settings UI). Module
+# Dashboard config (auto_apply_* keys land here via the dashboard Settings UI). Module
 # constant so tests can monkeypatch it away from the real local/config.json.
 CONFIG_JSON = HERE / "config.json"
 

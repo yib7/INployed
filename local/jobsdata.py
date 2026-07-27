@@ -1064,7 +1064,7 @@ def job_detail_segments(row, snapshot: dict | None = None) -> list[tuple[str, st
 
 
 def job_detail_fields(row, snapshot: dict | None = None) -> dict:
-    """The job-detail-card content as a flat dict (cycle 40 restyle).
+    """The job-detail-card content as a flat dict.
 
     Lives ALONGSIDE `job_detail_segments` (which stays — it is test-coupled and
     still feeds plain-text renderings); this is the structured source the Qt

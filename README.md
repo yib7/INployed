@@ -477,6 +477,7 @@ score_jobs.py           two-stage Gemini relevance scorer
 run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
 scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
 scripts/setup.ps1       Fast/Long setup wizard
+scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots for the docs
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)

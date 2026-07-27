@@ -28,6 +28,8 @@ apply_answers.json
 
 # ── LaTeX build artifacts ────────────────────────────────────────────────────
 *.aux
+# why so broad: `*.log` also covers the pipeline's runtime logs (scraper.log,
+# watcher.log, open_dashboard crash log) — no log file in this project is committed.
 *.log
 *.synctex.gz
 *.out
@@ -58,9 +60,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
 # The optional project-local venv the README and the .cmd launcher look for.
 venv/
 .venv/
@@ -85,5 +84,5 @@ local/settings_archive/
 # linked git worktrees (never committed)
 .worktrees/
 
-# offscreen UI screenshot output (tools/ui_screenshots.py)
+# offscreen UI screenshot output (scripts/ui_screenshots.py)
 .screenshots/

@@ -1,6 +1,6 @@
 """Offscreen UI screenshot harness for the restyle work.
 
-Run:  python tools/ui_screenshots.py [prefix]     (prefix defaults to "current")
+Run:  python scripts/ui_screenshots.py [prefix]     (prefix defaults to "current")
 
 Builds the real MainWindow offscreen (never app.main()/win.start() -- no
 single-instance lock, no real data loaders), feeds it synthetic data covering

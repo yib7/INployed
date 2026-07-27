@@ -62,17 +62,10 @@ flowchart TD
 
 ## Quick start
 
-### 1. Prerequisites
-Only **Python 3.14** is needed to open the dashboard; it launches to a get-started
-panel with no keys set. Everything else below is optional and enables one feature, so
-install it only when you want that feature.
-- **Python 3.14** (the Qt UI installs via `pip` with the other deps, including PySide6).
-- *(Optional, for résumé PDF output)* **MiKTeX** (for `pdflatex`): `winget install MiKTeX.MiKTeX`.
-  The résumé engine compiles LaTeX to PDF. (Set `PDFLATEX_PATH` if it isn't on `PATH`.)
-- *(Optional, for LLM scoring + tailoring)* **A Google Cloud project** with Vertex AI
-  enabled, plus the **[gcloud CLI](https://cloud.google.com/sdk/docs/install)** for the
-  `gcloud auth` login step (and the VM controls).
-- *(Optional, for scraping your own jobs)* a **Bright Data** account + LinkedIn dataset.
+**You need:** Windows 10/11 and **Python 3.14** ([download](https://www.python.org/downloads/)) —
+nothing else. Everything the dashboard needs installs with `pip` in Step 2. Steps 1-4 take
+about five minutes and end with a running app; Steps 5-7 connect it to your own data and
+accounts.
 
 > **Platform support — what is actually tested:**
 >
@@ -82,73 +75,88 @@ install it only when you want that feature.
 > | **Linux** | Supported for the **pipeline scripts only** (`scraper.py`, `score_jobs.py`) — that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
 > | **macOS** | Untested. Not claimed. |
 >
-> The `Open INployed Dashboard.cmd` launcher, the `setup.ps1` wizard, and the
+> The `Open INployed Dashboard.cmd` launcher, the `scripts/setup.ps1` config script, and the
 > optional Task Scheduler / GCP-VM automation are Windows-only. The dashboard and
 > résumé engine are plain Python + Qt with no Windows-specific dependency, so
 > `pip install -r requirements.txt && python local/app.py` will most likely work on
 > macOS or Linux (use MacTeX / TeX Live for `pdflatex` instead of MiKTeX) — but
 > nobody has run it there, so treat it as unverified rather than supported.
 
-### 2. One-command setup
+### Step 1 — Get the code
 ```powershell
 git clone https://github.com/yib7/INployed.git
 cd INployed
+```
 
-# Fast: drop the example config into place, then edit it
-./scripts/setup.ps1
+### Step 2 — Install the dependencies into a project venv
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+python -m pip install -r requirements.txt
+```
+Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests.
+The launcher in Step 4 finds this `venv` on its own.
 
-# Or guided, with prompts for your keys and preferences
-./scripts/setup.ps1 -Mode long -InstallDeps
+### Step 3 — Create your local config files
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 This writes a git-ignored `.env` (your keys), `local/config.json` (dashboard
-preferences), and a starter `resume_tailor_files/master_experience.yaml`. Re-run it
-any time to revisit settings; nothing is overwritten without `-Force`. (If PowerShell
-refuses to run scripts — the stock Windows default — run it once as
-`powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`.)
+preferences), and a starter `resume_tailor_files/master_experience.yaml`. It fills in
+placeholders only — you set the real values in Step 5, from the app. Re-run it any time;
+nothing is overwritten without `-Force`.
 
-Then install dependencies (if you skipped `-InstallDeps`):
-```powershell
-python -m venv venv; .\venv\Scripts\activate   # (optional) keep deps in a project venv
-python -m pip install -r requirements.txt
-gcloud auth application-default login   # (optional) only for Vertex AI scoring / tailoring
-```
+### Step 4 — Launch the dashboard
+**Double-click `Open INployed Dashboard.cmd`** in the project folder. That is the single
+entry point, and the only thing you need for every later launch. (Right-click it →
+*Send to* → *Desktop (create shortcut)* for a desktop icon. From a terminal it is
+`python local/app.py`.)
 
-**Prefer a GUI to editing `.env` by hand?** Once dependencies are installed, launch
-the dashboard (`python local/app.py`) and open the **Settings** tab: one window that
-sets your keys, paths, and every other option. See
+With no keys and no jobs yet, the window opens to a **get-started panel** rather than a
+blank table, so you can confirm the install worked before configuring anything.
+
+### Step 5 — Set your keys in the Settings tab
+In the running dashboard, open the **Settings** tab and fill in the **Credentials**
+section. One form covers every key, path, and option the project has; nothing needs to be
+edited by hand. See
 [Configure everything from the Settings tab](#configure-everything-from-the-settings-tab-no-file-editing).
 
-### 3. Tell the tool about you
+You need an account for each feature you want:
+
+| Feature | Account needed |
+|---|---|
+| LLM scoring + résumé tailoring | a **Google Cloud** project with Vertex AI enabled (or a Gemini API key) |
+| Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
+
+*(Skip if you only want to look around — the dashboard, tracker, and editors all run
+without keys. The tailor stops with a plain "no key configured" message instead.)*
+
+### Step 6 — Enter your experience in the Resume Data tab
 Your experience lives in **`resume_tailor_files/master_experience.yaml`**, the single
-source of truth the pipeline **selects** from per job (it never fabricates). You don't
-have to edit the file by hand: open the dashboard's **Resume Data** tab to add / edit /
-delete entries and achievements with inline tips, a **Validate** button, and a **Revert
-to opening state** safety net. (The heavily-commented
+source of truth the pipeline **selects** from per job (it never fabricates). Use the
+dashboard's **Resume Data** tab to add / edit / delete entries and achievements, with
+inline tips, a **Validate** button, and a **Revert to opening state** safety net. (The
+heavily-commented
 [`master_experience.example.yaml`](resume_tailor_files/master_experience.example.yaml)
-shows the structure if you prefer the file.)
+shows the structure if you would rather edit the file.)
 
-The Resume Data tab also has a collapsible **Resume Layout** editor for fine-tuning how
-many bullets each section/project gets and how long each one runs. Give a section or
-project a comma-separated list of per-bullet printed-line counts. For example,
-`2, 2, 1` means three bullets sized 2 / 2 / 1 lines (each 1 to 3, up to 5 bullets),
-and the one-page tailor honors it. A **"Bullets by strength"** box sizes projects by how
-strongly each ranks for *this* job instead of a flat count: type tiers as `projects:bullets`
-pairs (e.g. `2:3, 2:2, 1:1`) and the strongest-matching projects earn the extra bullets.
-A master **"Apply custom bullet layout"** checkbox turns the whole
-feature on or off: unchecked, the engine uses its built-in defaults but your saved
-targets are kept, so you can **A/B test** whether your custom layout helps or hurts your
-résumés without throwing the configuration away.
-
-**Tips for a résumé the tailor can use well** (these maximize match quality):
+**What makes a résumé the tailor can use well:**
 - Store **facts as atoms** (*what happened / how / scope / impact*), not finished
   sentences. The tailor re-angles each atom to fit a job.
 - **Quantify** everything you can (%, $, counts, time saved). Numbers win.
 - Tag each atom with **angles** (e.g. `backend`, `llm`, `data-pipeline`) so it matches a
   posting's keywords.
 - Hold **more than fits on one page**: selection picks the best evidence per job.
-- Click **Check setup** in the dashboard any time to lint your résumé data + apply
-  answers and get a clear error if something's malformed (so the pipeline never breaks
-  silently).
+- Click **Check setup** any time to lint your résumé data + apply answers, so a malformed
+  entry surfaces as a clear error instead of breaking the pipeline silently.
+
+### Step 7 (optional) — Extras, each for one feature
+*(Skip all of these until you want the feature; nothing above depends on them.)*
+```powershell
+winget install MiKTeX.MiKTeX          # compiles the tailored résumé to PDF (set PDFLATEX_PATH if not on PATH)
+gcloud auth application-default login # Vertex AI scoring / tailoring, and the VM controls
+```
+The [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate install.
 
 ---
 
@@ -164,6 +172,18 @@ Output (in `~/Downloads/Generated_Resumes/<Company>/<Title>/`): a one-page PDF, 
 `.tex` source, `ats_report.txt` (keyword coverage), an optional cover letter, and
 `apply.md` (a self-contained apply sheet you paste into Claude-in-Chrome).
 
+### Fine-tune the résumé layout
+The **Resume Data** tab has a collapsible **Resume Layout** editor for how many bullets
+each section/project gets and how long each one runs. Give a section or project a
+comma-separated list of per-bullet printed-line counts. For example, `2, 2, 1` means three
+bullets sized 2 / 2 / 1 lines (each 1 to 3, up to 5 bullets), and the one-page tailor
+honors it. A **"Bullets by strength"** box sizes projects by how strongly each ranks for
+*this* job instead of a flat count: type tiers as `projects:bullets` pairs (e.g.
+`2:3, 2:2, 1:1`) and the strongest-matching projects earn the extra bullets. A master
+**"Apply custom bullet layout"** checkbox turns the whole feature on or off: unchecked,
+the engine uses its built-in defaults but your saved targets are kept, so you can
+**A/B test** whether your custom layout helps without throwing the configuration away.
+
 ### Find skills you forgot to list
 The JD-gap helper surfaces skills a posting wants that aren't yet in your master
 file, screens them to genuine non-identifying skills, and (only on your
@@ -176,12 +196,7 @@ python -m resume_tailor.master_gaps --jd-file job.txt --apply  # write (.bak mad
 ```
 
 ### Run the dashboard
-The easiest way: **double-click `Open INployed Dashboard.cmd`** in the project folder
-(right-click it → *Send to* → *Desktop (create shortcut)* for a one-click desktop icon).
-Or, from a terminal:
-```bash
-python local/app.py       # or double-click local/open_dashboard.pyw
-```
+Launch it the way Step 4 describes: double-click `Open INployed Dashboard.cmd`.
 The window opens maximized and gives you high-score triage, an application tracker with
 follow-up nudges, and run stats. A few behaviors worth knowing:
 - **Tailor résumé** runs in the background, so the UI stays responsive.
@@ -189,8 +204,8 @@ follow-up nudges, and run stats. A few behaviors worth knowing:
   reported without sinking the rest, and a quick warning appears before very large batches.
 - Tailoring streams live progress in the status bar (`Tailoring (2/3 done): … rephrasing
   bullets`), so a multi-minute run is never a silent freeze.
-- On a brand-new setup with no jobs yet, the High Score tab shows a short get-started panel
-  (Open Settings · Find new jobs · Set up Resume Data) instead of a blank table.
+- The Step 4 get-started panel lists its three next actions (Open Settings · Find new jobs ·
+  Set up Resume Data) and is replaced by the job table as soon as you have scored jobs.
 
 Each job tab keeps a tidy filter bar: a search box plus a **Filters** button that holds
 min-score / day / time / recommendation / Easy-Apply (on the Tracker, also *Follow-up due
@@ -476,7 +491,7 @@ scraper.py              job discovery (fetches + normalizes postings)
 score_jobs.py           two-stage Gemini relevance scorer
 run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
 scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
-scripts/setup.ps1       Fast/Long setup wizard
+scripts/setup.ps1       first-run config writer (.env / config.json / master_experience.yaml)
 scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots for the docs
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)

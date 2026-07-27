@@ -47,3 +47,5 @@ pytest==9.1.1
 pytest-qt==4.5.0       # qtbot fixtures for the Qt UI tests (offscreen, no display)
 pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a thread dump,
                        # never burns runner hours (see the Run tests step in ci.yml)
+ruff==0.15.17          # the lint command (python -m ruff check .); declared here so CI and a
+                       # fresh clone lint with the same version instead of whatever is global

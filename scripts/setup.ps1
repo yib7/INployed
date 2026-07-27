@@ -25,7 +25,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('fast', 'long')] [string]$Mode = 'fast',
-    [string]$Root = (Split-Path -Parent $PSScriptRoot),
+    [string]$Root = '',
     [switch]$Force,
     [switch]$InstallDeps,
     # Long-mode values (optional; prompted when missing in long mode)
@@ -39,6 +39,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Resolve the repo root here, NOT as a param default: when the script is started
+# with `powershell -File scripts\setup.ps1` (the documented fallback for a machine
+# whose execution policy blocks `./scripts/setup.ps1`), PowerShell 5.1 binds the
+# param defaults before $PSScriptRoot is populated, so a default of
+# `Split-Path -Parent $PSScriptRoot` threw "Cannot bind argument to parameter
+# 'Path' because it is an empty string" and the whole script died. $PSCommandPath
+# is set by then under every launch form.
+if ([string]::IsNullOrWhiteSpace($Root)) {
+    $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+}
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }

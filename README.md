@@ -308,6 +308,28 @@ falls back to built-in defaults, so the VM keeps running unchanged.
 > map fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`, deep → `claude-opus-5`. The
 > cloud VM always scores with Gemini, regardless of this setting.
 
+### What leaves your machine
+There is no analytics, no crash reporting, and no phone-home. The only outbound
+traffic is the work you asked for, and each destination gets only what it needs:
+
+| Destination | When | What it receives |
+| --- | --- | --- |
+| Bright Data | you run job discovery | your search keywords and the dataset ID |
+| Google Gemini (Vertex or API key) | scoring and résumé tailoring | the job description, your `resume.md` / `master_experience.yaml` content |
+| Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
+| the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
+| healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code — no job data, no identifiers |
+
+The healthchecks ping is a dead-man's switch so a silently failing cron run emails
+you instead of rotting in the log. It is off unless you set `HEALTHCHECKS_URL`
+yourself (see `scripts/run_scraper.sh`); unset, `ping_hc` is a no-op.
+
+Your credentials never cross providers: the Gemini and Bright Data secrets are
+stripped from the environment before the `claude` CLI is launched, the ATS master
+password lives in the Windows Credential Manager and only ever exits to the
+clipboard, and nothing is written to the repo — secrets stay in your git-ignored
+`.env`.
+
 ### Manage the VM from the dashboard
 If you run discovery + scoring on a GCP VM, the dashboard drives it without
 SSH-by-hand; there's **no separate VM tab**. In

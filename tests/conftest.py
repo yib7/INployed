@@ -37,6 +37,43 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # tests/test_hermetic_appdata.py fails loudly if this redirect is ever removed.
 os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="inployed-test-appdata-")
 
+# Isolate the suite from the developer's REAL scrape_data/.env.
+#
+# Four modules call load_dotenv(<repo>/.env) at IMPORT time — local/app.py,
+# local/resume_tailor/config.py, score_jobs.py and scraper.py — so merely
+# importing any of them injects every var from that file into os.environ for the
+# rest of the session. Measured on the author's machine: 22 vars, including
+# GEMINI_API_KEYS and BRIGHT_DATA_API_TOKEN (a test asserting "no key configured"
+# then silently exercises the WITH-key branch), and RESUME_TAILOR_OUTPUT — which
+# points config.OUTPUT_ROOT at the user's real ~/Downloads/Generated_Resumes,
+# where output.resolve_dir happily mkdir's into it. That is the same class of bug
+# as the LOCALAPPDATA one above: a test that passes only on a machine whose .env
+# happens to be shaped right, and that writes to real user data on the way.
+#
+# Neutralise load_dotenv process-wide BEFORE `local/` is importable, and scrub any
+# var that a .env could have set so the modules see documented defaults. A test
+# that wants a value sets it with monkeypatch.setenv, which is undone at teardown.
+# tests/test_hermetic_dotenv.py fails loudly if this is ever removed.
+try:
+    import dotenv
+
+    dotenv.load_dotenv = lambda *a, **k: False
+    dotenv.main.load_dotenv = lambda *a, **k: False
+except (ImportError, AttributeError):    # python-dotenv absent: nothing to neutralise
+    pass
+
+for _leaked in (
+    "GEMINI_API_KEYS", "GEMINI_API_KEY", "BRIGHT_DATA_API_TOKEN", "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "HEALTHCHECK_URL",
+    "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
+    "RESUME_TAILOR_OUTPUT", "RESUME_TAILOR_CANDIDATE", "RESUME_TAILOR_GEMINI_AUTH",
+    "RESUME_TAILOR_PROVIDER", "LINKEDIN_EXTRA_MASTER", "APPLY_QUEUE_PATH",
+):
+    os.environ.pop(_leaked, None)
+
+# Whatever a stray default resolves to, it must not be the real Downloads folder.
+os.environ["RESUME_TAILOR_OUTPUT"] = tempfile.mkdtemp(prefix="inployed-test-output-")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
 
 _MASTER_YAML = textwrap.dedent("""\
@@ -108,6 +145,31 @@ def master_tmp_broken(tmp_path, monkeypatch):
     yield p
     for fn in cached:
         fn.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """Undo any os.environ change a test leaves behind.
+
+    monkeypatch.setenv is restored automatically, but APPLICATION code writes the
+    environment directly — MainWindow._apply_auth_env does
+    `os.environ["RESUME_TAILOR_GEMINI_AUTH"] = ...` so the in-process tailor picks
+    the mode up at call time. Any Qt test that reaches a tailor or manual-add path
+    therefore leaks that var into the rest of the session, and
+    `config.gemini_auth()` reads the env var ahead of config.json — so
+    test_llm_backend / test_llm_timeout passed or failed depending on whether a
+    Qt test happened to run first. Found by running the suite in reverse file
+    order; two tests failed that way and pass alphabetically.
+
+    Declared FIRST among the autouse fixtures on purpose: setup runs first, so
+    teardown runs LAST, after every other fixture has undone its own patches.
+    That makes this the final word on the environment for each test.
+    """
+    snapshot = dict(os.environ)
+    yield
+    if os.environ != snapshot:
+        os.environ.clear()
+        os.environ.update(snapshot)
 
 
 @pytest.fixture(autouse=True)

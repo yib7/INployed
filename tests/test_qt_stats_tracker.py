@@ -170,5 +170,10 @@ def test_followup_due_chip_proxies_the_popup_checkbox(qtbot):
 def test_apply_auth_env_sets_var(qtbot, monkeypatch):
     w = _win(qtbot)
     monkeypatch.setattr(mw.jobsdata, "_load_cfg", lambda: {"gemini_auth": "api_key"})
+    # _apply_auth_env writes the REAL os.environ (that is its job — the tailor
+    # reads the var at call time). conftest's _restore_environ fixture puts the
+    # environment back afterwards so this does not leak into later tests; the
+    # setenv here just pins the pre-state explicitly for the reader.
+    monkeypatch.setenv("RESUME_TAILOR_GEMINI_AUTH", "")
     w._apply_auth_env()
     assert os.environ["RESUME_TAILOR_GEMINI_AUTH"] == "api_key"

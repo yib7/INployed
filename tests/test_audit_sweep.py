@@ -2,7 +2,6 @@
 small fixes, each pinned by a regression test.
 """
 import sys
-import time
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +10,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import jobsdata  # noqa: E402
+import seen_db  # noqa: E402
 import outbox  # noqa: E402
 from resume_tailor import compose, output  # noqa: E402
 from seen_db import SeenRegistry  # noqa: E402
@@ -30,12 +30,29 @@ def test_finalize_skill_lines_joins_list_shape():
 
 # ── P2-6: same-day cross-machine status change can win the merge ─────────────
 
-def test_import_same_day_status_change_wins_with_timestamp(tmp_path):
+def test_import_same_day_status_change_wins_with_timestamp(tmp_path, monkeypatch):
+    """status_ts has second resolution, so the two writes must land on different
+    seconds. Drive seen_db's clock instead of sleeping 1.1 s of real time (audit
+    C6-12): a wall-clock sleep is both a second of suite runtime and the kind of
+    timing dependence that flakes on a loaded CI runner."""
+    import datetime as _dt
+
+    ticks = iter([_dt.datetime(2026, 7, 26, 12, 0, 0), _dt.datetime(2026, 7, 26, 12, 0, 5)])
+
+    class _Clock(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            try:
+                return next(ticks)
+            except StopIteration:          # other call sites keep the real clock
+                return _dt.datetime.now(tz)
+
+    monkeypatch.setattr(seen_db, "datetime", _Clock)
+
     a = SeenRegistry(tmp_path / "a.db")
     b = SeenRegistry(tmp_path / "b.db")
     try:
         a.set_status("j1", "applied", company="Acme")
-        time.sleep(1.1)      # status_ts has second resolution
         b.set_status("j1", "interviewing", company="Acme")
         bak = tmp_path / "b_export.db"
         b.export_to(bak)

@@ -85,11 +85,13 @@ _CLAUDE_MODEL_ENV = (
 def config_without_model_env(monkeypatch):
     """Re-import config with the tier overrides unset.
 
-    The CLAUDE_MODEL_* constants are resolved at import time from the
-    environment (which python-dotenv has already populated from a developer's
-    real .env), so deleting the vars after import is not enough — a machine
-    that pins a tier in .env would otherwise fail these default assertions.
-    Neutralise load_dotenv for the reload too, or it just re-reads that .env.
+    The CLAUDE_MODEL_* constants are resolved at import time, so deleting the
+    vars after import is not enough — the reload is what re-reads them.
+
+    conftest already neutralises load_dotenv session-wide (see
+    tests/test_hermetic_dotenv.py), so this reload cannot pull in a developer's
+    real .env; the belt-and-braces mp.setattr below keeps the fixture correct
+    even if it is ever lifted into a suite without that guard.
     """
     import dotenv
 
@@ -98,8 +100,8 @@ def config_without_model_env(monkeypatch):
         for name in _CLAUDE_MODEL_ENV:
             mp.delenv(name, raising=False)
         yield importlib.reload(config)
-    # Undo runs before this reload, so the module goes back to the real
-    # environment (and the real .env) for every later test in the session.
+    # The monkeypatch undo runs before this reload, so the module's constants go
+    # back to whatever the (hermetic) session environment says for later tests.
     importlib.reload(config)
 
 

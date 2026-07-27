@@ -90,3 +90,16 @@ def test_atomic_write_json_cleans_up_tmp_when_replace_fails(tmp_path, monkeypatc
 
     assert p.read_bytes() == before             # untouched: os.replace never landed
     assert list(tmp_path.glob("*.tmp")) == []    # no stray tmp file left behind
+
+
+def test_replace_with_retry_zero_retries_still_replaces(tmp_path):
+    """audit C6-7: retries=0 made `range(0)` skip the loop, so the function
+    returned WITHOUT calling os.replace and without raising. Callers delete their
+    tmp file in `finally`, so the write silently vanished. "No retries" must
+    still mean "try once"."""
+    src = tmp_path / "src"
+    dst = tmp_path / "dst"
+    src.write_text("payload", encoding="utf-8")
+    jsonutil.replace_with_retry(src, dst, retries=0)
+    assert dst.read_text(encoding="utf-8") == "payload"
+    assert not src.exists()

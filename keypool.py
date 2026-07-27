@@ -174,8 +174,14 @@ class KeyPool:
         self._vertex_calls = 0
         # Saves are debounced (P2-23), so flush the tail when the process exits —
         # an unattended VM run must still persist its final RPD counts.
+        # Registered once PER STATE, not per KeyPool (audit C6-8): the dashboard
+        # builds a fresh pool per scoring run over one long-lived process, and an
+        # unguarded atexit.register leaked a duplicate handler each time —
+        # unbounded growth, and N redundant disk writes at shutdown.
         import atexit
-        atexit.register(state.save)
+        if not getattr(state, "_atexit_registered", False):
+            atexit.register(state.save)
+            state._atexit_registered = True
 
     def stats(self) -> dict:
         return {"free_calls": self._free_calls, "vertex_calls": self._vertex_calls}

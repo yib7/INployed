@@ -431,3 +431,23 @@ def test_save_merges_concurrent_process_counters(tmp_path):
     c.load()
     assert c.get("fp1", "m") == 8
     assert c.get("fp2", "m") == 2
+
+
+def test_atexit_flush_registered_once_per_state(tmp_path, monkeypatch):
+    """audit C6-8: the dashboard builds a fresh KeyPool per scoring run inside one
+    long-lived process, and __init__ called atexit.register unconditionally — so
+    handlers accumulated for the life of the app and every one of them wrote the
+    same state file at shutdown."""
+    import atexit as _atexit
+
+    registered = []
+    monkeypatch.setattr(_atexit, "register", lambda fn, *a, **k: registered.append(fn) or fn)
+
+    state = keypool.UsageState(tmp_path / "usage.json")
+    for _ in range(5):
+        keypool.KeyPool([], state)
+    assert len(registered) == 1, f"{len(registered)} atexit handlers for one state"
+
+    # a genuinely different state still gets its own flush
+    keypool.KeyPool([], keypool.UsageState(tmp_path / "other.json"))
+    assert len(registered) == 2

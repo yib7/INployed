@@ -926,14 +926,41 @@ async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     """Retry failed/missing master rows. Returns (attempted, newly_scored)."""
     if not MASTER_CSV.exists():
         return 0, 0
-    header = pd.read_csv(MASTER_CSV, nrows=0).columns
-    light_cols = [c for c in ("job_posting_id", "score", "filtered_out", "reason",
-                              "recommendation") if c in header]
-    # Candidate-finding never needs the two ~90 MB text columns.
-    light = pd.read_csv(MASTER_CSV, usecols=light_cols, dtype={"job_posting_id": str})
-    if "job_posting_id" not in light.columns or light.empty:
+    # A malformed master must produce the same actionable message the fold path
+    # gives, not a raw pandas ParserError traceback out of a cron run (audit C6-6).
+    def _unreadable(e):
+        return OSError(
+            f"cannot scan {MASTER_CSV.name} for rows needing a rescore: the master "
+            f"is unreadable ({e}). Fix or restore {MASTER_CSV} and rerun; this run's "
+            f"other work is unaffected."
+        )
+
+    try:
+        header = pd.read_csv(MASTER_CSV, nrows=0).columns
+        light_cols = [c for c in ("job_posting_id", "score", "filtered_out", "reason",
+                                  "recommendation") if c in header]
+        # Candidate-finding never needs the two ~90 MB job-text columns — but
+        # `reason` is itself a free-text column, so even the "light" projection of
+        # a tens-of-thousands-row master is not small. Stream it in CHUNK pieces
+        # and keep only the rescore candidates from each (audit C6-4: this was the
+        # one whole-master read P2-21/P2-22 left unchunked). Peak memory is now
+        # the chunk plus the (RESCORE_CAP-bounded) candidate set.
+        parts = []
+        for chunk in pd.read_csv(MASTER_CSV, usecols=light_cols,
+                                 dtype={"job_posting_id": str}, chunksize=CHUNK):
+            hit = rows_needing_rescore(chunk)
+            if not hit.empty:
+                parts.append(hit)
+    except (OSError, ValueError, UnicodeDecodeError,
+            pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        raise _unreadable(e) from e
+    if not parts:
         return 0, 0
-    todo_ids = rows_needing_rescore(light)["job_posting_id"].astype(str)
+    candidates = pd.concat(parts, ignore_index=True)
+    if "job_posting_id" not in candidates.columns or candidates.empty:
+        return 0, 0
+    light = candidates
+    todo_ids = light["job_posting_id"].astype(str)   # already filtered per chunk above
     if todo_ids.empty:
         return 0, 0
     todo_ids = todo_ids.tail(RESCORE_CAP).tolist()  # newest-first cap, same as before

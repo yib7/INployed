@@ -211,17 +211,30 @@ def fetch_url_text(url: str, *, timeout: float = 10.0) -> str:
                 url, timeout=timeout, stream=True, allow_redirects=False,
                 headers={"User-Agent": "Mozilla/5.0 (INployed manual-add)"},
             )
-            status = getattr(resp, "status_code", 599)
-            if 300 <= status < 400:
-                target = str((getattr(resp, "headers", {}) or {}).get("Location", ""))
-                from urllib.parse import urljoin
-                url = urljoin(url, target)
-                if not _url_allowed(url):   # a redirect must not pivot internal
+            # stream=True keeps the socket open until the body is consumed OR the
+            # response is closed. Every early return below (redirect chain, non-2xx,
+            # the byte cap tripping mid-body) used to leak the connection back to
+            # the pool unread — audit C6-9. try/finally rather than `with` because
+            # the tests stub the response with a plain object; close defensively.
+            try:
+                status = getattr(resp, "status_code", 599)
+                if 300 <= status < 400:
+                    target = str((getattr(resp, "headers", {}) or {}).get("Location", ""))
+                    from urllib.parse import urljoin
+                    url = urljoin(url, target)
+                    if not _url_allowed(url):   # a redirect must not pivot internal
+                        return ""
+                    continue
+                if status >= 300 or resp is None:
                     return ""
-                continue
-            if status >= 300 or resp is None:
-                return ""
-            body = _read_capped(resp)
+                body = _read_capped(resp)
+            finally:
+                closer = getattr(resp, "close", None)
+                if callable(closer):
+                    try:
+                        closer()
+                    except Exception:       # noqa: BLE001 — cleanup must never mask
+                        pass
             break
         else:
             return ""                       # too many redirects

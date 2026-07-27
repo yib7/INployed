@@ -82,6 +82,10 @@ LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours")
 # folders can live under the Drive root, so per-selection stats must not hit the
 # filesystem on every click). Cleared outright on every _apply_frames.
 _DISK_CACHE_TTL_S = 20.0
+# Hard cap on cached probes (audit C6-5). Entries are per-key, and some keys are
+# per-job, so an all-day triage session grew the dict without bound between
+# reloads. Comfortably above the handful of live keys a session actually reuses.
+_DISK_CACHE_MAX = 512
 
 # Tailoring is parallel (all selected at once). Above this many, warn first — a big
 # fan-out means that many simultaneous Gemini calls + pdflatex processes (API limits /
@@ -775,6 +779,17 @@ class MainWindow(QtWidgets.QMainWindow):
             return hit[0]
         value = compute()
         cache[key] = (value, now)
+        # Bound the cache (audit C6-5). Keys include per-job entries, so a long
+        # triage session over a tens-of-thousands-row master added one entry per
+        # job clicked and only ever shrank on a full reload. Every entry past the
+        # TTL is dead weight by definition — drop those first, and if the cache is
+        # still over the cap, drop the oldest.
+        if len(cache) > _DISK_CACHE_MAX:
+            for k in [k for k, v in cache.items() if now - v[1] >= _DISK_CACHE_TTL_S]:
+                del cache[k]
+            if len(cache) > _DISK_CACHE_MAX:
+                for k in sorted(cache, key=lambda k: cache[k][1])[:len(cache) - _DISK_CACHE_MAX]:
+                    del cache[k]
         return value
 
     def _resume_ids(self) -> frozenset:

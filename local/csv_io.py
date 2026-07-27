@@ -89,6 +89,29 @@ def reconcile_is_seen(df: pd.DataFrame, registry: SeenRegistry) -> tuple[pd.Data
 _RECONCILE_CHUNK = 5000
 
 
+def _needs_reconcile(path: Path, seen_ids: set) -> bool:
+    """True if any row in `path` is in `seen_ids` but not already is_seen=yes.
+
+    Reads only the two columns it needs, in chunks, and short-circuits on the
+    first hit — so the common no-op case never touches the wide text columns.
+    Any read problem returns True so the real pass runs and reports the error
+    the way it always did (fail toward doing the work, not toward skipping it).
+    """
+    if not seen_ids:
+        return False
+    try:
+        for chunk in pd.read_csv(path, usecols=lambda c: c in ("job_posting_id", "is_seen"),
+                                 dtype=str, keep_default_na=False,
+                                 chunksize=_RECONCILE_CHUNK):
+            if "job_posting_id" not in chunk.columns or "is_seen" not in chunk.columns:
+                return True
+            if (chunk["job_posting_id"].isin(seen_ids) & (chunk["is_seen"] != "yes")).any():
+                return True
+    except (OSError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
+        return True
+    return False
+
+
 def reconcile_file(path: Path, registry: SeenRegistry) -> int:
     """Read + reconcile + write back. Returns rows changed (0 if no rewrite needed).
 
@@ -97,6 +120,16 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
     read + full rewrite held the whole frame in memory. The rewrite lands via
     tmp + retrying replace, and is skipped entirely when nothing changed."""
     seen_ids = registry.all_ids()
+
+    # Cheap two-column probe FIRST (audit C6-3). The rewrite below was already
+    # skipped when nothing changed — but only the os.replace was: the full
+    # decompress + re-serialize + gzip of a ~90 MB master still ran on every
+    # watcher fire, and "nothing changed" is the overwhelmingly common case.
+    # Reading just job_posting_id + is_seen costs a fraction of that, and lets
+    # the no-op path return without allocating a temp file at all.
+    if not _needs_reconcile(path, seen_ids):
+        return 0
+
     compression = "gzip" if str(path).endswith(".gz") else None
     fd, tmp_name = tempfile.mkstemp(prefix=path.stem + ".", suffix=".reconcile.tmp",
                                     dir=str(path.parent))
@@ -109,10 +142,17 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
                   lambda: open(tmp_path, "w", encoding="utf-8", newline=""))
         with opener() as out:
             wrote_header = False
-            for chunk in pd.read_csv(path, dtype={"job_posting_id": str},
+            # dtype=str + keep_default_na=False (audit C6-1, extending P2-26):
+            # the watcher reconciles on every fire, so inferred per-chunk dtypes
+            # would rewrite the whole master's formatting (score 5 -> 5.0) on a
+            # pass that is supposed to touch only is_seen. keep_default_na=False
+            # means a blank cell arrives as "" rather than NaN, so the is_seen
+            # default below tests for the empty string instead of using fillna.
+            for chunk in pd.read_csv(path, dtype=str, keep_default_na=False,
                                      chunksize=_RECONCILE_CHUNK):
                 if "is_seen" in chunk.columns:
-                    chunk["is_seen"] = chunk["is_seen"].fillna("no")
+                    chunk["is_seen"] = chunk["is_seen"].mask(
+                        chunk["is_seen"].isin(["", "nan", "NaN", "None"]), "no")
                 if seen_ids and "job_posting_id" in chunk.columns:
                     chunk, n = reconcile_is_seen(chunk, registry)
                     total += n

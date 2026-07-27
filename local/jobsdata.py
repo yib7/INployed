@@ -392,7 +392,13 @@ def _append_dedup_csv_locked(record: dict, jid: str, path: Path, compression) ->
         try:
             with _open_text_writer(tmp_path, compression) as out:
                 wrote_header = False
-                for chunk in pd.read_csv(path, dtype={"job_posting_id": str},
+                # dtype=object + keep_default_na=False (audit C6-1, extending
+                # P2-26): with inferred per-chunk dtypes every manual add
+                # reformats untouched rows of the master -- score 5 comes back
+                # as 5.0, and a chunk boundary can even infer two dtypes for one
+                # column. Reading every cell as the literal string keeps the
+                # rewrite byte-stable for rows we aren't changing.
+                for chunk in pd.read_csv(path, dtype=object, keep_default_na=False,
                                          compression=compression,
                                          chunksize=_RW_CHUNK):
                     if "job_posting_id" in chunk.columns:
@@ -475,7 +481,10 @@ def _drop_ids_from_csv(path: Path, ids: set[str]) -> None:
             try:
                 with _open_text_writer(tmp_path, compression) as out:
                     wrote_header = False
-                    for chunk in pd.read_csv(path, dtype={"job_posting_id": str},
+                    # dtype=str + keep_default_na=False: see the note in
+                    # _append_dedup_csv_locked (audit C6-1). A delete must not
+                    # silently reformat the rows it keeps.
+                    for chunk in pd.read_csv(path, dtype=str, keep_default_na=False,
                                              compression=compression,
                                              chunksize=_RW_CHUNK):
                         if "job_posting_id" not in chunk.columns:

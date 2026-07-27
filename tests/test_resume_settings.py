@@ -109,7 +109,7 @@ def test_resume_tailor_claude_model_fields_exist():
     for key, default in (
         ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "claude-haiku-4-5"),
         ("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "claude-sonnet-5"),
-        ("RESUME_TAILOR_CLAUDE_MODEL_PRO", "claude-opus-4-8"),
+        ("RESUME_TAILOR_CLAUDE_MODEL_PRO", "claude-opus-5"),
     ):
         assert key in by_key, f"missing Claude tailor model field {key}"
         f = by_key[key]

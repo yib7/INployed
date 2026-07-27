@@ -8,6 +8,7 @@ lanes are exercised via the injected `llm._invoke_claude` seam and a stubbed
 `llm._claude_cli()` fake module (mirrors llm._invoke / _call_gemini's own
 test style in test_llm_rate_limit.py / test_llm_timeout.py).
 """
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -73,19 +74,47 @@ def test_tailor_provider_vertex_falls_back_to_gemini(monkeypatch):
 
 
 # -- Claude tier -> model resolution ------------------------------------------
-def test_claude_model_defaults_are_correct():
-    assert config.CLAUDE_MODEL_FLASH_LITE == "claude-haiku-4-5"
-    assert config.CLAUDE_MODEL_FLASH == "claude-sonnet-5"
-    assert config.CLAUDE_MODEL_PRO == "claude-opus-4-8"
+_CLAUDE_MODEL_ENV = (
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+)
 
 
-def test_claude_model_for_returns_tier_default(monkeypatch):
-    monkeypatch.delenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", raising=False)
-    monkeypatch.delenv("RESUME_TAILOR_CLAUDE_MODEL_FLASH", raising=False)
-    monkeypatch.delenv("RESUME_TAILOR_CLAUDE_MODEL_PRO", raising=False)
-    assert config.claude_model_for(config.TIER_FLASH_LITE) == "claude-haiku-4-5"
-    assert config.claude_model_for(config.TIER_FLASH) == "claude-sonnet-5"
-    assert config.claude_model_for(config.TIER_PRO) == "claude-opus-4-8"
+@pytest.fixture
+def config_without_model_env(monkeypatch):
+    """Re-import config with the tier overrides unset.
+
+    The CLAUDE_MODEL_* constants are resolved at import time from the
+    environment (which python-dotenv has already populated from a developer's
+    real .env), so deleting the vars after import is not enough — a machine
+    that pins a tier in .env would otherwise fail these default assertions.
+    Neutralise load_dotenv for the reload too, or it just re-reads that .env.
+    """
+    import dotenv
+
+    with monkeypatch.context() as mp:
+        mp.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+        for name in _CLAUDE_MODEL_ENV:
+            mp.delenv(name, raising=False)
+        yield importlib.reload(config)
+    # Undo runs before this reload, so the module goes back to the real
+    # environment (and the real .env) for every later test in the session.
+    importlib.reload(config)
+
+
+def test_claude_model_defaults_are_correct(config_without_model_env):
+    cfg = config_without_model_env
+    assert cfg.CLAUDE_MODEL_FLASH_LITE == "claude-haiku-4-5"
+    assert cfg.CLAUDE_MODEL_FLASH == "claude-sonnet-5"
+    assert cfg.CLAUDE_MODEL_PRO == "claude-opus-5"
+
+
+def test_claude_model_for_returns_tier_default(config_without_model_env):
+    cfg = config_without_model_env
+    assert cfg.claude_model_for(cfg.TIER_FLASH_LITE) == "claude-haiku-4-5"
+    assert cfg.claude_model_for(cfg.TIER_FLASH) == "claude-sonnet-5"
+    assert cfg.claude_model_for(cfg.TIER_PRO) == "claude-opus-5"
 
 
 def test_claude_model_for_flash_lite_picks_up_env_change_live(monkeypatch):

@@ -62,11 +62,15 @@ ENV_TARGETS = {"env"}
 # The pro tier is the "-preview" id on purpose: Google has not shipped a stable
 # GA gemini-3.1-pro (and gemini-3.5-pro doesn't resolve on Vertex projects), so
 # the preview id is the only pro-tier option. It is never a default — only an
-# opt-in "max quality" choice.
-GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro-preview")
+# opt-in "max quality" choice. Re-verified against Google's deprecation table on
+# 2026-07-26: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
+# The 2026-07-21 releases (3.6-flash, 3.5-flash-lite) are offered as opt-in
+# choices; the defaults stay on the flash-lite/flash pair the VM scores with.
+GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash",
+                 "gemini-3.6-flash", "gemini-3.1-pro-preview")
 
 # Claude model ids offered in the Claude model dropdowns (also editable_choice).
-CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8")
+CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
 
 
 # Backing files, keyed by Field.target. The Scraper/Scoring sections write the
@@ -343,7 +347,7 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Claude provider only: re-phrasing bullets and the cover letter. "
                "Restart the dashboard after changing (.env is read at startup)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
-          "editable_choice", "claude-opus-4-8", "Engine", "env", choices=CLAUDE_MODELS,
+          "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
           help="Claude provider only: highest-quality tier (rephrase / cover letter). "
                "Restart the dashboard after changing (.env is read at startup)."),
 

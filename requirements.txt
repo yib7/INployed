@@ -12,8 +12,10 @@
 #
 # The VM has its own pin set: see requirements-vm.txt.
 
-pandas==3.0.3
-google-genai==1.56.0   # held at 1.x on purpose: 2.x is a major bump on the live LLM path (see CHANGELOG)
+pandas==3.0.5
+google-genai==2.14.0   # unified with requirements-vm.txt: the VM has run the 2.x line in
+                       # production since 2026-06 on the same genai.Client surface, so the
+                       # old "hold at 1.x" reason no longer applies (re-verified 2026-07-26)
 markdownify==1.2.3
 pypdf==6.14.2
 PyYAML==6.0.3
@@ -27,7 +29,7 @@ Send2Trash==2.1.0      # deleting a job moves its tailored-résumé folder to th
 keyring==25.7.0        # ATS master password lives in the Windows Credential Manager (ats_accounts.py)
 
 # only needed to run scraper.py locally (it normally runs on the VM)
-aiohttp==3.14.1
+aiohttp==3.14.3
 
 # fetches the posting when you paste a URL into "Add job by hand" (local/manual_add.py).
 # Also pulled in transitively by google-genai; pinned here because we import it directly.

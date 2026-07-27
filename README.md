@@ -297,7 +297,7 @@ falls back to built-in defaults, so the VM keeps running unchanged.
 > on your Claude Code CLI subscription instead of Gemini. Set **Resume tailor provider** or
 > **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
 > headless CLI with your subscription auth (no API key) and prompt caching; the tailor tiers
-> map fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`, deep → `claude-opus-4-8`. The
+> map fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`, deep → `claude-opus-5`. The
 > cloud VM always scores with Gemini, regardless of this setting.
 
 ### Manage the VM from the dashboard

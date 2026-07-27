@@ -15,10 +15,12 @@ available, otherwise dropped — a missing bullet is recoverable; a fabricated
 credential on a submitted resume is not.
 
 Calibration: ordinary paraphrase must pass. Sentence-initial words (the action
-verb) are never traced, matching is case-insensitive substring for words (so
-"SQL" is grounded by "PostgreSQL", but claiming "PostgreSQL" over a bare "SQL"
-atom is not), and numbers must match on their own digit boundaries ("40" is NOT
-grounded by "40,000" — a different figure is a different claim).
+verb) are never traced, matching is case-insensitive substring for words but the
+match must align to a word boundary on at least one side (so "SQL" is grounded by
+"PostgreSQL" and "Java" by "JavaScript", while "MIT" is NOT grounded by
+"committed"; claiming "PostgreSQL" over a bare "SQL" atom is also not grounded),
+and numbers must match on their own digit boundaries ("40" is NOT grounded by
+"40,000" — a different figure is a different claim).
 
 What this gate does NOT catch (audit C6-11 — stated so nobody reads it as
 airtight):
@@ -30,7 +32,13 @@ airtight):
     which is the injection payload that matters; it is not a general truth check.
   * The first word of each sentence is skipped, because that slot is the
     generated action verb. A proper noun that lands sentence-initially is
-    therefore untraced.
+    therefore untraced. Sentences are split on `.!?` and newlines ONLY —
+    `:` and `;` used to split too, which handed an attacker a free unchecked
+    slot mid-bullet (fixed in the Phase 4 security pass).
+  * A short token that ends or starts a longer unrelated word is still grounded
+    by it ("MS" traces to "systems"). One-sided boundary matching is the price
+    of grounding "SQL" from "PostgreSQL"; two- and three-letter acronyms are
+    therefore the weakest case.
   * For the COVER LETTER, `letter_allowed_source` deliberately whitelists the
     whole job description, since a letter is expected to echo the posting. A
     fabricated fact planted IN the JD can therefore pass the letter gate by
@@ -51,7 +59,12 @@ from . import assets, compose
 # Digit-bearing figures: 40,000 / 37% / 3.5 — commas normalized away.
 _NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _WORD_RE = re.compile(r"[A-Za-z][\w+#]*")
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?:;])\s+|\n+")
+# Real sentence boundaries only. `:` and `;` were in this class and were a live
+# bypass: the tracer skips each segment's first word because that slot holds the
+# GENERATED ACTION VERB, but a clause after a semicolon or colon is ordinary
+# mid-sentence text, so "Built an ETL pipeline; MIT coursework informed it" put
+# the fabricated credential straight into an unchecked slot.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 
 # A small digits<->words bridge so "3 models" traces to an atom that wrote "three".
 _DIGIT_WORDS = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
@@ -81,6 +94,26 @@ def _num_grounded(tok: str, norm_src: str) -> bool:
     return bool(word and word in norm_src)
 
 
+def _word_grounded(tok: str, norm_src: str) -> bool:
+    """True when `tok` appears in `norm_src` aligned to a word boundary on at
+    least one side.
+
+    Substring matching is deliberate — "SQL" is grounded by "PostgreSQL" and
+    "Java" by "JavaScript" — but a fully UNANCHORED substring test grounded a
+    fabricated credential on an unrelated ordinary word: "MIT" traced to
+    "committed"/"submitted", which is exactly the payload this gate exists to
+    stop. Requiring one boundary keeps both intended cases (SQL ends a word,
+    Java starts one) and drops the accidental interior ones. Boundaries are
+    tested against [0-9a-z] rather than `\\b` so tech names carrying `+`/`#`
+    (C++, C#) still match.
+    """
+    esc = re.escape(tok)
+    return bool(
+        re.search(rf"(?<![0-9a-z]){esc}", norm_src)
+        or re.search(rf"{esc}(?![0-9a-z])", norm_src)
+    )
+
+
 def _distinctive_word(tok: str) -> bool:
     """A token worth tracing: capitalized or inner-uppercase (PySide6, SQL) and
     at least two characters. Everything lowercase is ordinary prose."""
@@ -107,7 +140,7 @@ def unseen_tokens(text: str, source: str,
             if not _distinctive_word(tok):
                 continue
             low = tok.lower()
-            if low in allowed or low in norm_src:
+            if low in allowed or _word_grounded(low, norm_src):
                 continue
             if tok not in bad:
                 bad.append(tok)

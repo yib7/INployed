@@ -96,6 +96,53 @@ def test_proxy_numeric_sort(qapp):
     assert order == ["3", "2", "1"]                  # numeric 2 < 4 < 5, not "2"<"4"<"5" text
 
 
+def test_header_click_sorts_in_pandas_not_via_the_proxy(qtbot):
+    """Perf regression guard. QSortFilterProxyModel.sort() calls data() once per
+    comparison — ~600k Python round-trips on a tens-of-thousands-row master, which
+    measured 1.8-3.5 s of frozen UI. JobsTab sorts the DataFrame instead and leaves
+    the proxy unsorted; if someone re-enables the view's proxy sorting this fails."""
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    assert not tab.table.isSortingEnabled()      # the view must not drive proxy.sort
+    assert tab.proxy.sortColumn() == -1
+
+    sc = COL_IDS.index("score")
+    tab._on_header_clicked(sc)                    # 1st click -> ascending
+    assert [tab.model.job_id(r) for r in range(3)] == ["3", "2", "1"]   # 2 < 4 < 5
+    assert tab.proxy.sortColumn() == -1           # still the pandas order, not the proxy's
+
+    tab._on_header_clicked(sc)                    # 2nd click -> descending
+    assert [tab.model.job_id(r) for r in range(3)] == ["1", "2", "3"]
+
+    tab._on_header_clicked(sc)                    # 3rd click -> back to default order
+    assert tab._sort_col is None
+    assert tab.table.horizontalHeader().sortIndicatorSection() == -1
+
+
+def test_header_click_sort_is_numeric_not_lexicographic(qtbot):
+    """"10" must outrank "9" on score — the reason SORT_ROLE existed at all."""
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    df = _df().copy()
+    df.loc[:, "score"] = ["10", "9", "8"]
+    tab.set_source_df(df)
+    sc = COL_IDS.index("score")
+    tab._on_header_clicked(sc)
+    tab._on_header_clicked(sc)                    # descending
+    assert [tab.model.data(tab.model.index(r, sc)) for r in range(3)] == ["10", "9", "8"]
+
+
+def test_header_click_sort_survives_a_missing_column(qtbot):
+    """Edge case: the sorted column is hidden/absent from the filtered view."""
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    tab.set_source_df(_df())
+    tab._sort_col = 999                           # out of range for col_ids
+    tab._apply_filters()                          # must not raise
+    assert tab.model.rowCount() == 3
+
+
 def test_tab_filters_by_search(qtbot):
     tab = JobsTab("all", COLS)
     qtbot.addWidget(tab)

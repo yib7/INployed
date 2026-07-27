@@ -16,7 +16,7 @@ import jobsdata
 from jobsdata import COLUMN_LABELS, LABEL_TO_COLUMN
 from qt import theme
 from qt.delegates import JobRowDelegate
-from qt.jobs_model import SORT_ROLE, JobsTableModel
+from qt.jobs_model import NUMERIC_COLS, SORT_ROLE, JobsTableModel
 from qt.widgets import ColorLegend
 from seen_db import APP_STATUSES
 from vm_schedule import RUN_LABELS
@@ -51,6 +51,10 @@ class JobsTab(QtWidgets.QWidget):
         self._failed_ids = frozenset()   # jobs whose last tailor run failed (red)
         self._empty_widget = None
         self._extra_filter_active: list = []  # predicates from add_filter_row, for the badge
+        # Header-click sort state (applied in pandas by _sorted_view, not by the
+        # proxy). None = the model's default order from filter_and_sort.
+        self._sort_col: int | None = None
+        self._sort_order = QtCore.Qt.SortOrder.AscendingOrder
 
         self.model = JobsTableModel(self.col_ids, mode=table_key)
         self.proxy = QtCore.QSortFilterProxyModel(self)
@@ -140,12 +144,23 @@ class JobsTab(QtWidgets.QWidget):
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.clicked.connect(self._on_click)
         self.table.selectionModel().selectionChanged.connect(self._on_select)
-        self.table.setSortingEnabled(True)
+        # Header-click sorting is driven by US, in pandas, not by the proxy's
+        # comparison sort. QSortFilterProxyModel.sort() calls back into data()
+        # once per comparison, so an n-log-n sort of a tens-of-thousands-row
+        # master is ~600k Python round-trips: measured 1.8 s (score) to 3.5 s
+        # (job_title) at 40k rows, all of it a frozen UI on the All Jobs tab.
+        # Sorting the DataFrame instead and re-populating the model is ~0.1 s.
+        # setSortingEnabled(False) keeps the view from re-arming the proxy sort;
+        # the indicator is still drawn and clicks come via sectionClicked.
+        self.table.setSortingEnabled(False)
         # Start in the model's default order (sort_query); a header click sorts.
         self.table.horizontalHeader().setSortIndicator(
             -1, QtCore.Qt.SortOrder.AscendingOrder)
         self.proxy.sort(-1)
         hh = self.table.horizontalHeader()
+        hh.setSortIndicatorShown(True)
+        hh.setSectionsClickable(True)
+        hh.sectionClicked.connect(self._on_header_clicked)
         hh.setStretchLastSection(True)
         hh.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         self._set_column_widths(columns_with_widths(self.table_key, self.col_ids))
@@ -256,6 +271,43 @@ class JobsTab(QtWidgets.QWidget):
     def _debounced_filter(self) -> None:
         self._debounce.start()
 
+    def _on_header_clicked(self, section: int) -> None:
+        """Toggle asc/desc on the clicked column and re-sort in pandas.
+
+        Cycles asc -> desc -> unsorted (back to filter_and_sort's default order),
+        matching what the proxy's own toggle used to feel like plus a way out."""
+        if section == self._sort_col:
+            if self._sort_order == QtCore.Qt.SortOrder.AscendingOrder:
+                self._sort_order = QtCore.Qt.SortOrder.DescendingOrder
+            else:
+                self._sort_col, self._sort_order = None, QtCore.Qt.SortOrder.AscendingOrder
+        else:
+            self._sort_col = section
+            self._sort_order = QtCore.Qt.SortOrder.AscendingOrder
+        hh = self.table.horizontalHeader()
+        if self._sort_col is None:
+            hh.setSortIndicator(-1, QtCore.Qt.SortOrder.AscendingOrder)
+        else:
+            hh.setSortIndicator(self._sort_col, self._sort_order)
+        self._apply_filters()
+
+    def _sorted_view(self, view: pd.DataFrame) -> pd.DataFrame:
+        """Apply the header-click sort to `view` with pandas (see _build for why)."""
+        if self._sort_col is None or view.empty:
+            return view
+        try:
+            name = self.col_ids[self._sort_col]
+        except IndexError:
+            return view
+        if name not in view.columns:
+            return view
+        if name in NUMERIC_COLS:
+            key = pd.to_numeric(view[name], errors="coerce").fillna(float("-inf"))
+        else:
+            key = view[name].astype(str).str.lower()
+        asc = self._sort_order == QtCore.Qt.SortOrder.AscendingOrder
+        return view.iloc[key.argsort(kind="stable")[:: 1 if asc else -1]]
+
     def _apply_filters(self) -> None:
         label = self.search_col.currentText()
         col = LABEL_TO_COLUMN.get(label, label)
@@ -263,6 +315,7 @@ class JobsTab(QtWidgets.QWidget):
             self._base, self.search.text().strip().lower(), self.minscore.currentText(),
             self.day.currentText(), self.time.currentText(), self.reco.currentText(),
             self.easy.currentText(), col)
+        view = self._sorted_view(view)
         self.model.set_dataframe(view, self._resume_ids, self._failed_ids)
         total = 0 if self._base is None or self._base.empty else len(self._base)
         self.count_label.setText(f"{len(view)} of {total} shown")

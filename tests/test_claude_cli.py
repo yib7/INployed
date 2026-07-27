@@ -624,3 +624,32 @@ def test_pool_warmup_gate_releases_after_first_call_failure(monkeypatch, no_slee
     resp = asyncio.run(pool.generate(model="m", contents="second", config=config))
     assert resp.text == "second-ok"
     assert calls["n"] == 2
+
+
+def test_child_env_drops_other_providers_secrets(monkeypatch, tmp_path):
+    """Phase 4 (4.1): the parent has already loaded .env, so a bare
+    subprocess.run would hand Bright Data's and Gemini's credentials to an
+    unrelated vendor's CLI purely by env inheritance. Anthropic's own vars and
+    PATH must survive."""
+    fake_exe = str(tmp_path / "claude")
+    monkeypatch.setattr(claude_cli, "find_claude", lambda: fake_exe)
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1,k2")
+    monkeypatch.setenv("BRIGHT_DATA_API_TOKEN", "bd-token")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/tmp/sa.json")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    claude_cli.run_claude("sys", "user", "m")
+
+    env = captured["env"]
+    assert env is not None, "the child must not inherit the raw parent environment"
+    for leaked in ("GEMINI_API_KEYS", "BRIGHT_DATA_API_TOKEN",
+                   "GOOGLE_APPLICATION_CREDENTIALS"):
+        assert leaked not in env, f"{leaked} reached the claude subprocess"
+    assert env.get("ANTHROPIC_MODEL") == "claude-sonnet-5"
+    assert "PATH" in env

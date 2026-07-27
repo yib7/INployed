@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import re
 import shutil
@@ -33,6 +34,26 @@ from types import SimpleNamespace
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: no console flash
 DEFAULT_TIMEOUT_S = 180
+
+# Other providers' secrets must not ride into the `claude` child process. The
+# parent has already loaded .env, so a bare subprocess.run() would hand Bright
+# Data's and Gemini's credentials to an unrelated vendor's CLI purely by env
+# inheritance. Nothing here is needed by `claude` (it authenticates through its
+# own stored login), so strip them; everything else — PATH, HOME/USERPROFILE,
+# ANTHROPIC_* — is passed through untouched.
+_SCRUBBED_ENV_VARS = (
+    "GEMINI_API_KEY", "GEMINI_API_KEYS", "GOOGLE_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS", "RESUME_TAILOR_GEMINI_API_KEY",
+    "BRIGHT_DATA_API_TOKEN", "HEALTHCHECKS_URL", "HEALTHCHECK_URL",
+)
+
+
+def _child_env() -> dict:
+    """A copy of `os.environ` with every non-Anthropic credential removed."""
+    env = dict(os.environ)
+    for name in _SCRUBBED_ENV_VARS:
+        env.pop(name, None)
+    return env
 
 
 class ClaudeCLIError(RuntimeError):
@@ -127,6 +148,7 @@ def run_claude(
             argv, input=user, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout_s,
             cwd=tempfile.gettempdir(), creationflags=_NO_WINDOW,
+            env=_child_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise ClaudeCLIError(

@@ -281,6 +281,8 @@ scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
 scripts/setup.ps1       first-run config writer (.env / config.json / master_experience.yaml)
 scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots (synthetic data)
 scripts/build_demo_media.py assembles docs/demo.gif + docs/dashboard.png from those shots
+scripts/build_social_preview.py composes docs/social-preview.png (GitHub's 1280x640 card)
+scripts/build_walkthrough.py  records the captioned MP4 tour of the dashboard (synthetic data)
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)

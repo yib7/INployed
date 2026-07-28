@@ -4,6 +4,21 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-07-28
+
+Maintainer tooling for the project's own media. No runtime or pipeline change.
+
+### Added
+- `scripts/build_social_preview.py` composes `docs/social-preview.png` at GitHub's 1280x640
+  social shape. Uploading the hero screenshot as-is letterboxes it, and its 15 px interface text
+  is unreadable once a chat client shrinks the link unfurl, so the card sets the wordmark and the
+  one-line description over a blurred crop of the screenshot instead.
+- `scripts/build_walkthrough.py` drives the real dashboard offscreen through a 13-scene tour and
+  encodes a captioned MP4. Like the screenshots, it runs against synthetic fixtures, so it costs
+  nothing and shows no real data. The video is not committed: an inline player works only from
+  GitHub's user-content CDN. Encoding needs `imageio-ffmpeg`, which stays out of
+  `requirements.txt`.
+
 ## [1.7.0] - 2026-07-27
 
 Three cycles of work in one release: an Easy Apply filter that stops the scorer spending on
@@ -486,7 +501,8 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/yib7/INployed/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/yib7/INployed/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/yib7/INployed/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/yib7/INployed/compare/v1.6.0...v1.6.1

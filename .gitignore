@@ -86,3 +86,8 @@ local/settings_archive/
 
 # offscreen UI screenshot output (scripts/ui_screenshots.py)
 .screenshots/
+
+# walkthrough video (scripts/build_walkthrough.py). Rebuilt on demand and served
+# from GitHub's user-content CDN, which is the only place an inline player works,
+# so the repo has no reason to carry the binary.
+docs/walkthrough.mp4

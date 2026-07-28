@@ -197,6 +197,7 @@ Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USE
   experience file with impressive-sounding text.
 - **Next:** more discovery sources behind the same normalizer, and a scoring calibration
   loop that learns from tracker outcomes instead of a fixed rubric.
+
 ---
 
 ## How the résumé engine stays honest

@@ -27,7 +27,7 @@ the engine uses its built-in defaults but your saved targets are kept, so you ca
 
 ### Find skills you forgot to list
 The JD-gap helper surfaces skills a posting wants that aren't yet in your master
-file, screens them to genuine non-identifying skills, and (only on your
+file, screens them to non-identifying skills, and (only on your
 confirmation) folds them into the right bucket with a reviewable diff + backup.
 Run it from `local/`:
 ```bash
@@ -39,7 +39,7 @@ python -m resume_tailor.master_gaps --jd-file job.txt --apply  # write (.bak mad
 ### Run the dashboard
 Launch it the way Step 4 describes: double-click `Open INployed Dashboard.cmd`.
 The window opens maximized and gives you high-score triage, an application tracker with
-follow-up nudges, and run stats. A few behaviors worth knowing:
+follow-up nudges, and run stats. A few behaviors to know:
 - **Tailor résumé** runs in the background, so the UI stays responsive.
 - Select several jobs and it tailors them all at once, in parallel. A single failure is
   reported without sinking the rest, and a quick warning appears before very large batches.
@@ -122,7 +122,7 @@ one group at a time:
 
 - **Credentials:** the job-data (Bright Data) API token, the Gemini API-key pool,
   and the résumé-tailor API key. Each box holds the saved value (read straight from
-  your local `.env`), masked by default — untick *Hide* to reveal one, edit it to
+  your local `.env`), masked by default. Untick *Hide* to reveal one, edit it to
   change it, or clear the box to remove the key.
 - **Connection & paths:** the job-postings dataset ID, Google Cloud project +
   location, your name (for résumé filenames), the résumé output folder and
@@ -176,7 +176,7 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Google Gemini (Vertex or API key) | scoring and résumé tailoring | the job description, your `resume.md` / `master_experience.yaml` content |
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
 | the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
-| healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code — no job data, no identifiers |
+| healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
 The healthchecks ping is a dead-man's switch so a silently failing cron run emails
 you instead of rotting in the log. It is off unless you set `HEALTHCHECKS_URL`
@@ -185,7 +185,7 @@ yourself (see `scripts/run_scraper.sh`); unset, `ping_hc` is a no-op.
 Your credentials never cross providers: the Gemini and Bright Data secrets are
 stripped from the environment before the `claude` CLI is launched, the ATS master
 password lives in the Windows Credential Manager and only ever exits to the
-clipboard, and nothing is written to the repo — secrets stay in your git-ignored
+clipboard, and nothing is written to the repo. Secrets stay in your git-ignored
 `.env`.
 
 ### Manage the VM from the dashboard

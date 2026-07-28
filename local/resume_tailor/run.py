@@ -41,7 +41,7 @@ def _write_cover_txt(out_dir: Path, body: str, company: str,
 
 
 def _field(job: Dict[str, str], key: str) -> str:
-    """Robust string getter: NaN floats / None (pandas rows) become ''."""
+    """String getter that coerces NaN floats / None (pandas rows) to ''."""
     v = job.get(key)
     if not isinstance(v, str):
         return ""

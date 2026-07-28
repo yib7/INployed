@@ -1,4 +1,4 @@
-"""Offscreen UI screenshot harness for the restyle work.
+"""Offscreen UI screenshot harness for the dashboard.
 
 Run:  python scripts/ui_screenshots.py [prefix]     (prefix defaults to "current")
 

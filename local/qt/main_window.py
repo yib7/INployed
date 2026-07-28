@@ -212,9 +212,8 @@ class MainWindow(QtWidgets.QMainWindow):
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
         msg = QtWidgets.QLabel(
-            "Get started in three steps: set your keys and folders in Settings, find "
-            "new jobs to fetch and score them, then add your résumé data so jobs "
-            "are matched to you.")
+            "Three steps: set your keys and folders in Settings, fetch and score "
+            "new jobs, then add your résumé data so jobs get matched to you.")
         msg.setWordWrap(True)
         msg.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         msg.setProperty("muted", True)
@@ -385,10 +384,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.high_tab.set_empty_widget(self._build_empty_hint())
 
-        # The job detail card replaces the old ScorePreview — same `self.preview`
-        # attribute so the splitter wiring + _apply_preview_visibility stand.
-        # The card OWNS the Tailor/Apply buttons now; alias them so every
-        # existing enable/repolish path keeps the same object identities.
+        # The detail card is bound to `self.preview` because the splitter wiring and
+        # _apply_preview_visibility both key off that attribute name.
+        # The card OWNS the Tailor/Apply buttons; the aliases below give every
+        # enable/repolish path a stable object identity to work with.
         self.preview = JobDetailCard(
             on_open=self._open_url,
             on_tailor=self._tailor_selected,
@@ -463,7 +462,7 @@ class MainWindow(QtWidgets.QMainWindow):
         button("Find new jobs", self._run_scraper_dialog, accent=True)
 
         # One bottom panel: the interface-size control and a Restart button ride in
-        # the same bar as the actions (they used to be a separate status-bar strip).
+        # the same bar as the actions, so the window has a single control strip.
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.Shape.VLine)
         sep.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)

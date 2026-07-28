@@ -30,8 +30,9 @@ it), ``reopen`` relaunches the SAME persistent profile at the parked URL, restor
 the logged-in session where the run left off.
 
 UPLOADS: ``set_files`` drives a reachable ``<input type=file>`` (main frame, then any
-child frame). ``upload`` intercepts the browser's file chooser instead — the robust
-path for iframe/dynamically-created inputs and native OS file dialogs (SuccessFactors).
+child frame). ``upload`` intercepts the browser's file chooser instead, which is the
+reliable path for iframe/dynamically-created inputs and native OS file dialogs
+(SuccessFactors).
 
 CLI:
     python local/apply_driver.py launch --workdir DIR [--headless]  # detached serve (survives the agent)
@@ -167,7 +168,7 @@ def do(page, cmd: Dict[str, Any], workdir: Optional[Path] = None) -> Dict[str, A
         _set_files(page, cmd["selector"], cmd["paths"], cmd.get("timeout", 8000))
         page.wait_for_timeout(1500)
     elif a == "upload":
-        # Robust upload: intercept the browser's file chooser instead of requiring a
+        # Chooser-based upload: intercept the browser's file chooser instead of requiring a
         # reachable <input type=file>. Works for iframe-embedded / dynamically-created
         # inputs AND for "+"/"Upload" buttons that open a native OS file dialog
         # (e.g. SuccessFactors "My Documents") — the exact case set_input_files can't

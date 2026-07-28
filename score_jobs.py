@@ -53,8 +53,8 @@ RESUME_PATH = OUTPUT_DIR / "resume.md"
 # "Push config to VM" DOES scp this file (including `provider`) to the VM —
 # but claude_cli.py isn't shipped to the VM (and no `claude` CLI is installed
 # there), so make_pool() below silently falls back to Gemini regardless of a
-# pushed `provider: claude`. Absent the file entirely, the scorer behaves
-# exactly as before.
+# pushed `provider: claude`. Absent the file entirely, the scorer uses the
+# built-in defaults below.
 SCORING_CONFIG_FILE = "scoring_config.json"
 
 # Built-in defaults, keyed by config name -> (env var name, default value, kind).

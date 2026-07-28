@@ -29,8 +29,8 @@ configs keep working; the one new option (`drop_easy_apply`) defaults to off.
   SSRF-hardened (no redirects to private address space).
 - **A 1.8-3.5 s dashboard freeze** when sorting a large job table: sorting happens in pandas
   now rather than in the Qt proxy model.
-- **Whole-master reads are streamed in bounded chunks** everywhere they were not already -- the
-  watcher probe, reconcile, outbox row lookup, and append/drop -- so a ~35 MB master no longer
+- **Whole-master reads are streamed in bounded chunks** everywhere they were not already (the
+  watcher probe, reconcile, outbox row lookup, and append/drop), so a ~35 MB master no longer
   loads end-to-end for a single row.
 - Scoring robustness: separate retry budgets per key in the pool, debounced and merging state
   saves, a wider input-error catch, correct Stage-2 error counting, byte-stable master dtypes,
@@ -41,7 +41,7 @@ configs keep working; the one new option (`drop_easy_apply`) defaults to off.
 - VM schedule pushes preserve crontab lines the project does not manage, and biweekly runs use
   epoch-week parity so local and VM agree on which week it is.
 - `scripts/setup.ps1` survives being launched with `powershell -File`, which is how the README
-  tells you to run it -- on a fresh clone it previously failed.
+  tells you to run it; on a fresh clone it previously failed.
 - Table headers align with their cells, the Title column stretches, and form inputs are
   labelled.
 

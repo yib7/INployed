@@ -1,7 +1,7 @@
 # Security Policy
 
 INployed is a personal, single-developer project. There is no bug-bounty program, but
-genuine vulnerability reports are welcome and taken seriously.
+I read every vulnerability report and will fix what I can.
 
 ## Reporting a vulnerability
 
@@ -17,7 +17,7 @@ impact you observed. Expect an initial reply within about a week.
 This is a desktop + local-CLI tool with an optional self-hosted GCP scraper VM. The reports
 most relevant to it:
 
-- Secrets handling. Keys live only in a git-ignored `.env` (and, by the user's choice, in the
+- Secrets handling: keys live only in a git-ignored `.env` (and, by the user's choice, in the
   local `settings_archive/` snapshots, also git-ignored). A path that logs, prints, transmits,
   or commits a secret is in scope.
 - The résumé/apply pipeline reading untrusted input (a pasted job description or URL, a scraped

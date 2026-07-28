@@ -8,12 +8,12 @@ reopening this repo cold. This doc is about *how the code is shaped and why*.
 ### 1. Job discovery (`scraper.py`)
 The discovery step is an async Bright Data client. Triggers keyword × remote-type searches, polls the
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
-appends to a cumulative master CSV. Two cost-aware details worth remembering:
-- It excludes job ids already collected within a recency window — the last
-  `EXCLUDE_WINDOW_DAYS` days (default 90) — from re-collection (Bright Data bills
+appends to a cumulative master CSV. Two cost-aware details:
+- It excludes job ids already collected within a recency window (the last
+  `EXCLUDE_WINDOW_DAYS` days, default 90) from re-collection (Bright Data bills
   per collected posting, so re-fetching a job we already have wastes money). The set
   is windowed rather than unbounded: the search only looks back 24h, so a posting
-  older than the window can't reappear and its id is pure payload — capping it keeps
+  older than the window can't reappear and its id is pure payload, so capping it keeps
   the Bright Data trigger POST from eventually overflowing its request-size limit.
   Windowing fails toward a superset (undated/unparseable rows are kept), so it never
   drops an id it should have excluded. See `load_exclude_ids()` / `_window_ids()`.
@@ -24,21 +24,20 @@ appends to a cumulative master CSV. Two cost-aware details worth remembering:
 ### 2. Score (`score_jobs.py`)
 A two-stage Gemini filter. Stage 1 (cheap flash-lite) does a fast relevance pass;
 stage 2 (flash) deep-scores the survivors. A deterministic `min_required_years`
-regex pre-filter drops over-senior roles *before* any LLM sees them (this is the
-load-bearing, heavily-tested function; see `tests/test_min_required_years.py`).
+regex pre-filter drops over-senior roles *before* any LLM sees them (the highest-risk
+function here, and the most heavily tested; see `tests/test_min_required_years.py`).
 Locally the scorer can run through the Claude Code CLI instead (Settings → Scoring provider); the VM always scores with Gemini.
 
 ### 3. Dashboard (`local/app.py` + `local/qt/`) + résumé engine (`local/resume_tailor/`)
 PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
 application tracker (`local/seen_db.py`) with follow-up nudges, a stats tab, the
-Settings/Resume Data/Apply Answers editors, and the **Tailor resume** button. The
+Settings/Resume Data/Apply Answers editors, and the **Tailor résumé** button. The
 job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pure
 data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome.py`).
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
-`ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads genuinely
-overlap); per-job failures are captured and reported in one aggregate dialog, registry
+`ThreadPoolExecutor` (the work is I/O- + `pdflatex`-bound, so threads overlap); per-job failures are captured and reported in one aggregate dialog, registry
 writes happen back on the UI thread (the SQLite connection is thread-affine), and a
 warning precedes very large batches. Tailoring streams live per-job progress to the status bar
 via a `MainWindow.tailor_progress` Qt signal (the engine's `on_status` callback, queued cross-thread
@@ -67,23 +66,23 @@ outbox file to the VM's `~/incoming/` over the same gcloud scp transport as the 
 (`local/outbox.py`; argv builders in `local/vm_sync.py`). A file is deleted locally only when
 its scp exits 0, so a failed push simply retries on the next scrape or manual add. On the VM,
 `merge_incoming.py` (invoked by `run_scraper.sh` after the blocklist pull, before each scrape)
-folds `~/incoming/*` into the master and `run_stats.csv` — master-wins dedup on
+folds `~/incoming/*` into the master and `run_stats.csv`: master-wins dedup on
 `job_posting_id`, bad files quarantined to `~/incoming/bad/`, files younger than 60s skipped
 as possibly mid-upload, and the only nonzero exit is an unreadable existing master (which
 stops the cron run before the scrape can spend money). Merged rows then reach the dashboard
 through the normal Drive sync. On the viewing side there is exactly one owner of the
 local-runs fold: `app.py:_with_local_runs` appends `jobsdata.local_run_files()` to whatever
-sources it was launched with, so local runs show up immediately in EVERY entry point —
-including a watcher-launched window — and `load_files`' id-dedup keeps them from
+sources it was launched with, so local runs show up immediately in EVERY entry point,
+including a watcher-launched window, and `load_files`' id-dedup keeps them from
 double-counting once the merged master syncs back down.
 
 ### VM cron pipeline: merge, scrape, score, prune, and retention
 The VM's `run_scraper.sh` (invoked twice daily via cron) orchestrates the job discovery and scoring
 pipeline. After pulling the company blocklist, it merges any incoming rows from the dashboard
-(`merge_incoming.py` — local scrapes are master-wins deduped on `job_posting_id`), scrapes fresh jobs
+(`merge_incoming.py`; local scrapes are master-wins deduped on `job_posting_id`), scrapes fresh jobs
 from Bright Data (`scraper.py`), scores them via Gemini (`score_jobs.py`), and finally prunes old job
-descriptions to bound memory growth (`prune_master.py`). All four master-CSV passes — `append_to_master`,
-`update_master_scores`, `rescore_master_failures`, and the merge itself — are now **bounded-memory
+descriptions to bound memory growth (`prune_master.py`). All four master-CSV passes (`append_to_master`,
+`update_master_scores`, `rescore_master_failures`, and the merge itself) are **bounded-memory
 streaming operations** instead of full-DataFrame loads: each pass chunks the master at 2000 rows,
 skipping full-DataFrame reads. `append_to_master` and `merge_incoming` probe the id column up-front
 to validate readability and collect existing ids, then stream master chunks through a same-directory
@@ -97,12 +96,12 @@ staying flat as the master grows (the fix for the VM's previous OOM kills on a ~
 
 **Retention:** After scoring, `prune_master.py` blanks the `job_description_formatted` column for jobs
 older than 3 days (RETENTION_DAYS, CLI-overridable via `--days`), anchored on `extracted_date` with fallback
-to `job_posted_date` — rows with no parseable date are never stripped. The full HTML description
+to `job_posted_date`. Rows with no parseable date are never stripped. The full HTML description
 is ~55% of master bytes and is re-fetchable from each job's LinkedIn url; after 3 days a posting is
 typically applied-to or abandoned. `job_summary` is preserved (an opt-in `--summary` flag can strip it;
 off by default). A stripped row that was never scored is parked with `filtered_out=True` and `reason="pruned_no_desc"`
 (an empty description can't be scored, so it must not sit in the rescore queue forever). Prune never
-deletes rows — only blanks one column, runs chunked and idempotent, and is best-effort (a nonzero exit
+deletes rows; it only blanks one column, runs chunked and idempotent, and is best-effort (a nonzero exit
 does not fail the cron).
 
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
@@ -132,7 +131,7 @@ named surface/border/text colors plus a `SEMANTICS` dict (accent / success / war
 followup / followup_sent / neutral, each with base, hover, and tint alphas) that every row tint,
 pill, and badge derives from; the legacy `ROW_*` constants are pre-composed blends of those tokens,
 so legend swatches and tests keep working. Fonts go through **type roles** (title / section / body /
-control / caption / mono), each a *multiplier* of the live base size — never absolute px — assigned
+control / caption / mono), each a *multiplier* of the live base size, never absolute px, assigned
 per widget class or via `theme.set_type_role`. One persisted **interface scale** (`ui_scale_pct` in
 `config.json`) sizes the whole UI via `theme.set_scale`, driven by an **Interface size** control
 (slider + `-`/`+`, 10% steps, 75-150%; `MainWindow._apply_scale`), or by the **Ctrl +/-/0** shortcuts
@@ -149,10 +148,10 @@ font-weight rules still merge over the new font). Cell painting in the job table
 **`local/qt/delegates.py:JobRowDelegate`** (category tint + selection lines + first-column stripe +
 score badges, deep-score mini-bars, status/reco pills, "Open ↗" links) reading a `TAG_ROLE` the
 model exposes. The same semantic families feed the scale-aware widget kit in
-**`local/qt/chrome.py`** (`Pill` / `Chip` / `ChipBar` — used by the header **identity strip**
+**`local/qt/chrome.py`** (`Pill` / `Chip` / `ChipBar`, used by the header **identity strip**
 with its jobs/unseen/tracked counters + freshness pill, the Tracker's status chip bar, and the
-auto-apply pipeline chips) and **`local/qt/detail_card.py:JobDetailCard`**, the bottom pane that
-replaced the plain score preview: title + meta, the Open posting / Tailor résumé / Apply action
+auto-apply pipeline chips) and **`local/qt/detail_card.py:JobDetailCard`**, the bottom pane under the job
+tables: title + meta, the Open posting / Tailor résumé / Apply action
 row, score/deep/applicants chips, the REASON lede with STRENGTHS/GAPS columns (a tracker variant
 swaps in status/follow-up pills and a NEXT STEP line), and a collapsed "Show description" JD snippet. **Restart** (`MainWindow._restart_app`) flags the intent and closes the window;
 `app.main` relaunches a fresh process after the single-instance lock is released.
@@ -172,7 +171,7 @@ editable model dropdowns can't be scroll-edited. Settings sections are **collaps
 ## The résumé engine in depth (`local/resume_tailor/`)
 
 The whole engine obeys one rule: **select and re-phrase, never invent.** Every
-bullet must be traceable to a fact ("atom") the user actually wrote in
+bullet must be traceable to a fact ("atom") the user wrote in
 `master_experience.yaml`.
 
 | Module | Role |
@@ -189,12 +188,12 @@ bullet must be traceable to a fact ("atom") the user actually wrote in
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
-| `verify.py` | The grounding backstop. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule — select and re-phrase, never invent. |
+| `verify.py` | The grounding backstop. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
 | `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` backs the dashboard's "Check setup" button. |
 | `apply_answers.py` | The reusable screening-answer bank (git-ignored `apply_answers.json`): seeds from `apply_config.DEFAULTS`, migrates legacy overrides, and feeds the standard answers into `apply.md`. |
-| `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are now config-driven, default-preserving. |
+| `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are config-driven and default-preserving. |
 | `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder (by the `apply.md` meta marker), build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO, structured address). |
 
 ### Why it's config-driven
@@ -230,8 +229,7 @@ selected blocks; each surviving bullet verbatim) with **no extra LLM call**. The
 button (and `python -m resume_tailor.apply`) resolves the folder via that marker, opens the posting in
 Chrome, and shows the Apply panel, which **renders the sheet as formatted markdown** while "Copy apply
 sheet" copies the raw source; the user pastes `apply.md` into Claude-in-Chrome to fill the fields by hand
-and **stop for human review; nothing auto-submits.** (The former `apply-to-job` skill is retired; its
-contract now lives at the top of every `apply.md`.)
+and **stop for human review; nothing auto-submits.** (That fill-it-out contract lives at the top of every `apply.md`.)
 
 ### The one-page guarantee
 `layout.py` derives a `(min, max)` character window per bullet from empirically

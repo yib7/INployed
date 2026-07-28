@@ -420,8 +420,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.table.itemSelectionChanged.connect(self._update_details)
         v.addWidget(self.table, 1)
 
-        # Structured details panel (replaces the old plain-text pane; it keeps a
-        # `toPlainText()` mirror of the same composed text — test-coupled).
+        # Structured details panel. It keeps a `toPlainText()` mirror of the composed
+        # text because the tests assert against that flattened form.
         self.details = _DetailsPanel(on_answer_now=lambda: self._on_answer_now())
         self.open_folder_btn = self.details.open_folder_btn
         self.open_record_btn = self.details.open_record_btn

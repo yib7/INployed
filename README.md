@@ -6,11 +6,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.14-blue.svg)
 
-An end-to-end system that **finds relevant jobs, scores them with an LLM, and
-generates a tailored, ATS-friendly résumé for any posting in one click**, without
-ever inventing a fact about you.
+It finds relevant jobs, scores them with an LLM, and generates a tailored,
+ATS-friendly résumé for any posting in one click, without ever inventing a fact
+about you.
 
-It is three cooperating pieces:
+Three pieces do the work:
 
 1. **Job discovery** (`scraper.py`): pulls in fresh job postings to evaluate.
 2. **Scorer** (`score_jobs.py`): a two-stage Gemini relevance filter that ranks each
@@ -20,16 +20,16 @@ It is three cooperating pieces:
    (`local/resume_tailor/`) that produces a one-page LaTeX résumé, cover letter,
    ATS keyword report, and interview-prep sheet for the selected job.
 
-> **Why it's interesting (the engineering, not the hustle):** a scheduled cloud
-> job-discovery step feeding a tiered LLM scorer, syncing to a desktop app with an
-> automated LaTeX generation engine whose guiding rule is **select-and-rephrase,
-> never invent**. Every résumé bullet is traceable to a fact you actually provided.
+> **The engineering:** a scheduled cloud discovery step feeds a tiered LLM scorer,
+> which syncs to a desktop app that drives a LaTeX generation engine. That engine's
+> rule is select-and-rephrase, never invent, so every résumé bullet traces back to a
+> fact you wrote.
 
 ---
 
 ## Demo
 
-![Animated tour of the INployed dashboard, eight screens in turn: High Score (LLM-ranked postings with score badges, recommendation pills, and a detail card of reason, strengths, and gaps), All Jobs, Tracker, Auto-apply, Stats, Resume Data, Apply Answers, and Settings.](docs/demo.gif)
+![Animated tour of eight INployed dashboard tabs: High Score, All Jobs, Tracker, Auto-apply, Stats, Resume Data, Apply Answers, Settings. High Score shows ranked postings with score badges and a detail card of reason, strengths, and gaps.](docs/demo.gif)
 
 A tour of the full loop: **High Score** ranks every discovered posting by a two-stage
 Gemini relevance score and color-codes the recommendation; selecting a job opens its
@@ -62,33 +62,33 @@ flowchart TD
 
 ## Quick start
 
-**You need:** Windows 10/11 and **Python 3.14** ([download](https://www.python.org/downloads/)) —
-nothing else. Everything the dashboard needs installs with `pip` in Step 2. Steps 1-4 take
+**You need:** Windows 10/11 and **Python 3.14** ([download](https://www.python.org/downloads/)).
+Nothing else. Everything the dashboard needs installs with `pip` in Step 2. Steps 1-4 take
 about five minutes and end with a running app; Steps 5-7 connect it to your own data and
 accounts.
 
-> **Platform support — what is actually tested:**
+> **Platform support: what is actually tested**
 >
 > | | Status |
 > |---|---|
 > | **Windows 10/11** | Supported. Dashboard + full test suite run here, and CI runs the suite on `windows-latest` every push. |
-> | **Linux** | Supported for the **pipeline scripts only** (`scraper.py`, `score_jobs.py`) — that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
+> | **Linux** | Supported for the **pipeline scripts only** (`scraper.py`, `score_jobs.py`): that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
 > | **macOS** | Untested. Not claimed. |
 >
 > The `Open INployed Dashboard.cmd` launcher, the `scripts/setup.ps1` config script, and the
 > optional Task Scheduler / GCP-VM automation are Windows-only. The dashboard and
 > résumé engine are plain Python + Qt with no Windows-specific dependency, so
 > `pip install -r requirements.txt && python local/app.py` will most likely work on
-> macOS or Linux (use MacTeX / TeX Live for `pdflatex` instead of MiKTeX) — but
+> macOS or Linux (use MacTeX / TeX Live for `pdflatex` instead of MiKTeX), but
 > nobody has run it there, so treat it as unverified rather than supported.
 
-### Step 1 — Get the code
+### Step 1: Get the code
 ```powershell
 git clone https://github.com/yib7/INployed.git
 cd INployed
 ```
 
-### Step 2 — Install the dependencies into a project venv
+### Step 2: Install the dependencies into a project venv
 ```powershell
 python -m venv venv
 .\venv\Scripts\activate
@@ -97,16 +97,16 @@ python -m pip install -r requirements.txt
 Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests.
 The launcher in Step 4 finds this `venv` on its own.
 
-### Step 3 — Create your local config files
+### Step 3: Create your local config files
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 This writes a git-ignored `.env` (your keys), `local/config.json` (dashboard
 preferences), and a starter `resume_tailor_files/master_experience.yaml`. It fills in
-placeholders only — you set the real values in Step 5, from the app. Re-run it any time;
+placeholders only; you set the real values in Step 5, from the app. Re-run it any time;
 nothing is overwritten without `-Force`.
 
-### Step 4 — Launch the dashboard
+### Step 4: Launch the dashboard
 **Double-click `Open INployed Dashboard.cmd`** in the project folder. That is the single
 entry point, and the only thing you need for every later launch. (Right-click it →
 *Send to* → *Desktop (create shortcut)* for a desktop icon. From a terminal it is
@@ -115,7 +115,7 @@ entry point, and the only thing you need for every later launch. (Right-click it
 With no keys and no jobs yet, the window opens to a **get-started panel** rather than a
 blank table, so you can confirm the install worked before configuring anything.
 
-### Step 5 — Set your keys in the Settings tab
+### Step 5: Set your keys in the Settings tab
 In the running dashboard, open the **Settings** tab and fill in the **Credentials**
 section. One form covers every key, path, and option the project has; nothing needs to be
 edited by hand. See
@@ -128,10 +128,10 @@ You need an account for each feature you want:
 | LLM scoring + résumé tailoring | a **Google Cloud** project with Vertex AI enabled (or a Gemini API key) |
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
 
-*(Skip if you only want to look around — the dashboard, tracker, and editors all run
+*(Skip if you only want to look around: the dashboard, tracker, and editors all run
 without keys. The tailor stops with a plain "no key configured" message instead.)*
 
-### Step 6 — Enter your experience in the Resume Data tab
+### Step 6: Enter your experience in the Resume Data tab
 Your experience lives in **`resume_tailor_files/master_experience.yaml`**, the single
 source of truth the pipeline **selects** from per job (it never fabricates). Use the
 dashboard's **Resume Data** tab to add / edit / delete entries and achievements, with
@@ -150,7 +150,7 @@ shows the structure if you would rather edit the file.)
 - Click **Check setup** any time to lint your résumé data + apply answers, so a malformed
   entry surfaces as a clear error instead of breaking the pipeline silently.
 
-### Step 7 (optional) — Extras, each for one feature
+### Step 7 (optional): Extras, each for one feature
 *(Skip all of these until you want the feature; nothing above depends on them.)*
 ```powershell
 winget install MiKTeX.MiKTeX          # compiles the tailored résumé to PDF (set PDFLATEX_PATH if not on PATH)
@@ -171,8 +171,7 @@ The [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate instal
 - **Track.** Applications move through applied → interviewing → offer / rejected, with
   follow-up nudges. The whole history is a local SQLite file you can export and import.
 - **Apply.** Every tailored folder gets a self-contained `apply.md` sheet that a
-  browser agent fills page by page and then **stops at the review screen** — it never logs
-  in and never clicks submit.
+  browser agent fills page by page and then **stops at the review screen**. It never logs in, and it never clicks submit.
 - **Operate.** Settings is one schema-driven form over every key, path, and tunable the
   project has (no file editing), including the schedule, pause, and config pushes for the
   cloud discovery VM. Stats reports per-run cost and volume, with a staleness badge when a
@@ -194,8 +193,8 @@ Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USE
 - **Discovery is one vendor deep.** Postings come from a Bright Data LinkedIn dataset; a
   broken dataset or a schema change stops the front of the pipeline.
 - **Not an auto-submitter, and not a résumé writer.** The apply flow parks at review, and
-  the tailor can only select and rephrase facts you wrote yourself — it will never fill a
-  thin experience file with impressive-sounding text.
+  the tailor can only select and rephrase facts you wrote yourself. It will never fill a thin
+  experience file with impressive-sounding text.
 - **Next:** more discovery sources behind the same normalizer, and a scoring calibration
   loop that learns from tracker outcomes instead of a fixed rubric.
 ---
@@ -226,14 +225,13 @@ flowchart LR
     C --> P["tailored PDF"]
 ```
 
-**A deterministic backstop enforces it** (`local/resume_tailor/verify.py`). A job
+**The grounding backstop enforces it** (`local/resume_tailor/verify.py`), deterministically. A job
 description is untrusted internet text riding inside the generation prompt, so the prompt
 alone is not a guarantee. After generation, and with no LLM involved, every bullet's
-distinctive tokens — numbers, proper nouns, tool names — must trace back to the atoms that
+distinctive tokens (numbers, proper nouns, tool names) must trace back to the atoms that
 bullet was built from. One that introduces an unseen token is reverted to its last grounded
-version, or dropped. The module's own docstring states what the gate does *not* catch (an
-invented claim made of ordinary lowercase words has no distinctive token to check), because
-a guarantee is only worth its stated edges.
+version, or dropped. The module's own docstring states what the gate does *not* catch: an
+invented claim made of ordinary lowercase words has no distinctive token to check.
 
 The skills section follows the same rule. A **Methods** line surfaces the concept
 keywords an ATS screens for ("ETL", "A/B testing", "data analysis") drawn only from
@@ -261,7 +259,7 @@ The suite sets `QT_QPA_PLATFORM=offscreen` itself, so the same two commands work
 PowerShell, cmd, and bash. (CI exports it explicitly; see `.github/workflows/ci.yml`.)
 
 ## Screenshots
-![The High Score tab: scored job rows tinted by recommendation, with score badges, deep-score bars, and apply / consider / tailored pills, above the selected job’s detail card showing the score reason, strengths, gaps, and the Tailor résumé and Apply buttons. Representative sample data.](docs/dashboard.png)
+![The High Score tab. Scored job rows tinted by recommendation, with score badges, deep-score bars, and apply / consider / tailored pills. Below them, the selected job's detail card: score reason, strengths, gaps, and the Tailor résumé and Apply buttons. Sample data.](docs/dashboard.png)
 
 The **High Score** tab surfaces only unseen postings scoring ≥4, ordered by score then
 fewest applicants (the freshest apply window first). Selecting a row opens the job's

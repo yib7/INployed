@@ -422,7 +422,7 @@ def append_to_master(df: pd.DataFrame) -> int:
         return len(new)
 
     # Validate readability up front so a corrupt-but-present master still raises
-    # loudly (never silently treated as empty — same contract as before). The
+    # loudly, never silently treated as empty. The
     # probe's full parse also gives us existing_ids for free, before the tempfile
     # stream starts and before blocklist filtering (so a new row colliding with an
     # existing-but-about-to-be-blocklisted row is still correctly excluded below).

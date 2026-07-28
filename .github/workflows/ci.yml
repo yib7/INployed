@@ -42,3 +42,121 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python tests/smoke_qt.py
+
+  # Linux is a second platform on purpose, but a deliberately narrower one. The README
+  # claims Linux for the headless pipeline scripts only -- that is what runs on the
+  # production GCP VM -- and does not claim the Qt dashboard there. So this job runs
+  # ruff plus exactly the pipeline test files (scraper.py, score_jobs.py, vm_sync), and
+  # the platform claim gets evidence matching its own scope rather than a broader green
+  # nothing in the docs actually promises. None of these test files imports Qt.
+  pipeline-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      # PySide6 is in requirements.txt and its wheel needs these shared objects to be
+      # importable at all on a bare runner, even though this job never opens a window.
+      - name: Install PySide6 system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Run pipeline tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest -q \
+            tests/test_run_scraper_script.py \
+            tests/test_score_jobs.py \
+            tests/test_score_jobs_chunked.py \
+            tests/test_score_jobs_claude.py \
+            tests/test_scraper_append.py \
+            tests/test_scraper_bounds.py \
+            tests/test_vm_sync.py
+
+  # Runs the README's "Getting started" steps VERBATIM on a clean runner. This job
+  # exists because a fresh-clone breakage slipped through once: the documented
+  # `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` invocation failed on a
+  # machine that had never run the project, while every convenient approximation of it
+  # passed. Keep the commands below byte-identical to the README -- if the README
+  # changes, change this job, not the other way around.
+  readme-setup:
+    runs-on: windows-latest
+    steps:
+      # README Step 1 is `git clone` + `cd`; checkout is the CI equivalent.
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      # README Step 2, verbatim.
+      - name: README Step 2 - project venv and requirements
+        run: |
+          python -m venv venv
+          .\venv\Scripts\activate
+          python -m pip install -r requirements.txt
+
+      # README Step 3, verbatim -- the exact string a reader copy-pastes.
+      - name: README Step 3 - scripts/setup.ps1
+        run: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+
+      - name: README Step 3 - the config files were written
+        run: |
+          $expected = @('.env', 'local/config.json', 'resume_tailor_files/master_experience.yaml')
+          foreach ($f in $expected) {
+            if (-not (Test-Path $f)) { throw "setup.ps1 did not create $f" }
+          }
+          Write-Host 'setup.ps1 wrote all three config files'
+
+      # README Step 4 is "double-click Open INployed Dashboard.cmd". The .cmd uses
+      # `start`, which detaches, so running it alone proves the batch file parses and
+      # resolves an interpreter but can NOT observe a crash inside the app. Both halves
+      # are checked. The foreground run goes FIRST on purpose: app.main() holds a
+      # single-instance lock, so a still-running detached instance from the .cmd step
+      # would make this one exit immediately and turn the check into a false green.
+      - name: README Step 4 - the dashboard starts and stays up
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $py = Join-Path $PWD 'venv\Scripts\python.exe'
+          if (-not (Test-Path $py)) { throw "the venv from Step 2 is missing: $py" }
+          $out = Join-Path $env:RUNNER_TEMP 'dash-out.txt'
+          $err = Join-Path $env:RUNNER_TEMP 'dash-err.txt'
+          $p = Start-Process -FilePath $py `
+                 -ArgumentList 'local\open_dashboard.pyw' `
+                 -PassThru -NoNewWindow `
+                 -RedirectStandardOutput $out -RedirectStandardError $err
+          if ($p.WaitForExit(45000)) {
+            Write-Host '--- stdout ---'; Get-Content $out -ErrorAction SilentlyContinue
+            Write-Host '--- stderr ---'; Get-Content $err -ErrorAction SilentlyContinue
+            throw "the dashboard exited on its own (exit code $($p.ExitCode)) -- a fresh clone cannot launch the app"
+          }
+          Write-Host 'dashboard still running after 45s; stopping it'
+          Stop-Process -Id $p.Id -Force
+
+      - name: README Step 4 - the .cmd launcher runs
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cmd /c "Open INployed Dashboard.cmd"
+          Start-Sleep -Seconds 20
+          $alive = Get-Process -Name python, pythonw -ErrorAction SilentlyContinue
+          if (-not $alive) { throw 'the .cmd launcher started no Python process' }
+          Write-Host "launcher started: $($alive.Name -join ', ')"
+          $alive | Stop-Process -Force

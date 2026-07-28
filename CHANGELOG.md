@@ -4,6 +4,62 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-07-27
+
+Three cycles of work in one release: an Easy Apply filter that stops the scorer spending on
+postings you cannot apply to from here, a deterministic grounding gate for generated résumé
+text, a 34-finding code-audit remediation, and a security and performance pass. Existing saved
+configs keep working; the one new option (`drop_easy_apply`) defaults to off.
+
+### Added
+- **Drop Easy Apply before scoring.** A Settings toggle skips LinkedIn Easy Apply postings
+  before Stage 1, so no API credits go to jobs the apply flow cannot open on an external board.
+  Skips are counted in `run_stats` and named in the scraper log.
+- **Grounding backstop for generated text** (`local/resume_tailor/verify.py`). Every résumé bullet
+  and every cover-letter claim is checked back against an atom in `master_experience.yaml`
+  after the model returns, deterministically and without a second API call. The job description
+  is fenced as untrusted data in the prompts that read it.
+- **Push config to the VM from Settings.** Changing a setting the scraper VM reads now offers
+  to push the new config, instead of leaving the VM silently running the old one.
+
+### Fixed
+- **Security.** The prep-sheet prompt fenced its job description like the others; the Claude CLI
+  child process no longer inherits other providers' API keys; two paths that could reach the
+  résumé writer around the grounding gate are closed; `manual_add.fetch_url_text` is
+  SSRF-hardened (no redirects to private address space).
+- **A 1.8-3.5 s dashboard freeze** when sorting a large job table: sorting happens in pandas
+  now rather than in the Qt proxy model.
+- **Whole-master reads are streamed in bounded chunks** everywhere they were not already -- the
+  watcher probe, reconcile, outbox row lookup, and append/drop -- so a ~35 MB master no longer
+  loads end-to-end for a single row.
+- Scoring robustness: separate retry budgets per key in the pool, debounced and merging state
+  saves, a wider input-error catch, correct Stage-2 error counting, byte-stable master dtypes,
+  and a quoted dataset id.
+- Local master writes are serialized, and a scrape and a manual add can no longer run at once.
+- `master_experience.yaml` writes are atomic; the résumé CLI's `--apply` is gated.
+- A shared retrying atomic `os.replace` now backs every CSV, `apply.md`, and outbox writer.
+- VM schedule pushes preserve crontab lines the project does not manage, and biweekly runs use
+  epoch-week parity so local and VM agree on which week it is.
+- `scripts/setup.ps1` survives being launched with `powershell -File`, which is how the README
+  tells you to run it -- on a fresh clone it previously failed.
+- Table headers align with their cells, the Title column stretches, and form inputs are
+  labelled.
+
+### Changed
+- Dependency pins refreshed to current stable; `google-genai` unified on the 2.x line that the
+  VM has run in production since June; model ids refreshed against the current catalogs.
+- `tools/` retired into the packages that own its code, the app icon is wired up, and stale
+  `.gitignore` entries are gone.
+- The test suite is hermetic: it no longer reads the real `.env`, and `os.environ` is restored
+  per test.
+
+### Docs
+- README restructured: a seven-step Quick start, a Limitations section, regenerated screenshot
+  and demo GIF, and the platform claim narrowed to what is actually tested (Windows for the
+  dashboard, Linux for the pipeline scripts).
+- The long feature manual moved to `docs/USER_GUIDE.md`.
+- `SECURITY.md` now lists every outbound destination and what it receives.
+
 ## [1.6.2] - 2026-07-16
 
 A portfolio ship-checklist pass: first-run experience, accessibility, and setup-accuracy
@@ -430,7 +486,10 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/yib7/INployed/compare/v1.6.2...v1.7.0
+[1.6.2]: https://github.com/yib7/INployed/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/yib7/INployed/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/yib7/INployed/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/yib7/INployed/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/yib7/INployed/compare/v1.4.0...v1.5.0

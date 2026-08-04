@@ -57,9 +57,10 @@ def cover_filename() -> str:
     return f"{candidate_slug()}_Cover_Letter.pdf"
 
 
-def cover_txt_filename() -> str:
-    """Plain-text sibling of the cover-letter PDF, for easy copy-paste into forms."""
-    return f"{candidate_slug()}_Cover_Letter.txt"
+def cover_tex_filename() -> str:
+    """LaTeX source of the cover letter, shipped beside the PDF (as resume.tex is)
+    so a hand fix recompiles instead of regenerating the letter from scratch."""
+    return f"{candidate_slug()}_Cover_Letter.tex"
 
 
 def base_dir(company: str, job_title: str) -> Path:

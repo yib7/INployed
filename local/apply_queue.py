@@ -58,7 +58,7 @@ STATUSES = ("tailoring", "queued", "in_progress",
             "ready_to_submit", "submitted", "needs_human", "failed")
 TERMINAL = frozenset(("ready_to_submit", "submitted", "needs_human", "failed"))
 
-ARTIFACT_KEYS = ("folder", "resume_pdf", "cover_letter_pdf", "cover_letter_txt",
+ARTIFACT_KEYS = ("folder", "resume_pdf", "cover_letter_pdf",
                  "apply_md", "application_record")
 ATS_KEYS = ("domain", "system", "account_status")
 ATS_SYSTEMS = (

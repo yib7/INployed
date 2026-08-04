@@ -193,7 +193,7 @@ def _ready_folder(tmp_path, monkeypatch, jid):
     folder = tmp_path / "resumes" / jid
     folder.mkdir(parents=True, exist_ok=True)
     for name in (output.resume_filename(), output.cover_filename(),
-                 output.cover_txt_filename(), "apply.md"):
+                 output.cover_tex_filename(), "apply.md"):
         (folder / name).write_text("x", encoding="utf-8")
     return folder
 
@@ -236,8 +236,9 @@ def test_queue_ready_job_enqueues_with_artifact_paths(qtbot, monkeypatch, tmp_pa
     assert arts["folder"] == str(folder)
     assert arts["resume_pdf"] == str(folder / output.resume_filename())
     assert arts["cover_letter_pdf"] == str(folder / output.cover_filename())
-    assert arts["cover_letter_txt"] == str(folder / output.cover_txt_filename())
     assert arts["apply_md"] == str(folder / "apply.md")
+    # the .txt export is gone — the paste text lives in apply.md's Cover letter section
+    assert "cover_letter_txt" not in arts
 
 
 def test_queue_tracker_only_ready_job_falls_back_for_entry_data(qtbot, monkeypatch, tmp_path):
@@ -492,7 +493,7 @@ def _tailored_at_base(monkeypatch, tmp_path, company, title):
     folder = output.base_dir(company, title)
     folder.mkdir(parents=True, exist_ok=True)
     for name in (output.resume_filename(), output.cover_filename(),
-                 output.cover_txt_filename(), "apply.md"):
+                 output.cover_tex_filename(), "apply.md"):
         (folder / name).write_text("x", encoding="utf-8")
     return folder
 

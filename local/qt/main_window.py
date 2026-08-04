@@ -2095,7 +2095,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "folder": str(folder),
             "resume_pdf": existing(output.resume_filename()),
             "cover_letter_pdf": existing(output.cover_filename()),
-            "cover_letter_txt": existing(output.cover_txt_filename()),
             "apply_md": existing("apply.md"),
         }
 

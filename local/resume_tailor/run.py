@@ -28,16 +28,16 @@ def _noop(_msg: str) -> None:
     pass
 
 
-def _write_cover_txt(out_dir: Path, body: str, company: str,
-                     log: Callable[[str], None]) -> None:
-    """Save the copy-pasteable plain-text cover letter beside the PDF. Advisory:
-    a failure never sinks the (already-written) PDF, it just logs."""
+def _cover_text(body: str, company: str, log: Callable[[str], None]) -> str:
+    """The copy-pasteable plain-text letter, bound for apply.md's `## Cover letter`
+    section (the folder ships the letter's .tex, and LaTeX is useless in a paste
+    box). Advisory: a failure never sinks the (already-written) PDF, it just
+    logs and the sheet carries no letter."""
     try:
-        (out_dir / output.cover_txt_filename()).write_text(
-            coverletter.cover_letter_text(body, company), encoding="utf-8")
-        log("cover letter .txt written (copy-paste ready)")
-    except Exception as exc:  # noqa: BLE001 - the .txt is a convenience, never fatal
-        log(f"cover letter .txt skipped ({exc})")
+        return coverletter.cover_letter_text(body, company)
+    except Exception as exc:  # noqa: BLE001 - the text is a convenience, never fatal
+        log(f"cover letter text skipped ({exc})")
+        return ""
 
 
 def _field(job: Dict[str, str], key: str) -> str:
@@ -353,6 +353,7 @@ def tailor(
             except Exception as exc:  # noqa: BLE001 - the report is advisory, never fatal
                 log(f"ATS check skipped ({exc})")
 
+        cover_body = ""      # the paste-ready letter apply.md embeds, when generated
         if cover_letter:
             log("writing cover letter…")
             try:
@@ -368,7 +369,10 @@ def tailor(
                 cl_res, _ = coverletter.render_cover_letter(body, company, cl_tex, tmp_path)
                 if cl_res.ok and cl_res.pdf_path:
                     shutil.copyfile(cl_res.pdf_path, out_dir / output.cover_filename())
-                    _write_cover_txt(out_dir, body, company, log)
+                    # Ship the source too (as resume.tex is): a hand fix recompiles
+                    # instead of regenerating the letter from scratch.
+                    shutil.copyfile(cl_tex, out_dir / output.cover_tex_filename())
+                    cover_body = _cover_text(body, company, log)
                 else:
                     log(f"cover letter compile failed: {cl_res.error}")
             except Exception as exc:  # noqa: BLE001 - cover letter is optional, never fatal
@@ -387,7 +391,7 @@ def tailor(
 
         try:
             apply_data.write(job, out_dir, sel=sel, bullets=final_bullets,
-                             skill_lines=skill_lines)
+                             skill_lines=skill_lines, cover_body=cover_body)
             log("apply.md written (self-contained apply sheet)")
         except Exception as exc:  # noqa: BLE001 - advisory artifact, never fatal
             log(f"apply sheet skipped ({exc})")
@@ -458,7 +462,14 @@ def generate_cover_letter(
             raise RuntimeError(f"Cover letter compile failed: {cl_res.error}")
         dest = out_dir / output.cover_filename()
         shutil.copyfile(cl_res.pdf_path, dest)
-        _write_cover_txt(out_dir, body, company, log)
+        shutil.copyfile(cl_tex, out_dir / output.cover_tex_filename())
+        # This folder's apply.md already exists (guarded above) and carries the
+        # expensive tailored résumé, so the letter is SPLICED in, never rebuilt.
+        try:
+            apply_data.refresh_cover_letter(out_dir, _cover_text(body, company, log))
+            log("cover letter text refreshed in apply.md")
+        except Exception as exc:  # noqa: BLE001 - the PDF already landed; advisory
+            log(f"apply.md cover-letter section skipped ({exc})")
 
     log(f"done -> {dest}")
     log("token usage: " + llm.usage_summary())

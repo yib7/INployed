@@ -529,6 +529,162 @@ def test_refresh_standard_answers_atomic_preserves_file_on_write_failure(tmp_pat
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
 
 
+# --- the `## Cover letter` section (replaces the old _Cover_Letter.txt) ---------
+
+# What coverletter.cover_letter_text() hands over: the paste-ready letter, header
+# and sign-off included (a pasted letter travels without the résumé).
+_COVER_TEXT = ("Test Person\n\n555 | t@example.com\n\nAugust 4, 2026\n\nAcme\n\n"
+               "Dear Hiring Team,\n\nI built the ingestion pipeline.\n\n"
+               "Sincerely,\n\nTest Person\n")
+
+_LEGACY_TXT = "Test_Person_Cover_Letter.txt"
+
+
+def test_write_renders_cover_letter_section_after_the_resume(tmp_path):
+    text = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                            skill_lines=_SKILLS,
+                            cover_body=_COVER_TEXT).read_text(encoding="utf-8")
+    assert "## Cover letter" in text
+    assert "Dear Hiring Team," in text and "I built the ingestion pipeline." in text
+    assert text.index("## Leadership") < text.index("## Cover letter")
+    assert text.index("## Cover letter") < text.index("## Standard answers")
+    # the letter never pollutes the tailored-bullet parse
+    assert apply_data.parse_resume_bullets(text) == [
+        "Built the ingestion pipeline fast.", "Cut cloud spend 40%.",
+        "Shipped CoolApp end to end.", "Grew membership threefold."]
+
+
+def test_write_without_cover_body_has_no_cover_letter_section(tmp_path):
+    text = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                            skill_lines=_SKILLS).read_text(encoding="utf-8")
+    assert "## Cover letter" not in text
+
+
+def test_refresh_cover_letter_inserts_the_section_and_keeps_the_rest(tmp_path):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    before = out.read_text(encoding="utf-8")
+
+    assert apply_data.refresh_cover_letter(tmp_path, _COVER_TEXT) == out
+
+    text = out.read_text(encoding="utf-8")
+    assert "## Cover letter" in text and "Dear Hiring Team," in text
+    assert apply_data.parse_resume_bullets(text) == \
+        apply_data.parse_resume_bullets(before)
+    assert apply_data.parse_marker(text)["job_posting_id"] == "42"
+
+
+def test_refresh_cover_letter_lands_where_write_puts_the_section(tmp_path):
+    # Patching an existing sheet and writing a fresh one must agree byte-for-byte,
+    # so a regenerated letter never drifts from a freshly tailored one.
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    apply_data.refresh_cover_letter(tmp_path, _COVER_TEXT)
+    patched = out.read_bytes()
+    fresh = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                             skill_lines=_SKILLS,
+                             cover_body=_COVER_TEXT).read_bytes()
+    assert patched == fresh
+
+
+def test_refresh_cover_letter_replaces_an_existing_section(tmp_path):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS, cover_body=_COVER_TEXT)
+    apply_data.refresh_cover_letter(tmp_path, "Second draft of the letter.")
+    text = out.read_text(encoding="utf-8")
+    assert text.count("## Cover letter") == 1
+    assert "Second draft of the letter." in text
+    assert "I built the ingestion pipeline." not in text     # the old letter is gone
+    assert "## Technical skills" in text and "## Standard answers" in text
+
+
+def test_refresh_cover_letter_preserves_lf_endings(tmp_path):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    _rewrite_eol(out, b"\n")
+    assert apply_data.refresh_cover_letter(tmp_path, _COVER_TEXT) == out
+    raw = out.read_bytes()
+    assert b"\r" not in raw                       # still LF everywhere
+    assert b"## Cover letter" in raw
+
+
+# --- migration: folders tailored before this change carry a _Cover_Letter.txt ----
+
+def test_refresh_cover_letter_backfills_from_legacy_txt_then_deletes_it(tmp_path):
+    # An older tailored folder: a .txt on disk, an apply.md with no letter section.
+    # Dropping the .txt without this backfill would silently break auto-apply's
+    # paste boxes for every job tailored before the switch.
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    legacy = tmp_path / _LEGACY_TXT
+    legacy.write_text(_COVER_TEXT, encoding="utf-8")
+
+    assert apply_data.refresh_cover_letter(tmp_path) == out
+
+    text = out.read_text(encoding="utf-8")
+    assert "## Cover letter" in text and "Dear Hiring Team," in text
+    assert not legacy.exists()                    # dropped once the section landed
+
+
+def test_refresh_cover_letter_supplied_text_wins_and_still_drops_the_txt(tmp_path):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    legacy = tmp_path / _LEGACY_TXT
+    legacy.write_text("STALE LETTER", encoding="utf-8")
+
+    apply_data.refresh_cover_letter(tmp_path, _COVER_TEXT)
+
+    text = out.read_text(encoding="utf-8")
+    assert "Dear Hiring Team," in text and "STALE LETTER" not in text
+    assert not legacy.exists()
+
+
+def test_refresh_cover_letter_keeps_the_txt_when_the_write_fails(tmp_path, monkeypatch):
+    # The delete happens ONLY after apply.md is safely on disk — a crash at the
+    # rename must never leave the letter nowhere at all.
+    import jsonutil
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    before = out.read_bytes()
+    legacy = tmp_path / _LEGACY_TXT
+    legacy.write_text(_COVER_TEXT, encoding="utf-8")
+
+    def boom(src, dst, *a, **k):
+        raise OSError("crash right at the rename")
+    monkeypatch.setattr(jsonutil.os, "replace", boom)
+    monkeypatch.setattr(jsonutil, "_REPLACE_RETRY", 0)   # don't sleep in tests
+
+    with pytest.raises(OSError):
+        apply_data.refresh_cover_letter(tmp_path)
+
+    assert legacy.exists()                        # the only copy of the letter survives
+    assert out.read_bytes() == before             # untouched, not truncated
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_refresh_cover_letter_without_text_or_txt_is_a_noop(tmp_path):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
+                           skill_lines=_SKILLS)
+    before = out.read_bytes()
+    assert apply_data.refresh_cover_letter(tmp_path) is None
+    assert out.read_bytes() == before
+
+
+def test_refresh_cover_letter_missing_apply_md_returns_none(tmp_path):
+    legacy = tmp_path / _LEGACY_TXT
+    legacy.write_text(_COVER_TEXT, encoding="utf-8")
+    assert apply_data.refresh_cover_letter(tmp_path, _COVER_TEXT) is None
+    assert legacy.exists()                        # nothing deleted, nothing written
+
+
 def test_refresh_standard_answers_never_regenerates_tailored_content(tmp_path):
     # A hand-edited résumé bullet outside the span must survive a refresh —
     # proof the function splices instead of calling write_from_folder.

@@ -4,9 +4,12 @@ This is the machine-readable "apply sheet" — pure data a subagent draws on to 
 a job application (the no-submit contract lives in the auto-apply runbook, not
 here). It carries the candidate basics + mailing address, education, THIS JOB'S
 TAILORED RÉSUMÉ translated into markdown (Work experience / Projects / Leadership /
-Technical skills), the reusable standard answers (work auth / EEO / how-did-you-hear),
-and an electronic-signature section. A hidden HTML-comment meta marker at the foot
-carries the job identity for machine lookup (invisible in rendered markdown).
+Technical skills), this job's cover letter as plain text when one was generated
+(`## Cover letter` — the folder ships the letter's `.tex` and `.pdf`, neither of
+which can go in a paste box), the reusable standard answers (work auth / EEO /
+how-did-you-hear), and an electronic-signature section. A hidden HTML-comment meta
+marker at the foot carries the job identity for machine lookup (invisible in
+rendered markdown).
 
 The résumé sections are built **deterministically** from the data the tailor
 already computed — the selection (`sel`), the bullets that survived one-page
@@ -288,6 +291,20 @@ def _resume_lines(master: Dict[str, Any], sel: Optional[Dict[str, Any]],
     return body
 
 
+def _cover_letter_section(cover_body: str) -> str:
+    """The `## Cover letter` block: heading, blank line, then the paste-ready
+    letter (coverletter.cover_letter_text's output — header and sign-off included,
+    because a pasted letter travels without the résumé that would carry them).
+
+    This is where the cover letter's plain text lives now; the folder ships the
+    letter's `.tex` instead of a `.txt`, and a `.tex` is useless in a paste box.
+    Line endings are normalised to `\\n`; the splice re-renders them in the file's
+    own convention.
+    """
+    text = (cover_body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    return "## Cover letter\n\n" + text + "\n"
+
+
 def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
     out = ["## Standard answers\n"]
     for e in answers:
@@ -313,7 +330,8 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
                    answers: List[Dict[str, Any]], *,
                    sel: Optional[Dict[str, Any]] = None,
                    bullets: Optional[Dict[str, str]] = None,
-                   skill_lines: Optional[List[Dict[str, str]]] = None) -> str:
+                   skill_lines: Optional[List[Dict[str, str]]] = None,
+                   cover_body: Optional[str] = None) -> str:
     """Assemble the full apply.md text (pure function — easily testable)."""
     basics = master.get("basics", {}) or {}
     education = master.get("education", []) or []
@@ -337,6 +355,8 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     parts.append("\n" + _address_lines(flat))
     parts.append("\n" + _education_lines(education))
     parts.append("\n" + _resume_lines(master, sel, bullets, skill_lines))
+    if (cover_body or "").strip():
+        parts.append("\n" + _cover_letter_section(cover_body or ""))
     parts.append("\n" + _standard_answer_lines(answers))
 
     parts.append("\n## Electronic signature (use at the end, where the form asks — do not submit)\n")
@@ -350,17 +370,21 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
 def write(job: Dict[str, str], out_dir: Path, *,
           sel: Optional[Dict[str, Any]] = None,
           bullets: Optional[Dict[str, str]] = None,
-          skill_lines: Optional[List[Dict[str, str]]] = None) -> Path:
+          skill_lines: Optional[List[Dict[str, str]]] = None,
+          cover_body: Optional[str] = None) -> Path:
     """Write a self-contained apply.md into out_dir and return its path.
 
     `sel` / `bullets` / `skill_lines` are the tailor's own selection + surviving
     bullets + compressed skills; when present the résumé sections mirror the PDF.
     Omit them (CLI / backfill) and the sheet carries a re-tailor note instead.
+    `cover_body` is the paste-ready cover letter when the run generated one; omit
+    it and the sheet simply carries no `## Cover letter` section.
     """
     master = assets.load_master()
     answers = apply_answers.load()
     md = build_markdown(master, job, answers,
-                        sel=sel, bullets=bullets, skill_lines=skill_lines)
+                        sel=sel, bullets=bullets, skill_lines=skill_lines,
+                        cover_body=cover_body)
     path = out_dir / "apply.md"
     path.write_text(md, encoding="utf-8")
     return path
@@ -380,6 +404,16 @@ def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
 # untranslated text (newline=""), so the heading match tolerates a trailing \r.
 _ANSWERS_HEADING_RE = re.compile(r"(?m)^## Standard answers[ \t]*\r?$")
 _SIGNATURE_PREFIX_RE = re.compile(r"(?m)^## Electronic signature")
+# The cover-letter span runs from its own heading to the next `## ` heading (or,
+# in a sheet that has none after it, to the meta marker / end of file).
+_COVER_HEADING_RE = re.compile(r"(?m)^## Cover letter[ \t]*\r?$")
+_ANY_HEADING_RE = re.compile(r"(?m)^## ")
+_MARKER_START_RE = re.compile(r"<!--\s*" + re.escape(_MARKER_PREFIX))
+
+# Folders tailored before the cover letter moved into apply.md still carry the
+# old copy-paste export. Matched by shape rather than by the candidate slug, which
+# may well have changed since that folder was tailored.
+LEGACY_COVER_TXT_GLOB = "*_Cover_Letter.txt"
 
 
 def _dominant_eol(text: str) -> str:
@@ -409,12 +443,8 @@ def refresh_standard_answers(folder: Path) -> Optional[Path]:
     path = Path(folder) / "apply.md"
     if not path.exists():
         return None
-    try:
-        # newline="": no universal-newline translation in, none out — the
-        # file's own line endings survive the round trip byte-for-byte.
-        with path.open("r", encoding="utf-8", newline="") as fh:
-            text = fh.read()
-    except OSError:
+    text = _read_untranslated(path)
+    if text is None:
         return None
     m_start = _ANSWERS_HEADING_RE.search(text)
     if not m_start:
@@ -429,9 +459,24 @@ def refresh_standard_answers(folder: Path) -> Optional[Path]:
     # build_markdown separates the answers block from the signature heading with
     # one blank line; reproduce it so an unchanged store round-trips byte-identical.
     new_text = text[:m_start.start()] + section + eol + text[m_sig.start():]
-    # Atomic tmp+replace so a crash mid-rewrite leaves the prior apply.md fully
-    # intact, never a truncated file. newline="" keeps the file's own EOLs
-    # byte-for-byte; the replace shares jsonutil's Windows lock-retry.
+    _atomic_write(path, new_text)
+    return path
+
+
+def _read_untranslated(path: Path) -> Optional[str]:
+    """apply.md's text with NO universal-newline translation, so the file's own
+    line endings survive a splice round trip byte-for-byte. None on an OS error."""
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _atomic_write(path: Path, new_text: str) -> None:
+    """Rewrite apply.md atomically (tmp + replace) so a crash mid-rewrite leaves
+    the prior file fully intact, never a truncated one. newline="" keeps the
+    rendered EOLs byte-for-byte; the replace shares jsonutil's Windows lock-retry."""
     from jsonutil import replace_with_retry
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
@@ -444,4 +489,94 @@ def refresh_standard_answers(folder: Path) -> Optional[Path]:
                 tmp.unlink()
             except OSError:
                 pass
+
+
+def legacy_cover_txts(folder: Path) -> List[Path]:
+    """The pre-apply.md `*_Cover_Letter.txt` exports still sitting in a folder."""
+    try:
+        return sorted(p for p in Path(folder).glob(LEGACY_COVER_TXT_GLOB)
+                      if p.is_file())
+    except OSError:
+        return []
+
+
+def _cover_span(text: str) -> Optional[tuple]:
+    """(start, end) offsets of an existing `## Cover letter` block, else None."""
+    m = _COVER_HEADING_RE.search(text)
+    if not m:
+        return None
+    nxt = _ANY_HEADING_RE.search(text, m.end())
+    if nxt:
+        return m.start(), nxt.start()
+    marker = _MARKER_START_RE.search(text, m.end())
+    return (m.start(), marker.start() if marker else len(text))
+
+
+def _cover_insert_at(text: str) -> int:
+    """Where a missing `## Cover letter` block goes: just before the first of the
+    headings build_markdown always emits after the résumé (Standard answers, then
+    the signature), else before the meta marker, else at the end. Same slot
+    build_markdown renders it into, so a patched sheet matches a rewritten one."""
+    for pattern in (_ANSWERS_HEADING_RE, _SIGNATURE_PREFIX_RE, _MARKER_START_RE):
+        m = pattern.search(text)
+        if m:
+            return m.start()
+    return len(text)
+
+
+def refresh_cover_letter(folder: Path, text: str = "") -> Optional[Path]:
+    """Splice the `## Cover letter` section of `<folder>/apply.md` in place.
+
+    The regenerate path (run.generate_cover_letter) writes into a folder whose
+    apply.md already exists and carries the expensive tailored résumé sections,
+    so the letter is patched in — never rebuilt via write()/write_from_folder(),
+    which would nuke that content. Everything outside the section's span stays
+    byte-identical, line endings included.
+
+    MIGRATION: a folder tailored before the letter moved into apply.md has a
+    `*_Cover_Letter.txt` and no `## Cover letter` section. With no `text` supplied
+    the letter is backfilled from that file, which is then deleted — but only
+    once the apply.md write has succeeded, so the letter is never lost in
+    between. A supplied `text` wins over the (by then stale) file.
+
+    Returns the apply.md path, or None when there's no apply.md or no letter text
+    to write (nothing is touched then).
+    """
+    folder = Path(folder)
+    path = folder / "apply.md"
+    if not path.exists():
+        return None
+    legacy = legacy_cover_txts(folder)
+    body = (text or "").strip()
+    for old in legacy:
+        if body:
+            break
+        try:
+            body = old.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            body = ""
+    if not body:
+        return None
+    raw = _read_untranslated(path)
+    if raw is None:
+        return None
+
+    eol = _dominant_eol(raw)
+    section = _cover_letter_section(body)
+    if eol != "\n":
+        section = section.replace("\n", eol)
+    span = _cover_span(raw)
+    if span:
+        new_text = raw[:span[0]] + section + eol + raw[span[1]:]
+    else:
+        at = _cover_insert_at(raw)
+        new_text = raw[:at] + section + eol + raw[at:]
+    _atomic_write(path, new_text)
+
+    # Only now that the section is safely on disk: the .txt has no reader left.
+    for old in legacy:
+        try:
+            old.unlink()
+        except OSError:
+            pass
     return path

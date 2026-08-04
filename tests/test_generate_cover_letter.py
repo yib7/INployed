@@ -89,10 +89,15 @@ def offline_cover(monkeypatch, tmp_path):
     pdf.write_bytes(b"%PDF-1.4 fake cover")
     cl_result = types.SimpleNamespace(ok=True, pdf_path=pdf, error="")
     rec["cl_result"] = cl_result
-    monkeypatch.setattr(run_mod.coverletter, "render_cover_letter",
-                        lambda *a, **k: (cl_result, ""))
+
+    def fake_render(body, company, tex_path, work_dir):
+        # the real render writes the .tex before compiling; the run ships that file
+        Path(tex_path).write_text("\\documentclass[11pt]{article}", encoding="utf-8")
+        return cl_result, ""
+
+    monkeypatch.setattr(run_mod.coverletter, "render_cover_letter", fake_render)
     monkeypatch.setattr(run_mod.output, "cover_filename", lambda: "cover.pdf")
-    monkeypatch.setattr(run_mod.output, "cover_txt_filename", lambda: "cover.txt")
+    monkeypatch.setattr(run_mod.output, "cover_tex_filename", lambda: "cover.tex")
     monkeypatch.setattr(run_mod.coverletter, "cover_letter_text",
                         lambda body, company: f"TXT:{body}:{company}")
     return rec, out_dir
@@ -109,13 +114,44 @@ def test_happy_path_copies_pdf_and_returns_path(offline_cover):
     assert statuses  # progress was reported
 
 
-def test_writes_plain_text_sibling(offline_cover):
-    # A copy-paste-ready .txt lands beside the PDF, built from the generated body.
+def test_writes_tex_sibling_and_no_txt(offline_cover):
+    # The LaTeX source lands beside the PDF so a manual fix recompiles without
+    # regenerating; the copy-paste text now lives in apply.md, not a .txt.
     rec, out_dir = offline_cover
     run_mod.generate_cover_letter(_JOB, out_dir, tone="professional")
-    txt = out_dir / "cover.txt"
-    assert txt.exists()
-    assert txt.read_text(encoding="utf-8") == "TXT:cover body:BigCo"
+    tex = out_dir / "cover.tex"
+    assert tex.exists()
+    assert "documentclass" in tex.read_text(encoding="utf-8")
+    assert not (out_dir / "cover.txt").exists()
+    assert list(out_dir.glob("*_Cover_Letter.txt")) == []
+
+
+def test_regenerate_patches_the_letter_into_apply_md(offline_cover):
+    # generate_cover_letter runs against a folder whose apply.md already exists,
+    # so the letter is SPLICED in — the tailored résumé sections must survive.
+    from resume_tailor import apply_data
+    rec, out_dir = offline_cover
+    run_mod.generate_cover_letter(_JOB, out_dir, tone="professional")
+    md = (out_dir / "apply.md").read_text(encoding="utf-8")
+    assert "## Cover letter" in md
+    assert "TXT:cover body:BigCo" in md
+    assert apply_data.parse_resume_bullets(md) == [
+        "Built the ingestion pipeline fast.",
+        "Cut cloud spend 40%.",
+        "Shipped CoolApp end to end.",
+    ]
+
+
+def test_regenerate_migrates_a_legacy_txt_into_apply_md(offline_cover):
+    # A folder tailored before the switch still has the old .txt; regenerating
+    # replaces it with the apply.md section and drops the stale file.
+    rec, out_dir = offline_cover
+    legacy = out_dir / "Cand_Cover_Letter.txt"
+    legacy.write_text("STALE LETTER", encoding="utf-8")
+    run_mod.generate_cover_letter(_JOB, out_dir, tone="professional")
+    md = (out_dir / "apply.md").read_text(encoding="utf-8")
+    assert "TXT:cover body:BigCo" in md and "STALE LETTER" not in md
+    assert not legacy.exists()
 
 
 def test_bullets_shape_matches_tailors_dict_of_texts(offline_cover):

@@ -118,15 +118,21 @@ def offline_tailor(monkeypatch, tmp_path):
 
     cl_result = types.SimpleNamespace(ok=True, pdf_path=pdf, error="")
     monkeypatch.setattr(run_mod.coverletter, "generate_body", fake_cover_body)
-    monkeypatch.setattr(run_mod.coverletter, "render_cover_letter",
-                        lambda *a, **k: (cl_result, ""))
+
+    def fake_render_cover(body, company, tex_path, work_dir):
+        # the real render writes the .tex before compiling; tailor ships that file
+        Path(tex_path).write_text("\\documentclass[11pt]{article}", encoding="utf-8")
+        return cl_result, ""
+
+    monkeypatch.setattr(run_mod.coverletter, "render_cover_letter", fake_render_cover)
     monkeypatch.setattr(run_mod.coverletter, "cover_letter_text",
-                        lambda *a, **k: "cover txt")
-    monkeypatch.setattr(run_mod.output, "cover_txt_filename", lambda: "cover.txt")
+                        lambda body, company: f"TXT:{body}:{company}")
+    monkeypatch.setattr(run_mod.output, "cover_tex_filename", lambda: "cover.tex")
     monkeypatch.setattr(run_mod.research, "company_blurb", lambda *a, **k: "")
 
     def fake_apply(*a, **k):
         rec["apply"] += 1
+        rec["cover_body"] = k.get("cover_body")
 
     monkeypatch.setattr(run_mod.apply_data, "write", fake_apply)
 
@@ -192,6 +198,27 @@ def test_ats_report_false_skips_write_report(offline_tailor):
 def test_cover_letter_true_generates_cover(offline_tailor):
     run_mod.tailor(_JOB, cover_letter=True)
     assert offline_tailor["cover"] == 1
+
+
+def test_cover_letter_ships_the_tex_and_no_txt(offline_tailor):
+    # The .tex is the editable source (a manual fix recompiles it); the plain-text
+    # export moved into apply.md, so no .txt is left in the folder.
+    out = run_mod.tailor(_JOB, cover_letter=True)
+    tex = out / "cover.tex"
+    assert tex.exists()
+    assert "documentclass" in tex.read_text(encoding="utf-8")
+    assert list(out.glob("*_Cover_Letter.txt")) == []
+    assert not (out / "cover.txt").exists()
+
+
+def test_cover_letter_text_is_handed_to_apply_md(offline_tailor):
+    run_mod.tailor(_JOB, cover_letter=True)
+    assert offline_tailor["cover_body"] == "TXT:cover body:BigCo"
+
+
+def test_no_cover_letter_hands_apply_md_no_cover_body(offline_tailor):
+    run_mod.tailor(_JOB)
+    assert not offline_tailor["cover_body"]
 
 
 def test_prep_sheet_true_generates_prep(offline_tailor):

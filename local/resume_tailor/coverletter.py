@@ -131,7 +131,7 @@ _SIGNOFF_RE = re.compile(r"^\s*sincerely[,!.]?\s*$", re.I)
 
 def _strip_trailing_signoff(body: str) -> str:
     """Drop any trailing 'Sincerely, / Name' the model appended — the template and
-    the .txt export both supply the closing, so a model-added one would double it."""
+    the plain-text export both supply the closing, so a model-added one doubles it."""
     lines = body.strip().splitlines()
     if len(lines) >= 2 and _SIGNOFF_RE.match(lines[-2]):
         return "\n".join(lines[:-2]).rstrip()
@@ -356,8 +356,9 @@ def _paragraphs(body: str) -> str:
 
 
 def cover_letter_text(body: str, company: str) -> str:
-    """The cover letter as clean, copy-pasteable plain text (no LaTeX) — saved next
-    to the PDF so it can be dropped straight into an application form. Unlike the
+    """The cover letter as clean, copy-pasteable plain text (no LaTeX) — embedded in
+    the folder's apply.md under `## Cover letter`, so it can be dropped straight
+    into an application form's paste box (the .tex/.pdf can't). Unlike the
     PDF it keeps a name/contact/company header, because a pasted-in letter travels
     without the résumé that would otherwise carry them. Blocks separated by a blank
     line. Raw text (never escaped): reads the master basics for name + phone/email."""

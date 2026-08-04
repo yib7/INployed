@@ -157,9 +157,10 @@ def test_new_entry_carries_all_fields(tmp_path):
     assert e["status"] == "queued"
     assert e["attempts"] == 0
     assert e["missing_answers"] == []
-    for k in ("folder", "resume_pdf", "cover_letter_pdf", "cover_letter_txt",
+    for k in ("folder", "resume_pdf", "cover_letter_pdf",
               "apply_md", "application_record"):
         assert k in e["artifacts"], k
+    assert "cover_letter_txt" not in e["artifacts"]
     for k in ("domain", "system", "account_status"):
         assert k in e["ats"], k
     assert e["queued_at"] and e["updated_at"]

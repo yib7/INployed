@@ -10,9 +10,9 @@ writes "I am completing my studies" in July 2026. These tests pin:
   * generate_body prompts — TODAY'S DATE + EDUCATION lines in the user
     prompt; the tense rule, boilerplate-opener ban, and no-repeated-metric
     rule in the system prompt. compose.call is stubbed: no LLM ever runs.
-  * render_cover_letter — the template's \\address{} now carries the escaped
-    contact block (email \\ phone \\ https LinkedIn \\ https GitHub) so the
-    letter is self-contained. compile_tex is stubbed.
+  * render_cover_letter — the bare "Defender" layout: no name banner, no
+    contact line, no company line, just date / salutation / body / closing /
+    name over a newtxtext (Times) preamble. compile_tex is stubbed.
 """
 import datetime as dt
 import sys
@@ -151,49 +151,78 @@ def test_system_prompt_carries_tense_opener_and_metric_rules(monkeypatch):
     assert "same metric or number twice" in system
 
 
-# ── template header + closing ─────────────────────────────────────────────────
-def test_rendered_letter_header_is_phone_email_no_social(monkeypatch, tmp_path):
+# ── template layout ───────────────────────────────────────────────────────────
+def _render(monkeypatch, tmp_path, body, company="Acme", basics=None):
     monkeypatch.setattr(coverletter, "date", _FrozenDate)
     monkeypatch.setattr(coverletter.assets, "load_master", lambda: {
-        "basics": {"name": "Jane Doe", "email": "jane_doe@example.com",
-                   "phone": "555-555-0100",
-                   "linkedin": "linkedin.com/in/janedoe",
-                   "github": "github.com/janedoe"},
+        "basics": basics or {"name": "Jane Doe", "email": "jane_doe@example.com",
+                             "phone": "555-555-0100",
+                             "linkedin": "linkedin.com/in/janedoe",
+                             "github": "github.com/janedoe"},
     })
     monkeypatch.setattr(
         coverletter, "compile_tex",
         lambda tex, wd: types.SimpleNamespace(ok=True, pdf_path=None, error=""))
     _, rendered = coverletter.render_cover_letter(
-        "First paragraph.\n\nSecond paragraph.", "Acme",
-        tmp_path / "cl.tex", tmp_path)
-    # phone + email present and escaped, joined by a LaTeX pipe
-    assert "555-555-0100" in rendered
-    assert "jane\\_doe@example.com" in rendered
-    assert r"555-555-0100 \textbar{} jane\_doe@example.com" in rendered
-    # LinkedIn/GitHub deliberately gone from the letter
-    assert "linkedin" not in rendered.lower()
-    assert "github" not in rendered.lower()
+        body, company, tmp_path / "cl.tex", tmp_path)
+    return rendered
+
+
+def test_rendered_letter_preamble_is_the_defender_one(monkeypatch, tmp_path):
+    rendered = _render(monkeypatch, tmp_path, "Body.")
+    for line in (r"\documentclass[11pt]{article}",
+                 r"\usepackage[margin=1in]{geometry}",
+                 r"\usepackage{newtxtext,newtxmath}",   # Times, as on the resume
+                 r"\usepackage[english]{babel}",
+                 r"\usepackage[T1]{fontenc}",
+                 r"\usepackage{microtype}",
+                 r"\setlength{\parindent}{0pt}",
+                 r"\setlength{\parskip}{9pt}",
+                 r"\pagestyle{empty}"):
+        assert line in rendered
+    # packages the old header stack needed and this layout does not
+    for gone in (r"\usepackage{lmodern}", r"\usepackage{hyperref}",
+                 r"\usepackage{parskip}", r"\usepackage[utf8]{inputenc}",
+                 r"\hypersetup", r"\pagenumbering"):
+        assert gone not in rendered
     # left-aligned article layout — none of the `letter`-class machinery
     for cmd in ("\\address", "\\signature", "\\opening", "\\closing",
                 "\\begin{letter}"):
         assert cmd not in rendered
-    # header order: name, contact, date, company, salutation
-    assert rendered.index("Jane Doe") < rendered.index("555-555-0100")
-    assert rendered.index("555-555-0100") < rendered.index("July 4, 2026")
-    assert rendered.index("July 4, 2026") < rendered.index("Acme")
-    assert rendered.index("Acme") < rendered.index("Dear Hiring Team,")
 
 
-def test_rendered_letter_closing_is_left_with_small_gap(monkeypatch, tmp_path):
-    monkeypatch.setattr(coverletter, "date", _FrozenDate)
-    monkeypatch.setattr(coverletter.assets, "load_master", lambda: {
-        "basics": {"name": "Jane Doe", "email": "j@x.co", "phone": "123"}})
-    monkeypatch.setattr(
-        coverletter, "compile_tex",
-        lambda tex, wd: types.SimpleNamespace(ok=True, pdf_path=None, error=""))
-    _, rendered = coverletter.render_cover_letter("Body.", "Acme",
-                                                  tmp_path / "cl.tex", tmp_path)
-    # "Sincerely," then a small forced break, then the name (both flush left)
-    assert "Sincerely,\\\\[6pt]\nJane Doe" in rendered
-    # name appears twice: header + signature
-    assert rendered.count("Jane Doe") == 2
+def test_rendered_letter_has_no_banner_contact_or_company(monkeypatch, tmp_path):
+    rendered = _render(monkeypatch, tmp_path, "Body.")
+    # no bold name banner: the name survives only as the signature
+    assert r"\textbf{Jane Doe}" not in rendered
+    assert r"\large" not in rendered
+    assert rendered.count("Jane Doe") == 1
+    assert rendered.index("Jane Doe") > rendered.index("Sincerely,")
+    # no contact line at all (phone/email/socials), escaped or raw
+    assert "555-555-0100" not in rendered
+    assert "example.com" not in rendered
+    assert r"\textbar" not in rendered
+    assert "linkedin" not in rendered.lower()
+    assert "github" not in rendered.lower()
+    # the company is still an argument, but nothing renders it
+    assert "Acme" not in rendered
+
+
+def test_rendered_letter_order_is_date_salutation_body_closing_name(monkeypatch, tmp_path):
+    rendered = _render(monkeypatch, tmp_path,
+                       "First paragraph.\n\nSecond paragraph.")
+    order = [rendered.index(s) for s in ("July 4, 2026", "Dear Hiring Team,",
+                                         "First paragraph.", "Second paragraph.",
+                                         "Sincerely,", "Jane Doe")]
+    assert order == sorted(order)
+    # closing is a plain blank-line break, not a forced small gap
+    assert "Sincerely,\n\nJane Doe" in rendered
+    assert "\\\\[6pt]" not in rendered
+
+
+def test_rendered_paragraphs_are_blank_line_separated_only(monkeypatch, tmp_path):
+    rendered = _render(monkeypatch, tmp_path,
+                       "First paragraph.\n\nSecond paragraph.")
+    # parskip 9pt supplies the gap — no \medskip between paragraphs
+    assert "\\medskip" not in rendered
+    assert "First paragraph.\n\nSecond paragraph." in rendered

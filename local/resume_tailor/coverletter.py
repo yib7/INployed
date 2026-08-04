@@ -20,45 +20,42 @@ from .llm import LLMError
 from .compile import CompileResult, compile_tex
 from .latexutil import to_latex
 
-# A plain left-aligned business-letter layout (article, not the `letter` class)
-# so the header format and the closing gap are under our exact control:
+# A plain left-aligned business letter (article, not the `letter` class), matching
+# the layout of the hand-written reference letter. There is no letterhead at all:
 #
-#   Name (bold)
-#   Phone | Email
 #   Date
-#   Company
 #   Dear Hiring Team,
 #   <body>
 #   Sincerely,
-#   Name            (left-aligned, a small gap under "Sincerely,")
+#   Name
 #
-# Deliberately NO LinkedIn/GitHub in the header — the user wants phone + email
-# only. parskip gives the uniform blank-line spacing between blocks.
+# No name banner, no phone/email line, no company line — the résumé travelling with
+# the letter already carries all of that, so repeating it just crowds the page. Times
+# text comes from newtxtext (same font as the résumé template), and `parskip` at 9pt
+# supplies the one uniform gap between every block, so nothing here needs a \medskip
+# or a forced break.
 _TEMPLATE = r"""\documentclass[11pt]{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{lmodern}
+
 \usepackage[margin=1in]{geometry}
-\usepackage{parskip}
-\usepackage{hyperref}
-\hypersetup{colorlinks=false, pdfborder={0 0 0}}
-\pagenumbering{gobble}
+\usepackage{newtxtext,newtxmath}
+\usepackage[english]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{9pt}
+\pagestyle{empty}
 
 \begin{document}
 
-{\large\textbf{__CANDIDATE_NAME__}}
-
-__CONTACT_LINE__
-
 __DATE__
-
-__COMPANY_NAME__
 
 Dear Hiring Team,
 
 __BODY__
 
-Sincerely,\\[6pt]
+Sincerely,
+
 __CANDIDATE_NAME__
 
 \end{document}
@@ -112,9 +109,11 @@ def _education_context() -> str:
 
 
 def _contact_values() -> list[str]:
-    """The header contact fields, in print order: phone then email. LinkedIn and
-    GitHub are intentionally excluded (the user wants them out of the letter).
-    Missing/blank fields are dropped. Raw (unescaped) — callers escape as needed."""
+    """The plain-text export's contact fields, in print order: phone then email.
+    LinkedIn and GitHub are intentionally excluded (the user wants them out of the
+    letter). The rendered PDF prints no contact line at all, so this feeds only
+    cover_letter_text, whose header a paste-in form still wants. Missing/blank
+    fields are dropped. Raw (unescaped) — callers escape as needed."""
     basics = assets.load_master().get("basics", {}) or {}
     return [str(v).strip() for v in (basics.get("phone"), basics.get("email"))
             if str(v or "").strip()]
@@ -349,16 +348,19 @@ Rewrite the body now, removing every banned pattern."""
 
 
 def _paragraphs(body: str) -> str:
+    """The body as escaped LaTeX paragraphs joined by a blank line only — the
+    template's `parskip 9pt` is what puts the gap between them."""
     paras = [p.strip() for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
     esc = [to_latex(p).replace("\n", " ") for p in paras]
-    return "\n\n\\medskip\n\n".join(esc)
+    return "\n\n".join(esc)
 
 
 def cover_letter_text(body: str, company: str) -> str:
     """The cover letter as clean, copy-pasteable plain text (no LaTeX) — saved next
-    to the PDF so it can be dropped straight into an application form. Same header
-    and left-aligned closing as the PDF, blocks separated by a blank line. Raw text
-    (never escaped): reads the master basics for name + phone/email."""
+    to the PDF so it can be dropped straight into an application form. Unlike the
+    PDF it keeps a name/contact/company header, because a pasted-in letter travels
+    without the résumé that would otherwise carry them. Blocks separated by a blank
+    line. Raw text (never escaped): reads the master basics for name + phone/email."""
     name = _display_name()
     contact = " | ".join(_contact_values())
     body = _strip_trailing_signoff(body)
@@ -371,14 +373,17 @@ def cover_letter_text(body: str, company: str) -> str:
 
 
 def render_cover_letter(body: str, company: str, tex_path: Path, work_dir: Path) -> Tuple[CompileResult, str]:
+    """Write the letter's .tex and compile it; returns (result, rendered source).
+
+    `company` is accepted but NOT rendered: this layout prints no addressee line.
+    It stays in the signature because every call site passes it and the plain-text
+    export (cover_letter_text) still uses it — dropping it would churn them all.
+    """
     # Drop any trailing "Sincerely, / Name" the model added; the template supplies it.
     body = _strip_trailing_signoff(body)
-    contact_line = r" \textbar{} ".join(to_latex(v) for v in _contact_values())
     rendered = (
         _TEMPLATE.replace("__CANDIDATE_NAME__", to_latex(_display_name()))
-        .replace("__CONTACT_LINE__", contact_line)
         .replace("__DATE__", to_latex(_today_str()))
-        .replace("__COMPANY_NAME__", to_latex(company))
         .replace("__BODY__", _paragraphs(body))
     )
     tex_path.write_text(rendered, encoding="utf-8")

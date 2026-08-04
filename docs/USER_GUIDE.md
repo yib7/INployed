@@ -10,8 +10,11 @@ cd local
 python -m resume_tailor.run --job-id <job_posting_id> --cover-letter
 ```
 Output (in `~/Downloads/Generated_Resumes/<Company>/<Title>/`): a one-page PDF, its
-`.tex` source, `ats_report.txt` (keyword coverage), an optional cover letter, and
-`apply.md` (a self-contained apply sheet you paste into Claude-in-Chrome).
+`.tex` source, `ats_report.txt` (keyword coverage), an optional cover letter as **both a
+PDF and its `.tex` source** (so you can edit a word and re-run `pdflatex` instead of
+regenerating), and `apply.md` (a self-contained apply sheet you paste into
+Claude-in-Chrome). The cover letter's plain text lives in `apply.md`'s `## Cover letter`
+section — that is what you paste into an application's cover-letter box.
 
 ### Fine-tune the résumé layout
 The **Resume Data** tab has a collapsible **Resume Layout** editor for how many bullets

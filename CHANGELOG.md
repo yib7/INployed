@@ -4,6 +4,46 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+A per-job chat, a plainer cover letter that ships its own source, and two new toggles.
+Existing saved configs keep working: the AI-writing pass defaults off, and the Apply
+browser-open toggle defaults on, so nothing changes until you change it.
+
+### Added
+- **Ask AI about this job.** A non-modal chat scoped to one posting, from the jobs
+  right-click menu or the Apply panel. It answers from that job's `apply.md` and its job
+  description (fenced as untrusted data, like the tailor prompts) and falls back to a bounded
+  master-experience extract for a job you have not tailored yet. It answers only from that
+  context and says so plainly when the sheet does not cover something. Every arm of the
+  context is length-capped, because each turn re-sends the whole thing.
+- **The cover letter ships its `.tex`.** The source is copied next to the PDF the way
+  `resume.tex` already was, so fixing a word means editing and re-running `pdflatex` instead
+  of regenerating the letter.
+- **Optional avoid-AI-writing pass on the cover letter** (Settings → Resume, off by default).
+  Extends the existing two-arm style gate — prompt rules plus a deterministic ban list — with
+  a letter-relevant subset of Conor Bronsdon's MIT-licensed `avoid-ai-writing` skill, credited
+  in `docs/CREDITS.md`. The grounding gate still runs last, so a restyled sentence that
+  introduces an unsupported fact is still caught.
+- **Toggle for whether Apply opens the posting** (Settings → Dashboard, on by default). Off
+  keeps you in the dashboard; the posting URL is still on the apply sheet.
+
+### Changed
+- **The cover-letter PDF lost its letterhead.** It now opens at the date in Times, matching
+  the résumé's font, with no name banner, contact line, or company line — the résumé
+  travelling with it already carries all three.
+- **The cover letter's plain text moved into `apply.md`** as a `## Cover letter` section,
+  replacing the separate `_Cover_Letter.txt`. That is what the auto-apply skill pastes into
+  cover-letter boxes; a `.tex` would be useless there. Folders tailored before this change are
+  migrated in place the next time their letter is regenerated.
+- **The auto-apply skill now attaches the résumé and cover letter** instead of deferring every
+  file to the human, when the artifact folder has been granted for the run. It never clicks a
+  file control (that opens a native picker it cannot see), verifies the filename appears after
+  each upload, and falls back to the previous "Attach before submitting" record when the grant
+  is missing or an upload cannot be verified. Parking at review without submitting is
+  unchanged, as are all five safety invariants; Workday still uses Apply Manually, since
+  parsed autofill would write values that no longer trace to `apply.md`.
+
 ## [1.7.1] - 2026-07-28
 
 Maintainer tooling for the project's own media. No runtime or pipeline change.

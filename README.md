@@ -166,8 +166,11 @@ The [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate instal
   each row by recommendation (apply / consider / skip) and by whether a tailored résumé
   already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
 - **Tailor.** One click writes a one-page LaTeX résumé for that posting, plus an optional
-  cover letter, an ATS keyword report, and an interview-prep sheet. Batches run in parallel
-  in the background with live progress.
+  cover letter (PDF and editable `.tex`), an ATS keyword report, and an interview-prep
+  sheet. Batches run in parallel in the background with live progress.
+- **Ask.** Right-click any job for a chat scoped to it. The question goes to the model with
+  that job's apply sheet and description as context, so answers come from your own material
+  — and it says so plainly when the sheet doesn't cover something.
 - **Track.** Applications move through applied → interviewing → offer / rejected, with
   follow-up nudges. The whole history is a local SQLite file you can export and import.
 - **Apply.** Every tailored folder gets a self-contained `apply.md` sheet that a

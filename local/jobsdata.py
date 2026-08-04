@@ -8,6 +8,7 @@ filter. Extracted from the old `ui.py` so it survives the UI toolkit swap.
 from __future__ import annotations
 
 import gzip
+import html
 import json
 import logging
 import os
@@ -1010,6 +1011,43 @@ def filter_and_sort(base: pd.DataFrame, search: str, minscore: str, day: str,
     return sort_query(view)
 
 
+# Block-level tags whose OPENING or closing form ends a line. The opening form
+# has to count too: postings routinely write "Responsibilities:<ul><li>..." with
+# no closing tag in between, and stripping that <ul> to nothing would weld the
+# lead-in onto the first bullet.
+_BLOCK_TAG_RE = re.compile(
+    r"</?(?:br|p|div|h[1-6]|ul|ol|tr|table|section|article|blockquote|hr)\b[^>]*>",
+    re.I,
+)
+_LI_OPEN_RE = re.compile(r"<li\b[^>]*>", re.I)
+_LI_CLOSE_RE = re.compile(r"</li\s*>", re.I)
+_ANY_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def html_to_text(raw: str) -> str:
+    """HTML -> readable plain text, preserving the posting's line structure.
+
+    Block tags become newlines and `<li>` becomes a bullet marker, so a scraped
+    `job_description_formatted` reads as paragraphs and lists instead of one
+    run-on block. Deliberately hand-rolled rather than delegating to
+    `markdownify` (which the résumé tailor uses): markdown syntax is noise in a
+    plain-text viewer, and this module carries no soft dependencies.
+
+    Plain text passes through essentially unchanged.
+    """
+    if not raw:
+        return ""
+    text = _LI_CLOSE_RE.sub("\n", raw)
+    text = _LI_OPEN_RE.sub("• ", text)
+    text = _BLOCK_TAG_RE.sub("\n", text)
+    text = _ANY_TAG_RE.sub("", text)
+    # Unescape LAST: an escaped `&lt;b&gt;` in the posting's own prose is text,
+    # and unescaping before the strip would turn it into a live tag.
+    text = html.unescape(text)
+    text = "\n".join(line.rstrip() for line in text.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def job_detail_segments(row, snapshot: dict | None = None) -> list[tuple[str, str]]:
     """The score-preview content as (text, style) segments — style in
     {'h','muted','good','bad',''}. `row` is a pandas Series (or None); `snapshot`
@@ -1082,8 +1120,9 @@ def job_detail_fields(row, snapshot: dict | None = None) -> dict:
     loaded data. Returns {} when there is nothing to show.
 
     Keys: title, company, location, url, score, deep_score, recommendation,
-    applicants, salary, posted, reason, strengths (list), gaps (list), jd
-    (<=700-char snippet), snapshot_only (bool), note (snapshot-only hint)."""
+    applicants, salary, posted, reason, strengths (list), gaps (list), jd (the
+    FULL description as plain text, uncapped), snapshot_only (bool), note
+    (snapshot-only hint)."""
     def cell(col: str) -> str:
         if row is None:
             return ""
@@ -1106,11 +1145,15 @@ def job_detail_fields(row, snapshot: dict | None = None) -> dict:
         return {}
 
     posted = cell("job_posted_date").strip()
-    jd = cell("job_summary").strip()
-    if len(jd) < 40:
-        raw = cell("job_description_formatted")
-        jd = re.sub(r"<[^>]+>", " ", raw)
-        jd = re.sub(r"\s+", " ", jd).strip()
+    # Richest JD text first, summary last — same precedence (and same 40-char
+    # bar) as resume_tailor.run._job_description_text: LinkedIn's job_summary is
+    # frequently a truncated stub, so preferring it hides most of the posting.
+    jd = ""
+    for col in ("job_description_formatted", "job_description", "job_summary"):
+        text = html_to_text(cell(col))
+        if len(text) >= 40:
+            jd = text
+            break
     return {
         "title": cell("job_title") or "?",
         "company": cell("company_name") or "?",
@@ -1125,7 +1168,7 @@ def job_detail_fields(row, snapshot: dict | None = None) -> dict:
         "reason": cell("reason").strip(),
         "strengths": [s.strip() for s in cell("strengths").split("|") if s.strip()],
         "gaps": [g.strip() for g in cell("gaps").split("|") if g.strip()],
-        "jd": jd[:700] + ("…" if len(jd) > 700 else ""),
+        "jd": jd,
         "snapshot_only": False,
         "note": "",
     }

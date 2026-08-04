@@ -49,6 +49,90 @@ def test_job_detail_fields_segments_stay_untouched():
     assert any("Riverstone" in t for t, _s in segs)
 
 
+# ---- the JD field: precedence, no truncation --------------------------------------
+
+def test_job_detail_fields_prefers_description_over_a_long_summary():
+    # LinkedIn's job_summary is often a truncated stub even when it is long
+    # enough to clear the 40-char bar, so the real posting wins.
+    f = jobsdata.job_detail_fields(_row(
+        job_description_formatted="<p>The real posting, with every requirement "
+                                  "spelled out at length.</p>"))
+    assert f["jd"].startswith("The real posting")
+    assert "A summary" not in f["jd"]
+
+
+def test_job_detail_fields_prefers_formatted_over_plain_description():
+    f = jobsdata.job_detail_fields(_row(
+        job_description_formatted="<p>Formatted wins the precedence race here.</p>",
+        job_description="Plain description that is also long enough to qualify."))
+    assert f["jd"].startswith("Formatted wins")
+
+
+def test_job_detail_fields_uses_plain_description_when_formatted_is_missing():
+    f = jobsdata.job_detail_fields(_row(
+        job_description="Plain description that is also long enough to qualify."))
+    assert f["jd"].startswith("Plain description")
+
+
+def test_job_detail_fields_stub_description_falls_through_to_summary():
+    f = jobsdata.job_detail_fields(_row(job_description_formatted="<p>See site.</p>"))
+    assert f["jd"].startswith("A summary")
+
+
+def test_job_detail_fields_keeps_the_whole_description():
+    body = "\n".join(f"<p>Requirement number {i} spelled out in full.</p>"
+                     for i in range(200))
+    f = jobsdata.job_detail_fields(_row(job_description_formatted=body))
+    assert len(f["jd"]) > 5000
+    assert "…" not in f["jd"]
+    assert "Requirement number 0 spelled out in full." in f["jd"]
+    assert "Requirement number 199 spelled out in full." in f["jd"]
+
+
+def test_job_detail_fields_blank_row_yields_empty_jd():
+    f = jobsdata.job_detail_fields(pd.Series({"job_title": "", "job_summary": "",
+                                              "job_description_formatted": ""}))
+    assert f["jd"] == ""
+
+
+# ---- html_to_text -----------------------------------------------------------------
+
+def test_html_to_text_breaks_lines_on_block_tags():
+    # A block that both closes and opens gets a blank line between it and the
+    # next one — that is the paragraph spacing, not an accident.
+    out = jobsdata.html_to_text("one<br>two<p>three</p><div>four</div><h2>five</h2>")
+    assert out == "one\ntwo\nthree\n\nfour\n\nfive"
+
+
+def test_html_to_text_keeps_a_lead_in_off_the_first_bullet():
+    # "Responsibilities:<ul><li>" has no closing tag between the two, so the
+    # opening <ul> has to break the line as well.
+    out = jobsdata.html_to_text("Responsibilities:<ul><li>ship it</li></ul>")
+    assert out == "Responsibilities:\n• ship it"
+
+
+def test_html_to_text_marks_list_items_with_bullets():
+    out = jobsdata.html_to_text("<ul><li>alpha</li><li>beta</li></ul>")
+    assert out.splitlines() == ["• alpha", "• beta"]
+
+
+def test_html_to_text_unescapes_entities_after_stripping_tags():
+    assert jobsdata.html_to_text("R&amp;D &gt; sales") == "R&D > sales"
+    # an escaped tag in the source must stay inert text, not become live markup
+    assert jobsdata.html_to_text("literal &lt;b&gt;bold&lt;/b&gt;") == "literal <b>bold</b>"
+
+
+def test_html_to_text_collapses_blank_runs_and_trims():
+    out = jobsdata.html_to_text("<p>a   </p><br><br><br><br><p>b</p>")
+    assert out == "a\n\nb"
+
+
+def test_html_to_text_passes_plain_text_through():
+    plain = "No markup here.\n\nJust two paragraphs of ordinary text."
+    assert jobsdata.html_to_text(plain) == plain
+    assert jobsdata.html_to_text("") == ""
+
+
 # ---- JobDetailCard ------------------------------------------------------------------
 
 def test_card_renders_fields_to_plain_text(qtbot):

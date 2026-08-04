@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, Tuple
 
-from . import assets, compose, config, verify
+from . import aiwriting, assets, compose, config, verify
 from .llm import LLMError
 from .compile import CompileResult, compile_tex
 from .latexutil import to_latex
@@ -158,6 +158,27 @@ def tone_directive(tone: str) -> str:
     return _TONE_DIRECTIVES.get(key, _TONE_DIRECTIVES["professional"])
 
 
+def _with_ai_writing_rules(system: str) -> str:
+    """Append the vendored avoid-AI-writing rules when the Settings toggle is on.
+
+    Strictly additive and strictly last, so with the toggle OFF (the default)
+    every letter prompt is byte-identical to the one that shipped before the
+    toggle existed."""
+    if config.avoid_ai_writing_enabled():
+        return system + "\n" + aiwriting.RULES_PROMPT
+    return system
+
+
+def _body_violations(body: str) -> list:
+    """The letter's banned-phrasing names: compose's always, plus the extra
+    avoid-AI-writing set when the toggle is on. One list so the gate keeps its
+    single repair call AND its strict-improvement rule counts both sets."""
+    names = compose.style_violations(body)
+    if config.avoid_ai_writing_enabled():
+        names += aiwriting.violations(body)
+    return names
+
+
 def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str],
                   research: str = "", tone: str = "professional") -> str:
     used = "\n".join(f"- {t}" for t in bullets.values())
@@ -180,6 +201,7 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
         "Never use the same metric or number twice in the letter.\n"
         "BANNED PHRASING (using any of these is wrong): " + compose.BANNED_PHRASING
     )
+    system = _with_ai_writing_rules(system)
     research_block = (
         f"""
 
@@ -288,6 +310,7 @@ def refine_body(jd: str, job_title: str, company: str, body: str,
         "over-eager tone reads as AI-written. " + tone_directive(tone) + "\n"
         "BANNED PHRASING (do not introduce any of these): " + compose.BANNED_PHRASING
     )
+    system = _with_ai_writing_rules(system)
     user = f"""ROLE: {job_title} at {company}
 
 RESUME BULLETS (the only allowed source of facts):
@@ -314,8 +337,12 @@ def enforce_body_style(jd: str, job_title: str, company: str, body: str,
     source), committed only on strict improvement so a bad repair can't make it
     worse — then mechanically strip any em dash that survives, so one can never
     print. Best-effort: a failed call just leaves the body to the mechanical pass
-    (advisory, never fatal — like the bullet gate)."""
-    violations = compose.style_violations(body)
+    (advisory, never fatal — like the bullet gate).
+
+    With the avoid-AI-writing toggle on, the check widens to compose's bans PLUS
+    aiwriting's (_body_violations) and the repair prompt carries that rule text,
+    so the one call still covers both sets."""
+    violations = _body_violations(body)
     if violations:
         used = "\n".join(f"- {t}" for t in bullets.values())
         system = (
@@ -326,6 +353,7 @@ def enforce_body_style(jd: str, job_title: str, company: str, body: str,
             "never add a claim. " + tone_directive(tone) + "\n"
             "BANNED: " + compose.BANNED_PHRASING
         )
+        system = _with_ai_writing_rules(system)
         user = f"""ROLE: {job_title} at {company}
 
 RESUME BULLETS (the only allowed source of facts):
@@ -339,7 +367,7 @@ Rewrite the body now, removing every banned pattern."""
             fixed = (compose.call(system, user, config.TIER_FLASH, json_out=False,
                                   temperature=0.2) or "").strip()
             # Commit only strict improvement, so a bad repair can't make it worse.
-            if fixed and len(compose.style_violations(fixed)) < len(violations):
+            if fixed and len(_body_violations(fixed)) < len(violations):
                 body = fixed
         except Exception:  # noqa: BLE001 - repair is advisory; the mechanical pass still runs
             pass

@@ -195,6 +195,20 @@ def tech_aliases_enabled() -> bool:
     return _config_json().get("tech_aliases", True) is not False
 
 
+def avoid_ai_writing_enabled() -> bool:
+    """Whether the cover-letter body gets the extra avoid-AI-writing pass (aiwriting.py):
+    the vendored subset of Conor Bronsdon's avoid-ai-writing skill rides in the letter's
+    generation/refine/repair prompts, and its deterministic bans join compose's in the
+    style gate. Letter only -- the résumé bullets keep their own gate untouched. Defaults
+    OFF: it is a taste call, and with it off the letter prompts stay byte-identical to
+    what shipped before the toggle. Precedence: RESUME_TAILOR_AVOID_AI_WRITING env >
+    config.json 'cover_letter_avoid_ai_writing' > False."""
+    env = os.getenv("RESUME_TAILOR_AVOID_AI_WRITING")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return bool(_config_json().get("cover_letter_avoid_ai_writing", False))
+
+
 def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.

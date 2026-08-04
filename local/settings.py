@@ -205,6 +205,18 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("resume_tone", "Cover-letter tone", "choice", "professional", "Resume", "config",
           help="Tone used when generating the cover letter.",
           choices=("professional", "concise", "enthusiastic", "impactful")),
+    Field("cover_letter_avoid_ai_writing", "Strip AI writing patterns from the cover letter",
+          "bool", False, "Resume", "config",
+          help="Adds a second, stricter style pass to the COVER LETTER only (the résumé "
+               "bullets are unaffected). It applies a subset of Conor Bronsdon's "
+               "MIT-licensed 'avoid-ai-writing' skill: the overused AI vocabulary (delve, "
+               "pivotal, impactful, learnings, 'in order to'), 'it's not X, it's Y' "
+               "framing, hedging, chatbot tics ('I hope this helps'), rhetorical-question "
+               "openers, 'In conclusion' endings, and the metronomic sentence rhythm that "
+               "makes writing read as machine-made. The rules ride in the writing prompt "
+               "and the worst offenders are also caught by a checker that buys one rewrite. "
+               "Off by default because it is a taste call, and turning it off leaves the "
+               "letter exactly as it was before this setting existed."),
 
     # --- Auto-apply: the batch queue knobs (config.json). Read by the dashboard's
     # _queue_for_auto_apply and by apply_queue.build_context() for the agent run. ---

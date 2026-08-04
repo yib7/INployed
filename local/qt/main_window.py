@@ -1795,17 +1795,27 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         jid = ids[0]
         payload = self._job_payload(jid)
+        # Read the toggle HERE, on the UI thread — settings.load() touches the disk and
+        # must not run inside the worker (same shape as _generate_cover_for's tone read).
+        open_url = settings.load().get("apply_open_browser", True) is not False
         self._applying = True
-        self._set_status("Opening application …")
-        workers.run_async(self, lambda: self._apply_work(jid, payload),
+        self._set_status("Opening application …" if open_url
+                         else "Building the apply sheet …")
+        workers.run_async(self, lambda: self._apply_work(jid, payload, open_url),
                           on_done=self._finish_apply_ok, on_error=self._finish_apply_error)
 
-    def _apply_work(self, jid: str, payload: dict | None):
+    def _apply_work(self, jid: str, payload: dict | None, open_url: bool = True):
+        """Build the apply context, and launch the posting only when `open_url`.
+
+        `open_url` is resolved by the caller on the UI thread (the apply_open_browser
+        setting); it defaults True so the CLI-ish callers and older tests keep today's
+        behaviour. With it off the sheet still carries the posting URL, so nothing is
+        lost — the browser just doesn't take over the screen."""
         from resume_tailor import apply as apply_mod
         folder = apply_mod.resolve_generated_dir(job_id=jid, job=payload)
         ctx = apply_mod.build_apply_context(folder)
         url = ctx.get("apply_url", "")
-        if url:
+        if url and open_url:
             try:
                 chrome.open_in_chrome(url)
             except Exception:  # noqa: BLE001

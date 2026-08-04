@@ -104,6 +104,11 @@ SETTINGS_SCHEMA: list[Field] = [
           help="The Stats tab warns that the pipeline may have failed when the newest run is "
                "older than this. Discovery runs a few times a day, so 36h means a missed "
                "day stands out.", min=6, max=336),
+    Field("apply_open_browser", "Open the posting in your browser on Apply", "bool", True,
+          "Dashboard", "config",
+          help="When on, the Apply button opens the job's application page in Chrome as well "
+               "as showing the apply sheet. Off keeps you in the dashboard — the posting URL "
+               "is still on the apply sheet and the Open-folder button still works."),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
     Field("keywords", "Search keywords", "list",

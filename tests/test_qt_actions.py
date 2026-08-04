@@ -345,7 +345,10 @@ def test_poll_reloads_only_when_sources_change(qtbot, monkeypatch):
     assert called
 
 
-def test_apply_work_opens_url(qtbot, monkeypatch):
+@pytest.mark.parametrize("open_url, expected", [(True, ["https://x/1"]), (False, [])])
+def test_apply_work_opens_url_only_when_asked(qtbot, monkeypatch, open_url, expected):
+    # The apply_open_browser setting decides whether Apply launches the posting.
+    # Either way the context (and so the apply sheet) still carries the URL.
     w = _win(qtbot)
     import resume_tailor.apply as apply_mod
     monkeypatch.setattr(apply_mod, "resolve_generated_dir", lambda **k: "folder")
@@ -353,9 +356,41 @@ def test_apply_work_opens_url(qtbot, monkeypatch):
                         lambda folder: {"apply_url": "https://x/1", "job": {"company": "Acme"}})
     opened = []
     monkeypatch.setattr(mw.chrome, "open_in_chrome", opened.append)
-    ctx = w._apply_work("1", {"job_posting_id": "1"})
+    ctx = w._apply_work("1", {"job_posting_id": "1"}, open_url)
     assert ctx["apply_url"] == "https://x/1"
+    assert opened == expected
+
+
+def test_apply_work_defaults_to_opening(qtbot, monkeypatch):
+    # The default must stay "open", so any caller that predates the flag is unchanged.
+    w = _win(qtbot)
+    import resume_tailor.apply as apply_mod
+    monkeypatch.setattr(apply_mod, "resolve_generated_dir", lambda **k: "folder")
+    monkeypatch.setattr(apply_mod, "build_apply_context",
+                        lambda folder: {"apply_url": "https://x/1", "job": {}})
+    opened = []
+    monkeypatch.setattr(mw.chrome, "open_in_chrome", opened.append)
+    w._apply_work("1", {"job_posting_id": "1"})
     assert opened == ["https://x/1"]
+
+
+def test_apply_selected_reads_the_flag_on_the_ui_thread(qtbot, monkeypatch):
+    # settings.load() touches the disk; it must be read before dispatching, never
+    # inside the worker. Assert the resolved flag is what reaches _apply_work.
+    w = _win(qtbot)
+    monkeypatch.setattr(w, "_selected_ids", lambda: ["1"])
+    monkeypatch.setattr(w, "_job_payload", lambda jid: {"job_posting_id": jid})
+    monkeypatch.setattr(mw.settings, "load", lambda: {"apply_open_browser": False})
+    seen = {}
+    monkeypatch.setattr(w, "_apply_work",
+                        lambda jid, payload, open_url=True: seen.update(open_url=open_url))
+    # run the dispatched callable inline instead of on a thread
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None: fn())
+    w._apply_selected()
+    assert seen == {"open_url": False}
+    # ...and the interim status must not claim a browser opened.
+    assert "Opening application" not in w.statusBar().currentMessage()
 
 
 def test_bar_primary_is_find_new_jobs_and_apply_lives_on_card(qtbot):

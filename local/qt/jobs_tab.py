@@ -26,7 +26,7 @@ class JobsTab(QtWidgets.QWidget):
     def __init__(self, table_key: str, columns, *, on_open_url=None, on_set_status=None,
                  on_block=None, on_selection=None, on_delete=None, on_edit=None,
                  on_generate_cover=None, cover_state=None, on_queue_apply=None,
-                 hidden_columns=None, save_hidden=None, parent=None):
+                 on_ask_ai=None, hidden_columns=None, save_hidden=None, parent=None):
         super().__init__(parent)
         self.table_key = table_key
         self.col_ids = [c for c, _ in columns]
@@ -44,6 +44,9 @@ class JobsTab(QtWidgets.QWidget):
         # callers construct JobsTab without them and see no menu item at all.
         self._on_generate_cover = on_generate_cover or (lambda jid: None)
         self._cover_state = cover_state or (lambda jid: None)
+        # "Ask AI about this job": a chat scoped to ONE job, so it appears only on a
+        # single-row selection. None (the default) means unwired — no menu item.
+        self._on_ask_ai = on_ask_ai
         self._hidden: set[str] = set((hidden_columns or {}).get(table_key, []))
         self._save_hidden = save_hidden or (lambda key, hidden: None)
         self._base = pd.DataFrame()
@@ -481,6 +484,10 @@ class JobsTab(QtWidgets.QWidget):
         if self._on_queue_apply is not None:
             queue_act = menu.addAction(f"Queue for auto-apply ({len(ids)})")
         menu.addSeparator()
+        # Per-job chat: works whether or not the job is tailored (an untailored one
+        # falls back to the JD), so unlike the cover letter it needs no state probe.
+        ask_act = (menu.addAction("Ask AI about this job")
+                   if self._on_ask_ai is not None and len(ids) == 1 else None)
         # Cover letter for one already-tailored job: Generate when none exists,
         # Regenerate when one does (the handler confirms first), nothing when the
         # job isn't tailored (cover_state -> None) or on a multi-selection.
@@ -503,6 +510,8 @@ class JobsTab(QtWidgets.QWidget):
             self._on_open_url(ids[0])
         elif queue_act is not None and chosen is queue_act:
             self._on_queue_apply(ids)
+        elif ask_act is not None and chosen is ask_act:
+            self._on_ask_ai(ids[0])
         elif cover_act is not None and chosen is cover_act:
             self._on_generate_cover(ids[0])
         elif chosen is block_act:

@@ -48,6 +48,7 @@ from qt import theme, workers
 from qt.answers_tab import AnswersEditor
 from qt.apply_panel import ApplyPanel
 from qt.apply_queue_panel import ApplyQueuePanel
+from qt.chat_dialog import JobChatDialog
 from qt.chrome import ChipBar, IdentityStrip
 from qt.detail_card import JobDetailCard
 from qt.jobs_tab import JobsTab
@@ -175,6 +176,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # writes can never interleave on the same files. Registry (SQLite) writes
         # stay on the UI thread — the connection is thread-affine and they're fast.
         self._writes = workers.SerialTaskQueue(self)
+        # Open per-job chat windows, keyed by job id. They are PARENTED to this
+        # window (so they die with it) and remove themselves from here on close —
+        # a stale entry would be a Python wrapper over a deleted C++ object.
+        self._chat_dialogs: dict[str, "JobChatDialog"] = {}
         self.tailor_progress.connect(self._set_status)
         self.tailor_job_done.connect(self._on_tailor_job_done)
 
@@ -198,6 +203,7 @@ class MainWindow(QtWidgets.QMainWindow):
             on_generate_cover=self._generate_cover_for,
             cover_state=self._cover_state,
             on_queue_apply=self._queue_for_auto_apply,
+            on_ask_ai=self._ask_ai_for,
             hidden_columns=self.hidden_columns,
             save_hidden=self._save_hidden,
         )
@@ -410,7 +416,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_panel_open = False
         self._apply_panel_job: dict = {}
         self.apply_panel = ApplyPanel(on_close=self._close_apply_panel,
-                                      on_applied=self._mark_applied_from_panel)
+                                      on_applied=self._mark_applied_from_panel,
+                                      on_ask_ai=self._ask_ai_from_panel)
         self.apply_panel.hide()
         self.hsplit = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.hsplit.addWidget(self.splitter)
@@ -2378,21 +2385,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "A cover letter already exists for this job. Regenerate and "
                 "replace it?") != QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        payload = self._job_payload(jid)
-        if payload is None:
-            # Row not in the loaded frames (e.g. tracker-only) — the master CSV
-            # still carries the JD (same fallback the edit dialog uses).
-            row = jobsdata.master_row(jid) or {}
-            if row:
-                payload = {
-                    "job_posting_id": jid,
-                    "company_name": str(row.get("company_name", "") or ""),
-                    "job_title": str(row.get("job_title", "") or ""),
-                    "job_description_formatted": str(row.get("job_description_formatted", "") or ""),
-                    "job_description": str(row.get("job_description", "") or ""),
-                    "job_summary": str(row.get("job_summary", "") or ""),
-                    "url": str(row.get("url", "") or ""),
-                }
+        payload = self._payload_with_master_fallback(jid)
         if not payload:
             self._set_status("Job description not available — cannot generate a "
                              "cover letter.")
@@ -2429,6 +2422,66 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.warning(self, "Cover letter",
                                       f"Cover letter failed: {exc}")
         self._set_status(f"Cover letter failed: {exc}")
+
+    def _payload_with_master_fallback(self, jid: str) -> dict | None:
+        """The job's row payload, rebuilt from the master CSV when the row isn't
+        in the loaded frames (e.g. a tracker-only job) — the same fallback the
+        edit dialog uses. None when the id is unknown everywhere."""
+        payload = self._job_payload(jid)
+        if payload is not None:
+            return payload
+        row = jobsdata.master_row(jid) or {}
+        if not row:
+            return None
+        return {
+            "job_posting_id": jid,
+            "company_name": str(row.get("company_name", "") or ""),
+            "job_title": str(row.get("job_title", "") or ""),
+            "job_description_formatted": str(row.get("job_description_formatted", "") or ""),
+            "job_description": str(row.get("job_description", "") or ""),
+            "job_summary": str(row.get("job_summary", "") or ""),
+            "url": str(row.get("url", "") or ""),
+        }
+
+    # ---- per-job chat --------------------------------------------------------
+
+    def _ask_ai_for(self, jid: str) -> None:
+        """Open (or raise) the chat window for one job.
+
+        Deliberately never refuses: an untailored job still has its JD and the
+        master file to answer from, and a job the loaded frames have never heard
+        of may still have a tailored folder on disk for the resolver to find. So
+        this degrades to a thinner context instead of erroring.
+        """
+        jid = str(jid or "").strip()
+        if not jid:
+            return
+        open_dlg = self._chat_dialogs.get(jid)
+        if open_dlg is not None:      # one window per job; a second click raises it
+            open_dlg.show()
+            open_dlg.raise_()
+            open_dlg.activateWindow()
+            return
+        payload = self._payload_with_master_fallback(jid) or {"job_posting_id": jid}
+        self._apply_auth_env()        # the chat calls the engine, same as tailor/cover
+        # Parented to this window and self-removing on close — see qt/chat_dialog.py.
+        dlg = JobChatDialog(payload, parent=self,
+                            on_closed=lambda: self._chat_dialogs.pop(jid, None))
+        self._chat_dialogs[jid] = dlg
+        dlg.show()
+        title = payload.get("job_title") or payload.get("title") or "this job"
+        company = payload.get("company_name") or payload.get("company") or "?"
+        self._set_status(f"Ask AI — {title} @ {company}. Answers come only from "
+                         f"this job's apply sheet and posting.")
+
+    def _ask_ai_from_panel(self) -> None:
+        """The Apply panel's Ask AI button: chat about the job it is showing."""
+        job = getattr(self, "_apply_panel_job", None) or {}
+        jid = str(job.get("job_posting_id") or "").strip()
+        if not jid:
+            self._set_status("Couldn't identify this job to ask about.")
+            return
+        self._ask_ai_for(jid)
 
     # ---- check setup ---------------------------------------------------------
 

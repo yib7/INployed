@@ -19,10 +19,14 @@ import osopen
 
 class ApplyPanel(QtWidgets.QWidget):
     def __init__(self, on_close: Callable[[], None] | None = None,
-                 on_applied: Callable[[], None] | None = None, parent=None) -> None:
+                 on_applied: Callable[[], None] | None = None,
+                 on_ask_ai: Callable[[], None] | None = None, parent=None) -> None:
         super().__init__(parent)
         self._on_close = on_close or (lambda: None)
         self._on_applied = on_applied or (lambda: None)
+        # "Ask AI" opens the per-job chat for whichever job the panel is showing;
+        # the owner knows the identity, so this fires with no arguments.
+        self._on_ask_ai = on_ask_ai or (lambda: None)
         self._folder: str = ""
         self._raw_md: str = ""   # the apply.md source — rendered in the viewer, copied verbatim
         self._popout: QtWidgets.QDialog | None = None  # the Expand reader, kept alive
@@ -61,9 +65,16 @@ class ApplyPanel(QtWidgets.QWidget):
         self._cover_row, self._cover_edit = self._path_row("Cover letter PDF")
         v.addLayout(self._cover_row)
 
+        tools = QtWidgets.QHBoxLayout()
         self._open_btn = QtWidgets.QPushButton("Open folder")
         self._open_btn.clicked.connect(self._open_folder)
-        v.addWidget(self._open_btn)
+        tools.addWidget(self._open_btn)
+        self.ask_ai_btn = QtWidgets.QPushButton("Ask AI")
+        self.ask_ai_btn.setToolTip(
+            "Chat about this job — its apply sheet, bullets and cover letter")
+        self.ask_ai_btn.clicked.connect(lambda: self._on_ask_ai())
+        tools.addWidget(self.ask_ai_btn)
+        v.addLayout(tools)
 
         sheet_row = QtWidgets.QHBoxLayout()
         sheet_label = QtWidgets.QLabel("Apply sheet (apply.md)")

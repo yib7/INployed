@@ -48,6 +48,11 @@ résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and
 detail card for a right-side **Apply panel** (copyable doc paths + the apply sheet, with an
 **Expand** button that pops it into a large resizable reader; the close button dismisses it, and
 **"I applied to this job"** confirms → records the job applied in the Tracker → closes).
+**Ask AI** — on that panel next to *Open folder*, and in the jobs-table right-click menu as
+*Ask AI about this job* — opens a non-modal per-job chat (`qt/chat_dialog.py` over
+`resume_tailor/chat.py`): one window per job, parented to the main window and `deleteLater()`d on
+close, every turn on a worker thread. It answers only from that job's apply sheet and posting, so it
+declines rather than inventing; an untailored job still gets a JD-only conversation.
 
 Between VM drops, `local/watcher.py` closes the loop with **no polling**: a one-shot fired by
 Windows Task Scheduler (Logon / Unlock / Resume plus six scheduled fires around the VM's Drive
@@ -188,6 +193,7 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
+| `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity + the JD fenced as untrusted data + the folder's `apply.md`, or a bounded master-file digest when the job was never tailored) and `ask` sends only the turns as the user message — the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants, because the whole payload is re-sent (and re-billed) each turn. No style or grounding gate runs on an answer; the grounding rule is carried by the system prompt. |
 | `verify.py` | The grounding backstop. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |

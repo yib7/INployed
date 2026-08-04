@@ -1033,6 +1033,15 @@ _ANY_TAG_RE = re.compile(r"<[^>]+>")
 # bullet lines. A gap next to a paragraph is left alone — that is what sets a
 # list off from the prose around it.
 _BULLET_GAP_RE = re.compile(r"^(• .*)\n\n+(?=• )", re.M)
+# An `<li>` whose content is wrapped in a block tag (`<li><p>text</p></li>`)
+# breaks the line right after the marker, orphaning it from its OWN text — 41
+# of the 59 stray markers in the master. Rejoin those; only then is a marker
+# with nothing after it genuinely an EMPTY `<li>`, which drops out entirely.
+# The gap is the tell: a block tag between the marker and the next text emits a
+# second newline, so an ADJACENT line is the item's own content, and only a
+# non-bullet one (`(?=[^\s•])`) is text rather than the next marker.
+_ORPHAN_BULLET_RE = re.compile(r"^•\n(?=[^\s•])", re.M)
+_BARE_BULLET_RE = re.compile(r"^•(?:\n|$)", re.M)
 
 # Elements that carry no posting prose — their TEXT goes with the tags. LinkedIn
 # wraps every posting in `<section class="show-more-less-html">` whose "Show
@@ -1082,6 +1091,10 @@ def html_to_text(raw: str) -> str:
     # gutter on every line the posting's markup happened to indent. A `<pre>`
     # block would lose its own indentation with it — postings do not use one.
     text = "\n".join(line.strip() for line in text.splitlines())
+    # Now that the lines are final: reunite a marker with its own text, then
+    # drop the markers that turn out to have no text at all.
+    text = _ORPHAN_BULLET_RE.sub("• ", text)
+    text = _BARE_BULLET_RE.sub("", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     # LAST, on the rendered lines: close the gap between two bullets that the
     # markup structure alone cannot see (one `<ul>` per bullet).

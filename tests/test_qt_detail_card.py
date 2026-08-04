@@ -212,6 +212,35 @@ def test_html_to_text_keeps_the_blank_line_between_a_paragraph_and_a_bullet():
     assert out.splitlines() == ["Before the list", "", "• a"]
 
 
+def test_html_to_text_drops_an_empty_list_items_marker():
+    # An empty <li> left a content-free "•" sitting on its own line.
+    assert jobsdata.html_to_text(
+        "<ul><li></li><li>real item</li></ul>").splitlines() == ["• real item"]
+
+
+def test_html_to_text_joins_bullets_across_an_empty_list_item():
+    # The stray marker also blocked _BULLET_GAP_RE, so the list read ragged.
+    out = jobsdata.html_to_text("<ul><li>a</li><li></li><li>b</li></ul>")
+    assert out.splitlines() == ["• a", "• b"]
+
+
+def test_html_to_text_keeps_a_very_short_bullet():
+    # "Nothing after the marker" means nothing, not "not much".
+    out = jobsdata.html_to_text("<ul><li>C++</li><li>Go</li></ul>")
+    assert out.splitlines() == ["• C++", "• Go"]
+
+
+def test_html_to_text_keeps_the_marker_on_a_block_wrapped_item():
+    # `<li><p>text</p></li>` breaks the line right after the marker, orphaning
+    # it from its OWN text — 41 of the 59 stray markers in the master. The item
+    # keeps its bullet instead of being silently de-bulleted.
+    out = jobsdata.html_to_text("<ul><li><p>wrapped item</p></li></ul>")
+    assert out.splitlines() == ["• wrapped item"]
+    out = jobsdata.html_to_text(
+        "<ul><li><p>first</p></li><li><p>second</p></li></ul>")
+    assert out.splitlines() == ["• first", "• second"]
+
+
 def test_html_to_text_flattens_a_nested_list_without_blank_lines():
     out = jobsdata.html_to_text("<ul><li>a<ul><li>b</li><li>c</li></ul></li></ul>")
     assert out.splitlines() == ["• a", "• b", "• c"]

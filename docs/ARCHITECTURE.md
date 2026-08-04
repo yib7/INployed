@@ -158,7 +158,16 @@ with its jobs/unseen/tracked counters + freshness pill, the Tracker's status chi
 auto-apply pipeline chips) and **`local/qt/detail_card.py:JobDetailCard`**, the bottom pane under the job
 tables: title + meta, the Open posting / Tailor résumé / Apply action
 row, score/deep/applicants chips, the REASON lede with STRENGTHS/GAPS columns (a tracker variant
-swaps in status/follow-up pills and a NEXT STEP line), and a collapsed "Show description" JD snippet. **Restart** (`MainWindow._restart_app`) flags the intent and closes the window;
+swaps in status/follow-up pills and a NEXT STEP line), and a collapsed "Show description" panel
+holding the **whole, uncapped** JD. That panel is a read-only `QPlainTextEdit`, not a label: it keeps
+the posting's paragraphs and bullets, scrolls internally instead of growing the card without bound,
+is selectable/copyable, and is plain text *by construction* — a stronger form of the P2-19 guarantee
+than a label's text-format flag, since scraped `<b>`/`<img>` can never be parsed as markup. Its text
+comes from `jobsdata.job_detail_fields`, which prefers `job_description_formatted` →
+`job_description` → `job_summary` (first one over 40 characters, the same order the résumé tailor
+uses) and passes the markup through `jobsdata.html_to_text`: block tags become line breaks, `<li>` a
+`• ` bullet, entities are unescaped *after* stripping so an escaped tag in the posting's own prose
+stays inert text. **Restart** (`MainWindow._restart_app`) flags the intent and closes the window;
 `app.main` relaunches a fresh process after the single-instance lock is released.
 
 Each job tab folds its discovery filters (plus the Tracker's *Follow-up due

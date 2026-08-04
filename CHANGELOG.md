@@ -6,9 +6,10 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
-A per-job chat, a plainer cover letter that ships its own source, and two new toggles.
-Existing saved configs keep working: the AI-writing pass defaults off, and the Apply
-browser-open toggle defaults on, so nothing changes until you change it.
+A per-job chat, a plainer cover letter that ships its own source, two new toggles, and the
+full job description in the detail card. Existing saved configs keep working: the
+AI-writing pass defaults off, and the Apply browser-open toggle defaults on, so nothing
+changes until you change it.
 
 ### Added
 - **Ask AI about this job.** A non-modal chat scoped to one posting, from the jobs
@@ -43,6 +44,13 @@ browser-open toggle defaults on, so nothing changes until you change it.
   is missing or an upload cannot be verified. Parking at review without submitting is
   unchanged, as are all five safety invariants; Workday still uses Apply Manually, since
   parsed autofill would write values that no longer trace to `apply.md`.
+- **The detail card's description panel shows the whole posting.** It used to print a
+  700-character slice of the `job_summary` column, and LinkedIn's summary is itself often a
+  truncated stub, so you were reading a fragment of a fragment and had to open the posting
+  to judge the job. It now takes the real description when there is one (formatted HTML
+  first, then the plain field, with the summary left as the fallback) and does not truncate
+  it. The markup is rendered as paragraphs and bullets, the panel scrolls instead of
+  stretching the card, and the text can be selected and copied.
 
 ## [1.7.1] - 2026-07-28
 

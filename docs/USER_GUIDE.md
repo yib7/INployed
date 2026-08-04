@@ -70,8 +70,10 @@ remembered. **Restart** closes and reopens the dashboard.
 
 Selecting a job opens a **detail card** at the bottom: the job's title and meta line,
 score / deep-score / applicants chips, the model's reasoning, strengths, and gaps, a
-collapsed job-description snippet, and the per-job actions (**Open posting**, **Tailor
-résumé**, **Apply**). On the Tracker it switches to a tracker variant with status and
+collapsed **Show description** panel, and the per-job actions (**Open posting**, **Tailor
+résumé**, **Apply**). Expand the description and you get the whole posting rather than an
+excerpt of it: the panel scrolls on its own instead of stretching the card, and the text
+can be selected and copied. On the Tracker it switches to a tracker variant with status and
 follow-up pills plus a suggested next step. It appears only on the job-list tabs (**High
 Score / All Jobs / Tracker**) and hides itself elsewhere; **drag the divider above it**
 to make it taller or shorter.

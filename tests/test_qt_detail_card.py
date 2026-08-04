@@ -15,8 +15,8 @@ def _row(**over):
         "recommendation": "apply", "applicants": "4",
         "job_base_pay_range": "$105k–$135k", "job_posted_date": "2026-07-11T00:00",
         "reason": "great fit", "strengths": "LLM pipeline|Python depth",
-        "gaps": "No fintech", "job_summary": "A summary long enough to be used "
-        "directly as the JD snippet for the detail card.",
+        "gaps": "No fintech", "job_summary": "A summary long enough to clear the "
+        "40-character bar, so it is the card's JD when no description survives.",
     }
     base.update(over)
     return pd.Series(base)

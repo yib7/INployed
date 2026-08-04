@@ -121,7 +121,7 @@ def test_start_tailor_spawn_failure_does_not_reraise(qtbot, monkeypatch):
     assert "no threads" in w.statusBar().currentMessage()
 
 
-# ── P2-19: the JD snippet renders as plain text ──────────────────────────────
+# ── P2-19: the JD panel renders as plain text ────────────────────────────────
 
 def test_detail_card_jd_is_plain_text(qtbot):
     card = JobDetailCard()

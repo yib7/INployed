@@ -1026,6 +1026,13 @@ _LI_OPEN_RE = re.compile(r"<li\b[^>]*>", re.I)
 _LI_TIGHT_RE = re.compile(r"</li\s*>\s*(?=<li\b)", re.I)
 _LI_CLOSE_RE = re.compile(r"</li\s*>", re.I)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")
+# The `</li>`-adjacent-`<li>` case above only covers bullets that share one
+# list. Plenty of postings give every bullet its OWN `<ul>`, and there the
+# `</ul>` and the next `<ul>` each break the line, so the blank line survives.
+# Closing it needs the RENDERED text: a blank run whose neighbours are both
+# bullet lines. A gap next to a paragraph is left alone — that is what sets a
+# list off from the prose around it.
+_BULLET_GAP_RE = re.compile(r"^(• .*)\n\n+(?=• )", re.M)
 
 # Elements that carry no posting prose — their TEXT goes with the tags. LinkedIn
 # wraps every posting in `<section class="show-more-less-html">` whose "Show
@@ -1075,7 +1082,10 @@ def html_to_text(raw: str) -> str:
     # gutter on every line the posting's markup happened to indent. A `<pre>`
     # block would lose its own indentation with it — postings do not use one.
     text = "\n".join(line.strip() for line in text.splitlines())
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    # LAST, on the rendered lines: close the gap between two bullets that the
+    # markup structure alone cannot see (one `<ul>` per bullet).
+    return _BULLET_GAP_RE.sub(r"\1\n", text)
 
 
 def job_detail_segments(row, snapshot: dict | None = None) -> list[tuple[str, str]]:

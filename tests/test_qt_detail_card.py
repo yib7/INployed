@@ -187,6 +187,31 @@ def test_html_to_text_drop_list_is_tag_exact_and_case_insensitive():
     assert jobsdata.html_to_text('<p>keep</p><button title="a>b">drop</button>') == "keep"
 
 
+def test_html_to_text_tightens_bullets_split_across_sibling_lists():
+    # 278 master rows put every bullet in its OWN <ul>, so the `</ul><ul>` pair
+    # — not a `</li><li>` one — is what separated them with a blank line.
+    out = jobsdata.html_to_text("<ul><li>a</li></ul><ul><li>b</li></ul>")
+    assert out.splitlines() == ["• a", "• b"]
+
+
+def test_html_to_text_tightens_a_long_run_of_one_bullet_lists():
+    raw = "".join(f"<ul><li>perk {i}</li></ul>" for i in range(4))
+    out = jobsdata.html_to_text(raw)
+    assert out.splitlines() == [f"• perk {i}" for i in range(4)]
+
+
+def test_html_to_text_keeps_the_blank_line_between_a_bullet_and_a_paragraph():
+    # Only a blank line BETWEEN TWO BULLETS closes up — the gap that sets a list
+    # off from the prose around it is what makes the list readable.
+    out = jobsdata.html_to_text("<ul><li>a</li></ul><p>After the list</p>")
+    assert out.splitlines() == ["• a", "", "After the list"]
+
+
+def test_html_to_text_keeps_the_blank_line_between_a_paragraph_and_a_bullet():
+    out = jobsdata.html_to_text("<p>Before the list</p><ul><li>a</li></ul>")
+    assert out.splitlines() == ["Before the list", "", "• a"]
+
+
 def test_html_to_text_flattens_a_nested_list_without_blank_lines():
     out = jobsdata.html_to_text("<ul><li>a<ul><li>b</li><li>c</li></ul></li></ul>")
     assert out.splitlines() == ["• a", "• b", "• c"]

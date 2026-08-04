@@ -6,8 +6,10 @@ window aliases `btn_tailor`/`btn_apply` to this card's buttons so every
 existing enable/repolish path keeps its object identities), a chips row
 (score pill, deep mini-bar chip, applicants / salary / posted), the REASON
 lede, STRENGTHS/GAPS columns, and a collapsed "Show description" tertiary
-toggle over the muted JD snippet (locked user decision: the snippet stays,
-hidden by default).
+toggle over the full job description (locked user decision: it stays, hidden
+by default). The description is a read-only QPlainTextEdit — it can run to
+thousands of characters with real line breaks and bullets, so it keeps that
+structure, scrolls internally, and can never interpret markup.
 
 On the Tracker tab the card switches to its tracker variant: status +
 follow-up pills, a days-since chip, a synthesized NEXT STEP line, and
@@ -217,27 +219,70 @@ class JobDetailCard(QtWidgets.QFrame):
         cols.addLayout(self._strengths_col, 1)
         cols.addLayout(self._gaps_col, 1)
         v.addLayout(cols)
+        # The spacer and the description view TRADE stretch on toggle (see
+        # _on_desc_toggled): collapsed, the spacer eats the slack so the card
+        # keeps its compact shape; expanded, the view does, so the description
+        # grows into the leftover height instead of squeezing STRENGTHS/GAPS.
         v.addStretch(1)
+        self._spacer_at = v.count() - 1
 
-        # Collapsed JD snippet behind a tertiary toggle (locked user decision).
+        # Collapsed full JD behind a tertiary toggle (locked user decision).
         self.desc_toggle = QtWidgets.QPushButton("Show description")
         self.desc_toggle.setProperty("tier", "tertiary")
         self.desc_toggle.setCheckable(True)
         self.desc_toggle.toggled.connect(self._on_desc_toggled)
         v.addWidget(self.desc_toggle, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
-        self.desc_label = QtWidgets.QLabel("")
-        # The JD is raw scraped text: force plain text so angle-bracket content
-        # (<b>, <img>) renders verbatim instead of being rich-text interpreted
-        # (audit P2-19). Sibling fields are html.escape()d; this one is long free
-        # text, so the format switch is the safer guarantee.
-        self.desc_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.desc_label.setWordWrap(True)
-        self.desc_label.setProperty("muted", True)
-        self.desc_label.setVisible(False)
-        v.addWidget(self.desc_label)
+        # The JD is raw scraped text and now arrives in full, with real line
+        # breaks and "• " bullets. A read-only QPlainTextEdit keeps that
+        # structure (a QLabel would not) and is plain text BY CONSTRUCTION, so
+        # angle-bracket content (<b>, <img>) renders verbatim instead of being
+        # rich-text interpreted (audit P2-19) — there is no textFormat switch
+        # left to get wrong. Sibling fields stay html.escape()d.
+        self.desc_view = QtWidgets.QPlainTextEdit("")
+        self.desc_view.setObjectName("jdView")
+        self.desc_view.setReadOnly(True)
+        self.desc_view.setLineWrapMode(
+            QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.desc_view.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.desc_view.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Read-only leaves the text selectable AND copyable — keep that. What we
+        # drop is the editable-field costume: no frame, no caret, no tab stop
+        # (ClickFocus still lets a click focus it so Ctrl+C reaches the widget).
+        self.desc_view.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.desc_view.setCursorWidth(0)
+        self.desc_view.setFocusPolicy(QtCore.Qt.FocusPolicy.ClickFocus)
+        # setReadOnly() alone leaves only TextSelectableByMouse, which drops
+        # keyboard selection (shift+arrows / ctrl+A) — spell both out.
+        self.desc_view.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        self.desc_view.setProperty("muted", True)   # caption role + MUTED ink
+        # Global QSS dresses every QPlainTextEdit as an input well (WINDOW fill,
+        # hairline border, accent focus ring). This one belongs to the card
+        # surface, so override locally rather than widen the global rules.
+        self.desc_view.setStyleSheet(
+            f"QPlainTextEdit#jdView {{ background: {theme.PANEL};"
+            f" color: {theme.MUTED}; border: 0; padding: 0px; }}"
+            f"QPlainTextEdit#jdView:focus {{ border: 0; }}")
+        self.desc_view.setMinimumHeight(round(120 * theme._current_scale))
+        self.desc_view.setVisible(False)
+        v.addWidget(self.desc_view)
+        self._desc_at = v.count() - 1
+        self._content_layout = v
+        self._set_desc_stretch(False)
+
+    def _set_desc_stretch(self, expanded: bool) -> None:
+        """Hand the leftover vertical space to whichever of the two should own
+        it: the spacer when collapsed, the description view when expanded."""
+        self._content_layout.setStretch(self._spacer_at, 0 if expanded else 1)
+        self._content_layout.setStretch(self._desc_at, 1 if expanded else 0)
 
     def _on_desc_toggled(self, on: bool) -> None:
-        self.desc_label.setVisible(on and bool(self.desc_label.text()))
+        show = on and bool(self.desc_view.toPlainText())
+        self.desc_view.setVisible(show)
+        self._set_desc_stretch(show)
         self.desc_toggle.setText("Hide description" if on else "Show description")
 
     # ---- content -------------------------------------------------------------
@@ -358,12 +403,14 @@ class JobDetailCard(QtWidgets.QFrame):
         plain.extend(fields.get("strengths") or [])
         plain.extend(fields.get("gaps") or [])
 
-        # JD snippet: reset to collapsed on every new job.
+        # JD: reset to collapsed on every new job.
         jd = "" if is_tracker else fields.get("jd", "")
-        self.desc_label.setText(jd)
+        self.desc_view.setPlainText(jd)
+        self.desc_view.verticalScrollBar().setValue(0)
         self.desc_toggle.setVisible(bool(jd))
         self.desc_toggle.setChecked(False)
-        self.desc_label.setVisible(False)
+        self.desc_view.setVisible(False)
+        self._set_desc_stretch(False)
         if jd:
             plain.append(jd)
         if fields.get("url"):

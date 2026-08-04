@@ -1,7 +1,9 @@
 """Cycle 40 Phase 3b/3c: jobsdata.job_detail_fields + the JobDetailCard."""
 import pandas as pd
+from PySide6 import QtCore, QtWidgets
 
 import jobsdata
+from qt import theme
 from qt.detail_card import JobDetailCard
 
 
@@ -158,18 +160,124 @@ def test_card_empty_state(qtbot):
 
 
 def test_card_description_collapsed_behind_toggle(qtbot):
-    # Locked user decision: the JD snippet stays, collapsed by default.
+    # Locked user decision: the JD stays, collapsed by default.
     card = JobDetailCard()
     qtbot.addWidget(card)
     card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
-    assert card.desc_label.isHidden()
+    assert card.desc_view.isHidden()
     assert card.desc_toggle.text() == "Show description"
     card.desc_toggle.setChecked(True)
-    assert not card.desc_label.isHidden()
+    assert not card.desc_view.isHidden()
     assert card.desc_toggle.text() == "Hide description"
     # a new selection re-collapses it
     card.set_fields(jobsdata.job_detail_fields(_row(job_posting_id="2")), jid="2")
-    assert card.desc_label.isHidden()
+    assert card.desc_view.isHidden()
+    assert card.desc_toggle.text() == "Show description"
+
+
+def test_card_description_toggle_hides_when_there_is_no_jd(qtbot):
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    assert not card.desc_toggle.isHidden()
+    card.set_fields({"title": "T", "company": "C", "jd": ""}, jid="2")
+    assert card.desc_toggle.isHidden()
+    # and the view cannot be forced open with nothing to show
+    card.desc_toggle.setChecked(True)
+    assert card.desc_view.isHidden()
+
+
+def test_card_description_view_is_a_read_only_plain_text_edit(qtbot):
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    assert isinstance(card.desc_view, QtWidgets.QPlainTextEdit)
+    assert card.desc_view.isReadOnly()
+    # still selectable/copyable — read-only must not mean inert
+    flags = card.desc_view.textInteractionFlags()
+    assert flags & QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+    assert flags & QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+    # wrapped, own vertical scrollbar, never a horizontal one
+    assert card.desc_view.lineWrapMode() == QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth
+    assert (card.desc_view.horizontalScrollBarPolicy()
+            == QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    assert (card.desc_view.verticalScrollBarPolicy()
+            == QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    # not dressed as an editable form field
+    assert card.desc_view.frameShape() == QtWidgets.QFrame.Shape.NoFrame
+    assert card.desc_view.cursorWidth() == 0
+
+
+def test_card_description_holds_the_entire_jd_verbatim(qtbot):
+    body = "\n".join(f"<p>Requirement number {i} spelled out in full.</p>"
+                     for i in range(200))
+    fields = jobsdata.job_detail_fields(_row(job_description_formatted=body))
+    assert len(fields["jd"]) > 5000            # SP1 stopped truncating
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    card.set_fields(fields, jid="1")
+    shown = card.desc_view.toPlainText()
+    assert shown == fields["jd"]
+    assert "Requirement number 0 spelled out in full." in shown     # head
+    assert shown.rstrip().endswith("Requirement number 199 spelled out in full.")
+    assert "…" not in shown
+
+
+def test_card_description_preserves_line_breaks_and_bullets(qtbot):
+    jd = jobsdata.html_to_text(
+        "<p>Responsibilities:</p><ul><li>ship it</li><li>own it</li></ul>")
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    card.set_fields({"title": "T", "company": "C", "jd": jd}, jid="1")
+    shown = card.desc_view.toPlainText()
+    assert shown.splitlines() == ["Responsibilities:", "", "• ship it", "• own it"]
+    assert "\n• " in shown
+
+
+def test_card_collapsed_size_is_not_inflated_by_the_hidden_view(qtbot):
+    # A 120px minimum on a HIDDEN widget still inflates a layout if it is set
+    # carelessly (retainSizeWhenHidden, or a minimum parked on the card).
+    # Measure the content layout, not card.sizeHint(): the card's own outer
+    # layout caches heightForWidth and an unshown test window never flushes it.
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    floor = round(120 * theme._current_scale)
+    assert card.desc_view.minimumHeight() == floor
+    lay = card._content_layout
+    item = lay.itemAt(card._desc_at)
+
+    def measure():
+        lay.invalidate()
+        return lay.sizeHint().height(), lay.minimumSize().height()
+
+    collapsed = measure()
+    assert item.isEmpty()                      # contributes nothing at all
+    assert item.sizeHint().height() == 0 and item.minimumSize().height() == 0
+    card.desc_toggle.setChecked(True)
+    expanded = measure()
+    assert not item.isEmpty()
+    assert item.minimumSize().height() == floor
+    assert expanded[0] >= collapsed[0] + floor and expanded[1] >= collapsed[1] + floor
+    card.desc_toggle.setChecked(False)
+    assert measure() == collapsed              # no hole left behind
+    # and a new job leaves the card at its compact size too
+    card.set_fields(jobsdata.job_detail_fields(_row(job_posting_id="2")), jid="2")
+    assert measure() == collapsed
+
+
+def test_card_description_takes_the_slack_only_while_expanded(qtbot):
+    # The spacer above the toggle and the view trade stretch on toggle, so
+    # expanding grows the description instead of squashing STRENGTHS/GAPS,
+    # and collapsing does not leave a hole where the view was.
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    lay, spacer_at, view_at = card._content_layout, card._spacer_at, card._desc_at
+    assert (lay.stretch(spacer_at), lay.stretch(view_at)) == (1, 0)
+    card.desc_toggle.setChecked(True)
+    assert (lay.stretch(spacer_at), lay.stretch(view_at)) == (0, 1)
+    card.desc_toggle.setChecked(False)
+    assert (lay.stretch(spacer_at), lay.stretch(view_at)) == (1, 0)
 
 
 def test_card_buttons_fire_callbacks(qtbot):

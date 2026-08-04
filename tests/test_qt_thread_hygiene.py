@@ -6,7 +6,7 @@ import textwrap
 from unittest.mock import MagicMock
 
 import pandas as pd
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets
 
 from qt import main_window as mw
 from qt.detail_card import JobDetailCard
@@ -126,10 +126,16 @@ def test_start_tailor_spawn_failure_does_not_reraise(qtbot, monkeypatch):
 def test_detail_card_jd_is_plain_text(qtbot):
     card = JobDetailCard()
     qtbot.addWidget(card)
-    assert card.desc_label.textFormat() == QtCore.Qt.TextFormat.PlainText
+    # A QPlainTextEdit is plain-text BY CONSTRUCTION: there is no textFormat
+    # switch to get wrong and no HTML setter on the widget at all.
+    assert isinstance(card.desc_view, QtWidgets.QPlainTextEdit)
+    assert not hasattr(card.desc_view, "setHtml")
     card.set_fields({"title": "T", "company": "C",
                      "jd": "before <b>bold</b> <img src='x'> after"}, jid="1")
-    assert "<b>bold</b>" in card.desc_label.text()   # verbatim, not rich-text
+    assert "<b>bold</b>" in card.desc_view.toPlainText()   # verbatim, not markup
+    assert "<img src='x'>" in card.desc_view.toPlainText()
+    # the document stored it as literal characters, not as parsed markup
+    assert "&lt;b&gt;bold&lt;/b&gt;" in card.desc_view.document().toHtml()
 
 
 # ── P2-5: duplicate entry names keep both verbatim editors ───────────────────

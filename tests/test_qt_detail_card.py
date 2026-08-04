@@ -135,6 +135,106 @@ def test_html_to_text_passes_plain_text_through():
     assert jobsdata.html_to_text("") == ""
 
 
+# ---- html_to_text: non-content elements, list tightness, indentation ---------------
+
+def test_html_to_text_drops_non_content_elements_with_their_text():
+    # Stripping the tags alone leaves the chrome's own words in the posting.
+    for tag in ("script", "style", "button", "icon", "svg", "nav",
+                "header", "footer", "noscript", "form", "select"):
+        out = jobsdata.html_to_text(f"<p>keep me</p><{tag}>drop me</{tag}>")
+        assert out == "keep me", f"<{tag}> survived: {out!r}"
+
+
+def test_html_to_text_drops_an_element_whose_opening_tag_spans_lines():
+    # LinkedIn wraps class lists across newlines inside the opening tag.
+    raw = ('<p>keep me</p>\n'
+           '<button class="show-more-less-html__button show-more-less-button\n'
+           '        show-more-less-html__button--less\n'
+           '        ml-0.5" data-tracking-control-name="public_jobs_show-less-html-btn"\n'
+           ' aria-label="Show less" aria-expanded="true">\n'
+           '            Show less\n'
+           '          <icon class="show-more-less-button-icon"></icon>\n'
+           '    </button>')
+    assert jobsdata.html_to_text(raw) == "keep me"
+
+
+def test_html_to_text_leaves_an_unclosed_opener_to_the_tag_strip():
+    # A bare <icon/> with no closer must not swallow the rest of the document.
+    out = jobsdata.html_to_text("<p>before</p><icon/><p>after</p>")
+    assert out == "before\n\nafter"
+    out = jobsdata.html_to_text("<p>before</p><button aria-label='x'><p>after</p>")
+    assert "before" in out and "after" in out
+
+
+def test_html_to_text_never_deletes_prose_between_mismatched_openers():
+    # The teeth of the rule above: a self-closing opener must not pair with a
+    # LATER element's closer, and an unclosed <button> must not reach the next
+    # button's `</button>`. Leaking a word of chrome beats deleting the prose
+    # in between, which the reader cannot even notice.
+    out = jobsdata.html_to_text(
+        "<p>before</p><icon/><p>KEEP</p><icon>x</icon><p>after</p>")
+    assert "KEEP" in out and "x" not in out.split("KEEP")[1]
+    out = jobsdata.html_to_text(
+        "<p>A</p><button>Show more<p>MIDDLE</p><button>Show less</button><p>END</p>")
+    assert "MIDDLE" in out and "END" in out
+
+
+def test_html_to_text_drop_list_is_tag_exact_and_case_insensitive():
+    # `<selection>` is not `<select>`, and postings arrive in any casing.
+    assert jobsdata.html_to_text("<selection>keep me</selection>") == "keep me"
+    assert jobsdata.html_to_text("<p>keep</p><BUTTON>drop</BUTTON>") == "keep"
+    # a `>` inside a quoted attribute value is still inside the opening tag
+    assert jobsdata.html_to_text('<p>keep</p><button title="a>b">drop</button>') == "keep"
+
+
+def test_html_to_text_flattens_a_nested_list_without_blank_lines():
+    out = jobsdata.html_to_text("<ul><li>a<ul><li>b</li><li>c</li></ul></li></ul>")
+    assert out.splitlines() == ["• a", "• b", "• c"]
+
+
+def test_html_to_text_keeps_bullets_in_one_list_adjacent():
+    # `</li>\n<li>` used to yield a blank line between every bullet.
+    out = jobsdata.html_to_text("<ul><li>a</li>\n<li>b</li>\n<li>c</li></ul>")
+    assert out.splitlines() == ["• a", "• b", "• c"]
+
+
+def test_html_to_text_separates_a_list_from_the_paragraph_around_it():
+    out = jobsdata.html_to_text(
+        "<p>Lead in</p><ul><li>a</li><li>b</li></ul><p>After</p>")
+    assert out.splitlines() == ["Lead in", "", "• a", "• b", "", "After"]
+
+
+def test_html_to_text_normalizes_source_indentation():
+    raw = "<div>\n            indented body line\n</div><p>\n    another\n</p>"
+    assert jobsdata.html_to_text(raw) == "indented body line\n\nanother"
+
+
+def test_html_to_text_strips_the_linkedin_show_more_wrapper():
+    # The real wrapper shape: 2,675 of 2,678 master rows ended in this chrome.
+    raw = ('<section class="show-more-less-html" data-max-lines="5">\n'
+           '        <div class="show-more-less-html__markup\n'
+           '            relative overflow-hidden">\n'
+           '          The posting body, which must survive.\n'
+           '          <ul><li>alpha</li>\n<li>beta</li></ul>\n'
+           '        </div>\n'
+           '    <button class="show-more-less-html__button" '
+           'data-tracking-control-name="public_jobs_show-more-html-btn" '
+           'aria-label="Show more" aria-expanded="false">\n'
+           '<!---->\n        \n            Show more\n          \n\n'
+           '          <icon class="show-more-less-button-icon" '
+           'data-delayed-url="https://static.licdn.com/x"></icon>\n'
+           '    </button>\n  \n\n'
+           '    <button class="show-more-less-html__button--less" '
+           'aria-label="Show less" aria-expanded="true">\n'
+           '<!---->\n            Show less\n          \n'
+           '          <icon class="show-more-less-button-icon"></icon>\n'
+           '    </button>\n  \n<!---->    </section>')
+    out = jobsdata.html_to_text(raw)
+    assert "Show more" not in out and "Show less" not in out
+    assert "The posting body, which must survive." in out
+    assert out.splitlines()[-2:] == ["• alpha", "• beta"]
+
+
 # ---- JobDetailCard ------------------------------------------------------------------
 
 def test_card_renders_fields_to_plain_text(qtbot):

@@ -1020,8 +1020,29 @@ _BLOCK_TAG_RE = re.compile(
     re.I,
 )
 _LI_OPEN_RE = re.compile(r"<li\b[^>]*>", re.I)
+# A `</li>` with only whitespace before the next `<li>` ends the line without
+# the blank line an ordinary `</li>` + `<li>` pair would leave, so bullets
+# inside one list read as consecutive lines.
+_LI_TIGHT_RE = re.compile(r"</li\s*>\s*(?=<li\b)", re.I)
 _LI_CLOSE_RE = re.compile(r"</li\s*>", re.I)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")
+
+# Elements that carry no posting prose — their TEXT goes with the tags. LinkedIn
+# wraps every posting in `<section class="show-more-less-html">` whose "Show
+# more" / "Show less" buttons otherwise land at the bottom of the description.
+# Each alternative spans an opener to its OWN closing tag, and the span may not
+# contain another opener of the same name: `(?<!/)` rejects a self-closing
+# `<icon/>` and `(?!<tag\b)` stops an unclosed opener from reaching a later
+# sibling's closer. Both cases fall through to the `_ANY_TAG_RE` strip, which
+# leaks a word of chrome at worst — the alternative is silently deleting the
+# prose in between, which the reader cannot even notice.
+_DROP_ELEMENTS = ("script", "style", "button", "icon", "svg", "nav", "header",
+                  "footer", "noscript", "form", "select")
+_DROP_EL_RE = re.compile(
+    "|".join(rf"<{tag}\b[^>]*(?<!/)>(?:(?!<{tag}\b).)*?</{tag}\s*>"
+             for tag in _DROP_ELEMENTS),
+    re.I | re.S,
+)
 
 
 def html_to_text(raw: str) -> str:
@@ -1033,18 +1054,27 @@ def html_to_text(raw: str) -> str:
     `markdownify` (which the résumé tailor uses): markdown syntax is noise in a
     plain-text viewer, and this module carries no soft dependencies.
 
+    Non-content elements (page chrome such as LinkedIn's "Show more" button)
+    are dropped WITH their text before anything else runs.
+
     Plain text passes through essentially unchanged.
     """
     if not raw:
         return ""
-    text = _LI_CLOSE_RE.sub("\n", raw)
+    # First: chrome goes with its contents, so its words never reach the strip.
+    text = _DROP_EL_RE.sub("", raw)
+    text = _LI_TIGHT_RE.sub("\n", text)
+    text = _LI_CLOSE_RE.sub("\n", text)
     text = _LI_OPEN_RE.sub("• ", text)
     text = _BLOCK_TAG_RE.sub("\n", text)
     text = _ANY_TAG_RE.sub("", text)
     # Unescape LAST: an escaped `&lt;b&gt;` in the posting's own prose is text,
     # and unescaping before the strip would turn it into a live tag.
     text = html.unescape(text)
-    text = "\n".join(line.rstrip() for line in text.splitlines())
+    # Strip both ends: HTML source indentation otherwise leaks through as a
+    # gutter on every line the posting's markup happened to indent. A `<pre>`
+    # block would lose its own indentation with it — postings do not use one.
+    text = "\n".join(line.strip() for line in text.splitlines())
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 

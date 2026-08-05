@@ -30,7 +30,15 @@ TS_FORMAT = "%Y-%m-%d_%H-%M-%S"
 # live answer store, which never was.
 _SNAPSHOT_TARGETS = ("config", "search", "scoring", "env")
 
-# Prune policy names — also the choice values of the archive_prune_mode setting.
+# Prune policy names. PRUNE_OFF is still a live value — it is the same string as
+# settings.ARCHIVE_KEEP_ALL, the default of the archive_mode setting that replaced
+# the old archive_prune_* keys. PRUNE_COUNT / PRUNE_AGE are now LEGACY and their
+# prune() arms are unreachable from the app: no setting writes those strings, and
+# settings._legacy_archive_mode TRANSLATES a stored one into the new vocabulary
+# rather than passing it through. Both are retained for direct callers and to keep
+# prune()'s contract stable across the merge; the schema key that still names
+# PRUNE_COUNT is settings._LEGACY_PRUNE_COUNT, pinned equal to it by
+# test_the_migration_recognises_the_pruners_legacy_count_mode.
 PRUNE_OFF = "Keep everything"
 PRUNE_COUNT = "Keep newest N"
 PRUNE_AGE = "Delete older than N days"
@@ -153,17 +161,46 @@ def delete_snapshot(snap_path: Path) -> None:
         shutil.rmtree(snap_path)
 
 
+def _keep_from_mode(mode: str) -> int | None:
+    """The N in an ``archive_mode`` like "Keep newest 20", else ``None``.
+
+    Every LEGACY mode string is None-safe by construction — their counts live in
+    separate config keys, so ``PRUNE_COUNT`` ends in the literal letter N and
+    ``PRUNE_AGE`` in "days". That is what lets the counted arm be tried FIRST in
+    ``prune()`` without shadowing either of them.
+
+    ``isdecimal``, not ``isdigit``: the latter is True for characters ``int()``
+    rejects (superscripts), which would raise out of a Qt save slot that only
+    catches ``OSError``.
+    """
+    tail = str(mode).rsplit(" ", 1)[-1]
+    return int(tail) if tail.isdecimal() else None
+
+
 def prune(mode: str, *, keep: int = 20, days: int = 30,
           targets: dict | None = None, now: datetime | None = None) -> list[Path]:
     """Apply a retention policy; return the snapshot paths deleted.
 
-    ``PRUNE_OFF`` (or any unknown mode) deletes nothing. ``PRUNE_COUNT`` keeps the
-    newest ``keep`` and deletes the rest; ``PRUNE_AGE`` deletes snapshots older
-    than ``days`` days.
+    ``PRUNE_OFF`` (or any unknown mode) deletes nothing. A mode carrying its own
+    count — the "Keep newest 20" / "Keep newest 100" shape of the ``archive_mode``
+    setting — keeps that many and deletes the rest, ignoring ``keep``.
+
+    The ``keep`` / ``days`` keywords serve the two LEGACY modes: ``PRUNE_COUNT``
+    keeps the newest ``keep``; ``PRUNE_AGE`` deletes snapshots older than ``days``
+    days. Keeping this signature is deliberate — it is what let the merge of the
+    four archive_* settings into one ``archive_mode`` leave every caller and every
+    test of this module untouched.
     """
     snaps = list_snapshots(targets)  # newest first
     now = now or datetime.now()
-    if mode == PRUNE_COUNT:
+    # Truthiness, not `is not None`: a zero count falls through to "delete
+    # nothing" rather than emptying the archive — including the snapshot the same
+    # Save just wrote. No schema choice can produce a zero; testing it this way
+    # makes that a structural property of the PRIMARY arm rather than an accident.
+    keep_n = _keep_from_mode(mode)
+    if keep_n:
+        doomed = snaps[keep_n:]
+    elif mode == PRUNE_COUNT:
         doomed = snaps[max(keep, 0):]
     elif mode == PRUNE_AGE:
         cutoff = now - timedelta(days=days)

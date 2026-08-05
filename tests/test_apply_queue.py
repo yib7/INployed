@@ -655,6 +655,13 @@ def test_concurrent_claim_never_double_claims(tmp_path):
 # --- build_context --------------------------------------------------------------------
 
 def test_build_context_reads_master_email_and_config(tmp_path, monkeypatch):
+    # NOTE (settings declutter): the `auto_apply_inbox_url` config key exercised
+    # here no longer has a Settings Field — it was merged away into
+    # `auto_apply_inbox_map`. This test and
+    # test_build_context_single_inbox_is_fallback_for_unmapped_domain below are
+    # deliberately UNCHANGED: they are now the BACK-COMPAT CONTRACT for the key.
+    # build_context reads config.json directly and keeps DEFAULT_INBOX_URL, so a
+    # value an existing user already saved must keep resolving exactly as before.
     from resume_tailor import assets, config as rt_config
     monkeypatch.setattr(assets, "load_master",
                         lambda: {"basics": {"email": "cand@example.com"}})
@@ -703,7 +710,11 @@ def test_build_context_user_inbox_map_line_overrides_default(tmp_path, monkeypat
 
 
 def test_build_context_single_inbox_is_fallback_for_unmapped_domain(tmp_path, monkeypatch):
-    """An unmapped signup domain falls back to the single auto_apply_inbox_url."""
+    """An unmapped signup domain falls back to the single auto_apply_inbox_url.
+
+    The BACK-COMPAT CONTRACT for that key (see the note above): it is no longer a
+    Settings Field, but a config.json a user already saved must keep working.
+    """
     from resume_tailor import assets
     monkeypatch.setattr(assets, "load_master",
                         lambda: {"basics": {"email": "grad@acme.io"}})

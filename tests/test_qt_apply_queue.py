@@ -1036,13 +1036,9 @@ def test_settings_schema_has_auto_apply_fields():
     cap = by_key["auto_apply_batch_cap"]
     assert (cap.type, cap.default, cap.min, cap.max) == ("int", 10, 1, 25)
     assert cap.section == "Auto-apply" and cap.target == "config"
-    inbox = by_key["auto_apply_inbox_url"]
-    assert inbox.type == "str" and inbox.default == "https://mail.google.com"
-    assert inbox.section == "Auto-apply" and inbox.target == "config"
     # defaults surface through load() even with no backing file on disk
     values = settings.load(targets={})
     assert values["auto_apply_batch_cap"] == 10
-    assert values["auto_apply_inbox_url"] == "https://mail.google.com"
     # the 1-25 range is enforced
     assert "auto_apply_batch_cap" in settings.validate({"auto_apply_batch_cap": 26})
     assert "auto_apply_batch_cap" in settings.validate({"auto_apply_batch_cap": 0})

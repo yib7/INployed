@@ -4,7 +4,8 @@ The dashboard and the watcher both read local/config.json. This module
 describes WHICH keys are user-tunable (SETTINGS_SCHEMA) and provides safe
 load/validate/save that:
 
-  * fall back to a Field's default when a key is absent,
+  * fall back to a Field's default when a key is absent — or, for a key that
+    replaced older ones, to a pure migration function (DERIVED_WHEN_ABSENT),
   * validate types and min/max ranges before writing,
   * MERGE into the existing backing file so keys not in the schema
     (resume_layout, backend, gemini_auth, ...) survive a save,
@@ -22,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,23 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 
 # Claude model ids offered in the Claude model dropdowns (also editable_choice).
 CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
+
+# Settings-snapshot retention: the choices of the archive_mode setting, which
+# replaced a four-key retention DSL (archive_enabled + archive_prune_mode +
+# archive_prune_keep + archive_prune_days). ARCHIVE_KEEP_ALL is deliberately the
+# SAME string as settings_archive.PRUNE_OFF, so the pruner's existing "unknown
+# mode deletes nothing" arm makes the default reproduce today's behaviour exactly.
+# The counted modes carry their count IN the string, which is what let
+# settings_archive.prune() keep its signature (see _keep_from_mode there).
+ARCHIVE_KEEP_ALL = "Keep everything"
+ARCHIVE_KEEP_20 = "Keep newest 20"
+ARCHIVE_KEEP_100 = "Keep newest 100"
+ARCHIVE_OFF = "Off"
+# Order matters: index 0 is the DEFAULT because QComboBox falls back to the first
+# item when a stored value matches none of them (settings_tab._set_combo), so a
+# hand-edited typo lands on "keep everything" rather than silently switching
+# snapshots off.
+ARCHIVE_MODES = (ARCHIVE_KEEP_ALL, ARCHIVE_KEEP_20, ARCHIVE_KEEP_100, ARCHIVE_OFF)
 
 
 # Backing files, keyed by Field.target. The Scraper/Scoring sections write the
@@ -235,12 +254,15 @@ SETTINGS_SCHEMA: list[Field] = [
           help="At most this many jobs go into the auto-apply queue per 'Queue for "
                "auto-apply' action. ~10 keeps a batch reviewable in one sitting (every "
                "application is parked at its review page for you — never submitted)."),
-    Field("auto_apply_inbox_url", "Fallback signup inbox URL", "str", "https://mail.google.com",
-          "Auto-apply", "config",
-          help="Fallback webmail inbox the auto-apply agent opens for verification "
-               "emails when your signup email's domain isn't in 'Inbox by email domain' "
-               "below. Must be signed in already in Chrome. Keep the default in sync with "
-               "apply_queue.DEFAULT_INBOX_URL."),
+    # No auto_apply_inbox_url row: the single fallback URL duplicated the map
+    # below, firing only when the signup domain missed it — and the shipped
+    # DEFAULT_INBOX_MAP already covers the common providers, so an unmapped domain
+    # is one line in the map, exactly as easy as a fallback URL. apply_queue
+    # .build_context() still HONOURS a saved auto_apply_inbox_url (it reads
+    # config.json directly and keeps its own DEFAULT_INBOX_URL), so nobody's
+    # existing configuration changed behaviour. The provider defaults below must
+    # stay in sync with apply_queue.DEFAULT_INBOX_MAP —
+    # test_inbox_map_default_matches_apply_queue pins that.
     Field("auto_apply_inbox_map", "Inbox by email domain", "list",
           ["gmail.com https://mail.google.com",
            "googlemail.com https://mail.google.com",
@@ -251,29 +273,29 @@ SETTINGS_SCHEMA: list[Field] = [
            "wm.edu https://outlook.office.com/mail/"],
           "Auto-apply", "config",
           help="One 'emaildomain webmail-url' per line, so the agent opens the RIGHT "
-               "inbox for the email it signs up with (e.g. an @wm.edu address is "
-               "Microsoft 365 / Outlook, not Gmail). The domain of your signup email "
-               "(basics.email) is looked up here first; unlisted domains use the "
-               "fallback inbox above. Whichever inbox is used must be signed in in Chrome. "
-               "Keep the provider defaults in sync with apply_queue.DEFAULT_INBOX_MAP."),
+               "inbox for the email it signs up with (an @wm.edu address is Microsoft "
+               "365 / Outlook, not Gmail). Your signup email's domain (basics.email) is "
+               "looked up here; a domain not listed falls back to Gmail. Whichever inbox "
+               "is used must already be signed in in Chrome."),
 
     # --- Settings history: snapshot every Save so settings can be rolled back ---
-    # All four live in local/config.json. Snapshots copy every settings file
-    # (including the secret-bearing .env) into a git-ignored settings_archive/.
-    Field("archive_enabled", "Snapshot settings on every Save", "bool", True,
-          "Settings history", "config",
-          help="When on, each Save copies all your settings into a dated folder so you can "
-               "roll back later via 'Restore from archive...'. Turn off to stop snapshotting."),
-    Field("archive_prune_mode", "Old-snapshot cleanup", "choice", "Keep everything",
-          "Settings history", "config",
-          choices=("Keep everything", "Keep newest N", "Delete older than N days"),
-          help="How to stop snapshots piling up. 'Keep everything' never deletes (the default)."),
-    Field("archive_prune_keep", "Snapshots to keep (newest N)", "int", 20,
-          "Settings history", "config", min=1, max=1000,
-          help="With 'Keep newest N': how many of the most recent snapshots to keep."),
-    Field("archive_prune_days", "Delete snapshots older than (days)", "int", 30,
-          "Settings history", "config", min=1, max=3650,
-          help="With 'Delete older than N days': snapshots older than this are removed on Save."),
+    # Lives in local/config.json. Snapshots copy every settings file (including the
+    # secret-bearing .env) into a git-ignored settings_archive/.
+    #
+    # ONE choice replaced four keys (archive_enabled + archive_prune_mode +
+    # archive_prune_keep + archive_prune_days) — a retention DSL for folders
+    # holding a few KB of text, two of whose knobs were inert under the default
+    # mode. Age-based retention is dropped. The default reproduces the old
+    # effective behaviour, `_legacy_archive_mode` below migrates an older config,
+    # and the four old keys are NOT reaped from config.json (save() merges), so
+    # checking out an older commit restores the old behaviour intact.
+    Field("archive_mode", "Settings snapshots", "choice", ARCHIVE_KEEP_ALL,
+          "Settings history", "config", choices=ARCHIVE_MODES,
+          help="Each Save copies all your settings into a dated folder you can roll back "
+               "to. 'Keep everything' (the default) never deletes one; a 'Keep newest' "
+               "option deletes older ones on each Save; 'Off' stops taking new snapshots "
+               "and leaves existing ones alone. Each snapshot holds a copy of your .env, "
+               "so more snapshots means more copies of your keys on disk."),
 
     # Apply-form answers (work auth, sponsorship, EEO, "how did you hear") are NOT
     # configured here. They live in the richer Apply Answers tab (per-question,
@@ -449,11 +471,60 @@ def _read_target(target_id: str, path: Path | None) -> dict[str, Any]:
     return _read_file(path)
 
 
+# The legacy archive_prune_mode value whose count lived in a separate key. Kept
+# here (not imported from settings_archive, which imports THIS module) purely so
+# the migration below can recognise a config written before archive_mode existed.
+_LEGACY_PRUNE_COUNT = "Keep newest N"
+
+
+def _legacy_archive_mode(stored: Mapping[str, Any]) -> str:
+    """Derive `archive_mode` from the four archive_* keys it replaced.
+
+    Runs only for a config saved before that key existed (see
+    DERIVED_WHEN_ABSENT). Deliberately PURE — raw backing-store mapping in,
+    string out, no I/O — so every legacy combination is unit-testable without a
+    filesystem.
+
+    The governing invariant is NEVER PRUNE MORE AGGRESSIVELY THAN THE OLD POLICY.
+    That is why a count that is not one of the two offered rounds UP (a saved
+    `keep: 10` reads "Keep newest 20"), why a count above every option and the
+    dropped age-based mode both read "Keep everything", and why anything
+    unreadable does too. Rounding down would delete snapshots the user still has.
+    """
+    if "archive_enabled" in stored and not stored["archive_enabled"]:
+        return ARCHIVE_OFF          # the master switch beats any prune policy
+    if stored.get("archive_prune_mode") != _LEGACY_PRUNE_COUNT:
+        # absent, "Keep everything", the dropped days mode, or garbage
+        return ARCHIVE_KEEP_ALL
+    try:
+        keep = int(stored.get("archive_prune_keep", 20))
+    except (TypeError, ValueError):
+        return ARCHIVE_KEEP_ALL     # an unreadable count prunes nothing
+    if keep <= 20:
+        return ARCHIVE_KEEP_20
+    if keep <= 100:
+        return ARCHIVE_KEEP_100
+    return ARCHIVE_KEEP_ALL
+
+
+# Keys whose value is DERIVED from older keys in the SAME backing file when the
+# key itself is absent — the migration hook `load()` consults BETWEEN the stored
+# value and the schema default. So a stored value always wins, a derivation only
+# ever runs for a config written before its key existed, and a fresh install
+# (empty store) still lands on the Field default. Every function here must be
+# pure: mapping in, value out, no I/O.
+DERIVED_WHEN_ABSENT: dict[str, Callable[[Mapping[str, Any]], Any]] = {
+    "archive_mode": _legacy_archive_mode,
+}
+
+
 def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
-    """Return {key: stored-value-or-default} for every schema Field.
+    """Return {key: stored-value-or-derived-or-default} for every schema Field.
 
     Reads each backing file once and looks each Field up in its own target,
-    so the result is the effective configuration the UI should display.
+    so the result is the effective configuration the UI should display. A key
+    absent from its backing file falls back to DERIVED_WHEN_ABSENT (a migration
+    off older keys in the same file) and then to the Field's default.
     """
     targets = _resolve_targets(targets)
     cache: dict[str, dict[str, Any]] = {}
@@ -462,7 +533,11 @@ def load(targets: dict[str, Path] | None = None) -> dict[str, Any]:
         if f.target not in cache:
             cache[f.target] = _read_target(f.target, targets.get(f.target))
         store = cache[f.target]
-        values[f.key] = store[f.key] if f.key in store else f.default
+        if f.key in store:
+            values[f.key] = store[f.key]
+            continue
+        derive = DERIVED_WHEN_ABSENT.get(f.key)
+        values[f.key] = f.default if derive is None else derive(store)
     return values
 
 

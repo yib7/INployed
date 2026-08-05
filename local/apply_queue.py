@@ -623,6 +623,16 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
     back to the single auto_apply_inbox_url then Gmail. The effective inbox_map is
     returned too, so a subagent that uses a different account email can resolve
     it. Never anything secret-shaped.
+
+    `auto_apply_inbox_url` is a LEGACY KEY, honoured for back-compat — do NOT
+    "clean it up". The Settings tab dropped its Field (it duplicated
+    auto_apply_inbox_map, which already ships the common providers), and this
+    function is precisely what made that deletion safe: it reads config.json
+    DIRECTLY and carries its own DEFAULT_INBOX_URL, so a value an existing user
+    already saved keeps resolving exactly as it did before. Nothing here routes
+    through settings.load(), which returns schema fields only. Pinned by
+    test_build_context_single_inbox_is_fallback_for_unmapped_domain and
+    test_auto_apply_inbox_url_is_not_a_settings_field.
     """
     try:
         from resume_tailor import assets

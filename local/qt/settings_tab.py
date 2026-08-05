@@ -642,17 +642,19 @@ class SettingsForm(QtWidgets.QWidget):
                 "copy the updated config up.")
 
     def _archive_after_save(self, values: dict) -> bool:
-        """Snapshot all settings then apply the prune policy. Never raises into Save —
-        archiving is a safety net, not something that should be able to block a save."""
-        if not values.get("archive_enabled", True):
+        """Snapshot all settings then apply the retention policy. Never raises into
+        Save — archiving is a safety net, not something that should be able to block
+        a save.
+
+        One `archive_mode` drives both halves: "Off" takes no new snapshot (and
+        leaves existing ones alone), and every other value carries its own
+        retention in the string, so `prune` needs no count keyword here."""
+        mode = str(values.get("archive_mode", settings.ARCHIVE_KEEP_ALL))
+        if mode == settings.ARCHIVE_OFF:
             return False
         try:
             made = settings_archive.snapshot(self.targets)
-            settings_archive.prune(
-                values.get("archive_prune_mode", settings_archive.PRUNE_OFF),
-                keep=int(values.get("archive_prune_keep", 20) or 20),
-                days=int(values.get("archive_prune_days", 30) or 30),
-                targets=self.targets)
+            settings_archive.prune(mode, targets=self.targets)
             return made is not None
         except OSError:
             return False

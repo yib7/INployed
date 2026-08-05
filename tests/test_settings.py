@@ -398,3 +398,250 @@ def test_drop_easy_apply_save_roundtrips_to_scoring_config(tmp_path):
     values["drop_easy_apply"] = False
     settings.save(values, targets)
     assert settings.load(targets)["drop_easy_apply"] is False
+
+
+# --- the merged auto-apply inbox fallback --------------------------------------
+
+def test_auto_apply_inbox_url_is_not_a_settings_field(tmp_path, monkeypatch):
+    """Settings declutter: the single fallback URL was redundant with the map.
+
+    It only ever fired when the signup email's domain missed `auto_apply_inbox_map`,
+    and the shipped DEFAULT_INBOX_MAP already covers the common providers — an
+    unmapped domain is one line in the map, exactly as easy as a fallback URL.
+
+    The deletion is safe ONLY because of the second half asserted here:
+    `apply_queue.build_context` reads config.json DIRECTLY and carries its own
+    DEFAULT_INBOX_URL, so a value an existing public-repo user already saved keeps
+    resolving exactly as before. Anything routed through `settings.load()` would
+    not qualify — that returns schema fields only, so deleting the Field would
+    silently revert the user's real value to a code default with no error.
+    """
+    import apply_queue
+    from resume_tailor import assets, config as rt_config
+
+    assert "auto_apply_inbox_url" not in {f.key for f in settings.SETTINGS_SCHEMA}
+
+    monkeypatch.setattr(assets, "load_master",
+                        lambda: {"basics": {"email": "grad@acme.io"}})  # unmapped domain
+    monkeypatch.setattr(rt_config, "OUTPUT_ROOT", tmp_path / "Generated_Resumes")
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"auto_apply_inbox_url": "https://legacy.inbox"}),
+                   encoding="utf-8")
+    monkeypatch.setattr(apply_queue, "CONFIG_JSON", cfg)
+    ctx = apply_queue.build_context(path=tmp_path / "apply_queue.json")
+    assert ctx["inbox_url"] == "https://legacy.inbox"      # legacy key still honoured
+
+
+def test_inbox_map_help_names_the_gmail_fallback():
+    """With the fallback Field gone, the map's help is the only place a user learns
+    what an unlisted domain does — so it must say it."""
+    f = next(f for f in settings.SETTINGS_SCHEMA if f.key == "auto_apply_inbox_map")
+    assert "Gmail" in f.help and "not listed" in f.help
+
+
+# --- archive_mode: the merged snapshot-retention setting -----------------------
+
+def test_archive_mode_replaces_the_four_legacy_keys():
+    keys = {f.key for f in settings.SETTINGS_SCHEMA}
+    assert "archive_mode" in keys
+    for gone in ("archive_enabled", "archive_prune_mode",
+                 "archive_prune_keep", "archive_prune_days"):
+        assert gone not in keys, gone
+    f = next(f for f in settings.SETTINGS_SCHEMA if f.key == "archive_mode")
+    assert (f.type, f.default, f.section, f.target) == (
+        "choice", "Keep everything", "Settings history", "config")
+    assert f.choices == ("Keep everything", "Keep newest 20", "Keep newest 100", "Off")
+    # Index 0 is the default on purpose: QComboBox falls back to it when a stored
+    # value matches no item, so a hand-edited typo lands on "keep everything"
+    # rather than silently switching snapshots off.
+    assert f.choices[0] == f.default
+
+
+def test_settings_history_section_is_now_a_single_field():
+    fields = [f for f in settings.SETTINGS_SCHEMA if f.section == "Settings history"]
+    assert [f.key for f in fields] == ["archive_mode"]
+
+
+def test_keep_everything_is_the_same_string_the_pruner_no_ops_on():
+    """`prune()` deletes nothing for PRUNE_OFF, and that is exactly how the new
+    default reproduces today's effective behaviour. Renaming either constant
+    without the other would silently start deleting snapshots."""
+    assert settings.ARCHIVE_KEEP_ALL == settings_archive.PRUNE_OFF
+
+
+def test_the_migration_recognises_the_pruners_legacy_count_mode():
+    """The other cross-module string coupling, and the one that decides whether a
+    legacy config migrates at all. Rename `PRUNE_COUNT` without this copy and
+    `_legacy_archive_mode` stops recognising every saved `archive_prune_keep`,
+    silently reading "Keep everything" for all of them — fail-safe, but it defeats
+    the entire migration."""
+    assert settings._LEGACY_PRUNE_COUNT == settings_archive.PRUNE_COUNT
+
+
+# One case per legacy combination, against the PURE derivation function.
+# The invariant: never prune more aggressively than the old policy — which is why
+# every count that is not one of the two offered rounds UP, and why anything
+# unrecognised reads "Keep everything".
+LEGACY_ARCHIVE_CASES = [
+    ({}, "Keep everything", "absent-entirely"),
+    ({"archive_enabled": False}, "Off", "disabled"),
+    ({"archive_enabled": False, "archive_prune_mode": "Keep newest N",
+      "archive_prune_keep": 5}, "Off", "disabled-beats-a-prune-policy"),
+    ({"archive_enabled": True, "archive_prune_mode": "Keep everything"},
+     "Keep everything", "keep-everything"),
+    # The repo owner's real local/config.json, verbatim: 10 is not one of the new
+    # options, so it must round UP to 20 rather than down to nothing.
+    ({"archive_enabled": True, "archive_prune_mode": "Keep newest N",
+      "archive_prune_keep": 10, "archive_prune_days": 30},
+     "Keep newest 20", "owners-live-config-keep-10"),
+    ({"archive_prune_mode": "Keep newest N", "archive_prune_keep": 20},
+     "Keep newest 20", "keep-20-exactly"),
+    ({"archive_prune_mode": "Keep newest N", "archive_prune_keep": 21},
+     "Keep newest 100", "keep-21-rounds-up"),
+    ({"archive_prune_mode": "Keep newest N", "archive_prune_keep": 100},
+     "Keep newest 100", "keep-100-exactly"),
+    ({"archive_prune_mode": "Keep newest N", "archive_prune_keep": 500},
+     "Keep everything", "keep-500-exceeds-every-option"),
+    ({"archive_prune_mode": "Delete older than N days", "archive_prune_days": 30},
+     "Keep everything", "age-based-mode-is-dropped"),
+    ({"archive_prune_mode": "Sell them on eBay"}, "Keep everything", "garbage-mode"),
+    ({"archive_prune_mode": "Keep newest N", "archive_prune_keep": "ten"},
+     "Keep everything", "garbage-count"),
+]
+
+
+@pytest.mark.parametrize("stored,expected",
+                         [(c[0], c[1]) for c in LEGACY_ARCHIVE_CASES],
+                         ids=[c[2] for c in LEGACY_ARCHIVE_CASES])
+def test_legacy_archive_mode_derivation(stored, expected):
+    assert settings._legacy_archive_mode(stored) == expected
+
+
+def test_legacy_archive_mode_is_pure():
+    """No I/O, no mutation — that is what makes the migration table testable
+    without a filesystem, and what lets load() call it per backing store."""
+    stored = {"archive_prune_mode": "Keep newest N", "archive_prune_keep": 10}
+    before = dict(stored)
+    settings._legacy_archive_mode(stored)
+    assert stored == before
+
+
+def test_every_derived_key_is_a_schema_key():
+    keys = {f.key for f in settings.SETTINGS_SCHEMA}
+    assert set(settings.DERIVED_WHEN_ABSENT) <= keys
+    assert settings.DERIVED_WHEN_ABSENT["archive_mode"] is settings._legacy_archive_mode
+
+
+def test_load_derives_archive_mode_from_a_legacy_config(tmp_path):
+    targets = _targets(tmp_path)
+    targets["config"].write_text(
+        json.dumps({"archive_enabled": True, "archive_prune_mode": "Keep newest N",
+                    "archive_prune_keep": 10}), encoding="utf-8")
+    assert settings.load(targets)["archive_mode"] == "Keep newest 20"
+
+
+def test_load_derives_off_from_a_disabled_legacy_config(tmp_path):
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"archive_enabled": False}), encoding="utf-8")
+    assert settings.load(targets)["archive_mode"] == "Off"
+
+
+def test_a_stored_archive_mode_wins_over_the_derivation(tmp_path):
+    """The hook sits between the stored value and the DEFAULT, so it only ever
+    runs for a config written before the key existed. Once the user has saved,
+    their choice is final however the old keys read."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(
+        json.dumps({"archive_mode": "Keep newest 100", "archive_enabled": False,
+                    "archive_prune_mode": "Keep newest N", "archive_prune_keep": 10}),
+        encoding="utf-8")
+    assert settings.load(targets)["archive_mode"] == "Keep newest 100"
+
+
+def test_load_falls_back_to_the_default_for_a_fresh_config(tmp_path):
+    """No file at all: the derivation sees {} and yields the default, so a brand
+    new user gets today's effective behaviour (nothing is ever deleted)."""
+    assert settings.load(_targets(tmp_path))["archive_mode"] == "Keep everything"
+
+
+def test_legacy_config_saves_archive_mode_and_keeps_the_old_keys(tmp_path):
+    """The downgrade path: save() MERGES, so the four legacy keys stay on disk.
+
+    A user who checks out an older commit after this change gets their old
+    retention behaviour back, because nothing reaped the keys that behaviour reads.
+    """
+    targets = _targets(tmp_path)
+    legacy = {"archive_enabled": True, "archive_prune_mode": "Keep newest N",
+              "archive_prune_keep": 10, "archive_prune_days": 30, "min_score": 4}
+    targets["config"].write_text(json.dumps(legacy), encoding="utf-8")
+
+    values = settings.load(targets)
+    assert values["archive_mode"] == "Keep newest 20"        # derived for the form
+    settings.save(values, targets)
+
+    on_disk = json.loads(targets["config"].read_text(encoding="utf-8"))
+    assert on_disk["archive_mode"] == "Keep newest 20"       # new key written
+    for key, was in legacy.items():
+        assert on_disk[key] == was, key                      # ...old keys untouched
+    assert settings.load(targets)["archive_mode"] == "Keep newest 20"
+
+
+def test_archive_mode_validates_only_its_four_choices():
+    assert settings.validate({"archive_mode": "Off"}) == {}
+    assert settings.validate({"archive_mode": "Keep newest 20"}) == {}
+    assert "archive_mode" in settings.validate({"archive_mode": "Keep newest 7"})
+
+
+# --- the pruner side: one signature, a new mode shape it parses ----------------
+
+@pytest.mark.parametrize("mode,expected", [
+    (settings.ARCHIVE_KEEP_20, 20),
+    (settings.ARCHIVE_KEEP_100, 100),
+    (settings.ARCHIVE_KEEP_ALL, None),
+    (settings.ARCHIVE_OFF, None),
+    # The two LEGACY modes, referenced through the constants rather than copied:
+    # the counted arm runs FIRST, so if either is ever renamed to something ending
+    # in a digit the arms silently reorder — which is the regression this pins.
+    (settings_archive.PRUNE_COUNT, None),   # counts live in a separate key
+    (settings_archive.PRUNE_AGE, None),
+    ("", None),
+])
+def test_keep_from_mode_parses_only_a_trailing_count(mode, expected):
+    """Every legacy mode string is None-safe by construction (their counts live in
+    separate keys), so the new arm can be tried first without shadowing them."""
+    assert settings_archive._keep_from_mode(mode) == expected
+
+
+def test_keep_from_mode_ignores_a_zero_count(tmp_path):
+    """A zero count is treated as "no counted policy" so the PRIMARY prune arm can
+    never wipe the archive — including the snapshot the same Save just wrote."""
+    targets = _targets(tmp_path)
+    _snap_n(targets, 3)
+    assert settings_archive.prune("Keep newest 0", targets=targets) == []
+    assert len(settings_archive.list_snapshots(targets)) == 3
+
+
+def _snap_n(targets, n):
+    from datetime import datetime as _dt
+    settings.save({"min_score": 4}, targets)
+    for sec in range(n):
+        settings_archive.snapshot(targets, when=_dt(2026, 6, 23, 10, 0, sec))
+
+
+def test_prune_honours_a_counted_archive_mode_without_the_keep_kwarg(tmp_path):
+    """`prune()` keeps its exact signature — the count rides in the mode string, so
+    all eleven pre-existing archive tests still pass untouched."""
+    targets = _targets(tmp_path)
+    _snap_n(targets, 5)
+    deleted = settings_archive.prune("Keep newest 2", targets=targets)
+    remaining = settings_archive.list_snapshots(targets)
+    assert len(deleted) == 3 and len(remaining) == 2
+    assert {s.timestamp.second for s in remaining} == {4, 3}   # the two newest survive
+
+
+def test_prune_deletes_nothing_for_keep_everything_or_off(tmp_path):
+    targets = _targets(tmp_path)
+    _snap_n(targets, 3)
+    assert settings_archive.prune("Keep everything", targets=targets) == []
+    assert settings_archive.prune("Off", targets=targets) == []
+    assert len(settings_archive.list_snapshots(targets)) == 3

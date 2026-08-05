@@ -1,4 +1,5 @@
 """SP6: the Qt settings form — widget-by-type, secret masking, save/revert, VM toggle."""
+import json
 from datetime import datetime
 
 import envfile
@@ -515,10 +516,66 @@ def test_save_skips_snapshot_when_archiving_disabled(qtbot, tmp_path, monkeypatc
     form = SettingsForm(targets=targets)
     qtbot.addWidget(form)
     _quiet_info(monkeypatch)
-    form._setters["archive_enabled"](False)
+    form._setters["archive_mode"]("Off")     # was the archive_enabled checkbox
     form._setters["min_score"](5)
     assert form.save() is True
     assert settings_archive.list_snapshots(targets) == []
+
+
+def test_settings_history_renders_one_dropdown(qtbot, tmp_path):
+    """The four-key retention DSL merged into one choice: the section must render
+    a single control, not a checkbox + mode + two counts."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    keys = [f.key for f in settings.SETTINGS_SCHEMA if f.section == "Settings history"]
+    assert keys == ["archive_mode"]
+    assert isinstance(form._widgets["archive_mode"], QtWidgets.QComboBox)
+    assert [form._widgets["archive_mode"].itemText(i)
+            for i in range(form._widgets["archive_mode"].count())] == [
+        "Keep everything", "Keep newest 20", "Keep newest 100", "Off"]
+
+
+def test_a_legacy_archive_config_opens_reading_keep_newest_20(qtbot, tmp_path):
+    """End to end through the real form: the repo owner's saved `keep: 10` shows
+    as the rounded-UP option, so nobody's snapshots start disappearing."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(
+        json.dumps({"archive_enabled": True, "archive_prune_mode": "Keep newest N",
+                    "archive_prune_keep": 10}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._getters["archive_mode"]() == "Keep newest 20"
+
+
+def test_an_unrecognised_stored_archive_mode_falls_back_to_the_default(qtbot, tmp_path):
+    """Why "Keep everything" is choices[0] and not "Off": QComboBox falls back to
+    the FIRST item when a stored value matches none of them, so a hand-edited typo
+    must land on the harmless default rather than silently stopping snapshots."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"archive_mode": "Keep newest 7"}),
+                                 encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._getters["archive_mode"]() == "Keep everything"
+
+
+def test_save_forwards_the_archive_mode_to_prune(qtbot, tmp_path, monkeypatch):
+    """The count now rides in the mode string, so Save hands `prune` the whole mode
+    and no count keyword. (What that mode then DELETES is
+    test_prune_honours_a_counted_archive_mode_without_the_keep_kwarg's job.)"""
+    targets = _targets(tmp_path)
+    form = SettingsForm(targets=targets)
+    qtbot.addWidget(form)
+    _quiet_info(monkeypatch)
+    pruned = []
+    monkeypatch.setattr(settings_archive, "prune",
+                        lambda mode, **kw: pruned.append((mode, kw)) or [])
+    form._setters["archive_mode"]("Keep newest 20")
+    form._setters["min_score"](5)
+    assert form.save() is True
+    assert [mode for mode, _ in pruned] == ["Keep newest 20"]
+    assert "keep" not in pruned[0][1] and "days" not in pruned[0][1]
+    assert len(settings_archive.list_snapshots(targets)) == 1
 
 
 def test_restore_loads_values_and_shows_secret(qtbot, tmp_path, monkeypatch):

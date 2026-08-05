@@ -136,6 +136,8 @@ if ($haveMaster -and -not $Force) {
 # stop changing before watcher.py opens it). It is deliberately not in the
 # Settings tab schema; watcher.load_config() reads config.json directly and
 # defaults it to 30, so seeding it here just makes the value visible to editors.
+# Keep the 30 below in sync with watcher.DEFAULT_CONFIG: an explicit file value
+# always beats that default, so a stale seed would pin every new install.
 $cfg = [ordered]@{ gdrive_root = ''; mtime_stable_seconds = 30; min_score = $MinScore; followup_days = $FollowupDays }
 if (Test-Path -LiteralPath $cfgPath) {
     try {

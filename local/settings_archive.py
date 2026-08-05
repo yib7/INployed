@@ -2,12 +2,11 @@
 
 Every successful Save writes a snapshot folder
 (``settings_archive/<YYYY-MM-DD_HH-MM-SS>/``) holding a copy of each settings
-file that exists — ``config.json``, ``search_config.json``,
-``scoring_config.json`` and ``.env``. The user chose
-self-contained snapshots, so the copy of ``.env`` carries the SAME secrets the
-live file does: the archive directory is therefore git-ignored, and secret
-values are never logged or surfaced in the UI — they only ride along inside the
-copied ``.env`` so a restore can put them back.
+file that exists — ``config.json``, ``search_config.json``, ``scoring_config.json``
+and ``.env``. The user chose self-contained snapshots, so the copy of ``.env``
+carries the SAME secrets the live file does: the archive directory is therefore
+git-ignored, and secret values are never logged or surfaced in the UI — they only
+ride along inside the copied ``.env`` so a restore can put them back.
 
 Restore reads a snapshot back the same way ``settings.load`` reads the live
 files: point a ``targets`` mapping at the snapshot folder. The dashboard loads

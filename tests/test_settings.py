@@ -46,6 +46,24 @@ def test_mtime_stable_seconds_is_not_a_settings_field():
     assert watcher.DEFAULT_CONFIG["mtime_stable_seconds"] == 30
 
 
+def test_watcher_still_honours_a_saved_mtime_stable_seconds(tmp_path, monkeypatch):
+    """The other half of the deletion contract, and the half that can rot.
+
+    Pinning DEFAULT_CONFIG alone isn't enough: it would still pass if
+    load_config() were refactored to return the parsed file WITHOUT merging the
+    defaults underneath, and that is exactly the change that breaks a fresh user
+    (KeyError at watcher.py's two cfg["mtime_stable_seconds"] reads). Assert the
+    merge itself, from both sides.
+    """
+    monkeypatch.setattr(watcher, "CONFIG_PATH", tmp_path / "missing.json")
+    assert watcher.load_config()["mtime_stable_seconds"] == 30      # absent -> default
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"mtime_stable_seconds": 90}), encoding="utf-8")
+    monkeypatch.setattr(watcher, "CONFIG_PATH", cfg)
+    assert watcher.load_config()["mtime_stable_seconds"] == 90      # saved value wins
+
+
 def test_ui_scale_pct_is_not_a_settings_field():
     # Cycle 17: scaling moved to the bottom bar; ui_scale_pct is persisted via
     # jobsdata (config.json), not the settings schema.
@@ -141,6 +159,18 @@ def test_apply_section_removed_from_schema():
     assert "apply" not in settings.TARGET_FILES
     assert "apply" not in settings.STORAGE_LABELS
     assert "apply" not in settings_archive._SNAPSHOT_TARGETS
+
+
+def test_every_field_targets_a_registered_backing_file():
+    """No Field may point at a target id TARGET_FILES doesn't know.
+
+    save() skips an unregistered target silently (`path = targets.get(id)` then
+    `if path is None: continue`) and storage_location() falls back to printing
+    the raw id, so such a field renders a plausible "stored in" chip while every
+    Save quietly discards its value. That is the deletion-safety failure mode in
+    reverse, and later phases move fields between targets — pin it now.
+    """
+    assert {f.target for f in settings.SETTINGS_SCHEMA} <= set(settings.TARGET_FILES)
 
 
 def test_list_type_validate_accepts_list_of_str():

@@ -5,7 +5,9 @@ The three job tabs (High Score / All Jobs / Tracker) are real `JobsTab`s wired t
 the data and registry; Auto-apply mirrors the batch apply queue; Stats / Resume
 Data / Apply Answers / Settings are filled in later phases. Long-running actions
 (scrape, apply, tailor) run on a worker thread via `qt.workers.run_async`. The
-score preview rides in a vertical splitter and is shown only on the job tabs.
+score preview rides in a vertical splitter and is shown only on the job tabs; it
+grows to ~half that splitter while the card's description pane is open and hands
+the height back when it closes (`_on_description_toggled`).
 """
 from __future__ import annotations
 
@@ -180,6 +182,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # window (so they die with it) and remove themselves from here on close —
         # a stale entry would be a Python wrapper over a deleted C++ object.
         self._chat_dialogs: dict[str, "JobChatDialog"] = {}
+        # Detail-pane growth while the card's description is open: the state the
+        # last descriptionToggled reported, and the splitter sizes to hand back
+        # when it closes (None = nothing to restore).
+        self._preview_desc_open = False
+        self._preview_prev_sizes: list[int] | None = None
+        self._preview_shown = False
         self.tailor_progress.connect(self._set_status)
         self.tailor_job_done.connect(self._on_tailor_job_done)
 
@@ -409,6 +417,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         self.splitter.setSizes([640, 300])  # the detail card needs ~300px @100%
+        # Opening the card's description grows this pane to ~half the splitter and
+        # closing it hands the height back (see _on_description_toggled). The card
+        # never reaches up into its parent; it just says which state it is in.
+        self.preview.descriptionToggled.connect(self._on_description_toggled)
+        self.splitter.splitterMoved.connect(self._on_preview_splitter_moved)
 
         # The Apply panel rides to the RIGHT of the tabs+preview column; it opens
         # (and the preview hides) when the user clicks Apply, and closes back to the
@@ -958,6 +971,60 @@ class MainWindow(QtWidgets.QMainWindow):
         show = title in PREVIEW_TABS and not getattr(self, "_apply_panel_open", False)
         self.preview.setVisible(show)
         self._preview_shown = show
+
+    def _on_preview_splitter_moved(self, *_args) -> None:
+        """A drag of the outer divider is the user's newest word on how tall the
+        detail pane should be, so it retires the pre-expand memory: collapsing
+        the description then leaves their size alone instead of yanking it back.
+        Only real drags land here — setSizes() and window resizes do not emit
+        splitterMoved, so this never discards a size the window itself set."""
+        self._preview_prev_sizes = None
+
+    def _on_description_toggled(self, expanded: bool) -> None:
+        """Grow the detail pane to ~half the splitter while the card's
+        description is open, and give the height back when it closes.
+
+        The signal fires from INSIDE JobDetailCard.set_fields/set_empty, i.e.
+        mid selection-update, so this only ever touches the splitter — calling
+        back into the card would recurse. Repeats of the state already recorded
+        are dropped, which is what makes a sticky expand across job selections
+        (and a discovery↔Tracker switch) a no-op here."""
+        expanded = bool(expanded)
+        if expanded == self._preview_desc_open:
+            return
+        self._preview_desc_open = expanded
+        if not expanded:
+            # Restore even while the pane is hidden: a tab switch to Settings
+            # hides it and THEN clears the card, so the collapse routinely
+            # arrives with the preview already gone. A hidden pane reports 0
+            # but setSizes still lands on the splitter's sizer, and that is what
+            # comes back when the pane is re-shown. Dropping the restore here
+            # instead would leave the pane stuck at half for the whole session.
+            prev, self._preview_prev_sizes = self._preview_prev_sizes, None
+            if prev:
+                self.splitter.setSizes(prev)
+            return
+        if not self._preview_shown:
+            # The Apply panel is open (or this isn't a preview tab), so the pane
+            # is hidden and reports 0 height: growing it would fight
+            # _apply_preview_visibility, and recording [n, 0] would restore a
+            # zero-height pane on the way out.
+            self._preview_prev_sizes = None
+            return
+        # A pane that was just un-hidden still reports its hidden [n, 0] until
+        # the next layout pass — and _on_tab_changed re-shows it and re-renders
+        # the card in the SAME turn, so that stale read is the common case here.
+        # refresh() recomputes the splitter's ranges in place; unlike
+        # processEvents it delivers no events, so nothing can re-enter.
+        self.splitter.refresh()
+        sizes = self.splitter.sizes()
+        if len(sizes) != 2:
+            return
+        self._preview_prev_sizes = list(sizes)
+        target = sum(sizes) // 2
+        if sizes[1] >= target:
+            return          # already at least half — never shrink what the user grew
+        self.splitter.setSizes([sum(sizes) - target, target])
 
     def _show_preview(self, jid: str) -> None:
         self._update_apply_button(jid)

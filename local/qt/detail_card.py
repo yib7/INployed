@@ -128,6 +128,11 @@ def _clear_layout(lay) -> None:
 
 
 class JobDetailCard(QtWidgets.QFrame):
+    #: Emitted when the description pane's EFFECTIVE state changes (checked and
+    #: a JD to show). The card never touches its parent — the main window
+    #: connects this to grow/restore the outer pane.
+    descriptionToggled = QtCore.Signal(bool)
+
     def __init__(self, *, on_open: Callable[[str], None] | None = None,
                  on_tailor: Callable[[], None] | None = None,
                  on_apply: Callable[[], None] | None = None,
@@ -139,6 +144,9 @@ class JobDetailCard(QtWidgets.QFrame):
         self._on_open = on_open or (lambda _jid: None)
         self._jid = ""
         self._plain = ""
+        # Effective description state + the user's dragged split (session only).
+        self._desc_open = False
+        self._split_sizes: list[int] | None = None
         self.setMinimumHeight(140)
         self._build(on_tailor, on_apply, on_open_resume, on_followed_up)
         self.set_empty()
@@ -198,16 +206,36 @@ class JobDetailCard(QtWidgets.QFrame):
         head.addWidget(self.apply_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         v.addLayout(head)
 
+        # Everything BELOW the header lives in a horizontal splitter: the
+        # scoring column (chips / REASON / STRENGTHS / GAPS / toggle) on the
+        # left, the full description on the right. Collapsed, the right pane is
+        # hidden — Qt then hides the handle too, so the splitter is visually a
+        # plain single column and the card keeps its compact shape.
+        self._split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self._split.setChildrenCollapsible(False)   # no drag-to-zero pane
+        self._left_pane = QtWidgets.QWidget()
+        # An explicit minimum REPLACES the layout's computed one (qSmartMinSize),
+        # which is what makes a real half-and-half split possible: the chips row
+        # is a line of fixed-size pills and alone demands ~830px, so without this
+        # floor the splitter could never give the description half the card. Past
+        # the floor the trailing chips clip at the pane edge — the divider is
+        # draggable, so the user can hand the width back.
+        self._left_pane.setMinimumWidth(round(280 * theme._current_scale))
+        lv = QtWidgets.QVBoxLayout(self._left_pane)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(8)                            # same rhythm as the header
+        self._split.addWidget(self._left_pane)
+
         # Chips row (rebuilt per job).
         self._chips = QtWidgets.QHBoxLayout()
         self._chips.setSpacing(8)
-        v.addLayout(self._chips)
+        lv.addLayout(self._chips)
 
         # REASON / NEXT STEP lede.
         self.reason_label = QtWidgets.QLabel("")
         self.reason_label.setWordWrap(True)
         self.reason_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        v.addWidget(self.reason_label)
+        lv.addWidget(self.reason_label)
 
         # STRENGTHS / GAPS columns.
         cols = QtWidgets.QHBoxLayout()
@@ -218,20 +246,18 @@ class JobDetailCard(QtWidgets.QFrame):
         self._gaps_col.setSpacing(3)
         cols.addLayout(self._strengths_col, 1)
         cols.addLayout(self._gaps_col, 1)
-        v.addLayout(cols)
-        # The spacer and the description view TRADE stretch on toggle (see
-        # _on_desc_toggled): collapsed, the spacer eats the slack so the card
-        # keeps its compact shape; expanded, the view does, so the description
-        # grows into the leftover height instead of squeezing STRENGTHS/GAPS.
-        v.addStretch(1)
-        self._spacer_at = v.count() - 1
+        lv.addLayout(cols)
+        # The spacer keeps the scoring content top-aligned in its own column
+        # whatever height the splitter hands it.
+        lv.addStretch(1)
 
-        # Collapsed full JD behind a tertiary toggle (locked user decision).
+        # Full JD behind a tertiary toggle (locked user decision), parked at the
+        # bottom of the left column so the collapsed card is unchanged.
         self.desc_toggle = QtWidgets.QPushButton("Show description")
         self.desc_toggle.setProperty("tier", "tertiary")
         self.desc_toggle.setCheckable(True)
-        self.desc_toggle.toggled.connect(self._on_desc_toggled)
-        v.addWidget(self.desc_toggle, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.desc_toggle.toggled.connect(lambda _on: self._apply_desc_state())
+        lv.addWidget(self.desc_toggle, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         # The JD is raw scraped text and now arrives in full, with real line
         # breaks and "• " bullets. A read-only QPlainTextEdit keeps that
         # structure (a QLabel would not) and is plain text BY CONSTRUCTION, so
@@ -268,22 +294,42 @@ class JobDetailCard(QtWidgets.QFrame):
             f"QPlainTextEdit#jdView:focus {{ border: 0; }}")
         self.desc_view.setMinimumHeight(round(120 * theme._current_scale))
         self.desc_view.setVisible(False)
-        v.addWidget(self.desc_view)
-        self._desc_at = v.count() - 1
+        self._split.addWidget(self.desc_view)
+        self._split.setStretchFactor(0, 1)
+        self._split.setStretchFactor(1, 1)
+        # The splitter owns the card's leftover height; each pane top-aligns its
+        # own content, so the collapsed card looks exactly as it did before.
+        v.addWidget(self._split, 1)
         self._content_layout = v
-        self._set_desc_stretch(False)
 
-    def _set_desc_stretch(self, expanded: bool) -> None:
-        """Hand the leftover vertical space to whichever of the two should own
-        it: the spacer when collapsed, the description view when expanded."""
-        self._content_layout.setStretch(self._spacer_at, 0 if expanded else 1)
-        self._content_layout.setStretch(self._desc_at, 1 if expanded else 0)
+    def _half_split_sizes(self) -> list[int]:
+        """A 50/50 split of whatever width the splitter currently has."""
+        total = self._split.width()
+        if total <= 0:                       # never laid out yet
+            total = max(self._split.sizeHint().width(), 2)
+        half = total // 2
+        return [half, total - half]
 
-    def _on_desc_toggled(self, on: bool) -> None:
-        show = on and bool(self.desc_view.toPlainText())
-        self.desc_view.setVisible(show)
-        self._set_desc_stretch(show)
-        self.desc_toggle.setText("Hide description" if on else "Show description")
+    def _apply_desc_state(self) -> None:
+        """Sync the split to the toggle. The pane opens only when there is a JD
+        to show, so a JD-less job (Tracker included) stays single-column even
+        with the toggle left checked by a previous selection."""
+        checked = self.desc_toggle.isChecked()
+        self.desc_toggle.setText("Hide description" if checked
+                                 else "Show description")
+        want = checked and bool(self.desc_view.toPlainText())
+        if want == self._desc_open:
+            return
+        if not want:
+            # Remember the user's drag BEFORE hiding — a hidden pane reports 0.
+            sizes = self._split.sizes()
+            if len(sizes) == 2 and sizes[1] > 0:
+                self._split_sizes = sizes
+        self._desc_open = want
+        self.desc_view.setVisible(want)
+        if want:
+            self._split.setSizes(self._split_sizes or self._half_split_sizes())
+        self.descriptionToggled.emit(want)
 
     # ---- content -------------------------------------------------------------
 
@@ -403,14 +449,14 @@ class JobDetailCard(QtWidgets.QFrame):
         plain.extend(fields.get("strengths") or [])
         plain.extend(fields.get("gaps") or [])
 
-        # JD: reset to collapsed on every new job.
+        # JD: the text swaps and the scroll returns to the top, but the split
+        # stays as the user left it (locked user decision: the toggle is sticky
+        # across selections). A job with no JD still folds back to one column.
         jd = "" if is_tracker else fields.get("jd", "")
         self.desc_view.setPlainText(jd)
         self.desc_view.verticalScrollBar().setValue(0)
         self.desc_toggle.setVisible(bool(jd))
-        self.desc_toggle.setChecked(False)
-        self.desc_view.setVisible(False)
-        self._set_desc_stretch(False)
+        self._apply_desc_state()
         if jd:
             plain.append(jd)
         if fields.get("url"):

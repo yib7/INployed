@@ -291,6 +291,20 @@ def test_html_to_text_strips_the_linkedin_show_more_wrapper():
 
 # ---- JobDetailCard ------------------------------------------------------------------
 
+def _flush():
+    """Let Qt run the pending layout pass (a QSplitter hands out no sizes
+    until its parent has actually been laid out)."""
+    QtWidgets.QApplication.processEvents()
+
+
+def _show(qtbot, card, w=1000, h=460):
+    """Register, size and realize the card so geometry assertions are real."""
+    qtbot.addWidget(card)
+    card.resize(w, h)
+    card.show()
+    _flush()
+
+
 def test_card_renders_fields_to_plain_text(qtbot):
     card = JobDetailCard()
     qtbot.addWidget(card)
@@ -323,15 +337,38 @@ def test_card_description_collapsed_behind_toggle(qtbot):
     card.desc_toggle.setChecked(True)
     assert not card.desc_view.isHidden()
     assert card.desc_toggle.text() == "Hide description"
-    # a new selection re-collapses it
-    card.set_fields(jobsdata.job_detail_fields(_row(job_posting_id="2")), jid="2")
-    assert card.desc_view.isHidden()
-    assert card.desc_toggle.text() == "Show description"
+    # a new selection now KEEPS it open (sticky toggle) — only the text swaps
+    card.set_fields(jobsdata.job_detail_fields(
+        _row(job_posting_id="2", job_summary="Second posting body, long enough "
+             "to clear the forty-character bar for the card's JD.")), jid="2")
+    assert not card.desc_view.isHidden()
+    assert card.desc_toggle.text() == "Hide description"
+    assert card.desc_view.toPlainText().startswith("Second posting body")
+
+
+def test_card_description_state_is_sticky_across_selections(qtbot):
+    # Expanded once, the split layout persists as the user clicks through jobs.
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    long_jd = "\n".join(f"Requirement {i} spelled out in full." for i in range(200))
+    card.set_fields({"title": "T", "company": "C", "jd": long_jd}, jid="1")
+    card.desc_toggle.setChecked(True)
+    card.desc_view.verticalScrollBar().setValue(40)
+    for n, body in ((2, "Second body."), (3, "Third body.")):
+        card.set_fields({"title": f"T{n}", "company": "C", "jd": long_jd + body},
+                        jid=str(n))
+        assert card.desc_toggle.isChecked()
+        assert not card.desc_view.isHidden()
+        assert card.desc_toggle.text() == "Hide description"
+        assert card.desc_view.toPlainText().endswith(body)
+        assert card.desc_view.verticalScrollBar().value() == 0
 
 
 def test_card_description_toggle_hides_when_there_is_no_jd(qtbot):
     card = JobDetailCard()
     qtbot.addWidget(card)
+    seen = []
+    card.descriptionToggled.connect(seen.append)
     card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
     assert not card.desc_toggle.isHidden()
     card.set_fields({"title": "T", "company": "C", "jd": ""}, jid="2")
@@ -339,6 +376,47 @@ def test_card_description_toggle_hides_when_there_is_no_jd(qtbot):
     # and the view cannot be forced open with nothing to show
     card.desc_toggle.setChecked(True)
     assert card.desc_view.isHidden()
+    assert card._split.sizes()[1] == 0          # still a single column
+    assert seen == []                           # no phantom expand either
+
+
+def test_card_tracker_variant_stays_single_column(qtbot):
+    # The Tracker passes no JD, so the card must never split — even if the
+    # toggle was left checked by a previous (discovery) selection.
+    card = JobDetailCard()
+    _show(qtbot, card)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    card.desc_toggle.setChecked(True)
+    _flush()
+    assert card._split.sizes()[1] > 0
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1",
+                    tracker={"status": "applied", "days": "8",
+                             "next_step": "Follow up."})
+    _flush()
+    assert card.desc_toggle.isHidden()
+    assert card.desc_view.isHidden()
+    assert card._split.sizes()[1] == 0
+    assert card._split.handle(1).isHidden()
+
+
+def test_card_emits_description_toggled_only_on_real_changes(qtbot):
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    seen = []
+    card.descriptionToggled.connect(seen.append)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    assert seen == []                       # rendering a job is not a toggle
+    card.desc_toggle.setChecked(True)
+    assert seen == [True]
+    card.set_fields(jobsdata.job_detail_fields(_row(job_posting_id="2")), jid="2")
+    assert seen == [True]                   # sticky: state did not change
+    card.desc_toggle.setChecked(False)
+    assert seen == [True, False]
+    card.desc_toggle.setChecked(True)
+    assert seen == [True, False, True]
+    # a job with nothing to show closes the split — that IS a state change
+    card.set_fields({"title": "T", "company": "C", "jd": ""}, jid="3")
+    assert seen == [True, False, True, False]
 
 
 def test_card_description_view_is_a_read_only_plain_text_edit(qtbot):
@@ -387,9 +465,11 @@ def test_card_description_preserves_line_breaks_and_bullets(qtbot):
     assert "\n• " in shown
 
 
-def test_card_collapsed_size_is_not_inflated_by_the_hidden_view(qtbot):
+def test_card_collapsed_size_is_not_inflated_by_the_hidden_pane(qtbot):
     # A 120px minimum on a HIDDEN widget still inflates a layout if it is set
-    # carelessly (retainSizeWhenHidden, or a minimum parked on the card).
+    # carelessly (retainSizeWhenHidden, or a minimum parked on the card). Now
+    # that the view is the splitter's right pane, expanding must spend WIDTH,
+    # not height — the old "grows by at least the floor" claim is inverted.
     # Measure the content layout, not card.sizeHint(): the card's own outer
     # layout caches heightForWidth and an unshown test window never flushes it.
     card = JobDetailCard()
@@ -398,20 +478,24 @@ def test_card_collapsed_size_is_not_inflated_by_the_hidden_view(qtbot):
     floor = round(120 * theme._current_scale)
     assert card.desc_view.minimumHeight() == floor
     lay = card._content_layout
-    item = lay.itemAt(card._desc_at)
 
     def measure():
         lay.invalidate()
-        return lay.sizeHint().height(), lay.minimumSize().height()
+        return lay.sizeHint(), lay.minimumSize()
 
     collapsed = measure()
-    assert item.isEmpty()                      # contributes nothing at all
-    assert item.sizeHint().height() == 0 and item.minimumSize().height() == 0
+    collapsed_split = card._split.sizeHint().width()
+    assert card.desc_view.isHidden()
+    assert card._split.handle(1).isHidden()    # no stray handle either
     card.desc_toggle.setChecked(True)
     expanded = measure()
-    assert not item.isEmpty()
-    assert item.minimumSize().height() == floor
-    assert expanded[0] >= collapsed[0] + floor and expanded[1] >= collapsed[1] + floor
+    assert not card.desc_view.isHidden()
+    # sideways: the splitter asks for width it did not ask for while hidden
+    # (the content layout's own width is set by the full-width header row)...
+    assert card._split.sizeHint().width() > collapsed_split
+    # ...and the pane does NOT stack its 120px floor under the scoring column.
+    assert expanded[0].height() < collapsed[0].height() + floor
+    assert expanded[1].height() < collapsed[1].height() + floor
     card.desc_toggle.setChecked(False)
     assert measure() == collapsed              # no hole left behind
     # and a new job leaves the card at its compact size too
@@ -419,19 +503,63 @@ def test_card_collapsed_size_is_not_inflated_by_the_hidden_view(qtbot):
     assert measure() == collapsed
 
 
-def test_card_description_takes_the_slack_only_while_expanded(qtbot):
-    # The spacer above the toggle and the view trade stretch on toggle, so
-    # expanding grows the description instead of squashing STRENGTHS/GAPS,
-    # and collapsing does not leave a hole where the view was.
+def test_card_splits_the_width_only_while_expanded(qtbot):
+    # Collapsed, the scoring column owns the whole card and there is no handle;
+    # expanded, the width is split ~50/50 with a draggable divider between.
     card = JobDetailCard()
-    qtbot.addWidget(card)
+    _show(qtbot, card)
     card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
-    lay, spacer_at, view_at = card._content_layout, card._spacer_at, card._desc_at
-    assert (lay.stretch(spacer_at), lay.stretch(view_at)) == (1, 0)
+    _flush()
+    sp = card._split
+    assert sp.sizes()[1] == 0
+    assert sp.sizes()[0] == sp.width()
+    assert sp.handle(1).isHidden()
     card.desc_toggle.setChecked(True)
-    assert (lay.stretch(spacer_at), lay.stretch(view_at)) == (0, 1)
+    _flush()
+    left, right = sp.sizes()
+    assert left > 0 and right > 0
+    assert abs(left - right) <= 8               # ~half and half
+    assert not sp.handle(1).isHidden()          # user-draggable divider
     card.desc_toggle.setChecked(False)
-    assert (lay.stretch(spacer_at), lay.stretch(view_at)) == (1, 0)
+    _flush()
+    assert sp.sizes()[1] == 0 and sp.sizes()[0] == sp.width()
+    assert sp.handle(1).isHidden()
+
+
+def test_card_description_sits_beside_the_scoring_when_expanded(qtbot):
+    card = JobDetailCard()
+    _show(qtbot, card)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    card.desc_toggle.setChecked(True)
+    _flush()
+    left = card._left_pane
+    left_edge = left.mapTo(card, QtCore.QPoint(left.width(), 0)).x()
+    desc = card.desc_view.mapTo(card, QtCore.QPoint(0, 0))
+    assert card.desc_view.width() > 0 and card.desc_view.height() > 0
+    assert desc.x() >= left_edge                          # to the RIGHT of it
+    # beside, not below: the two panes share the same vertical band
+    assert desc.y() < left.mapTo(card, QtCore.QPoint(0, left.height())).y()
+    # the header row stays full width above both panes
+    assert card.apply_btn.mapTo(card, QtCore.QPoint(0, 0)).x() > left_edge
+    assert card.apply_btn.mapTo(card, QtCore.QPoint(0, 0)).y() < desc.y()
+
+
+def test_card_user_split_survives_a_collapse_round_trip(qtbot):
+    card = JobDetailCard()
+    _show(qtbot, card)
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    card.desc_toggle.setChecked(True)
+    _flush()
+    card._split.setSizes([680, 320])            # stands in for a user drag
+    _flush()
+    dragged = card._split.sizes()
+    assert dragged[0] > dragged[1] > 0
+    card.desc_toggle.setChecked(False)
+    _flush()
+    card.desc_toggle.setChecked(True)
+    _flush()
+    restored = card._split.sizes()
+    assert abs(restored[0] - dragged[0]) <= 2 and abs(restored[1] - dragged[1]) <= 2
 
 
 def test_card_buttons_fire_callbacks(qtbot):

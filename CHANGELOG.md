@@ -6,10 +6,10 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
-A per-job chat, a plainer cover letter that ships its own source, two new toggles, and the
-full job description in the detail card. Existing saved configs keep working: the
-AI-writing pass defaults off, and the Apply browser-open toggle defaults on, so nothing
-changes until you change it.
+A per-job chat, a plainer cover letter that ships its own source, two new toggles, and a
+detail card that opens the full job description beside the scoring. Existing saved configs
+keep working: the AI-writing pass defaults off, and the Apply browser-open toggle defaults
+on, so nothing changes until you change it.
 
 ### Added
 - **Ask AI about this job.** A non-modal chat scoped to one posting, from the jobs
@@ -51,6 +51,33 @@ changes until you change it.
   first, then the plain field, with the summary left as the fallback) and does not truncate
   it. The markup is rendered as paragraphs and bullets, the panel scrolls instead of
   stretching the card, and the text can be selected and copied.
+- **The description opens beside the scoring instead of under it.** Showing it splits the
+  detail card into two columns — reasoning, strengths, and gaps on the left, the posting on
+  the right — and grows the card to at least about half the window, because a full posting
+  stacked under the scoring in a ~300px pane meant scrolling a column to read anything. Hiding it
+  restores the height the card had; if you drag the divider above the card while the
+  description is open, that drag wins and hiding leaves your size alone. The split itself is
+  draggable too, and your split comes back when you re-open the description.
+- **The description stays open as you click through jobs.** It used to re-collapse on every
+  selection, which made comparing several postings a click-per-job chore. Now only the text
+  swaps (scrolled back to the top). It folds back to a single column for a job with no
+  description and when the selection is cleared, and re-opens on the next job that has one.
+  The Tracker card is unchanged.
+
+### Fixed
+- **LinkedIn's "Show more" / "Show less" no longer lands at the bottom of the description.**
+  The HTML-to-text pass stripped tags but kept the text inside them, so the posting's own
+  page chrome came through as prose on 2,675 of the 2,678 postings in the master file.
+  Non-content elements (`script`, `style`, `button`, `icon`, `svg`, `nav`, `header`,
+  `footer`, `noscript`, `form`, `select`) are now dropped together with their contents. The
+  rule is structural — nothing is matched against the posting's words — so EEO statements,
+  agency notices, and scam warnings still show.
+- **Bullet lists in the description read as lists again.** Each `<li>` was ending up with a
+  blank line after it, so a 20-bullet posting scrolled like an endless column; bullets in one
+  list are now consecutive lines, with the blank line kept between a list and the prose
+  around it. A bullet whose text was wrapped in a block element is reunited with its marker,
+  empty markers are dropped, and the source HTML's indentation no longer leaks through as a
+  gutter down the left of some lines.
 
 ## [1.7.1] - 2026-07-28
 

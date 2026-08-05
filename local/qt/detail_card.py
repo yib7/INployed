@@ -4,17 +4,28 @@
 title + meta line, the action row (Open posting / Tailor / Apply — the main
 window aliases `btn_tailor`/`btn_apply` to this card's buttons so every
 existing enable/repolish path keeps its object identities), a chips row
-(score pill, deep mini-bar chip, applicants / salary / posted), the REASON
-lede, STRENGTHS/GAPS columns, and a collapsed "Show description" tertiary
-toggle over the full job description (locked user decision: it stays, hidden
-by default). The description is a read-only QPlainTextEdit — it can run to
-thousands of characters with real line breaks and bullets, so it keeps that
-structure, scrolls internally, and can never interpret markup.
+(score pill, deep mini-bar chip, applicants / salary / posted), and — below
+those two full-width rows — a horizontal QSplitter holding the scoring
+column (REASON lede, STRENGTHS/GAPS, the "Show description" tertiary
+toggle) on the left and the full job description on the right. Collapsed,
+the right pane is hidden and Qt hides its handle with it, so the card is a
+plain single column with the shape it had before the split existed;
+expanded it defaults to 50/50 and stays draggable, and the drag is
+remembered for the session. The toggle is sticky (locked user decision):
+once open it stays open as the user clicks through jobs and only the text
+swaps. It folds back for a job with no JD, and when the card is cleared —
+in both cases without unchecking the toggle, so the next job that has a
+description re-opens the split and the stickiness survives. The card
+reports the state through `descriptionToggled(bool)` rather than reaching
+up into its parent; the main window uses it to grow the outer pane. The
+description is a read-only QPlainTextEdit — it can run to thousands of
+characters with real line breaks and bullets, so it keeps that structure,
+scrolls internally, and can never interpret markup.
 
 On the Tracker tab the card switches to its tracker variant: status +
 follow-up pills, a days-since chip, a synthesized NEXT STEP line, and
 Open résumé PDF / Mark followed up actions (Tailor/Apply hide but keep
-existing).
+existing). It carries no JD, so it is always a single column.
 
 Data comes from `jobsdata.job_detail_fields(row, snapshot)`;
 `toPlainText()` exposes the rendered content as plain text (test-coupled).

@@ -70,13 +70,21 @@ remembered. **Restart** closes and reopens the dashboard.
 
 Selecting a job opens a **detail card** at the bottom: the job's title and meta line,
 score / deep-score / applicants chips, the model's reasoning, strengths, and gaps, a
-collapsed **Show description** panel, and the per-job actions (**Open posting**, **Tailor
-résumé**, **Apply**). Expand the description and you get the whole posting rather than an
-excerpt of it: the panel scrolls on its own instead of stretching the card, and the text
-can be selected and copied. On the Tracker it switches to a tracker variant with status and
-follow-up pills plus a suggested next step. It appears only on the job-list tabs (**High
-Score / All Jobs / Tracker**) and hides itself elsewhere; **drag the divider above it**
-to make it taller or shorter.
+**Show description** button (on jobs that came with a description), and the per-job
+actions (**Open posting**, **Tailor résumé**, **Apply**). Click **Show description** and
+the card splits into two columns — the scoring stays on the left, the whole posting opens
+beside it on the right — and the card grows to at least about half the window so there is
+room to read. **Hide description** gives that height back, unless you dragged the divider
+above the card while the description was open: then your size stands. The description
+stays open as you click from job to job: only the text changes, so you can read down a
+list without re-opening it each time. It scrolls on its own instead of stretching the
+card, and the text can be selected and copied. Both dividers are draggable — the one
+between the scoring and the description (your split is remembered until you close the
+dashboard) and **the divider above the card**, which sets its height. A job with no
+description at all folds the card back to one column. On the Tracker the card switches to
+a tracker variant with status and follow-up pills plus a suggested next step, and stays a
+single column (there is no description there). The card appears only on the job-list tabs
+(**High Score / All Jobs / Tracker**) and hides itself elsewhere.
 
 At-a-glance colors: a job whose tailored-résumé folder still exists on disk is tinted
 **blue** in the High Score / All Jobs lists (delete the folder and the tint clears on the

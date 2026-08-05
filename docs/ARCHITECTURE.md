@@ -158,17 +158,35 @@ with its jobs/unseen/tracked counters + freshness pill, the Tracker's status chi
 auto-apply pipeline chips) and **`local/qt/detail_card.py:JobDetailCard`**, the bottom pane under the job
 tables: title + meta, the Open posting / Tailor résumé / Apply action
 row, score/deep/applicants chips, the REASON lede with STRENGTHS/GAPS columns (a tracker variant
-swaps in status/follow-up pills and a NEXT STEP line), and a collapsed "Show description" panel
-holding the **whole, uncapped** JD. That panel is a read-only `QPlainTextEdit`, not a label: it keeps
+swaps in status/follow-up pills and a NEXT STEP line), and a "Show description" toggle over the
+**whole, uncapped** JD. Everything below the header and chips rows lives in a horizontal
+`QSplitter` the card owns: scoring on the left, description on the right. Collapsed, the right pane
+is hidden (Qt hides the handle with it) and the card is a plain single column; expanded it defaults
+to 50/50, stays draggable, and keeps the drag for the session. The toggle is **sticky** — a new
+selection swaps the text and resets the scroll but leaves the split open — and the card emits
+`descriptionToggled(bool)` so `MainWindow._on_description_toggled` can grow the outer splitter's
+bottom pane to ~half the window and hand the height back on collapse, without the card reaching up
+into its parent. That growth is a floor, not an assignment — a pane already at least half is left
+alone — and a drag of the outer divider while the description is open retires the recorded sizes
+(`_on_preview_splitter_moved`), so the collapse leaves a hand-set height standing. The description
+pane is a read-only `QPlainTextEdit`, not a label: it keeps
 the posting's paragraphs and bullets, scrolls internally instead of growing the card without bound,
 is selectable/copyable, and is plain text *by construction* — a stronger form of the P2-19 guarantee
 than a label's text-format flag, since scraped `<b>`/`<img>` can never be parsed as markup. Its text
 comes from `jobsdata.job_detail_fields`, which prefers `job_description_formatted` →
 `job_description` → `job_summary` (first one over 40 characters, the same order the résumé tailor
-uses) and passes the markup through `jobsdata.html_to_text`: block tags become line breaks, `<li>` a
-`• ` bullet, entities are unescaped *after* stripping so an escaped tag in the posting's own prose
-stays inert text. **Restart** (`MainWindow._restart_app`) flags the intent and closes the window;
-`app.main` relaunches a fresh process after the single-instance lock is released.
+uses) and passes the markup through `jobsdata.html_to_text`: non-content elements (`script`,
+`style`, `button`, `icon`, `svg`, `nav`, `header`, `footer`, `noscript`, `form`, `select`) are
+dropped **with their text** first, so LinkedIn's "Show more"/"Show less" chrome no longer reaches
+the card (each pattern spans an opener to its own closer; a self-closing or unclosed opener falls
+through to the plain tag strip, which leaks a word of chrome rather than swallowing the prose after
+it); then block tags become line breaks, `<li>` a `• ` bullet, bullets within one list stay on
+consecutive lines (a blank line still separates a list from the prose around it), source
+indentation is stripped per line, and entities are unescaped *after* the tag strip so an escaped
+tag in the posting's own prose stays inert text. The cleanup is structural only — it never
+pattern-matches prose, so EEO statements and agency notices survive. **Restart**
+(`MainWindow._restart_app`) flags the intent and closes the window; `app.main` relaunches a fresh
+process after the single-instance lock is released.
 
 Each job tab folds its discovery filters (plus the Tracker's *Follow-up due
 only*, via `JobsTab.add_filter_row`) into a single **Filters** popup with an active-count badge. Row

@@ -13,6 +13,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import settings  # noqa: E402
+import settings_archive  # noqa: E402
+import watcher  # noqa: E402
 
 
 def _targets(tmp_path: Path) -> dict[str, Path]:
@@ -25,13 +27,23 @@ def test_load_returns_defaults_when_file_absent(tmp_path):
     assert values["min_score"] == 4
     assert values["followup_days"] == 5
     assert values["gdrive_root"] == ""
-    assert values["mtime_stable_seconds"] == 30
 
 
 def test_projects_max_is_not_a_settings_field():
     # Cycle 19: the project count + at-most/exactly-N mode moved out of Settings
     # into the Resume Data tab's Resume Layout section (jobsdata.save_projects_count).
     assert not any(f.key == "projects_max" for f in settings.SETTINGS_SCHEMA)
+
+
+def test_mtime_stable_seconds_is_not_a_settings_field():
+    # Settings declutter: the sync debounce is a WATCHER-only key. Its help even
+    # claimed the dashboard used it, but the only reader is local/watcher.py.
+    # It must stay out of the schema AND keep its watcher-side default: that
+    # default is what makes the removal invisible, because watcher.load_config()
+    # reads config.json directly, so an absent key falls back to 30 and a value a
+    # user already saved is still honoured.
+    assert "mtime_stable_seconds" not in {f.key for f in settings.SETTINGS_SCHEMA}
+    assert watcher.DEFAULT_CONFIG["mtime_stable_seconds"] == 30
 
 
 def test_ui_scale_pct_is_not_a_settings_field():
@@ -121,6 +133,14 @@ def test_apply_section_removed_from_schema():
     # so the dead "Apply" section / "apply" target must not appear in the schema.
     assert not any(f.section == "Apply" for f in settings.SETTINGS_SCHEMA)
     assert not any(f.target == "apply" for f in settings.SETTINGS_SCHEMA)
+    # ...nor in the registries that hang off a target id. With zero fields
+    # pointing at it, a registered "apply" target only made every snapshot walk a
+    # file that isn't there. Legacy apply_config.json is still READ by
+    # resume_tailor.apply_config.load_apply_config(), which opens the repo-root
+    # path itself — it never went through the settings layer.
+    assert "apply" not in settings.TARGET_FILES
+    assert "apply" not in settings.STORAGE_LABELS
+    assert "apply" not in settings_archive._SNAPSHOT_TARGETS
 
 
 def test_list_type_validate_accepts_list_of_str():
@@ -153,7 +173,6 @@ def _all_targets_env(tmp_path: Path) -> dict[str, Path]:
         "config": tmp_path / "config.json",
         "search": tmp_path / "search_config.json",
         "scoring": tmp_path / "scoring_config.json",
-        "apply": tmp_path / "apply_config.json",
         "env": tmp_path / ".env",
     }
 
@@ -272,7 +291,6 @@ def test_storage_location_maps_each_target():
     assert settings.storage_location(by_key["keywords"]) == "search_config.json"
     assert settings.storage_location(by_key["stage1_model"]) == "scoring_config.json"
     assert settings.storage_location(by_key["min_score"]) == "config.json"
-    assert settings.STORAGE_LABELS["apply"] == "apply_config.json"
 
 
 def test_tailor_open_folder_is_a_resume_bool_defaulting_off(tmp_path):

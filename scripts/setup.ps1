@@ -132,6 +132,10 @@ if ($haveMaster -and -not $Force) {
 }
 
 # --- 3. local/config.json (dashboard prefs) -----------------------------------
+# mtime_stable_seconds is a WATCHER-only key (how long a freshly synced file must
+# stop changing before watcher.py opens it). It is deliberately not in the
+# Settings tab schema; watcher.load_config() reads config.json directly and
+# defaults it to 30, so seeding it here just makes the value visible to editors.
 $cfg = [ordered]@{ gdrive_root = ''; mtime_stable_seconds = 30; min_score = $MinScore; followup_days = $FollowupDays }
 if (Test-Path -LiteralPath $cfgPath) {
     try {

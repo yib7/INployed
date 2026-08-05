@@ -3,7 +3,7 @@
 Every successful Save writes a snapshot folder
 (``settings_archive/<YYYY-MM-DD_HH-MM-SS>/``) holding a copy of each settings
 file that exists — ``config.json``, ``search_config.json``,
-``scoring_config.json``, ``apply_config.json`` and ``.env``. The user chose
+``scoring_config.json`` and ``.env``. The user chose
 self-contained snapshots, so the copy of ``.env`` carries the SAME secrets the
 live file does: the archive directory is therefore git-ignored, and secret
 values are never logged or surfaced in the UI — they only ride along inside the
@@ -26,7 +26,10 @@ import settings
 ARCHIVE_DIRNAME = "settings_archive"
 TS_FORMAT = "%Y-%m-%d_%H-%M-%S"
 # The settings files a snapshot copies, by target id (the ids settings.py uses).
-_SNAPSHOT_TARGETS = ("config", "search", "scoring", "apply", "env")
+# No "apply": settings.py dropped that vestigial target, so a legacy repo-root
+# apply_config.json is no longer snapshotted — matching apply_answers.json, the
+# live answer store, which never was.
+_SNAPSHOT_TARGETS = ("config", "search", "scoring", "env")
 
 # Prune policy names — also the choice values of the archive_prune_mode setting.
 PRUNE_OFF = "Keep everything"

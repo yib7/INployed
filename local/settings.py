@@ -12,8 +12,8 @@ load/validate/save that:
     config.json.
 
 The schema is a flat list of Field rows grouped by `section`, backing onto
-five target files (config / search / scoring / apply / env — see
-TARGET_FILES), so the Qt Settings tab can render one labelled input per row.
+four target files (config / search / scoring / env — see TARGET_FILES), so the
+Qt Settings tab can render one labelled input per row.
 Every public function accepts an optional `targets` mapping so tests can point
 the backing files at a tmp directory.
 """
@@ -40,8 +40,8 @@ class Field:
     label: str          # UI label
     type: str           # "int"|"str"|"bool"|"choice"|"multichoice"|"path"|"list"
     default: Any
-    section: str        # "Dashboard"|"Scraper"|"Scoring"|"Resume"|"Apply"|"Credentials"|...
-    target: str         # backing-file id (TARGET_FILES): config|search|scoring|apply|env
+    section: str        # "Dashboard"|"Scraper"|"Scoring"|"Resume"|"Credentials"|...
+    target: str         # backing-file id (TARGET_FILES): config|search|scoring|env
     help: str = ""
     choices: tuple = ()
     min: float | None = None
@@ -79,7 +79,13 @@ TARGET_FILES: dict[str, Path] = {
     "config": HERE / "config.json",
     "search": ROOT / "search_config.json",
     "scoring": ROOT / "scoring_config.json",
-    "apply": ROOT / "apply_config.json",
+    # No "apply" target: zero fields ever pointed at apply_config.json, and the
+    # apply pipeline reads that legacy file itself (resume_tailor.apply_config
+    # .load_apply_config opens the repo-root path directly and merges over its own
+    # DEFAULTS), so nothing here needs to know about it. Consequence of dropping
+    # it: a legacy root apply_config.json is no longer copied into settings
+    # snapshots — the same treatment apply_answers.json, the LIVE answer store,
+    # has always had.
     # Secrets, identity, and paths live in the git-ignored .env at the repo root,
     # the same file scraper.py / score_jobs.py / the tailor load at runtime.
     "env": ROOT / ".env",
@@ -94,11 +100,10 @@ SETTINGS_SCHEMA: list[Field] = [
           slider=True),
     Field("gdrive_root", "Job data folder", "path", "", "Dashboard", "config",
           help="Folder the dashboard reads scored CSVs from."),
-    Field("mtime_stable_seconds", "Wait before opening a new file (seconds)", "int", 30,
-          "Dashboard", "config",
-          help="How long a freshly synced file must stop changing before the dashboard "
-               "opens it — stops it reading a half-downloaded file. 30 is fine for most.",
-          min=1, max=600),
+    # No mtime_stable_seconds row: the sync debounce is watcher-only (see
+    # watcher.DEFAULT_CONFIG), never read by the dashboard, so it is not a
+    # user-tunable dashboard setting. watcher.load_config() reads config.json
+    # directly, so a saved value still applies and an absent key falls back to 30.
     Field("stale_after_hours", "Flag data as stale after (hours)", "int", 36,
           "Dashboard", "config",
           help="The Stats tab warns that the pipeline may have failed when the newest run is "
@@ -411,7 +416,6 @@ STORAGE_LABELS: dict[str, str] = {
     "config": "config.json",
     "search": "search_config.json",
     "scoring": "scoring_config.json",
-    "apply": "apply_config.json",
     "env": ".env",
 }
 

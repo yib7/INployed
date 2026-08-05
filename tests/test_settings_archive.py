@@ -11,7 +11,6 @@ def _targets(tmp_path):
         "config": tmp_path / "config.json",
         "search": tmp_path / "search_config.json",
         "scoring": tmp_path / "scoring_config.json",
-        "apply": tmp_path / "apply_config.json",
         "env": tmp_path / ".env",
     }
 

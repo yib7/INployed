@@ -2,6 +2,7 @@
 from datetime import datetime
 
 import envfile
+import pytest
 import settings
 import settings_archive
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -54,12 +55,150 @@ def test_editable_combo_opens_popup_on_click(qtbot, monkeypatch):
     assert opened  # clicking the text field opened the dropdown
 
 
+def _form(tmp_path, **kw):
+    """A SettingsForm that touches nothing outside tmp_path.
+
+    Without `collapsed_sections`/`save_collapsed` the constructor falls through to
+    `jobsdata.load_collapsed_sections()`, which reads the DEVELOPER's real
+    local/config.json — so a test's widget visibility would depend on which
+    sections that person happens to have folded.
+    """
+    return SettingsForm(targets=_targets(tmp_path), collapsed_sections=[],
+                        save_collapsed=lambda s: None, **kw)
+
+
 def test_editable_choice_field_has_popup_filter(qtbot, tmp_path):
-    form = SettingsForm(targets=_targets(tmp_path))
+    form = _form(tmp_path)
     qtbot.addWidget(form)
-    # stage1_model is an editable_choice -> a popup filter was attached to it
-    combo = next(c for c in form.findChildren(QtWidgets.QComboBox) if c.isEditable())
+    # stage1_model is an editable_choice -> a popup filter was attached to it.
+    # Looked up BY KEY, not by "first editable combo in the tree": conditional
+    # visibility and the advanced toggle both reorder/hide widgets, and a
+    # positional probe would then silently assert about a different field.
+    combo = form._widgets["stage1_model"]
+    assert isinstance(combo, QtWidgets.QComboBox) and combo.isEditable()
     assert combo.findChild(st._PopupOnClick) is not None
+
+
+# --- cycle 18 P0: widget / form-row registries -----------------------------------
+
+def test_widget_registry_covers_every_schema_key(qtbot, tmp_path):
+    """Every Field must be addressable by key. This is the guard that stops a
+    newly added setting from shipping unregistered — conditional visibility,
+    the advanced toggle, dirty markers and search all address fields by key."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    missing = [f.key for f in settings.SETTINGS_SCHEMA if f.key not in form._widgets]
+    assert missing == []
+    assert all(isinstance(w, QtWidgets.QWidget) for w in form._widgets.values())
+
+
+def test_every_field_registers_the_widget_in_its_own_row(qtbot, tmp_path):
+    """The registered widget must live in the field's OWN first row.
+
+    Coverage alone can't catch a mis-registration (a copy-pasted
+    `self._widgets[f.key] = <some other widget>`, or a future composite type that
+    registers its wrapper). Walking every field also makes this the guard on the
+    stale-index hazard: an `insertRow` anywhere would shift the stored indices and
+    land some field's lookup on a neighbour's row.
+    """
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    role = QtWidgets.QFormLayout.ItemRole.FieldRole
+    for f in settings.SETTINGS_SCHEMA:
+        rows = form._rows[f.key]
+        if not rows:
+            continue                       # vm_enabled: the section gate, no form row
+        layout, row = rows[0]
+        cell = layout.itemAt(row, role).widget()
+        w = form._widgets[f.key]
+        assert w is cell or cell.isAncestorOf(w), f"{f.key} is registered outside its own row"
+
+
+def test_row_registry_holds_both_rows_for_every_field(qtbot, tmp_path):
+    """Each field renders TWO form rows — label+storage chip, then the muted help
+    paragraph. Both are recorded so hiding a field takes its explanation with it.
+    `vm_enabled` is the one exception: it is the VM section's master checkbox,
+    added straight to the section body rather than to a QFormLayout. (Every field
+    currently sets `help`, so the one-row arm below is defensive, not exercised.)"""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    for f in settings.SETTINGS_SCHEMA:
+        assert f.key in form._rows, f"{f.key} has no row entry"
+        expected = 0 if f.key == "vm_enabled" else (2 if f.help else 1)
+        assert len(form._rows[f.key]) == expected, f"{f.key} rows"
+    # and the recorded (form, index) pairs really point at that field's rows
+    form_layout, label_row = form._rows["min_score"][0]
+    _, help_row = form._rows["min_score"][1]
+    assert help_row == label_row + 1
+    label_cell = form_layout.itemAt(label_row, QtWidgets.QFormLayout.ItemRole.LabelRole).widget()
+    assert "Min score" in label_cell.findChild(QtWidgets.QLabel).text()
+    help_widget = form_layout.itemAt(help_row, QtWidgets.QFormLayout.ItemRole.FieldRole).widget()
+    assert help_widget.property("muted") is True
+
+
+def test_composite_cells_register_the_inner_control(qtbot, tmp_path):
+    """The four composite cells wrap their real control in a container. The
+    registry must hold the INNER control — dirty tracking and error styling
+    attach to the thing the user types in, not to a layout box."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+
+    slider = form._widgets["followup_days"]          # _slider_widget: slider + readout
+    assert isinstance(slider, QtWidgets.QSlider)
+    slider.setValue(9)
+    assert form._getters["followup_days"]() == "9"   # the registered widget IS the value
+
+    path = form._widgets["gdrive_root"]              # _path_widget: line edit + Browse
+    assert isinstance(path, QtWidgets.QLineEdit)
+    path.setText("D:/jobs")
+    assert form._getters["gdrive_root"]() == "D:/jobs"
+
+    secret = form._widgets["GEMINI_API_KEYS"]        # _secret_widget: line edit + Hide
+    assert isinstance(secret, QtWidgets.QLineEdit)
+    assert secret is form._secret_edits["GEMINI_API_KEYS"]
+
+    # multichoice is the documented exception: N checkboxes, no single inner
+    # control, so the cell is registered and the per-choice boxes stay in _multi.
+    multi = form._widgets["remote_types"]
+    assert type(multi) is QtWidgets.QWidget
+    boxes = set(form._multi["remote_types"].values())
+    assert boxes and boxes <= set(multi.findChildren(QtWidgets.QCheckBox))
+
+
+def test_set_field_visible_hides_and_restores_both_rows(qtbot, tmp_path):
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    rows = form._rows["min_score"]
+    assert len(rows) == 2
+    assert all(f.isRowVisible(r) for f, r in rows)
+
+    form._set_field_visible("min_score", False)
+    assert not any(f.isRowVisible(r) for f, r in rows)   # help row hidden too
+
+    form._set_field_visible("min_score", True)
+    assert all(f.isRowVisible(r) for f, r in rows)
+
+
+def test_set_field_visible_is_a_noop_for_a_field_with_no_form_rows(qtbot, tmp_path):
+    # vm_enabled is the VM section's master checkbox, not a QFormLayout row, so
+    # it registers zero rows: the call must be a harmless no-op, not a KeyError
+    # and not a hidden gate the user can no longer untick.
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    check = form._widgets["vm_enabled"]
+    assert form._rows["vm_enabled"] == []
+    before = check.isHidden()
+    form._set_field_visible("vm_enabled", False)
+    assert check.isHidden() is before
+
+
+def test_set_field_visible_raises_on_an_unregistered_key(qtbot, tmp_path):
+    # Every schema key is registered, so a miss is a typo or a key deleted from
+    # the schema — surfacing it beats silently hiding nothing.
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    with pytest.raises(KeyError):
+        form._set_field_visible("no_such_setting", False)
 
 
 def test_secret_box_shows_saved_value(qtbot, tmp_path):

@@ -117,6 +117,22 @@ class SettingsForm(QtWidgets.QWidget):
 
         self._getters: dict[str, Callable[[], str]] = {}
         self._setters: dict[str, Callable[[object], None]] = {}
+        # Address any field by key: its control, and every form row it occupies.
+        # `_widgets` holds the control you'd read/write/style (the INNER one for a
+        # composite cell — see `_make_widget`); `_rows` holds the (form, index)
+        # pairs `_set_field_visible` flips, which for a normal field is BOTH its
+        # label row and its muted help row.
+        #
+        # CONSTRAINT: the row indices are POSITIONAL and captured once, at build.
+        # Never `insertRow`/`removeRow` into these forms afterwards — an insert
+        # shifts every later row and silently re-points every stored index below
+        # it at the wrong field, with no error (`setRowVisible` on an out-of-range
+        # row neither raises nor warns). A row that only sometimes shows (an
+        # inline validation message, say) must be BUILT here, hidden, and toggled
+        # with `setRowVisible` — not inserted later.
+        # `test_every_field_registers_the_widget_in_its_own_row` is the guard.
+        self._widgets: dict[str, QtWidgets.QWidget] = {}
+        self._rows: dict[str, list[tuple[QtWidgets.QFormLayout, int]]] = {}
         self._multi: dict[str, dict[str, QtWidgets.QCheckBox]] = {}
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
@@ -214,6 +230,13 @@ class SettingsForm(QtWidgets.QWidget):
         sec.add_widget(check)
         self._getters[gate_key] = lambda c=check: c.isChecked()
         self._setters[gate_key] = lambda v, c=check: c.setChecked(bool(v))
+        # The gate is a section-body widget, not a QFormLayout row, so it is the one
+        # schema key with an EMPTY row list (registered so lookups never KeyError).
+        # That makes `_set_field_visible(gate_key, ...)` a deliberate no-op, which is
+        # the behaviour we want: `_apply_section_visibility` keys off the checkbox's
+        # STATE, so hiding the gate would strand its section's fields ungovernable.
+        self._widgets[gate_key] = check
+        self._rows.setdefault(gate_key, [])
 
         container = QtWidgets.QWidget()
         cbox = QtWidgets.QVBoxLayout(container)
@@ -246,6 +269,21 @@ class SettingsForm(QtWidgets.QWidget):
             if container is not None:
                 container.setVisible(bool(self._getters[gate_key]()))
 
+    def _set_field_visible(self, key: str, visible: bool) -> None:
+        """Show or hide every form row ONE field occupies — its label+chip row AND
+        its help row, so a hidden control never leaves its explanation behind.
+
+        Composes with the two coarser visibility mechanisms rather than fighting
+        them: a row hidden here stays hidden through a VM gate off/on cycle and a
+        section collapse/expand, and showing a row inside a gated-off container
+        does not force the container open. `KeyError` on an unregistered key is
+        deliberate — every schema key IS registered, so a miss is a typo or a key
+        that was deleted from the schema, not a field that happens to be hidden.
+        `vm_enabled` registers zero rows, which makes it a legitimate no-op.
+        """
+        for form, row in self._rows[key]:
+            form.setRowVisible(row, visible)
+
     def _label_cell(self, f: settings.Field) -> QtWidgets.QWidget:
         cell = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(cell)
@@ -264,14 +302,30 @@ class SettingsForm(QtWidgets.QWidget):
         # which QFormLayout can't expose as the field's label to assistive
         # tech -- name the input explicitly so screen readers announce it.
         widget.setAccessibleName(f.label)
+        # A field owns TWO rows: label+chip, then the muted help paragraph.
+        # Record both so `_set_field_visible` takes the explanation with the
+        # control instead of leaving an orphaned paragraph on screen.
+        rows = self._rows.setdefault(f.key, [])
         form.addRow(self._label_cell(f), widget)
+        rows.append((form, form.rowCount() - 1))
         if f.help:
             help_lab = QtWidgets.QLabel(f.help)
             help_lab.setProperty("muted", True)
             help_lab.setWordWrap(True)
             form.addRow("", help_lab)
+            rows.append((form, form.rowCount() - 1))
 
     def _make_widget(self, f, value):
+        """Build one field's input cell and register its control in `self._widgets`.
+
+        The registered widget is the one a caller would read, write, style or
+        mark dirty. For the four composite cells that is the INNER control, not
+        the container this returns: `_slider_widget` registers its `QSlider`,
+        `_path_widget` and `_secret_widget` their `QLineEdit`. `multichoice` is
+        the deliberate exception — it has no single inner control (one
+        `QCheckBox` per choice, all of which move together), so it registers the
+        cell and the per-choice boxes stay addressable through `self._multi[key]`.
+        """
         if f.secret:
             return self._secret_widget(f, value)
         if f.type == "bool":
@@ -279,6 +333,7 @@ class SettingsForm(QtWidgets.QWidget):
             cb.setChecked(bool(value))
             self._getters[f.key] = cb.isChecked
             self._setters[f.key] = lambda v, c=cb: c.setChecked(bool(v))
+            self._widgets[f.key] = cb
             return cb
         if f.type == "choice":
             combo = QtWidgets.QComboBox()
@@ -286,6 +341,7 @@ class SettingsForm(QtWidgets.QWidget):
             self._set_combo(combo, value)
             self._getters[f.key] = combo.currentText
             self._setters[f.key] = lambda v, c=combo: self._set_combo(c, v)
+            self._widgets[f.key] = combo
             return combo
         if f.type == "editable_choice":
             combo = QtWidgets.QComboBox()
@@ -295,6 +351,7 @@ class SettingsForm(QtWidgets.QWidget):
             combo.lineEdit().installEventFilter(_PopupOnClick(combo))
             self._getters[f.key] = combo.currentText
             self._setters[f.key] = lambda v, c=combo: c.setCurrentText("" if v is None else str(v))
+            self._widgets[f.key] = combo
             return combo
         if getattr(f, "slider", False) and f.type == "int":
             return self._slider_widget(f, value)
@@ -306,12 +363,14 @@ class SettingsForm(QtWidgets.QWidget):
             txt.setMinimumHeight(150)
             txt.setPlainText("\n".join(str(v) for v in (value if isinstance(value, list) else [])))
             self._lists[f.key] = txt
+            self._widgets[f.key] = txt
             return txt
         if f.type == "path":
             return self._path_widget(f, value)
         edit = QtWidgets.QLineEdit("" if value is None else str(value))
         self._getters[f.key] = edit.text
         self._setters[f.key] = lambda v, e=edit: e.setText("" if v is None else str(v))
+        self._widgets[f.key] = edit
         return edit
 
     @staticmethod
@@ -344,6 +403,7 @@ class SettingsForm(QtWidgets.QWidget):
         col.addWidget(row)
         self._getters[f.key] = lambda s=slider: str(s.value())
         self._setters[f.key] = lambda v, s=slider: s.setValue(int(v) if str(v).strip() else int(f.default))
+        self._widgets[f.key] = slider    # the inner control, not the cell
         return cell
 
     def _multichoice_widget(self, f, value):
@@ -358,6 +418,9 @@ class SettingsForm(QtWidgets.QWidget):
             self._multi[f.key][choice] = cb
             h.addWidget(cb)
         h.addStretch(1)
+        # No single inner control here: the field IS the row of checkboxes, so the
+        # cell is what a caller styles or marks dirty. Per-choice boxes: _multi[key].
+        self._widgets[f.key] = cell
         return cell
 
     def _path_widget(self, f, value):
@@ -372,6 +435,7 @@ class SettingsForm(QtWidgets.QWidget):
         h.addWidget(browse)
         self._getters[f.key] = edit.text
         self._setters[f.key] = lambda v, e=edit: e.setText("" if v is None else str(v))
+        self._widgets[f.key] = edit     # the inner control, not the cell
         return cell
 
     def _secret_widget(self, f, value):
@@ -395,6 +459,7 @@ class SettingsForm(QtWidgets.QWidget):
         h.addWidget(hide)
         self._secret_edits[f.key] = edit
         self._secret_hides[f.key] = hide
+        self._widgets[f.key] = edit     # the inner control, not the cell
         return cell
 
     def _add_buttons(self):

@@ -206,30 +206,36 @@ class JobDetailCard(QtWidgets.QFrame):
         head.addWidget(self.apply_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         v.addLayout(head)
 
-        # Everything BELOW the header lives in a horizontal splitter: the
-        # scoring column (chips / REASON / STRENGTHS / GAPS / toggle) on the
-        # left, the full description on the right. Collapsed, the right pane is
-        # hidden — Qt then hides the handle too, so the splitter is visually a
-        # plain single column and the card keeps its compact shape.
+        # Chips row (rebuilt per job) — full width, like the header above it.
+        # It is a line of FIXED-size pills that together demand ~830px, and
+        # neither Pill nor _DeepChip elides, so a chips row confined to a
+        # half-width pane clips its trailing chips (and chops the deep-score
+        # mini-bar in half) on any display narrower than ~1700px. Full-bleed it
+        # costs nothing — it is one metadata strip — and it keeps the left pane
+        # free to shrink to its text minimum, which is what makes a real 50/50
+        # split reachable at real window sizes.
+        self._chips = QtWidgets.QHBoxLayout()
+        self._chips.setSpacing(8)
+        v.addLayout(self._chips)
+
+        # Everything BELOW that lives in a horizontal splitter: the scoring
+        # column (REASON / STRENGTHS / GAPS / toggle) on the left, the full
+        # description on the right. Collapsed, the right pane is hidden — Qt
+        # hides the handle with it, so the splitter is visually a plain single
+        # column and the card keeps exactly its previous compact shape.
         self._split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self._split.setChildrenCollapsible(False)   # no drag-to-zero pane
         self._left_pane = QtWidgets.QWidget()
-        # An explicit minimum REPLACES the layout's computed one (qSmartMinSize),
-        # which is what makes a real half-and-half split possible: the chips row
-        # is a line of fixed-size pills and alone demands ~830px, so without this
-        # floor the splitter could never give the description half the card. Past
-        # the floor the trailing chips clip at the pane edge — the divider is
-        # draggable, so the user can hand the width back.
-        self._left_pane.setMinimumWidth(round(280 * theme._current_scale))
+        # Vertically Minimum (no ShrinkFlag), so qSmartMinSize floors the pane
+        # at its preferred height and the scoring column keeps the "cannot be
+        # squeezed" property the flat layout gave it. Horizontally Preferred —
+        # it MUST shrink, or the description could never take half the card.
+        self._left_pane.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                                      QtWidgets.QSizePolicy.Policy.Minimum)
         lv = QtWidgets.QVBoxLayout(self._left_pane)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(8)                            # same rhythm as the header
         self._split.addWidget(self._left_pane)
-
-        # Chips row (rebuilt per job).
-        self._chips = QtWidgets.QHBoxLayout()
-        self._chips.setSpacing(8)
-        lv.addLayout(self._chips)
 
         # REASON / NEXT STEP lede.
         self.reason_label = QtWidgets.QLabel("")
@@ -256,7 +262,7 @@ class JobDetailCard(QtWidgets.QFrame):
         self.desc_toggle = QtWidgets.QPushButton("Show description")
         self.desc_toggle.setProperty("tier", "tertiary")
         self.desc_toggle.setCheckable(True)
-        self.desc_toggle.toggled.connect(lambda _on: self._apply_desc_state())
+        self.desc_toggle.toggled.connect(self._on_desc_toggled)
         lv.addWidget(self.desc_toggle, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         # The JD is raw scraped text and now arrives in full, with real line
         # breaks and "• " bullets. A read-only QPlainTextEdit keeps that
@@ -300,7 +306,11 @@ class JobDetailCard(QtWidgets.QFrame):
         # The splitter owns the card's leftover height; each pane top-aligns its
         # own content, so the collapsed card looks exactly as it did before.
         v.addWidget(self._split, 1)
-        self._content_layout = v
+
+    def _on_desc_toggled(self, _checked: bool) -> None:
+        """The toggle's own slot — the state is re-read inside, because
+        `set_fields` reaches the same code with no bool to hand over."""
+        self._apply_desc_state()
 
     def _half_split_sizes(self) -> list[int]:
         """A 50/50 split of whatever width the splitter currently has."""
@@ -336,6 +346,12 @@ class JobDetailCard(QtWidgets.QFrame):
     def set_empty(self) -> None:
         self._jid = ""
         self._plain = ""
+        # Clearing the JD closes the split (and emits False) without touching
+        # the toggle: an empty card has nothing to show beside the placeholder,
+        # so the outer pane must not stay grown. The next selection re-opens it,
+        # because the toggle is still checked — stickiness survives.
+        self.desc_view.clear()
+        self._apply_desc_state()
         self._content.setVisible(False)
         self._empty.setVisible(True)
 

@@ -417,6 +417,16 @@ def test_card_emits_description_toggled_only_on_real_changes(qtbot):
     # a job with nothing to show closes the split — that IS a state change
     card.set_fields({"title": "T", "company": "C", "jd": ""}, jid="3")
     assert seen == [True, False, True, False]
+    # ...and so does clearing the selection: the empty card must not leave the
+    # outer pane grown around a placeholder. The next job re-opens it, because
+    # the toggle itself is still checked.
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    assert seen == [True, False, True, False, True]
+    card.set_empty()
+    assert seen == [True, False, True, False, True, False]
+    card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
+    assert seen == [True, False, True, False, True, False, True]
+    assert not card.desc_view.isHidden()
 
 
 def test_card_description_view_is_a_read_only_plain_text_edit(qtbot):
@@ -470,32 +480,39 @@ def test_card_collapsed_size_is_not_inflated_by_the_hidden_pane(qtbot):
     # carelessly (retainSizeWhenHidden, or a minimum parked on the card). Now
     # that the view is the splitter's right pane, expanding must spend WIDTH,
     # not height — the old "grows by at least the floor" claim is inverted.
-    # Measure the content layout, not card.sizeHint(): the card's own outer
-    # layout caches heightForWidth and an unshown test window never flushes it.
+    # Measure the splitter, not card.sizeHint(): the card's own outer layout
+    # caches heightForWidth and an unshown test window never flushes it, and
+    # the content layout's own width is set by the full-width header row.
+    # QSplitter recomputes both hints from its visible children on every call.
     card = JobDetailCard()
     qtbot.addWidget(card)
     card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
     floor = round(120 * theme._current_scale)
     assert card.desc_view.minimumHeight() == floor
-    lay = card._content_layout
+    sp = card._split
 
     def measure():
-        lay.invalidate()
-        return lay.sizeHint(), lay.minimumSize()
+        return sp.sizeHint(), sp.minimumSizeHint()
 
+    # What the splitter is allowed to squeeze the scoring column to (the pane is
+    # vertically Minimum, so its own sizeHint is part of that floor).
+    left_min_h = max(card._left_pane.minimumSizeHint().height(),
+                     card._left_pane.sizeHint().height())
+    assert left_min_h < floor                  # otherwise the next line is moot
     collapsed = measure()
-    collapsed_split = card._split.sizeHint().width()
     assert card.desc_view.isHidden()
-    assert card._split.handle(1).isHidden()    # no stray handle either
+    assert sp.handle(1).isHidden()             # no stray handle either
+    # hidden, the 120px floor contributes nothing: the splitter is as tall as
+    # the scoring column alone, NOT the column plus the floor.
+    assert collapsed[1].height() == left_min_h
     card.desc_toggle.setChecked(True)
     expanded = measure()
     assert not card.desc_view.isHidden()
-    # sideways: the splitter asks for width it did not ask for while hidden
-    # (the content layout's own width is set by the full-width header row)...
-    assert card._split.sizeHint().width() > collapsed_split
-    # ...and the pane does NOT stack its 120px floor under the scoring column.
-    assert expanded[0].height() < collapsed[0].height() + floor
-    assert expanded[1].height() < collapsed[1].height() + floor
+    # sideways: the pane asks for width it did not ask for while hidden...
+    assert expanded[0].width() > collapsed[0].width()
+    # ...and its floor now applies BESIDE the column, not stacked under it.
+    assert expanded[1].height() == floor
+    assert expanded[1].height() < left_min_h + floor
     card.desc_toggle.setChecked(False)
     assert measure() == collapsed              # no hole left behind
     # and a new job leaves the card at its compact size too
@@ -536,7 +553,7 @@ def test_card_description_sits_beside_the_scoring_when_expanded(qtbot):
     left_edge = left.mapTo(card, QtCore.QPoint(left.width(), 0)).x()
     desc = card.desc_view.mapTo(card, QtCore.QPoint(0, 0))
     assert card.desc_view.width() > 0 and card.desc_view.height() > 0
-    assert desc.x() >= left_edge                          # to the RIGHT of it
+    assert desc.x() > left_edge                           # to the RIGHT of it
     # beside, not below: the two panes share the same vertical band
     assert desc.y() < left.mapTo(card, QtCore.QPoint(0, left.height())).y()
     # the header row stays full width above both panes

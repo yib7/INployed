@@ -354,6 +354,16 @@ def _qss() -> str:
     QLabel[heading="true"] {{ color: {TEXT}; font-weight: 600; }}
     QLabel[warn="true"] {{ color: {AMBER}; }}
     QLabel[danger="true"] {{ color: {DANGER}; }}
+    /* Unsaved-change markers (Settings tab): the per-field dot and the "· N
+       changed" a section header appends to its tagline. The two-attribute form is
+       what beats QLabel[muted="true"] on specificity rather than on rule order —
+       the section tagline carries both properties, and its whole job here is to
+       stop reading as background text the moment it has a count. */
+    QLabel[dirtyDot="true"][dirty="true"] {{ color: {ACCENT}; }}
+    QLabel[changed="true"], QLabel[muted="true"][changed="true"] {{ color: {ACCENT}; }}
+    QToolButton[resetField="true"] {{ color: {MUTED}; border: 0; padding: 0 4px;
+        background: transparent; }}
+    QToolButton[resetField="true"]:hover {{ color: {ACCENT}; }}
     QToolButton[sectionHeader="true"] {{ color: {TEXT}; font-weight: 600; border: 0;
         padding: 6px 2px; text-align: left; }}
     QToolButton[sectionHeader="true"]:hover {{ color: {ACCENT}; }}
@@ -431,6 +441,23 @@ def font_for(role: str, scale: float | None = None) -> QtGui.QFont:
     elif role == "section":
         font.setWeight(QtGui.QFont.Weight.DemiBold)    # 600
     return font
+
+
+def repolish(widget: QtWidgets.QWidget) -> None:
+    """Re-run the style on `widget` so a just-changed dynamic property (`error`,
+    `danger`, `warn`, `dirty`, `changed`) actually repaints.
+
+    Qt resolves property selectors when a widget is polished, not on every paint,
+    so without this the QSS rule is correct and invisible. The `update()` is the
+    third of the three steps Qt's own dynamic-property recipe calls for: the
+    unpolish/polish pair re-resolves the rule, but only a repaint request
+    guarantees the new colour reaches the screen before some unrelated event
+    happens to schedule one.
+    """
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
 
 
 def set_type_role(widget: QtWidgets.QWidget, role: str) -> None:

@@ -51,6 +51,7 @@ class CollapsibleSection(QtWidgets.QFrame):
         theme.set_type_role(self._header, "section")
         self._header.clicked.connect(self._on_header_clicked)
         header_row.addWidget(self._header)
+        self._subtitle_text = subtitle
         self._subtitle = QtWidgets.QLabel(subtitle)
         self._subtitle.setProperty("muted", True)
         self._subtitle.setVisible(bool(subtitle))
@@ -82,6 +83,32 @@ class CollapsibleSection(QtWidgets.QFrame):
 
     def add_layout(self, lay) -> None:
         self._body_layout.addLayout(lay)
+
+    def set_changed_count(self, n: int, hint: str = "") -> None:
+        """Append "· N changed" to the header tagline (n == 0 removes it).
+
+        The tagline, not the body, because the header row is the part that stays
+        on screen when the section is FOLDED — which is the state that matters:
+        this repo's owner runs with 9 of the 10 sections closed, so before this a
+        collapsed section gave zero signal that it was holding unsaved edits. It
+        rides on the existing subtitle label rather than a second one so a section
+        with no tagline still gets the count, and it un-mutes itself (the
+        `changed` property) so it stops reading as background text.
+
+        `hint` becomes the tooltip. The caller uses it to say so when some of what
+        it counted is not merely folded but genuinely off screen — expanding the
+        section would then show fewer marks than the number promises, and a count
+        the user can audit and find wrong is worse than no count.
+        """
+        parts = [self._subtitle_text] if self._subtitle_text else []
+        if n:
+            parts.append(f"{n} changed")
+        text = " · ".join(parts)
+        self._subtitle.setText(text)
+        self._subtitle.setVisible(bool(text))
+        self._subtitle.setProperty("changed", bool(n))
+        self._subtitle.setToolTip(hint)
+        theme.repolish(self._subtitle)
 
     def is_collapsed(self) -> bool:
         # isHidden() is the explicit fold flag — unlike isVisible() it does not also

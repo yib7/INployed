@@ -140,7 +140,11 @@ def test_row_registry_holds_both_rows_for_every_field(qtbot, tmp_path):
     _, help_row = form._rows["min_score"][1]
     assert help_row == label_row + 1
     label_cell = form_layout.itemAt(label_row, QtWidgets.QFormLayout.ItemRole.LabelRole).widget()
-    assert "Min score" in label_cell.findChild(QtWidgets.QLabel).text()
+    # findChildren, not findChild: the label cell holds three QLabels since P6 —
+    # the (initially empty) unsaved-change dot, the label, the storage chip — and
+    # the dot is the first one.
+    assert any("Min score" in lab.text()
+               for lab in label_cell.findChildren(QtWidgets.QLabel))
     help_widget = form_layout.itemAt(help_row, QtWidgets.QFormLayout.ItemRole.FieldRole).widget()
     assert help_widget.property("muted") is True
 
@@ -1617,6 +1621,409 @@ def test_repopulate_drops_a_note_about_the_values_it_replaced(qtbot, tmp_path, m
     assert _note(form, "resume_tone") == ""
     assert form._widgets["resume_tone"].property("error") is False
     assert form.status.text().startswith("Reverted")              # not a leftover count
+
+
+# --- cycle 18 P6: dirty markers, Save count, per-field reset --------------------
+
+def _dot(form, key):
+    """The field's unsaved-change dot as (text, dirty-property)."""
+    lab = form._dots[key]
+    return lab.text(), lab.property("dirty")
+
+
+def test_a_change_in_a_collapsed_section_shows_up_in_its_header(qtbot, tmp_path):
+    """The phase checkpoint, and the piece that earns it for THIS repo.
+
+    The owner runs with 9 of the 10 sections folded, so the body a dirty dot lives
+    in is usually not on screen at all — the header is the only surface left, and
+    before this a collapsed section gave zero signal that it was holding unsaved
+    edits. The section must STAY collapsed: a badge that pops its own section open
+    to be read has solved nothing.
+    """
+    form = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER))
+    qtbot.addWidget(form)
+    sec = form._section_widgets["Dashboard"]
+    assert sec.is_collapsed()
+    assert sec._subtitle.text() == st.SECTION_TAGLINE["Dashboard"]
+    assert "changed" not in sec._subtitle.text()
+
+    form._widgets["min_score"].setValue(2)
+
+    assert "· 1 changed" in sec._subtitle.text()
+    assert sec._subtitle.text().startswith(st.SECTION_TAGLINE["Dashboard"])
+    assert sec._subtitle.property("changed") is True      # stops reading as muted
+    assert sec.is_collapsed()                             # ...without unfolding it
+    assert _dot(form, "min_score") == ("●", True)
+    assert form._dots["min_score"].toolTip()              # says what the glyph means
+    # and only that section's header moved
+    assert all("changed" not in w._subtitle.text()
+               for s, w in form._section_widgets.items() if s != "Dashboard")
+
+    # The `dirty` property is not decoration: it is what the QSS colours by, so a
+    # dot whose property never moved would render in body text rather than accent.
+    from qt import theme
+    assert 'QLabel[dirtyDot="true"][dirty="true"]' in theme._qss()
+
+
+def test_the_section_badge_counts_and_clears(qtbot, tmp_path):
+    """Two fields in one section read "· 2 changed"; putting one back reads
+    "· 1 changed"; putting both back removes the badge and restores the tagline
+    exactly (the count is appended to it, not written over it)."""
+    form = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER))
+    qtbot.addWidget(form)
+    sec = form._section_widgets["Scraper"]
+    tagline = st.SECTION_TAGLINE["Scraper"]
+
+    form._widgets["location"].setText("Remote")
+    form._widgets["country"].setText("CA")
+    assert sec._subtitle.text() == f"{tagline} · 2 changed"
+
+    form._widgets["country"].setText(form._opening_values["country"])
+    assert sec._subtitle.text() == f"{tagline} · 1 changed"
+
+    form._widgets["location"].setText(form._opening_values["location"])
+    assert sec._subtitle.text() == tagline
+    assert sec._subtitle.property("changed") is False
+
+
+def test_a_section_with_no_tagline_still_gets_the_count(qtbot):
+    """The badge rides on the subtitle label, which is HIDDEN when a section has
+    no tagline — so the count has to un-hide it rather than assume it is there."""
+    from qt.widgets import CollapsibleSection
+    sec = CollapsibleSection("Bare", subtitle="")
+    qtbot.addWidget(sec)
+    assert sec._subtitle.text() == "" and sec._subtitle.isHidden() is True
+    sec.set_changed_count(3)
+    assert sec._subtitle.text() == "3 changed"     # no stray leading separator
+    assert sec._subtitle.isHidden() is False
+    sec.set_changed_count(0)
+    assert sec._subtitle.text() == "" and sec._subtitle.isHidden() is True
+
+
+def test_the_save_button_counts_the_changes_and_stays_pressable(qtbot, tmp_path):
+    """"Save 3 changes" while dirty, singular at one, "Save settings" when clean —
+    and enabled throughout. Disabling it when clean would break Restore defaults on
+    a form already at its defaults, and would delete the "No changes to save"
+    feedback that tells someone their edit did not take."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._save_btn.text() == "Save settings"
+    assert form._save_btn.isEnabled()
+
+    form._widgets["min_score"].setValue(2)
+    assert form._save_btn.text() == "Save 1 change"
+    form._widgets["location"].setText("Remote")
+    assert form._save_btn.text() == "Save 2 changes"
+    form._widgets["country"].setText("CA")
+    assert form._save_btn.text() == "Save 3 changes"
+
+    form._widgets["min_score"].setValue(form._opening_values["min_score"])
+    assert form._save_btn.text() == "Save 2 changes"
+    assert form._save_btn.isEnabled()
+
+    form.revert()
+    assert form._save_btn.text() == "Save settings"
+    assert form._save_btn.isEnabled()          # never disabled, clean or not
+
+
+def test_the_reset_button_restores_the_default_and_clears_both_markers(qtbot, tmp_path):
+    """The second half of the checkpoint: ↺ clears the field dot AND the header
+    count, because it puts the value back where it started."""
+    form = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER))
+    qtbot.addWidget(form)
+    default = next(f for f in settings.SETTINGS_SCHEMA if f.key == "min_score").default
+    sec = form._section_widgets["Dashboard"]
+
+    form._widgets["min_score"].setValue(2)
+    assert form._resets["min_score"].isHidden() is False
+    form._resets["min_score"].click()
+
+    assert form._widgets["min_score"].value() == default
+    assert _dot(form, "min_score") == ("", False)
+    assert "changed" not in sec._subtitle.text()
+    assert form._save_btn.text() == "Save settings"
+    assert form._resets["min_score"].isHidden()     # nothing left to reset
+
+
+def test_no_reset_button_is_built_for_a_secret(qtbot, tmp_path):
+    """Not hidden — NOT BUILT. A secret's schema default is `""`, so the button
+    would be offering to clear a live API key: one stray click on a row someone
+    opened to read, and the value is gone from the box and from .env with nothing
+    to type back. Every other field's default is a value you can retype."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    secrets = [f.key for f in settings.SETTINGS_SCHEMA if f.secret]
+    assert secrets                                   # the test is not vacuous
+    for key in secrets:
+        assert key not in form._resets, key
+        cell = form._notes[key].parentWidget()
+        assert cell.findChildren(QtWidgets.QToolButton) == [], key
+
+    # ...and every other field that has a row does have one
+    expected = {f.key for f in settings.SETTINGS_SCHEMA
+                if not f.secret and f.key != "vm_enabled"}
+    assert set(form._resets) == expected
+
+
+def test_a_reset_button_shows_only_while_the_value_differs_from_the_default(qtbot, tmp_path):
+    """Against the DEFAULT, not the opening value: a field saved away from its
+    default months ago still offers the way back, which is the only affordance in
+    the form that says what the shipped value even was."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"min_score": 1}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._widgets["min_score"].value() == 1
+    assert _dot(form, "min_score") == ("", False)          # saved that way: not dirty
+    assert form._resets["min_score"].isHidden() is False    # ...but off the default
+
+    assert form._resets["location"].isHidden()             # untouched, at its default
+    form._widgets["location"].setText("Remote")
+    assert form._resets["location"].isHidden() is False
+
+    # ...and pressing it goes to the DEFAULT, not back to what was on disk. This is
+    # the one config where "reset to default" and "undo my edit" disagree, so it is
+    # the only place that can tell them apart — swap the two in `_reset_field` and
+    # every other test in this file still passes.
+    form._resets["min_score"].click()
+    assert form._widgets["min_score"].value() == 4          # the default, not the stored 1
+    assert _dot(form, "min_score") == ("●", True)           # so ↺ can CREATE dirt...
+    assert form._save_btn.text() == "Save 2 changes"        # ...and it counts (with location)
+
+
+def test_no_reset_button_is_a_keyboard_tab_stop(qtbot, tmp_path):
+    """A QToolButton is a tab stop by DEFAULT, and this form would add one per
+    off-default field — on a real profile ~19 one-keypress "overwrite this value"
+    controls in the tab chain, some holding text nobody can retype, and double the
+    number of stops between one setting and the next. Qt's own inline auxiliary
+    control (QLineEdit's clear button) is not a tab stop either."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    assert form._resets                                   # not vacuous
+    for key, btn in form._resets.items():
+        assert btn.focusPolicy() == QtCore.Qt.FocusPolicy.NoFocus, key
+        assert btn.accessibleName()                       # ...still announced
+
+
+@pytest.mark.parametrize("key, expected", [
+    ("min_score", "4"),                                   # int
+    ("location", "United States"),                        # str
+    ("remote_types", "Hybrid, On-site"),                  # multichoice: joined
+    ("gdrive_root", "blank"),                             # path with an empty default
+])
+def test_the_reset_tooltip_names_the_value_it_would_write(qtbot, tmp_path, key, expected):
+    """The button overwrites a value that is then gone, so it has to say what it
+    would put there BEFORE it is pressed — the only place in the form that states
+    what the shipped default even was."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert expected in form._resets[key].toolTip()
+    assert form._resets[key].toolTip().startswith("Reset to the default")
+
+
+@pytest.mark.parametrize("default, expected", [
+    (["item-%02d" % i for i in range(40)], None),         # truncated to 60
+    ([], "empty"),                                        # an empty LIST reads "empty"
+    ("   ", "blank"),                                     # ...and empty TEXT reads "blank"
+])
+def test_the_default_label_handles_the_shapes_a_tooltip_cannot_render(default, expected):
+    """A tooltip is not a place for a 40-item list, and "Reset to the default ()"
+    tells nobody anything."""
+    ftype = "list" if isinstance(default, list) else "str"
+    label = st.SettingsForm._default_label(
+        settings.Field("k", "L", ftype, default, "S", "config"))
+    if expected is None:
+        assert len(label) == 60 and label.endswith("…")
+    else:
+        assert label == expected
+
+
+def test_a_dirty_field_a_configuration_gate_hides_still_counts(qtbot, tmp_path):
+    """The line this phase draws, and it is the OPPOSITE of P4's advanced count.
+
+    That count promises "ticking this box reveals N rows", so a field a gate holds
+    shut has to be subtracted or the promise is false. This one promises "Save
+    writes N changes" — and `collect()` walks the SCHEMA, so a gated-off field's
+    edit is written exactly like any other. Leaving it out would understate the
+    number in the direction that loses an edit quietly. P5's reachability answer
+    does not apply either: it names an unreachable ERROR because the user must
+    reach it to act, while a dirty field asks nothing of them.
+    """
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._widgets["stage1_model"].setCurrentText("gemini-9-custom")
+    assert form._save_btn.text() == "Save 1 change"
+
+    form._widgets["provider"].setCurrentText("claude")     # hides the row just edited
+    assert form._widgets["stage1_model"].isVisibleTo(form) is False
+    assert "stage1_model" in form._dirty                   # ...and it still counts
+    assert form._save_btn.text() == "Save 2 changes"       # the model AND the provider
+    subtitle = form._section_widgets["Scoring"]._subtitle
+    assert "· 2 changed" in subtitle.text()
+
+    # ...and the badge says which of the two expanding the section will NOT show.
+    # A count the user can audit and find short by one is worse than no count: the
+    # header's claim is "open me and you will find them", which holds for a view
+    # fold and does not hold for a gate.
+    assert "Stage-1 model" in subtitle.toolTip()
+    assert "Scoring provider" in subtitle.toolTip() and "gemini" in subtitle.toolTip()
+
+    form._widgets["provider"].setCurrentText("gemini")     # gate back open
+    assert "· 1 changed" in subtitle.text()                # provider is home again
+    assert subtitle.toolTip() == ""                        # nothing hidden any more
+
+
+def test_an_advanced_field_folded_away_still_counts(qtbot, tmp_path):
+    """Same rule for a VIEW fold, arrived at from the other direction: P4 does not
+    subtract a collapsed section, and nothing here subtracts the disclosure — the
+    edit is written either way."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._widgets["stale_after_hours"].setValue(9)
+    assert form._save_btn.text() == "Save 1 change"
+
+    form._advanced_check.setChecked(False)
+    assert "stale_after_hours" not in _on_screen_field_keys(form)
+    assert form._save_btn.text() == "Save 1 change"
+    assert "· 1 changed" in form._section_widgets["Dashboard"]._subtitle.text()
+
+
+def test_the_vm_master_switch_counts_without_a_dot(qtbot, tmp_path):
+    """`vm_enabled` never goes through `_add_field`, so it has no row, no dot and
+    no ↺ — the same deliberate no-op it is for `_set_field_note` and
+    `_set_field_visible`. It is still a setting the Save writes, so it still
+    counts."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert "vm_enabled" not in form._dots and "vm_enabled" not in form._resets
+
+    form._widgets["vm_enabled"].setChecked(True)
+    assert form._dirty == {"vm_enabled"}
+    assert form._save_btn.text() == "Save 1 change"
+    assert "· 1 changed" in form._section_widgets["VM (cloud scraper)"]._subtitle.text()
+
+
+def test_a_save_clears_every_marker(qtbot, tmp_path, monkeypatch):
+    """Save moves the baseline, so the dots, the badges and the count all go with
+    it — the form now matches disk."""
+    _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["min_score"].setValue(2)
+    form._widgets["location"].setText("Remote")
+    assert form._save_btn.text() == "Save 2 changes"
+
+    assert form.save() is True
+    assert form._dirty == set()
+    assert form._save_btn.text() == "Save settings"
+    assert _dot(form, "min_score") == ("", False)
+    assert all("changed" not in w._subtitle.text()
+               for w in form._section_widgets.values())
+    # the value stayed off its default, so the way back is still offered
+    assert form._resets["min_score"].isHidden() is False
+
+
+def test_restore_defaults_marks_everything_it_moved_and_leaves_save_pressable(
+        qtbot, tmp_path):
+    """Why the Save button must not disable when clean: Restore defaults produces
+    a form that differs from DISK and needs a Save, and on a profile already at its
+    defaults it produces no change at all — a disabled button would strand the
+    first case and lie about the second."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"min_score": 1}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._dirty == set()
+
+    form.restore_defaults()
+    assert form._dirty == {"min_score"}
+    assert form._save_btn.text() == "Save 1 change"
+    assert form._save_btn.isEnabled()
+    assert form._resets["min_score"].isHidden()      # it IS the default now
+
+
+def test_a_setter_that_raises_mid_fill_still_leaves_honest_markers(qtbot, tmp_path):
+    """A snapshot with a junk slider value makes `_repopulate` raise part-way
+    through (the slider setter does `int(v)`). The fill cannot be completed, but a
+    half-filled form whose every dot, badge and count still describes the values it
+    replaced is the worst of both states — so the markers are re-read in the
+    `finally` and the exception carries on."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    keys = [f.key for f in settings.SETTINGS_SCHEMA]
+    assert keys.index("min_score") < keys.index("followup_days")   # order matters here
+
+    form._widgets["min_score"].setValue(2)
+    assert form._dirty == {"min_score"}
+
+    with pytest.raises(ValueError):
+        form._repopulate(lambda f: "junk" if f.key == "followup_days" else f.default)
+
+    assert form._widgets["min_score"].value() == 4          # this one did land
+    assert form._dirty == set()                             # ...and the markers say so
+    assert form._save_btn.text() == "Save settings"
+
+
+def test_a_clamped_int_opens_dirty(qtbot, tmp_path):
+    """P5's clamp note and P6's dirty dot are the same fact said twice, so they
+    must agree: the form is holding 5000 where the file says 99999 and the next
+    Save writes it, which is exactly what "changed, unsaved" means."""
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"max_scored_per_run": 99999}), encoding="utf-8")
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    assert "99999" in _note(form, "max_scored_per_run")
+    assert _dot(form, "max_scored_per_run") == ("●", True)
+    assert form._save_btn.text() == "Save 1 change"
+
+
+def test_a_stored_string_int_does_not_open_dirty(qtbot, tmp_path, monkeypatch):
+    """`settings.load()` returns what is literally in the file, so a hand-edited
+    `"min_score": "5"` reaches the comparison as text while the spin box reports
+    5. Compared raw, that field opens permanently dirty with nothing to undo —
+    which is why the baseline goes through the same `_coerce` the widgets do.
+
+    And the post-save summary is normalised the SAME way, so the two claims about
+    "did anything change" cannot disagree: before this, the button read "Save
+    settings" while pressing it announced "Min score to highlight: 5 -> 5" and took
+    an archive snapshot for the privilege.
+    """
+    modals = _no_modals(monkeypatch)
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"min_score": "5"}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._widgets["min_score"].value() == 5
+    assert form._dirty == set()
+    assert form._save_btn.text() == "Save settings"
+
+    assert form.save() is True
+    assert form.status.text() == "Saved — no changes."
+    assert [m for m in modals if "No changes to save" in str(m[1])], modals
+
+
+def test_a_flagged_field_keeps_its_dot_and_a_reset_clears_the_flag(qtbot, tmp_path,
+                                                                   monkeypatch):
+    """The two markers are independent claims — "this is wrong" and "this is
+    unsaved" — so an error must not swallow the dot. And ↺ goes through the same
+    `_on_field_edited` hook every other edit does, so it clears P5's error state
+    exactly as typing a fix would."""
+    _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    form._widgets["local_task_offsets"].setText("every half hour")
+
+    assert form.save() is False
+    assert form._widgets["local_task_offsets"].property("error") is True
+    assert _dot(form, "local_task_offsets") == ("●", True)      # both, at once
+
+    form._resets["local_task_offsets"].click()
+    assert form._errors == {}
+    assert form._widgets["local_task_offsets"].property("error") is False
+    assert _note(form, "local_task_offsets") == ""
+    assert _dot(form, "local_task_offsets") == ("", False)
+    assert form._save_btn.text() == "Save 1 change"             # vm_enabled, still on
 
 
 def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):

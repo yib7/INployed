@@ -87,23 +87,7 @@ NOTE_ERROR = "error"
 NOTE_WARN = "warn"
 
 
-def _repolish(widget: QtWidgets.QWidget) -> None:
-    """Re-run the style on `widget` so a just-changed dynamic property (`error`,
-    `danger`, `warn`) actually repaints. Qt resolves property selectors when a
-    widget is polished, not on every paint, so without this the QSS rule is
-    correct and invisible.
-
-    The `update()` is the third of the three steps Qt's own dynamic-property recipe
-    calls for: unpolish/polish re-resolve the rule, but only a repaint request
-    guarantees the new border reaches the screen before the next unrelated event
-    happens to schedule one. Cheap, and the failure it prevents (a red outline that
-    appears a beat late, or not until the mouse moves) is invisible to a headless
-    test — which is exactly why it is not left to luck.
-    """
-    style = widget.style()
-    style.unpolish(widget)
-    style.polish(widget)
-    widget.update()
+_repolish = theme.repolish   # dynamic properties only restyle if you ask (see theme)
 
 
 class _FocusOutValidator(QtCore.QObject):
@@ -195,6 +179,22 @@ class SettingsForm(QtWidgets.QWidget):
         # row indices above. `_errors` is the subset currently blocking Save.
         self._notes: dict[str, QtWidgets.QLabel] = {}
         self._errors: dict[str, str] = {}
+        # Unsaved-change markers. `_dirty` is every key whose value differs from
+        # `_opening_values` — i.e. exactly what the next Save would write — and
+        # `_off_default` every key a ↺ button would move. Both are kept as SETS,
+        # not recomputed onto every widget, so an edit repolishes only the markers
+        # that actually flipped (a keystroke would otherwise restyle ~60 rows).
+        # `_dots` has no entry for `vm_enabled`, which has no form row to hold one.
+        self._dirty: set[str] = set()
+        self._off_default: set[str] = set()
+        # Set while `_repopulate` is writing 60 values in a row: each setter emits,
+        # so without it one Revert costs 60 full rescans of the form. Every path
+        # that raises it does its own single refresh afterwards.
+        self._suspend_markers: bool = False
+        self._dots: dict[str, QtWidgets.QLabel] = {}
+        self._resets: dict[str, QtWidgets.QToolButton] = {}
+        self._section_counts: dict[str, tuple[int, str]] = {}
+        self._save_btn: QtWidgets.QPushButton | None = None
         self._multi: dict[str, dict[str, QtWidgets.QCheckBox]] = {}
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
@@ -273,6 +273,12 @@ class SettingsForm(QtWidgets.QWidget):
 
         self._add_buttons()
         self._body.addStretch(1)
+        # Last, because it writes to the Save button `_add_buttons` just made. Not
+        # a no-op on a fresh form either: a stored int the widget had to CLAMP is
+        # genuinely dirty — the form is holding 5000 where the file says 99999, and
+        # the next Save writes it — so the marker opens alongside P5's note saying
+        # so, rather than the two disagreeing.
+        self._refresh_dirty()
 
     # ---- progressive disclosure (settings.Field.advanced) --------------------
 
@@ -391,6 +397,12 @@ class SettingsForm(QtWidgets.QWidget):
         # every gate widget `_gate_values` reads. (setChecked is above the
         # connects, so neither fires during construction.)
         check.toggled.connect(self._refresh_advanced_label)
+        # ...and it is a real setting, so flipping it is a real unsaved change.
+        # `_add_field` never sees this widget, so the one hook every other field
+        # gets through `_connect_field_signals` has to be wired by hand. It has no
+        # form row, hence no dot and no ↺ — but it counts, in the Save button and
+        # in its section's header, because the Save WILL write it.
+        check.toggled.connect(lambda *_a: self._on_field_edited(gate_key))
         sec.add_widget(check)
         self._getters[gate_key] = lambda c=check: c.isChecked()
         self._setters[gate_key] = lambda v, c=check: c.setChecked(bool(v))
@@ -539,6 +551,16 @@ class SettingsForm(QtWidgets.QWidget):
         cell = QtWidgets.QWidget()
         h = QtWidgets.QHBoxLayout(cell)
         h.setContentsMargins(0, 0, 0, 0)
+        # The unsaved-change dot, ahead of the label. Always present at a FIXED
+        # width and only its text/colour toggle: hiding and showing it would shunt
+        # the label sideways every time a value changed, which is a lot of motion
+        # to pay for one glyph.
+        dot = QtWidgets.QLabel("")
+        dot.setProperty("dirtyDot", True)
+        dot.setProperty("dirty", False)   # a real bool from the start, never unset
+        dot.setFixedWidth(12)
+        self._dots[f.key] = dot
+        h.addWidget(dot)
         h.addWidget(QtWidgets.QLabel(f.label))
         # Storage tag as a small mono bordered chip (".env" / "config.json").
         tag = QtWidgets.QLabel(settings.storage_location(f))
@@ -569,7 +591,7 @@ class SettingsForm(QtWidgets.QWidget):
         self._flag_a_rewritten_int(f, value)
 
     def _input_cell(self, f: settings.Field, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
-        """The field's control with its inline note label stacked underneath.
+        """The field's control (plus its ↺ reset) with the inline note underneath.
 
         The note lives INSIDE the field's cell rather than in a form row of its
         own, and it is built here — empty and hidden — for every field, never
@@ -583,18 +605,75 @@ class SettingsForm(QtWidgets.QWidget):
           and restored WITH its control for free — a note left behind by a field
           the advanced toggle just folded away would be an error message with
           nothing to attach it to.
+
+        The reset button rides in the same cell for the same two reasons, and the
+        note stays at layout index 1 so it is still the row's last word.
         """
         cell = QtWidgets.QWidget()
         col = QtWidgets.QVBoxLayout(cell)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(3)
-        col.addWidget(widget)
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(widget, 1)
+        reset = self._reset_button(f)
+        if reset is not None:
+            row.addWidget(reset, 0)
+        col.addLayout(row)
         note = QtWidgets.QLabel("")
         note.setWordWrap(True)
         note.setVisible(False)
         col.addWidget(note)
         self._notes[f.key] = note
         return cell
+
+    def _reset_button(self, f: settings.Field) -> QtWidgets.QToolButton | None:
+        """The per-field ↺, or None for a secret.
+
+        NO reset on a credential, and not merely hidden: a secret's schema default
+        is `""`, so the button would be offering to clear a live API key — an
+        action with no undo (the old value is gone from .env and from the box that
+        was showing it) sitting one stray click away from a row the user opened to
+        read, not to edit. Every other field's default is a value you can type
+        back.
+
+        Built hidden and shown only while the value differs from the default, so a
+        form at its defaults carries none of them.
+
+        `NoFocus`, deliberately. A `QToolButton` is a tab stop by default, which
+        would put ~19 one-keypress "overwrite this value" controls into the tab
+        chain of a real profile — several holding text nobody can retype
+        (`keywords`, the inbox map) — and double the number of stops between one
+        setting and the next, which is itself the friction this cycle exists to
+        remove. It follows Qt's own convention for an inline auxiliary control
+        (`QLineEdit`'s built-in clear button is not a tab stop either). The
+        keyboard route to a default is unchanged: select the field's text and type
+        it, or use Restore defaults for the whole form.
+        """
+        if f.secret:
+            return None
+        btn = QtWidgets.QToolButton()
+        btn.setText("↺")
+        btn.setProperty("resetField", True)
+        btn.setAutoRaise(True)
+        btn.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        btn.setToolTip(f"Reset to the default ({self._default_label(f)})")
+        btn.setAccessibleName(f"Reset {f.label} to its default")
+        btn.setVisible(False)
+        btn.clicked.connect(lambda *_a, k=f.key: self._reset_field(k))
+        self._resets[f.key] = btn
+        return btn
+
+    @staticmethod
+    def _default_label(f: settings.Field) -> str:
+        """`f.default` as a short phrase for the ↺ tooltip — the button says what
+        it would do BEFORE it does it, since the value it overwrites is gone."""
+        d = f.default
+        text = ", ".join(str(x) for x in d) if isinstance(d, list) else str(d)
+        if not text.strip():
+            return "empty" if isinstance(d, list) else "blank"
+        return text if len(text) <= 60 else text[:59] + "…"
 
     def _make_widget(self, f, value):
         """Build one field's input cell and register its control in `self._widgets`.
@@ -884,11 +963,18 @@ class SettingsForm(QtWidgets.QWidget):
                        f"Showing {shown} — saving stores that.", kind=NOTE_WARN)
 
     def _on_field_edited(self, key: str) -> None:
-        """The user changed a field: drop whatever note it was carrying."""
+        """The user changed a field: drop whatever note it was carrying, then
+        re-read the unsaved-change markers.
+
+        The one narrow per-key hook, as P5 promised it would be — the dirty
+        markers extend it rather than opening a second pass of connections over
+        the same signals.
+        """
         if self._notes.get(key) is not None and not self._notes[key].isHidden():
             self._set_field_note(key, "")
         if self._errors.pop(key, None) is not None:
             self._refresh_error_status()
+        self._refresh_dirty()
 
     def _validate_field(self, key: str) -> None:
         """Re-check ONE field (focus-out) and flag or clear it in place."""
@@ -1035,10 +1121,142 @@ class SettingsForm(QtWidgets.QWidget):
         widget.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self._scroll.ensureWidgetVisible(widget)
 
+    # ---- unsaved-change markers ----------------------------------------------
+
+    @classmethod
+    def _as_form_value(cls, f: settings.Field, raw):
+        """A STORED value read the way the widget holding it would read it.
+
+        `settings.load()` hands back whatever is literally in the file, so a
+        hand-edited `"min_score": "5"` compares unequal to the 5 the spin box
+        reports: that field would open permanently dirty with nothing to undo, and
+        the post-save summary would announce "5 -> 5" (and take an archive snapshot
+        for it). Put through the same `_coerce` `_field_value` uses, so both sides
+        of every comparison in this form are produced the same way — the reason
+        `_field_value` itself exists.
+
+        `_coerce` deliberately hands an UNREADABLE int straight back ("lots"),
+        which keeps such a field dirty, and that is right: the next Save really
+        would replace it with the default. `list`/`multichoice` are returned as-is
+        because `_coerce` does not speak them (`_field_value` reaches them through
+        their own branches), and a secret because .env values are already text.
+        """
+        if f.secret or f.type in ("multichoice", "list"):
+            return raw
+        return cls._coerce(f, raw)[0]
+
+    @classmethod
+    def _as_form_values(cls, stored: dict) -> dict:
+        """`_as_form_value` across a whole stored mapping."""
+        return {f.key: cls._as_form_value(f, stored.get(f.key, f.default))
+                for f in settings.SETTINGS_SCHEMA}
+
+    def _opening_value(self, f: settings.Field):
+        """`f`'s value as the form opened it, read the way the WIDGET reads it."""
+        return self._as_form_value(f, self._opening_values.get(f.key, f.default))
+
+    def _changed_from(self, baseline: Callable[[settings.Field], object]) -> set[str]:
+        """Every key whose current value differs from `baseline(field)`, compared
+        with `_value_changed` — the same per-type comparison the post-save summary
+        and the VM-push prompt use, so "changed" means one thing in this form."""
+        return {f.key for f in settings.SETTINGS_SCHEMA
+                if self._value_changed(f, baseline(f), self._field_value(f)[0])}
+
+    def _refresh_dirty(self) -> None:
+        """Re-read every field and move only the markers that actually flipped.
+
+        VISIBILITY IS NOT CONSULTED, and that is the whole line — the opposite of
+        P4's advanced count, deliberately. That count promises "ticking this box
+        reveals N rows", so a field a configuration gate holds shut has to be
+        subtracted or the promise is false. This one promises "Save writes N
+        changes", and `collect()` walks the SCHEMA: a gated-off or folded-away
+        field's edit is written exactly like any other, so leaving it out would
+        make the number wrong in the direction that loses data quietly. Edit a
+        Gemini model, switch the provider to Claude, and the count still says one —
+        because the Save still writes it.
+
+        The reachability question P5 answered for errors therefore does not arise
+        here: P5 names an unreachable ERROR because the user has to reach it to
+        act, while a dirty field asks nothing of them. The section header — on
+        screen even when the section is folded — is where it becomes findable.
+        """
+        if self._save_btn is None or self._suspend_markers:
+            return                       # mid-build or mid-bulk-fill; both refresh after
+        dirty = self._changed_from(self._opening_value)
+        off_default = {k for k in self._changed_from(lambda f: f.default)
+                       if k in self._resets}
+        for key in dirty ^ self._dirty:
+            self._set_field_dirty(key, key in dirty)
+        for key in off_default ^ self._off_default:
+            self._resets[key].setVisible(key in off_default)
+        self._dirty, self._off_default = dirty, off_default
+        self._refresh_section_badges()
+        self._refresh_save_label()
+
+    def _set_field_dirty(self, key: str, on: bool) -> None:
+        """Toggle one field's accent dot. A field with no dot — `vm_enabled`, which
+        has no form row — is a deliberate no-op, as it is for `_set_field_note` and
+        `_set_field_visible`; it still counts in the totals."""
+        dot = self._dots.get(key)
+        if dot is None:
+            return
+        dot.setText("●" if on else "")
+        dot.setProperty("dirty", on)
+        dot.setToolTip("Changed — not saved yet" if on else "")
+        _repolish(dot)
+
+    def _refresh_section_badges(self) -> None:
+        """Push each section's dirty count onto its header, plus a tooltip for the
+        part of that count expanding the section would NOT show.
+
+        The badge's whole claim is "open me and you will find them". That holds for
+        a view fold — collapse, or the advanced disclosure — where the dot is
+        waiting behind it. It does not hold for a configuration gate: that row is
+        off screen entirely, so a section reading "· 2 changed" can expand to
+        exactly one dot and look like a lie. `_blocking_gate` already produces the
+        sentence that closes the gap, in the same shape the error status line uses.
+        """
+        counts: dict[str, int] = dict.fromkeys(self._section_widgets, 0)
+        hidden: dict[str, list[str]] = {s: [] for s in self._section_widgets}
+        for f in settings.SETTINGS_SCHEMA:
+            if f.key not in self._dirty or f.section not in counts:
+                continue
+            counts[f.section] += 1
+            gate = self._blocking_gate(f)
+            if gate is not None:
+                hidden[f.section].append(f"{f.label} — {gate}")
+        for section, n in counts.items():
+            hint = ("Not shown on this form: " + "; ".join(hidden[section])
+                    if n and hidden[section] else "")
+            if self._section_counts.get(section) != (n, hint):
+                self._section_widgets[section].set_changed_count(n, hint)
+                self._section_counts[section] = (n, hint)
+
+    def _refresh_save_label(self) -> None:
+        """"Save 3 changes" while dirty, "Save settings" when clean — and NEVER
+        disabled. Restore defaults leaves a form that differs from disk only in
+        ways the user has not committed yet, so the button has to stay pressable;
+        and the "No changes to save" path is real feedback, not a dead end."""
+        n = len(self._dirty)
+        self._save_btn.setText(
+            f"Save {n} change{'' if n == 1 else 's'}" if n else "Save settings")
+
+    def _reset_field(self, key: str) -> None:
+        """Put one field back to its schema default (the ↺ button)."""
+        f = next(x for x in settings.SETTINGS_SCHEMA if x.key == key)
+        self._set_field_value(f, f.default)
+        # Insurance, and idempotent. The button is only ever VISIBLE while the value
+        # differs from the default, so today every setter this reaches really does
+        # emit and land in `_on_field_edited` on its own — but that is a property of
+        # the visibility rule, not of the reset, and a programmatic call has no such
+        # guarantee.
+        self._on_field_edited(key)
+
     def _add_buttons(self):
         bar = QtWidgets.QHBoxLayout()
         save = QtWidgets.QPushButton("Save settings")
         save.setProperty("accent", True)
+        self._save_btn = save
         save.clicked.connect(self.save)
         bar.addWidget(save)
         revert = QtWidgets.QPushButton("Discard changes")
@@ -1159,7 +1377,12 @@ class SettingsForm(QtWidgets.QWidget):
             self._report_errors(errors)
             return False
         self._show_errors({})
-        before = settings.load(self.targets)
+        # Normalised, for the same reason `_opening_value` is: `settings.load()`
+        # returns the file verbatim, so a hand-edited `"min_score": "5"` made the
+        # summary announce "5 -> 5" — take an archive snapshot for it, and offer a
+        # VM push over it — while the Save button, which normalises, correctly read
+        # "Save settings". Two claims about the same question must not disagree.
+        before = self._as_form_values(settings.load(self.targets))
         try:
             settings.save(values, self.targets)
         except (ValueError, OSError) as exc:
@@ -1174,6 +1397,7 @@ class SettingsForm(QtWidgets.QWidget):
         self._opening_values = settings.load(self.targets)
         self._clear_all_notes()   # every note described the file this Save replaced
         self._sync_secret_boxes(self._opening_values)  # reflect the canonical stored values
+        self._refresh_dirty()     # ...and the new baseline is what was just written
         self.status.setText("Saved." if summary else "Saved — no changes.")
         if summary:
             note = "\n\nA snapshot was saved to the archive." if archived else ""
@@ -1264,38 +1488,66 @@ class SettingsForm(QtWidgets.QWidget):
             edit.setText("" if v is None else str(v))
             self._secret_hides[key].setChecked(True)
 
+    def _set_field_value(self, f: settings.Field, val) -> None:
+        """Write one value into its widget, per type — the three-way dispatch
+        `_repopulate` and the ↺ reset both need, in one place so a bulk restore and
+        a single reset can never diverge.
+
+        NOT for a secret: `_secret_widget` registers no setter (its box is driven
+        by `_sync_secret_boxes`), which is why `_repopulate` skips them and why no
+        ↺ button is built for one.
+        """
+        if f.type == "multichoice":
+            want = set(val if isinstance(val, list) else [])
+            for choice, cb in self._multi[f.key].items():
+                cb.setChecked(choice in want)
+        elif f.type == "list":
+            self._lists[f.key].setPlainText(
+                "\n".join(str(v) for v in (val if isinstance(val, list) else [])))
+        else:
+            self._setters[f.key](val)
+
     def _repopulate(self, value_for: Callable[[settings.Field], object]) -> None:
         incoming: dict[str, object] = {}
-        for f in settings.SETTINGS_SCHEMA:
-            if f.secret:
-                continue
-            val = incoming[f.key] = value_for(f)
-            if f.type == "multichoice":
-                want = set(val if isinstance(val, list) else [])
-                for choice, cb in self._multi[f.key].items():
-                    cb.setChecked(choice in want)
-            elif f.type == "list":
-                self._lists[f.key].setPlainText(
-                    "\n".join(str(v) for v in (val if isinstance(val, list) else [])))
-            else:
-                self._setters[f.key](val)
-        # Every value on screen was just replaced, so every note about the old ones
-        # is stale — and a setter that happened to write the SAME value emits no
-        # change signal, so `_on_field_edited` cannot be relied on to have cleared
-        # them. Then re-run the clamp check against what actually arrived: the
-        # setters clamp exactly as the constructor does, so without this a snapshot
-        # holding `max_scored_per_run: 99999` loads as 5000 in silence — the one
-        # rewrite this phase exists to make visible, restored by the back door.
-        self._clear_all_notes()
-        for f in settings.SETTINGS_SCHEMA:
-            if f.type == "int" and f.key in incoming:
-                self._flag_a_rewritten_int(f, incoming[f.key])
-        self._apply_section_visibility()
-        # Revert / Restore defaults / snapshot-load all land here, and any of them
-        # can change a gate. Re-evaluate EXPLICITLY: every gate is a QComboBox
-        # today, whose setter emits currentTextChanged and would get there by
-        # itself, but that is a side-effect of the widget type, not a contract.
-        self._apply_field_visibility()
+        # Markers off for the fill: every setter emits, and each emission would
+        # otherwise re-read all ~60 fields — 60 rescans for one Revert. One refresh
+        # at the end says the same thing once.
+        self._suspend_markers = True
+        try:
+            for f in settings.SETTINGS_SCHEMA:
+                if f.secret:
+                    continue
+                incoming[f.key] = value_for(f)
+                self._set_field_value(f, incoming[f.key])
+        finally:
+            # In the `finally` with the flag, not after the try: a setter CAN raise
+            # (the slider's does `int(v)`, reachable from a corrupt snapshot), and
+            # a half-filled form whose every dot, badge and count still describes
+            # the values it replaced is the worst of both states. Re-describe what
+            # actually landed, then let the exception carry on.
+            self._suspend_markers = False
+            # Every value on screen was just replaced, so every note about the old
+            # ones is stale — and a setter that happened to write the SAME value
+            # emits no change signal, so `_on_field_edited` cannot be relied on to
+            # have cleared them. Then re-run the clamp check against what actually
+            # arrived: the setters clamp exactly as the constructor does, so without
+            # this a snapshot holding `max_scored_per_run: 99999` loads as 5000 in
+            # silence — the rewrite P5 exists to expose, back through its own door.
+            self._clear_all_notes()
+            for f in settings.SETTINGS_SCHEMA:
+                if f.type == "int" and f.key in incoming:
+                    self._flag_a_rewritten_int(f, incoming[f.key])
+            self._apply_section_visibility()
+            # Revert / Restore defaults / snapshot-load all land here, and any of
+            # them can change a gate. Re-evaluate EXPLICITLY: every gate is a
+            # QComboBox today, whose setter emits currentTextChanged and would get
+            # there by itself, but that is a side-effect of the widget type, not a
+            # contract.
+            self._apply_field_visibility()
+            # The one marker refresh for the whole fill — the per-setter ones were
+            # suspended above, so this is not a belt-and-braces call: drop it and
+            # Revert leaves every dot, badge and count describing the old values.
+            self._refresh_dirty()
 
     def restore_defaults(self) -> None:
         # Defaults reset the tunables but never wipe saved keys — leave secrets as-is.

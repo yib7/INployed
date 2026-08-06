@@ -501,7 +501,11 @@ def is_visible(field: Field, values: Mapping[str, Any]) -> bool:
     (TypeError): KeyError for a gate key that is not a schema field — silently
     hiding a field forever is the exact failure this phase exists to prevent —
     and ValueError for a cycle, which would otherwise be an infinite loop in
-    front of a user. The shipped graph is pinned by
+    front of a user. The cycle raise is value-DEPENDENT: a failing predicate
+    returns False before the walk reaches the repeat, so a cyclic graph only
+    raises when the values satisfy every predicate around the loop. Either way
+    it terminates; the value-independent guard is the schema test. The shipped
+    graph is pinned by
     test_every_gate_names_a_real_field_and_real_choices and
     test_show_if_graph_is_acyclic.
     """

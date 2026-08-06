@@ -331,6 +331,13 @@ class SettingsForm(QtWidgets.QWidget):
         control can be a gate — `show_if` compares against `Field.choices` — so
         QComboBox and QCheckBox are the whole supported set, and both are
         guaranteed to have a `_getters` entry for `_gate_values`.
+
+        The QCheckBox arm is reachable only if you give the bool gate an explicit
+        `choices=("True", "False")`: a bool Field defaults to `choices=()`, which
+        `test_every_gate_names_a_real_field_and_real_choices` rejects, and
+        `is_visible` compares `str(True)` — so `("true",)` and `(True,)` both
+        fail their own schema-lint test. Nothing can ship broken; you just have
+        to spell it that one way.
         """
         for key in self._gate_keys_in_use():
             widget = self._widgets[key]

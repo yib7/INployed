@@ -788,3 +788,84 @@ def test_a_hidden_field_still_loads_and_saves_its_value(tmp_path):
     settings.save(values, targets)
     assert settings.load(targets)["stage1_model"] == "gemini-9-custom"
     assert json.loads(targets["scoring"].read_text("utf-8"))["stage1_model"] == "gemini-9-custom"
+
+
+# --- advanced: progressive disclosure -------------------------------------------
+
+# The eighteen advanced fields, spelled out so the set can't drift silently. Every
+# one is a knob whose default is already right for the person who just installed
+# this, and whose wrong value is either invisible (a model id nobody's account can
+# serve) or irrelevant until something else is set up (the VM block).
+ADVANCED_KEYS = {
+    # the four scoring model pickers — a wrong id breaks scoring silently
+    "stage1_model", "stage2_model", "stage1_model_claude", "stage2_model_claude",
+    # scorer throughput / retry plumbing
+    "stage1_concurrency", "stage2_concurrency", "rescore_cap",
+    # a Stats-tab warning threshold
+    "stale_after_hours",
+    # the Vertex region — 'global' works for most users
+    "GOOGLE_CLOUD_LOCATION",
+    # the six résumé-tailor model pickers (three per provider)
+    "RESUME_TAILOR_MODEL_FLASH_LITE", "RESUME_TAILOR_MODEL_FLASH", "RESUME_TAILOR_MODEL_PRO",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+    # VM plumbing, inert unless you run the cloud job-discovery VM
+    "VM_GCLOUD_PATH", "VM_REMOTE_DIR", "local_task_offsets",
+}
+
+
+def test_the_advanced_set_is_declared_on_the_schema():
+    """PLAN.md's P4 calls this list "17 fields"; enumerating it gives 18 (4 + 5
+    singles + 6 + 3). The enumeration names every key explicitly, so it is the
+    authoritative half — see DECISIONS.md. Nothing in the UI hardcodes either
+    number: the checkbox counts at runtime."""
+    declared = {f.key for f in settings.SETTINGS_SCHEMA if f.advanced}
+    assert declared == ADVANCED_KEYS
+    assert len(ADVANCED_KEYS) == 18
+
+
+def test_advanced_set_excludes_country_pdflatex_and_max_scored():
+    """Three fields that LOOK advanced and are deliberately kept in plain sight.
+
+    `country` sits beside `location` and is what a non-US user must change:
+    `location="United Kingdom"` with `country="US"` silently mis-searches, and a
+    mis-search returns plausible results rather than an error, so nothing else
+    tells them.
+
+    `PDFLATEX_PATH` is the fix for "no PDF came out" — what someone hunts for
+    when the tool is ALREADY broken. Hiding a repair knob behind a disclosure
+    toggle is backwards: a user in that state has no reason to suspect the
+    setting exists at all.
+
+    `max_scored_per_run` is the only ceiling on an LLM bill, so it must stay
+    where someone worried about spend can find it. (`rescore_cap` reads like its
+    twin but is retry-of-failures plumbing — genuinely advanced, and in the set
+    above.)
+
+    This test exists to stop a future tidy-up pass from folding them in.
+    """
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for key in ("country", "PDFLATEX_PATH", "max_scored_per_run"):
+        assert by_key[key].advanced is False, f"{key} must stay visible by default"
+    assert by_key["rescore_cap"].advanced is True     # the contrast that makes the point
+
+
+def test_advanced_defaults_to_false_and_is_a_bool_everywhere():
+    """A new Field is plain unless it opts in — the safe direction: a forgotten
+    flag leaves a setting visible, never invisible."""
+    assert settings.Field("k", "L", "str", "", "S", "config").advanced is False
+    assert all(isinstance(f.advanced, bool) for f in settings.SETTINGS_SCHEMA)
+
+
+def test_advanced_is_a_rendering_flag_only(tmp_path):
+    """Same contract as `show_if`: load()/save()/validate() never consult it, so
+    an advanced field keeps round-tripping its stored value whether or not the
+    disclosure toggle has ever been ticked."""
+    targets = _targets(tmp_path)
+    targets["env"] = tmp_path / ".env"
+    values = settings.load(targets)
+    assert values["GOOGLE_CLOUD_LOCATION"] == "global"      # advanced, still loaded
+    values["GOOGLE_CLOUD_LOCATION"] = "us-east1"
+    settings.save(values, targets)
+    assert settings.load(targets)["GOOGLE_CLOUD_LOCATION"] == "us-east1"
+    assert settings.validate(values) == {}

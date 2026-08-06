@@ -727,6 +727,22 @@ def save_collapsed_sections(sections) -> None:
     _save_cfg({"settings_collapsed": [str(s) for s in sections]})
 
 
+def load_show_advanced() -> bool:
+    """Is the Settings tab's "Show advanced settings" disclosure ticked?
+    (config.json 'settings_show_advanced', default False.)
+
+    Strict `is True` rather than truthiness: a hand-edited `"false"` is a truthy
+    STRING, so `bool()` would turn disclosure on for someone editing the file to
+    turn it off. Anything that isn't a real JSON `true` falls back to the shipped
+    default."""
+    return _load_cfg().get("settings_show_advanced") is True
+
+
+def save_show_advanced(show: bool) -> None:
+    """Persist the advanced-settings disclosure (best-effort; never crashes the UI)."""
+    _save_cfg({"settings_show_advanced": bool(show)})
+
+
 def load_ui_scale_pct() -> int:
     """The saved interface scale percent (config.json `ui_scale_pct`), default 100,
     clamped to the supported 75-150 range so a stale/hand-edited value can't break it."""

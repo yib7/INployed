@@ -58,13 +58,22 @@ def test_editable_combo_opens_popup_on_click(qtbot, monkeypatch):
 def _form(tmp_path, **kw):
     """A SettingsForm that touches nothing outside tmp_path.
 
-    Without `collapsed_sections`/`save_collapsed` the constructor falls through to
-    `jobsdata.load_collapsed_sections()`, which reads the DEVELOPER's real
-    local/config.json — so a test's widget visibility would depend on which
-    sections that person happens to have folded.
+    Without `collapsed_sections`/`save_collapsed` — and, since P4, without
+    `show_advanced`/`save_show_advanced` — the constructor falls through to
+    `jobsdata.load_collapsed_sections()` / `load_show_advanced()`, which read the
+    DEVELOPER's real local/config.json. A test's widget visibility would then
+    depend on which sections that person happens to have folded and whether they
+    last left the advanced toggle on.
+
+    `show_advanced` defaults to False here (the shipped default) so a test sees
+    what a fresh profile sees; pass `show_advanced=True` to isolate `show_if`
+    behaviour on a field that is also advanced.
     """
-    return SettingsForm(targets=_targets(tmp_path), collapsed_sections=[],
-                        save_collapsed=lambda s: None, **kw)
+    kw.setdefault("collapsed_sections", [])
+    kw.setdefault("save_collapsed", lambda s: None)
+    kw.setdefault("show_advanced", False)
+    kw.setdefault("save_show_advanced", lambda v: None)
+    return SettingsForm(targets=_targets(tmp_path), **kw)
 
 
 def test_editable_choice_field_has_popup_filter(qtbot, tmp_path):
@@ -608,8 +617,12 @@ def _rows_visible(form, key):
 
 def test_flipping_the_provider_swaps_which_model_pair_is_visible(qtbot, tmp_path):
     """Both Claude pickers sit on screen at the shipped defaults today, advertising
-    machinery the default configuration cannot run."""
-    form = _form(tmp_path)
+    machinery the default configuration cannot run.
+
+    Opened with advanced shown: all four model pickers are ALSO `advanced`, so
+    without this the assertions below would pass for the wrong reason (everything
+    hidden) and stop testing the gate at all."""
+    form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
     assert _rows_visible(form, "stage1_model") and _rows_visible(form, "stage2_model")
     assert not _rows_visible(form, "stage1_model_claude")
@@ -635,7 +648,7 @@ def test_gate_signals_are_wired_when_the_gate_renders_after_its_dependent(qtbot,
     `RESUME_TAILOR_GEMINI_API_KEY` in Credentials — which SECTION_ORDER renders
     FIRST. Connect at dependent-build time and neither of these flips anything.
     """
-    form = _form(tmp_path)
+    form = _form(tmp_path, show_advanced=True)   # stage1_model is advanced too
     qtbot.addWidget(form)
 
     # gate declared after its dependents, same section
@@ -652,7 +665,7 @@ def test_gate_signals_are_wired_when_the_gate_renders_after_its_dependent(qtbot,
 def test_form_hides_a_gated_field_transitively(qtbot, tmp_path):
     """Through the real widgets: switching the tailor to Claude must take the
     Gemini API-key box with `gemini_auth`, even with 'api_key' selected."""
-    form = _form(tmp_path)
+    form = _form(tmp_path, show_advanced=True)   # the tailor model pickers are advanced
     qtbot.addWidget(form)
     form._widgets["gemini_auth"].setCurrentText("api_key")
     assert _rows_visible(form, "gemini_auth")
@@ -669,7 +682,7 @@ def test_hidden_field_still_collects_its_stored_value(qtbot, tmp_path):
     """`collect()` iterates the SCHEMA and reads `self._getters`, so a hidden
     widget still returns what it holds. This is the round-trip guarantee: hiding
     is a rendering decision, never a data one."""
-    form = _form(tmp_path)
+    form = _form(tmp_path, show_advanced=True)               # else it starts hidden
     qtbot.addWidget(form)
     form._setters["stage1_model"]("gemini-9-custom")
     form._widgets["provider"].setCurrentText("claude")       # hides the Gemini pair
@@ -700,7 +713,7 @@ def test_provider_round_trip_does_not_wipe_hidden_model_choices(qtbot, tmp_path,
     """
     targets = _targets(tmp_path)
     _quiet_info(monkeypatch)
-    form = _form(tmp_path)
+    form = _form(tmp_path, show_advanced=True)   # the model pickers are advanced too
     qtbot.addWidget(form)
 
     def on_disk():
@@ -736,7 +749,7 @@ def test_provider_round_trip_does_not_wipe_hidden_model_choices(qtbot, tmp_path,
 def _form_opened_on_claude(qtbot, tmp_path):
     targets = _targets(tmp_path)
     targets["config"].write_text(json.dumps({"tailor_provider": "claude"}), encoding="utf-8")
-    form = _form(tmp_path)
+    form = _form(tmp_path, show_advanced=True)   # the tailor model pickers are advanced
     qtbot.addWidget(form)
     assert not _rows_visible(form, "gemini_auth")           # opened on claude
     return form
@@ -791,9 +804,8 @@ def test_repopulate_re_evaluates_visibility_without_relying_on_setter_signals(qt
 def test_hidden_rows_survive_a_vm_gate_cycle(qtbot, tmp_path):
     """`show_if` composes with the section gate rather than fighting it: the VM
     master switch must not un-hide a field `show_if` closed, and vice versa."""
-    form = SettingsForm(targets=_targets(tmp_path), collapsed_sections=[],
-                        save_collapsed=lambda s: None,
-                        vm_panel_factory=lambda parent: QtWidgets.QLabel("vm", parent))
+    form = _form(tmp_path, show_advanced=True,
+                 vm_panel_factory=lambda parent: QtWidgets.QLabel("vm", parent))
     qtbot.addWidget(form)
     form._widgets["provider"].setCurrentText("claude")
     assert not _rows_visible(form, "stage1_model")
@@ -801,6 +813,240 @@ def test_hidden_rows_survive_a_vm_gate_cycle(qtbot, tmp_path):
     assert not _rows_visible(form, "stage1_model")
     form._setters["vm_enabled"](False)
     assert not _rows_visible(form, "stage1_model")
+
+
+# --- cycle 18 P4: the advanced flag + progressive disclosure --------------------
+
+def _visible_field_keys(form):
+    """Every schema key whose form ROWS are all flipped on right now.
+
+    Row-flag level, which is what `_field_visible` decides. Use
+    `_on_screen_field_keys` for claims about what a user actually sees."""
+    return {f.key for f in settings.SETTINGS_SCHEMA
+            if form._rows[f.key] and _rows_visible(form, f.key)}
+
+
+def _on_screen_field_keys(form):
+    """Every schema key that would really REACH THE SCREEN: its rows are flipped
+    on AND no ancestor is hidden.
+
+    `QFormLayout.isRowVisible` reports the row's own flag and knows nothing about
+    a hidden container, so a row inside the switched-off VM section reads True
+    while showing nothing. That gap is how the disclosure count first shipped
+    over-claiming by three."""
+    return {f.key for f in settings.SETTINGS_SCHEMA
+            if form._rows[f.key] and _rows_visible(form, f.key)
+            and form._widgets[f.key].isVisibleTo(form)}
+
+
+def test_advanced_fields_are_hidden_until_the_box_is_ticked(qtbot, tmp_path):
+    """The phase in one assertion: a fresh profile hides every advanced field,
+    ticking the box reveals exactly the ones a gate is not also holding shut."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._advanced_check.isChecked() is False
+    assert not _rows_visible(form, "stage1_concurrency")     # advanced, ungated
+    assert _rows_visible(form, "stage2_threshold")           # plain, same section
+
+    before = _visible_field_keys(form)
+    form._advanced_check.setChecked(True)
+    revealed = _visible_field_keys(form) - before
+    assert _rows_visible(form, "stage1_concurrency")
+    # exactly the advanced fields whose `show_if` gate is open at the shipped defaults
+    stored = settings.load(_targets(tmp_path))
+    assert revealed == {f.key for f in settings.SETTINGS_SCHEMA
+                        if f.advanced and settings.is_visible(f, stored)}
+    assert not revealed & {"stage1_model_claude", "RESUME_TAILOR_CLAUDE_MODEL_PRO"}
+
+    form._advanced_check.setChecked(False)
+    assert _visible_field_keys(form) == before               # and back again
+
+
+def test_the_three_deliberate_keeps_are_on_screen_on_a_fresh_profile(qtbot, tmp_path):
+    """The schema half of this lives in test_settings.py
+    (test_advanced_set_excludes_country_pdflatex_and_max_scored); this is the
+    same claim through the real form, because a second visibility path added
+    later could hide them without touching `Field.advanced`."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    for key in ("country", "PDFLATEX_PATH", "max_scored_per_run"):
+        assert _rows_visible(form, key), f"{key} must be visible without ticking advanced"
+
+
+def test_the_advanced_toggle_persists_through_the_injected_callback(qtbot, tmp_path):
+    """Toggling writes through the injected saver — never the developer's real
+    local/config.json — and a form built from what was written comes back ticked.
+    That second half IS the restart: the constructor is the only reader.
+
+    Opened ALREADY TICKED so "building must not write" is a real guard: Qt emits
+    nothing for `setChecked(False)` on a box that is already unticked, so a form
+    built at the default would pass that assertion even with the connect moved
+    above the `setChecked` — and every launch that remembered the box on would
+    then rewrite config.json at build.
+    """
+    saved = []
+    form = _form(tmp_path, show_advanced=True, save_show_advanced=saved.append)
+    qtbot.addWidget(form)
+    assert form._advanced_check.isChecked() is True
+    assert saved == []                                  # building must not write
+
+    form._advanced_check.setChecked(False)
+    assert saved == [False]
+    form._advanced_check.setChecked(True)
+    assert saved == [False, True]
+
+    reopened = _form(tmp_path, show_advanced=True)      # as a restart would load it
+    qtbot.addWidget(reopened)
+    assert reopened._advanced_check.isChecked() is True
+    assert _rows_visible(reopened, "stage1_concurrency")
+
+
+def test_a_failing_advanced_save_never_breaks_the_toggle(qtbot, tmp_path):
+    """Persisting the disclosure state is a convenience; an unwritable config.json
+    must not take the checkbox down with it (same posture as `_on_section_toggled`)."""
+    def boom(_value):
+        raise OSError("read-only config.json")
+
+    form = _form(tmp_path, save_show_advanced=boom)
+    qtbot.addWidget(form)
+    form._advanced_check.setChecked(True)
+    assert _rows_visible(form, "stage1_concurrency")     # still applied
+
+
+def test_an_advanced_field_behind_a_closed_gate_stays_hidden(qtbot, tmp_path):
+    """Composition with P3, the AND direction: `stage1_model_claude` is advanced
+    AND gated on provider=claude. Ticking 'show advanced' must not put it on
+    screen while the scorer runs on Gemini — that is the machinery-that-cannot-run
+    row P3 removed."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._advanced_check.setChecked(True)
+    assert _rows_visible(form, "stage1_model")           # advanced, gate open
+    assert not _rows_visible(form, "stage1_model_claude")   # advanced, gate closed
+
+    form._widgets["provider"].setCurrentText("claude")   # gate opens...
+    assert _rows_visible(form, "stage1_model_claude")     # ...now both halves hold
+    assert not _rows_visible(form, "stage1_model")
+
+    form._advanced_check.setChecked(False)               # advanced half closes again
+    assert not _rows_visible(form, "stage1_model_claude")
+
+
+def test_ticking_advanced_does_not_reveal_a_plain_gated_off_field(qtbot, tmp_path):
+    """The other direction: `RESUME_TAILOR_GEMINI_API_KEY` is NOT advanced, just
+    gated (gemini_auth == api_key). The disclosure toggle must not be a master
+    key that overrides `show_if` — it composes with it."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert not _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")
+    form._advanced_check.setChecked(True)
+    assert not _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")
+    form._widgets["gemini_auth"].setCurrentText("api_key")
+    assert _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")   # the gate is what opens it
+
+
+def test_the_checkbox_label_counts_what_ticking_would_reveal(qtbot, tmp_path):
+    """The count is computed at RUNTIME and means "advanced settings that APPLY
+    to this configuration and are being withheld" — not "how many advanced fields
+    exist". Of the eighteen, five belong to whichever provider is not selected
+    and three to a VM the user may not run, so the raw total would promise rows a
+    tick cannot deliver. Until search ships this label is the only signal the
+    hidden settings exist, so it must not lie in either direction.
+
+    Measured against what REACHES THE SCREEN, not against row flags — the count's
+    first cut passed a row-flag assertion while over-claiming by three.
+    """
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    before = _on_screen_field_keys(form)
+    label = form._advanced_check.text()
+
+    form._advanced_check.setChecked(True)
+    revealed = _on_screen_field_keys(form) - before
+    assert revealed                                      # the tick did something
+    assert f"({len(revealed)} hidden)" in label          # ...and the promise was exact
+    assert len(revealed) < len([f for f in settings.SETTINGS_SCHEMA if f.advanced])
+
+    # nothing is being withheld now, so the parenthetical goes away
+    assert "hidden" not in form._advanced_check.text()
+    form._advanced_check.setChecked(False)
+    assert form._advanced_check.text() == label          # ...and comes back
+
+
+def test_the_count_excludes_advanced_fields_in_a_switched_off_section(qtbot, tmp_path):
+    """The VM section's master switch is a CONFIGURATION gate, not a view fold:
+    with `vm_enabled` off its three advanced fields cannot reach the screen
+    whatever this checkbox says, because their whole container is hidden. Counting
+    them over-claims by three on every fresh install — which is what shipped in
+    the first cut of this phase. Turning the VM on must add them back, label and
+    all, without going through a `show_if` gate."""
+    form = _form(tmp_path, vm_panel_factory=lambda parent: QtWidgets.QLabel("vm", parent))
+    qtbot.addWidget(form)
+    off = form._advanced_hidden_count()
+    assert f"({off} hidden)" in form._advanced_check.text()
+
+    form._setters["vm_enabled"](True)
+    assert form._advanced_hidden_count() == off + 3
+    assert f"({off + 3} hidden)" in form._advanced_check.text()   # label followed the switch
+
+    form._setters["vm_enabled"](False)
+    assert form._advanced_hidden_count() == off
+
+    # ...and with the VM off, ticking really does leave those three off screen
+    form._advanced_check.setChecked(True)
+    on_screen = _on_screen_field_keys(form)
+    assert not {"VM_REMOTE_DIR", "VM_GCLOUD_PATH", "local_task_offsets"} & on_screen
+
+
+def test_a_collapsed_section_does_not_shrink_the_count(qtbot, tmp_path):
+    """The other side of that line. A collapsed section is a fold the user set,
+    with a header on screen naming what is inside, and the settings still apply —
+    so it must NOT subtract. It also cannot: this repo's owner runs with 9 of the
+    10 sections folded, so counting that way would report ~0 and destroy the only
+    signal (until search ships) that the hidden settings exist at all."""
+    expanded = _form(tmp_path)
+    qtbot.addWidget(expanded)
+    folded = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER))
+    qtbot.addWidget(folded)
+    assert folded._section_widgets["Scoring"].is_collapsed()
+    assert folded._advanced_hidden_count() == expanded._advanced_hidden_count()
+    assert folded._advanced_hidden_count() > 0
+
+
+def test_the_count_is_recomputed_rather_than_frozen_at_build(qtbot, tmp_path, monkeypatch):
+    """The shipped schema can't show this: `provider` and `tailor_provider` each
+    swap a same-sized pair of advanced pickers, so the real count is the same
+    number in every reachable gate state. Shrink one arm with a monkeypatched
+    schema to prove the label re-reads the gates instead of caching a constant.
+    """
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    baseline = form._advanced_hidden_count()
+    assert f"({baseline} hidden)" in form._advanced_check.text()
+
+    # Flipping `provider` normally swaps a same-sized pair (two Gemini pickers
+    # out, two Claude ones in), so the count comes back identical. Drop one of the
+    # incoming pair from the schema and the same flip must now read one lower.
+    thinner = [f for f in settings.SETTINGS_SCHEMA if f.key != "stage1_model_claude"]
+    monkeypatch.setattr(settings, "SETTINGS_SCHEMA", thinner)
+    form._widgets["provider"].setCurrentText("claude")   # gate change -> recount
+    assert form._advanced_hidden_count() == baseline - 1
+    assert f"({baseline - 1} hidden)" in form._advanced_check.text()
+
+
+def test_load_save_show_advanced_roundtrip(tmp_path, monkeypatch):
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
+    assert jobsdata.load_show_advanced() is False        # off on a fresh profile
+    jobsdata.save_show_advanced(True)
+    assert jobsdata.load_show_advanced() is True
+    jobsdata.save_show_advanced(False)
+    assert jobsdata.load_show_advanced() is False
+    # A hand-mangled value falls back to the shipped default rather than to
+    # truthiness: `bool("false")` is True, which would turn disclosure ON for
+    # someone who hand-edited the file trying to turn it off.
+    (tmp_path / "config.json").write_text('{"settings_show_advanced": "false"}', encoding="utf-8")
+    assert jobsdata.load_show_advanced() is False
 
 
 def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):

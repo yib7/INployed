@@ -4,8 +4,9 @@ Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
 checkboxes / multiline list / path+Browse / credential (masked by default, with
 a Hide toggle) / entry), a muted "(filename)" storage tag, a collapsible VM section
-gated by a master checkbox, and Save / Revert changes / Restore from archive /
-Restore defaults. Save validates via `settings.validate`/`settings.save`, reports
+gated by a master checkbox, a "Show advanced settings (N hidden)" disclosure
+that folds every `Field.advanced` row away, and Save / Revert changes / Restore
+from archive / Restore defaults. Save validates via `settings.validate`/`settings.save`, reports
 a changed-field summary, and never echoes a secret value into that summary.
 """
 from __future__ import annotations
@@ -109,6 +110,8 @@ class SettingsForm(QtWidgets.QWidget):
                  vm_panel_factory: Callable[[QtWidgets.QWidget], QtWidgets.QWidget] | None = None,
                  collapsed_sections: list[str] | None = None,
                  save_collapsed: Callable[[list[str]], None] | None = None,
+                 show_advanced: bool | None = None,
+                 save_show_advanced: Callable[[bool], None] | None = None,
                  parent=None):
         super().__init__(parent)
         self.on_saved = on_saved
@@ -147,6 +150,16 @@ class SettingsForm(QtWidgets.QWidget):
             jobsdata.load_collapsed_sections() if collapsed_sections is None else collapsed_sections)
         self._save_collapsed = save_collapsed or jobsdata.save_collapsed_sections
 
+        # Progressive disclosure: are the `advanced` fields folded away? Injected
+        # the same way as the collapse state (and for the same reason — a test
+        # that fell through to jobsdata would read the DEVELOPER's config.json and
+        # its assertions would depend on what that person last ticked).
+        self._show_advanced: bool = (
+            jobsdata.load_show_advanced() if show_advanced is None else bool(show_advanced))
+        self._save_show_advanced = save_show_advanced or jobsdata.save_show_advanced
+        # self._advanced_check is created by `_build` -> `_add_advanced_toggle`,
+        # before anything reads it (same as self.status, built by `_add_buttons`).
+
         self._build()
 
     # ---- construction --------------------------------------------------------
@@ -177,6 +190,8 @@ class SettingsForm(QtWidgets.QWidget):
         stored = settings.load(self.targets)
         self._opening_values = dict(stored)
 
+        self._add_advanced_toggle()
+
         for section, fields in _ordered_sections():
             sec = CollapsibleSection(
                 SECTION_DISPLAY.get(section, section),
@@ -198,6 +213,82 @@ class SettingsForm(QtWidgets.QWidget):
 
         self._add_buttons()
         self._body.addStretch(1)
+
+    # ---- progressive disclosure (settings.Field.advanced) --------------------
+
+    def _add_advanced_toggle(self) -> None:
+        """The one checkbox that folds every `advanced` field away, at the top of
+        the form (P7's search box goes above it).
+
+        Built BEFORE the sections so `_apply_field_visibility` — which refreshes
+        the label — can assume it exists, and connected AFTER `setChecked` so
+        restoring the persisted state does not write it straight back out.
+        """
+        check = QtWidgets.QCheckBox()
+        check.setChecked(self._show_advanced)
+        check.toggled.connect(self._on_advanced_toggled)
+        self._advanced_check = check
+        self._body.addWidget(check)
+
+    def _section_gate_open(self, f: settings.Field) -> bool:
+        """Is the master checkbox of `f`'s section (if it has one) switched on?
+
+        Read ONLY by the advanced count, never by `_field_visible`. The section
+        gate already hides its fields by hiding their whole container, so
+        repeating it per row would fight `_set_field_visible`'s property that
+        showing a row inside a gated-off container does not force the container
+        open — and would make this a second field-visibility path.
+        """
+        gate_key = COLLAPSIBLE_SECTIONS.get(f.section)
+        return gate_key is None or bool(self._getters[gate_key]())
+
+    def _advanced_hidden_count(self, gate_values: dict | None = None) -> int:
+        """How many advanced settings that APPLY to this configuration the
+        checkbox is withholding right now. Computed, never hardcoded.
+
+        Two subtractions, one line between them:
+
+        * A CONFIGURATION gate subtracts — both kinds. A `show_if` gate shut
+          (the other provider's model pickers) and the VM section's master
+          switch off both mean the same thing: that field does nothing for the
+          way this user has things set up. Counting them would promise rows a
+          tick cannot deliver, which is the whole reason this is not simply
+          "how many advanced fields exist" (18 today, of which 5 belong to the
+          provider that is not selected and 3 to a VM the user may not run).
+        * A collapsed SECTION does not subtract. That is a fold the user set
+          themselves, with a header on screen naming what is inside; the
+          settings still apply and expanding is not a configuration change. It
+          also cannot subtract: this repo's owner runs with 9 of the 10 sections
+          folded, so counting that way would report ~0 and destroy the only
+          signal — until search ships — that the hidden settings exist at all.
+
+        Zero once the box is ticked, which is what drops the parenthetical from
+        the label.
+        """
+        if self._show_advanced:
+            return 0
+        if gate_values is None:
+            gate_values = self._gate_values()
+        return sum(1 for f in settings.SETTINGS_SCHEMA
+                   if f.advanced and settings.is_visible(f, gate_values)
+                   and self._section_gate_open(f))
+
+    def _refresh_advanced_label(self, *_, gate_values: dict | None = None) -> None:
+        """Re-render the checkbox's count. Takes `*_` because it is also connected
+        directly to the VM master switch, whose `toggled(bool)` moves the count
+        without going through `_apply_field_visibility`."""
+        hidden = self._advanced_hidden_count(gate_values)
+        self._advanced_check.setText(
+            f"Show advanced settings ({hidden} hidden)" if hidden
+            else "Show advanced settings")
+
+    def _on_advanced_toggled(self, checked: bool) -> None:
+        self._show_advanced = bool(checked)
+        try:
+            self._save_show_advanced(self._show_advanced)
+        except OSError:
+            pass  # persisting the disclosure state must never break the form
+        self._apply_field_visibility()
 
     def _on_section_toggled(self, section: str, collapsed: bool) -> None:
         if collapsed:
@@ -233,6 +324,13 @@ class SettingsForm(QtWidgets.QWidget):
         check = QtWidgets.QCheckBox(gate.label if gate else "Enable")
         check.setChecked(bool(stored.get(gate_key, getattr(gate, "default", False))))
         check.toggled.connect(self._apply_section_visibility)
+        # This switch decides whether its section's advanced fields apply at all,
+        # so it moves the disclosure count. Connected HERE rather than from
+        # `_apply_section_visibility`, which also runs mid-`_build` — the label
+        # must not depend on SECTION_ORDER happening to render this section after
+        # every gate widget `_gate_values` reads. (setChecked is above the
+        # connects, so neither fires during construction.)
+        check.toggled.connect(self._refresh_advanced_label)
         sec.add_widget(check)
         self._getters[gate_key] = lambda c=check: c.isChecked()
         self._setters[gate_key] = lambda v, c=check: c.setChecked(bool(v))
@@ -354,22 +452,28 @@ class SettingsForm(QtWidgets.QWidget):
         """Should one field be on screen right now?
 
         The single place field-level visibility is decided, so later phases
-        compose HERE rather than in the loop below — P4's advanced flag becomes
-        `(not f.advanced or self._show_advanced) and settings.is_visible(...)`.
+        compose HERE rather than in the loop below. The two halves AND together
+        and neither overrides the other: ticking "show advanced" never reveals a
+        field whose `show_if` gate is shut (it would describe machinery the
+        current configuration cannot run), and an open gate never reveals an
+        advanced field while the disclosure is folded.
         """
-        return settings.is_visible(f, gate_values)
+        return ((not f.advanced or self._show_advanced)
+                and settings.is_visible(f, gate_values))
 
     def _apply_field_visibility(self, *_) -> None:
         """Re-render every field's visibility from the CURRENT gate values.
 
-        Runs once at build, on every gate change, and from `_repopulate` — so
-        Revert, Restore defaults and snapshot-load all re-evaluate. Walks the
-        whole schema, not just the gated fields, so an ungated field is actively
-        asserted visible instead of merely never touched.
+        Runs once at build, on every gate change, on the advanced toggle, and
+        from `_repopulate` — so Revert, Restore defaults and snapshot-load all
+        re-evaluate. Walks the whole schema, not just the gated fields, so an
+        ungated field is actively asserted visible instead of merely never
+        touched. The advanced count rides along because a gate change moves it.
         """
         gate_values = self._gate_values()
         for f in settings.SETTINGS_SCHEMA:
             self._set_field_visible(f.key, self._field_visible(f, gate_values))
+        self._refresh_advanced_label(gate_values=gate_values)
 
     def _label_cell(self, f: settings.Field) -> QtWidgets.QWidget:
         cell = QtWidgets.QWidget()

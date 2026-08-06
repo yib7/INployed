@@ -16,8 +16,10 @@ The schema is a flat list of Field rows grouped by `section`, backing onto
 four target files (config / search / scoring / env — see TARGET_FILES), so the
 Qt Settings tab can render one labelled input per row. A Field may also declare
 `show_if` — a gate that keeps it off screen until it can actually do something
-(is_visible / visible_keys). That is a RENDERING decision only: load/validate/
-save never consult it, so a hidden field keeps its value on disk.
+(is_visible / visible_keys) — and `advanced`, which folds a power-user knob
+behind the tab's disclosure checkbox. Both are RENDERING decisions only:
+load/validate/save never consult either, so a hidden field keeps its value on
+disk.
 Every public function accepts an optional `targets` mapping so tests can point
 the backing files at a tmp directory.
 """
@@ -62,6 +64,15 @@ class Field:
     # PURELY a rendering decision: load(), save() and validate() never consult it,
     # so a hidden field keeps round-tripping its stored value to disk.
     show_if: tuple[str, tuple[str, ...]] | None = None
+    # UI hint: a power-user knob, folded away behind the Settings tab's "Show
+    # advanced settings" checkbox. Same contract as `show_if` — purely a rendering
+    # decision, never consulted by load/save/validate — and the two COMPOSE rather
+    # than override: a field is on screen iff
+    #   (not advanced or the toggle is on) AND is_visible(field, gate_values)
+    # which settings_tab._field_visible is the single place that decides.
+    # Defaults False so a new Field is plain unless it opts in: a forgotten flag
+    # leaves a setting visible, which is the harmless direction.
+    advanced: bool = False
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
@@ -134,7 +145,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # user-tunable dashboard setting. watcher.load_config() reads config.json
     # directly, so a saved value still applies and an absent key falls back to 30.
     Field("stale_after_hours", "Flag data as stale after (hours)", "int", 36,
-          "Dashboard", "config",
+          "Dashboard", "config", advanced=True,
           help="The Stats tab warns that the pipeline may have failed when the newest run is "
                "older than this. Discovery runs a few times a day, so 36h means a missed "
                "day stands out.", min=6, max=336),
@@ -165,6 +176,9 @@ SETTINGS_SCHEMA: list[Field] = [
           min=1, max=500),
     Field("location", "Location", "str", "United States", "Scraper", "search",
           help="Geographic location filter for searches."),
+    # NOT advanced, deliberately: it sits beside `location` and is what a non-US
+    # user must change. location="United Kingdom" with country="US" silently
+    # mis-searches — plausible results, no error — so nothing else tells them.
     Field("country", "Country code", "str", "US", "Scraper", "search",
           help="Two-letter country code (e.g. US, GB, CA)."),
     Field("time_range", "Time range", "choice", "Past 24 hours", "Scraper", "search",
@@ -193,11 +207,13 @@ SETTINGS_SCHEMA: list[Field] = [
     # provider actually uses is on screen. The other pair keeps its stored value.
     Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.1-flash-lite",
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
+          advanced=True,
           help="Advanced: cheap model that scores every surviving job 1-5. Pick from the "
                "list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
     Field("stage2_model", "Stage-2 model", "editable_choice", "gemini-3.5-flash",
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
+          advanced=True,
           help="Advanced: deeper model for jobs that pass the Stage-2 threshold. Pick from "
                "the list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
@@ -209,22 +225,28 @@ SETTINGS_SCHEMA: list[Field] = [
           choices=("gemini", "claude")),
     Field("stage1_model_claude", "Stage-1 model (Claude)", "editable_choice",
           "claude-haiku-4-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
-          show_if=("provider", ("claude",)),
+          show_if=("provider", ("claude",)), advanced=True,
           help="Used only when Scoring provider is 'claude'."),
     Field("stage2_model_claude", "Stage-2 model (Claude)", "editable_choice",
           "claude-sonnet-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
-          show_if=("provider", ("claude",)),
+          show_if=("provider", ("claude",)), advanced=True,
           help="Used only when Scoring provider is 'claude'."),
     Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
+          advanced=True,
           help="Parallel Stage-1 LLM calls.", min=1, max=50, slider=True),
     Field("stage2_concurrency", "Stage-2 concurrency", "int", 4, "Scoring", "scoring",
+          advanced=True,
           help="Parallel Stage-2 LLM calls.", min=1, max=50, slider=True),
     Field("stage2_threshold", "Stage-2 threshold", "int", 4, "Scoring", "scoring",
           help="Stage-1 score at/above which a job gets deep Stage-2 analysis.", min=1, max=5,
           slider=True),
+    # NOT advanced, deliberately: this is the only ceiling on an LLM bill, so it
+    # stays where a user worried about spend can find it without first learning
+    # that a disclosure toggle exists. `rescore_cap` below reads like its twin but
+    # is retry-of-failures plumbing — genuinely advanced.
     Field("max_scored_per_run", "Max scored per run", "int", 800, "Scoring", "scoring",
           help="Spend guard: cap on LLM-scored jobs per run.", min=1, max=5000),
-    Field("rescore_cap", "Rescore cap", "int", 200, "Scoring", "scoring",
+    Field("rescore_cap", "Rescore cap", "int", 200, "Scoring", "scoring", advanced=True,
           help="Spend guard: cap on failed/missing master rows retried per run.", min=0, max=5000),
     Field("min_filter_years", "Min required years cutoff", "int", 1, "Scoring", "scoring",
           help="Roles requiring at least this many years of experience are filtered out.",
@@ -354,7 +376,7 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Project with Vertex AI enabled (for Gemini scoring + tailoring). Leave blank "
                "if you use the Gemini API keys (job scorer) above instead."),
     Field("GOOGLE_CLOUD_LOCATION", "Google Cloud location", "choice", "global",
-          "Connection & paths", "env",
+          "Connection & paths", "env", advanced=True,
           help="Vertex AI region. 'global' works for most users. Left blank, the résumé "
                "tailor falls back to 'global' but the job scorer falls back to "
                "'us-central1' — set this explicitly to keep the two in sync.",
@@ -365,6 +387,10 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("RESUME_TAILOR_OUTPUT", "Resume output folder", "path", "",
           "Connection & paths", "env", path_kind="dir", optional=True,
           help="Where tailored resumes are saved. Blank = your Downloads/Generated_Resumes."),
+    # NOT advanced, deliberately: this is the fix for "no PDF came out", i.e. what
+    # someone hunts for when the tool is ALREADY broken. Hiding a repair knob
+    # behind a disclosure toggle is backwards — a user in that state has no reason
+    # to suspect the setting exists.
     Field("PDFLATEX_PATH", "pdflatex path", "path", "pdflatex",
           "Connection & paths", "env", path_kind="file", optional=True,
           help="Path to pdflatex (MiKTeX/TeX Live). Leave as 'pdflatex' if it's on your PATH."),
@@ -395,31 +421,31 @@ SETTINGS_SCHEMA: list[Field] = [
     # Editable dropdowns: pick a 3.x model or type a custom id.
     Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model — fast (selection)",
           "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)),
+          show_if=("tailor_provider", ("gemini",)), advanced=True,
           help="Cheapest model — the bullet-selection / quick stages of tailoring."),
     Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model — standard (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)),
+          show_if=("tailor_provider", ("gemini",)), advanced=True,
           help="Default model — re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)),
+          show_if=("tailor_provider", ("gemini",)), advanced=True,
           help="Deliberately defaults to the same standard flash model as above to keep "
                "costs down — set to gemini-3.1-pro-preview yourself for the strongest "
                "writing (slower / pricier)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)),
+          show_if=("tailor_provider", ("claude",)), advanced=True,
           help="Claude provider only: cheapest tier (bullet selection / quick stages). "
                "Restart the dashboard after changing (.env is read at startup)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model — standard (writing)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)),
+          show_if=("tailor_provider", ("claude",)), advanced=True,
           help="Claude provider only: re-phrasing bullets and the cover letter. "
                "Restart the dashboard after changing (.env is read at startup)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
           "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)),
+          show_if=("tailor_provider", ("claude",)), advanced=True,
           help="Claude provider only: highest-quality tier (rephrase / cover letter). "
                "Restart the dashboard after changing (.env is read at startup)."),
 
@@ -441,9 +467,10 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("VM_USER", "VM Linux user", "str", "", "VM (cloud scraper)", "env", optional=True,
           help="Linux account on the VM that owns the discovery run (run_scraper.sh, crontab, data)."),
     Field("VM_REMOTE_DIR", "VM home dir", "str", "~", "VM (cloud scraper)", "env",
+          advanced=True,
           help="Remote dir the discovery files live in. Usually ~ (the Linux user's home)."),
     Field("VM_GCLOUD_PATH", "gcloud path", "path", "gcloud", "VM (cloud scraper)", "env",
-          path_kind="file", optional=True,
+          path_kind="file", optional=True, advanced=True,
           help="Path to the gcloud CLI. Leave as 'gcloud' if it's on your PATH."),
     # --- Local watcher task: keep the LinkedInJobsWatcher scheduled task in step --
     # with the VM schedule (local, non-secret; the VM tab's buttons use these too).
@@ -454,7 +481,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "Syncs off the VM's wall-clock run times, so it assumes the VM shares "
                "your timezone. Off = the local task's triggers never move."),
     Field("local_task_offsets", "Watcher check offsets (minutes)", "str", "30,50,70",
-          "VM (cloud scraper)", "config",
+          "VM (cloud scraper)", "config", advanced=True,
           help="Minutes after each VM run time the local watcher checks for fresh "
                "results, comma-separated (e.g. 30,50,70 = three checks per run)."),
 ]

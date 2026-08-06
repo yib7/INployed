@@ -645,3 +645,146 @@ def test_prune_deletes_nothing_for_keep_everything_or_off(tmp_path):
     assert settings_archive.prune("Keep everything", targets=targets) == []
     assert settings_archive.prune("Off", targets=targets) == []
     assert len(settings_archive.list_snapshots(targets)) == 3
+
+
+# --- show_if: a field is on screen only when it can actually do something ------
+
+# The twelve gates, spelled out so the schema can't drift without a failure here.
+SHOW_IF_GATES = {
+    "stage1_model": ("provider", ("gemini",)),
+    "stage2_model": ("provider", ("gemini",)),
+    "stage1_model_claude": ("provider", ("claude",)),
+    "stage2_model_claude": ("provider", ("claude",)),
+    "RESUME_TAILOR_MODEL_FLASH_LITE": ("tailor_provider", ("gemini",)),
+    "RESUME_TAILOR_MODEL_FLASH": ("tailor_provider", ("gemini",)),
+    "RESUME_TAILOR_MODEL_PRO": ("tailor_provider", ("gemini",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": ("tailor_provider", ("claude",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("tailor_provider", ("claude",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("tailor_provider", ("claude",)),
+    "gemini_auth": ("tailor_provider", ("gemini",)),
+    "RESUME_TAILOR_GEMINI_API_KEY": ("gemini_auth", ("api_key",)),
+}
+
+
+def test_the_twelve_gates_are_declared_on_the_schema():
+    gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
+    assert gated == SHOW_IF_GATES
+
+
+def test_show_if_is_a_declarative_tuple_not_a_callable():
+    """`Field` is frozen and pure-schema tests print/compare gates, so a gate is
+    data. A callable would also make the acyclic check below impossible."""
+    for f in settings.SETTINGS_SCHEMA:
+        if f.show_if is None:
+            continue
+        gate_key, allowed = f.show_if
+        assert isinstance(gate_key, str) and isinstance(allowed, tuple), f.key
+        assert all(isinstance(v, str) for v in allowed), f.key
+
+
+def test_every_gate_names_a_real_field_and_real_choices():
+    """The failure mode this catches is invisible at runtime: a typo in either
+    half ("api-key" for "api_key", "Provider" for "provider") hides the gated
+    field FOREVER, with no error anywhere — the value keeps round-tripping to
+    disk, so nothing else notices either."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for f in settings.SETTINGS_SCHEMA:
+        if f.show_if is None:
+            continue
+        gate_key, allowed = f.show_if
+        assert gate_key in by_key, f"{f.key} gates on unknown field {gate_key!r}"
+        gate = by_key[gate_key]
+        assert allowed, f"{f.key} has an empty allowed set — it could never show"
+        assert set(allowed) <= set(gate.choices), (
+            f"{f.key} gates on {gate_key} values {allowed} that aren't in {gate.choices}")
+
+
+def test_show_if_graph_is_acyclic():
+    """`is_visible` walks the gate chain, so a cycle is a hang (or, with the
+    guard, an exception) in front of a real user. Prove the shipped graph
+    terminates from every starting field."""
+    edges = {f.key: f.show_if[0] for f in settings.SETTINGS_SCHEMA if f.show_if}
+    for start in edges:
+        chain = [start]
+        node = edges[start]
+        while node in edges:
+            assert node not in chain, f"show_if cycle: {' -> '.join(chain + [node])}"
+            chain.append(node)
+            node = edges[node]
+
+
+def test_is_visible_raises_on_a_cyclic_gate_graph(monkeypatch):
+    """The other half of the acyclic contract: the walk must TERMINATE on a bad
+    graph rather than spin. Only the schema test above ships, but this proves the
+    guard is real, so a future cycle surfaces as an error instead of a frozen UI."""
+    a = settings.Field("a", "A", "choice", "x", "S", "config",
+                       choices=("x",), show_if=("b", ("x",)))
+    b = settings.Field("b", "B", "choice", "x", "S", "config",
+                       choices=("x",), show_if=("a", ("x",)))
+    monkeypatch.setattr(settings, "SETTINGS_SCHEMA", [a, b])
+    with pytest.raises(ValueError):
+        settings.is_visible(a, {"a": "x", "b": "x"})
+
+
+def test_show_if_gates_resolve_transitively():
+    """A field is visible iff its OWN predicate holds AND its gate is visible.
+
+    Without the second half, tailor_provider="claude" hides `gemini_auth` but a
+    stored `gemini_auth="api_key"` leaves the Gemini API-key box on screen with
+    nothing on the form governing it — the exact orphan this phase removes.
+    """
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    auth = by_key["gemini_auth"]
+    api_key = by_key["RESUME_TAILOR_GEMINI_API_KEY"]
+
+    both_open = {"tailor_provider": "gemini", "gemini_auth": "api_key"}
+    assert settings.is_visible(auth, both_open) is True
+    assert settings.is_visible(api_key, both_open) is True
+
+    own_predicate_fails = {"tailor_provider": "gemini", "gemini_auth": "vertex"}
+    assert settings.is_visible(auth, own_predicate_fails) is True
+    assert settings.is_visible(api_key, own_predicate_fails) is False
+
+    # The transitive case: the API key's OWN predicate holds, but its gate is
+    # itself hidden, so it must go too.
+    orphaned = {"tailor_provider": "claude", "gemini_auth": "api_key"}
+    assert settings.is_visible(auth, orphaned) is False
+    assert settings.is_visible(api_key, orphaned) is False
+    assert "RESUME_TAILOR_GEMINI_API_KEY" not in settings.visible_keys(orphaned)
+
+
+def test_is_visible_falls_back_to_the_gates_default_when_it_is_absent():
+    """`values` may be partial (the form only reads the gate widgets). An absent
+    gate must read as its default, not as "hidden"."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert settings.is_visible(by_key["stage1_model"], {}) is True        # provider=gemini
+    assert settings.is_visible(by_key["stage1_model_claude"], {}) is False
+    assert settings.is_visible(by_key["min_score"], {}) is True           # ungated
+
+
+def test_visible_keys_at_the_shipped_defaults_hides_the_six_inapplicable_fields(tmp_path):
+    """The audit's headline finding, pinned. At the shipped defaults
+    (provider=gemini, tailor_provider=gemini, gemini_auth=vertex) these six
+    describe machinery that cannot run — two Claude scorer pickers, three Claude
+    tailor pickers, and the Gemini API key that only 'api_key' billing reads."""
+    values = settings.load(_targets(tmp_path))
+    hidden = {f.key for f in settings.SETTINGS_SCHEMA} - set(settings.visible_keys(values))
+    assert hidden == {
+        "stage1_model_claude", "stage2_model_claude",
+        "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
+        "RESUME_TAILOR_CLAUDE_MODEL_PRO", "RESUME_TAILOR_GEMINI_API_KEY",
+    }
+
+
+def test_a_hidden_field_still_loads_and_saves_its_value(tmp_path):
+    """`show_if` is a UI concern only: load()/save()/validate() never consult it.
+    Hiding a field must not touch what is on disk — that is what makes the whole
+    feature reversible and what keeps a Claude user's Gemini ids intact."""
+    targets = _targets(tmp_path)
+    targets["scoring"] = tmp_path / "scoring_config.json"
+    values = settings.load(targets)
+    values["provider"] = "claude"                 # hides stage1_model
+    values["stage1_model"] = "gemini-9-custom"
+    settings.save(values, targets)
+    assert settings.load(targets)["stage1_model"] == "gemini-9-custom"
+    assert json.loads(targets["scoring"].read_text("utf-8"))["stage1_model"] == "gemini-9-custom"

@@ -599,6 +599,210 @@ def test_restore_loads_values_and_shows_secret(qtbot, tmp_path, monkeypatch):
     assert settings.load(targets)["min_score"] == 5
 
 
+# --- cycle 18 P3: show_if conditional visibility --------------------------------
+
+def _rows_visible(form, key):
+    """Is EVERY form row this field occupies on screen? (label row + help row)"""
+    return all(layout.isRowVisible(row) for layout, row in form._rows[key])
+
+
+def test_flipping_the_provider_swaps_which_model_pair_is_visible(qtbot, tmp_path):
+    """Both Claude pickers sit on screen at the shipped defaults today, advertising
+    machinery the default configuration cannot run."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert _rows_visible(form, "stage1_model") and _rows_visible(form, "stage2_model")
+    assert not _rows_visible(form, "stage1_model_claude")
+    assert not _rows_visible(form, "stage2_model_claude")
+
+    form._widgets["provider"].setCurrentText("claude")
+    assert not _rows_visible(form, "stage1_model")
+    assert not _rows_visible(form, "stage2_model")
+    assert _rows_visible(form, "stage1_model_claude")
+    assert _rows_visible(form, "stage2_model_claude")
+
+    form._widgets["provider"].setCurrentText("gemini")
+    assert _rows_visible(form, "stage1_model") and _rows_visible(form, "stage2_model")
+    assert not _rows_visible(form, "stage1_model_claude")
+
+
+def test_gate_signals_are_wired_when_the_gate_renders_after_its_dependent(qtbot, tmp_path):
+    """The reason gate signals are connected in a SECOND pass at the end of
+    `_build()` rather than as each dependent is built.
+
+    Two gates render after what they gate: `provider` follows `stage1_model` in
+    the Scoring section, and `gemini_auth` lives in Engine while it gates
+    `RESUME_TAILOR_GEMINI_API_KEY` in Credentials — which SECTION_ORDER renders
+    FIRST. Connect at dependent-build time and neither of these flips anything.
+    """
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+
+    # gate declared after its dependents, same section
+    assert _rows_visible(form, "stage1_model")
+    form._widgets["provider"].setCurrentText("claude")
+    assert not _rows_visible(form, "stage1_model")
+
+    # gate in a LATER section than the field it gates
+    assert not _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")
+    form._widgets["gemini_auth"].setCurrentText("api_key")
+    assert _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")
+
+
+def test_form_hides_a_gated_field_transitively(qtbot, tmp_path):
+    """Through the real widgets: switching the tailor to Claude must take the
+    Gemini API-key box with `gemini_auth`, even with 'api_key' selected."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["gemini_auth"].setCurrentText("api_key")
+    assert _rows_visible(form, "gemini_auth")
+    assert _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")
+
+    form._widgets["tailor_provider"].setCurrentText("claude")
+    assert not _rows_visible(form, "gemini_auth")
+    assert not _rows_visible(form, "RESUME_TAILOR_GEMINI_API_KEY")   # orphan removed
+    assert _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_PRO")
+    assert not _rows_visible(form, "RESUME_TAILOR_MODEL_PRO")
+
+
+def test_hidden_field_still_collects_its_stored_value(qtbot, tmp_path):
+    """`collect()` iterates the SCHEMA and reads `self._getters`, so a hidden
+    widget still returns what it holds. This is the round-trip guarantee: hiding
+    is a rendering decision, never a data one."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._setters["stage1_model"]("gemini-9-custom")
+    form._widgets["provider"].setCurrentText("claude")       # hides the Gemini pair
+    assert not _rows_visible(form, "stage1_model")
+
+    values, errors = form.collect()
+    assert errors == {}
+    assert values["stage1_model"] == "gemini-9-custom"       # hidden is not dropped
+    assert values["provider"] == "claude"
+
+
+def test_provider_round_trip_does_not_wipe_hidden_model_choices(qtbot, tmp_path, monkeypatch):
+    """The test this whole phase has to pass.
+
+    Type a custom Gemini model id, save, switch the scorer to Claude, save,
+    switch back, save — and the custom id must still be on disk.
+
+    THREE saves, for the reason mutation testing actually showed rather than the
+    one it looks like. `settings.save()` MERGES into the backing file, so a key
+    merely OMITTED from `collect()` is not wiped from disk — the on-disk
+    assertions alone do not catch a `collect()` "optimised" to iterate visible
+    fields. What they do catch is a hidden field whose value is REPLACED (e.g. a
+    visibility pass that "tidies" hidden widgets back to their defaults), and
+    what save 3 adds over save 2 is the end state the checkpoint asks for: BOTH
+    provider's model choices coexisting in one scoring_config.json. The omission
+    mutant is caught by the `collect()` assertion below, and independently by
+    test_hidden_field_still_collects_its_stored_value.
+    """
+    targets = _targets(tmp_path)
+    _quiet_info(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+
+    def on_disk():
+        return json.loads(targets["scoring"].read_text(encoding="utf-8"))
+
+    form._setters["stage1_model"]("gemini-9-custom")
+    form._setters["stage2_model"]("gemini-9-deep")
+    assert form.save() is True                                    # save 1
+    assert on_disk()["stage1_model"] == "gemini-9-custom"
+
+    form._widgets["provider"].setCurrentText("claude")            # hides both
+    form._setters["stage1_model_claude"]("claude-99-custom")
+    assert not _rows_visible(form, "stage1_model")
+    # The hidden key must be IN the dict Save writes, not merely left undisturbed
+    # on disk by the merge — this is the assertion that kills a visible-only collect().
+    assert form.collect()[0]["stage1_model"] == "gemini-9-custom"
+    assert form.save() is True                                    # save 2
+    assert on_disk()["provider"] == "claude"
+    assert on_disk()["stage1_model"] == "gemini-9-custom"         # hidden, still written
+    assert on_disk()["stage2_model"] == "gemini-9-deep"
+
+    form._widgets["provider"].setCurrentText("gemini")            # back again
+    assert form.save() is True                                    # save 3
+    both = on_disk()
+    assert both["stage1_model"] == "gemini-9-custom"
+    assert both["stage2_model"] == "gemini-9-deep"
+    assert both["stage1_model_claude"] == "claude-99-custom"      # the other pair too
+    # ...and the widget shows it again now that it is back on screen
+    assert _rows_visible(form, "stage1_model")
+    assert form._getters["stage1_model"]() == "gemini-9-custom"
+
+
+def _form_opened_on_claude(qtbot, tmp_path):
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"tailor_provider": "claude"}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert not _rows_visible(form, "gemini_auth")           # opened on claude
+    return form
+
+
+def test_revert_and_restore_defaults_re_evaluate_visibility(qtbot, tmp_path):
+    """Revert, Restore defaults and snapshot-load all go through `_repopulate`."""
+    form = _form_opened_on_claude(qtbot, tmp_path)
+
+    form.restore_defaults()                                 # tailor_provider -> gemini
+    assert _rows_visible(form, "gemini_auth")
+    assert _rows_visible(form, "RESUME_TAILOR_MODEL_PRO")
+    assert not _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_PRO")
+
+    form.revert()                                           # back to the stored claude
+    assert not _rows_visible(form, "gemini_auth")
+    assert _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_PRO")
+
+
+def test_repopulate_re_evaluates_visibility_without_relying_on_setter_signals(qtbot, tmp_path):
+    """`_repopulate` must re-render visibility ITSELF, not get there by luck.
+
+    Every gate is a QComboBox today, and `_set_combo` emits `currentTextChanged`,
+    so the test above passes even with `_apply_field_visibility()` deleted from
+    `_repopulate` (verified by mutation). That is a property of the widget type,
+    not a contract — a gate rendered by a setter that changes its value silently
+    would leave Revert showing a stale form. Block the gate's signals to prove
+    `_repopulate` does not depend on them.
+    """
+    form = _form_opened_on_claude(qtbot, tmp_path)
+    gate = form._widgets["tailor_provider"]
+
+    gate.blockSignals(True)
+    try:
+        form.restore_defaults()                             # -> gemini, no signal emitted
+    finally:
+        gate.blockSignals(False)
+    assert gate.currentText() == "gemini"                   # the value really did change
+    assert _rows_visible(form, "gemini_auth")
+    assert _rows_visible(form, "RESUME_TAILOR_MODEL_PRO")
+    assert not _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_PRO")
+
+    gate.blockSignals(True)
+    try:
+        form.revert()                                       # back to the stored claude
+    finally:
+        gate.blockSignals(False)
+    assert not _rows_visible(form, "gemini_auth")
+    assert _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_PRO")
+
+
+def test_hidden_rows_survive_a_vm_gate_cycle(qtbot, tmp_path):
+    """`show_if` composes with the section gate rather than fighting it: the VM
+    master switch must not un-hide a field `show_if` closed, and vice versa."""
+    form = SettingsForm(targets=_targets(tmp_path), collapsed_sections=[],
+                        save_collapsed=lambda s: None,
+                        vm_panel_factory=lambda parent: QtWidgets.QLabel("vm", parent))
+    qtbot.addWidget(form)
+    form._widgets["provider"].setCurrentText("claude")
+    assert not _rows_visible(form, "stage1_model")
+    form._setters["vm_enabled"](True)
+    assert not _rows_visible(form, "stage1_model")
+    form._setters["vm_enabled"](False)
+    assert not _rows_visible(form, "stage1_model")
+
+
 def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):
     targets = _targets(tmp_path)
     settings.save({"min_score": 5}, targets)

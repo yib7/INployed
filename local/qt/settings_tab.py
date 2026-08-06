@@ -190,6 +190,12 @@ class SettingsForm(QtWidgets.QWidget):
             else:
                 self._fill_section(sec, section, fields, stored)
 
+        # Second pass, AFTER every field exists: wire the `show_if` gates and do
+        # the first visibility render. See `_connect_gate_signals` for why this
+        # cannot happen inside the section loop above.
+        self._connect_gate_signals()
+        self._apply_field_visibility()
+
         self._add_buttons()
         self._body.addStretch(1)
 
@@ -283,6 +289,80 @@ class SettingsForm(QtWidgets.QWidget):
         """
         for form, row in self._rows[key]:
             form.setRowVisible(row, visible)
+
+    # ---- conditional visibility (settings.Field.show_if) ---------------------
+
+    def _gate_keys_in_use(self) -> list[str]:
+        """Every field named as another field's `show_if` gate, deduped, in schema
+        order.
+
+        This is also the full set of keys `settings.is_visible` can consult: a
+        gate that is itself gated (`gemini_auth`) appears here because something
+        gates on IT, and its own gate (`tailor_provider`) appears for the same
+        reason — so a chain of any depth is covered without walking it.
+        """
+        keys: list[str] = []
+        for f in settings.SETTINGS_SCHEMA:
+            if f.show_if is not None and f.show_if[0] not in keys:
+                keys.append(f.show_if[0])
+        return keys
+
+    def _gate_values(self) -> dict[str, object]:
+        """Current values of the gate fields, read LIVE from their widgets.
+
+        Not from `settings.load()`: visibility has to follow the form as the user
+        edits it, before anything is saved. Only gates are read —
+        `settings.is_visible` falls back to a Field's own default for any key
+        absent from this mapping.
+        """
+        return {key: self._getters[key]() for key in self._gate_keys_in_use()}
+
+    def _connect_gate_signals(self) -> None:
+        """Connect every gate's change signal, in ONE pass at the end of `_build`.
+
+        Deferring this is mandatory, not stylistic: two gates render AFTER what
+        they gate. `provider` follows `stage1_model` in the Scoring section, and
+        `gemini_auth` lives in Engine while it gates `RESUME_TAILOR_GEMINI_API_KEY`
+        in Credentials — which `SECTION_ORDER` renders FIRST. Connecting as each
+        dependent is built would leave both of those gates inert.
+
+        An unsupported gate widget raises rather than silently never firing (the
+        same posture as `_set_field_visible`'s KeyError). Only a bounded-value
+        control can be a gate — `show_if` compares against `Field.choices` — so
+        QComboBox and QCheckBox are the whole supported set, and both are
+        guaranteed to have a `_getters` entry for `_gate_values`.
+        """
+        for key in self._gate_keys_in_use():
+            widget = self._widgets[key]
+            if isinstance(widget, QtWidgets.QComboBox):
+                widget.currentTextChanged.connect(self._apply_field_visibility)
+            elif isinstance(widget, QtWidgets.QCheckBox):
+                widget.toggled.connect(self._apply_field_visibility)
+            else:
+                raise TypeError(f"{key} gates another field but renders as "
+                                f"{type(widget).__name__}, which has no watched "
+                                f"change signal")
+
+    def _field_visible(self, f: settings.Field, gate_values: dict) -> bool:
+        """Should one field be on screen right now?
+
+        The single place field-level visibility is decided, so later phases
+        compose HERE rather than in the loop below — P4's advanced flag becomes
+        `(not f.advanced or self._show_advanced) and settings.is_visible(...)`.
+        """
+        return settings.is_visible(f, gate_values)
+
+    def _apply_field_visibility(self, *_) -> None:
+        """Re-render every field's visibility from the CURRENT gate values.
+
+        Runs once at build, on every gate change, and from `_repopulate` — so
+        Revert, Restore defaults and snapshot-load all re-evaluate. Walks the
+        whole schema, not just the gated fields, so an ungated field is actively
+        asserted visible instead of merely never touched.
+        """
+        gate_values = self._gate_values()
+        for f in settings.SETTINGS_SCHEMA:
+            self._set_field_visible(f.key, self._field_visible(f, gate_values))
 
     def _label_cell(self, f: settings.Field) -> QtWidgets.QWidget:
         cell = QtWidgets.QWidget()
@@ -496,6 +576,18 @@ class SettingsForm(QtWidgets.QWidget):
             edit.setText(chosen)
 
     def collect(self) -> tuple[dict, dict[str, str]]:
+        """Read every field's current value out of its widget.
+
+        THE ROUND-TRIP GUARANTEE — do not "optimise" this to iterate
+        `settings.visible_keys()`. It walks the SCHEMA and reads `self._getters`,
+        so a field hidden by `show_if` still returns the value it is holding and
+        still gets written. Iterate visible fields instead and the very first
+        Save after switching `provider` to claude silently wipes both Gemini
+        model ids off disk (they fall out of `values`, `settings.save` never
+        groups them, and the next `load` hands back the schema default) — the one
+        failure mode `test_provider_round_trip_does_not_wipe_hidden_model_choices`
+        exists to catch.
+        """
         values: dict = {}
         errors: dict[str, str] = {}
         for f in settings.SETTINGS_SCHEMA:
@@ -682,6 +774,11 @@ class SettingsForm(QtWidgets.QWidget):
             else:
                 self._setters[f.key](val)
         self._apply_section_visibility()
+        # Revert / Restore defaults / snapshot-load all land here, and any of them
+        # can change a gate. Re-evaluate EXPLICITLY: every gate is a QComboBox
+        # today, whose setter emits currentTextChanged and would get there by
+        # itself, but that is a side-effect of the widget type, not a contract.
+        self._apply_field_visibility()
 
     def restore_defaults(self) -> None:
         # Defaults reset the tunables but never wipe saved keys — leave secrets as-is.

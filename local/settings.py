@@ -14,7 +14,10 @@ load/validate/save that:
 
 The schema is a flat list of Field rows grouped by `section`, backing onto
 four target files (config / search / scoring / env — see TARGET_FILES), so the
-Qt Settings tab can render one labelled input per row.
+Qt Settings tab can render one labelled input per row. A Field may also declare
+`show_if` — a gate that keeps it off screen until it can actually do something
+(is_visible / visible_keys). That is a RENDERING decision only: load/validate/
+save never consult it, so a hidden field keeps its value on disk.
 Every public function accepts an optional `targets` mapping so tests can point
 the backing files at a tmp directory.
 """
@@ -52,6 +55,13 @@ class Field:
     path_kind: str = "dir"      # for type=="path": "dir" picks a folder, "file" picks a file
     optional: bool = False      # UI hint: blank is fine (no value needed to run)
     slider: bool = False        # UI hint: render a bounded int as a drag slider (needs min+max)
+    # UI hint: show this field only while another field holds one of these values,
+    # e.g. ("provider", ("gemini",)). Declarative DATA, not a callable — Field is
+    # frozen, and a tuple is comparable and printable, so the whole gate graph is
+    # testable without building a form (see is_visible / visible_keys).
+    # PURELY a rendering decision: load(), save() and validate() never consult it,
+    # so a hidden field keeps round-tripping its stored value to disk.
+    show_if: tuple[str, tuple[str, ...]] | None = None
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
@@ -178,13 +188,16 @@ SETTINGS_SCHEMA: list[Field] = [
                "to the VM after changing this, and re-upload score_jobs.py once."),
 
     # --- Scoring: written to root-level scoring_config.json (read by score_jobs.py) ---
+    # The two model PAIRS below are gated on `provider` (declared after them — see
+    # the deferred signal wiring in settings_tab._build): only the pair the chosen
+    # provider actually uses is on screen. The other pair keeps its stored value.
     Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.1-flash-lite",
-          "Scoring", "scoring", choices=GEMINI_MODELS,
+          "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           help="Advanced: cheap model that scores every surviving job 1-5. Pick from the "
                "list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
     Field("stage2_model", "Stage-2 model", "editable_choice", "gemini-3.5-flash",
-          "Scoring", "scoring", choices=GEMINI_MODELS,
+          "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           help="Advanced: deeper model for jobs that pass the Stage-2 threshold. Pick from "
                "the list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
@@ -196,9 +209,11 @@ SETTINGS_SCHEMA: list[Field] = [
           choices=("gemini", "claude")),
     Field("stage1_model_claude", "Stage-1 model (Claude)", "editable_choice",
           "claude-haiku-4-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
+          show_if=("provider", ("claude",)),
           help="Used only when Scoring provider is 'claude'."),
     Field("stage2_model_claude", "Stage-2 model (Claude)", "editable_choice",
           "claude-sonnet-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
+          show_if=("provider", ("claude",)),
           help="Used only when Scoring provider is 'claude'."),
     Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
           help="Parallel Stage-1 LLM calls.", min=1, max=50, slider=True),
@@ -316,8 +331,15 @@ SETTINGS_SCHEMA: list[Field] = [
                "comma-separated with no spaces, that it rotates through to spread rate limits. This "
                "is SEPARATE from the resume-tailor key below. Get keys at aistudio.google.com; leave "
                "blank to score with your Google Cloud project instead."),
+    # Gated TWO deep: it is only readable when the Gemini side bills by key
+    # (gemini_auth == api_key), and gemini_auth is itself only live when the
+    # tailor runs on Gemini. The transitive rule in is_visible() is what stops a
+    # stored "api_key" from leaving this box on screen under the Claude tailor.
+    # It also renders in the FIRST section while its gate lives in Engine — the
+    # reason gate signals are connected in a second pass (settings_tab._build).
     Field("RESUME_TAILOR_GEMINI_API_KEY", "Gemini API key (resume tailor)", "str", "",
           "Credentials", "env", secret=True, optional=True,
+          show_if=("gemini_auth", ("api_key",)),
           help="Powers the RESUME TAILOR only, and only when its engine (below) is set to 'api_key'. "
                "A SINGLE key, kept separate from the scorer's pool above so the two can use different "
                "accounts or quotas. Leave blank if the tailor uses your Google Cloud project "
@@ -355,7 +377,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # local/config.json), which Google billing method the Gemini side uses, and
     # the per-stage Gemini + Claude model pickers (.env). ---------------------
     Field("gemini_auth", "Resume tailor engine", "choice", "vertex",
-          "Engine", "config",
+          "Engine", "config", show_if=("tailor_provider", ("gemini",)),
           help="'vertex' bills your Google Cloud project (above). 'api_key' uses the single "
                "Gemini API key (above) - pick this if you don't have a Cloud project.",
           choices=("vertex", "api_key")),
@@ -373,25 +395,31 @@ SETTINGS_SCHEMA: list[Field] = [
     # Editable dropdowns: pick a 3.x model or type a custom id.
     Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model — fast (selection)",
           "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
+          show_if=("tailor_provider", ("gemini",)),
           help="Cheapest model — the bullet-selection / quick stages of tailoring."),
     Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model — standard (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
+          show_if=("tailor_provider", ("gemini",)),
           help="Default model — re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
+          show_if=("tailor_provider", ("gemini",)),
           help="Deliberately defaults to the same standard flash model as above to keep "
                "costs down — set to gemini-3.1-pro-preview yourself for the strongest "
                "writing (slower / pricier)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
+          show_if=("tailor_provider", ("claude",)),
           help="Claude provider only: cheapest tier (bullet selection / quick stages). "
                "Restart the dashboard after changing (.env is read at startup)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model — standard (writing)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
+          show_if=("tailor_provider", ("claude",)),
           help="Claude provider only: re-phrasing bullets and the cover letter. "
                "Restart the dashboard after changing (.env is read at startup)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
           "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
+          show_if=("tailor_provider", ("claude",)),
           help="Claude provider only: highest-quality tier (rephrase / cover letter). "
                "Restart the dashboard after changing (.env is read at startup)."),
 
@@ -446,6 +474,57 @@ def storage_location(field: Field) -> str:
     """The friendly filename a Field's value is saved to (for the GUI 'stored in'
     tag). Falls back to the raw target id for any unmapped target."""
     return STORAGE_LABELS.get(field.target, field.target)
+
+
+def is_visible(field: Field, values: Mapping[str, Any]) -> bool:
+    """Should `field` be rendered, given the current `values`?
+
+    A field is visible iff its OWN `show_if` predicate holds AND its gate field
+    is itself visible. The transitive half is not decoration: `gemini_auth` is
+    gated on the tailor running on Gemini, so with the tailor on Claude a STORED
+    `gemini_auth == "api_key"` would otherwise leave the Gemini API-key box on
+    screen with nothing on the form governing it.
+
+    `values` may be PARTIAL — the Qt form only reads the gate widgets — so an
+    absent gate key falls back to that Field's own default rather than reading as
+    "hidden".
+
+    Values are compared as strings, EXACTLY: no strip/lower, unlike the runtime
+    resolvers (`resume_tailor.config`, `score_jobs._active_scoring`) which
+    normalise. That cannot diverge through the form, because `_gate_values` reads
+    a non-editable QComboBox whose text is always one of `Field.choices` — a
+    hand-edited `"provider": "Claude"` is already coerced to the first choice by
+    `settings_tab._set_combo` before this ever sees it.
+
+    Raises on a broken graph rather than degrading quietly, matching the posture
+    of `settings_tab._set_field_visible` (KeyError) and `_connect_gate_signals`
+    (TypeError): KeyError for a gate key that is not a schema field — silently
+    hiding a field forever is the exact failure this phase exists to prevent —
+    and ValueError for a cycle, which would otherwise be an infinite loop in
+    front of a user. The shipped graph is pinned by
+    test_every_gate_names_a_real_field_and_real_choices and
+    test_show_if_graph_is_acyclic.
+    """
+    by_key = {f.key: f for f in SETTINGS_SCHEMA}
+    seen: set[str] = {field.key}
+    current = field
+    while current.show_if is not None:
+        gate_key, allowed = current.show_if
+        gate = by_key.get(gate_key)
+        if gate is None:
+            raise KeyError(f"{current.key} gates on unknown field {gate_key!r}")
+        if str(values.get(gate_key, gate.default)) not in allowed:
+            return False
+        if gate_key in seen:
+            raise ValueError(f"show_if cycle at {gate_key!r}")
+        seen.add(gate_key)
+        current = gate
+    return True
+
+
+def visible_keys(values: Mapping[str, Any]) -> list[str]:
+    """The keys of every Field that `values` puts on screen, in schema order."""
+    return [f.key for f in SETTINGS_SCHEMA if is_visible(f, values)]
 
 
 def _resolve_targets(targets: dict[str, Path] | None) -> dict[str, Path]:

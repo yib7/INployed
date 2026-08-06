@@ -1245,6 +1245,24 @@ def test_editing_clears_the_note_through_a_composite_cell_too(qtbot, tmp_path,
     assert _note(form, key) == ""
 
 
+def test_a_leading_zero_is_not_reported_as_unreadable(qtbot, tmp_path):
+    """`readable` is decided by PARSING the stored value, not by
+    `str(stored) == str(int(stored))`.
+
+    The string test called '05' and '+3' unreadable — both of which `int()` takes
+    happily — and then printed a note claiming a whole number is not one and
+    calling the value on screen "the default" when the default is 4. A false alarm
+    that misdescribes the file it is warning about is worse than no alarm: it
+    teaches the user to distrust the ones that are real.
+    """
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"min_score": "05"}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._widgets["min_score"].value() == 5
+    assert _note(form, "min_score") == ""
+
+
 def test_every_field_got_a_change_signal_or_is_the_documented_exception(qtbot, tmp_path):
     """A structural version of the test above, so a NEW composite type cannot ship
     unwired. `multichoice` has no single inner control (P0's documented
@@ -1293,20 +1311,34 @@ def test_the_error_styling_uses_a_selector_the_widget_actually_matches(qtbot, tm
     """`theme.py` styled only QLineEdit/QPlainTextEdit/QTextEdit, so the red
     outline would silently never appear on the six new QSpinBoxes. A property
     nothing renders is worse than no property: the test passes and the user sees
-    a status line pointing at a field that looks fine."""
+    a status line pointing at a field that looks fine.
+
+    The candidate set is derived from the SCHEMA, not from the field that happens
+    to carry a rule today: `settings.TEXT_TYPES` is the schema's own statement of
+    where a `pattern` may be declared, and it includes `editable_choice`, which
+    renders as a QComboBox — a class the first cut of the QSS left out, i.e. the
+    exact defect this test exists for, one field type over.
+    """
     from qt import theme
     qss = theme._qss()
-    for cls in ("QLineEdit", "QPlainTextEdit", "QSpinBox"):
+    for cls in ("QLineEdit", "QPlainTextEdit", "QSpinBox", "QComboBox"):
         assert f'{cls}[error="true"]' in qss, cls
     assert 'QLabel[danger="true"]' in qss
 
     form = _form(tmp_path, show_advanced=True)
     qtbot.addWidget(form)
-    # every widget an error can land on is one of the styled classes
-    styled = (QtWidgets.QLineEdit, QtWidgets.QPlainTextEdit, QtWidgets.QSpinBox)
+    # every widget an error CAN land on — a pattern may be declared on any
+    # TEXT_TYPES field, and every non-slider int gets a range message
+    styled = (QtWidgets.QLineEdit, QtWidgets.QPlainTextEdit, QtWidgets.QSpinBox,
+              QtWidgets.QComboBox)
+    checked = 0
     for f in settings.SETTINGS_SCHEMA:
-        if f.pattern or (f.type == "int" and not f.slider):
+        if f.type in settings.TEXT_TYPES or (f.type == "int" and not f.slider):
             assert isinstance(form._widgets[f.key], styled), f.key
+            cls = type(form._widgets[f.key]).__name__
+            assert f'{cls}[error="true"]' in qss, f"{f.key} renders as an unstyled {cls}"
+            checked += 1
+    assert checked >= 30            # not vacuous if the schema is refactored
 
 
 def test_the_status_line_pluralises_on_the_count(qtbot, tmp_path, monkeypatch):
@@ -1492,6 +1524,99 @@ def test_the_first_reachable_offender_is_the_one_focused(qtbot, tmp_path, monkey
     assert not _focused(form, "stage1_model")
     assert "2 settings need fixing" in form.status.text()
     assert "Stage-1 model" in form.status.text()           # named, since it is hidden
+
+
+def test_the_gate_hint_survives_fixing_the_reachable_offender(qtbot, tmp_path, monkeypatch):
+    """The reachable half is the half the user fixes FIRST, so the count they are
+    left staring at is the one that most needs its "and here is where it lives".
+
+    The first cut rebuilt the sentence without hints on every clear-as-you-type,
+    so fixing the visible field dropped a fully-explained "2 settings need fixing
+    (Stage-1 model — set ...)" to a bare "1 setting needs fixing" naming a row that
+    is nowhere on the form — a status line counting something the user cannot see
+    or even identify, which is precisely what this phase replaced the modal to
+    avoid.
+    """
+    _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["provider"].setCurrentText("claude")     # hides the Gemini pair
+    monkeypatch.setattr(settings, "validate",
+                        lambda values: {"stage1_model": "bad", "resume_tone": "bad"})
+    assert form.save() is False
+    assert form.status.text().startswith("2 settings need fixing (Stage-1 model")
+
+    monkeypatch.setattr(settings, "validate", lambda values: {"stage1_model": "bad"})
+    form._widgets["resume_tone"].setCurrentIndex(1)        # fix the one on screen
+    assert list(form._errors) == ["stage1_model"]
+    assert form._widgets["stage1_model"].isVisibleTo(form) is False
+    assert form.status.text().startswith("1 setting needs fixing (Stage-1 model")
+    assert "Scoring provider" in form.status.text()        # ...and how to reach it
+
+
+def test_a_successful_save_clears_a_stale_clamp_note(qtbot, tmp_path, monkeypatch):
+    """The clamp note describes the FILE ("scoring_config.json has 99999"). The
+    Save is what makes that false — it just wrote 5000 there — so leaving the note
+    up turns the one honest thing on the row into a lie."""
+    _no_modals(monkeypatch)
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"max_scored_per_run": 99999}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert "99999" in _note(form, "max_scored_per_run")
+
+    form._widgets["min_score"].setValue(2)                 # something to save
+    assert form.save() is True
+    assert json.loads(targets["scoring"].read_text("utf-8"))["max_scored_per_run"] == 5000
+    assert _note(form, "max_scored_per_run") == ""
+
+
+def test_repopulate_reflags_a_value_it_had_to_clamp(qtbot, tmp_path):
+    """The silent rewrite, restored by the back door. `_repopulate` (Discard
+    changes / Restore defaults / Load snapshot) drives the same setters the
+    constructor does, and `QSpinBox.setValue` clamps just as silently there — so a
+    snapshot holding `max_scored_per_run: 99999` loaded as 5000 with nothing said,
+    which is the exact behaviour this phase exists to remove."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert _note(form, "max_scored_per_run") == ""
+
+    form._repopulate(lambda f: 99999 if f.key == "max_scored_per_run" else f.default)
+    assert form._widgets["max_scored_per_run"].value() == 5000
+    note = _note(form, "max_scored_per_run")
+    assert "99999" in note and "5000" in note
+
+    # ...and a repopulate that clamps nothing leaves the row clean again
+    form._repopulate(lambda f: f.default)
+    assert _note(form, "max_scored_per_run") == ""
+
+
+def test_repopulate_drops_a_note_about_the_values_it_replaced(qtbot, tmp_path, monkeypatch):
+    """Discard changes has to clear the notes ITSELF, not lean on the setters.
+
+    A setter that writes the value already on screen emits no change signal, so
+    `_on_field_edited` never runs — and that is exactly the shape of the case that
+    matters: a field flagged WITHOUT being edited (rejected on Save because of what
+    was on disk) is reverted to the same value it is holding, and the red outline
+    survives the action whose whole job is to put the form back. `resume_tone` is
+    untouched here for precisely that reason; revert it to a DIFFERENT value and
+    this test passes with the fix removed.
+    """
+    _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    monkeypatch.setattr(settings, "validate", lambda values: {"resume_tone": "bad"})
+    before = form._widgets["resume_tone"].currentText()
+    assert form.save() is False
+    assert form._errors and form._widgets["resume_tone"].property("error") is True
+
+    monkeypatch.setattr(settings, "validate", lambda values: {})
+    form.revert()
+    assert form._widgets["resume_tone"].currentText() == before   # nothing to signal
+    assert form._errors == {}
+    assert _note(form, "resume_tone") == ""
+    assert form._widgets["resume_tone"].property("error") is False
+    assert form.status.text().startswith("Reverted")              # not a leftover count
 
 
 def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):

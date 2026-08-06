@@ -91,10 +91,19 @@ def _repolish(widget: QtWidgets.QWidget) -> None:
     """Re-run the style on `widget` so a just-changed dynamic property (`error`,
     `danger`, `warn`) actually repaints. Qt resolves property selectors when a
     widget is polished, not on every paint, so without this the QSS rule is
-    correct and invisible."""
+    correct and invisible.
+
+    The `update()` is the third of the three steps Qt's own dynamic-property recipe
+    calls for: unpolish/polish re-resolve the rule, but only a repaint request
+    guarantees the new border reaches the screen before the next unrelated event
+    happens to schedule one. Cheap, and the failure it prevents (a red outline that
+    appears a beat late, or not until the mouse moves) is invisible to a headless
+    test — which is exactly why it is not left to luck.
+    """
     style = widget.style()
     style.unpolish(widget)
     style.polish(widget)
+    widget.update()
 
 
 class _FocusOutValidator(QtCore.QObject):
@@ -853,8 +862,15 @@ class SettingsForm(QtWidgets.QWidget):
             return
         widget = self._widgets[f.key]
         shown = widget.value()
-        wanted = self._as_int(stored, f.default)
-        readable = str(stored).strip() == str(wanted)
+        # "Readable" is decided by PARSING, not by `str(stored) == str(wanted)`:
+        # the string form says "05" and "+3" are unreadable when int() takes both
+        # happily, and the message then claims a number is not a whole number and
+        # calls the value it is showing "the default" when it is nothing of the
+        # sort.
+        try:
+            wanted, readable = int(str(stored).strip()), True
+        except (TypeError, ValueError):
+            wanted, readable = int(f.default), False
         if readable and wanted == shown:
             return
         where = settings.storage_location(f)
@@ -896,8 +912,22 @@ class SettingsForm(QtWidgets.QWidget):
 
         Only ever called after the error set CHANGED, so it cannot stomp on a
         "Saved." / "Reverted…" message that has nothing to do with validation.
+
+        The hints are RECOMPUTED here rather than passed down from the Save that
+        first reported them, because the reachable half is the half the user fixes
+        first: flag two, one of them behind a configuration gate, fix the one on
+        screen, and a status line built without hints would drop to a bare
+        "1 setting needs fixing" naming a field that is nowhere on the form. Every
+        path that touches `self._errors` therefore lands on the same sentence.
         """
-        self.status.setText(self._error_status() if self._errors else "")
+        self.status.setText(self._error_status(self._unreachable()) if self._errors else "")
+
+    def _unreachable(self) -> list[settings.Field]:
+        """The flagged fields a CONFIGURATION gate is keeping off screen, in schema
+        order — the ones the status line has to name, because nothing else on the
+        form will."""
+        return [f for f in settings.SETTINGS_SCHEMA
+                if f.key in self._errors and self._blocking_gate(f) is not None]
 
     def _error_status(self, unreachable: list[settings.Field] | None = None) -> str:
         n = len(self._errors)
@@ -961,6 +991,23 @@ class SettingsForm(QtWidgets.QWidget):
             self._set_field_note(key, message)
         self._errors = dict(errors)
 
+    def _clear_all_notes(self) -> None:
+        """Drop every inline note and every flag, errors and clamp warnings alike.
+
+        For the moments when the values the notes describe stop existing: a
+        successful Save (the clamp note says "config.json has 99999" — it no longer
+        does, this Save is what wrote 5000 there) and `_repopulate` (Revert,
+        Restore defaults and snapshot-load each replace every value on screen).
+        Leaving them is not a cosmetic wrinkle: a note naming a disk state that is
+        no longer true is the same lie as the silent rewrite this feature exists to
+        expose.
+        """
+        for key in list(self._notes):
+            self._set_field_note(key, "")
+        if self._errors:
+            self._errors.clear()
+            self._refresh_error_status()
+
     def _report_errors(self, errors: dict[str, str]) -> None:
         """Put every rejected field on screen if it can be, name the ones it
         cannot, focus the first one the user can actually act on.
@@ -973,11 +1020,10 @@ class SettingsForm(QtWidgets.QWidget):
         one outcome worse than the modal this replaces.
         """
         self._show_errors(errors)
-        ordered = [f for f in settings.SETTINGS_SCHEMA if f.key in errors]
-        blocked = {f.key for f in ordered if self._blocking_gate(f) is not None}
-        unreachable = [f for f in ordered if f.key in blocked]
-        reachable = [f for f in ordered if f.key not in blocked]
-        self.status.setText(self._error_status(unreachable))
+        self._refresh_error_status()        # names the unreachable ones, same as everywhere
+        blocked = {f.key for f in self._unreachable()}
+        reachable = [f for f in settings.SETTINGS_SCHEMA
+                     if f.key in errors and f.key not in blocked]
         if not reachable:
             return
         # The first REACHABLE one, not simply the first: sending someone to a row
@@ -1126,6 +1172,7 @@ class SettingsForm(QtWidgets.QWidget):
         summary = self._changed_summary(before, values)
         archived = self._archive_after_save(values) if summary else False
         self._opening_values = settings.load(self.targets)
+        self._clear_all_notes()   # every note described the file this Save replaced
         self._sync_secret_boxes(self._opening_values)  # reflect the canonical stored values
         self.status.setText("Saved." if summary else "Saved — no changes.")
         if summary:
@@ -1218,10 +1265,11 @@ class SettingsForm(QtWidgets.QWidget):
             self._secret_hides[key].setChecked(True)
 
     def _repopulate(self, value_for: Callable[[settings.Field], object]) -> None:
+        incoming: dict[str, object] = {}
         for f in settings.SETTINGS_SCHEMA:
             if f.secret:
                 continue
-            val = value_for(f)
+            val = incoming[f.key] = value_for(f)
             if f.type == "multichoice":
                 want = set(val if isinstance(val, list) else [])
                 for choice, cb in self._multi[f.key].items():
@@ -1231,6 +1279,17 @@ class SettingsForm(QtWidgets.QWidget):
                     "\n".join(str(v) for v in (val if isinstance(val, list) else [])))
             else:
                 self._setters[f.key](val)
+        # Every value on screen was just replaced, so every note about the old ones
+        # is stale — and a setter that happened to write the SAME value emits no
+        # change signal, so `_on_field_edited` cannot be relied on to have cleared
+        # them. Then re-run the clamp check against what actually arrived: the
+        # setters clamp exactly as the constructor does, so without this a snapshot
+        # holding `max_scored_per_run: 99999` loads as 5000 in silence — the one
+        # rewrite this phase exists to make visible, restored by the back door.
+        self._clear_all_notes()
+        for f in settings.SETTINGS_SCHEMA:
+            if f.type == "int" and f.key in incoming:
+                self._flag_a_rewritten_int(f, incoming[f.key])
         self._apply_section_visibility()
         # Revert / Restore defaults / snapshot-load all land here, and any of them
         # can change a gate. Re-evaluate EXPLICITLY: every gate is a QComboBox

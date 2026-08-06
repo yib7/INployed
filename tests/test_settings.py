@@ -12,6 +12,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+import local_task  # noqa: E402
 import settings  # noqa: E402
 import settings_archive  # noqa: E402
 import watcher  # noqa: E402
@@ -368,12 +369,21 @@ def test_local_task_offsets_is_an_editable_config_str(tmp_path):
 
 # --- Field.pattern: the one free-text format rule the schema declares ------------
 
-@pytest.mark.parametrize("text", ["30,50,70", "0", "30, 50, 70", " 30 ,50 ", "5,5"])
+@pytest.mark.parametrize("text", ["30,50,70", "0", "30, 50, 70", " 30 ,50 ", "5,5",
+                                  "", "  ", "30,", ",30", "30,,50"])
 def test_local_task_offsets_accepts_comma_separated_minutes(text):
+    """The five extra cases are the ones the first cut of this rule rejected.
+
+    `parse_offsets` honours every one of them in full — blank and whitespace mean
+    "use the built-in 30,50,70", and a stray or trailing comma is simply an empty
+    entry it skips, so `30,,50` really is (30, 50). See
+    `test_the_offsets_pattern_is_never_stricter_than_its_consumer` for why that
+    matters more than tidiness.
+    """
     assert settings.validate({"local_task_offsets": text}) == {}
 
 
-@pytest.mark.parametrize("text", ["", "abc", "30,abc", "30,", ",30", "30;50", "-5", "1.5"])
+@pytest.mark.parametrize("text", ["abc", "30,abc", "30;50", "-5", "1.5"])
 def test_local_task_offsets_rejects_anything_that_is_not_minutes(text):
     """The one field whose value is free text a consumer must PARSE.
 
@@ -387,6 +397,44 @@ def test_local_task_offsets_rejects_anything_that_is_not_minutes(text):
     errors = settings.validate({"local_task_offsets": text})
     assert "local_task_offsets" in errors
     assert "30,50,70" in errors["local_task_offsets"]      # the message shows the shape
+
+
+def _consumer_loses_part_of(text) -> bool:
+    """Did `parse_offsets` throw away part of what the user actually wrote?
+
+    Written entries = the non-empty comma-separated pieces. Nothing written at all
+    (blank, spaces, a lone comma) is not a loss: falling back to the built-in
+    offsets IS what an empty setting means, exactly as it does for every other
+    optional field in the schema.
+    """
+    written = [p.strip() for p in str(text).split(",") if p.strip()]
+    sentinel = (-99999,)
+    parsed = local_task.parse_offsets(text, default=sentinel)
+    if not written:
+        return False
+    return parsed == sentinel or len(parsed) != len(written)
+
+
+@pytest.mark.parametrize("text", [
+    "30,50,70", "0", "30, 50, 70", " 30 ,50 ", "5,5", "", "  ", "30,", ",30",
+    "30,,50", " , , ", "abc", "30,abc", "30;50", "-5", "1.5", "30 50", "1e3",
+    "30,50,70 plus whatever", "every half hour", "0030",
+])
+def test_the_offsets_pattern_is_never_stricter_than_its_consumer(text):
+    """A pattern may reject only what its consumer would silently DISCARD.
+
+    This repo is public and other people run it. `validate()` runs over EVERY
+    collected field, so a rule stricter than the runtime does not nag — it locks
+    someone whose config already holds such a value out of saving any OTHER
+    setting, from a row (`local_task_offsets` is `advanced` AND inside the VM
+    section) that a configuration gate can keep off screen entirely. The first cut
+    rejected "", "30," and ",30", all of which `parse_offsets` honours exactly.
+
+    Asserted against the real consumer rather than against a second regex, so the
+    two cannot drift apart in the same commit.
+    """
+    rejected = "local_task_offsets" in settings.validate({"local_task_offsets": text})
+    assert rejected == _consumer_loses_part_of(text), text
 
 
 def test_pattern_is_declared_on_the_field_and_off_by_default():
@@ -407,16 +455,20 @@ def test_pattern_must_match_the_WHOLE_value():
 def test_a_field_defaults_pass_their_own_pattern():
     """Restore-defaults must never land on a value the same schema rejects."""
     for f in settings.SETTINGS_SCHEMA:
-        if f.pattern:
+        if f.pattern is not None:
             assert settings.validate({f.key: f.default}) == {}, f.key
 
 
 def test_a_pattern_is_only_declared_on_a_text_field():
     """`re.fullmatch` needs a string. A pattern on a list/int/bool field would
     raise TypeError out of validate() the first time someone saved — catch it in
-    the schema lint instead."""
+    the schema lint instead.
+
+    `is not None`, not truthiness, in both schema lints: `pattern=""` is falsy but
+    validate() still enforces it — and an empty pattern rejects every non-empty
+    value, so it is the one spelling that most needs linting."""
     for f in settings.SETTINGS_SCHEMA:
-        if f.pattern:
+        if f.pattern is not None:
             assert f.type in settings.TEXT_TYPES, f.key
 
 

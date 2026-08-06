@@ -83,6 +83,15 @@ class Field:
     # discard. `pattern_help` is the sentence the user reads, so it must name the
     # shape ("Use comma-separated whole numbers, e.g. 30,50,70") rather than echo
     # the regex.
+    #
+    # THE RULE A PATTERN MUST OBEY: reject only what the consumer would silently
+    # DISCARD — never a value it honours. This repo is public and others run it,
+    # so a rule stricter than the runtime is not a nag, it is a lock-out: validate()
+    # runs over EVERY collected field, so one already-saved value the editor has
+    # newly decided it dislikes blocks every future Save of every OTHER setting,
+    # from a row a configuration gate may keep off screen entirely. Write the
+    # differential test (editor rejects it ⟺ the consumer loses part of it) rather
+    # than eyeballing the regex.
     pattern: str | None = None
     pattern_help: str = ""
 
@@ -504,9 +513,18 @@ SETTINGS_SCHEMA: list[Field] = [
     # never leave the watcher task trigger-less) — which is right for the consumer
     # and wrong for the editor: without this rule the Settings tab happily saves
     # "every half hour" and nothing ever says the pipeline threw it away.
+    #
+    # The rule is drawn exactly at what the consumer DISCARDS: every non-empty
+    # comma-separated entry must be a non-negative whole number. Blank, a stray or
+    # trailing comma, and surrounding spaces all pass, because parse_offsets
+    # honours each of them in full — blank means "use the built-in 30,50,70", and
+    # `30,,50` really is (30, 50). Rejecting those (the first cut did) would have
+    # locked anyone whose config already held one out of saving ANY setting, from
+    # a row the VM master switch can keep off screen.
+    # test_the_offsets_pattern_is_never_stricter_than_its_consumer is the guard.
     Field("local_task_offsets", "Watcher check offsets (minutes)", "str", "30,50,70",
           "VM (cloud scraper)", "config", advanced=True,
-          pattern=r"\s*\d+\s*(?:,\s*\d+\s*)*",
+          pattern=r"\s*(?:\d+\s*)?(?:,\s*(?:\d+\s*)?)*",
           pattern_help="Use comma-separated whole numbers, e.g. 30,50,70.",
           help="Minutes after each VM run time the local watcher checks for fresh "
                "results, comma-separated (e.g. 30,50,70 = three checks per run)."),

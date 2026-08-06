@@ -306,11 +306,16 @@ def _qss() -> str:
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
     QPlainTextEdit:focus, QTextEdit:focus, QDateEdit:focus {{ border-color: {ACCENT}; }}
     /* Inline validation (Settings tab): the offending input outlines in red and
-       a danger note appears under it. QSpinBox is in the list because six int
-       settings render as one — leave it out and the property is set, the status
-       line counts it, and the field the user is sent to looks perfectly fine. */
+       a danger note appears under it. The list must cover every widget class a
+       settings error can land on — leave one out and the property is set, the
+       status line counts it, and the field the user is sent to looks perfectly
+       fine. QSpinBox is here because six int settings render as one; QComboBox
+       because `editable_choice` is one of settings.TEXT_TYPES, i.e. a field type
+       the schema explicitly lets carry a `pattern`.
+       test_the_error_styling_uses_a_selector_the_widget_actually_matches derives
+       the set from the schema rather than from this list. */
     QLineEdit[error="true"], QPlainTextEdit[error="true"], QTextEdit[error="true"],
-    QSpinBox[error="true"], QDoubleSpinBox[error="true"] {{
+    QSpinBox[error="true"], QDoubleSpinBox[error="true"], QComboBox[error="true"] {{
         border-color: {DANGER}; }}
     QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
         border: 0; width: 22px; }}

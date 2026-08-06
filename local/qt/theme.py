@@ -305,7 +305,12 @@ def _qss() -> str:
         selection-background-color: {SEL}; selection-color: {SEL_TEXT}; }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
     QPlainTextEdit:focus, QTextEdit:focus, QDateEdit:focus {{ border-color: {ACCENT}; }}
-    QLineEdit[error="true"], QPlainTextEdit[error="true"], QTextEdit[error="true"] {{
+    /* Inline validation (Settings tab): the offending input outlines in red and
+       a danger note appears under it. QSpinBox is in the list because six int
+       settings render as one — leave it out and the property is set, the status
+       line counts it, and the field the user is sent to looks perfectly fine. */
+    QLineEdit[error="true"], QPlainTextEdit[error="true"], QTextEdit[error="true"],
+    QSpinBox[error="true"], QDoubleSpinBox[error="true"] {{
         border-color: {DANGER}; }}
     QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
         border: 0; width: 22px; }}
@@ -343,6 +348,7 @@ def _qss() -> str:
     QLabel[secondary="true"] {{ color: {TEXT_SECONDARY}; }}
     QLabel[heading="true"] {{ color: {TEXT}; font-weight: 600; }}
     QLabel[warn="true"] {{ color: {AMBER}; }}
+    QLabel[danger="true"] {{ color: {DANGER}; }}
     QToolButton[sectionHeader="true"] {{ color: {TEXT}; font-weight: 600; border: 0;
         padding: 6px 2px; text-align: left; }}
     QToolButton[sectionHeader="true"]:hover {{ color: {ACCENT}; }}

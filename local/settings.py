@@ -19,7 +19,8 @@ Qt Settings tab can render one labelled input per row. A Field may also declare
 (is_visible / visible_keys) — and `advanced`, which folds a power-user knob
 behind the tab's disclosure checkbox. Both are RENDERING decisions only:
 load/validate/save never consult either, so a hidden field keeps its value on
-disk.
+disk. `pattern` is the exception that proves it: a format rule validate() DOES
+enforce, so the tab cannot write free text the consumer would silently discard.
 Every public function accepts an optional `targets` mapping so tests can point
 the backing files at a tmp directory.
 """
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -73,11 +75,27 @@ class Field:
     # Defaults False so a new Field is plain unless it opts in: a forgotten flag
     # leaves a setting visible, which is the harmless direction.
     advanced: bool = False
+    # A format rule for a free-text field, as schema DATA (like `choices`) rather
+    # than a branch inside validate(). Matched against the WHOLE value with
+    # `re.fullmatch`, so a rule can't be satisfied by a prefix. Unlike `show_if`
+    # and `advanced` this is NOT a rendering hint — validate() enforces it, which
+    # is what stops the Settings tab writing a value its consumer would silently
+    # discard. `pattern_help` is the sentence the user reads, so it must name the
+    # shape ("Use comma-separated whole numbers, e.g. 30,50,70") rather than echo
+    # the regex.
+    pattern: str | None = None
+    pattern_help: str = ""
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
 # the literal environment-variable name, so values round-trip straight to .env.
 ENV_TARGETS = {"env"}
+
+# The field types whose value is a plain string, i.e. the only ones a
+# `Field.pattern` can be matched against. Pinned by
+# test_a_pattern_is_only_declared_on_a_text_field so a pattern on, say, a list
+# field is caught by the schema lint rather than by a TypeError in validate().
+TEXT_TYPES = ("str", "path", "editable_choice")
 
 # Gemini model ids offered in the model dropdowns (the recent 3.x family). These
 # are EDITABLE dropdowns ("editable_choice"): pick one or type a custom id, so a
@@ -480,8 +498,16 @@ SETTINGS_SCHEMA: list[Field] = [
                "LinkedInJobsWatcher task so it checks for fresh results after each run. "
                "Syncs off the VM's wall-clock run times, so it assumes the VM shares "
                "your timezone. Off = the local task's triggers never move."),
+    # The one free-text field a consumer has to PARSE, so the one that carries a
+    # `pattern`. local_task.parse_offsets is deliberately junk-safe (it skips
+    # unreadable entries and falls back to its own default, so a mangled value can
+    # never leave the watcher task trigger-less) — which is right for the consumer
+    # and wrong for the editor: without this rule the Settings tab happily saves
+    # "every half hour" and nothing ever says the pipeline threw it away.
     Field("local_task_offsets", "Watcher check offsets (minutes)", "str", "30,50,70",
           "VM (cloud scraper)", "config", advanced=True,
+          pattern=r"\s*\d+\s*(?:,\s*\d+\s*)*",
+          pattern_help="Use comma-separated whole numbers, e.g. 30,50,70.",
           help="Minutes after each VM run time the local watcher checks for fresh "
                "results, comma-separated (e.g. 30,50,70 = three checks per run)."),
 ]
@@ -714,6 +740,11 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
             bad = [v for v in value if v not in f.choices]
             if bad:
                 errors[key] = f"Not allowed: {', '.join(bad)}."
+        elif f.type in TEXT_TYPES and f.pattern is not None:
+            # fullmatch, not search: a rule satisfied by a PREFIX would pass
+            # "30,50,70 and some junk" and write it straight to config.json.
+            if re.fullmatch(f.pattern, value) is None:
+                errors[key] = f.pattern_help or "Not in the expected format."
     return errors
 
 

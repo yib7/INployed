@@ -2,12 +2,19 @@
 
 Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
-checkboxes / multiline list / path+Browse / credential (masked by default, with
-a Hide toggle) / entry), a muted "(filename)" storage tag, a collapsible VM section
-gated by a master checkbox, a "Show advanced settings (N hidden)" disclosure
-that folds every `Field.advanced` row away, and Save / Revert changes / Restore
-from archive / Restore defaults. Save validates via `settings.validate`/`settings.save`, reports
-a changed-field summary, and never echoes a secret value into that summary.
+spin box / checkboxes / multiline list / path+Browse / credential (masked by
+default, with a Hide toggle) / entry), a muted "(filename)" storage tag, a
+collapsible VM section gated by a master checkbox, a "Show advanced settings
+(N hidden)" disclosure that folds every `Field.advanced` row away, and Save /
+Revert changes / Restore from archive / Restore defaults. Save validates via
+`settings.validate`/`settings.save`, reports a changed-field summary, and never
+echoes a secret value into that summary.
+
+Problems are reported IN PLACE, not in a modal: the offending input outlines in
+red, a danger note appears under it, the form scrolls to the first one the user
+can act on, and the status line counts them ("2 settings need fixing"). The one
+surviving modal is the disk-failure arm of Save — a rejected field is something
+you can see and fix where you are, an unwritable config.json is neither.
 """
 from __future__ import annotations
 
@@ -73,6 +80,43 @@ SECTION_TAGLINE = {
 }
 COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
 
+# The two flavours of inline note a field row can carry (one at a time — see
+# `_set_field_note`). An ERROR blocks Save; a WARN is information about what the
+# form already did to a stored value.
+NOTE_ERROR = "error"
+NOTE_WARN = "warn"
+
+
+def _repolish(widget: QtWidgets.QWidget) -> None:
+    """Re-run the style on `widget` so a just-changed dynamic property (`error`,
+    `danger`, `warn`) actually repaints. Qt resolves property selectors when a
+    widget is polished, not on every paint, so without this the QSS rule is
+    correct and invisible."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
+class _FocusOutValidator(QtCore.QObject):
+    """Validate one field the moment focus leaves it.
+
+    Finding out at Save time that a box has been wrong for ten minutes is the
+    modal's other failure, so leaving the field is when to say so. Installed on
+    the REGISTERED control; note that a `QSpinBox` hands focus to its internal
+    line edit, so its FocusOut arrives there rather than here — harmless, because
+    a spin box is structurally in range and has nothing to report.
+    """
+
+    def __init__(self, form: "SettingsForm", key: str):
+        super().__init__(form)          # parented: lives exactly as long as the form
+        self._form = form
+        self._key = key
+
+    def eventFilter(self, obj, event):  # noqa: N802 - Qt override name
+        if event.type() == QtCore.QEvent.Type.FocusOut:
+            self._form._validate_field(self._key)
+        return False
+
 
 class _PopupOnClick(QtCore.QObject):
     """Open an editable combo's dropdown when its text field is clicked.
@@ -136,6 +180,12 @@ class SettingsForm(QtWidgets.QWidget):
         # `test_every_field_registers_the_widget_in_its_own_row` is the guard.
         self._widgets: dict[str, QtWidgets.QWidget] = {}
         self._rows: dict[str, list[tuple[QtWidgets.QFormLayout, int]]] = {}
+        # Inline validation. `_notes` is one always-present, initially EMPTY and
+        # HIDDEN QLabel per field, sitting inside the field's own cell (see
+        # `_add_field`) — which is why nothing here has to touch the positional
+        # row indices above. `_errors` is the subset currently blocking Save.
+        self._notes: dict[str, QtWidgets.QLabel] = {}
+        self._errors: dict[str, str] = {}
         self._multi: dict[str, dict[str, QtWidgets.QCheckBox]] = {}
         self._lists: dict[str, QtWidgets.QPlainTextEdit] = {}
         self._secret_edits: dict[str, QtWidgets.QLineEdit] = {}
@@ -170,6 +220,7 @@ class SettingsForm(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         outer.addWidget(scroll)
+        self._scroll = scroll   # Save scrolls the first offender into view
         # The form lives in a centered, max-width column of section cards
         # (restyle 3f) so a full-width window doesn't stretch every input.
         host = QtWidgets.QWidget()
@@ -497,7 +548,7 @@ class SettingsForm(QtWidgets.QWidget):
         # Record both so `_set_field_visible` takes the explanation with the
         # control instead of leaving an orphaned paragraph on screen.
         rows = self._rows.setdefault(f.key, [])
-        form.addRow(self._label_cell(f), widget)
+        form.addRow(self._label_cell(f), self._input_cell(f, widget))
         rows.append((form, form.rowCount() - 1))
         if f.help:
             help_lab = QtWidgets.QLabel(f.help)
@@ -505,6 +556,36 @@ class SettingsForm(QtWidgets.QWidget):
             help_lab.setWordWrap(True)
             form.addRow("", help_lab)
             rows.append((form, form.rowCount() - 1))
+        self._connect_field_signals(f)
+        self._flag_a_rewritten_int(f, value)
+
+    def _input_cell(self, f: settings.Field, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        """The field's control with its inline note label stacked underneath.
+
+        The note lives INSIDE the field's cell rather than in a form row of its
+        own, and it is built here — empty and hidden — for every field, never
+        added on demand. Two reasons, both load-bearing:
+
+        * `self._rows` holds POSITIONAL QFormLayout indices captured at build, so
+          an `insertRow` would silently re-point every stored index below it (see
+          the constraint at the `_rows` declaration). Inside the cell there is no
+          index to invalidate.
+        * `_set_field_visible` flips whole rows, so a note in the cell is hidden
+          and restored WITH its control for free — a note left behind by a field
+          the advanced toggle just folded away would be an error message with
+          nothing to attach it to.
+        """
+        cell = QtWidgets.QWidget()
+        col = QtWidgets.QVBoxLayout(cell)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(3)
+        col.addWidget(widget)
+        note = QtWidgets.QLabel("")
+        note.setWordWrap(True)
+        note.setVisible(False)
+        col.addWidget(note)
+        self._notes[f.key] = note
+        return cell
 
     def _make_widget(self, f, value):
         """Build one field's input cell and register its control in `self._widgets`.
@@ -558,6 +639,8 @@ class SettingsForm(QtWidgets.QWidget):
             return txt
         if f.type == "path":
             return self._path_widget(f, value)
+        if f.type == "int":
+            return self._spin_widget(f, value)
         edit = QtWidgets.QLineEdit("" if value is None else str(value))
         self._getters[f.key] = edit.text
         self._setters[f.key] = lambda v, e=edit: e.setText("" if v is None else str(v))
@@ -568,6 +651,42 @@ class SettingsForm(QtWidgets.QWidget):
     def _set_combo(combo: QtWidgets.QComboBox, value) -> None:
         i = combo.findText("" if value is None else str(value))
         combo.setCurrentIndex(i if i >= 0 else 0)
+
+    @staticmethod
+    def _as_int(value, default: int) -> int:
+        """A stored value as an int, falling back to `default`. Accepts the string
+        form ("5"), because a hand-edited config.json and an .env both hand back
+        text for a key the schema calls an int."""
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _spin_widget(self, f, value):
+        """A bounded whole number as a spin box rather than a free-text box.
+
+        The getter returns `str(spin.value())`, NOT the int: every other scalar
+        getter in this form returns text, and `_coerce` / `_changed_summary` /
+        `load_from_snapshot`'s round-trip all read them that way. Returning an int
+        here would pass a casual test and break those.
+
+        Structurally this makes `_coerce`'s "must be a whole number" arm and
+        `settings.validate`'s range arm unreachable from these rows — which is the
+        point, and also why `_flag_a_rewritten_int` exists: what the widget cannot
+        be driven to, it silently CLAMPS to on the way in.
+        """
+        spin = QtWidgets.QSpinBox()
+        # A schema int without bounds is not a thing today; the fallbacks keep a
+        # future one from inheriting QSpinBox's stock 0..99 ceiling, which would
+        # clamp almost anything.
+        spin.setMinimum(int(f.min) if f.min is not None else -1_000_000_000)
+        spin.setMaximum(int(f.max) if f.max is not None else 1_000_000_000)
+        spin.setValue(self._as_int(value, f.default))
+        self._getters[f.key] = lambda s=spin: str(s.value())
+        self._setters[f.key] = lambda v, s=spin, d=f.default: s.setValue(
+            SettingsForm._as_int(v, d))
+        self._widgets[f.key] = spin
+        return spin
 
     def _slider_widget(self, f, value):
         cell = QtWidgets.QWidget()
@@ -653,6 +772,223 @@ class SettingsForm(QtWidgets.QWidget):
         self._widgets[f.key] = edit     # the inner control, not the cell
         return cell
 
+    # ---- inline validation ---------------------------------------------------
+
+    def _connect_field_signals(self, f: settings.Field) -> None:
+        """Wire one field's "the user touched this" and "the user left this"
+        signals.
+
+        Clearing on CHANGE rather than on the next Save is what keeps a red box
+        from following someone around after they have already fixed it — and, for
+        a clamp note, the moment they type the widget IS the value, so a note
+        about what used to be on disk is stale.
+
+        Reads `self._widgets[f.key]`, i.e. the REGISTERED control, NOT whatever
+        `_make_widget` returned: for the four composite cells those differ, and
+        connecting to the wrapper finds no signal at all — sliders, path boxes and
+        credential boxes would silently never clear. (The registry exists for
+        exactly this; see `_make_widget`'s docstring.) `multichoice` is the
+        documented exception with no single inner control, so its per-choice boxes
+        are wired individually.
+
+        `_on_field_edited` is deliberately one narrow hook per key: P6's dirty
+        markers want exactly this signal set, and should extend that method rather
+        than connect a second pass of their own.
+        """
+        widget = self._widgets[f.key]
+        edited = getattr(widget, "textChanged", None)                # QLineEdit / QPlainTextEdit
+        if edited is None:
+            edited = getattr(widget, "valueChanged", None)           # QSpinBox / QSlider
+        if edited is None:
+            edited = getattr(widget, "currentTextChanged", None)     # QComboBox
+        if edited is None:
+            edited = getattr(widget, "toggled", None)                # QCheckBox
+        if edited is not None:
+            edited.connect(lambda *_a, k=f.key: self._on_field_edited(k))
+        elif f.type == "multichoice":
+            for cb in self._multi[f.key].values():                   # no single control
+                cb.toggled.connect(lambda *_a, k=f.key: self._on_field_edited(k))
+        widget.installEventFilter(_FocusOutValidator(self, f.key))
+
+    def _set_field_note(self, key: str, text: str, *, kind: str = NOTE_ERROR) -> None:
+        """Show one field's inline note (empty `text` clears it) and outline the
+        control to match.
+
+        ONE note per field, last writer wins: an error supersedes a clamp warning
+        rather than stacking, because the two cannot both be actionable at once
+        (a spin box the form clamped on the way in cannot then be out of range).
+        A field with no note label — `vm_enabled`, the VM section's master
+        checkbox, which is added straight to the section body rather than through
+        `_add_field` — is a deliberate no-op, exactly as it is for
+        `_set_field_visible`.
+        """
+        note = self._notes.get(key)
+        if note is None:
+            return
+        note.setText(text)
+        note.setProperty("danger", bool(text) and kind == NOTE_ERROR)
+        note.setProperty("warn", bool(text) and kind == NOTE_WARN)
+        note.setVisible(bool(text))
+        _repolish(note)
+        widget = self._widgets.get(key)
+        if widget is not None:
+            widget.setProperty("error", bool(text) and kind == NOTE_ERROR)
+            _repolish(widget)
+
+    def _flag_a_rewritten_int(self, f: settings.Field, stored) -> None:
+        """Say so when building the widget CHANGED the stored value.
+
+        The real bug in this feature: `QSpinBox.setValue` (and `QSlider.setValue`)
+        clamp SILENTLY, so a hand-edited `max_scored_per_run: 99999` becomes 5000
+        and is written back on the next Save with no visible cause — a "safety"
+        feature quietly rewriting the user's config. Keyed off `Field.type`, not
+        off which widget got built, because the five slider ints clamp identically.
+
+        A WARNING, not an error: the value on screen is legal and Save works, the
+        user is simply told what happened before it is written. Cleared the moment
+        they edit the field (`_on_field_edited`), because from then on the widget
+        is the value and this note describes history.
+        """
+        if f.type != "int":
+            return
+        widget = self._widgets[f.key]
+        shown = widget.value()
+        wanted = self._as_int(stored, f.default)
+        readable = str(stored).strip() == str(wanted)
+        if readable and wanted == shown:
+            return
+        where = settings.storage_location(f)
+        if not readable:
+            self._set_field_note(
+                f.key, f"{where} has {stored!r}, which is not a whole number. Showing "
+                       f"the default {shown} — saving stores that.", kind=NOTE_WARN)
+        else:
+            self._set_field_note(
+                f.key, f"{where} has {wanted}, outside the allowed {f.min}–{f.max}. "
+                       f"Showing {shown} — saving stores that.", kind=NOTE_WARN)
+
+    def _on_field_edited(self, key: str) -> None:
+        """The user changed a field: drop whatever note it was carrying."""
+        if self._notes.get(key) is not None and not self._notes[key].isHidden():
+            self._set_field_note(key, "")
+        if self._errors.pop(key, None) is not None:
+            self._refresh_error_status()
+
+    def _validate_field(self, key: str) -> None:
+        """Re-check ONE field (focus-out) and flag or clear it in place."""
+        f = next((x for x in settings.SETTINGS_SCHEMA if x.key == key), None)
+        if f is None:
+            return
+        value, err = self._field_value(f)
+        err = err or settings.validate({key: value}).get(key)
+        had = key in self._errors
+        if err:
+            self._errors[key] = err
+            self._set_field_note(key, err)
+        elif had:
+            self._errors.pop(key, None)
+            self._set_field_note(key, "")
+        if had != (key in self._errors):
+            self._refresh_error_status()
+
+    def _refresh_error_status(self) -> None:
+        """Rewrite (or clear) the counting status line from `self._errors`.
+
+        Only ever called after the error set CHANGED, so it cannot stomp on a
+        "Saved." / "Reverted…" message that has nothing to do with validation.
+        """
+        self.status.setText(self._error_status() if self._errors else "")
+
+    def _error_status(self, unreachable: list[settings.Field] | None = None) -> str:
+        n = len(self._errors)
+        msg = f"{n} setting{'' if n == 1 else 's'} need{'s' if n == 1 else ''} fixing"
+        hints = [f"{f.label} — {self._blocking_gate(f)}" for f in (unreachable or [])]
+        if hints:
+            msg += " (" + "; ".join(hints[:2])
+            msg += f"; and {len(hints) - 2} more)" if len(hints) > 2 else ")"
+        return msg
+
+    def _blocking_gate(self, f: settings.Field) -> str | None:
+        """The CONFIGURATION gate keeping `f` off screen, phrased as the thing the
+        user would do about it — or None when nothing configuration-level is.
+
+        The line P4 drew, reused: a `show_if` gate and the VM section's master
+        switch both mean "this field does nothing for the way you have things set
+        up", and the form must not flip either one to make its own message true.
+        A collapsed section and the advanced disclosure are the other kind — view
+        folds — and `_reveal_view_folds` opens those instead.
+        """
+        by_key = {x.key: x for x in settings.SETTINGS_SCHEMA}
+        gate_key = COLLAPSIBLE_SECTIONS.get(f.section)
+        if gate_key is not None and not self._getters[gate_key]():
+            return f'turn on "{by_key[gate_key].label}" to see it'
+        values = self._gate_values()
+        current = f
+        while current.show_if is not None:
+            key, allowed = current.show_if
+            gate = by_key[key]
+            if str(values.get(key, gate.default)) not in allowed:
+                return f'set "{gate.label}" to {" or ".join(allowed)} to see it'
+            current = gate
+        return None
+
+    def _reveal_view_folds(self, f: settings.Field) -> None:
+        """Open every VIEW fold hiding `f` — the collapsed section it lives in and
+        the advanced disclosure — WITHOUT persisting either.
+
+        The user did not choose to open these, so neither `_save_collapsed` nor
+        `_save_show_advanced` is called: `CollapsibleSection.set_collapsed` does
+        not fire `on_toggled`, `self._collapsed` is left holding the state the user
+        actually chose, and the checkbox is ticked with its signal blocked. A
+        restart comes back to their layout.
+        """
+        if f.advanced and not self._show_advanced:
+            self._show_advanced = True
+            self._advanced_check.blockSignals(True)
+            self._advanced_check.setChecked(True)
+            self._advanced_check.blockSignals(False)
+            self._apply_field_visibility()
+        section = self._section_widgets.get(f.section)
+        if section is not None and section.is_collapsed():
+            section.set_collapsed(False)
+
+    def _show_errors(self, errors: dict[str, str]) -> None:
+        """Replace the flagged set with `errors`, note by note."""
+        for key in list(self._errors):
+            if key not in errors:
+                self._set_field_note(key, "")
+        for key, message in errors.items():
+            self._set_field_note(key, message)
+        self._errors = dict(errors)
+
+    def _report_errors(self, errors: dict[str, str]) -> None:
+        """Put every rejected field on screen if it can be, name the ones it
+        cannot, focus the first one the user can actually act on.
+
+        The bar this has to clear: the user must be able to REACH every problem
+        the status line claims exists. Auto-revealing a view fold does that for
+        free; a configuration gate cannot be opened on their behalf, so the
+        status line names the field and the switch that brings it into view —
+        telling someone their config is broken and hiding the broken part is the
+        one outcome worse than the modal this replaces.
+        """
+        self._show_errors(errors)
+        ordered = [f for f in settings.SETTINGS_SCHEMA if f.key in errors]
+        blocked = {f.key for f in ordered if self._blocking_gate(f) is not None}
+        unreachable = [f for f in ordered if f.key in blocked]
+        reachable = [f for f in ordered if f.key not in blocked]
+        self.status.setText(self._error_status(unreachable))
+        if not reachable:
+            return
+        # The first REACHABLE one, not simply the first: sending someone to a row
+        # a configuration gate keeps off screen is the same lie as not mentioning
+        # it, just harder to spot.
+        first = reachable[0]
+        self._reveal_view_folds(first)
+        widget = self._widgets[first.key]
+        widget.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self._scroll.ensureWidgetVisible(widget)
+
     def _add_buttons(self):
         bar = QtWidgets.QHBoxLayout()
         save = QtWidgets.QPushButton("Save settings")
@@ -702,23 +1038,30 @@ class SettingsForm(QtWidgets.QWidget):
         values: dict = {}
         errors: dict[str, str] = {}
         for f in settings.SETTINGS_SCHEMA:
-            if f.secret:
-                # The box shows the saved value, so whatever it holds is the truth:
-                # write it as-is (an empty box clears the key).
-                values[f.key] = self._secret_edits[f.key].text()
-                continue
-            if f.type == "multichoice":
-                values[f.key] = [c for c, cb in self._multi[f.key].items() if cb.isChecked()]
-                continue
-            if f.type == "list":
-                raw = self._lists[f.key].toPlainText()
-                values[f.key] = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-                continue
-            value, err = self._coerce(f, self._getters[f.key]())
+            value, err = self._field_value(f)
             values[f.key] = value
             if err:
                 errors[f.key] = err
         return values, errors
+
+    def _field_value(self, f: settings.Field):
+        """ONE field's current value, plus any coercion error.
+
+        Shared by `collect()` and the focus-out validator so both read a field
+        exactly the same way — a second copy of this per-type dispatch is how a
+        field ends up validating differently depending on whether you tabbed out
+        of it or pressed Save.
+        """
+        if f.secret:
+            # The box shows the saved value, so whatever it holds is the truth:
+            # write it as-is (an empty box clears the key).
+            return self._secret_edits[f.key].text(), None
+        if f.type == "multichoice":
+            return [c for c, cb in self._multi[f.key].items() if cb.isChecked()], None
+        if f.type == "list":
+            raw = self._lists[f.key].toPlainText()
+            return [ln.strip() for ln in raw.splitlines() if ln.strip()], None
+        return self._coerce(f, self._getters[f.key]())
 
     @staticmethod
     def _coerce(f: settings.Field, raw):
@@ -762,17 +1105,21 @@ class SettingsForm(QtWidgets.QWidget):
 
     def save(self) -> bool:
         values, errors = self.collect()
-        labels = {f.key: f.label for f in settings.SETTINGS_SCHEMA}
         errors.update(settings.validate(values))
         if errors:
-            msg = "\n".join(f"{labels.get(k, k)}: {m}" for k, m in errors.items())
-            self.status.setText("Not saved — see error.")
-            QtWidgets.QMessageBox.critical(self, "Settings", msg)
+            # In place, not in a modal: a newline-dump of every offender named
+            # them but pointed at nothing, so the user dismissed it and then hunted
+            # ~130 form rows for the box it meant.
+            self._report_errors(errors)
             return False
+        self._show_errors({})
         before = settings.load(self.targets)
         try:
             settings.save(values, self.targets)
         except (ValueError, OSError) as exc:
+            # The one arm that stays modal. A rejected field is something the user
+            # can see and fix where they are; an unwritable config.json is neither,
+            # and a status line alone would let them walk away believing they saved.
             self.status.setText("Save failed.")
             QtWidgets.QMessageBox.critical(self, "Settings", str(exc))
             return False

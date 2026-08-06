@@ -1049,6 +1049,451 @@ def test_load_save_show_advanced_roundtrip(tmp_path, monkeypatch):
     assert jobsdata.load_show_advanced() is False
 
 
+# --- cycle 18 P5: spin boxes ----------------------------------------------------
+
+SPIN_KEYS = ("min_score", "stale_after_hours", "limit_per_input",
+             "max_scored_per_run", "rescore_cap", "auto_apply_batch_cap")
+
+
+def test_every_non_slider_int_renders_as_a_spin_box(qtbot, tmp_path):
+    """A bounded whole number typed into a free-text box is the one input in this
+    form that can be wrong in a way the box itself could have prevented. The set
+    is derived from the schema, not listed, so a new int field is covered the day
+    it lands."""
+    form = _form(tmp_path, show_advanced=True)   # two of the six are advanced
+    qtbot.addWidget(form)
+    expected = tuple(f.key for f in settings.SETTINGS_SCHEMA
+                     if f.type == "int" and not f.slider)
+    assert expected == SPIN_KEYS
+    for key in expected:
+        spin = form._widgets[key]
+        assert isinstance(spin, QtWidgets.QSpinBox), key
+        f = next(x for x in settings.SETTINGS_SCHEMA if x.key == key)
+        assert spin.minimum() == f.min and spin.maximum() == f.max, key
+
+
+def test_the_spin_box_getter_returns_a_string(qtbot, tmp_path):
+    """`_coerce` and the archive-restore test both read getters as text, and
+    `_changed_summary` formats them. A getter returning an int would pass a
+    casual round-trip and break those."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["min_score"].setValue(3)
+    assert form._getters["min_score"]() == "3"
+    values, errors = form.collect()
+    assert errors == {}
+    assert values["min_score"] == 3                  # coerced back to int for the file
+
+
+def test_spin_box_round_trips_through_collect_and_save(qtbot, tmp_path, monkeypatch):
+    targets = _targets(tmp_path)
+    form = SettingsForm(targets=targets, collapsed_sections=[], save_collapsed=lambda s: None,
+                        show_advanced=False, save_show_advanced=lambda v: None)
+    qtbot.addWidget(form)
+    _quiet_info(monkeypatch)
+    form._widgets["max_scored_per_run"].setValue(1234)
+    assert form.save() is True
+    assert json.loads(targets["scoring"].read_text("utf-8"))["max_scored_per_run"] == 1234
+    reopened = _form(tmp_path)
+    qtbot.addWidget(reopened)
+    assert reopened._widgets["max_scored_per_run"].value() == 1234
+
+
+def test_a_spin_box_cannot_be_driven_out_of_range(qtbot, tmp_path):
+    """Why this phase swapped the widget: the box now enforces the bound the
+    schema declares, so `_coerce`'s 'must be a whole number' arm and
+    `settings.validate`'s range arm are unreachable from these six rows."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    spin = form._widgets["min_score"]
+    spin.setValue(99)
+    assert spin.value() == 5                          # clamped to Field.max
+    values, errors = form.collect()
+    assert errors == {}
+    assert settings.validate(values) == {}
+
+
+# --- cycle 18 P5: the clamp gotcha ----------------------------------------------
+
+def _note(form, key):
+    lab = form._notes[key]
+    return lab.text() if not lab.isHidden() else ""
+
+
+def _focused(form, key):
+    """Did Save put the caret in this field?
+
+    `hasFocus()` is False for every widget in a headless run — it also requires
+    the window to be ACTIVE, which an offscreen form never is. `focusWidget()` is
+    the form's own record of where `setFocus` landed, which is the claim here."""
+    return form.focusWidget() is form._widgets[key]
+
+
+def test_every_note_label_is_built_hidden_and_empty(qtbot, tmp_path):
+    """Trap 1, made structural. `self._rows` holds POSITIONAL QFormLayout indices
+    captured at build, so a note inserted on demand would silently re-point every
+    later field's rows at a neighbour. The note is therefore built for every field
+    up front — inside the field's own cell, so there is no row index to shift —
+    and merely toggled. Built VISIBLE it would also reserve a blank line under all
+    ~60 rows on a form whose whole problem is length."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    keyed = {f.key for f in settings.SETTINGS_SCHEMA}
+    # every field except the VM section's master checkbox, which is not a form row
+    assert set(form._notes) == keyed - {"vm_enabled"}
+    for key, note in form._notes.items():
+        assert note.text() == "", key
+        assert note.isHidden(), key
+        # ...and it reserves no space: a hidden widget's layout item is "empty",
+        # so the cell is exactly as tall as its input. (The QLabel's own sizeHint
+        # is a font line height either way — measuring that would prove nothing.)
+        cell = note.parentWidget()
+        item = cell.layout().itemAt(1)
+        assert item.widget() is note and item.isEmpty(), key
+        assert cell.sizeHint().height() == cell.layout().itemAt(0).sizeHint().height()
+    assert form._errors == {}
+
+    form._set_field_note("min_score", "something went wrong")
+    cell = form._notes["min_score"].parentWidget()
+    assert cell.sizeHint().height() > cell.layout().itemAt(0).sizeHint().height()
+
+
+def test_a_stored_out_of_range_int_is_flagged_not_silently_rewritten(qtbot, tmp_path):
+    """The real bug in the feature. `QSpinBox.setValue` clamps SILENTLY, so a
+    hand-edited `max_scored_per_run: 99999` would become 5000 and be written back
+    on the next Save with no visible cause — a "safety" feature quietly rewriting
+    the user's config."""
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"max_scored_per_run": 99999}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+
+    assert form._widgets["max_scored_per_run"].value() == 5000     # clamped, as Qt does
+    note = _note(form, "max_scored_per_run")
+    assert note                                                    # ...but not silently
+    assert "99999" in note and "5000" in note
+    assert form._notes["max_scored_per_run"].property("warn") is True
+    # A clamp is not a validation failure: Save still works, it just told you first.
+    assert "max_scored_per_run" not in form._errors
+
+
+def test_an_unreadable_stored_int_is_flagged_too(qtbot, tmp_path):
+    """Same silent-rewrite class, different cause: a non-numeric value falls back
+    to the Field default instead of being clamped."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"min_score": "lots"}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._widgets["min_score"].value() == 4                 # the schema default
+    assert "lots" in _note(form, "min_score")
+
+
+def test_the_clamp_flag_covers_slider_ints_too(qtbot, tmp_path):
+    """`QSlider.setValue` clamps exactly like `QSpinBox`, so the flag is keyed off
+    `Field.type == "int"` rather than off which widget got built. Otherwise the
+    five slider ints keep the silent rewrite this phase exists to remove."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"followup_days": 900}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._widgets["followup_days"].value() == 60
+    assert "900" in _note(form, "followup_days")
+
+
+def test_an_in_range_stored_int_is_not_flagged(qtbot, tmp_path):
+    """Including a value stored as a STRING: '5' displays as 5 with nothing lost,
+    so comparing the raw stored object against the widget would cry wolf."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"min_score": "5", "followup_days": 7}),
+                                 encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._widgets["min_score"].value() == 5
+    assert _note(form, "min_score") == ""
+    assert _note(form, "followup_days") == ""
+
+
+def test_editing_a_clamped_field_clears_its_note(qtbot, tmp_path):
+    """Once the user touches the box, the widget IS the value and the note about
+    what was on disk is stale."""
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"max_scored_per_run": 99999}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert _note(form, "max_scored_per_run")
+    form._widgets["max_scored_per_run"].setValue(900)
+    assert _note(form, "max_scored_per_run") == ""
+
+
+@pytest.mark.parametrize("key, stored, edit", [
+    ("followup_days", 900, lambda w: w.setValue(9)),            # slider: composite cell
+    ("min_score", 99, lambda w: w.setValue(2)),                 # spin: returned directly
+])
+def test_editing_clears_the_note_through_a_composite_cell_too(qtbot, tmp_path,
+                                                              key, stored, edit):
+    """The change signal must be taken off the REGISTERED control, not off what
+    `_make_widget` returned. For the four composite cells those differ — a slider,
+    a path box and a credential box all come back wrapped — and a wrapper QWidget
+    has no `valueChanged`/`textChanged` at all, so the connection silently finds
+    nothing and the note never clears."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({key: stored}), encoding="utf-8")
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert _note(form, key)
+    edit(form._widgets[key])
+    assert _note(form, key) == ""
+
+
+def test_every_field_got_a_change_signal_or_is_the_documented_exception(qtbot, tmp_path):
+    """A structural version of the test above, so a NEW composite type cannot ship
+    unwired. `multichoice` has no single inner control (P0's documented
+    exception); `vm_enabled` is the section master switch, not a form row."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    signals = ("textChanged", "valueChanged", "currentTextChanged", "toggled")
+    for f in settings.SETTINGS_SCHEMA:
+        if f.type == "multichoice" or f.key == "vm_enabled":
+            continue
+        w = form._widgets[f.key]
+        assert any(getattr(w, s, None) is not None for s in signals), f.key
+
+
+# --- cycle 18 P5: inline validation, replacing the modal dump -------------------
+
+def _no_modals(monkeypatch):
+    """Record every modal this save would have popped. The point of the phase is
+    that the validation path pops none."""
+    seen = []
+    for name in ("critical", "information", "warning"):
+        monkeypatch.setattr(QtWidgets.QMessageBox, name,
+                            staticmethod(lambda *a, _n=name, **k: seen.append((_n, a))))
+    return seen
+
+
+def test_junk_in_local_task_offsets_is_a_red_field_and_a_status_line(qtbot, tmp_path,
+                                                                     monkeypatch):
+    """The phase checkpoint. No modal, a red box, and a status line that counts."""
+    modals = _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)                     # so the row is on screen
+    form._setters["local_task_offsets"]("every half hour")
+
+    assert form.save() is False
+    assert modals == []                                   # the dump is gone
+    assert form.status.text().startswith("1 setting needs fixing")
+    widget = form._widgets["local_task_offsets"]
+    assert widget.property("error") is True               # ...and the field is red
+    assert "30,50,70" in _note(form, "local_task_offsets")
+    assert list(form._errors) == ["local_task_offsets"]
+
+
+def test_the_error_styling_uses_a_selector_the_widget_actually_matches(qtbot, tmp_path):
+    """`theme.py` styled only QLineEdit/QPlainTextEdit/QTextEdit, so the red
+    outline would silently never appear on the six new QSpinBoxes. A property
+    nothing renders is worse than no property: the test passes and the user sees
+    a status line pointing at a field that looks fine."""
+    from qt import theme
+    qss = theme._qss()
+    for cls in ("QLineEdit", "QPlainTextEdit", "QSpinBox"):
+        assert f'{cls}[error="true"]' in qss, cls
+    assert 'QLabel[danger="true"]' in qss
+
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    # every widget an error can land on is one of the styled classes
+    styled = (QtWidgets.QLineEdit, QtWidgets.QPlainTextEdit, QtWidgets.QSpinBox)
+    for f in settings.SETTINGS_SCHEMA:
+        if f.pattern or (f.type == "int" and not f.slider):
+            assert isinstance(form._widgets[f.key], styled), f.key
+
+
+def test_the_status_line_pluralises_on_the_count(qtbot, tmp_path, monkeypatch):
+    """Only one field carries a format rule today, so drive `settings.validate`
+    directly to prove the sentence is built from the count rather than hardcoded."""
+    modals = _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    monkeypatch.setattr(settings, "validate",
+                        lambda values: {"location": "bad", "country": "bad"})
+    assert form.save() is False
+    assert form.status.text() == "2 settings need fixing"
+    assert modals == []
+    assert form._widgets["location"].property("error") is True
+    assert form._widgets["country"].property("error") is True
+
+
+def test_a_fixed_field_clears_its_error_as_you_type(qtbot, tmp_path, monkeypatch):
+    _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    form._setters["local_task_offsets"]("nope")
+    assert form.save() is False
+    assert form._widgets["local_task_offsets"].property("error") is True
+
+    form._widgets["local_task_offsets"].setText("30,50")
+    assert form._widgets["local_task_offsets"].property("error") is False
+    assert _note(form, "local_task_offsets") == ""
+    assert form._errors == {}
+    assert form.status.text() == ""                 # the count went with it
+    assert form.save() is True
+
+
+def test_focus_out_validates_without_waiting_for_save(qtbot, tmp_path):
+    """Finding out at Save time that a box has been wrong for ten minutes is the
+    modal's other failure. Leaving the field is the moment to say so."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    edit = form._widgets["local_task_offsets"]
+    edit.setText("half past")
+    assert edit.property("error") is not True        # not while you are still typing
+
+    QtWidgets.QApplication.sendEvent(
+        edit, QtGui.QFocusEvent(QtCore.QEvent.Type.FocusOut))
+    assert edit.property("error") is True
+    assert "30,50,70" in _note(form, "local_task_offsets")
+
+    edit.setText("30,50,70")
+    QtWidgets.QApplication.sendEvent(
+        edit, QtGui.QFocusEvent(QtCore.QEvent.Type.FocusOut))
+    assert edit.property("error") is False
+
+
+def test_the_disk_failure_modal_survives(qtbot, tmp_path, monkeypatch):
+    """The one arm that stays modal. A rejected field is a thing the user can see
+    and fix in place; an unwritable config.json is neither, and silently leaving
+    it on a status line would let someone walk away believing they saved."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda parent, title, text, *a, **k: shown.append(text)))
+    monkeypatch.setattr(settings, "save",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    form._widgets["min_score"].setValue(5)
+    assert form.save() is False
+    assert shown and "disk full" in shown[0]
+    assert form.status.text() == "Save failed."
+
+
+def test_a_successful_save_clears_a_previous_error(qtbot, tmp_path, monkeypatch):
+    _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    form._setters["local_task_offsets"]("junk")
+    assert form.save() is False
+    form._setters["local_task_offsets"]("30,50,70")
+    assert form.save() is True
+    assert form._errors == {}
+    assert form._widgets["local_task_offsets"].property("error") is False
+    assert _note(form, "local_task_offsets") == ""
+
+
+# --- cycle 18 P5: an error in a field the user cannot see -----------------------
+
+def test_an_error_behind_a_view_fold_reveals_itself(qtbot, tmp_path, monkeypatch):
+    """A status line claiming a problem the user cannot find is worse than the
+    modal it replaces. A COLLAPSED SECTION and the ADVANCED DISCLOSURE are both
+    view folds — things the user closed, changing nothing about the
+    configuration — so Save opens them to put the offender on screen."""
+    _no_modals(monkeypatch)
+    saved_collapse, saved_adv = [], []
+    form = _form(tmp_path, collapsed_sections=list(st.SECTION_ORDER),
+                 save_collapsed=saved_collapse.append,
+                 show_advanced=False, save_show_advanced=saved_adv.append)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)          # the CONFIGURATION gate is open...
+    form._setters["local_task_offsets"]("junk")
+    assert form._section_widgets["VM (cloud scraper)"].is_collapsed()
+    assert not _rows_visible(form, "local_task_offsets")   # ...but two folds are shut
+
+    assert form.save() is False
+    assert form.status.text() == "1 setting needs fixing"  # no "you can't see it" caveat
+    assert not form._section_widgets["VM (cloud scraper)"].is_collapsed()
+    assert form._advanced_check.isChecked() is True
+    assert "local_task_offsets" in _on_screen_field_keys(form)
+    assert _focused(form, "local_task_offsets")
+
+    # The user did not choose either reveal, so neither is written back.
+    assert saved_collapse == [] and saved_adv == []
+
+
+def test_an_error_behind_a_configuration_gate_is_named_not_flipped(qtbot, tmp_path,
+                                                                   monkeypatch):
+    """The other half of the line P4 drew. `vm_enabled` off does not mean "folded
+    away", it means "this user does not run a VM" — flipping it would edit their
+    configuration to make a message true. So the status line names the field and
+    the switch that brings it into view, and the field stays flagged for when they
+    do."""
+    _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    assert form._getters["vm_enabled"]() is False
+    form._setters["local_task_offsets"]("junk")
+
+    assert form.save() is False
+    status = form.status.text()
+    assert status.startswith("1 setting needs fixing")
+    assert "Watcher check offsets (minutes)" in status     # named...
+    assert "Enable VM features" in status                  # ...with the way to reach it
+    assert form._getters["vm_enabled"]() is False          # never flipped
+    assert form._widgets["local_task_offsets"].property("error") is True
+
+    # turning the VM on later brings the still-flagged row into view
+    form._setters["vm_enabled"](True)
+    form._advanced_check.setChecked(True)
+    assert "local_task_offsets" in _on_screen_field_keys(form)
+
+
+def test_a_show_if_gate_is_named_the_same_way(qtbot, tmp_path, monkeypatch):
+    """Same reasoning, the other kind of configuration gate: a gated-off field's
+    value can still be invalid on disk, and switching the provider to reveal it
+    would change which models the pipeline runs."""
+    _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._widgets["provider"].setCurrentText("claude")     # hides the Gemini pair
+    monkeypatch.setattr(settings, "validate", lambda values: {"stage1_model": "bad"})
+
+    assert form.save() is False
+    status = form.status.text()
+    assert "Stage-1 model" in status and "Scoring provider" in status
+    assert "gemini" in status
+    assert form._widgets["provider"].currentText() == "claude"   # never flipped
+
+
+def test_the_first_reachable_offender_is_the_one_focused(qtbot, tmp_path, monkeypatch):
+    """When some offenders are reachable and some are not, focus goes to the first
+    one the user can act on — scrolling to a hidden row would be the same lie in a
+    different place.
+
+    The pair is chosen so schema order and reachability DISAGREE: `stage1_model`
+    (Scoring) precedes `resume_tone` (Resume), and with the scorer on Claude it is
+    the unreachable one. Pick two where the first is also the reachable one and
+    this test passes with `reachable[0]` replaced by `ordered[0]` — verified by
+    mutation, which is how the first draft of it got caught.
+    """
+    _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["provider"].setCurrentText("claude")
+    keys = [f.key for f in settings.SETTINGS_SCHEMA]
+    assert keys.index("stage1_model") < keys.index("resume_tone")
+    monkeypatch.setattr(settings, "validate",
+                        lambda values: {"stage1_model": "bad", "resume_tone": "bad"})
+
+    assert form.save() is False
+    assert _focused(form, "resume_tone")                   # not the gated-off one
+    assert not _focused(form, "stage1_model")
+    assert "2 settings need fixing" in form.status.text()
+    assert "Stage-1 model" in form.status.text()           # named, since it is hidden
+
+
 def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):
     targets = _targets(tmp_path)
     settings.save({"min_score": 5}, targets)

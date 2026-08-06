@@ -366,6 +366,60 @@ def test_local_task_offsets_is_an_editable_config_str(tmp_path):
     assert settings.load(_targets(tmp_path))["local_task_offsets"] == "30,50,70"
 
 
+# --- Field.pattern: the one free-text format rule the schema declares ------------
+
+@pytest.mark.parametrize("text", ["30,50,70", "0", "30, 50, 70", " 30 ,50 ", "5,5"])
+def test_local_task_offsets_accepts_comma_separated_minutes(text):
+    assert settings.validate({"local_task_offsets": text}) == {}
+
+
+@pytest.mark.parametrize("text", ["", "abc", "30,abc", "30,", ",30", "30;50", "-5", "1.5"])
+def test_local_task_offsets_rejects_anything_that_is_not_minutes(text):
+    """The one field whose value is free text a consumer must PARSE.
+
+    `local_task.parse_offsets` is deliberately junk-safe — it skips unreadable
+    entries and falls back to its own default — so junk here has always been
+    silently ignored rather than reported. That tolerance is right for the
+    consumer (a mangled value must never leave the watcher task trigger-less) and
+    wrong for the editor: the Settings tab is where someone finds out they typed
+    something the pipeline will throw away.
+    """
+    errors = settings.validate({"local_task_offsets": text})
+    assert "local_task_offsets" in errors
+    assert "30,50,70" in errors["local_task_offsets"]      # the message shows the shape
+
+
+def test_pattern_is_declared_on_the_field_and_off_by_default():
+    """A format rule is schema DATA, like `choices` — not a branch in validate()."""
+    assert settings.Field("k", "L", "str", "", "S", "config").pattern is None
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["local_task_offsets"]
+    assert f.pattern and f.pattern_help
+    # ...and it is the only one today, so nothing else silently gained a rule.
+    assert [x.key for x in settings.SETTINGS_SCHEMA if x.pattern] == ["local_task_offsets"]
+
+
+def test_pattern_must_match_the_WHOLE_value():
+    """A `re.search`-style check would pass '30,50,70 and some junk'."""
+    assert "local_task_offsets" in settings.validate(
+        {"local_task_offsets": "30,50,70 plus whatever"})
+
+
+def test_a_field_defaults_pass_their_own_pattern():
+    """Restore-defaults must never land on a value the same schema rejects."""
+    for f in settings.SETTINGS_SCHEMA:
+        if f.pattern:
+            assert settings.validate({f.key: f.default}) == {}, f.key
+
+
+def test_a_pattern_is_only_declared_on_a_text_field():
+    """`re.fullmatch` needs a string. A pattern on a list/int/bool field would
+    raise TypeError out of validate() the first time someone saved — catch it in
+    the schema lint instead."""
+    for f in settings.SETTINGS_SCHEMA:
+        if f.pattern:
+            assert f.type in settings.TEXT_TYPES, f.key
+
+
 def test_inbox_map_default_matches_apply_queue():
     import apply_queue
     f = next(f for f in settings.SETTINGS_SCHEMA if f.key == "auto_apply_inbox_map")

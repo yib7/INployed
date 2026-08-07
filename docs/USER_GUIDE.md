@@ -131,7 +131,40 @@ schema-driven form that edits every tunable the project has, grouped and explain
 so a non-technical user can set things up without touching a file. Each section has a
 **collapsible header** with a one-line tagline, so you can fold away the parts you're
 not editing (the tagline still tells you what each collapsed section is for) and tackle
-one group at a time:
+one group at a time.
+
+**Finding one setting among sixty.** Three things at the top of the tab, in this order:
+
+- **The search box.** Type a word and the tab filters to the rows that mention it. It
+  matches the setting's name, its explanation, its config key **and the chips on the
+  row**, so you can search `GEMINI_API_KEYS` after reading your `.env`, or `restart` to
+  list every setting that needs one. Several
+  words narrow rather than widen (`gemini key` is the key box, not everything Gemini).
+  Sections with no match disappear, sections with one open themselves, and **clearing the
+  box puts your layout back exactly as it was** — an opening the search made for you is
+  never saved. If a match exists but your configuration makes it inert, a muted line under
+  the results says so and names the switch: *"3 more settings apply when Scoring provider
+  is 'claude'"*.
+- **Show advanced settings.** Off by default, folding 18 power-user rows away — the
+  per-stage model pickers, scorer concurrency and retry caps, VM plumbing. The label counts
+  what it is currently withholding *for your configuration*, so ticking it really does
+  reveal that many rows. Search ignores the fold: an advanced row still turns up in
+  results, tagged `(advanced)`.
+- **Unsaved-change markers.** An accent dot appears beside every field you have edited, the
+  section header picks up "· 2 changed" (visible even when the section is folded — that is
+  the point), and the Save button reads "Save 3 changes". A **↺** button appears on any row
+  sitting off its default and puts that one row back; credentials do not get one, because
+  their default is blank and the click would wipe a live key. **Discard changes** still
+  undoes everything back to how the form opened.
+
+Rows whose value only matters to some configurations hide themselves — the Gemini model
+pickers are absent while the tailor runs on Claude, and vice versa. Nothing is lost by
+this: switch provider, save, switch back, and the custom model id you typed is still
+there. A row tagged **`restart`** is one the dashboard reads only at startup, so saving it
+writes the file immediately but the running app keeps using the old value; Save says so
+again and names them.
+
+The sections:
 
 - **Credentials:** the job-data (Bright Data) API token, the Gemini API-key pool,
   and the résumé-tailor API key. Each box holds the saved value (read straight from
@@ -153,24 +186,35 @@ one group at a time:
   type a custom id.
 - **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
   inbox the apply agent opens for verification emails; plus a snapshot of your
-  settings on every Save, restorable from **Restore from archive…**.
+  settings on every Save, restorable from **Restore from archive…**. **Settings
+  snapshots** is one dropdown: *Off*, *Keep everything* (the default — nothing is ever
+  deleted), *Keep newest 20*, or *Keep newest 100*. Each snapshot holds a copy of your
+  `.env`, so more snapshots means more copies of your keys on this PC.
 - **VM (cloud job discovery):** an **Enable VM features** master toggle (off by default)
   plus the non-secret connection details for your GCP job-discovery VM (instance, zone,
   project, Linux user). Off hides the whole VM area and silences VM prompts; turn
   it on to reveal the controls (see *Manage the VM* below).
 
 Guard rails keep it hard to break: fixed-choice fields are **dropdowns** (no
-typos), bounded numbers are **sliders**, multi-select fields are **checkboxes**,
-every field has a one-line explanation **and a muted tag naming the file its value
-is saved to** (e.g. `(.env)`, `(search_config.json)`) so you can find it yourself,
-numbers are range-checked on Save, there's a **Revert changes** button (undo your edits
-back to how the form opened) alongside **Restore defaults**, and **Save tells you exactly
-which fields changed** (secrets shown as *updated* / *cleared*, never the value).
+typos), bounded numbers are **sliders** or **spin boxes**, multi-select fields are
+**checkboxes**, every field has a one-line explanation **and a muted tag naming the file
+its value is saved to** (e.g. `(.env)`, `(search_config.json)`) so you can find it
+yourself, there's a **Discard changes** button (undo your edits back to how the form
+opened) alongside **Restore defaults**, and **Save tells you exactly which fields changed**
+(secrets shown as *updated* / *cleared*, never the value).
+
+**When something is wrong, it is flagged where it is.** A rejected value outlines the box
+in red with a note underneath, the form scrolls to the first one you can act on, and the
+status line counts them ("2 settings need fixing") — no modal listing problems and pointing
+at none of them. Fields are re-checked when you tab out of them, not only at Save. If a
+number you hand-edited into a config file is outside the allowed range, the spin box shows
+the clamped value **and tells you** what the file actually holds, rather than quietly
+rewriting it on the next Save.
 
 Edits are written atomically (with a `.bak`) to your git-ignored `.env`,
-`local/config.json`, and `search_config.json` / `scoring_config.json` /
-`apply_config.json`. Environment variables still override a file, and an absent file
-falls back to built-in defaults, so the VM keeps running unchanged.
+`local/config.json`, and `search_config.json` / `scoring_config.json`. Environment
+variables still override a file, and an absent file falls back to built-in defaults, so
+the VM keeps running unchanged.
 
 > **Claude backend (optional).** The résumé tailor and the local job scorer can each run
 > on your Claude Code CLI subscription instead of Gemini. Set **Resume tailor provider** or
@@ -178,6 +222,23 @@ falls back to built-in defaults, so the VM keeps running unchanged.
 > headless CLI with your subscription auth (no API key) and prompt caching; the tailor tiers
 > map fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`, deep → `claude-opus-5`. The
 > cloud VM always scores with Gemini, regardless of this setting.
+
+#### What "Strip AI writing patterns from the cover letter" catches
+Settings → Résumé, off by default. It adds a second, stricter style pass to the **cover
+letter only** — résumé bullets are unaffected — applying a letter-relevant subset of Conor
+Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`):
+
+- the overused AI vocabulary — *delve*, *pivotal*, *impactful*, *learnings*, *in order to*
+- *"it's not X, it's Y"* contrast framing
+- hedging, and chatbot tics such as *"I hope this helps"*
+- rhetorical-question openers and *"In conclusion"* endings
+- the metronomic sentence rhythm that makes writing read as machine-made
+
+The rules ride in the writing prompt, and the worst offenders are also caught afterwards by
+a deterministic checker that buys exactly one rewrite. It is off by default because it is a
+taste call, and turning it off leaves the letter exactly as it was before the setting
+existed. The grounding gate still runs last either way, so a restyled sentence that
+introduces an unsupported fact is still rejected.
 
 ### What leaves your machine
 There is no analytics, no crash reporting, and no phone-home. The only outbound

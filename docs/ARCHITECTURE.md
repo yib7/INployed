@@ -236,16 +236,40 @@ identity all come from the yaml (the `tailor:` section + `basics`/`education`). 
 is what lets the same code produce anyone's résumé; see `tests/test_tailor_config.py`.
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) describing every user-editable
-option (key, type, default, validation, backing file). The dashboard's **Settings**
-tab auto-renders it grouped by collapsible section (Credentials / Connection & paths /
-Engine / Dashboard / Job discovery / Scoring / Résumé / Auto-apply / Settings history /
-VM) inside a scrollable canvas. `load`/`save` read and atomically write (with a
-`.bak`) the git-ignored `.env` and `local/config.json`, plus the root-level `search_config.json`
-(read by `scraper.py`), `scoring_config.json` (read by `score_jobs.py`), and
-`apply_config.json` (read by `apply_data.py`). The VM-standalone scraper/scorer never
+`settings.py` is one schema (`SETTINGS_SCHEMA`) — 60 `Field` rows describing every
+user-editable option (key, type, default, validation, backing file). The dashboard's
+**Settings** tab auto-renders it grouped by collapsible section — `SECTION_ORDER` is Credentials /
+Connection & paths / Engine / Dashboard / Scraper / Scoring / Resume / Auto-apply /
+Settings history / VM (cloud scraper), two of which `SECTION_DISPLAY` retitles for the UI
+as *Job discovery* and *VM (cloud job discovery)*) — inside a scrollable canvas. `load`/`save` read and atomically write
+(with a `.bak`) **four** backing files (`TARGET_FILES`): the git-ignored `.env` and
+`local/config.json`, plus the root-level `search_config.json` (read by `scraper.py`) and
+`scoring_config.json` (read by `score_jobs.py`). The VM-standalone scraper/scorer never
 import `local/`; they read their own JSON with **env-override > file > built-in-default**
 precedence, so an absent file reproduces today's behavior exactly.
+
+### Rendering flags vs. validation, on the same dataclass
+Four optional `Field` attributes carry the Settings tab's whole disclosure story as
+declarative data rather than as branches in the form. The first three are **rendering
+decisions only** — `load()`, `save()` and `validate()` never consult them, so a field the
+tab is not showing still round-trips its stored value to disk (`collect()` walks the
+schema, not the visible rows; `tests/test_qt_settings.py::test_provider_round_trip_does_not_wipe_hidden_model_choices`
+is the guard). The fourth is the exception that proves the rule.
+
+| Attribute | Contract |
+| --- | --- |
+| `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** — a field is visible only if its own predicate holds *and* its gate field is itself visible — by `settings.is_visible` / `visible_keys`. A typo'd gate key raises rather than degrading to "hidden". |
+| `advanced` (18 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` rather than overriding it — `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
+| `restart` (16 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt — `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
+| `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours — `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
+
+The tab composes three **view folds** (a collapsed section, the advanced disclosure, an
+active search) against those two **configuration gates** (`show_if`, and the VM section's
+`vm_enabled` master switch). The line between them governs every count and message in the
+form: a view fold may be opened on the user's behalf and is never persisted when it is
+(`_reveal_view_folds`), while a configuration gate is only ever *named*
+(`_blocking_gate_field`) — the form does not flip a user's configuration to make its own
+message true. A master switch is never reported as hiding itself.
 
 ## Apply automation (`apply.py` + the `apply.md` apply sheet)
 `apply_data.write` drops a single self-contained `apply.md` next to each tailored résumé. It is a

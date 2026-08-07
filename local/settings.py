@@ -16,11 +16,13 @@ The schema is a flat list of Field rows grouped by `section`, backing onto
 four target files (config / search / scoring / env — see TARGET_FILES), so the
 Qt Settings tab can render one labelled input per row. A Field may also declare
 `show_if` — a gate that keeps it off screen until it can actually do something
-(is_visible / visible_keys) — and `advanced`, which folds a power-user knob
-behind the tab's disclosure checkbox. Both are RENDERING decisions only:
-load/validate/save never consult either, so a hidden field keeps its value on
-disk. `pattern` is the exception that proves it: a format rule validate() DOES
-enforce, so the tab cannot write free text the consumer would silently discard.
+(is_visible / visible_keys) — `advanced`, which folds a power-user knob behind
+the tab's disclosure checkbox, and `restart`, which says a running dashboard
+cannot see a new value until it is relaunched. All three are RENDERING decisions
+only: load/validate/save never consult any of them, so a hidden field keeps its
+value on disk. `pattern` is the exception that proves it: a format rule
+validate() DOES enforce, so the tab cannot write free text the consumer would
+silently discard.
 Every public function accepts an optional `targets` mapping so tests can point
 the backing files at a tmp directory.
 """
@@ -94,6 +96,34 @@ class Field:
     # than eyeballing the regex.
     pattern: str | None = None
     pattern_help: str = ""
+    # UI hint: a running dashboard will not see a new value for this key until it
+    # is restarted, so the Settings tab chips the row and says so again after the
+    # Save. Same contract as `show_if` / `advanced` — a rendering decision that
+    # load/save/validate never consult.
+    #
+    # WHY IT IS TRUE OF (NEARLY) EVERY .env FIELD, which is not obvious and is
+    # what made the first cut of this badge cover 3 rows instead of 16:
+    # `local/app.py` calls `load_dotenv()` at startup, so this process's
+    # `os.environ` is a snapshot of `.env` taken once per launch. Nothing writes
+    # it back — `save()` and `envfile` touch the FILE only — and `python-dotenv`
+    # defaults to `override=False`, so a later `load_dotenv()` cannot beat a value
+    # that is already set. That closes both routes at once: a consumer freezing
+    # the value in a module constant at import (`resume_tailor/config.py`,
+    # `chrome.CHROME_ACCOUNT`, `scraper.API_TOKEN`) and one reading `os.environ`
+    # live on every call (`keypool.KeyPool.from_env`, `llm.py`) get the same stale
+    # snapshot — and so does every SUBPROCESS, which inherits a copy of it and
+    # then cannot override it from `.env` either. The six VM keys are the one
+    # exception: `vm_sync.VMTarget.from_env` reads the file through
+    # `settings.load`. Pinned by
+    # test_every_env_field_needs_a_restart_except_the_six_the_vm_tab_re_reads.
+    #
+    # It over-warns in exactly one case, deliberately: a key ABSENT from `.env` at
+    # launch is absent from `os.environ` too, so there is nothing for
+    # `override=False` to protect and a subprocess started afterwards really does
+    # pick the new value up. That is first-run setup, where the user is about to
+    # restart anyway — and the flag is per-Field, not per-value, so the honest
+    # choice is the one that cannot leave someone staring at a stale model id.
+    restart: bool = False
 
 
 # Targets whose backing file is a .env (key=value), not JSON. Their Field.key is
@@ -235,13 +265,13 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.1-flash-lite",
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           advanced=True,
-          help="Advanced: cheap model that scores every surviving job 1-5. Pick from the "
+          help="Cheap model that scores every surviving job 1-5. Pick from the "
                "list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
     Field("stage2_model", "Stage-2 model", "editable_choice", "gemini-3.5-flash",
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           advanced=True,
-          help="Advanced: deeper model for jobs that pass the Stage-2 threshold. Pick from "
+          help="Deeper model for jobs that pass the Stage-2 threshold. Pick from "
                "the list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
     Field("provider", "Scoring provider", "choice", "gemini", "Scoring", "scoring",
@@ -300,16 +330,10 @@ SETTINGS_SCHEMA: list[Field] = [
           choices=("professional", "concise", "enthusiastic", "impactful")),
     Field("cover_letter_avoid_ai_writing", "Strip AI writing patterns from the cover letter",
           "bool", False, "Resume", "config",
-          help="Adds a second, stricter style pass to the COVER LETTER only (the résumé "
-               "bullets are unaffected). It applies a subset of Conor Bronsdon's "
-               "MIT-licensed 'avoid-ai-writing' skill: the overused AI vocabulary (delve, "
-               "pivotal, impactful, learnings, 'in order to'), 'it's not X, it's Y' "
-               "framing, hedging, chatbot tics ('I hope this helps'), rhetorical-question "
-               "openers, 'In conclusion' endings, and the metronomic sentence rhythm that "
-               "makes writing read as machine-made. The rules ride in the writing prompt "
-               "and the worst offenders are also caught by a checker that buys one rewrite. "
-               "Off by default because it is a taste call, and turning it off leaves the "
-               "letter exactly as it was before this setting existed."),
+          help="Adds a stricter style pass to the COVER LETTER only, stripping the "
+               "overused AI vocabulary, hedging and chatbot tics that make writing read "
+               "as machine-made (résumé bullets are unaffected). Off by default because "
+               "it is a taste call; docs/USER_GUIDE.md lists exactly what it catches."),
 
     # --- Auto-apply: the batch queue knobs (config.json). Read by the dashboard's
     # _queue_for_auto_apply and by apply_queue.build_context() for the agent run. ---
@@ -372,14 +396,14 @@ SETTINGS_SCHEMA: list[Field] = [
     # local .env) and write whatever the box holds — clearing it removes the key.
     # Field.key is the exact environment-variable name the pipeline reads.
     Field("BRIGHT_DATA_API_TOKEN", "Job-data API token", "str", "",
-          "Credentials", "env", secret=True, optional=True,
+          "Credentials", "env", secret=True, optional=True, restart=True,
           help="Needed for job discovery. Create one in your job-data API dashboard - API tokens."),
     Field("GEMINI_API_KEYS", "Gemini API keys (job scorer)", "str", "",
-          "Credentials", "env", secret=True, optional=True,
+          "Credentials", "env", secret=True, optional=True, restart=True,
           help="Powers the JOB SCORER, which rates every collected job. A pool of one or more keys, "
                "comma-separated with no spaces, that it rotates through to spread rate limits. This "
-               "is SEPARATE from the resume-tailor key below. Get keys at aistudio.google.com; leave "
-               "blank to score with your Google Cloud project instead."),
+               "is SEPARATE from 'Gemini API key (resume tailor)'. Get keys at aistudio.google.com; "
+               "leave blank to score with your Google Cloud project instead."),
     # Gated TWO deep: it is only readable when the Gemini side bills by key
     # (gemini_auth == api_key), and gemini_auth is itself only live when the
     # tailor runs on Gemini. The transitive rule in is_visible() is what stops a
@@ -387,42 +411,42 @@ SETTINGS_SCHEMA: list[Field] = [
     # It also renders in the FIRST section while its gate lives in Engine — the
     # reason gate signals are connected in a second pass (settings_tab._build).
     Field("RESUME_TAILOR_GEMINI_API_KEY", "Gemini API key (resume tailor)", "str", "",
-          "Credentials", "env", secret=True, optional=True,
+          "Credentials", "env", secret=True, optional=True, restart=True,
           show_if=("gemini_auth", ("api_key",)),
-          help="Powers the RESUME TAILOR only, and only when its engine (below) is set to 'api_key'. "
-               "A SINGLE key, kept separate from the scorer's pool above so the two can use different "
-               "accounts or quotas. Leave blank if the tailor uses your Google Cloud project "
-               "(engine 'vertex')."),
+          help="Powers the RESUME TAILOR only, and only while 'Resume tailor engine' is set to "
+               "'api_key'. A SINGLE key, kept separate from 'Gemini API keys (job scorer)' so the "
+               "two can use different accounts or quotas. Leave blank if the tailor bills your "
+               "Google Cloud project (engine 'vertex')."),
 
     # --- Connection & paths: non-secret identity / locations, also in .env -----
     Field("BRIGHT_DATA_DATASET_ID", "Job-data dataset ID", "str", "",
-          "Connection & paths", "env", optional=True,
+          "Connection & paths", "env", optional=True, restart=True,
           help="The job-postings dataset to query - an identifier, not a secret."),
     Field("GOOGLE_CLOUD_PROJECT", "Google Cloud project ID", "str", "",
-          "Connection & paths", "env", optional=True,
+          "Connection & paths", "env", optional=True, restart=True,
           help="Project with Vertex AI enabled (for Gemini scoring + tailoring). Leave blank "
-               "if you use the Gemini API keys (job scorer) above instead."),
+               "if you use 'Gemini API keys (job scorer)' instead."),
     Field("GOOGLE_CLOUD_LOCATION", "Google Cloud location", "choice", "global",
-          "Connection & paths", "env", advanced=True,
+          "Connection & paths", "env", advanced=True, restart=True,
           help="Vertex AI region. 'global' works for most users. Left blank, the résumé "
                "tailor falls back to 'global' but the job scorer falls back to "
                "'us-central1' — set this explicitly to keep the two in sync.",
           choices=("global", "us-central1", "us-east1", "us-west1", "europe-west1")),
     Field("RESUME_TAILOR_CANDIDATE", "Your name (resume filenames)", "str", "Your_Name",
-          "Connection & paths", "env",
+          "Connection & paths", "env", restart=True,
           help="Used in generated resume filenames. Use underscores instead of spaces."),
     Field("RESUME_TAILOR_OUTPUT", "Resume output folder", "path", "",
-          "Connection & paths", "env", path_kind="dir", optional=True,
+          "Connection & paths", "env", path_kind="dir", optional=True, restart=True,
           help="Where tailored resumes are saved. Blank = your Downloads/Generated_Resumes."),
     # NOT advanced, deliberately: this is the fix for "no PDF came out", i.e. what
     # someone hunts for when the tool is ALREADY broken. Hiding a repair knob
     # behind a disclosure toggle is backwards — a user in that state has no reason
     # to suspect the setting exists.
     Field("PDFLATEX_PATH", "pdflatex path", "path", "pdflatex",
-          "Connection & paths", "env", path_kind="file", optional=True,
+          "Connection & paths", "env", path_kind="file", optional=True, restart=True,
           help="Path to pdflatex (MiKTeX/TeX Live). Leave as 'pdflatex' if it's on your PATH."),
     Field("LINKEDIN_CHROME_ACCOUNT", "Chrome profile (Google email)", "str", "",
-          "Connection & paths", "env", optional=True,
+          "Connection & paths", "env", optional=True, restart=True,
           help="Open job links in the Chrome profile signed in to this Google account. "
                "Blank = your default browser."),
 
@@ -431,16 +455,18 @@ SETTINGS_SCHEMA: list[Field] = [
     # the per-stage Gemini + Claude model pickers (.env). ---------------------
     Field("gemini_auth", "Resume tailor engine", "choice", "vertex",
           "Engine", "config", show_if=("tailor_provider", ("gemini",)),
-          help="'vertex' bills your Google Cloud project (above). 'api_key' uses the single "
-               "Gemini API key (above) - pick this if you don't have a Cloud project.",
+          help="How the Gemini side bills. 'vertex' uses 'Google Cloud project ID' in "
+               "Connection & paths. 'api_key' uses 'Gemini API key (resume tailor)' in "
+               "Credentials — a box that appears only once you pick 'api_key' here.",
           choices=("vertex", "api_key")),
 
     Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
           "Engine", "config",
-          help="Which AI service tailors resumes. 'gemini' uses the Google engine above. "
-               "'claude' runs your locally installed Claude Code CLI on your claude.ai "
-               "subscription (run `claude` once to log in). Takes effect on the next "
-               "tailor run -- no restart.",
+          help="Which AI service tailors resumes. 'gemini' uses Google, billed the way "
+               "'Resume tailor engine' says (that setting is on screen only while this is "
+               "'gemini'). 'claude' runs your locally installed Claude Code CLI on your "
+               "claude.ai subscription (run `claude` once to log in). Takes effect on the "
+               "next tailor run.",
           choices=("gemini", "claude")),
 
     # --- Resume tailor models: which Gemini model each tailoring stage uses, ----
@@ -448,33 +474,30 @@ SETTINGS_SCHEMA: list[Field] = [
     # Editable dropdowns: pick a 3.x model or type a custom id.
     Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model — fast (selection)",
           "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True,
+          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
           help="Cheapest model — the bullet-selection / quick stages of tailoring."),
     Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model — standard (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True,
+          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
           help="Default model — re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True,
-          help="Deliberately defaults to the same standard flash model as above to keep "
-               "costs down — set to gemini-3.1-pro-preview yourself for the strongest "
-               "writing (slower / pricier)."),
+          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
+          help="Deliberately defaults to the same model as 'Tailor model — standard "
+               "(writing)' to keep costs down — set it to gemini-3.1-pro-preview yourself "
+               "for the strongest writing (slower / pricier)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True,
-          help="Claude provider only: cheapest tier (bullet selection / quick stages). "
-               "Restart the dashboard after changing (.env is read at startup)."),
+          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          help="Claude provider only: cheapest tier (bullet selection / quick stages)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model — standard (writing)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True,
-          help="Claude provider only: re-phrasing bullets and the cover letter. "
-               "Restart the dashboard after changing (.env is read at startup)."),
+          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          help="Claude provider only: re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
           "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True,
-          help="Claude provider only: highest-quality tier (rephrase / cover letter). "
-               "Restart the dashboard after changing (.env is read at startup)."),
+          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          help="Claude provider only: highest-quality tier (rephrase / cover letter)."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your

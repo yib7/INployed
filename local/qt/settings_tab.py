@@ -4,12 +4,13 @@ Renders `settings.SETTINGS_SCHEMA` grouped by section: one labelled, explained
 input per Field, the right widget per type (dropdown / editable dropdown / slider /
 spin box / checkboxes / multiline list / path+Browse / credential (masked by
 default, with a Hide toggle) / entry), a muted "(filename)" storage tag, a
-collapsible VM section gated by a master checkbox, a "Show advanced settings
-(N hidden)" disclosure that folds every `Field.advanced` row away, a debounced
-search box that filters the whole tab by label / help / config key, and Save /
-Revert changes / Restore from archive / Restore defaults. Save validates via
-`settings.validate`/`settings.save`, reports a changed-field summary, and never
-echoes a secret value into that summary.
+"restart" chip on every `Field.restart` row, a collapsible VM section gated by a
+master checkbox, a "Show advanced settings (N hidden)" disclosure that folds
+every `Field.advanced` row away, a debounced search box that filters the whole
+tab by label / help / config key / chip, and Save / Discard changes / Restore from
+archive / Restore defaults. Save validates via `settings.validate`/
+`settings.save`, reports a changed-field summary, names any restart-required
+setting that summary contains, and never echoes a secret value into either.
 
 THREE VIEW FOLDS, ONE CONFIGURATION GATE. A collapsed section, the advanced
 disclosure and an active search all hide rows the settings still apply to, so the
@@ -46,8 +47,17 @@ SECTION_HELP = {
                "bills (Cloud project vs API key), and which model each tailoring stage runs."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
-    "Scoring": ("Advanced — which models score jobs and the spend guards around them. The "
-                "defaults are tuned; changing the model names can silently break scoring."),
+    # Rewritten in P8: the old blurb ("which models score jobs … changing the model
+    # names can silently break scoring") described rows a fresh profile cannot see.
+    # P4 made all four model pickers `advanced`, so what renders by default is
+    # provider / stage2_threshold / max_scored_per_run / min_filter_years — a
+    # section header describing a screen the reader is not looking at is worse than
+    # none, because it reads as a bug in the form.
+    "Scoring": ("Which AI service scores collected jobs, the score that earns a deeper "
+                "second pass, and the caps on how much one run may spend. The per-stage "
+                "model names and throughput knobs live under \"Show advanced settings\" — "
+                "their defaults are tuned, and a model id your account cannot use breaks "
+                "scoring silently."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
     "Auto-apply": ("The batch auto-apply queue (Auto-apply tab): how many jobs one 'Queue for "
                    "auto-apply' action may add, and which webmail inbox the agent may open for "
@@ -80,7 +90,11 @@ SECTION_TAGLINE = {
     "Engine": "Tailor AI service, billing & per-stage models",
     "Dashboard": "How jobs are surfaced & tracked",
     "Scraper": "What job searches to run",
-    "Scoring": "Models & spend guards (advanced)",
+    # Not "(advanced)": the section is not, and four of its rows are on screen at
+    # shipped defaults. The parenthetical was a leftover from before P4 gave the
+    # word a specific meaning in this tab (the disclosure checkbox), and a tagline
+    # that claims a folded-away section reads as an empty one.
+    "Scoring": "Scoring engine, thresholds & spend guards",
     "Resume": "Cover letter, ATS report & prep-sheet toggles",
     "Auto-apply": "Batch cap & inbox for the apply agent",
     "Settings history": "Snapshot & restore your settings",
@@ -357,14 +371,26 @@ class SettingsForm(QtWidgets.QWidget):
 
     @staticmethod
     def _search_haystack(f: settings.Field) -> str:
-        """What one field is searchable BY: its label, its help, and its config key.
+        """What one field is searchable BY: its label, its help, its config key,
+        and the text of any CHIP the row carries.
 
         The key is not padding. A user reading `.env`, a GitHub issue or this
         project's docs searches `GEMINI_API_KEYS` — a string that appears in no
         label and in no help text — and that person is the most likely to reach
         for a search box in the first place.
+
+        The chips are here for the same reason, and P8 is what made it necessary:
+        it deleted "Restart the dashboard after changing" from three help strings
+        and "Advanced:" from two more, because a chip now says both — and
+        `test_no_restart_field_repeats_the_word_in_its_help` ENFORCES the
+        deletion. Without this line the word printed on a row's own chip finds
+        nothing in the box directly above it, which is the exact failure the key
+        is included to avoid. The words have to be added here rather than put back
+        in the help, since the lint forbids the latter.
         """
-        return f"{f.label}\n{f.help}\n{f.key}".lower()
+        return ("\n".join([f.label, f.help, f.key]
+                          + (["restart"] if f.restart else [])
+                          + (["advanced"] if f.advanced else []))).lower()
 
     def _field_matches(self, f: settings.Field) -> bool:
         """Does `f` match the current terms? Every term must hit (AND), anywhere in
@@ -678,7 +704,7 @@ class SettingsForm(QtWidgets.QWidget):
             extra = self._vm_factory(container)
             if extra is not None:
                 cbox.addWidget(extra)
-                self._vm_panel = extra  # so Revert changes can reset it too
+                self._vm_panel = extra  # so Discard changes can reset it too
         self._apply_section_visibility()
 
     def _apply_section_visibility(self, *_):
@@ -826,6 +852,25 @@ class SettingsForm(QtWidgets.QWidget):
         tag.setProperty("storageTag", True)
         theme.set_type_role(tag, "mono")
         h.addWidget(tag)
+        # The "restart" chip, beside the storage one because it is the same kind
+        # of fact about where the value lives: this one is read out of `.env` once
+        # per launch, so editing it changes a file the running process has already
+        # stopped consulting. Always visible (not toggled like the advanced chip) —
+        # the whole failure it addresses is a user who saves, sees "Saved.", and
+        # then watches the old model / key / output folder keep being used.
+        # Borrows `storageTag`'s SHAPE deliberately — the two chips are siblings
+        # by design — but `restartTag` carries its own colour rule in theme.py, or
+        # a reader scanning the row would just see two storage tags. (Setting a
+        # dynamic property no QSS matches is the P5 defect: counted, styled,
+        # invisible. `test_the_restart_chip_has_a_selector_the_widget_matches`.)
+        if f.restart:
+            chip = QtWidgets.QLabel("restart")
+            chip.setProperty("storageTag", True)
+            chip.setProperty("restartTag", True)
+            theme.set_type_role(chip, "mono")
+            chip.setToolTip("Saved immediately, but the dashboard reads this one at "
+                            "startup — restart it for the new value to take effect.")
+            h.addWidget(chip)
         # The "(advanced)" chip: built for every advanced field, hidden, and shown
         # only in search results. Search ignores `advanced` so that a folded-away
         # knob stays findable — but a result that arrives with no explanation of
@@ -1719,16 +1764,19 @@ class SettingsForm(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Settings", str(exc))
             return False
         summary = self._changed_summary(before, values)
+        restart = self._restart_notice(before, values)
         archived = self._archive_after_save(values) if summary else False
         self._opening_values = settings.load(self.targets)
         self._clear_all_notes()   # every note described the file this Save replaced
         self._sync_secret_boxes(self._opening_values)  # reflect the canonical stored values
         self._refresh_dirty()     # ...and the new baseline is what was just written
-        self.status.setText("Saved." if summary else "Saved — no changes.")
+        self.status.setText(
+            ("Saved. " + restart if restart else "Saved.") if summary else "Saved — no changes.")
         if summary:
             note = "\n\nA snapshot was saved to the archive." if archived else ""
             QtWidgets.QMessageBox.information(
-                self, "Settings", "Settings saved. Updated:\n\n- " + "\n- ".join(summary) + note)
+                self, "Settings", "Settings saved. Updated:\n\n- " + "\n- ".join(summary)
+                + (f"\n\n{restart}" if restart else "") + note)
         else:
             QtWidgets.QMessageBox.information(
                 self, "Settings", "No changes to save — your settings are unchanged.")
@@ -1736,6 +1784,38 @@ class SettingsForm(QtWidgets.QWidget):
         if self.on_saved:
             self.on_saved()
         return True
+
+    def _restart_notice(self, before: dict, values: dict) -> str:
+        """"Restart the dashboard for these to take effect: A, B." — or "".
+
+        The chip beside the input is the reminder while you are editing; this is
+        the one at the moment it matters, which is the click that writes the file
+        and puts "Saved." on screen. Without it the whole failure mode survives
+        the badge: the user saves a new model id or API key, is told it saved
+        (truthfully — it is on disk), and then watches the old one keep being used
+        with nothing to connect the two.
+
+        Names only what THIS Save changed, so the sentence has to be earned. A
+        line on every Save is a line nobody reads on the Save that needed one.
+        LABELS only, never values — `GEMINI_API_KEYS` is both restart-required and
+        a credential, and `_changed_summary`'s no-echo rule applies here for
+        exactly the same reason.
+        """
+        labels = [f.label for f in settings.SETTINGS_SCHEMA
+                  if f.restart
+                  and self._value_changed(f, before.get(f.key, f.default), values[f.key])]
+        if not labels:
+            return ""
+        # Elided at three, the same shape `_error_status` uses. `self.status` is a
+        # plain unwrapped QLabel, and a snapshot load can change all sixteen of
+        # these at once — a ~450-character status line does not wrap, it just runs
+        # off the end of the bar and takes the rest of the sentence with it.
+        named = ", ".join(labels[:3])
+        if len(labels) > 3:
+            named += f", and {len(labels) - 3} more"
+        return ("Restart the dashboard for "
+                f"{'this' if len(labels) == 1 else 'these'} to take effect: "
+                + named + ".")
 
     @staticmethod
     def _value_changed(f: settings.Field, old, new) -> bool:

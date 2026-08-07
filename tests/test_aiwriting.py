@@ -218,7 +218,32 @@ def test_settings_schema_exposes_the_toggle_defaulting_off():
                  if f.key == "cover_letter_avoid_ai_writing")
     assert (field.type, field.default, field.section, field.target) == (
         "bool", False, "Resume", "config")
-    assert "Bronsdon" in field.help
+
+
+def test_the_attribution_survives_the_help_trim():
+    """The help string used to carry the credit, and P8 cut it from ~700 chars to
+    two sentences to sit under the schema's 350-char cap.
+
+    The attribution is not optional, so this asserts it MOVED rather than that it
+    is gone: the full citation (name, version, licence, source path) lives in
+    `docs/CREDITS.md`, the user-facing description of what the pass catches lives
+    in `docs/USER_GUIDE.md`, and the field help points at the guide so someone
+    reading the checkbox can still get there.
+    """
+    docs = Path(__file__).resolve().parents[1] / "docs"
+    credits = (docs / "CREDITS.md").read_text(encoding="utf-8")
+    guide = (docs / "USER_GUIDE.md").read_text(encoding="utf-8")
+    for text in (credits, guide):
+        assert "Bronsdon" in text
+        assert "avoid-ai-writing" in text
+        assert "MIT" in text
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local"))
+    import settings  # noqa: PLC0415
+
+    field = next(f for f in settings.SETTINGS_SCHEMA
+                 if f.key == "cover_letter_avoid_ai_writing")
+    assert "USER_GUIDE.md" in field.help
 
 
 # ── prompt wiring: additive when ON, byte-identical when OFF ──────────────────

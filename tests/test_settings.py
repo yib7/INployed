@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO / "local"))
 import local_task  # noqa: E402
 import settings  # noqa: E402
 import settings_archive  # noqa: E402
+import vm_sync  # noqa: E402
 import watcher  # noqa: E402
 
 
@@ -975,3 +976,172 @@ def test_advanced_is_a_rendering_flag_only(tmp_path):
     settings.save(values, targets)
     assert settings.load(targets)["GOOGLE_CLOUD_LOCATION"] == "us-east1"
     assert settings.validate(values) == {}
+
+
+# --- restart: the .env values a running dashboard has already frozen ------------
+
+# Every `.env`-target field, minus the six the VM tab reads back out of the FILE.
+# That carve-out is the whole rule: `local/app.py` calls `load_dotenv()` at
+# startup, so the dashboard's `os.environ` is a snapshot of `.env` taken once per
+# launch, and `python-dotenv` defaults to `override=False` — a later
+# `load_dotenv()` anywhere, in this process or in a child that inherited its
+# environment, cannot beat a value that is already set.
+RESTART_KEYS = {
+    # frozen as module constants at import (local/resume_tailor/config.py)
+    "RESUME_TAILOR_OUTPUT", "RESUME_TAILOR_CANDIDATE",
+    "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "PDFLATEX_PATH",
+    "RESUME_TAILOR_MODEL_FLASH_LITE", "RESUME_TAILOR_MODEL_FLASH", "RESUME_TAILOR_MODEL_PRO",
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+    # read live from os.environ — but os.environ is the stale startup snapshot
+    "RESUME_TAILOR_GEMINI_API_KEY",     # llm.py, per call
+    "GEMINI_API_KEYS",                  # keypool.KeyPool.from_env, per run
+    "LINKEDIN_CHROME_ACCOUNT",          # chrome.CHROME_ACCOUNT, at import
+    # module constants inside a SUBPROCESS that inherits the stale snapshot
+    "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_DATASET_ID",
+}
+
+
+def test_the_restart_set_is_declared_on_the_schema():
+    declared = {f.key for f in settings.SETTINGS_SCHEMA if f.restart}
+    assert declared == RESTART_KEYS
+    assert len(RESTART_KEYS) == 16
+
+
+def test_every_env_field_needs_a_restart_except_the_six_the_vm_tab_re_reads():
+    """The rule behind the list, so a NEW .env field cannot quietly opt out.
+
+    `local/app.py` loads `.env` into `os.environ` once, at launch. Nothing writes
+    it back: `settings.save()` and `envfile` touch the FILE only (pinned below).
+    So an edited `.env` value is invisible to this process — and to every child it
+    spawns, because `subprocess` hands the child a copy of the parent's
+    environment and `load_dotenv(override=False)` will not overwrite what is
+    already there. The scraper and the scorer run as subprocesses and are covered
+    by exactly that.
+
+    The six VM keys are the one real exception: `vm_sync.VMTarget.from_env` calls
+    `settings.load(targets)`, which reads the file, and says so at
+    `local/vm_sync.py:101`.
+    """
+    env_keys = {f.key for f in settings.SETTINGS_SCHEMA if f.target == "env"}
+    vm_keys = {f.key for f in settings.SETTINGS_SCHEMA
+               if f.target == "env" and f.section == "VM (cloud scraper)"}
+    assert vm_keys == set(vm_sync.VM_KEYS)
+    assert env_keys - vm_keys == RESTART_KEYS
+    # ...and nothing OUTSIDE .env carries the badge. Two different reasons, and
+    # only one of them is "re-read live":
+    #   * `config`  — genuinely live (config.py:_config_json, vm_sync, settings.load).
+    #   * `search` / `scoring` — NOT live: score_jobs.py freezes all eleven scoring
+    #     settings as module constants at import. They go unbadged because the path
+    #     that reads them is a fresh subprocess per run, which re-imports. The one
+    #     seam is the in-process manual-add (manual_add imports score_jobs), which
+    #     holds whatever the session's first manual add froze — too narrow to badge
+    #     every scoring row over, but noted here rather than left to look checked.
+    assert all(f.target == "env" for f in settings.SETTINGS_SCHEMA if f.restart)
+
+
+def test_saving_a_secret_never_writes_os_environ(tmp_path):
+    """The mechanism the badge exists for, asserted rather than assumed. If a
+    future save() ever DID export into os.environ, `RESUME_TAILOR_GEMINI_API_KEY`
+    and `GEMINI_API_KEYS` would stop needing the badge and this test is where
+    that gets noticed."""
+    import os
+    before = dict(os.environ)
+    targets = _targets(tmp_path)
+    targets["env"] = tmp_path / ".env"
+    settings.save({"GEMINI_API_KEYS": "a-brand-new-key",
+                   "RESUME_TAILOR_CANDIDATE": "Someone_Else"}, targets)
+    assert dict(os.environ) == before
+    assert "a-brand-new-key" in targets["env"].read_text(encoding="utf-8")
+
+
+def test_restart_defaults_to_false_and_is_a_bool_everywhere():
+    """Same safe direction as `advanced`: a forgotten flag under-promises (no
+    badge on a field that turns out to need one) rather than nagging every user
+    to restart for a setting that takes effect immediately."""
+    assert settings.Field("k", "L", "str", "", "S", "config").restart is False
+    assert all(isinstance(f.restart, bool) for f in settings.SETTINGS_SCHEMA)
+
+
+def test_restart_is_a_rendering_flag_only(tmp_path):
+    """Third member of the `show_if` / `advanced` family: load/save/validate never
+    consult it."""
+    targets = _targets(tmp_path)
+    targets["env"] = tmp_path / ".env"
+    values = settings.load(targets)
+    values["RESUME_TAILOR_CANDIDATE"] = "Ada_Lovelace"
+    settings.save(values, targets)
+    assert settings.load(targets)["RESUME_TAILOR_CANDIDATE"] == "Ada_Lovelace"
+    assert settings.validate(values) == {}
+
+
+def test_the_fields_that_take_effect_without_a_restart_carry_no_badge():
+    """`gemini_auth` and `tailor_provider` look like the model pickers beside them
+    and are the opposite case: `config.py`'s `gemini_auth()` / `tailor_provider()`
+    re-read `local/config.json` on EVERY call, so a change lands on the next
+    tailor run. Badging them would train the user to ignore the badge."""
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for key in ("gemini_auth", "tailor_provider", "VM_REMOTE_DIR", "VM_GCLOUD_PATH"):
+        assert by_key[key].restart is False, f"{key} takes effect without a restart"
+
+
+def test_no_restart_field_repeats_the_word_in_its_help():
+    """The badge says it once, in a place every restart-required row shows it the
+    same way. Leaving the sentence in three of the sixteen help strings is how
+    the count got to be 3-of-16 in the first place."""
+    for f in settings.SETTINGS_SCHEMA:
+        if f.restart:
+            assert "restart" not in f.help.lower(), f.key
+
+
+# --- schema lint: a hard cap on help length --------------------------------------
+
+HELP_MAX_CHARS = 450
+
+
+def test_no_help_string_is_longer_than_the_cap():
+    """A hard cap is the only thing that stops the next twelve-line paragraph.
+
+    `cover_letter_avoid_ai_writing` reached 702 characters — a wall of prose in a
+    form whose whole problem is that there is too much to read. Two sentences in
+    the field, the rest in `docs/USER_GUIDE.md`.
+
+    The number is a BUDGET, and it is set with headroom on purpose. The longest
+    surviving help is `archive_mode` at 347, which earned its length in P2
+    (four legacy keys collapsed into one dropdown, plus the secrets-on-disk
+    note) — a cap three characters above it would fire on the next word anyone
+    adds there and tell them to move it into the guide, which is the wrong advice
+    for a 348-character explanation. 450 is comfortably under the 702 that
+    motivated this, so tripping it still means someone wrote an essay.
+    """
+    too_long = {f.key: len(f.help) for f in settings.SETTINGS_SCHEMA
+                if len(f.help) > HELP_MAX_CHARS}
+    assert too_long == {}, f"move the detail to docs/USER_GUIDE.md: {too_long}"
+    # The cap is worth nothing if it drifts up to meet whatever was just written.
+    assert max(len(f.help) for f in settings.SETTINGS_SCHEMA) <= 400
+
+
+def test_no_help_string_points_at_a_row_by_position():
+    """From the P3 review. "the Google engine above" was written when every field
+    was on screen; `show_if` now hides rows, so a positional word can point at
+    nothing — and does so in exactly the state where the sentence is being read.
+    `tailor_provider`'s help said "'gemini' uses the Google engine above" while
+    `gemini_auth`, the row it means, is gated on `tailor_provider == "gemini"` and
+    is therefore ABSENT whenever someone reads that sentence to decide whether to
+    switch back. Name the setting instead of its position.
+
+    `min_score`'s "at/above this score" is the numeric sense, not the positional
+    one, so it is the single spelling this lint lets through.
+    """
+    import re
+    positional = re.compile(r"(?<!at/)\b(above|below)\b", re.IGNORECASE)
+    # Positive control: `assert offenders == set()` passes just as well against a
+    # gutted regex, and no help string currently contains "below" at all, so both
+    # arms and the lookbehind are pinned here rather than by the schema happening
+    # to be clean.
+    assert positional.search("'gemini' uses the Google engine above")
+    assert positional.search("the API-key box below")
+    assert not positional.search("Jobs at/above this score are surfaced")
+
+    offenders = {f.key for f in settings.SETTINGS_SCHEMA if positional.search(f.help)}
+    assert offenders == set(), "name the setting instead of its position"

@@ -2408,3 +2408,153 @@ def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path)
     qtbot.addWidget(dlg)
     assert dlg.listw.count() == 2
     assert "topsecret" not in dlg.preview.toPlainText()    # secret values never previewed
+
+
+# --- cycle 18 P8: the restart badge ---------------------------------------------
+
+def _restart_chip(form, key):
+    cell = form._rows[key][0][0].itemAt(form._rows[key][0][1],
+                                        QtWidgets.QFormLayout.ItemRole.LabelRole).widget()
+    return next((w for w in cell.findChildren(QtWidgets.QLabel)
+                 if w.property("restartTag")), None)
+
+
+def test_every_restart_field_carries_a_chip_and_no_other_field_does(qtbot, tmp_path):
+    """The badge is a CORRECTNESS fix, not polish: `local/app.py` reads `.env`
+    once at launch, so 16 of these rows are edited into a file the running process
+    has already stopped reading. Before this, 3 of the 16 said so in prose."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    chipped = {f.key for f in settings.SETTINGS_SCHEMA
+               if form._rows[f.key] and _restart_chip(form, f.key) is not None}
+    assert chipped == {f.key for f in settings.SETTINGS_SCHEMA if f.restart}
+    chip = _restart_chip(form, "RESUME_TAILOR_CANDIDATE")
+    assert chip.text() == "restart"
+    assert "restart" in chip.toolTip().lower()
+    # It sits beside the storage chip, in the label cell, so it hides and returns
+    # with the row like everything else there.
+    assert _restart_chip(form, "GOOGLE_CLOUD_LOCATION").isVisibleTo(form)
+    form._advanced_check.setChecked(False)
+    assert not _restart_chip(form, "GOOGLE_CLOUD_LOCATION").isVisibleTo(form)
+
+
+def test_saving_a_restart_field_says_so_and_names_it(qtbot, tmp_path, monkeypatch):
+    """A chip beside the input is easy to miss at the moment it matters — the
+    click that writes the value. The post-save summary names every restart-
+    required setting the Save actually changed, and nothing else."""
+    modals = _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["RESUME_TAILOR_CANDIDATE"].setText("Ada_Lovelace")   # restart=True
+    form._widgets["min_score"].setValue(9)                             # restart=False
+    assert form.save() is True
+
+    body = "\n".join(str(a) for _n, a in modals)
+    assert "Restart the dashboard" in body
+    assert "Your name (resume filenames)" in body
+    assert "Min score" not in body.split("Restart the dashboard")[1]
+    assert "Restart the dashboard" in form.status.text()
+
+
+def test_a_save_that_changes_no_restart_field_stays_quiet(qtbot, tmp_path, monkeypatch):
+    """The line has to be earned. A restart nag on every Save is a restart nag
+    nobody reads on the Save that needed one."""
+    modals = _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["min_score"].setValue(9)
+    assert form.save() is True
+    assert "Restart" not in "\n".join(str(a) for _n, a in modals)
+    assert form.status.text() == "Saved."
+
+
+def test_the_restart_line_survives_a_secret_without_echoing_it(qtbot, tmp_path, monkeypatch):
+    """`GEMINI_API_KEYS` is both restart-required and a credential, so the line
+    that names it must obey `_changed_summary`'s rule: the LABEL, never the
+    value."""
+    modals = _no_modals(monkeypatch)
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._secret_edits["GEMINI_API_KEYS"].setText("sk-do-not-print-me")
+    assert form.save() is True
+    body = "\n".join(str(a) for _n, a in modals)
+    assert "Restart the dashboard" in body
+    assert "Gemini API keys (job scorer)" in body
+    assert "sk-do-not-print-me" not in body
+
+
+def test_no_section_tagline_calls_its_own_section_advanced(qtbot, tmp_path):
+    """From the P4 review. "advanced" acquired a specific meaning in this tab — the
+    disclosure checkbox — and Scoring's tagline read "Models & spend guards
+    (advanced)" while four of its rows are on screen at shipped defaults and the
+    model names are not. A header describing a screen the reader is not looking at
+    reads as a bug in the form. If a blurb mentions the word at all it must be
+    pointing AT the checkbox, as Scoring's now does.
+    """
+    for section, tagline in st.SECTION_TAGLINE.items():
+        assert "advanced" not in tagline.lower(), section
+    for section, blurb in st.SECTION_HELP.items():
+        if "advanced" in blurb.lower():
+            assert "Show advanced settings" in blurb, section
+    assert "Show advanced settings" in st.SECTION_HELP["Scoring"]
+
+
+def test_a_fresh_profile_sees_the_scoring_rows_its_blurb_describes(qtbot, tmp_path):
+    """The measurement behind the rewrite: Scoring renders provider, the Stage-2
+    threshold, the spend cap and the experience filter — and no model names —
+    until the disclosure is ticked."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    scoring = {f.key for f in settings.SETTINGS_SCHEMA if f.section == "Scoring"}
+    on_screen = scoring & _on_screen_field_keys(form)
+    assert on_screen == {"provider", "stage2_threshold", "max_scored_per_run",
+                         "min_filter_years"}
+    assert not any("model" in k for k in on_screen)
+
+
+def test_the_restart_chip_has_a_selector_the_widget_matches(qtbot, tmp_path):
+    """Same defect class P5 hit with `QSpinBox[error="true"]`: a dynamic property
+    with no QSS rule is set, counted, and invisible.
+
+    Here it would not be invisible so much as indistinguishable — the chip
+    borrows `storageTag`'s shape, so without a colour of its own a reader sees
+    two identical faint bordered chips and the row says ".env" twice.
+    """
+    from qt import theme
+    qss = theme._qss()
+    assert 'QLabel[restartTag="true"]' in qss
+    assert theme.AMBER in qss.split('QLabel[restartTag="true"]')[1].split("}")[0]
+
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    chip = _restart_chip(form, "PDFLATEX_PATH")
+    assert chip.property("restartTag") is True
+    assert chip.property("storageTag") is True      # ...and still chip-shaped
+
+
+def test_search_finds_the_words_printed_on_a_rows_own_chips(qtbot, tmp_path):
+    """P8 deleted "Restart the dashboard after changing" from three help strings
+    and "Advanced:" from two more, because a chip now says both — and the new
+    lint ENFORCES the deletion. That handed the tab a row chipped `restart` whose
+    own search box, one inch above it, returned nothing for "restart".
+
+    Chip text is therefore part of the haystack, alongside the config key and for
+    the same reason: search has to find a setting by every string the user can
+    see or read about it.
+    """
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form.set_search("restart")
+    assert _on_screen_field_keys(form) == {
+        f.key for f in settings.SETTINGS_SCHEMA
+        if f.restart and settings.is_visible(f, form._gate_values())}
+    assert "PDFLATEX_PATH" in _on_screen_field_keys(form)
+
+    form.set_search("advanced")
+    shown = _on_screen_field_keys(form)
+    assert shown and all(next(x for x in settings.SETTINGS_SCHEMA if x.key == k).advanced
+                         for k in shown)
+    assert "stage1_concurrency" in shown          # found despite the fold
+
+    form.set_search("")
+    assert "restart" not in form._search_terms

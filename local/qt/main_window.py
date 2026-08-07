@@ -2601,8 +2601,17 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:  # noqa: BLE001
             pass
         if not problems:
+            # The credential checks above read the FILE (settings.load /
+            # secret_status), while the tailor and the scorer read this process's
+            # os.environ — a snapshot of .env taken once at launch (local/app.py).
+            # So right after a Settings save this can truthfully report a key as
+            # present while the engine is still using the old one. Rather than
+            # make the check lie in the other direction, say which reading it is.
             QtWidgets.QMessageBox.information(
-                self, "Check setup", "All good — no problems found.")
+                self, "Check setup",
+                "All good — no problems found.\n\nThis reads your saved settings "
+                "files. If you changed a key, model or path in Settings since "
+                "launching, restart the dashboard for it to actually be used.")
             self._set_status("Setup check passed.")
         else:
             QtWidgets.QMessageBox.critical(

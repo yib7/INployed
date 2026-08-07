@@ -388,6 +388,11 @@ def _qss() -> str:
     QFrame[divider="true"] {{ background: {BORDER_SOFT}; border: 0; }}
     QLabel[storageTag="true"] {{ color: {FAINT}; border: 1px solid {BORDER};
         border-radius: 4px; padding: 0px 5px; background: transparent; }}
+    /* The Settings tab's "restart" chip sits immediately beside the ".env" one
+       and borrows its shape, so without a colour of its own a reader scanning
+       the row sees two storage tags. Amber, matching the inline `warn` note:
+       both say "saved, and here is what you still need to know". */
+    QLabel[restartTag="true"] {{ color: {AMBER}; border-color: {rgba(AMBER, 0.45)}; }}
     QLabel[countBadge="true"] {{ background: {PANEL}; border: 1px solid {BORDER};
         border-radius: {RADII["control"]}px; padding: 2px 9px; }}
 

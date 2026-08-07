@@ -6,10 +6,11 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
-A per-job chat, a plainer cover letter that ships its own source, two new toggles, and a
-detail card that opens the full job description beside the scoring. Existing saved configs
-keep working: the AI-writing pass defaults off, and the Apply browser-open toggle defaults
-on, so nothing changes until you change it.
+A per-job chat, a plainer cover letter that ships its own source, two new toggles, a detail
+card that opens the full job description beside the scoring, and a Settings tab you can
+find things in. Existing saved configs keep working: the AI-writing pass defaults off, the
+Apply browser-open toggle defaults on, and every removed setting keeps its saved value
+working at its consumer, so nothing changes until you change it.
 
 ### Added
 - **Ask AI about this job.** A non-modal chat scoped to one posting, from the jobs
@@ -28,6 +29,37 @@ on, so nothing changes until you change it.
   introduces an unsupported fact is still caught.
 - **Toggle for whether Apply opens the posting** (Settings → Dashboard, on by default). Off
   keeps you in the dashboard; the posting URL is still on the apply sheet.
+- **Search box on the Settings tab.** Type a word and the whole tab filters to the rows that
+  mention it — matching the setting's name, its explanation, its config key **and the
+  chips on the row**, so `GEMINI_API_KEYS` finds the box for someone reading a `.env` or
+  a GitHub issue, and `restart` finds every setting that needs one. Several
+  words narrow rather than widen. Sections with no match fold away, sections with one open
+  themselves, and clearing the box puts every section back exactly as you had it: an
+  opening the search made for you is never saved as your layout.
+- **"Show advanced settings" checkbox**, off by default, which folds 18 power-user rows
+  (the ten per-stage model pickers, scorer concurrency and retry caps, VM plumbing) out of
+  sight. The label counts what it is withholding for *your* configuration, so it does not
+  promise rows a tick cannot deliver. Search ignores the fold — an advanced row still turns
+  up in results, tagged `(advanced)` — because hiding a setting is only defensible while it
+  stays findable. Three knobs stay in plain sight on purpose: **Country code** (a non-US
+  user must change it, and a mismatch mis-searches silently), **pdflatex path** (the fix for
+  "no PDF came out", so hiding it behind a disclosure would be backwards), and **Max scored
+  per run** (the only ceiling on an LLM bill).
+- **Settings that only apply to your configuration now hide themselves.** The Gemini model
+  pickers are absent while the tailor runs on Claude and vice versa, the Gemini API-key box
+  appears only when the tailor bills by key, and so on. Values are never touched by this:
+  switch provider, save three times, switch back, and the custom model id you typed is
+  still there.
+- **Unsaved-change markers.** A dot beside each edited field, "· 2 changed" on the section
+  header (which stays on screen when the section is folded — the point of it), and a Save
+  button that reads "Save 3 changes". A per-field **↺** appears on any row sitting off its
+  default and puts that one row back. Credentials get no ↺: their default is blank, so the
+  button would be offering to wipe a live key.
+- **"restart" chip on the 16 settings a running dashboard cannot pick up**, and a line after
+  Save naming the ones that Save changed. The dashboard reads `.env` once, at launch, so
+  editing your API keys, model ids, output folder or `pdflatex` path used to save
+  successfully and then quietly go on using the old value. Three of the sixteen said so in
+  prose; now all of them say it the same way, in the same place.
 
 ### Changed
 - **The cover-letter PDF lost its letterhead.** It now opens at the date in Times, matching
@@ -63,6 +95,48 @@ on, so nothing changes until you change it.
   swaps (scrolled back to the top). It folds back to a single column for a job with no
   description and when the selection is cleared, and re-opens on the next job that has one.
   The Tracker card is unchanged.
+- **Whole numbers in Settings are spin boxes, and a bad value is flagged where it is.**
+  Save no longer pops a modal listing every rejected field and pointing at none of them: the
+  offending box outlines in red, a note appears under it, the form scrolls to the first one
+  you can act on, and the status line counts them ("2 settings need fixing"). Fields are
+  re-checked when you tab out of them, not only at Save. The one surviving modal is a Save
+  that could not write the file. A spin box also **says so when it had to clamp a
+  hand-edited value** — `max_scored_per_run: 99999` shows 5000 with a note naming the file
+  and the real number, rather than silently rewriting your config on the next Save.
+- **Settings snapshots are one dropdown instead of four knobs.** See *Removed*.
+
+### Removed
+- **`mtime_stable_seconds` is gone from the Settings tab.** It is the file-watcher's
+  settle delay, in seconds, and the dashboard never read it. Three things follow, and all
+  three are deliberate: **(a)** a saved value keeps working at whatever you set it to —
+  `local/watcher.py` starts from its own defaults and merges the file over them, so both an
+  absent key and an existing one behave exactly as before; **(b)** the watcher's built-in
+  default is 30, which is what a fresh install has always used; **(c)** restoring a settings
+  snapshot taken before this change no longer replays the key. Snapshots copy whole *files*,
+  but a restore replays only *schema* fields, so a snapshot holding `mtime_stable_seconds: 77`
+  restores your other settings and leaves the live settle value alone — the same as every
+  other non-schema key in `config.json` (`resume_layout`, `ui_scale_pct`, `removed_jobs`),
+  none of which were ever restorable either.
+- **`auto_apply_inbox_url` is gone from the Settings tab, but is still honoured.** It was the
+  single-URL fallback that `auto_apply_inbox_map` replaced. `apply_queue.build_context()`
+  reads `config.json` directly and still consults a saved value, so nobody's apply run
+  changes; it simply has no editor any more. If you customised it, the map is now where you
+  set an inbox per email domain.
+- **A vestigial `apply` settings target.** No field targeted it and no `apply_config.json`
+  exists at the repo root, so the only effect is that a legacy root-level `apply_config.json`
+  is no longer copied into settings snapshots — matching `apply_answers.json`, the live
+  answer store, which never was.
+- **Age-based snapshot retention.** The four snapshot keys (`archive_enabled`,
+  `archive_prune_mode`, `archive_prune_keep`, `archive_prune_days`) are replaced by one
+  **Settings snapshots** dropdown: *Off* / *Keep everything* (the default) / *Keep newest 20*
+  / *Keep newest 100*. An existing config is migrated on read under one rule — **never prune
+  more aggressively than the old policy** — so a saved `Keep newest 10` reads as **Keep
+  newest 20**, rounding *up*; a days-based policy becomes *Keep everything*. **Nothing on
+  disk is deleted by this change**, and the four old keys are left in `config.json`
+  untouched, so checking out an older commit restores the old behaviour intact. The accepted
+  trade-off: a snapshot contains a copy of your `.env`, so rounding a keep-count up is a
+  marginal increase in copies of your keys on disk. Rounding down would have deleted
+  snapshots you still had, which the invariant above forbids.
 
 ### Fixed
 - **LinkedIn's "Show more" / "Show less" no longer lands at the bottom of the description.**

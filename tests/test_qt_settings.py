@@ -2292,6 +2292,109 @@ def test_typing_is_debounced_not_refiltered_per_keystroke(qtbot, tmp_path):
     assert len(_on_screen_field_keys(form)) < len(before)
 
 
+# --- cycle 18 P8 (Task A: the deferred P7 review) --------------------------------
+
+def test_a_master_switch_is_never_its_own_blocking_gate(qtbot, tmp_path):
+    """`vm_enabled` reported ITSELF as the configuration gate hiding it.
+
+    `_blocking_gate_field` opened with "does this field's section have a master
+    switch, and is it off?" — which is true of the switch too, so every sentence
+    built from it came out circular and false about a control the user is looking
+    straight at. Two shipped features said it out loud: P7's search footer ("1 more
+    setting applies when Enable VM features is on", printed under a form showing
+    that very checkbox) and P6's section-badge tooltip, which told someone who had
+    just UNTICKED the box that their unsaved change was "not shown on this form"
+    and that the fix was to turn on the thing they had just turned off.
+    """
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    vm = next(f for f in settings.SETTINGS_SCHEMA if f.key == "vm_enabled")
+    assert form._getters["vm_enabled"]() is False        # the gate is shut...
+    # ...and the switch is on screen anyway, because it is what opens it.
+    assert form._widgets["vm_enabled"].isVisibleTo(form)
+    assert form._blocking_gate(vm) is None
+    assert form._gate_condition(vm) is None
+    # A field the switch really does hide still names it.
+    gcloud = next(f for f in settings.SETTINGS_SCHEMA if f.key == "VM_GCLOUD_PATH")
+    assert form._gate_condition(gcloud) == "Enable VM features is on"
+
+    # P7's manifestation: a search that matches the switch says nothing about it.
+    form.set_search("enable vm")
+    assert form._field_matches(vm)
+    assert form._search_footer.text() == ""
+    assert not form._search_footer.isVisibleTo(form)
+
+
+def test_unticking_the_vm_switch_does_not_claim_it_is_off_screen(qtbot, tmp_path):
+    """P6's half of the same defect, measured through the header the user reads."""
+    targets = _targets(tmp_path)
+    targets["config"].write_text(json.dumps({"vm_enabled": True}), encoding="utf-8")
+    form = SettingsForm(targets=targets, collapsed_sections=[], save_collapsed=lambda s: None,
+                        show_advanced=False, save_show_advanced=lambda v: None)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](False)
+    sub = form._section_widgets["VM (cloud scraper)"]._subtitle
+    assert "1 changed" in sub.text()          # it IS an unsaved change...
+    assert sub.toolTip() == ""                # ...and it is right there on screen
+
+
+def test_a_section_whose_only_matches_are_gated_keeps_its_switch_on_screen(qtbot, tmp_path):
+    """Deliberate, and the one place `_apply_search_chrome` counts a row the user
+    cannot see.
+
+    Search "gcloud" with VM features off: both matches sit behind the section's
+    master switch, so no form row survives — but the section stays, because the
+    switch that opens them is inside it. Dropping the card would leave the footer
+    telling the user to flip a control the same search had just hidden. Pinned so
+    a later "count only what is really on screen" tidy-up has to argue with it.
+    """
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    assert form._getters["vm_enabled"]() is False
+    form.set_search("gcloud")
+    assert _sections_on_screen(form) == {"VM (cloud scraper)"}
+    assert _on_screen_field_keys(form) == set()          # no ROW survived
+    assert form._widgets["vm_enabled"].isVisibleTo(form)  # the switch did
+    assert form._search_footer.text() == (
+        "2 more settings apply when Enable VM features is on")
+
+    # Flip it and the same search is answered by rows instead of by the footer.
+    form._setters["vm_enabled"](True)
+    assert {"VM_GCLOUD_PATH", "VM_PROJECT"} <= _on_screen_field_keys(form)
+    assert form._search_footer.text() == ""
+
+
+def test_a_keystroke_still_in_the_debounce_cannot_re_hide_what_save_revealed(
+        qtbot, tmp_path, monkeypatch):
+    """The debounce window is 180ms; a Save inside it left an armed timer that
+    re-filtered AFTER the reveal.
+
+    `_reveal_view_folds` promises the user can reach every problem the status line
+    claims exists, and it cleared the COMMITTED search — but a term typed and not
+    yet committed was still pending, so the field it had just focused vanished a
+    fraction of a second later with the red note attached to it. Flushing the
+    pending keystroke first is what makes the guarantee hold for the box's real
+    state rather than for its last committed one.
+    """
+    _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    form._widgets["local_task_offsets"].setText("every half hour")
+
+    form._search_edit.setText("gemini")          # typed, NOT yet committed
+    assert form._search_timer.isActive() and form._search_terms == []
+
+    assert form.save() is False
+    assert "local_task_offsets" in _on_screen_field_keys(form)
+    assert _focused(form, "local_task_offsets")
+    # Nothing is left armed to undo that.
+    assert not form._search_timer.isActive()
+    assert form._search_edit.text() == "" and form._search_terms == []
+    form._commit_search()                        # ...and firing it anyway is inert
+    assert "local_task_offsets" in _on_screen_field_keys(form)
+
+
 def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):
     targets = _targets(tmp_path)
     settings.save({"min_score": 5}, targets)

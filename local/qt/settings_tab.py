@@ -391,7 +391,11 @@ class SettingsForm(QtWidgets.QWidget):
         The early return is not just a saving: while a search is running,
         `_apply_field_visibility` force-expands every matching section, so
         re-committing an unchanged term would undo a fold the user had just made
-        by hand mid-search.
+        by hand mid-search. Note the exact scope of that — an UNCHANGED term. A
+        section the user folds mid-search and then types another letter into is
+        force-expanded again, because the new term is a new set of results and
+        every matching section is opened for it. The fold is not lost: it went
+        into `self._collapsed` like any other, so clearing the search restores it.
         """
         terms = self._search_edit.text().lower().split()
         if terms == self._search_terms:
@@ -427,6 +431,15 @@ class SettingsForm(QtWidgets.QWidget):
         an empty card — ten headers with nothing under them is the same wall of
         chrome the filter exists to cut. A section WITH a hit is force-expanded,
         because a result the user still has to go and unfold is not a result.
+
+        `shown` counts `_field_visible`, which is ROW-FLAG level and knows nothing
+        about the VM section's master switch hiding the container those rows sit
+        in. That is deliberate, not the oversight it looks like: search "gcloud"
+        with VM features off and both matches are behind that switch, so no row
+        survives — and the card stays anyway, because the switch is INSIDE it.
+        Counting "really on screen" would drop the card and leave the footer
+        telling the user to flip a control the same search had just hidden.
+        Pinned by `test_a_section_whose_only_matches_are_gated_keeps_its_switch_on_screen`.
         """
         searching = bool(self._search_terms)
         for tag in self._advanced_tags.values():
@@ -499,6 +512,25 @@ class SettingsForm(QtWidgets.QWidget):
         self._advanced_check = check
         self._body.addWidget(check)
 
+    def _shut_section_gate(self, f: settings.Field) -> settings.Field | None:
+        """The master switch of `f`'s section when it is OFF — or None.
+
+        `f.key != gate_key` is the carve-out that makes this usable, and it is
+        the fix for a defect three features said out loud: A MASTER SWITCH IS
+        NEVER HIDDEN BY ITSELF. It is the control that OPENS its section, so it
+        is on screen precisely when the gate is shut. Reading the gate without
+        that exemption made every sentence built off this walk circular — P7's
+        search footer printed "1 more setting applies when Enable VM features is
+        on" underneath a form plainly showing that checkbox, and P6's section
+        badge told a user who had just unticked it that their unsaved change was
+        "not shown on this form" and that the fix was to turn on the thing they
+        had just turned off.
+        """
+        gate_key = COLLAPSIBLE_SECTIONS.get(f.section)
+        if gate_key is None or f.key == gate_key or self._getters[gate_key]():
+            return None
+        return next(x for x in settings.SETTINGS_SCHEMA if x.key == gate_key)
+
     def _section_gate_open(self, f: settings.Field) -> bool:
         """Is the master checkbox of `f`'s section (if it has one) switched on?
 
@@ -508,8 +540,7 @@ class SettingsForm(QtWidgets.QWidget):
         showing a row inside a gated-off container does not force the container
         open — and would make this a second field-visibility path.
         """
-        gate_key = COLLAPSIBLE_SECTIONS.get(f.section)
-        return gate_key is None or bool(self._getters[gate_key]())
+        return self._shut_section_gate(f) is None
 
     def _advanced_hidden_count(self, gate_values: dict | None = None) -> int:
         """How many advanced settings that APPLY to this configuration the
@@ -597,13 +628,17 @@ class SettingsForm(QtWidgets.QWidget):
         check = QtWidgets.QCheckBox(gate.label if gate else "Enable")
         check.setChecked(bool(stored.get(gate_key, getattr(gate, "default", False))))
         check.toggled.connect(self._apply_section_visibility)
-        # This switch decides whether its section's advanced fields apply at all,
-        # so it moves the disclosure count. Connected HERE rather than from
-        # `_apply_section_visibility`, which also runs mid-`_build` — the label
-        # must not depend on SECTION_ORDER happening to render this section after
+        # This switch decides whether its section's fields apply at all, so it
+        # moves BOTH things that report on withheld settings: the disclosure count
+        # and — since P7 — the search footer naming the gates ("2 more settings
+        # apply when Enable VM features is on"). `_apply_field_visibility` drives
+        # both, and connecting only the label left that footer standing after the
+        # user flipped the very switch it named. Connected HERE rather than from
+        # `_apply_section_visibility`, which also runs mid-`_build` — neither
+        # claim may depend on SECTION_ORDER happening to render this section after
         # every gate widget `_gate_values` reads. (setChecked is above the
-        # connects, so neither fires during construction.)
-        check.toggled.connect(self._refresh_advanced_label)
+        # connects, so nothing fires during construction.)
+        check.toggled.connect(self._apply_field_visibility)
         # ...and it is a real setting, so flipping it is a real unsaved change.
         # `_add_field` never sees this widget, so the one hook every other field
         # gets through `_connect_field_signals` has to be wired by hand. It has no
@@ -1282,9 +1317,9 @@ class SettingsForm(QtWidgets.QWidget):
         would then tell the user that the rows in front of them are missing.
         """
         by_key = {x.key: x for x in settings.SETTINGS_SCHEMA}
-        gate_key = COLLAPSIBLE_SECTIONS.get(f.section)
-        if gate_key is not None and not self._getters[gate_key]():
-            return by_key[gate_key], ()
+        section_gate = self._shut_section_gate(f)
+        if section_gate is not None:
+            return section_gate, ()
         values = self._gate_values()
         current = f
         while current.show_if is not None:
@@ -1337,7 +1372,16 @@ class SettingsForm(QtWidgets.QWidget):
         field, so a filter that leaves the rejected row off screen breaks this
         method's whole guarantee (the user must be able to REACH every problem the
         status line claims exists) with no gate to name.
+
+        A keystroke still inside the debounce window is flushed FIRST, because
+        the guarantee is about the box's real state, not its last committed one:
+        typing a term and pressing Save within `SEARCH_DEBOUNCE_MS` used to leave
+        an armed timer that re-filtered a fraction of a second later and took the
+        field this method had just focused — red note and all — back off screen.
         """
+        if self._search_timer.isActive():
+            self._search_timer.stop()
+            self._commit_search()
         if self._search_terms and not self._field_matches(f):
             self.set_search("")
         if f.advanced and not self._show_advanced:

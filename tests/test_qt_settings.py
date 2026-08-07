@@ -2026,6 +2026,272 @@ def test_a_flagged_field_keeps_its_dot_and_a_reset_clears_the_flag(qtbot, tmp_pa
     assert form._save_btn.text() == "Save 1 change"             # vm_enabled, still on
 
 
+# --- cycle 18 P7: the search / filter box ---------------------------------------
+
+# This repo owner's real `settings_collapsed` (local/config.json): 9 of the 10
+# sections folded shut. Every collapse-restoration claim below is measured against
+# it rather than against an empty list, because "search permanently unfolds the tab"
+# is invisible on a form that had nothing folded in the first place.
+OWNER_COLLAPSED = ["Auto-apply", "Connection & paths", "Credentials", "Dashboard",
+                   "Engine", "Resume", "Scoring", "Scraper", "VM (cloud scraper)"]
+
+
+def _sections_on_screen(form):
+    return {s for s, w in form._section_widgets.items() if w.isVisibleTo(form)}
+
+
+def test_search_filters_fields_and_sections(qtbot, tmp_path):
+    """The phase checkpoint, top half: a term narrows the tab to the rows that
+    mention it and drops every section left with nothing."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    everything = _on_screen_field_keys(form)
+    assert {"min_score", "keywords", "GEMINI_API_KEYS"} <= everything
+
+    form.set_search("gemini")
+    shown = _on_screen_field_keys(form)
+    assert {"GEMINI_API_KEYS", "provider", "gemini_auth", "tailor_provider",
+            "GOOGLE_CLOUD_PROJECT"} <= shown
+    assert not {"min_score", "keywords", "location"} & shown
+    # ...and every surviving row really does mention the term (no leakage from a
+    # section that merely happens to hold one match).
+    assert all(form._field_matches(f) for f in settings.SETTINGS_SCHEMA
+               if f.key in shown)
+
+    # A section with zero matches goes away entirely — header, tagline and all.
+    assert _sections_on_screen(form) == {"Credentials", "Connection & paths",
+                                         "Engine", "Scoring"}
+
+    form.set_search("")
+    assert _on_screen_field_keys(form) == everything
+    assert _sections_on_screen(form) == set(form._section_widgets)
+
+
+def test_search_matches_the_config_key_not_only_the_label(qtbot, tmp_path):
+    """A user reading `.env`, a GitHub issue or this project's docs searches
+    `GEMINI_API_KEYS` — a string that appears in no label and no help text. Match
+    the key too or the search is useless to exactly the person most likely to
+    reach for it."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    key = "GEMINI_API_KEYS"
+    f = next(x for x in settings.SETTINGS_SCHEMA if x.key == key)
+    assert key.lower() not in f.label.lower() and key.lower() not in f.help.lower()
+
+    form.set_search(key)
+    assert _on_screen_field_keys(form) == {key}
+    form.set_search("gemini_api_keys")          # ...case-insensitively
+    assert _on_screen_field_keys(form) == {key}
+
+
+def test_search_terms_are_anded(qtbot, tmp_path):
+    """Two words narrow, they do not widen: "gemini key" is the pool key, not
+    every row mentioning either word."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form.set_search("gemini")
+    assert "provider" in _on_screen_field_keys(form)
+
+    form.set_search("Gemini KEY")
+    shown = _on_screen_field_keys(form)
+    assert "GEMINI_API_KEYS" in shown
+    assert "provider" not in shown              # matches "gemini", never "key"
+
+
+def test_search_reveals_an_advanced_field_and_marks_it(qtbot, tmp_path):
+    """Search IGNORES `advanced`. Hiding a power-user knob behind a disclosure is
+    only defensible while it stays findable, so the fold does not apply to a
+    result — it is tagged instead, and the user's disclosure preference is never
+    flipped on their behalf."""
+    form = _form(tmp_path)                       # show_advanced=False, as shipped
+    qtbot.addWidget(form)
+    key = "RESUME_TAILOR_MODEL_PRO"
+    assert next(x for x in settings.SETTINGS_SCHEMA if x.key == key).advanced
+    assert key not in _on_screen_field_keys(form)
+
+    form.set_search("gemini")
+    assert key in _on_screen_field_keys(form)
+    chip = form._advanced_tags[key]
+    assert chip.text() == "(advanced)" and chip.isVisibleTo(form)
+    assert form._advanced_check.isChecked() is False      # preference untouched
+
+    form.set_search("")
+    assert key not in _on_screen_field_keys(form)
+    assert not chip.isVisibleTo(form)
+
+
+def test_the_disclosure_count_reads_zero_while_searching(qtbot, tmp_path):
+    """The checkbox withholds nothing while a search is filtering, so its count
+    must not promise rows a tick cannot deliver — and the control itself is inert,
+    so it says so rather than sitting there dead."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    label = form._advanced_check.text()
+    assert "hidden" in label and form._advanced_check.isEnabled()
+
+    form.set_search("gemini")
+    assert "hidden" not in form._advanced_check.text()
+    assert form._advanced_check.isEnabled() is False
+
+    form.set_search("")
+    assert form._advanced_check.text() == label
+    assert form._advanced_check.isEnabled() is True
+
+
+def test_search_leaves_a_gated_field_out_and_names_its_gate(qtbot, tmp_path):
+    """Search RESPECTS `show_if`, and says so.
+
+    A field a gate holds shut does nothing for this configuration, so listing it
+    among the results would be a hit the user cannot act on. Dropping it in
+    silence is no better — it teaches them the box lies. Naming the gate is the
+    honest third option.
+    """
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form.set_search("gemini")
+    # gemini_auth is 'vertex' at defaults, so the tailor's API-key box is inert.
+    assert "RESUME_TAILOR_GEMINI_API_KEY" not in _on_screen_field_keys(form)
+
+    foot = form._search_footer
+    assert foot.isVisibleTo(form)
+    assert foot.text() == ("1 more setting applies when "
+                           "Resume tailor engine is 'api_key'")
+
+    # Open that gate and the field joins the results; the footer has nothing left.
+    form._widgets["gemini_auth"].setCurrentText("api_key")
+    assert "RESUME_TAILOR_GEMINI_API_KEY" in _on_screen_field_keys(form)
+    assert not foot.isVisibleTo(form)
+
+    form.set_search("")
+    assert not foot.isVisibleTo(form)
+
+
+def test_the_gate_footer_reads_the_widgets_not_the_stored_file(qtbot, tmp_path):
+    """Routed here from the P3 review, and P7 is where it stops being latent.
+
+    `settings.is_visible` compares gate values EXACTLY while `_set_combo` coerces
+    an unrecognised stored value to `choices[0]` before the form ever sees it — so
+    a hand-edited `"provider": "openai"` makes `visible_keys(load())` hide all
+    twelve gated fields while the form renders them normally. A footer built from
+    the FILE would then announce that the Gemini pickers on screen in front of the
+    user are missing.
+    """
+    targets = _targets(tmp_path)
+    targets["scoring"].write_text(json.dumps({"provider": "openai"}), encoding="utf-8")
+    form = SettingsForm(targets=targets, collapsed_sections=[], save_collapsed=lambda s: None,
+                        show_advanced=False, save_show_advanced=lambda v: None)
+    qtbot.addWidget(form)
+    # The two readings genuinely disagree — that is the whole hazard.
+    stored = settings.load(targets)
+    assert stored["provider"] == "openai"
+    assert "stage1_model" not in settings.visible_keys(stored)
+    assert form._widgets["provider"].currentText() == "gemini"
+
+    form.set_search("model")
+    shown = _on_screen_field_keys(form)
+    assert {"stage1_model", "stage2_model"} <= shown       # what the user can see
+    assert not {"stage1_model_claude", "stage2_model_claude"} & shown
+
+    foot = form._search_footer.text()
+    assert "2 more settings apply when Scoring provider is 'claude'" in foot
+    assert "gemini" not in foot        # never names a gate that is standing open
+
+
+def test_clearing_search_restores_collapse_state(qtbot, tmp_path):
+    """The real bug in this feature: a search that permanently unfolds the tab is
+    worse than no search at all.
+
+    Force-expanding a matching section is a VIEW change the user did not ask for,
+    so it must never reach `save_collapsed` — the same line P5's `_reveal_view_folds`
+    draws. Measured on this repo owner's real 9-of-10-folded layout, where the
+    damage would be nine sections wide.
+    """
+    saved: list[list[str]] = []
+    form = _form(tmp_path, collapsed_sections=list(OWNER_COLLAPSED),
+                 save_collapsed=saved.append)
+    qtbot.addWidget(form)
+    before = {s: w.is_collapsed() for s, w in form._section_widgets.items()}
+    assert sum(before.values()) == 9
+
+    form.set_search("gemini")
+    assert not form._section_widgets["Credentials"].is_collapsed()   # opened for the hit
+    assert not form._section_widgets["Scoring"].is_collapsed()
+
+    form.set_search("")
+    assert {s: w.is_collapsed() for s, w in form._section_widgets.items()} == before
+    assert _sections_on_screen(form) == set(form._section_widgets)
+    assert form._collapsed == set(OWNER_COLLAPSED)
+    # THE assertion. Nothing the search did was ever written through.
+    assert saved == []
+
+
+def test_a_toggle_the_user_makes_during_a_search_is_still_theirs(qtbot, tmp_path):
+    """The other side of that line: only SEARCH-induced folds are unpersisted. A
+    header the user clicks mid-search is a real choice and survives the clear."""
+    saved: list[list[str]] = []
+    form = _form(tmp_path, collapsed_sections=list(OWNER_COLLAPSED),
+                 save_collapsed=saved.append)
+    qtbot.addWidget(form)
+    form.set_search("gemini")
+    form._section_widgets["Credentials"]._on_header_clicked()   # fold it again, by hand
+
+    assert saved and "Credentials" in saved[-1]
+    form.set_search("")
+    assert form._section_widgets["Credentials"].is_collapsed()
+
+
+def test_the_dirty_count_ignores_the_search(qtbot, tmp_path):
+    """P6's rule, composed with the third view fold: the count promises what Save
+    WRITES, and `collect()` walks the schema — so filtering a row off screen
+    subtracts nothing."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    form._widgets["min_score"].setValue(9)
+    assert form._save_btn.text() == "Save 1 change"
+
+    form.set_search("gemini")
+    assert "min_score" not in _on_screen_field_keys(form)
+    assert form._save_btn.text() == "Save 1 change"
+    assert "· 1 changed" in form._section_widgets["Dashboard"]._subtitle.text()
+
+
+def test_a_rejected_field_the_search_hid_clears_the_search(qtbot, tmp_path, monkeypatch):
+    """Search is the THIRD view fold, so P5's guarantee has to hold through it:
+    the user must be able to reach every problem the status line claims exists.
+    A collapsed section and the advanced disclosure are already opened on their
+    behalf; a filter that hides the red box is the same failure."""
+    _no_modals(monkeypatch)
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["vm_enabled"](True)
+    form._widgets["local_task_offsets"].setText("every half hour")
+    form.set_search("gemini")
+    assert "local_task_offsets" not in _on_screen_field_keys(form)
+
+    assert form.save() is False
+    assert form._search_edit.text() == ""
+    assert form._search_terms == []
+    assert "local_task_offsets" in _on_screen_field_keys(form)
+    assert _focused(form, "local_task_offsets")
+
+
+def test_typing_is_debounced_not_refiltered_per_keystroke(qtbot, tmp_path):
+    """~130 form rows re-evaluated on every keystroke is what makes a filter box
+    feel broken. The box arms a single-shot timer; the refilter is what it fires."""
+    form = _form(tmp_path)
+    qtbot.addWidget(form)
+    before = _on_screen_field_keys(form)
+
+    form._search_edit.setText("gem")
+    assert form._search_timer.isActive()
+    assert _on_screen_field_keys(form) == before          # nothing moved yet
+
+    form._search_timer.stop()
+    form._commit_search()                                 # what the timer calls
+    assert "GEMINI_API_KEYS" in _on_screen_field_keys(form)
+    assert len(_on_screen_field_keys(form)) < len(before)
+
+
 def test_archive_dialog_lists_snapshots_without_leaking_secrets(qtbot, tmp_path):
     targets = _targets(tmp_path)
     settings.save({"min_score": 5}, targets)

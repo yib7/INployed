@@ -5,10 +5,18 @@ input per Field, the right widget per type (dropdown / editable dropdown / slide
 spin box / checkboxes / multiline list / path+Browse / credential (masked by
 default, with a Hide toggle) / entry), a muted "(filename)" storage tag, a
 collapsible VM section gated by a master checkbox, a "Show advanced settings
-(N hidden)" disclosure that folds every `Field.advanced` row away, and Save /
+(N hidden)" disclosure that folds every `Field.advanced` row away, a debounced
+search box that filters the whole tab by label / help / config key, and Save /
 Revert changes / Restore from archive / Restore defaults. Save validates via
 `settings.validate`/`settings.save`, reports a changed-field summary, and never
 echoes a secret value into that summary.
+
+THREE VIEW FOLDS, ONE CONFIGURATION GATE. A collapsed section, the advanced
+disclosure and an active search all hide rows the settings still apply to, so the
+form opens them on the user's behalf when it has to (`_reveal_view_folds`) and
+never persists an opening it made itself. A `show_if` gate and the VM master
+switch are the other kind — they mean "this does nothing for the way you have
+things set up" — so the form names them instead of flipping them.
 
 Problems are reported IN PLACE, not in a modal: the offending input outlines in
 red, a danger note appears under it, the form scrolls to the first one the user
@@ -85,6 +93,11 @@ COLLAPSIBLE_SECTIONS = {"VM (cloud scraper)": "vm_enabled"}
 # form already did to a stored value.
 NOTE_ERROR = "error"
 NOTE_WARN = "warn"
+
+# How long the search box waits after the last keystroke before re-filtering.
+# One refilter walks ~60 fields and ~130 form rows and can force-expand ten
+# sections, so doing it per keystroke is what makes a filter box feel broken.
+SEARCH_DEBOUNCE_MS = 180
 
 
 _repolish = theme.repolish   # dynamic properties only restyle if you ask (see theme)
@@ -219,6 +232,21 @@ class SettingsForm(QtWidgets.QWidget):
         # self._advanced_check is created by `_build` -> `_add_advanced_toggle`,
         # before anything reads it (same as self.status, built by `_add_buttons`).
 
+        # Search / filter. `_search_terms` is the parsed, lower-cased, AND-ed term
+        # list and is the ONLY search state anything else reads — empty means "not
+        # searching", which is the single test every branch below keys off.
+        # Deliberately NOT persisted: a filter is a thing you are doing right now,
+        # and reopening the tab into a two-section view with no memory of why is
+        # the same trap as a search that leaves the sections unfolded.
+        self._search_terms: list[str] = []
+        # One "(advanced)" chip per advanced field, built hidden in `_label_cell`
+        # and shown only while a search is running (search ignores `advanced`, so a
+        # result needs to say when it is one). `_search_footer` is the muted line
+        # naming the gates keeping matches off screen — also built hidden, because
+        # `self._rows` holds positional indices and nothing may be inserted later.
+        self._advanced_tags: dict[str, QtWidgets.QLabel] = {}
+        self._search_footer: QtWidgets.QLabel | None = None
+
         self._build()
 
     # ---- construction --------------------------------------------------------
@@ -250,6 +278,7 @@ class SettingsForm(QtWidgets.QWidget):
         stored = settings.load(self.targets)
         self._opening_values = dict(stored)
 
+        self._add_search_box()
         self._add_advanced_toggle()
 
         for section, fields in _ordered_sections():
@@ -265,6 +294,11 @@ class SettingsForm(QtWidgets.QWidget):
             else:
                 self._fill_section(sec, section, fields, stored)
 
+        # Below the sections, because it is the footer of the RESULTS: the muted
+        # "3 more settings apply when …" line. Built before the first visibility
+        # render, which is what fills it in.
+        self._add_search_footer()
+
         # Second pass, AFTER every field exists: wire the `show_if` gates and do
         # the first visibility render. See `_connect_gate_signals` for why this
         # cannot happen inside the section loop above.
@@ -279,6 +313,175 @@ class SettingsForm(QtWidgets.QWidget):
         # the next Save writes it — so the marker opens alongside P5's note saying
         # so, rather than the two disagreeing.
         self._refresh_dirty()
+
+    # ---- search / filter ------------------------------------------------------
+
+    def _add_search_box(self) -> None:
+        """The filter box, at the very top of the form.
+
+        This is what legitimises the two folds below it. Hiding a setting behind
+        a disclosure toggle or a collapsed section is only defensible while the
+        setting stays FINDABLE; without a search an advanced or folded-away row is
+        genuinely lost, and the user's only recourse is to scroll ~130 rows
+        looking for a word they already know.
+        """
+        box = QtWidgets.QLineEdit()
+        box.setPlaceholderText("Search settings — name, description, or config key…")
+        box.setClearButtonEnabled(True)
+        box.setAccessibleName("Search settings")
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(SEARCH_DEBOUNCE_MS)
+        timer.timeout.connect(self._commit_search)
+        box.textChanged.connect(lambda *_a: timer.start())
+        self._search_edit = box
+        self._search_timer = timer
+        self._body.addWidget(box)
+
+    def _add_search_footer(self) -> None:
+        """The muted line under the results naming the gates holding matches back.
+
+        Built empty and HIDDEN, then toggled — never inserted on demand. Same
+        constraint as the per-field notes: `self._rows` holds positional
+        `QFormLayout` indices captured at build, and while this label lives in
+        `self._body` rather than in a form layout, "build it hidden" is the rule
+        this form follows so nothing has to reason about which containers are
+        index-sensitive.
+        """
+        lab = QtWidgets.QLabel("")
+        lab.setProperty("muted", True)
+        lab.setWordWrap(True)
+        lab.setVisible(False)
+        self._search_footer = lab
+        self._body.addWidget(lab)
+
+    @staticmethod
+    def _search_haystack(f: settings.Field) -> str:
+        """What one field is searchable BY: its label, its help, and its config key.
+
+        The key is not padding. A user reading `.env`, a GitHub issue or this
+        project's docs searches `GEMINI_API_KEYS` — a string that appears in no
+        label and in no help text — and that person is the most likely to reach
+        for a search box in the first place.
+        """
+        return f"{f.label}\n{f.help}\n{f.key}".lower()
+
+    def _field_matches(self, f: settings.Field) -> bool:
+        """Does `f` match the current terms? Every term must hit (AND), anywhere in
+        the haystack, case-insensitively. No terms = everything matches."""
+        hay = self._search_haystack(f)
+        return all(t in hay for t in self._search_terms)
+
+    def set_search(self, text: str) -> None:
+        """Drive the box programmatically and re-filter NOW, skipping the debounce.
+
+        The one entry point for a caller (or a test) that wants the filter applied
+        before the next event loop turn — `_reveal_view_folds` needs exactly that,
+        because it has to put a rejected field on screen inside the same Save.
+        """
+        self._search_timer.stop()
+        self._search_edit.blockSignals(True)
+        self._search_edit.setText(text)
+        self._search_edit.blockSignals(False)
+        self._commit_search()
+
+    def _commit_search(self) -> None:
+        """Re-read the box and re-filter. What the debounce timer fires.
+
+        The early return is not just a saving: while a search is running,
+        `_apply_field_visibility` force-expands every matching section, so
+        re-committing an unchanged term would undo a fold the user had just made
+        by hand mid-search.
+        """
+        terms = self._search_edit.text().lower().split()
+        if terms == self._search_terms:
+            return
+        was_searching = bool(self._search_terms)
+        self._search_terms = terms
+        self._apply_field_visibility()
+        if was_searching and not terms:
+            self._restore_collapse_state()
+
+    def _restore_collapse_state(self) -> None:
+        """Put every section back to the fold the USER chose, on clearing a search.
+
+        `self._collapsed` is untouched by search from end to end — force-expanding
+        goes through `CollapsibleSection.set_collapsed`, which does not fire
+        `on_toggled` — so this is a restore, not a guess. That is the whole point:
+        this repo's owner runs with 9 of the 10 sections folded, and a search that
+        permanently unfolds the tab is worse than no search at all.
+
+        Called only on the searching → cleared transition, never from
+        `_apply_field_visibility`: that runs on every gate change, and re-asserting
+        the persisted fold there would immediately re-collapse the section
+        `_reveal_view_folds` deliberately opened without recording.
+        """
+        for section, sec in self._section_widgets.items():
+            sec.set_collapsed(section in self._collapsed)
+
+    def _apply_search_chrome(self, gate_values: dict) -> None:
+        """Everything a search changes beyond the field rows themselves: the
+        "(advanced)" chips, which sections survive, and the gate footer.
+
+        A section with zero surviving rows is hidden outright rather than left as
+        an empty card — ten headers with nothing under them is the same wall of
+        chrome the filter exists to cut. A section WITH a hit is force-expanded,
+        because a result the user still has to go and unfold is not a result.
+        """
+        searching = bool(self._search_terms)
+        for tag in self._advanced_tags.values():
+            tag.setVisible(searching)
+        # The disclosure governs nothing while a search is running — search ignores
+        # `advanced` — so it neither counts (see `_advanced_hidden_count`) nor
+        # pretends to be live.
+        self._advanced_check.setEnabled(not searching)
+        self._advanced_check.setToolTip(
+            "Search results already include advanced settings" if searching else "")
+        if searching:
+            shown: dict[str, int] = dict.fromkeys(self._section_widgets, 0)
+            for f in settings.SETTINGS_SCHEMA:
+                if f.section in shown and self._field_visible(f, gate_values):
+                    shown[f.section] += 1
+            for section, sec in self._section_widgets.items():
+                sec.setVisible(bool(shown[section]))
+                if shown[section] and sec.is_collapsed():
+                    sec.set_collapsed(False)   # a view change, so never persisted
+        else:
+            for sec in self._section_widgets.values():
+                sec.setVisible(True)
+        self._refresh_search_footer()
+
+    def _refresh_search_footer(self) -> None:
+        """Name the gates keeping matching settings off screen — or say nothing.
+
+        The honest third option. A search that silently omits results teaches the
+        user the tool lies; one that lists a field their configuration makes inert
+        hands them a row that does nothing. Naming the gate does neither: the
+        setting is accounted for AND the sentence says what would bring it back.
+        """
+        if self._search_footer is None:
+            return                      # mid-build; `_build` fills it in right after
+        text = self._gated_out_summary() if self._search_terms else ""
+        self._search_footer.setText(text)
+        self._search_footer.setVisible(bool(text))
+
+    def _gated_out_summary(self) -> str:
+        """"3 more settings apply when Scoring provider is 'claude'", per gate.
+
+        Grouped by the gate CONDITION and emitted in schema order, so five hidden
+        matches behind two gates read as two clauses rather than five.
+        """
+        counts: dict[str, int] = {}
+        for f in settings.SETTINGS_SCHEMA:
+            if not self._field_matches(f):
+                continue
+            condition = self._gate_condition(f)
+            if condition is not None:
+                counts[condition] = counts.get(condition, 0) + 1
+        return "; ".join(
+            f"{n} more setting{'' if n == 1 else 's'} "
+            f"{'applies' if n == 1 else 'apply'} when {condition}"
+            for condition, n in counts.items())
 
     # ---- progressive disclosure (settings.Field.advanced) --------------------
 
@@ -329,9 +532,13 @@ class SettingsForm(QtWidgets.QWidget):
           signal — until search ships — that the hidden settings exist at all.
 
         Zero once the box is ticked, which is what drops the parenthetical from
-        the label.
+        the label — and zero again while a SEARCH is running, for the same reason
+        rather than a different one: search ignores `advanced`, so the checkbox is
+        withholding nothing and a count there would promise rows a tick cannot
+        deliver. (What the search itself is withholding is not this label's claim;
+        the gate footer makes that one.)
         """
-        if self._show_advanced:
+        if self._show_advanced or self._search_terms:
             return 0
         if gate_values is None:
             gate_values = self._gate_values()
@@ -523,28 +730,45 @@ class SettingsForm(QtWidgets.QWidget):
     def _field_visible(self, f: settings.Field, gate_values: dict) -> bool:
         """Should one field be on screen right now?
 
-        The single place field-level visibility is decided, so later phases
-        compose HERE rather than in the loop below. The two halves AND together
-        and neither overrides the other: ticking "show advanced" never reveals a
-        field whose `show_if` gate is shut (it would describe machinery the
-        current configuration cannot run), and an open gate never reveals an
-        advanced field while the disclosure is folded.
+        The single place field-level visibility is decided — P3 put the gate here,
+        P4 composed the advanced flag in, and search composes here too rather than
+        opening a third rule that the other two would have to be kept in step with.
+
+        The gate half is in EVERY branch and nothing overrides it: ticking "show
+        advanced" never reveals a field whose `show_if` gate is shut (it would
+        describe machinery the current configuration cannot run), and neither does
+        a search hit.
+
+        What search DOES override is `advanced`, deliberately and asymmetrically.
+        The disclosure is a view fold — "not now" — and a user who has typed the
+        name of the thing they want has said "now"; leaving an advanced row out of
+        its own search results is what would make the fold indefensible. A
+        `show_if` gate is not a fold, so it survives, and `_refresh_search_footer`
+        names it instead of dropping the field in silence.
         """
+        if self._search_terms:
+            return self._field_matches(f) and settings.is_visible(f, gate_values)
         return ((not f.advanced or self._show_advanced)
                 and settings.is_visible(f, gate_values))
 
     def _apply_field_visibility(self, *_) -> None:
         """Re-render every field's visibility from the CURRENT gate values.
 
-        Runs once at build, on every gate change, on the advanced toggle, and
-        from `_repopulate` — so Revert, Restore defaults and snapshot-load all
-        re-evaluate. Walks the whole schema, not just the gated fields, so an
-        ungated field is actively asserted visible instead of merely never
-        touched. The advanced count rides along because a gate change moves it.
+        Runs once at build, on every gate change, on the advanced toggle, on every
+        committed search, and from `_repopulate` — so Revert, Restore defaults and
+        snapshot-load all re-evaluate. Walks the whole schema, not just the gated
+        fields, so an ungated field is actively asserted visible instead of merely
+        never touched. The advanced count and the search chrome ride along because
+        a gate change moves both (flip `provider` mid-search and a section can go
+        from three hits to none).
+
+        It does NOT restore the persisted collapse state — see
+        `_restore_collapse_state` for why that would fight `_reveal_view_folds`.
         """
         gate_values = self._gate_values()
         for f in settings.SETTINGS_SCHEMA:
             self._set_field_visible(f.key, self._field_visible(f, gate_values))
+        self._apply_search_chrome(gate_values)
         self._refresh_advanced_label(gate_values=gate_values)
 
     def _label_cell(self, f: settings.Field) -> QtWidgets.QWidget:
@@ -567,6 +791,18 @@ class SettingsForm(QtWidgets.QWidget):
         tag.setProperty("storageTag", True)
         theme.set_type_role(tag, "mono")
         h.addWidget(tag)
+        # The "(advanced)" chip: built for every advanced field, hidden, and shown
+        # only in search results. Search ignores `advanced` so that a folded-away
+        # knob stays findable — but a result that arrives with no explanation of
+        # why it was not there a moment ago is its own small confusion, and the
+        # chip is also where the user learns the disclosure toggle exists.
+        if f.advanced:
+            chip = QtWidgets.QLabel("(advanced)")
+            chip.setProperty("muted", True)
+            chip.setToolTip('Normally folded away behind "Show advanced settings"')
+            chip.setVisible(False)
+            self._advanced_tags[f.key] = chip
+            h.addWidget(chip)
         return cell
 
     def _add_field(self, form: QtWidgets.QFormLayout, f, value):
@@ -1024,40 +1260,86 @@ class SettingsForm(QtWidgets.QWidget):
             msg += f"; and {len(hints) - 2} more)" if len(hints) > 2 else ")"
         return msg
 
-    def _blocking_gate(self, f: settings.Field) -> str | None:
-        """The CONFIGURATION gate keeping `f` off screen, phrased as the thing the
-        user would do about it — or None when nothing configuration-level is.
+    def _blocking_gate_field(self, f: settings.Field):
+        """The CONFIGURATION gate keeping `f` off screen, as
+        `(gate field, the values that would open it)` — or None when nothing
+        configuration-level is. An empty `allowed` means a bool master switch.
 
-        The line P4 drew, reused: a `show_if` gate and the VM section's master
-        switch both mean "this field does nothing for the way you have things set
-        up", and the form must not flip either one to make its own message true.
-        A collapsed section and the advanced disclosure are the other kind — view
-        folds — and `_reveal_view_folds` opens those instead.
+        The line P4 drew, reused by three features now (P5's error status, P6's
+        section-badge tooltip, P7's search footer): a `show_if` gate and the VM
+        section's master switch both mean "this field does nothing for the way you
+        have things set up", and the form must not flip either one to make its own
+        message true. A collapsed section, the advanced disclosure and an active
+        search are the other kind — view folds — and `_reveal_view_folds` opens
+        those instead.
+
+        READS THE WIDGETS (`_gate_values`), never `settings.load()`, and that is
+        load-bearing rather than incidental. `settings.is_visible` compares gate
+        values EXACTLY while `_set_combo` coerces an unrecognised stored value to
+        `choices[0]` before the form ever sees it, so a hand-edited
+        `"provider": "openai"` makes `visible_keys(load())` hide all twelve gated
+        fields while the form renders them normally. Anything phrased off the file
+        would then tell the user that the rows in front of them are missing.
         """
         by_key = {x.key: x for x in settings.SETTINGS_SCHEMA}
         gate_key = COLLAPSIBLE_SECTIONS.get(f.section)
         if gate_key is not None and not self._getters[gate_key]():
-            return f'turn on "{by_key[gate_key].label}" to see it'
+            return by_key[gate_key], ()
         values = self._gate_values()
         current = f
         while current.show_if is not None:
             key, allowed = current.show_if
             gate = by_key[key]
             if str(values.get(key, gate.default)) not in allowed:
-                return f'set "{gate.label}" to {" or ".join(allowed)} to see it'
+                return gate, allowed
             current = gate
         return None
 
+    def _blocking_gate(self, f: settings.Field) -> str | None:
+        """That gate phrased as the thing the user would DO about it — the shape
+        P5's status line and P6's badge tooltip both append to a field label."""
+        found = self._blocking_gate_field(f)
+        if found is None:
+            return None
+        gate, allowed = found
+        if not allowed:
+            return f'turn on "{gate.label}" to see it'
+        return f'set "{gate.label}" to {" or ".join(allowed)} to see it'
+
+    def _gate_condition(self, f: settings.Field) -> str | None:
+        """The same gate phrased as the CONDITION under which the field applies —
+        what the search footer needs ("… when Scoring provider is 'claude'").
+
+        A second phrasing over one shared walk, rather than a second walk: the two
+        sentences must never be able to disagree about which gate is shut."""
+        found = self._blocking_gate_field(f)
+        if found is None:
+            return None
+        gate, allowed = found
+        if not allowed:
+            return f"{gate.label} is on"
+        return f"{gate.label} is " + " or ".join(f"'{a}'" for a in allowed)
+
     def _reveal_view_folds(self, f: settings.Field) -> None:
-        """Open every VIEW fold hiding `f` — the collapsed section it lives in and
-        the advanced disclosure — WITHOUT persisting either.
+        """Open every VIEW fold hiding `f` — an active search, the advanced
+        disclosure, and the collapsed section it lives in — WITHOUT persisting any
+        of them.
 
         The user did not choose to open these, so neither `_save_collapsed` nor
         `_save_show_advanced` is called: `CollapsibleSection.set_collapsed` does
         not fire `on_toggled`, `self._collapsed` is left holding the state the user
         actually chose, and the checkbox is ticked with its signal blocked. A
         restart comes back to their layout.
+
+        The search clears FIRST, and it has to: clearing restores the persisted
+        collapse layout, which would otherwise re-fold the section this method is
+        about to open. It also cannot be skipped — Save validates every collected
+        field, so a filter that leaves the rejected row off screen breaks this
+        method's whole guarantee (the user must be able to REACH every problem the
+        status line claims exists) with no gate to name.
         """
+        if self._search_terms and not self._field_matches(f):
+            self.set_search("")
         if f.advanced and not self._show_advanced:
             self._show_advanced = True
             self._advanced_check.blockSignals(True)

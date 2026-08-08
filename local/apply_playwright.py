@@ -5,7 +5,7 @@ The Chrome-extension apply path can fill every field but cannot attach a résum�
 résumé PDF on disk could never be attached. This module is an alternative. Playwright's
 ``page.set_input_files`` drives the file input at the CDP layer (``DOM.setFileInputFiles``),
 below the extension's session-share policy AND the page's Content-Security-Policy, so a
-plain local path uploads. Proven live on Greenhouse (Gotion, 2026-07-06). Note: `playwright`
+plain local path uploads. Proven live against a real Greenhouse form. Note: `playwright`
 is not in `requirements.txt` — install it separately to use this experimental path.
 
 Scope: the standardized Greenhouse-family embed (`job-boards.greenhouse.io` /

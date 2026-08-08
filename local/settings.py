@@ -357,14 +357,14 @@ SETTINGS_SCHEMA: list[Field] = [
            "outlook.com https://outlook.live.com/mail/",
            "hotmail.com https://outlook.live.com/mail/",
            "live.com https://outlook.live.com/mail/",
-           "msn.com https://outlook.live.com/mail/",
-           "wm.edu https://outlook.office.com/mail/"],
+           "msn.com https://outlook.live.com/mail/"],
           "Auto-apply", "config",
           help="One 'emaildomain webmail-url' per line, so the agent opens the RIGHT "
-               "inbox for the email it signs up with (an @wm.edu address is Microsoft "
-               "365 / Outlook, not Gmail). Your signup email's domain (basics.email) is "
-               "looked up here; a domain not listed falls back to Gmail. Whichever inbox "
-               "is used must already be signed in in Chrome."),
+               "inbox for the email it signs up with. Only consumer providers are "
+               "seeded; add your work or school domain, e.g. 'yourschool.edu "
+               "https://outlook.office.com/mail/' for Microsoft 365. Your signup "
+               "email's domain (basics.email) is looked up here; a domain not listed "
+               "falls back to Gmail. That inbox must already be signed in in Chrome."),
 
     # --- Settings history: snapshot every Save so settings can be rolled back ---
     # Lives in local/config.json. Snapshots copy every settings file (including the

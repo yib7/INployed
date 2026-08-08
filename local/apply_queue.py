@@ -570,11 +570,12 @@ def stats(path: Optional[Path] = None) -> Dict[str, int]:
 
 
 # Well-known email-provider → webmail inbox, so the drain agent opens the RIGHT
-# inbox for the signup email's domain. This encodes the non-obvious knowledge
-# that, e.g., an @wm.edu address is Microsoft 365 / Outlook, not Gmail. Users
-# extend or override it via config.json's "auto_apply_inbox_map" (settings field
-# "Inbox by email domain"); keep the provider rows in sync with settings.py's
-# field default.
+# inbox for the signup email's domain. Only the consumer providers ship here,
+# because a work or school domain resolves per organization: a university on
+# Microsoft 365 signs in at https://outlook.office.com/mail/, one on Google
+# Workspace at https://mail.google.com. Add your own domain via config.json's
+# "auto_apply_inbox_map" (settings field "Inbox by email domain"); keep the rows
+# below in sync with settings.py's field default.
 DEFAULT_INBOX_MAP: Dict[str, str] = {
     "gmail.com": "https://mail.google.com",
     "googlemail.com": "https://mail.google.com",
@@ -582,7 +583,6 @@ DEFAULT_INBOX_MAP: Dict[str, str] = {
     "hotmail.com": "https://outlook.live.com/mail/",
     "live.com": "https://outlook.live.com/mail/",
     "msn.com": "https://outlook.live.com/mail/",
-    "wm.edu": "https://outlook.office.com/mail/",
 }
 DEFAULT_INBOX_URL = "https://mail.google.com"
 
@@ -619,7 +619,7 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
     signup_email comes from the master yaml (basics.email); batch_cap from the
     dashboard config.json's auto_apply_* keys — tolerantly. inbox_url is resolved
     from the signup email's domain via DEFAULT_INBOX_MAP + the user's
-    auto_apply_inbox_map (so an @wm.edu signup opens Outlook, not Gmail), falling
+    auto_apply_inbox_map (so an @hotmail.com signup opens Outlook, not Gmail), falling
     back to the single auto_apply_inbox_url then Gmail. The effective inbox_map is
     returned too, so a subagent that uses a different account email can resolve
     it. Never anything secret-shaped.
@@ -649,8 +649,8 @@ def build_context(path: Optional[Path] = None) -> Dict[str, Any]:
     single = cfg.get("auto_apply_inbox_url")
     single = str(single).strip() if isinstance(single, str) and str(single).strip() else ""
     # Resolve from the signup email's domain first (the map carries the
-    # non-obvious knowledge, e.g. @wm.edu → Outlook); fall back to the single
-    # configured inbox for unmapped domains, then to the Gmail default.
+    # non-obvious knowledge, e.g. @hotmail.com → Outlook); fall back to the
+    # single configured inbox for unmapped domains, then to the Gmail default.
     inbox = inbox_map.get(_inbox_domain(email)) or single or DEFAULT_INBOX_URL
     try:
         cap = int(cfg.get("auto_apply_batch_cap", 10))

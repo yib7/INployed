@@ -683,30 +683,33 @@ def test_build_context_reads_master_email_and_config(tmp_path, monkeypatch):
 
 
 def test_build_context_resolves_inbox_from_signup_domain(tmp_path, monkeypatch):
-    """A wm.edu signup email resolves to the Outlook inbox via the seeded map,
+    """A hotmail.com signup email resolves to the Outlook inbox via the seeded map,
     even though the single inbox_url is absent (would otherwise default to Gmail)."""
     from resume_tailor import assets
     monkeypatch.setattr(assets, "load_master",
-                        lambda: {"basics": {"email": "me@wm.edu"}})
+                        lambda: {"basics": {"email": "me@hotmail.com"}})
     monkeypatch.setattr(apply_queue, "CONFIG_JSON", tmp_path / "missing.json")
     ctx = apply_queue.build_context(path=_q(tmp_path))
-    assert ctx["inbox_url"] == "https://outlook.office.com/mail/"
-    assert ctx["inbox_map"]["wm.edu"] == "https://outlook.office.com/mail/"
+    assert ctx["inbox_url"] == "https://outlook.live.com/mail/"
+    assert ctx["inbox_map"]["hotmail.com"] == "https://outlook.live.com/mail/"
 
 
 def test_build_context_user_inbox_map_line_overrides_default(tmp_path, monkeypatch):
-    """A user 'domain url' line in auto_apply_inbox_map wins for that domain."""
+    """A user 'domain url' line in auto_apply_inbox_map wins for that domain, both
+    for a domain the default map seeds and for one it does not."""
     from resume_tailor import assets
     monkeypatch.setattr(assets, "load_master",
-                        lambda: {"basics": {"email": "me@wm.edu"}})
+                        lambda: {"basics": {"email": "me@yourschool.edu"}})
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({
-        "auto_apply_inbox_map": ["wm.edu https://mail.wm.edu/owa"],
+        "auto_apply_inbox_map": ["yourschool.edu https://outlook.office.com/mail/",
+                                 "hotmail.com https://custom.example/owa"],
     }), encoding="utf-8")
     monkeypatch.setattr(apply_queue, "CONFIG_JSON", cfg)
     ctx = apply_queue.build_context(path=_q(tmp_path))
-    assert ctx["inbox_url"] == "https://mail.wm.edu/owa"
-    assert ctx["inbox_map"]["wm.edu"] == "https://mail.wm.edu/owa"
+    assert ctx["inbox_url"] == "https://outlook.office.com/mail/"
+    assert ctx["inbox_map"]["yourschool.edu"] == "https://outlook.office.com/mail/"
+    assert ctx["inbox_map"]["hotmail.com"] == "https://custom.example/owa"
 
 
 def test_build_context_single_inbox_is_fallback_for_unmapped_domain(tmp_path, monkeypatch):

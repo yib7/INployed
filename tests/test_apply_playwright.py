@@ -16,9 +16,9 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_playwright  # noqa: E402
 
-# A representative slice of a real apply.md (Gotion/CITGO shape).
+# A synthetic slice of an apply.md, in the shape the generator emits.
 _APPLY_MD = """\
-# Apply sheet — Associate Business Analyst @ CITGO
+# Apply sheet — Associate Business Analyst @ Acme Analytics
 Generated 2026-07-05.
 
 ## Instructions for the form-filler (read first)

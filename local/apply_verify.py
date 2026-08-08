@@ -56,7 +56,7 @@ def extract_code(text, length=None):
     if not text:
         return None
     t = text.replace("\r", "\n")
-    # Codes can be mixed-case (e.g. "tffCw7Xp") — match [A-Za-z0-9], not just caps.
+    # Codes can be mixed-case (e.g. "mkPz3Qra") — match [A-Za-z0-9], not just caps.
     own_line = re.findall(r"(?m)^\s*([A-Za-z0-9]{4,12})\s*$", t)   # alone on a line
     # Near 'code': allow a short run of filler ("is", "the", "your", ":") between
     # the keyword and the token, not only non-word chars.

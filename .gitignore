@@ -10,6 +10,8 @@
 *.pfx
 service-account*.json
 credentials.json
+secrets.json
+*.secrets.json
 # Backups written next to atomically-saved configs (.env.bak holds secrets;
 # config.json.bak etc. mirror git-ignored configs); never commit them.
 *.bak

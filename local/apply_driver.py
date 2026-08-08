@@ -1,5 +1,5 @@
 """File-driven headed Playwright REPL — graduated from a proven scratch driver that
-ran the live CITGO SuccessFactors account-creation run end-to-end.
+ran a live SuccessFactors account-creation flow end-to-end.
 
 ONE long-lived headed browser per ``serve --workdir DIR`` (persistent profile at
 ``DIR/profile`` so an in-progress signup/session survives across steps — two serves

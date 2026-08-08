@@ -13,34 +13,36 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_verify  # noqa: E402
 
-# Verbatim body of the real Greenhouse "Security code" email (Gotion, 2026-07-06).
+# A Greenhouse "Security code" email, in the shape the real one arrives in: CRLF
+# paragraphs, the code alone on its own line, an inline year in the footer. Codes
+# and text are synthetic; only the layout is load-bearing for extract_code.
 _GREENHOUSE_BODY = (
     "Hi Jane,\r\n\r\nCopy and paste this code into the security code field "
-    "on your application:\r\n\r\nK2A5IMA0\r\n\r\nAfter you enter the code, "
+    "on your application:\r\n\r\nQ7X4ZTB2\r\n\r\nAfter you enter the code, "
     "resubmit your application.\r\n\r\n© 2026 Greenhouse\r\n\r\n"
-    "18 West 18th Street, 11th Floor, New York, NY 10011, USA"
+    "123 Example Street, 4th Floor, Anytown, NY 10001, USA"
 )
 
 
 def test_extract_greenhouse_security_code():
-    assert apply_verify.extract_code(_GREENHOUSE_BODY, length=8) == "K2A5IMA0"
+    assert apply_verify.extract_code(_GREENHOUSE_BODY, length=8) == "Q7X4ZTB2"
 
 
 def test_extract_greenhouse_code_without_length_hint():
     # The code sits alone on its own line, so it wins even without a length hint
     # (footer tokens like "2026" appear inline, not alone on a line).
-    assert apply_verify.extract_code(_GREENHOUSE_BODY) == "K2A5IMA0"
+    assert apply_verify.extract_code(_GREENHOUSE_BODY) == "Q7X4ZTB2"
 
 
 def test_extract_mixed_case_code():
-    # Live run surfaced this: Greenhouse codes can be mixed-case ("tffCw7Xp").
+    # A live run surfaced this shape: Greenhouse codes can be mixed-case.
     body = (
         "Hi Jane,\r\n\r\nCopy and paste this code into the security code field "
-        "on your application:\r\n\r\ntffCw7Xp\r\n\r\nAfter you enter the code, "
+        "on your application:\r\n\r\nmkPz3Qra\r\n\r\nAfter you enter the code, "
         "resubmit your application.\r\n\r\n© 2026 Greenhouse"
     )
-    assert apply_verify.extract_code(body, length=8) == "tffCw7Xp"
-    assert apply_verify.extract_code(body) == "tffCw7Xp"
+    assert apply_verify.extract_code(body, length=8) == "mkPz3Qra"
+    assert apply_verify.extract_code(body) == "mkPz3Qra"
 
 
 def test_extract_numeric_otp():
@@ -95,10 +97,11 @@ def test_extract_rejects_bare_year_token():
 
 
 def test_handshake_request_then_await(tmp_path):
-    apply_verify.request_code(tmp_path, {"company": "Gotion", "email": "jane.doe@example.com"})
+    apply_verify.request_code(tmp_path, {"company": "Acme Analytics",
+                                         "email": "jane.doe@example.com"})
     assert (tmp_path / apply_verify.REQUEST_FILE).exists()
-    apply_verify.write_code(tmp_path, "K2A5IMA0")
-    assert apply_verify.await_code(tmp_path, timeout=2, poll=0.05) == "K2A5IMA0"
+    apply_verify.write_code(tmp_path, "Q7X4ZTB2")
+    assert apply_verify.await_code(tmp_path, timeout=2, poll=0.05) == "Q7X4ZTB2"
 
 
 def test_request_code_clears_stale_response(tmp_path):

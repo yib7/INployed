@@ -33,8 +33,18 @@ This project stands on a lot of other people's work.
 - **MiKTeX** (`pdflatex`): LaTeX to PDF compilation.
 
 ## Python libraries
-pandas · google-genai · aiohttp · PyYAML · pypdf · markdownify · python-dotenv ·
-PySide6 (Qt) · pytest · pytest-qt · and the Python standard library (asyncio, sqlite3, argparse).
+pandas · google-genai · aiohttp · PyYAML · ruamel.yaml · pypdf · markdownify ·
+python-dotenv · tzdata · requests · Send2Trash · keyring · PySide6 (Qt) · pytest ·
+pytest-qt · pytest-timeout · ruff · and the Python standard library (asyncio, sqlite3,
+argparse).
+
+None of these are redistributed with this project; `pip` installs each from PyPI under
+its own license. Across the full pinned dependency tree the licenses are MIT, BSD-2/3,
+Apache-2.0, PSF and MPL-2.0 (certifi), all of which the MIT release license permits.
+The one copyleft dependency is **PySide6** (with PySide6-Essentials, PySide6-Addons and
+shiboken6), licensed LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercially from
+The Qt Company. See the License section of the README for why a source-only distribution
+satisfies the LGPL here.
 
 If you reuse this project, please keep this file and the upstream template
 attribution.

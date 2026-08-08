@@ -303,3 +303,11 @@ docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CR
 Released under the [MIT License](LICENSE). The LaTeX résumé template is derived
 from Jake Gutierrez's MIT-licensed ["Jake's Resume"](https://github.com/jakegut/resume);
 see [docs/CREDITS.md](docs/CREDITS.md) for full attribution.
+
+No dependency is redistributed here. This repo is source only, and `pip` fetches each
+one from PyPI under its own license when you run Step 2. Every pin is MIT, BSD,
+Apache-2.0 or PSF except **PySide6/Qt**, which is LGPLv3 (or GPL, or a commercial Qt
+license). The dashboard imports PySide6 as an ordinary Python module and bundles no Qt
+binaries, so LGPLv3's relink condition is met by construction: you have this project's
+full source and can swap the PySide6 version with one `pip install`. Freezing this into
+a single-file executable is a different case, and those obligations would be yours.

@@ -1,6 +1,7 @@
 # Local Windows side (C:\Python314, Python 3.14.0): watcher, dashboard,
-# resume tailor, and tests. Pins re-verified against PyPI stable on 2026-07-01
-# (full test suite + ruff green on this exact set).
+# resume tailor, and tests. Pins re-verified against PyPI stable on 2026-08-08
+# (every pin below is the newest stable release on PyPI, and pip-audit reports no
+# known vulnerability against this set).
 #
 #   python -m pip install -r requirements.txt
 #
@@ -13,11 +14,16 @@
 # The VM has its own pin set: see requirements-vm.txt.
 
 pandas==3.0.5
-google-genai==2.14.0   # unified with requirements-vm.txt: the VM has run the 2.x line in
+google-genai==2.17.0   # unified with requirements-vm.txt: the VM has run the 2.x line in
                        # production since 2026-06 on the same genai.Client surface, so the
-                       # old "hold at 1.x" reason no longer applies (re-verified 2026-07-26)
+                       # old "hold at 1.x" reason no longer applies (re-verified 2026-08-08;
+                       # 2.15/2.16/2.17 are additive -- audio transcription config, Maps
+                       # grounding, environments -- with no breaking change in the changelog)
 markdownify==1.2.3
-pypdf==6.14.2
+pypdf==6.15.0          # security: 6.14.2 carries CVE-2026-71852 and CVE-2026-71870, two
+                       # crafted-PDF resource-exhaustion bugs in font width / /ToUnicode
+                       # parsing that fire during text extraction, which is exactly what
+                       # resume_tailor does to the user's PDF resume. Fixed in 6.15.0.
 PyYAML==6.0.3
 ruamel.yaml==0.19.1
 python-dotenv==1.2.2   # auto-loads .env so secrets stay out of the repo
@@ -47,5 +53,7 @@ pytest==9.1.1
 pytest-qt==4.5.0       # qtbot fixtures for the Qt UI tests (offscreen, no display)
 pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a thread dump,
                        # never burns runner hours (see the Run tests step in ci.yml)
-ruff==0.15.17          # the lint command (python -m ruff check .); declared here so CI and a
-                       # fresh clone lint with the same version instead of whatever is global
+ruff==0.16.2           # the lint command (python -m ruff check .); declared here so CI and a
+                       # fresh clone lint with the same version instead of whatever is global.
+                       # The rule selection lives in ruff.toml because 0.16 widened ruff's
+                       # built-in default rule set -- see the comment at the top of that file.

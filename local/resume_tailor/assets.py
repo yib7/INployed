@@ -34,8 +34,30 @@ def load_master() -> Dict[str, Any]:
         example = path.with_name("master_experience.example.yaml")
         if example.exists():
             path = example
-    with path.open(encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
+    try:
+        with path.open(encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+    except FileNotFoundError:
+        # Neither the personal master nor the committed example is on disk.
+        raise ValueError(
+            f"No resume master file found at {path}. Run scripts/setup.ps1, or "
+            f"copy resume_tailor_files/master_experience.example.yaml to "
+            f"resume_tailor_files/master_experience.yaml and fill it in."
+        ) from None
+    except yaml.YAMLError as exc:
+        # The user hand-edits this file, so a broken edit is the likeliest way
+        # the tailor fails. Say which file, where, and what fixes it -- a raw
+        # ParserError traceback in the dashboard's error dialog does not.
+        where = ""
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            where = f" at line {mark.line + 1}, column {mark.column + 1}"
+        raise ValueError(
+            f"{path.name} is not valid YAML{where}: "
+            f"{getattr(exc, 'problem', None) or exc}. Fix that line (indentation "
+            f"and unclosed brackets are the usual causes) or compare against "
+            f"master_experience.example.yaml."
+        ) from None
     if not isinstance(data, dict):
         raise ValueError(
             f"{path.name} must be a YAML mapping (got "

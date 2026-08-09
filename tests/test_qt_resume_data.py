@@ -22,7 +22,14 @@ def test_no_horizontal_overflow(qtbot, master_tmp):
     assert ed.scroll.horizontalScrollBarPolicy() == off
 
 
-def test_edit_basics_round_trips(qtbot, master_tmp):
+def test_edit_basics_round_trips(qtbot, master_tmp, tmp_path, monkeypatch):
+    # `save()` also persists the verbatim blocks through jobsdata, which resolves
+    # config.json off `jobsdata.HERE`. Without this redirect the test rewrote the
+    # developer's REAL local/config.json -- the only file in the whole worktree a
+    # full suite run still touched. Every other save()-calling test here already
+    # patches HERE; this one was the hole.
+    import jobsdata
+    monkeypatch.setattr(jobsdata, "HERE", tmp_path)
     ed = _editor(qtbot, master_tmp)
     ed._basics_edits["name"].setText("New Name")
     assert ed.save() is True

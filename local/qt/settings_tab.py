@@ -1164,8 +1164,13 @@ class SettingsForm(QtWidgets.QWidget):
         edit = QtWidgets.QLineEdit("" if value is None else str(value))
         edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         edit.setPlaceholderText("not set")
+        # Without this the three credential boxes announce nothing on focus (the
+        # cell around them is a bare QWidget, which a screen reader skips), while
+        # every other field type names its inner control.
+        edit.setAccessibleName(f.label)
         h.addWidget(edit, 1)
         hide = QtWidgets.QCheckBox("Hide")
+        hide.setAccessibleName(f"Hide {f.label}")
         hide.toggled.connect(lambda on, e=edit: e.setEchoMode(
             QtWidgets.QLineEdit.EchoMode.Password if on
             else QtWidgets.QLineEdit.EchoMode.Normal))

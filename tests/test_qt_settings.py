@@ -2558,3 +2558,17 @@ def test_search_finds_the_words_printed_on_a_rows_own_chips(qtbot, tmp_path):
 
     form.set_search("")
     assert "restart" not in form._search_terms
+
+
+def test_secret_boxes_carry_an_accessible_name(qtbot, tmp_path):
+    """A secret field's cell is a bare QWidget, which a screen reader skips, so
+    without a name on the INNER QLineEdit the three credential boxes announced
+    nothing at all on focus — the one field type where a user cannot fall back on
+    reading the value off the screen (it is masked)."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    secrets = [f for f in settings.SETTINGS_SCHEMA if f.secret]
+    assert secrets                                        # not vacuous
+    for f in secrets:
+        assert form._widgets[f.key].accessibleName() == f.label, f.key
+        assert form._secret_hides[f.key].accessibleName() == f"Hide {f.label}"

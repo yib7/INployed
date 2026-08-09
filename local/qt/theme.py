@@ -49,7 +49,7 @@ BORDER_STRONG = "#3f4a5a"  # hovered controls
 TEXT = "#e6edf3"           # primary
 TEXT_SECONDARY = "#c8d1da"
 MUTED = "#8b949e"
-FAINT = "#6e7681"
+FAINT = "#7d8590"        # 5.07:1 on WINDOW — the dimmest tier still AA-legible
 TEXT_DISABLED = "#484f58"
 
 # --- semantic families ---------------------------------------------------------
@@ -208,6 +208,17 @@ def _dark_palette() -> QtGui.QPalette:
     p.setColor(Role.Text, C(TEXT))
     p.setColor(Role.Button, C(RAISED))
     p.setColor(Role.ButtonText, C(TEXT))
+    # Fusion draws frame bevels (the QTabBar base line, sunken separators,
+    # group-box frames) from the Light/Midlight/Mid/Dark/Shadow roles. A default
+    # QPalette leaves those at their LIGHT-theme values, so Light = pure white:
+    # that is what painted a 1px #ffffff hairline across the full window width
+    # above the tab bar on every tab and every scale. Derive them from the dark
+    # surfaces instead.
+    p.setColor(Role.Light, C(FLOATING))
+    p.setColor(Role.Midlight, C(RAISED))
+    p.setColor(Role.Mid, C(BORDER))
+    p.setColor(Role.Dark, C(BORDER_SOFT))
+    p.setColor(Role.Shadow, C("#010409"))
     p.setColor(Role.BrightText, C("#ffffff"))
     p.setColor(Role.ToolTipBase, C(FLOATING))
     p.setColor(Role.ToolTipText, C(TEXT))
@@ -253,7 +264,12 @@ def _qss() -> str:
        glyph to nothing -- drop the horizontal padding so it renders. */
     QPushButton[compact="true"] {{ padding: 6px 0px; }}
 
-    QPushButton[accent="true"] {{ background: {ACCENT}; color: #ffffff;
+    /* Filled buttons carry DARK ink, not white. White on {ACCENT} measures
+       3.20:1 and white on {GOOD} 2.54:1 — both under the 4.5:1 floor, on the two
+       loudest controls in the window ("Find new jobs", "Apply"). {ACCENT_INK} on
+       the same fills measures 5.85:1 and 7.37:1, so the fill colour (the thing
+       that makes them read as primary) survives and the label becomes legible. */
+    QPushButton[accent="true"] {{ background: {ACCENT}; color: {ACCENT_INK};
                   border: 1px solid {ACCENT}; }}
     QPushButton[accent="true"]:hover {{ background: {ACCENT_HOVER};
                   border-color: {ACCENT_HOVER}; }}
@@ -288,7 +304,7 @@ def _qss() -> str:
     QPushButton[tier="link"]:disabled {{ background: transparent;
                   color: {TEXT_DISABLED}; }}
 
-    QPushButton[applyReady="true"] {{ background: {GOOD}; color: #ffffff;
+    QPushButton[applyReady="true"] {{ background: {GOOD}; color: {ACCENT_INK};
                   border: 1px solid {GOOD}; }}
     QPushButton[applyReady="true"]:hover {{ background: {GOOD_HOVER};
                   border-color: {GOOD_HOVER}; }}
@@ -359,8 +375,13 @@ def _qss() -> str:
     QToolButton[resetField="true"] {{ color: {MUTED}; border: 0; padding: 0 4px;
         background: transparent; }}
     QToolButton[resetField="true"]:hover {{ color: {ACCENT}; }}
+    /* `background: transparent` is load-bearing: a section header is a
+       QToolButton inside a PANEL card, and the global `QWidget {{ background:
+       WINDOW }}` rule otherwise painted a WINDOW-dark slab behind every Settings
+       section title. QToolButton is not a QLabel/QCheckBox/QSlider, so the
+       card-child transparency rule below never covered it. */
     QToolButton[sectionHeader="true"] {{ color: {TEXT}; font-weight: 600; border: 0;
-        padding: 6px 2px; text-align: left; }}
+        background: transparent; padding: 6px 2px; text-align: left; }}
     QToolButton[sectionHeader="true"]:hover {{ color: {ACCENT}; }}
 
     /* Containers: cards, warning callouts, chip/identity strips (Phase 3). */

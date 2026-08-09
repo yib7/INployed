@@ -1,19 +1,32 @@
-"""Maintainer tool: assemble the README media from the synthetic screenshots.
+"""Maintainer tool: assemble the README media from the synthetic dashboard.
 
-Run `python scripts/ui_screenshots.py p8` first -- it renders the real dashboard
-offscreen against synthetic fixtures (no API calls, no real data), writing PNGs to
-the gitignored `.screenshots/`. This script then stamps each tab shot with a caption
-band and assembles them into `docs/demo.gif` (an 8-screen crossfaded tour) and
-`docs/dashboard.png` (the still hero shot).
+Two products, both from fixtures, neither touching the network or real data:
+
+* **The four README stills** (`docs/dashboard.png`, `docs/tracker.png`,
+  `docs/resume-data.png`, `docs/settings.png`) are stamped from the PNGs that
+  `scripts/ui_screenshots.py` writes into the gitignored `.screenshots/`. Run
+
+      python scripts/ui_screenshots.py p8
+
+  first, then pass the same prefix here.
+
+* **`docs/demo.gif`** is rendered live, from the storyboard in
+  `scripts/build_walkthrough.py` -- the same scene list the MP4 uses, re-timed
+  for a loop. It changes state inside a screen (row selection, a live search
+  filter) instead of cutting between eight static tabs, so it reads as motion.
 
     python scripts/build_demo_media.py p8
 
-Nothing here touches the network or the user's data.
+Every frame carries the "representative sample data" watermark and the fixtures
+are fictional (Acme / Globex / Initech / Hooli / Vandelay, run label
+"synthetic", Jane Doe's example résumé). Keep it that way: no grab of this
+dashboard may ever show a real posting or the author's own data.
 """
 
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -27,22 +40,26 @@ BG = (13, 17, 23)
 FG = (139, 148, 158)
 WATERMARK = "representative sample data"
 
-# slug -> caption, in tour order.
-TOUR = [
-    ("high_score", "High Score - LLM-ranked postings with a score breakdown"),
-    ("all_jobs", "All Jobs - every collected posting"),
-    ("tracker", "Tracker - application statuses + follow-up nudges"),
-    ("auto_apply", "Auto-apply - the batch apply queue"),
-    ("stats", "Stats - per-run pipeline metrics"),
-    ("resume_data", "Resume Data - the select-and-rephrase source of truth"),
-    ("apply_answers", "Apply Answers - reusable form answers"),
-    ("settings", "Settings - every option, no file editing"),
+# The README's Screenshots grid: four distinct screens, not four near-duplicates
+# of the same table. (slug in .screenshots, caption band, committed filename)
+STILLS = [
+    ("high_score", "High Score - LLM-ranked postings with a score breakdown",
+     "dashboard.png"),
+    ("tracker", "Tracker - application statuses + follow-up nudges",
+     "tracker.png"),
+    ("resume_data", "Resume Data - the atoms every bullet must trace back to",
+     "resume-data.png"),
+    ("settings", "Settings - every key, path and option, no file editing",
+     "settings.png"),
 ]
 
-FIRST_HOLD_MS = 3200
-HOLD_MS = 2400
-FADE_FRAMES = 6
+# GIF timing. Holds are far shorter than the MP4's (a loop that lingers reads as
+# a slideshow), and the crossfade runs at 25 fps so the cut itself is motion.
+FIRST_HOLD_MS = 2000
+HOLD_MS = 1500
+FADE_FRAMES = 10
 FADE_MS = 40
+GIF_COLORS = 128
 
 
 def _font() -> ImageFont.FreeTypeFont:
@@ -62,39 +79,78 @@ def _stamp(src: Path, caption: str) -> Image.Image:
     draw = ImageDraw.Draw(out)
     font = _font()
     y = h + BAND_H // 2
-    draw.text((16, y), f"INployed — {caption}", font=font, fill=FG, anchor="lm")
+    draw.text((16, y), f"INployed - {caption}", font=font, fill=FG, anchor="lm")
     draw.text((w - 16, y), WATERMARK, font=font, fill=FG, anchor="rm")
     return out
 
 
-def main() -> int:
-    prefix = sys.argv[1] if len(sys.argv) > 1 else "current"
-    holds = [_stamp(SHOTS / f"{prefix}_{slug}_1.0.png", cap) for slug, cap in TOUR]
+def build_stills(prefix: str) -> list[tuple[Path, int]]:
+    written = []
+    for slug, caption, name in STILLS:
+        src = SHOTS / f"{prefix}_{slug}_1.0.png"
+        if not src.exists():
+            raise SystemExit(
+                f"missing {src}\nRun: python scripts/ui_screenshots.py {prefix}")
+        out = DOCS / name
+        _stamp(src, caption).save(out, optimize=True)
+        written.append((out, out.stat().st_size))
+    return written
+
+
+def build_gif() -> Path:
+    """Render the walkthrough storyboard live and write it as a looping GIF."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    import build_walkthrough as bw
+
+    tmp = tempfile.TemporaryDirectory(prefix="demo_gif_")
+    holds, _secs = bw.render_scenes(Path(tmp.name))
+    if not holds:
+        raise SystemExit("no frames captured")
 
     frames: list[Image.Image] = []
     durations: list[int] = []
     for i, hold in enumerate(holds):
         frames.append(hold)
         durations.append(FIRST_HOLD_MS if i == 0 else HOLD_MS)
-        nxt = holds[(i + 1) % len(holds)]
+        nxt = holds[(i + 1) % len(holds)]  # the tour loops, so the last fades to the first
         for k in range(1, FADE_FRAMES + 1):
             frames.append(Image.blend(hold, nxt, k / (FADE_FRAMES + 1)))
             durations.append(FADE_MS)
-    # The tour loops, so drop the fade back into frame 0 only if you want a hard cut.
+
+    # One shared adaptive palette: the theme is flat and dark, so 128 colours
+    # cost nothing visually and let every frame reuse the same table.
+    palette = frames[0].quantize(colors=GIF_COLORS, method=Image.Quantize.MAXCOVERAGE)
+    quantized = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
 
     gif = DOCS / "demo.gif"
-    frames[0].save(
+    quantized[0].save(
         gif,
         save_all=True,
-        append_images=frames[1:],
+        append_images=quantized[1:],
         duration=durations,
         loop=0,
         optimize=True,
-        disposal=2,
+        disposal=1,   # keep the previous frame: lets optimize() write deltas only
     )
-    holds[0].save(DOCS / "dashboard.png", optimize=True)
-    print(f"{gif} -> {len(frames)} frames, {gif.stat().st_size / 1e6:.2f} MB")
-    print(f"{DOCS / 'dashboard.png'} -> {(DOCS / 'dashboard.png').stat().st_size / 1e3:.0f} KB")
+    secs = sum(durations) / 1000
+    print(f"{gif} -> {len(holds)} scenes, {len(frames)} frames, {secs:.0f}s, "
+          f"{frames[0].width}x{frames[0].height}, {gif.stat().st_size / 1e6:.2f} MB")
+    return gif
+
+
+def main() -> int:
+    prefix = sys.argv[1] if len(sys.argv) > 1 else "current"
+    total = 0
+    for path, size in build_stills(prefix):
+        total += size
+        print(f"{path} -> {size / 1e3:.0f} KB")
+    gif = build_gif()
+    total += gif.stat().st_size
+    print(f"committed README media total: {total / 1e6:.2f} MB")
+    if gif.stat().st_size > 15e6:
+        print("WARNING: demo.gif is over the 15 MB budget.")
+    if total > 30e6:
+        print("WARNING: committed README media is over the 30 MB budget.")
     return 0
 
 

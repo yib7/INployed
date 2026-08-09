@@ -146,12 +146,15 @@ def _encode(entries, out: Path) -> None:
     listing.unlink()
 
 
-def main() -> int:
-    tmp = tempfile.TemporaryDirectory(prefix="walkthrough_")
-    tmp_dir = Path(tmp.name)
-    frames_dir = tmp_dir / "frames"
-    frames_dir.mkdir()
+def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float]]:
+    """Drive the real MainWindow offscreen through `scenes()` and return one
+    captioned still per scene plus its seconds-on-screen.
 
+    Shared with `scripts/build_demo_media.py`, which re-times the same
+    storyboard into `docs/demo.gif`, so the video and the GIF can never drift
+    into telling two different stories. Everything here runs against
+    `ui_screenshots`' synthetic fixtures: no network, no real data, no API call.
+    """
     # Same synthetic world the screenshots use: fictional jobs, a fictional
     # master_experience.yaml, and a .env full of placeholders.
     queue_path = tmp_dir / "apply_queue.json"
@@ -183,6 +186,7 @@ def main() -> int:
     win._refresh_stats()
     uis._write_queue(queue_path, uis._queue_jobs())
     win.apply_queue_panel.refresh()
+    uis._expand_settings_section(win)
     app.processEvents()
 
     holds: list[Image.Image] = []
@@ -199,7 +203,16 @@ def main() -> int:
             continue
         holds.append(_band(Image.open(raw).convert("RGB"), caption))
         secs.append(dur)
+    return holds, secs
 
+
+def main() -> int:
+    tmp = tempfile.TemporaryDirectory(prefix="walkthrough_")
+    tmp_dir = Path(tmp.name)
+    frames_dir = tmp_dir / "frames"
+    frames_dir.mkdir()
+
+    holds, secs = render_scenes(tmp_dir)
     if not holds:
         print("no frames captured")
         return 1

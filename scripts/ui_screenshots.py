@@ -241,6 +241,16 @@ def _registry(resume_dir: Path) -> MagicMock:
     return reg
 
 
+def _expand_settings_section(win: MainWindow, section: str = "Engine") -> None:
+    """Unfold one non-secret Settings section so the grab shows real controls
+    instead of ten folded title bars. Never Credentials: even with the synthetic
+    .env its rows are secret fields, and an expanded secret row is a bad look in
+    a README image."""
+    sec = getattr(win.settings_tab, "_section_widgets", {}).get(section)
+    if sec is not None:
+        sec.set_collapsed(False)
+
+
 def _select_row0(win: MainWindow) -> None:
     """Select row 0 in every table so detail/preview panes are populated."""
     for tab in (win.high_tab, win.all_tab, win.tracker_tab):
@@ -320,6 +330,7 @@ def main() -> int:
     _write_queue(queue_path, _queue_jobs())
     win.apply_queue_panel.refresh()
     _select_row0(win)
+    _expand_settings_section(win)
     app.processEvents()
     written += _capture_all(app, win, prefix, "", SCALES)
 

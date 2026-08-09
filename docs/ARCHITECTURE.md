@@ -3,9 +3,19 @@
 A guided tour of how the pieces fit together, written for someone (you, later)
 reopening this repo cold. This doc is about *how the code is shaped and why*.
 
+## Repo layout in one breath
+
+`pipeline/` holds the headless scripts the GCP VM runs (scraper, scorer, key pool, merge and
+prune helpers). They sit flat in one directory and import each other by bare name, because the
+VM copies them side by side into `~/` and runs them with no package around them. Each resolves
+its data root as "the repo root when I am inside `pipeline/`, otherwise my own directory", so
+the same file reads `.env` and the master CSV correctly in both places. `local/` is the desktop
+half (Qt dashboard, résumé engine, VM control). `scripts/` is ops and maintainer tooling,
+`tests/` the suite, `docs/` the prose, `resume_tailor_files/` your résumé source data.
+
 ## The three subsystems
 
-### 1. Job discovery (`scraper.py`)
+### 1. Job discovery (`pipeline/scraper.py`)
 The discovery step is an async Bright Data client. Triggers keyword × remote-type searches, polls the
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
 appends to a cumulative master CSV. Two cost-aware details:
@@ -21,7 +31,7 @@ appends to a cumulative master CSV. Two cost-aware details:
   without triggering a new collection: the recovery path when a run dies after
   billing.
 
-### 2. Score (`score_jobs.py`)
+### 2. Score (`pipeline/score_jobs.py`)
 A two-stage Gemini filter. Stage 1 (cheap flash-lite) does a fast relevance pass;
 stage 2 (flash) deep-scores the survivors. A deterministic `min_required_years`
 regex pre-filter drops over-senior roles *before* any LLM sees them (the highest-risk

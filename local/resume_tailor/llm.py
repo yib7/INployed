@@ -343,14 +343,15 @@ def _call_gemini(
 
 
 def _claude_cli():
-    """Lazy import of the root-level claude_cli module (config.SCRAPE_DIR IS
+    """Lazy import of the claude_cli module from pipeline/ (config.SCRAPE_DIR IS
     the repo root -- same sys.path pattern as local/manual_add.py:30-34).
     Imported lazily (not at module load) so llm.py stays importable even in
-    contexts where the repo root isn't yet on sys.path, and so tests can stub
+    contexts where pipeline/ isn't yet on sys.path, and so tests can stub
     this function without a real claude_cli import."""
     import sys
+    from pathlib import Path
 
-    root = str(config.SCRAPE_DIR)
+    root = str(Path(config.SCRAPE_DIR) / "pipeline")
     if root not in sys.path:
         sys.path.insert(0, root)
     import claude_cli

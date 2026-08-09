@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 REPO = Path(__file__).resolve().parent.parent
-for p in (str(REPO), str(REPO / "local")):
+for p in (str(REPO / "pipeline"), str(REPO / "local")):
     if p not in sys.path:
         sys.path.insert(0, p)
 

@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 import score_jobs as sj  # noqa: E402
 

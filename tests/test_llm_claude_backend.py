@@ -17,7 +17,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
-sys.path.insert(0, str(REPO))          # claude_cli.py lives at the repo root
+sys.path.insert(0, str(REPO / "pipeline"))          # claude_cli.py lives in pipeline/
 
 from resume_tailor import config  # noqa: E402
 from resume_tailor import llm  # noqa: E402

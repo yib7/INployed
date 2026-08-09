@@ -103,7 +103,10 @@ python ~/scraper.py >> ~/scraper.log 2>&1
 python ~/score_jobs.py >> ~/scraper.log 2>&1
 
 # 2.5 Retention: blank descriptions older than the window; best-effort, never fails the run.
-#     DEPLOY NOTE: prune_master.py must be scp'd to ~/ alongside scraper.py/score_jobs.py.
+#     DEPLOY NOTE: the pipeline scripts live in pipeline/ in the repo but are scp'd FLAT
+#     into ~/ on the VM (that flat layout is what every `python ~/*.py` line here assumes,
+#     and what each script's data-root check keys off). prune_master.py must be scp'd
+#     alongside scraper.py/score_jobs.py.
 #     Because this line is best-effort, a MISSING ~/prune_master.py logs "non-fatal (exit 127)"
 #     and silently prunes nothing (the master keeps growing) -- so after deploying this script,
 #     confirm `ls ~/prune_master.py` on the VM and grep the log for a real prune line, not 127.

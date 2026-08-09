@@ -11,10 +11,10 @@
 #     (or set PDFLATEX_PATH). Install: winget install MiKTeX.MiKTeX
 #     First compile may prompt MiKTeX to fetch missing LaTeX packages; allow it.
 #
-# The VM has its own pin set: see requirements-vm.txt.
+# The VM has its own pin set: see scripts/requirements-vm.txt.
 
 pandas==3.0.5
-google-genai==2.17.0   # unified with requirements-vm.txt: the VM has run the 2.x line in
+google-genai==2.17.0   # unified with scripts/requirements-vm.txt: the VM has run the 2.x line
                        # production since 2026-06 on the same genai.Client surface, so the
                        # old "hold at 1.x" reason no longer applies (re-verified 2026-08-08;
                        # 2.15/2.16/2.17 are additive -- audio transcription config, Maps
@@ -55,5 +55,5 @@ pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a t
                        # never burns runner hours (see the Run tests step in ci.yml)
 ruff==0.16.2           # the lint command (python -m ruff check .); declared here so CI and a
                        # fresh clone lint with the same version instead of whatever is global.
-                       # The rule selection lives in ruff.toml because 0.16 widened ruff's
+                       # The rule selection lives in pyproject.toml because 0.16 widened ruff's
                        # built-in default rule set -- see the comment at the top of that file.

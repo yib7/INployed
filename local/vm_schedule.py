@@ -11,11 +11,12 @@ import re
 import sys
 from pathlib import Path
 
-# run_labels.py lives at the repo root (so the VM can import it standalone).
+# run_labels.py lives in pipeline/ (flat, so the VM can import it standalone).
 # Make it importable when this module is loaded from local/.
 _ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+_PIPELINE = _ROOT / "pipeline"
+if str(_PIPELINE) not in sys.path:
+    sys.path.insert(0, str(_PIPELINE))
 from run_labels import RUN_LABELS, label_for_hour  # noqa: E402,F401  re-exported
 
 FREQS = ("daily", "weekly", "biweekly")

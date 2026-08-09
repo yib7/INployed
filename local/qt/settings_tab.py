@@ -1853,7 +1853,7 @@ class SettingsForm(QtWidgets.QWidget):
         if "drop_easy_apply" in changed_vm:
             text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "
                      "(there is no automated code push) — run:\n"
-                     "  gcloud compute scp score_jobs.py <user>@<vm>:~ --zone=<zone>")
+                     "  gcloud compute scp pipeline/score_jobs.py <user>@<vm>:~ --zone=<zone>")
         if QtWidgets.QMessageBox.question(
                 self, "Push config to VM?", text,
                 QtWidgets.QMessageBox.StandardButton.Yes

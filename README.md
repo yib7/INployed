@@ -273,14 +273,16 @@ résumé** and **Apply** actions. *(Shown with representative sample data.)*
 ## Project layout
 ```
 Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
-scraper.py              job discovery (fetches + normalizes postings)
-score_jobs.py           two-stage Gemini relevance scorer
-run_labels.py           shared run-label buckets (morning/afternoon/evening/night)
-keypool.py              Gemini key/credential pool + rotation for the scorer
-claude_cli.py           optional Claude Code CLI backend (tailor + local scorer)
-merge_incoming.py       folds locally-added jobs into the master CSV on the VM
-prune_master.py         retention prune: blanks old jobs' full HTML description (the master's biggest column)
+pipeline/               headless pipeline scripts, flat so the VM can run them standalone:
+  scraper.py            job discovery (fetches + normalizes postings)
+  score_jobs.py         two-stage Gemini relevance scorer
+  run_labels.py         shared run-label buckets (morning/afternoon/evening/night)
+  keypool.py            Gemini key/credential pool + rotation for the scorer
+  claude_cli.py         optional Claude Code CLI backend (tailor + local scorer)
+  merge_incoming.py     folds locally-added jobs into the master CSV on the VM
+  prune_master.py       retention prune: blanks old jobs' full HTML description (the master's biggest column)
 scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
+scripts/requirements-vm.txt  pinned VM venv (Python 3.11, pipeline scripts only)
 scripts/setup.ps1       first-run config writer (.env / config.json / master_experience.yaml)
 scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots (synthetic data)
 scripts/build_demo_media.py assembles docs/demo.gif + docs/dashboard.png from those shots

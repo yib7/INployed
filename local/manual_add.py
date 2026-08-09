@@ -29,7 +29,9 @@ from typing import Any, Callable, Dict, Optional
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
-for _p in (str(HERE), str(REPO_ROOT)):
+# pipeline/ holds the flat pipeline modules (score_jobs, keypool, run_labels …);
+# they are imported by bare name so the same files also run standalone on the VM.
+for _p in (str(HERE), str(REPO_ROOT / "pipeline")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

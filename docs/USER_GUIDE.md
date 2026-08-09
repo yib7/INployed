@@ -112,9 +112,9 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
   refreshes the view when done.
 - **On-demand (local CLI):** run your own pipeline, then open the dashboard:
   ```bash
-  python scraper.py                              # full run (needs Bright Data keys in .env)
-  python scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
-  python score_jobs.py                           # needs Vertex AI / ADC (auto-loads .env locally)
+  python pipeline/scraper.py                              # full run (needs Bright Data keys in .env)
+  python pipeline/scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
+  python pipeline/score_jobs.py                           # needs Vertex AI / ADC (auto-loads .env locally)
   ```
   `--max-keywords N` / `--limit N` cap a run's cost: the discovery service bills per
   collected posting, so the full keyword list (the VM default) can collect

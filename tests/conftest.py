@@ -75,6 +75,9 @@ for _leaked in (
 os.environ["RESUME_TAILOR_OUTPUT"] = tempfile.mkdtemp(prefix="inployed-test-output-")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
+# pipeline/ holds the flat pipeline modules (scraper, score_jobs, keypool, …),
+# imported by bare name so the same files run standalone on the VM.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 _MASTER_YAML = textwrap.dedent("""\
     # top comment

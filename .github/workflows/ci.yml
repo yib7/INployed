@@ -36,7 +36,7 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen   # Qt UI tests run headless (no display on CI)
-        # The per-test timeout lives in pytest.ini (timeout = 120), so a hung test
+        # The per-test timeout lives in pyproject.toml (timeout = 120), so a hung test
         # fails fast with a thread dump everywhere, not just on CI.
         run: python -m pytest -q
 

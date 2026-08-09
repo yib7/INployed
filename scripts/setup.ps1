@@ -182,6 +182,6 @@ Write-Host @"
     3. Enter your experience in the Resume Data tab, which writes
        resume_tailor_files/master_experience.yaml for you.
     4. Authenticate Google Cloud:  gcloud auth application-default login
-    5. (Scraping) run your own pipeline:  python scraper.py   then   python score_jobs.py
+    5. (Scraping) run your own pipeline:  python pipeline\scraper.py   then   python pipeline\score_jobs.py
        or run it on a small GCP VM via cron, managed from Settings -> VM.
 "@ -ForegroundColor Gray

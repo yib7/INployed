@@ -1377,14 +1377,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # scrape.log stays empty for the whole run and a healthy scrape looks dead.
     @staticmethod
     def scraper_cmd(bounded: bool) -> list[str]:
-        cmd = [_console_python(), "-u", "scraper.py"]
+        cmd = [_console_python(), "-u", "pipeline/scraper.py"]
         if bounded:
             cmd += ["--max-keywords", "1", "--limit", "5"]
         return cmd
 
     @staticmethod
     def scorer_cmd() -> list[str]:
-        return [_console_python(), "-u", "score_jobs.py"]
+        return [_console_python(), "-u", "pipeline/score_jobs.py"]
 
     @staticmethod
     def _scrape_log_path() -> Path:
@@ -1559,8 +1559,9 @@ class MainWindow(QtWidgets.QMainWindow):
         is logged to scrape.log and swallowed — the scrape result is unaffected."""
         try:
             repo = Path(__file__).resolve().parents[2]
-            if str(repo) not in sys.path:
-                sys.path.insert(0, str(repo))
+            for _p in (str(repo / "pipeline"), str(repo / "local")):
+                if _p not in sys.path:
+                    sys.path.insert(0, _p)
             import scraper
             import vm_sync
             target = vm_sync.VMTarget.from_env()

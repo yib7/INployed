@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "pipeline"))
 
 import claude_cli  # noqa: E402
 

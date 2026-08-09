@@ -3,9 +3,9 @@
 A scrape run is labelled by the hour it starts, so the dashboard can show
 morning / afternoon / evening / night runs from a configurable schedule.
 
-Kept dependency-free and at the repo root so the VM (which copies scraper.py and
-score_jobs.py to the home dir, with no `local/` package) can import it
-standalone — exactly like keypool.py.
+Kept dependency-free and flat in pipeline/ so the VM (which copies scraper.py and
+score_jobs.py into the home dir side by side, with no `local/` package) can import
+it standalone — exactly like keypool.py.
 """
 from __future__ import annotations
 

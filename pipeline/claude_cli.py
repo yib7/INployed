@@ -1,6 +1,6 @@
 """Shared headless-CLI transport for the optional Claude provider.
 
-Root-level so score_jobs.py can lazy-import it. NOT copied to the VM -- every
+In pipeline/ beside score_jobs.py, which lazy-imports it. NOT copied to the VM -- every
 import must stay behind a `provider == "claude"` check (the VM scores with
 Gemini unconditionally; see keypool.py / score_jobs.py). Consumers:
 

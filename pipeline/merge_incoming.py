@@ -22,7 +22,13 @@ from pathlib import Path
 
 import pandas as pd
 
-HOME = Path(__file__).resolve().parent
+# Data root: the directory holding the master CSV, run_stats.csv and the
+# incoming/ spool. In the repo this script lives in pipeline/ and the data root
+# is the repo root one level up; on the VM the pipeline scripts are scp'd FLAT
+# into ~/ and the data root is that same directory, so the parent hop only
+# applies while the script is still inside pipeline/.
+_HERE = Path(__file__).resolve().parent
+HOME = _HERE.parent if _HERE.name == "pipeline" else _HERE
 INCOMING_DIR = HOME / "incoming"
 MASTER_CSV = HOME / "linkedin_jobs_master.csv"
 RUN_STATS_CSV = HOME / "run_stats.csv"

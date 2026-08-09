@@ -6,7 +6,7 @@
 #
 # Rebuild from scratch:
 #   python3 -m venv ~/venv
-#   ~/venv/bin/pip install -r requirements-vm.txt
+#   ~/venv/bin/pip install -r scripts/requirements-vm.txt
 #
 # rclone is a system binary on the VM (not pip) — config in ~/.config/rclone/.
 

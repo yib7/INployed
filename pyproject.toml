@@ -1,0 +1,31 @@
+# Tool configuration for INployed. This project is not packaged or installed
+# (users clone and run), so there is no [build-system] or [project] table here
+# on purpose -- this file exists only to hold the two tool configs that both
+# ruff and pytest discover by walking up to the repo root. They used to be a
+# separate ruff.toml and pytest.ini; one root file does the same job.
+
+[tool.ruff]
+# The rule selection is written down rather than inherited from ruff's built-in
+# default, because that default is not stable across ruff minor releases: 0.16
+# widened it from the pycodestyle/pyflakes core to include pyupgrade, isort,
+# flake8-bandit, flake8-datetimez and more, which turned one lint finding into
+# 1278 overnight. Pinning the selection means a ruff upgrade changes how the
+# same rules are enforced, not which rules exist, so CI and a fresh clone keep
+# agreeing with each other.
+target-version = "py314"
+
+[tool.ruff.lint]
+# ruff's pre-0.16 default: pycodestyle errors (E4 imports, E7 statements,
+# E9 syntax) plus all of pyflakes (F). Adding a rule family is a deliberate
+# edit here, not a side effect of `pip install -U ruff`.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+# Suite-wide hang guard: a stuck test (e.g. an unmocked modal dialog) fails fast
+# with a thread dump instead of blocking the run forever, in EVERY environment
+# (dev machine, fresh clone, CI) -- not only where a --timeout flag is remembered.
+timeout = 120
+timeout_method = "thread"
+filterwarnings = [
+    "ignore::DeprecationWarning:google.genai.types",
+]

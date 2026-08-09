@@ -12,12 +12,20 @@ import pandas as pd
 
 from run_labels import RUN_LABELS, label_for_hour
 
+# Data root: the directory holding .env, the master CSV and the per-run-label
+# output dirs. In the repo this script lives in pipeline/ and the data root is
+# the repo root one level up; on the VM the pipeline scripts are scp'd FLAT
+# into ~/ and the data root is that same directory, so the parent hop only
+# applies while the script is still inside pipeline/.
+_HERE = Path(__file__).resolve().parent
+DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
+
 # Optional: load a local .env so credentials live outside the repo. The VM path
 # sets these via run_scraper.sh exports, so a missing python-dotenv is fine.
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).parent / ".env")
+    load_dotenv(DATA_ROOT / ".env")
 except ImportError:
     pass
 
@@ -45,7 +53,7 @@ POLL_INTERVAL = 10
 MAX_WAIT_MINUTES = 60
 MAX_POLL_FAILURES = 5
 
-OUTPUT_DIR = Path(__file__).parent
+OUTPUT_DIR = DATA_ROOT
 PREVIOUS_IDS_FILE = OUTPUT_DIR / "last_run_job_ids.json"
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
 # Job ids collected on ANOTHER machine and pushed here (e.g. a manual local scrape

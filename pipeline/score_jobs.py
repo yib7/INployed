@@ -34,16 +34,24 @@ from markdownify import markdownify
 from keypool import KeyPool, PoolError
 from run_labels import RUN_LABELS
 
+# Data root: the directory holding .env, resume.md, the master CSV and the
+# per-run-label output dirs. In the repo this script lives in pipeline/ and the
+# data root is the repo root one level up; on the VM the pipeline scripts are
+# scp'd FLAT into ~/ and the data root is that same directory, so the parent hop
+# only applies while the script is still inside pipeline/.
+_HERE = Path(__file__).resolve().parent
+DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
+
 # Optional: load a local .env so credentials work for manual/local runs. The VM
 # path exports these via run_scraper.sh, so a missing python-dotenv is fine.
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).parent / ".env")
+    load_dotenv(DATA_ROOT / ".env")
 except ImportError:
     pass
 
-OUTPUT_DIR = Path(__file__).parent
+OUTPUT_DIR = DATA_ROOT
 RESUME_PATH = OUTPUT_DIR / "resume.md"
 
 # Root-level scoring_config.json lets a local user (or the dashboard's Settings

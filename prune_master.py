@@ -24,8 +24,20 @@ def _cutoff_date(days: int, now: datetime | None):
     now = now or datetime.now(timezone.utc)
     return (now - timedelta(days=days)).date()
 
+def _column(chunk: pd.DataFrame, col: str, missing):
+    """chunk[col] if present, else a full-length Series of `missing`.
+
+    chunk.get(col) returns a bare None for an absent column, and pandas'
+    to_datetime/to_numeric turn that into a NaT/nan *scalar* — which then blows
+    up on the next Series method. A master written before score_jobs.py has run
+    has no `score`; one rebuilt from an older source can lack `extracted_date`.
+    """
+    if col in chunk.columns:
+        return chunk[col]
+    return pd.Series(missing, index=chunk.index)
+
 def _aged_mask(chunk: pd.DataFrame, cutoff) -> pd.Series:
-    dt = pd.to_datetime(chunk.get(DATE_COL), errors="coerce", utc=True)
+    dt = pd.to_datetime(_column(chunk, DATE_COL, pd.NaT), errors="coerce", utc=True)
     if FALLBACK_DATE_COL in chunk.columns:
         dt = dt.fillna(pd.to_datetime(chunk[FALLBACK_DATE_COL], errors="coerce", utc=True))
     # Undatable -> NOT aged (never strip what we can't date).
@@ -33,12 +45,12 @@ def _aged_mask(chunk: pd.DataFrame, cutoff) -> pd.Series:
     return dt.notna() & (dt < cutoff_ts)
 
 def _needs_rescore(chunk: pd.DataFrame) -> pd.Series:
-    score = pd.to_numeric(chunk.get("score"), errors="coerce")
+    score = pd.to_numeric(_column(chunk, "score", None), errors="coerce")
     # Accept the historical float-upcast ("1.0") and trailing-space ("True ")
     # spellings too (a .strip()-normalised, false-family-safe set), else those
     # rows read as NOT filtered and get re-parked/retried forever. Keep IDENTICAL
     # to score_jobs.rows_needing_rescore.
-    filtered = (chunk.get("filtered_out", pd.Series(False, index=chunk.index))
+    filtered = (_column(chunk, "filtered_out", False)
                 .fillna(False).astype(str).str.strip().str.lower()
                 .isin(("true", "1", "1.0", "yes")))
     return score.isna() & ~filtered
@@ -98,8 +110,13 @@ def main(argv=None) -> int:
     try:
         r = prune(Path(a.master), retention_days=a.days, strip_summary=a.summary,
                   dry_run=a.dry_run)
-    except (OSError, ValueError, pd.errors.ParserError) as e:
-        print(f"prune_master: cannot process {a.master}: {e}", file=sys.stderr)
+    except (OSError, ValueError, KeyError, AttributeError, TypeError,
+            pd.errors.ParserError) as e:
+        # A shape surprise in the master should print one actionable line, not a
+        # traceback: run_scraper.sh swallows the exit code, so a traceback here
+        # means the prune silently stops running and nobody notices.
+        print(f"prune_master: cannot process {a.master}: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
         return 1
     print(f"prune_master: rows={r['rows']} stripped_desc={r['stripped']} "
           f"parked_unscored={r['parked']} days={a.days} dry_run={a.dry_run}")

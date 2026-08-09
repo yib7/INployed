@@ -326,6 +326,35 @@ def test_call_claude_transient_error_sleeps_and_advances(monkeypatch, claude_env
     assert recorded == [1.5]            # 1.5 * (idx + 1), idx=0 on first attempt
 
 
+# P1-3, Claude lane: a kinded error was already classified where it was raised
+# (claude_cli runs is_rate_limit_message on the real stderr), so its message
+# must not be re-read by the substring classifier. A CLI error whose payload
+# quotes a job description about quotas is a transient, not a 429.
+def test_call_claude_kinded_error_mentioning_quota_is_not_a_rate_limit(
+        monkeypatch, claude_env):
+    recorded, _ = claude_env
+    excs = [ClaudeCLIErrorLike("claude exited 1: quota planning JD, 429 refs",
+                               kind="error")] * 99
+    fake, seen = _invoke_claude_seq(excs)
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    with pytest.raises(llm.LLMError):
+        llm._call_claude("sys", "user", "claude-sonnet-5")
+    assert seen == [180, 300]           # schedule consumed, not the 429 budget
+    assert recorded == [1.5, 3.0]       # transient sleeps, not the 30s ladder
+
+
+def test_call_claude_bad_json_mentioning_quota_is_not_a_rate_limit(
+        monkeypatch, claude_env):
+    recorded, _ = claude_env
+    fake, seen = _invoke_claude_seq(
+        [], ok_text="I only handle quota attainment questions (429 policy).")
+    monkeypatch.setattr(llm, "_invoke_claude", fake)
+    with pytest.raises(llm.LLMError, match="valid JSON"):
+        llm._call_claude("sys", "user", "claude-sonnet-5", json_out=True)
+    assert seen == [180, 300]
+    assert recorded == [1.5, 3.0]
+
+
 def test_call_claude_transient_exhausts_schedule_raises(monkeypatch, claude_env):
     recorded, _ = claude_env
     excs = [ClaudeCLIErrorLike("500 boom", kind="error")] * 99

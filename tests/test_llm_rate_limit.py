@@ -121,6 +121,62 @@ def test_transient_errors_keep_schedule_bounded_behavior(monkeypatch, sleeps):
     assert len(seen) == 3
 
 
+# P1-3: the retry classifiers substring-match str(exc), and the try block they
+# guard raises its OWN LLMErrors carrying up to 500 chars of model output. A JD
+# about sales quotas or request timeouts must not turn a deterministic parse
+# failure into 17 minutes of rate-limit backoff.
+def _always_returns(text):
+    """Fake _invoke that always answers `text`. Records each attempt's timeout."""
+    seen: list[int] = []
+
+    def _fake(system, user, model, *, json_out, temperature,
+              max_output_tokens, tools, timeout_s):
+        seen.append(timeout_s)
+        return _ok_resp(text)
+
+    return _fake, seen
+
+
+def test_bad_json_containing_quota_is_not_treated_as_a_rate_limit(monkeypatch, sleeps):
+    fake, seen = _always_returns(
+        "Sorry, I can only discuss quota attainment and 429 territory plans.")
+    monkeypatch.setattr(llm, "_invoke", fake)
+    with pytest.raises(llm.LLMError, match="valid JSON"):
+        llm.call("sys", "user", "quick", json_out=True)
+    # Schedule attempts with 1.5s transient sleeps, not the 30s rate-limit
+    # ladder (which would be [30, 60, 120, 240, 300, 300] and 6 more attempts).
+    assert seen == [60, 120, 180]
+    assert sleeps == [1.5, 3.0, 4.5]
+
+
+def test_bad_json_containing_timeout_does_not_escalate_as_a_timeout(monkeypatch, sleeps):
+    fake, _seen = _always_returns(
+        "The pipeline timed out; investigate the timeout budget.")
+    monkeypatch.setattr(llm, "_invoke", fake)
+    with pytest.raises(llm.LLMError) as ei:
+        llm.call("sys", "user", "quick", json_out=True)
+    # The timeout branch sleeps nothing and reports "timed out after N attempts";
+    # the transient branch sleeps and keeps the real parse error.
+    assert "valid JSON" in str(ei.value)
+    assert sleeps == [1.5, 3.0, 4.5]
+
+
+def test_empty_response_stays_transient(monkeypatch, sleeps):
+    fake, _seen = _always_returns("   ")
+    monkeypatch.setattr(llm, "_invoke", fake)
+    with pytest.raises(llm.LLMError):
+        llm.call("sys", "user", "quick")
+    assert sleeps == [1.5, 3.0, 4.5]
+
+
+def test_local_kinds_are_tagged_on_the_error():
+    with pytest.raises(llm.LLMError) as ei:
+        llm._extract_json("not json at all")
+    assert ei.value.kind == "bad_json"
+    assert llm._local_failure(ei.value) is True
+    assert llm._local_failure(RuntimeError("429 quota")) is False
+
+
 def test_retry_delay_hint_parser():
     assert llm._retry_delay_hint("{'retryDelay': '22s'}") == 22.0
     assert llm._retry_delay_hint('"retryDelay": "7.5s"') == 7.5

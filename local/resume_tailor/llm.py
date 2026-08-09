@@ -36,7 +36,34 @@ RATE_LIMIT_MAX_SLEEP = 300.0
 
 
 class LLMError(RuntimeError):
-    pass
+    """A tailor-transport failure, optionally classified STRUCTURALLY.
+
+    `kind` mirrors `claude_cli.ClaudeCLIError.kind` so both provider lanes
+    classify a failure by how it was produced instead of by what its message
+    says. That matters because these messages embed model output (up to 500
+    characters of it, in the bad-JSON case), and the retry logic below decides
+    what to do by substring-matching the message it is handed. A job
+    description about sales quotas would otherwise turn a deterministic parse
+    failure into the 429 branch and sleep out the whole backoff budget.
+
+    Kinds: "bad_json" and "empty" (the model answered, the answer was
+    unusable), "config" (missing credentials or provider). None = unclassified.
+    """
+
+    def __init__(self, *args, kind: Optional[str] = None):
+        super().__init__(*args)
+        self.kind = kind
+
+
+# Kinds that mean "we inspected a response that already arrived and rejected
+# it". Never a transport signal, so never eligible for the timeout-escalation
+# or rate-limit-backoff branches no matter what the message happens to contain.
+_LOCAL_KINDS = frozenset({"bad_json", "empty", "config"})
+
+
+def _local_failure(exc: BaseException) -> bool:
+    """True when `exc` is our own verdict on a response, not a transport error."""
+    return getattr(exc, "kind", "") in _LOCAL_KINDS
 
 
 # Per-process token accounting, so a run can report tier usage for cost sanity.
@@ -79,7 +106,8 @@ def _extract_json(text: str) -> Any:
                     continue
         # `from None`: the message already carries the offending payload; the
         # internal JSONDecodeError chain is noise in the user-facing dialog/CLI.
-        raise LLMError(f"Model did not return valid JSON. Got:\n{text[:500]}") from None
+        raise LLMError(f"Model did not return valid JSON. Got:\n{text[:500]}",
+                       kind="bad_json") from None
 
 
 def as_dict(out: Any, key: str = "") -> dict:
@@ -138,9 +166,11 @@ def _check_creds() -> None:
     """Fail fast (no retries) when the selected auth mode has no usable credentials."""
     if config.gemini_auth() == "api_key":
         if not os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"):
-            raise LLMError("RESUME_TAILOR_GEMINI_API_KEY not set (gemini_auth=api_key).")
+            raise LLMError("RESUME_TAILOR_GEMINI_API_KEY not set (gemini_auth=api_key).",
+                           kind="config")
     elif not config.GCP_PROJECT:
-        raise LLMError("Vertex auth selected but GOOGLE_CLOUD_PROJECT is not set.")
+        raise LLMError("Vertex auth selected but GOOGLE_CLOUD_PROJECT is not set.",
+                       kind="config")
 
 
 def _is_timeout(exc: Optional[BaseException]) -> bool:
@@ -262,7 +292,7 @@ def _call_gemini(
             )
             text = resp.text or ""
             if not text.strip():
-                raise LLMError("empty response")
+                raise LLMError("empty response", kind="empty")
             meta = getattr(resp, "usage_metadata", None)
             USAGE.append({
                 "model": model,
@@ -272,7 +302,13 @@ def _call_gemini(
             return _extract_json(text) if json_out else text.strip()
         except Exception as exc:  # noqa: BLE001
             last_err = exc
-            if _is_timeout(exc):
+            # Structural classification first. `local` covers the LLMErrors this
+            # very try block raises (empty body, unparseable JSON) — their
+            # messages carry model output, so handing them to the substring
+            # classifiers below would let a JD about sales quotas or request
+            # timeouts route a deterministic failure into the 429 branch.
+            local = _local_failure(exc)
+            if not local and _is_timeout(exc):
                 timed_out = True
                 log.warning("llm: %s timed out at %ss (attempt %d/%d); escalating "
                             "timeout: %s", model, timeout_s, idx + 1,
@@ -280,7 +316,7 @@ def _call_gemini(
                 idx += 1
                 continue  # escalate to the next (longer) timeout — no sleep
             timed_out = False
-            if _is_rate_limit(exc):
+            if not local and _is_rate_limit(exc):
                 if rl_used >= RATE_LIMIT_MAX_RETRIES:
                     raise LLMError(
                         f"Gemini rate limit persisted through {rl_used} waits "
@@ -366,7 +402,8 @@ def _call_claude(
         raise LLMError(
             "Resume tailor provider is 'claude' but the `claude` CLI is not "
             "on PATH. Install Claude Code and run `claude` once to log in, "
-            "or set the provider back to 'gemini' in Settings."
+            "or set the provider back to 'gemini' in Settings.",
+            kind="config",
         )
     schedule = config.claude_timeout_schedule()
     last_err: Optional[Exception] = None
@@ -399,7 +436,11 @@ def _call_claude(
                 idx += 1
                 continue  # escalate to the next (longer) timeout — no sleep
             timed_out = False
-            if kind == "rate_limit" or _is_rate_limit(exc):
+            # `not kind` mirrors the timeout line above: a kinded exception was
+            # already classified at the point it was raised (claude_cli runs
+            # is_rate_limit_message on the real stderr), and the unkinded case
+            # is the only one whose message is worth substring-matching.
+            if kind == "rate_limit" or (not kind and _is_rate_limit(exc)):
                 if rl_used >= RATE_LIMIT_MAX_RETRIES:
                     raise LLMError(
                         f"Claude rate/usage limit persisted through {rl_used} "

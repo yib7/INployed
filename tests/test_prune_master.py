@@ -76,3 +76,44 @@ def test_needs_rescore_treats_float_and_padded_filtered_out_as_filtered():
     assert not bool(needs.iloc[0])   # "1.0" -> already filtered
     assert not bool(needs.iloc[1])   # "True " -> already filtered
     assert bool(needs.iloc[2])       # "False" + unscored -> needs rescore
+
+
+# P1-2: chunk.get(COL) returns a bare None for an absent column, and pandas
+# turns that into a NaT/nan *scalar* whose .fillna/.isna raises AttributeError.
+# Both shapes are reachable: `score` only exists after score_jobs.py has run,
+# and the seen.db/CSV rebuild recipes can produce a master without
+# `extracted_date`. run_scraper.sh swallows the exit code, so a crash here
+# means the retention prune silently stops running.
+def test_master_without_extracted_date_does_not_crash(tmp_path):
+    row = {k: v for k, v in BASE.items() if k != "extracted_date"}
+    p = _write(tmp_path, [row])
+    r = pm.prune(p, retention_days=3, now=NOW)
+    assert r["rows"] == 1
+    assert r["stripped"] == 1          # falls back to job_posted_date
+    assert len(pd.read_csv(p)) == 1
+
+def test_master_without_score_column_does_not_crash(tmp_path):
+    row = {k: v for k, v in BASE.items() if k != "score"}
+    p = _write(tmp_path, [row])
+    r = pm.prune(p, retention_days=3, now=NOW)
+    assert r["rows"] == 1
+    assert r["parked"] == 1            # no score at all -> park the aged row
+    assert len(pd.read_csv(p)) == 1
+
+def test_master_with_neither_date_column_strips_nothing(tmp_path):
+    row = {k: v for k, v in BASE.items()
+           if k not in ("extracted_date", "job_posted_date")}
+    p = _write(tmp_path, [row])
+    r = pm.prune(p, retention_days=3, now=NOW)
+    assert r["stripped"] == 0          # undatable -> never stripped
+    df = pd.read_csv(p, dtype=str)
+    assert df.loc[0, "job_description_formatted"] == "FULL <b>desc</b>"
+
+def test_main_reports_one_line_on_a_shape_surprise(tmp_path, capsys, monkeypatch):
+    p = _write(tmp_path, [BASE])
+    monkeypatch.setattr(pm, "prune",
+                        lambda *a, **k: (_ for _ in ()).throw(AttributeError("boom")))
+    rc = pm.main(["--master", str(p)])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "prune_master: cannot process" in err and "AttributeError" in err

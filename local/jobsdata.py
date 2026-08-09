@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import gzip
 import html
-import json
 import logging
 import os
 import re
@@ -25,9 +24,11 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from jsonutil import atomic_write_json, replace_with_retry  # noqa: E402  (needs HERE on sys.path)
+from jsonutil import (  # noqa: E402  (needs HERE on sys.path)
+    read_json_dict, replace_with_retry, update_json_locked,
+)
 from csv_io import read_csv_gz, write_csv_gz_atomic  # noqa: E402
-from locks import SingleInstance  # noqa: E402  (shared single-instance lock)
+from locks import FileLockTimeout, SingleInstance  # noqa: E402  (shared file locks)
 from vm_schedule import RUN_LABELS  # noqa: E402  (shared run-label set)
 
 # Repo root: scraper.py / score_jobs.py write their outputs here (one level above
@@ -593,21 +594,27 @@ def update_manual_job(record: dict, *, old_id=None, master_csv: Path | None = No
         return append_manual_job(record, master_csv=master_csv)
 
 
+def _cfg_path() -> Path:
+    return HERE / "config.json"
+
+
 def _load_cfg() -> dict:
     """config.json (shared with the watcher), {} when unreadable."""
-    try:
-        return json.loads((HERE / "config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    return read_json_dict(_cfg_path())
 
 
 def _save_cfg(updates: dict) -> None:
-    """Merge updates into local/config.json (best-effort; never crash the UI)."""
-    cfg = _load_cfg()
-    cfg.update(updates)
+    """Merge updates into local/config.json (best-effort; never crash the UI).
+
+    Locked, not just atomic: deletes run on the dashboard's background
+    SerialTaskQueue while every Settings save, column-hide and layout tweak
+    runs on the UI thread, and the watcher writes gdrive_root from another
+    process entirely. A lock-free read-modify-write there reverts whichever
+    writer read first — a deleted job comes back, or a page of settings does.
+    """
     try:
-        atomic_write_json(HERE / "config.json", cfg)
-    except OSError:
+        update_json_locked(_cfg_path(), updates)
+    except (OSError, FileLockTimeout):
         pass
 
 

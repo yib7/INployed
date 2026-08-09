@@ -23,6 +23,10 @@ resume_tailor_files/master_experience.yaml
 # config.EXAMPLE_PDF) and any personal resume PDFs kept beside the master.
 resume_tailor_files/resume_*.pdf
 local/config.json
+# Sidecar lock (locks.file_lock) and the PID-tagged temp an atomic write leaves
+# behind if the replace fails — both land next to the config they guard.
+*.json.lock
+*.json.*.tmp
 search_config.json
 scoring_config.json
 apply_config.json

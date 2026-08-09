@@ -32,8 +32,8 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from csv_io import reconcile_file  # noqa: E402
-from jsonutil import atomic_write_json  # noqa: E402
-from locks import SingleInstance  # noqa: E402  (shared single-instance lock)
+from jsonutil import atomic_write_json, update_json_locked  # noqa: E402
+from locks import FileLockTimeout, SingleInstance  # noqa: E402  (shared file locks)
 from seen_db import SeenRegistry  # noqa: E402
 from vm_schedule import RUN_LABELS  # noqa: E402  (canonical run-label set, re-exported)
 
@@ -87,27 +87,23 @@ def load_config() -> dict:
     return cfg
 
 
-def save_config(cfg: dict) -> None:
-    atomic_write_json(CONFIG_PATH, cfg)
-
-
 def save_config_key(key: str, value) -> None:
     """Persist a single config key without clobbering a concurrent writer.
 
     The dashboard (jobsdata._save_cfg) and this watcher both read-modify-write
-    config.json. Writing back the whole dict the watcher loaded at startup would
-    silently revert any key the dashboard saved between our load and our write —
-    atomic_write_json prevents torn files, not lost updates. So re-read the file
-    FRESH, set only this key, and atomic-write. gdrive_root auto-detect is the
-    one key the watcher owns."""
+    config.json, from separate processes. Writing back the whole dict the
+    watcher loaded at startup would silently revert any key the dashboard saved
+    between our load and our write — atomic_write_json prevents torn files, not
+    lost updates. update_json_locked re-reads FRESH inside an exclusive sidecar
+    lock, so the window is closed rather than narrowed. gdrive_root auto-detect
+    is the one key the watcher owns."""
     try:
-        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            raw = {}
-    except (OSError, json.JSONDecodeError):
-        raw = {}
-    raw[key] = value
-    atomic_write_json(CONFIG_PATH, raw)
+        update_json_locked(CONFIG_PATH, {key: value})
+    except FileLockTimeout:
+        # Another process is mid-write. gdrive_root re-detects on the next fire;
+        # never take down the watcher loop over a contended config write.
+        log.warning("config.json is locked by another process — "
+                    "skipping the %s write; it retries on the next fire", key)
 
 
 def detect_gdrive_root() -> str | None:

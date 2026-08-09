@@ -4,14 +4,27 @@ Both write local/config.json from separate processes; a naked write_text can
 leave a half-written file or have one writer clobber the other mid write. An
 atomic write (temp file in the same directory, then os.replace) makes each
 write all-or-nothing so a concurrent reader never sees a partial file.
+
+Atomicity is not enough on its own: it stops a TORN file, not a LOST UPDATE.
+`update_json_locked` adds the missing half — the read -> merge -> write cycle
+runs inside an exclusive sidecar lock, so the settings save, the background
+delete queue and the watcher's gdrive_root probe cannot overwrite each other's
+keys. Everything that read-modify-writes a shared JSON file goes through it.
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from locks import file_lock  # noqa: E402  (needs HERE on sys.path)
 
 # os.replace retry tuning: on Windows, CPython's open() doesn't grant
 # FILE_SHARE_DELETE, so a writer's MoveFileEx fails with PermissionError while
@@ -66,3 +79,37 @@ def atomic_write_json(path: Path, data: Any) -> None:
                 tmp.unlink()
             except OSError:
                 pass
+
+
+def read_json_dict(path: Path) -> dict:
+    """`path` parsed as a JSON object, {} when missing, unreadable or not an
+    object. The lock-free read half of the update cycle: os.replace means a
+    reader sees either the previous or the next complete file, never a mix."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def update_json_locked(path: Path, updates: dict, *,
+                       timeout: float | None = None) -> dict:
+    """Merge `updates` into the JSON object at `path` under an exclusive lock.
+
+    The whole read -> merge -> atomic-write cycle is serialized on the sidecar
+    `<path>.lock`, which is what makes concurrent writers safe: without it two
+    writers each persist the snapshot they read and the second one silently
+    reverts the first. In this app that showed up as a deleted job reappearing
+    (the dashboard's delete runs on a background queue) or a page of Settings
+    reverting (that save runs on the UI thread), both with no error.
+
+    Returns the merged dict that was written. Raises locks.FileLockTimeout if
+    the lock cannot be taken, and OSError if the write itself fails; callers
+    that must never crash the UI catch both.
+    """
+    path = Path(path)
+    with file_lock(path, timeout=timeout):
+        merged = read_json_dict(path)
+        merged.update(updates)
+        atomic_write_json(path, merged)
+    return merged

@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import Any
 
 import envfile  # local module: comment-preserving .env reader/writer
+from jsonutil import replace_with_retry  # shared Windows-lock-retrying replace
+from locks import file_lock              # shared sidecar read-modify-write lock
 
 HERE = Path(__file__).resolve().parent
 # settings.py lives in local/, so the repo root (where scraper.py / score_jobs.py
@@ -793,15 +795,31 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     """Write `data` as JSON to `path`, backing up any existing file to .bak.
 
     Copy existing -> path.bak, write to a same-dir PID-tagged temp file, then
-    os.replace onto the real path (atomic on the same filesystem).
+    replace onto the real path (atomic on the same filesystem).
+
+    The replace goes through jsonutil.replace_with_retry like every other
+    atomic writer in the tree: CPython's open() on Windows does not grant
+    FILE_SHARE_DELETE, so MoveFileEx fails with PermissionError for the
+    microseconds a lock-free reader holds the destination — and config.json is
+    read lock-free by jobsdata on the UI thread and by the watcher on a timer.
+    The try/finally is what keeps a failed write from stranding a
+    config.json.<pid>.tmp in a directory the user is told to look at.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         shutil.copy2(path, path.with_name(path.name + ".bak"))
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False),
+                       encoding="utf-8")
+        replace_with_retry(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def save(values: dict[str, Any], targets: dict[str, Path] | None = None) -> None:
@@ -835,6 +853,11 @@ def save(values: dict[str, Any], targets: dict[str, Path] | None = None) -> None
             # backs up to .bak itself, so no read-merge-write dance here.
             envfile.update(Path(path), {k: str(v) for k, v in updates.items()})
         else:
-            merged = _read_file(path)
-            merged.update(updates)
-            _atomic_write(Path(path), merged)
+            # Locked read-merge-write. config.json is written from the UI thread
+            # here, from the dashboard's background delete queue via
+            # jobsdata._save_cfg, and from the watcher process; without the lock
+            # whichever writer read first has its keys silently reverted.
+            with file_lock(Path(path)):
+                merged = _read_file(path)
+                merged.update(updates)
+                _atomic_write(Path(path), merged)

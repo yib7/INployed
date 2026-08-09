@@ -49,6 +49,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
+from locks import FileLockTimeout, file_lock  # noqa: E402  (shared sidecar lock)
 
 # Dashboard config (auto_apply_* keys land here via the dashboard Settings UI). Module
 # constant so tests can monkeypatch it away from the real local/config.json.
@@ -78,7 +79,7 @@ LOCK_TIMEOUT = 5.0    # seconds until QueueLockTimeout
 LOCK_RETRY = 0.025    # seconds between lock attempts
 
 
-class QueueLockTimeout(TimeoutError):
+class QueueLockTimeout(FileLockTimeout):
     """Could not take the queue's sidecar lock within LOCK_TIMEOUT."""
 
 
@@ -105,64 +106,24 @@ def queue_path(path: Optional[Path] = None) -> Path:
     return appdata / "linkedin_watcher" / "apply_queue.json"
 
 
-def _lock_byte0(fh) -> None:
-    """One non-blocking exclusive-lock attempt on byte 0 (raises OSError when
-    held elsewhere). msvcrt on Windows, fcntl.flock elsewhere — same split as
-    locks.SingleInstance."""
-    if os.name == "nt":
-        import msvcrt
-        fh.seek(0)  # msvcrt.locking is positional; always lock byte 0
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _unlock_byte0(fh) -> None:
-    if os.name == "nt":
-        import msvcrt
-        fh.seek(0)
-        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-
-
 @contextmanager
 def locked(path: Optional[Path] = None, timeout: Optional[float] = None):
     """Exclusive cross-process lock on the queue's sidecar .lock file.
 
-    Blocking-with-timeout: retries every LOCK_RETRY seconds and raises
-    QueueLockTimeout after `timeout` (default LOCK_TIMEOUT) seconds. Every
-    mutation wraps its load -> mutate -> atomic-write cycle in this.
+    Blocking-with-timeout: retries until `timeout` (default LOCK_TIMEOUT)
+    seconds, then raises QueueLockTimeout. Every mutation wraps its
+    load -> mutate -> atomic-write cycle in this. The lock primitive itself is
+    locks.file_lock, shared with config.json's writers; this wrapper only
+    supplies the queue's path and its own timeout vocabulary.
     """
     qp = queue_path(path)
-    qp.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = qp.with_name(qp.name + ".lock")
-    deadline = time.monotonic() + (LOCK_TIMEOUT if timeout is None else timeout)
-    fh = open(lock_file, "a+b")
-    got = False
+    limit = LOCK_TIMEOUT if timeout is None else timeout
     try:
-        while True:
-            try:
-                _lock_byte0(fh)
-                got = True
-                break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise QueueLockTimeout(
-                        f"could not lock {lock_file} within "
-                        f"{LOCK_TIMEOUT if timeout is None else timeout:.1f}s "
-                        "(another dashboard/agent process is holding it)") from None
-                time.sleep(LOCK_RETRY)
-        yield
-    finally:
-        if got:
-            try:
-                _unlock_byte0(fh)
-            except OSError:
-                pass
-        fh.close()
+        with file_lock(qp, timeout=limit):
+            yield
+    except FileLockTimeout as exc:
+        raise QueueLockTimeout(
+            f"{exc} (another dashboard/agent process is holding it)") from None
 
 
 # ── load / save ──────────────────────────────────────────────────────────────

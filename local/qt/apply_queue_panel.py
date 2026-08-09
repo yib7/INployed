@@ -169,7 +169,13 @@ class _DetailsPanel(QtWidgets.QFrame):
 
         head = QtWidgets.QHBoxLayout()
         head.setSpacing(10)
+        # PlainText for every label fed a raw scraped string (company, title,
+        # location, artifact paths). Qt's AutoText default would run
+        # Qt::mightBeRichText over them and render a posting's stray markup;
+        # the lede and callout below stay RichText because we compose their
+        # markup ourselves and html.escape() the untrusted part into it.
         self.title_label = QtWidgets.QLabel("")
+        self.title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         theme.set_type_role(self.title_label, "section")
         head.addWidget(self.title_label)
         self.status_pill = Pill("", "neutral")
@@ -183,6 +189,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         cv.addLayout(head)
 
         self.meta_label = QtWidgets.QLabel("")
+        self.meta_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.meta_label.setProperty("muted", True)
         cv.addWidget(self.meta_label)
 
@@ -208,6 +215,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         cv.addWidget(self.callout)
 
         self.artifacts_label = QtWidgets.QLabel("")
+        self.artifacts_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.artifacts_label.setWordWrap(True)
         self.artifacts_label.setProperty("muted", True)
         theme.set_type_role(self.artifacts_label, "mono")

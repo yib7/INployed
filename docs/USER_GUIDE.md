@@ -250,6 +250,8 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Google Gemini (Vertex or API key) | scoring and résumé tailoring | the job description, your `resume.md` / `master_experience.yaml` content |
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
 | the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
+| the employer's application site | only when you run auto-apply on a queued job | the answers you approved, in your own Chrome; it never submits |
+| your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; it runs under your own `gcloud` login and no secret is sent |
 | healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
 The healthchecks ping is a dead-man's switch so a silently failing cron run emails

@@ -601,3 +601,23 @@ def test_card_tracker_variant_swaps_actions_and_lede(qtbot):
     card.set_fields(jobsdata.job_detail_fields(_row()), jid="1")
     assert not card.tailor_btn.isHidden() and not card.apply_btn.isHidden()
     assert card.resume_btn.isHidden() and card.followup_btn.isHidden()
+
+
+def test_card_header_labels_are_plain_text_not_auto_rich(qtbot):
+    """A scraped title/company carrying markup must render verbatim.
+
+    The card html.escape()s every untrusted field it composes into a RichText
+    span, but the title and meta labels get the raw string. QLabel's AutoText
+    default runs Qt::mightBeRichText over that, so a posting titled
+    "Senior <b>Engineer</b>" would render as bold text with the tags eaten.
+    Pinning the format is what makes that unmissable.
+    """
+    card = JobDetailCard()
+    qtbot.addWidget(card)
+    assert card.title_label.textFormat() == QtCore.Qt.TextFormat.PlainText
+    assert card.meta_label.textFormat() == QtCore.Qt.TextFormat.PlainText
+    card.set_fields(jobsdata.job_detail_fields(
+        _row(job_title="Senior <b>Engineer</b>",
+             company_name="Acme <i>Corp</i>")), jid="1")
+    assert card.title_label.text() == "Senior <b>Engineer</b>"
+    assert "Acme <i>Corp</i>" in card.meta_label.text()

@@ -186,10 +186,20 @@ class JobDetailCard(QtWidgets.QFrame):
         head.setSpacing(12)
         title_col = QtWidgets.QVBoxLayout()
         title_col.setSpacing(1)
+        # PlainText, not Qt's AutoText default: both labels carry raw scraped
+        # strings (job title, company, location) and AutoText runs
+        # Qt::mightBeRichText over them, so a posting titled
+        # "Senior <b>Engineer</b>" would render as markup instead of as the
+        # title the CSV holds. Every OTHER untrusted field on this card is
+        # html.escape()d into a deliberate RichText span; these two carry no
+        # markup of our own, so the cheaper and unmissable fix is to say they
+        # are plain. Sibling of the QPlainTextEdit choice for the JD below.
         self.title_label = QtWidgets.QLabel("")
+        self.title_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         theme.set_type_role(self.title_label, "title")
         title_col.addWidget(self.title_label)
         self.meta_label = QtWidgets.QLabel("")
+        self.meta_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.meta_label.setProperty("muted", True)
         title_col.addWidget(self.meta_label)
         head.addLayout(title_col, 1)

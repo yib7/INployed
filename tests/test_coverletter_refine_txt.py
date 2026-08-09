@@ -92,25 +92,29 @@ def test_generate_body_runs_generation_then_refine_then_gate(monkeypatch):
     _master(monkeypatch, {"name": "Test User", "location": "NYC"})
     order = []
 
+    # Sentence-case sentinels, not ALLCAPS: the grounding gate downstream traces
+    # every ALLCAPS token wherever it sits (P2-4 -- sentence case cannot produce
+    # one, so an abbreviation upstream cannot manufacture a free slot), and an
+    # ungrounded "GEN" would fail the letter before the ordering is asserted.
     def fake_call(system, user, *a, **k):
         order.append("generate")
-        return "GEN"
+        return "Gen"
 
     def fake_refine(jd, jt, co, body, bullets, **k):
         order.append(f"refine({body})")
-        return "REFINED"
+        return "Refined"
 
     def fake_gate(jd, jt, co, body, bullets, **k):
         order.append(f"gate({body})")
-        return "GATED"
+        return "Gated"
 
     monkeypatch.setattr(compose, "call", fake_call)
     monkeypatch.setattr(coverletter, "refine_body", fake_refine)
     monkeypatch.setattr(coverletter, "enforce_body_style", fake_gate)
     out = coverletter.generate_body("jd", "Engineer", "Acme", BULLETS)
-    assert out == "GATED"
+    assert out == "Gated"
     # refine sees the generation output; the gate sees the refined output (last word)
-    assert order == ["generate", "refine(GEN)", "gate(REFINED)"]
+    assert order == ["generate", "refine(Gen)", "gate(Refined)"]
 
 
 # ── cover_letter_text ─────────────────────────────────────────────────────────

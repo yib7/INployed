@@ -315,3 +315,40 @@ def test_unreadable_master_still_aborts_with_chunk_set(tmp_path, monkeypatch):
     assert rc == 1
     assert (inc / "local_rows_a.csv.gz").exists()          # nothing consumed
     assert master.read_bytes().startswith(b"a,b")          # master untouched
+
+
+# P2-7: the incoming reader used inferred dtypes while the master reader three
+# functions down uses dtype=str + keep_default_na=False. Rows appended straight
+# into the master therefore landed reformatted.
+def test_incoming_rows_keep_their_on_disk_spelling(tmp_path):
+    inc, master, stats = _setup(tmp_path)
+    pd.DataFrame([{"job_posting_id": "1", "score": "7", "filtered_out": "False"}]
+                 ).to_csv(master, index=False)
+    # a blank cell in `score` is what made pandas infer float64 and rewrite 5
+    # as 5.0; a blank `filtered_out` did the same through bool.
+    _gz(inc / "local_rows_a.csv.gz", pd.DataFrame([
+        {"job_posting_id": "2", "score": "5", "filtered_out": "True"},
+        {"job_posting_id": "3", "score": "", "filtered_out": ""},
+    ]))
+    assert merge_incoming.main(incoming_dir=inc, master_csv=master,
+                               stats_csv=stats, min_age_seconds=0) == 0
+    out = pd.read_csv(master, dtype=str, keep_default_na=False)
+    by_id = dict(zip(out["job_posting_id"], out["score"]))
+    assert by_id["2"] == "5"          # not "5.0"
+    assert by_id["3"] == ""
+    flags = dict(zip(out["job_posting_id"], out["filtered_out"]))
+    assert flags["2"] == "True"       # not "True"->bool->"True" via float NaN
+    assert flags["1"] == "False"
+
+
+def test_incoming_id_like_column_keeps_leading_zeros(tmp_path):
+    """The master's schema is a column union and grows; any future id-like
+    column would have lost its leading zeros to the inferred int64."""
+    inc, master, stats = _setup(tmp_path)
+    pd.DataFrame([{"job_posting_id": "1", "req_id": "00042"}]).to_csv(master, index=False)
+    _gz(inc / "local_rows_a.csv.gz",
+        pd.DataFrame([{"job_posting_id": "2", "req_id": "00099"}]))
+    assert merge_incoming.main(incoming_dir=inc, master_csv=master,
+                               stats_csv=stats, min_age_seconds=0) == 0
+    out = pd.read_csv(master, dtype=str, keep_default_na=False)
+    assert set(out["req_id"]) == {"00042", "00099"}

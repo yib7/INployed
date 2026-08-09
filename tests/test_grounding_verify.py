@@ -251,6 +251,39 @@ def test_acronym_is_not_grounded_by_an_unrelated_longer_word(monkeypatch):
     assert verify.unseen_tokens("Shipped Java tooling", src) == []
 
 
+def test_abbreviation_does_not_open_an_unchecked_first_slot(monkeypatch):
+    """P2-4: _SENTENCE_SPLIT breaks on any `.` + whitespace, so "U.S." spawns a
+    segment whose index 0 is not the generated action verb. That slot used to be
+    skipped unconditionally and the fabricated credential shipped."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
+        "a1": {"what": "Built ingestion for the lab", "_block": "Globex"}})
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens("Built ingestion for the U.S. MIT lab", src) == ["MIT"]
+    # single-letter-dotted initialisms of every shape open the same slot
+    assert "NASA" in verify.unseen_tokens("Built ingestion in the U.K. NASA wing", src)
+
+
+def test_the_action_verb_slot_is_still_free_for_sentence_case(monkeypatch):
+    """The index-0 pass exists for the generated verb; only ALLCAPS/InnerCaps
+    lose it. Sentence case cannot produce those, so nothing legitimate regresses."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
+        "a1": {"what": "shipped the pipeline", "_block": "Globex"}})
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens("Delivered the pipeline", src) == []
+    assert verify.unseen_tokens("Shipped the pipeline. Rebuilt the loader.", src) == []
+    # ...but an ungrounded acronym opening a segment is now traced
+    assert verify.unseen_tokens("Shipped the pipeline. SQL tuning followed.",
+                                src) == ["SQL"]
+
+
+def test_sentence_case_helper_classifies_the_shapes_it_claims():
+    assert verify._sentence_case("Built") is True
+    assert verify._sentence_case("Google") is True
+    assert verify._sentence_case("MIT") is False
+    assert verify._sentence_case("PySide6") is False
+    assert verify._sentence_case("SQL") is False
+
+
 def test_prep_sheet_prompt_fences_the_jd(monkeypatch, tmp_path):
     """The prep sheet was the one JD prompt site the cycle-5 fence pass missed,
     and it has no verify.enforce_grounded backstop downstream."""

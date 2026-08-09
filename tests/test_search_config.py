@@ -55,3 +55,56 @@ def test_build_inputs_uses_config_keywords(monkeypatch, tmp_path):
     # max_keywords still caps the config list
     capped = scraper.build_inputs([], max_keywords=1)
     assert len({i["keyword"] for i in capped}) == 1
+
+
+# P2-5: limit_per_input is interpolated into the trigger URL of a
+# pay-per-collection API. load_search_config used to return whatever the JSON
+# held, uncoerced, so a hand-edited or corrupted config could rewrite the
+# request that gets billed.
+def test_limit_per_input_is_coerced_to_a_positive_int(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    for bad in ("100&limit=5000", None, "", [], {}, 0, -3):
+        _write_config(tmp_path, {"limit_per_input": bad})
+        cfg = scraper.load_search_config()
+        assert cfg["limit_per_input"] == scraper.LIMIT_PER_INPUT, bad
+    # a numeric string is still honoured
+    _write_config(tmp_path, {"limit_per_input": "40"})
+    assert scraper.load_search_config()["limit_per_input"] == 40
+
+
+def test_positive_int_helper():
+    assert scraper._positive_int(25, 7) == 25
+    assert scraper._positive_int("25", 7) == 25
+    assert scraper._positive_int(2.9, 7) == 2        # int() truncates, still >= 1
+    assert scraper._positive_int(0, 7) == 7
+    assert scraper._positive_int("100&limit=5000", 7) == 7
+    assert scraper._positive_int(None, 7) == 7
+
+
+def test_trigger_url_cannot_carry_an_injected_query_parameter(monkeypatch):
+    """Even called directly with a poisoned limit, trigger() must not smuggle a
+    second parameter into the billed URL."""
+    import asyncio
+
+    seen = {}
+
+    class _Resp:
+        status = 200
+
+        async def json(self):
+            return {"snapshot_id": "s1"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Session:
+        def post(self, url, json=None):
+            seen["url"] = url
+            return _Resp()
+
+    asyncio.run(scraper.trigger(_Session(), {}, "100&limit=5000"))
+    assert "&limit=5000" not in seen["url"]
+    assert f"limit_per_input={scraper.LIMIT_PER_INPUT}" in seen["url"]

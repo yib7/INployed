@@ -120,13 +120,29 @@ def _distinctive_word(tok: str) -> bool:
     return len(tok) >= 2 and any(c.isupper() for c in tok)
 
 
+def _sentence_case(tok: str) -> bool:
+    """True for plain title case (`Built`, `Analyzed`, `Google`).
+
+    The free pass the tracer gives a segment's first word is there for the
+    GENERATED ACTION VERB, and sentence case is the only shape that slot can
+    legitimately produce. It is not free for ALLCAPS or InnerCaps, because the
+    sentence splitter manufactures segments from abbreviations: "Built ingestion
+    for the U.S. MIT lab" splits after "U.S." and hands index 0 of the next
+    segment to MIT, which then ships untraced. Same bypass class the module
+    docstring records as fixed for `:` and `;`.
+    """
+    return tok[:1].isupper() and tok[1:].islower()
+
+
 def unseen_tokens(text: str, source: str,
                   allow: Iterable[str] = ()) -> List[str]:
     """Distinctive tokens in `text` with no trace in `source` (empty = grounded).
 
     Numbers are checked everywhere; capitalized/inner-uppercase words are checked
-    except at sentence starts (the action verb / ordinary sentence case). `allow`
-    adds extra always-permitted lowercase tokens.
+    except at a sentence start holding ordinary sentence case (the action verb).
+    An ALLCAPS or InnerCaps token is traced wherever it sits, since sentence case
+    cannot produce one and an abbreviation upstream can fabricate the slot.
+    `allow` adds extra always-permitted lowercase tokens.
     """
     norm_src = _norm_source(source)
     allowed = _ALWAYS_ALLOWED | {str(a).lower() for a in allow}
@@ -136,7 +152,9 @@ def unseen_tokens(text: str, source: str,
             bad.append(num)
     for sentence in _SENTENCE_SPLIT.split(text or ""):
         words = _WORD_RE.findall(sentence)
-        for tok in words[1:]:  # index 0 = the opening verb / sentence case
+        for i, tok in enumerate(words):
+            if i == 0 and _sentence_case(tok):
+                continue           # the opening verb / ordinary sentence case
             if not _distinctive_word(tok):
                 continue
             low = tok.lower()

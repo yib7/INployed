@@ -78,6 +78,12 @@ def reconcile_is_seen(df: pd.DataFrame, registry: SeenRegistry) -> tuple[pd.Data
     if not seen_ids:
         return df, 0
     df["job_posting_id"] = df["job_posting_id"].astype(str)
+    # A frame that predates the is_seen column (a first-day master, or one
+    # rebuilt from a source without it) used to raise KeyError here — and
+    # _needs_reconcile deliberately routes exactly that shape into this
+    # function. Default it to "no" and let the registry flip what it owns.
+    if "is_seen" not in df.columns:
+        df["is_seen"] = "no"
     mask = df["job_posting_id"].isin(seen_ids) & (df["is_seen"] != "yes")
     n = int(mask.sum())
     if n:
@@ -136,6 +142,7 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
     os.close(fd)
     tmp_path = Path(tmp_name)
     total = 0
+    normalized = 0
     try:
         opener = (lambda: gzip.open(tmp_path, "wt", encoding="utf-8", newline="")
                   ) if compression else (
@@ -150,15 +157,30 @@ def reconcile_file(path: Path, registry: SeenRegistry) -> int:
             # default below tests for the empty string instead of using fillna.
             for chunk in pd.read_csv(path, dtype=str, keep_default_na=False,
                                      chunksize=_RECONCILE_CHUNK):
-                if "is_seen" in chunk.columns:
-                    chunk["is_seen"] = chunk["is_seen"].mask(
-                        chunk["is_seen"].isin(["", "nan", "NaN", "None"]), "no")
+                if "is_seen" not in chunk.columns:
+                    # _needs_reconcile returns True for a master with no is_seen
+                    # column at all; adding it is the work it asked for.
+                    chunk["is_seen"] = "no"
+                    normalized += len(chunk)
+                else:
+                    blank = chunk["is_seen"].isin(["", "nan", "NaN", "None"])
+                    normalized += int(blank.sum())
+                    chunk["is_seen"] = chunk["is_seen"].mask(blank, "no")
                 if seen_ids and "job_posting_id" in chunk.columns:
                     chunk, n = reconcile_is_seen(chunk, registry)
                     total += n
                 chunk.to_csv(out, index=False, header=not wrote_header)
                 wrote_header = True
-        if total:
+        # `or normalized` (audit P2-3): the pass also rewrites literal
+        # ""/"nan"/"None" in is_seen to "no", and _needs_reconcile enters it on
+        # a read error or a missing column too, not only on a pending seen flag.
+        # Gating the replace on `total` alone built that normalized file and
+        # then deleted it in the finally, so the same decompress + re-serialize
+        # of a ~90 MB master repeated on every watcher fire. Persisting it also
+        # matters beyond this module: read_csv_gz re-fills blanks on every read,
+        # but prune_master.py and merge_incoming.py read the master with plain
+        # pd.read_csv and would see the literal "nan".
+        if total or normalized:
             replace_with_retry(tmp_path, path)
         return total
     finally:

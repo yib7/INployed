@@ -133,3 +133,37 @@ def test_removed_jobs_pruned_when_absent_everywhere(tmp_path, monkeypatch):
     df, _ = jobsdata.load_files([src])
     assert list(df["job_posting_id"]) == ["1"]        # 2 still hidden
     assert jobsdata.load_removed_jobs() == {"2"}      # gone-id pruned
+
+
+# ── P2-1: status_ts must be UTC-aware, like every other timestamp seen_db writes
+
+def test_set_status_stamps_an_aware_utc_timestamp(tmp_path):
+    """status_ts is the cross-machine merge tie-break and compares
+    LEXICOGRAPHICALLY. A naive local wall-clock stamp let a 09:00 change in one
+    zone beat a later 10:00 change in another, and lost an hour a year to DST
+    fall-back."""
+    from datetime import datetime as _dtdt, timezone as _tz
+
+    r = SeenRegistry(tmp_path / "s.db")
+    try:
+        r.set_status("j1", "applied", company="Acme")
+        ts = r._conn.execute(
+            "SELECT status_ts FROM app_status WHERE job_posting_id='j1'"
+        ).fetchone()[0]
+    finally:
+        r.close()
+    assert ts.endswith("+00:00"), ts
+    parsed = _dtdt.fromisoformat(ts)
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == _tz.utc.utcoffset(None)
+    # matches the other writers in the module (mark / record_resume)
+    assert abs((_dtdt.now(_tz.utc) - parsed).total_seconds()) < 120
+
+
+def test_a_utc_stamp_beats_a_legacy_naive_stamp_of_the_same_clock_time():
+    """Old rows carry a naive string. Lexicographically the aware form sorts
+    later at equal clock time (the '+00:00' suffix), so the newer write wins —
+    the safe direction, and the reason no migration is needed."""
+    naive = "2026-07-26T12:00:00"
+    aware = "2026-07-26T12:00:00+00:00"
+    assert aware > naive

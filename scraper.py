@@ -142,6 +142,22 @@ BASE_FILTERS = {
 SEARCH_CONFIG_FILE = "search_config.json"
 
 
+def _positive_int(value, default: int) -> int:
+    """Coerce a config value to a positive int, falling back to `default`.
+
+    limit_per_input is interpolated into the trigger URL of a pay-per-collection
+    API. Uncoerced, a hand-edited or corrupted search_config.json holding
+    "100&limit=5000" rewrites the request that gets billed. Everything the
+    scraper spends is bounded by this number, so it is coerced at the boundary
+    rather than trusted at the call site.
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return n if n >= 1 else default
+
+
 def load_search_config() -> dict:
     """Effective search config: file values where present, built-in constants else.
 
@@ -161,7 +177,7 @@ def load_search_config() -> dict:
     return {
         "keywords": raw.get("keywords", KEYWORDS),
         "remote_types": raw.get("remote_types", REMOTE_TYPES),
-        "limit_per_input": raw.get("limit_per_input", LIMIT_PER_INPUT),
+        "limit_per_input": _positive_int(raw.get("limit_per_input"), LIMIT_PER_INPUT),
         "location": raw.get("location", BASE_FILTERS["location"]),
         "country": raw.get("country", BASE_FILTERS["country"]),
         "time_range": raw.get("time_range", BASE_FILTERS["time_range"]),
@@ -501,12 +517,15 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> lis
 
 async def trigger(session: aiohttp.ClientSession, payload: dict,
                   limit_per_input: int = LIMIT_PER_INPUT) -> str:
-    # quote() the configured id (audit P2-20): a malformed value then fails as a
-    # clean API error instead of silently mangling the query string.
+    # quote() every interpolated value (audit P2-20 for dataset_id, P2-5 for the
+    # limit): a malformed value then fails as a clean API error instead of
+    # silently rewriting the query string of a billed collection.
+    limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
     url = (
         "https://api.brightdata.com/datasets/v3/scrape"
         f"?dataset_id={urllib.parse.quote(str(DATASET_ID), safe='')}"
-        f"&type=discover_new&discover_by=keyword&limit_per_input={limit_per_input}"
+        f"&type=discover_new&discover_by=keyword"
+        f"&limit_per_input={urllib.parse.quote(str(limit), safe='')}"
     )
     async with session.post(url, json=payload) as resp:
         if resp.status >= 400:

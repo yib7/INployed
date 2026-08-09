@@ -242,7 +242,14 @@ class SeenRegistry:
         if status not in APP_STATUSES:
             raise ValueError(f"status must be one of {APP_STATUSES}, got {status!r}")
         today = date.today().isoformat()
-        now_ts = datetime.now().isoformat(timespec="seconds")
+        # UTC, aware — like every other timestamp this module writes. status_ts
+        # exists so import_from can break a same-day tie across machines, and it
+        # compares LEXICOGRAPHICALLY: a naive local wall-clock stamp let a 09:00
+        # change in one zone beat a genuinely later 10:00 change in another, and
+        # lost an hour a year to DST fall-back. A legacy naive row still sorts
+        # sanely against a UTC one — the "+00:00" suffix makes the aware form
+        # sort later at equal clock time, which is the safe direction.
+        now_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
         applied = today if status == "applied" else None
         self._conn.execute(
             "INSERT INTO app_status (job_posting_id, status, status_date, status_ts,"

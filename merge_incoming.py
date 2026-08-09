@@ -130,7 +130,15 @@ def _process_row_files(paths: list[Path], bad_dir: Path) -> tuple[list[pd.DataFr
     good_paths: list[Path] = []
     for path in paths:
         try:
-            df = pd.read_csv(path, dtype={"job_posting_id": str})
+            # dtype=str + keep_default_na=False (audit P2-26/P2-7): these rows
+            # are appended straight into the master, so they must read the same
+            # way the master reader below reads it. With inferred dtypes a
+            # `score` column holding one blank infers float64 and writes 5 back
+            # as "5.0" — one of the spellings score_jobs.rows_needing_rescore
+            # and prune_master._needs_rescore exist to tolerate. merge_rows
+            # casts job_posting_id itself, so nothing downstream wants the
+            # inferred types.
+            df = pd.read_csv(path, dtype=str, keep_default_na=False)
         except _BAD_FILE_ERRORS as e:
             _quarantine(path, bad_dir, f"unreadable: {e}")
             continue

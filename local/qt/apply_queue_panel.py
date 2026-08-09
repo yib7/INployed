@@ -303,7 +303,10 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  submit_write: Callable | None = None,
                  on_set_password: Callable[[], None] | None = None,
                  password_exists: Callable[[], bool] | None = None,
-                 on_start_run: Callable[[], None] | None = None,
+                 # takes `scoped`: True = the allowlisted variant, False = the
+                 # blanket permission bypass. _start_run always passes it, and
+                 # this is the seam that chooses between the two.
+                 on_start_run: Callable[[bool], None] | None = None,
                  on_mark_applied: Callable[[Dict[str, Any]], None] | None = None,
                  on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
                  on_answer_now: Callable[[], None] | None = None,

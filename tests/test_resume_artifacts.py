@@ -49,7 +49,7 @@ def test_generate_body_injects_tone_directive_into_prompt(monkeypatch):
     def fake_call(system, user, tier, *, json_out, temperature):
         captured["system"] = system
         captured["user"] = user
-        return "BODY"
+        return "Body"          # sentence case: see P2-4 in verify.py
 
     monkeypatch.setattr(coverletter.compose, "call", fake_call)
     # avoid loading the real master_experience.yaml for the display name/location
@@ -60,7 +60,7 @@ def test_generate_body_injects_tone_directive_into_prompt(monkeypatch):
     body = coverletter.generate_body(
         "a" * 60, "Engineer", "BigCo", {"g1": "did a thing"}, tone="concise"
     )
-    assert body == "BODY"
+    assert body == "Body"
     directive = coverletter.tone_directive("concise")
     assert directive in (captured["system"] + captured["user"])
 

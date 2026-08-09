@@ -234,3 +234,74 @@ def test_reconcile_file_with_empty_registry_is_a_noop(tmp_path):
 
     assert csv_io.reconcile_file(master, _Reg()) == 0
     assert master.read_bytes() == before
+
+
+# ── P2-3: the is_seen blank-normalization must be PERSISTED, not discarded ───
+
+def test_reconcile_on_a_master_with_no_is_seen_column_adds_it(tmp_path, monkeypatch):
+    """_needs_reconcile returns True when the column is missing entirely, and
+    the pass then handed that frame to reconcile_is_seen, which indexed
+    df["is_seen"] and raised KeyError. A first-day master, or one rebuilt from a
+    source without the column, is exactly that shape."""
+    monkeypatch.setattr(csv_io, "_RECONCILE_CHUNK", 2)
+    master = tmp_path / "master.csv"
+    master.write_text("job_posting_id,score\n1,5\n2,6\n3,7\n", encoding="utf-8")
+
+    class _Reg:
+        def all_ids(self):
+            return {"1"}
+
+    assert csv_io.reconcile_file(master, _Reg()) == 1
+    back = pd.read_csv(master, dtype=str, keep_default_na=False)
+    assert list(back["is_seen"]) == ["yes", "no", "no"]
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_reconcile_is_seen_tolerates_a_frame_without_the_column():
+    class _Reg:
+        def all_ids(self):
+            return {"2"}
+
+    df = pd.DataFrame({"job_posting_id": ["1", "2"], "score": ["5", "6"]})
+    out, n = csv_io.reconcile_is_seen(df, _Reg())
+    assert n == 1
+    assert list(out["is_seen"]) == ["no", "yes"]
+
+
+def test_reconcile_persists_blank_normalization(tmp_path, monkeypatch):
+    """The pass also rewrites literal ""/"nan"/"None" in is_seen to "no". That
+    edit used to be built into the temp file and then discarded whenever the
+    seen-flag counter was the only thing gating the replace. It matters on disk
+    because prune_master.py and merge_incoming.py read the master with plain
+    pd.read_csv and would see the literal "nan"."""
+    monkeypatch.setattr(csv_io, "_RECONCILE_CHUNK", 2)
+    master = tmp_path / "master.csv"
+    master.write_text(
+        "job_posting_id,score,is_seen\n1,5,\n2,6,nan\n3,4,None\n4,7,no\n",
+        encoding="utf-8")
+
+    class _Reg:
+        def all_ids(self):
+            return {"1"}
+
+    assert csv_io.reconcile_file(master, _Reg()) == 1
+    back = pd.read_csv(master, dtype=str, keep_default_na=False)
+    assert list(back["is_seen"]) == ["yes", "no", "no", "no"]
+    assert "nan" not in master.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_reconcile_leaves_a_clean_file_alone(tmp_path, monkeypatch):
+    """Nothing to normalize and nothing to flag still means no rewrite."""
+    monkeypatch.setattr(csv_io, "_RECONCILE_CHUNK", 2)
+    master = tmp_path / "master.csv"
+    master.write_text(
+        "job_posting_id,score,is_seen\n1,5,yes\n2,6,no\n", encoding="utf-8")
+    before = master.read_bytes()
+
+    class _Reg:
+        def all_ids(self):
+            return {"1"}
+
+    assert csv_io.reconcile_file(master, _Reg()) == 0
+    assert master.read_bytes() == before

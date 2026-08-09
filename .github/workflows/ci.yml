@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `autopilot/**` is here so a release-prep branch can prove itself on the Windows
+    # and Linux runners before it reaches main, without opening a PR to trigger it.
+    branches: [main, "autopilot/**"]
   pull_request:
     branches: [main]
 

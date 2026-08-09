@@ -6,24 +6,23 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.14-blue.svg)
 
-It finds relevant jobs, scores them with an LLM, and generates a tailored,
-ATS-friendly résumé for any posting in one click, without ever inventing a fact
-about you.
+A scheduled cloud discovery step feeds a two-stage LLM scorer, which syncs to a
+desktop app that drives a LaTeX generation engine. About **5% of scraped postings
+survive to a recommendation**, so that is all you read.
+
+The generation engine's rule is **select and re-phrase, never invent**. Every
+résumé bullet traces back to a fact you wrote, and a deterministic grounding pass
+(no LLM) drops any bullet that doesn't.
 
 Three pieces do the work:
 
-1. **Job discovery** (`scraper.py`): pulls in fresh job postings to evaluate.
-2. **Scorer** (`score_jobs.py`): a two-stage Gemini relevance filter that ranks each
-   job against your background, so you only look at the ~5% worth your time.
+1. **Job discovery** (`pipeline/scraper.py`): pulls in fresh job postings to evaluate.
+2. **Scorer** (`pipeline/score_jobs.py`): a two-stage Gemini relevance filter that
+   ranks each job against your background.
 3. **Desktop dashboard** (`local/app.py`): a Windows PySide6/Qt app for triage, an
    application tracker, run statistics, and an on-demand **résumé-tailoring engine**
    (`local/resume_tailor/`) that produces a one-page LaTeX résumé, cover letter,
    ATS keyword report, and interview-prep sheet for the selected job.
-
-> **The engineering:** a scheduled cloud discovery step feeds a tiered LLM scorer,
-> which syncs to a desktop app that drives a LaTeX generation engine. That engine's
-> rule is select-and-rephrase, never invent, so every résumé bullet traces back to a
-> fact you wrote.
 
 ---
 
@@ -31,14 +30,19 @@ Three pieces do the work:
 
 ![Animated tour of eight INployed dashboard tabs: High Score, All Jobs, Tracker, Auto-apply, Stats, Resume Data, Apply Answers, Settings. High Score shows ranked postings with score badges and a detail card of reason, strengths, and gaps.](docs/demo.gif)
 
-A tour of the full loop: **High Score** ranks every discovered posting by a two-stage
-Gemini relevance score and color-codes the recommendation; selecting a job opens its
-**detail card** (reason, strengths, gaps, plus the tailor and apply actions); the **Tracker** follows each application
-from applied through interviewing, offer, or rejected; **Stats** reports per-run
-pipeline metrics; the **Resume Data** tab is the select-and-rephrase source of truth
-the tailor draws from (including the Resume Layout bullet-sizing editor); **Apply
-Answers** holds the reusable answers the apply helper fills into forms; and
-**Settings** configures the whole pipeline. *(Shown with representative sample data.)*
+A tour of the full loop, one tab at a time:
+
+- **High Score** ranks every discovered posting and color-codes the recommendation.
+- Selecting a job opens its **detail card**: reason, strengths, gaps, tailor and apply.
+- **All Jobs** is the same table over everything scraped, seen or not.
+- **Tracker** follows each application from applied through interviewing, offer, rejected.
+- **Auto-apply** is the batch queue the apply helper works through, one job at a time.
+- **Stats** reports per-run pipeline metrics.
+- **Resume Data** is the select-and-rephrase source of truth, plus the bullet-sizing editor.
+- **Apply Answers** holds the reusable answers the apply helper fills into forms.
+- **Settings** configures the whole pipeline.
+
+*(Shown with representative sample data.)*
 
 ---
 
@@ -46,8 +50,8 @@ Answers** holds the reusable answers the apply helper fills into forms; and
 
 ```mermaid
 flowchart TD
-    subgraph Cloud["GCP VM (cron, twice daily)"]
-        A["scraper.py<br/>job discovery"] --> B["score_jobs.py<br/>2-stage Gemini scorer"]
+    subgraph Cloud["GCP VM (cron, on the schedule you set)"]
+        A["pipeline/scraper.py<br/>job discovery"] --> B["pipeline/score_jobs.py<br/>2-stage Gemini scorer"]
     end
     B -->|scored CSVs| C[("Google Drive")]
     C -->|Drive desktop sync| D["Local synced jobs folder"]
@@ -201,6 +205,9 @@ Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USE
 - **Not an auto-submitter, and not a résumé writer.** The apply flow parks at review, and
   the tailor can only select and rephrase facts you wrote yourself. It will never fill a thin
   experience file with impressive-sounding text.
+- **The grounding check has a blind spot.** It traces distinctive tokens (numbers, proper
+  nouns, tool names). A rephrasing that overstates using only ordinary words gives it
+  nothing to catch, so the output is still worth reading before you send it.
 - **Next:** more discovery sources behind the same normalizer, and a scoring calibration
   loop that learns from tracker outcomes instead of a fixed rubric.
 
@@ -232,30 +239,35 @@ flowchart LR
     C --> P["tailored PDF"]
 ```
 
-**The grounding backstop enforces it** (`local/resume_tailor/verify.py`), deterministically. A job
-description is untrusted internet text riding inside the generation prompt, so the prompt
-alone is not a guarantee. After generation, and with no LLM involved, every bullet's
-distinctive tokens (numbers, proper nouns, tool names) must trace back to the atoms that
-bullet was built from. One that introduces an unseen token is reverted to its last grounded
-version, or dropped. The module's own docstring states what the gate does *not* catch: an
-invented claim made of ordinary lowercase words has no distinctive token to check.
+**A grounding backstop enforces it** (`local/resume_tailor/verify.py`), deterministically.
 
-The skills section follows the same rule. A **Methods** line surfaces the concept
-keywords an ATS screens for ("ETL", "A/B testing", "data analysis") drawn only from
-concepts you declared, and an **anchored alias map** lets skills lines print the JD's
-own spelling of a skill you own ("Postgres" for your "PostgreSQL"); an alias is used
-only when its canonical is a real skill in your data, so it can never inject a keyword
-you don't have. An underfull bullet is filled only from unused facts in its own entry.
+A job description is untrusted internet text riding inside the generation prompt, so
+the prompt alone is not a guarantee. After generation, with no LLM involved, every
+bullet's distinctive tokens (numbers, proper nouns, tool names) must trace back to the
+atoms that bullet was built from. A bullet that introduces an unseen token is reverted
+to its last grounded version, or dropped.
 
-Layout is **config-driven** (the `tailor:` block in your yaml): which sections are
-required and their line budgets are declared in data, not hardcoded, so it works
-for anyone's résumé, not one person's.
+The gate's own docstring names its blind spot: an invented claim made of ordinary
+lowercase words has no distinctive token to check.
+
+The skills section follows the same rule:
+
+- A **Methods** line surfaces the concept keywords an ATS screens for ("ETL",
+  "A/B testing"), drawn only from concepts you declared.
+- An **anchored alias map** prints the JD's own spelling of a skill you own
+  ("Postgres" for your "PostgreSQL"). An alias is used only when its canonical is a
+  real skill in your data, so it can never inject a keyword you don't have.
+- An underfull bullet is filled only from unused facts in its own entry.
+
+Layout is **config-driven** (the `tailor:` block in your yaml). Which sections are
+required, and their line budgets, are declared in data rather than hardcoded, so it
+works for anyone's résumé.
 
 ---
 
 ## Tech stack
-Python 3.14 · Gemini (Vertex AI) · Bright Data · pandas · LaTeX (MiKTeX) · PySide6/Qt ·
-Google Drive · cron · pytest.
+Python 3.14 · Gemini (Vertex AI) · Bright Data · pandas · SQLite · LaTeX (MiKTeX) ·
+PySide6/Qt · Google Drive · cron · pytest · ruff.
 
 ## Tests
 ```bash
@@ -276,6 +288,9 @@ résumé** and **Apply** actions. *(Shown with representative sample data.)*
 ## Project layout
 ```
 Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
+pyproject.toml          the project's only tool config: ruff rule selection + pytest options
+requirements.txt        pinned desktop/dev dependencies (the set CI tests)
+.github/                SECURITY.md + the CI workflow (Windows + Linux matrix)
 pipeline/               headless pipeline scripts, flat so the VM can run them standalone:
   scraper.py            job discovery (fetches + normalizes postings)
   score_jobs.py         two-stage Gemini relevance scorer
@@ -301,7 +316,8 @@ local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashb
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
-docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CREDITS (attribution)
+docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CREDITS
+                        (attribution), plus the README's media
 ```
 
 ## License
@@ -309,10 +325,14 @@ Released under the [MIT License](LICENSE). The LaTeX résumé template is derive
 from Jake Gutierrez's MIT-licensed ["Jake's Resume"](https://github.com/jakegut/resume);
 see [docs/CREDITS.md](docs/CREDITS.md) for full attribution.
 
-No dependency is redistributed here. This repo is source only, and `pip` fetches each
-one from PyPI under its own license when you run Step 2. Every pin is MIT, BSD,
-Apache-2.0 or PSF except **PySide6/Qt**, which is LGPLv3 (or GPL, or a commercial Qt
-license). The dashboard imports PySide6 as an ordinary Python module and bundles no Qt
-binaries, so LGPLv3's relink condition is met by construction: you have this project's
-full source and can swap the PySide6 version with one `pip install`. Freezing this into
-a single-file executable is a different case, and those obligations would be yours.
+No dependency is redistributed here. The repo is source only, and `pip` fetches each
+one from PyPI under its own license when you run Step 2.
+
+Every pin is MIT, BSD, Apache-2.0 or PSF except **PySide6/Qt**, which is LGPLv3 (or
+GPL, or a commercial Qt license). The dashboard imports PySide6 as an ordinary Python
+module and bundles no Qt binaries, so LGPLv3's relink condition is met by
+construction: you have the full source and can swap the PySide6 version with one
+`pip install`.
+
+Freezing this into a single-file executable is a different case, and those
+obligations would be yours.

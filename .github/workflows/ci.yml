@@ -111,8 +111,7 @@ jobs:
       - name: README Step 2 - project venv and requirements
         run: |
           python -m venv venv
-          .\venv\Scripts\activate
-          python -m pip install -r requirements.txt
+          venv\Scripts\python.exe -m pip install -r requirements.txt
 
       # README Step 3, verbatim -- the exact string a reader copy-pastes.
       - name: README Step 3 - scripts/setup.ps1

@@ -62,17 +62,17 @@ flowchart TD
 
 ## Quick start
 
-**You need:** Windows 10/11 and **Python 3.14** ([download](https://www.python.org/downloads/)).
-Nothing else. Everything the dashboard needs installs with `pip` in Step 2. Steps 1-4 take
-about five minutes and end with a running app; Steps 5-7 connect it to your own data and
-accounts.
+**You need:** Windows 10/11, **Git** ([download](https://git-scm.com/downloads)), and **Python
+3.14** ([download](https://www.python.org/downloads/)). Nothing else. Everything the dashboard
+needs installs with `pip` in Step 2. Steps 1-4 take about five minutes and end with a running
+app; Steps 5-7 connect it to your own data and accounts.
 
 > **Platform support: what is actually tested**
 >
 > | | Status |
 > |---|---|
 > | **Windows 10/11** | Supported. Dashboard + full test suite run here, and CI runs the suite on `windows-latest` every push. |
-> | **Linux** | Supported for the **pipeline scripts only** (`scraper.py`, `score_jobs.py`): that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
+> | **Linux** | Supported for the **pipeline scripts only** (`pipeline/scraper.py`, `pipeline/score_jobs.py`): that is how they run on the GCP VM in production. The Qt dashboard is not tested on Linux. |
 > | **macOS** | Untested. Not claimed. |
 >
 > The `Open INployed Dashboard.cmd` launcher, the `scripts/setup.ps1` config script, and the
@@ -91,11 +91,11 @@ cd INployed
 ### Step 2: Install the dependencies into a project venv
 ```powershell
 python -m venv venv
-.\venv\Scripts\activate
-python -m pip install -r requirements.txt
+venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
-Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests.
-The launcher in Step 4 finds this `venv` on its own.
+Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests. Calling
+the venv's `python.exe` by path means you never have to activate it, which Windows' default
+execution policy blocks. The launcher in Step 4 finds this `venv` on its own.
 
 ### Step 3: Create your local config files
 ```powershell
@@ -153,10 +153,13 @@ shows the structure if you would rather edit the file.)
 ### Step 7 (optional): Extras, each for one feature
 *(Skip all of these until you want the feature; nothing above depends on them.)*
 ```powershell
-winget install MiKTeX.MiKTeX          # compiles the tailored résumé to PDF (set PDFLATEX_PATH if not on PATH)
-gcloud auth application-default login # Vertex AI scoring / tailoring, and the VM controls
+winget install MiKTeX.MiKTeX          # (skip until you tailor) no pdflatex on PATH -> Tailor stops with "pdflatex not found"
+gcloud auth application-default login # (skip if you set a Gemini API key) Vertex AI scoring/tailoring + the VM controls
 ```
-The [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate install.
+Set `PDFLATEX_PATH` if MiKTeX lands somewhere off `PATH`. The
+[gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate install; without it the
+Settings → VM controls are the only thing that stops working, and only if you run the cloud
+discovery VM.
 
 ---
 

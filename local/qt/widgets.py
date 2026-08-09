@@ -126,6 +126,58 @@ class CollapsibleSection(QtWidgets.QFrame):
         self.set_collapsed(not self.is_collapsed())
         self._on_toggled(self.is_collapsed())
 
+class ElidedLabel(QtWidgets.QLabel):
+    """A caption that ELIDES instead of being sliced off at the layout's edge.
+
+    Qt clips a QLabel that is given less width than it asked for, mid-glyph and
+    with no ellipsis: the bottom action bar's keyboard hint read a bare "Ct" at a
+    1100px window, and the Auto-apply counts caption cut inside "ready_to_sub".
+    This keeps the full text as the widget's own value (and its tooltip, so it is
+    still reachable) and paints an ElideRight rendering of it at the current
+    width. Horizontal policy is Ignored, i.e. no minimum: the label is the thing
+    in its row that gives ground, and the controls beside it keep full width.
+    """
+
+    def __init__(self, text: str = "", parent=None) -> None:
+        super().__init__(parent)
+        self._full = ""
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                           QtWidgets.QSizePolicy.Policy.Preferred)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 (Qt naming)
+        self._full = text or ""
+        self.setToolTip(self._full)
+        super().setText(self._full)
+        self._elide()
+
+    def text(self) -> str:  # noqa: A003 (Qt naming)
+        """The FULL text, not the elided rendering. Qt paints from its own C++
+        copy, so callers (and tests) reading `.text()` get what was set."""
+        return self._full
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().resizeEvent(event)
+        self._elide()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        # `theme.set_scale` pushes a new font onto every live widget; re-measure
+        # against it or the label keeps an elision computed at the old size.
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.FontChange:
+            super().setText(self._full)
+            self._elide()
+
+    def _elide(self) -> None:
+        width = self.contentsRect().width()
+        if width <= 0 or not self._full:
+            return
+        elided = self.fontMetrics().elidedText(
+            self._full, QtCore.Qt.TextElideMode.ElideRight, width)
+        if elided != super().text():
+            super().setText(elided)
+
+
 class ColorLegend(QtWidgets.QWidget):
     """A thin horizontal key: a small color swatch + muted label per `(color, text)`.
 

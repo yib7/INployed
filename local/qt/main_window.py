@@ -59,6 +59,7 @@ from qt.resume_data_tab import ResumeDataEditor
 from qt.settings_tab import SettingsForm
 from qt.stats_tab import StatsTab, _human_age
 from qt.vm_panel import VMPanel
+from qt.widgets import ElidedLabel
 from resume_trash import recycle_resume_folder
 from seen_db import SeenRegistry
 
@@ -416,7 +417,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.splitter.addWidget(self.preview)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
-        self.splitter.setSizes([640, 300])  # the detail card needs ~300px @100%
+        # The detail card needs ~300px @100%, and every line inside it scales with
+        # the interface size — at 150% the unscaled 300 clipped the last strength
+        # bullet in half. Scale the initial split the same way the card's contents
+        # scale (a drag still overrides it; only the starting point is set here).
+        _s = theme._current_scale
+        self.splitter.setSizes([round(640 * _s), round(300 * _s)])
         # Opening the card's description grows this pane to ~half the splitter and
         # closing it hands the height back (see _on_description_toggled). The card
         # never reaches up into its parent; it just says which state it is in.
@@ -449,14 +455,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_action_bar(self) -> QtWidgets.QHBoxLayout:
         bar = QtWidgets.QHBoxLayout()
-        tip = QtWidgets.QLabel("Ctrl/Shift-click for multiple · Ctrl+A selects all · "
-                               "double-click opens · right-click for status (incl. applied) / block")
+        tip = ElidedLabel("Ctrl/Shift-click for multiple · Ctrl+A selects all · "
+                          "double-click opens · right-click for status (incl. applied) / block")
         tip.setProperty("muted", True)
-        # The hint is the one thing in this bar that may be clipped when the
-        # window is narrow (Ignored = no minimum), so the controls to its right
-        # keep their full width instead of every element shrinking together.
-        tip.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
-                          QtWidgets.QSizePolicy.Policy.Preferred)
+        # The hint is the one thing in this bar that gives ground when the window
+        # is narrow (ElidedLabel = Ignored policy, no minimum), so the controls to
+        # its right keep their full width instead of every element shrinking
+        # together. It ELIDES rather than clipping: at 1100px the plain QLabel
+        # rendered a bare "Ct".
         # It also carries the bar's only stretch, so it shows in full on a wide
         # window and simply gives ground as the window narrows.
         bar.addWidget(tip, 1)

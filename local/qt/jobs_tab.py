@@ -21,6 +21,11 @@ from qt.widgets import ColorLegend
 from seen_db import APP_STATUSES
 from vm_schedule import RUN_LABELS
 
+# Narrowest Title column worth showing, @100% (see `_update_stretch`). Roughly
+# "Senior Analytics Engineer" — under this the column stops being readable and
+# the table is better off scrolling.
+TITLE_FLOOR_PX = 170
+
 
 class JobsTab(QtWidgets.QWidget):
     def __init__(self, table_key: str, columns, *, on_open_url=None, on_set_status=None,
@@ -172,7 +177,9 @@ class JobsTab(QtWidgets.QWidget):
         hh.sectionClicked.connect(self._on_header_clicked)
         hh.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Interactive)
         self._set_column_widths(columns_with_widths(self.table_key, self.col_ids))
+        self._in_stretch = False
         self._update_stretch()
+        self.table.viewport().installEventFilter(self)
         layout.addWidget(self.table, 1)
 
         # A compact, tab-specific key for the row tints. The All Jobs tab is a
@@ -238,15 +245,29 @@ class JobsTab(QtWidgets.QWidget):
         self._filters_btn.setText(f"Filters ({n})" if n else "Filters")
 
     def _set_column_widths(self, widths: list[int]) -> None:
+        """Initial widths, scaled by the live interface scale.
+
+        The constants in `jobsdata` are @100%. The cells are painted by
+        `JobRowDelegate`, whose text and pills DO scale, so a user running at
+        125% or 150% opened every table with each column a third too narrow and
+        read "Don't consi…" / "2026-07-1…" everywhere. Columns stay Interactive:
+        this only sets where they start."""
+        scale = theme._current_scale
         for i, w in enumerate(widths):
-            self.table.setColumnWidth(i, w)
+            self.table.setColumnWidth(i, round(w * scale))
 
     def _update_stretch(self) -> None:
         """Spend the table's spare width on Title, not on the trailing Link
         column. Link holds one fixed-width "Open" link, so stretching the last
         section (Qt's default) left a dead gutter hundreds of pixels wide on a
         normal window while job titles truncated. Falls back to the default when
-        Title is hidden."""
+        Title is hidden.
+
+        A Stretch section has no floor: once the other columns no longer fit
+        (150% interface size on a 1600px window, or a wide All Jobs set), Qt
+        shrank Title to a bare "…" — the one column the row is read by. So the
+        stretch is dropped for a fixed floor width whenever the spare space falls
+        under it, which lets the table scroll horizontally instead."""
         hh = self.table.horizontalHeader()
         interactive = QtWidgets.QHeaderView.ResizeMode.Interactive
         idx = self.col_ids.index("job_title") if "job_title" in self.col_ids else -1
@@ -257,7 +278,30 @@ class JobsTab(QtWidgets.QWidget):
             hh.setStretchLastSection(True)
             return
         hh.setStretchLastSection(False)
-        hh.setSectionResizeMode(idx, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        floor = round(TITLE_FLOOR_PX * theme._current_scale)
+        others = sum(hh.sectionSize(i) for i in range(len(self.col_ids))
+                     if i != idx and not self.table.isColumnHidden(i))
+        if self.table.viewport().width() - others < floor:
+            hh.setSectionResizeMode(idx, interactive)
+            self.table.setColumnWidth(idx, floor)
+        else:
+            hh.setSectionResizeMode(idx, QtWidgets.QHeaderView.ResizeMode.Stretch)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt naming)
+        # Re-decide stretch-vs-floor for Title whenever the table's viewport
+        # changes width: widening the window past the point where Title fits must
+        # hand the spare width back to it. The filter is on the VIEWPORT, not on
+        # this widget — JobsTab.resizeEvent runs before the layout has resized
+        # the table, so it would decide against a stale width and stick.
+        if (obj is self.table.viewport()
+                and event.type() == QtCore.QEvent.Type.Resize
+                and not self._in_stretch):
+            self._in_stretch = True          # setColumnWidth can toggle a
+            try:                             # scrollbar, which resizes the
+                self._update_stretch()       # viewport again
+            finally:
+                self._in_stretch = False
+        return super().eventFilter(obj, event)
 
     def add_toolbar_button(self, label: str, callback, accent: bool = False):
         """Add an extra action button to the filter bar (before the count label)."""

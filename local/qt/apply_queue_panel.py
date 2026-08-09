@@ -37,6 +37,7 @@ import osopen
 from qt import theme
 from qt.chrome import ChipBar, Pill
 from qt.delegates import STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
+from qt.widgets import ElidedLabel
 
 # The repo root (this file lives in <root>/local/qt/) — the kickoff command
 # cd's here so `claude` picks up the repo's .claude/skills/auto-apply skill.
@@ -358,10 +359,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
              for s in ("queued", "in_progress", "ready_to_submit", "needs_human")],
             checkable=False)
         header.addWidget(self.status_chips)
-        self.counts_label = QtWidgets.QLabel("")
+        # The per-status counts caption is the longest thing in this row and the
+        # least load-bearing (every count it names is already on a chip). It is
+        # the one element with no minimum width, so at 1280 the status chips keep
+        # their labels ("Ready to submit", not "Ready to su") and the caption
+        # elides instead.
+        self.counts_label = ElidedLabel("")
         self.counts_label.setProperty("muted", True)
-        header.addWidget(self.counts_label)
-        header.addStretch(1)
+        header.addWidget(self.counts_label, 1)
 
         # Master-password cluster: caption/state label + SET pill + compact
         # buttons in one bordered frame. pw_label keeps its exact text contract

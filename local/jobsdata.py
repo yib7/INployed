@@ -60,10 +60,14 @@ COLUMN_LABELS = {
 }
 LABEL_TO_COLUMN = {v: k for k, v in COLUMN_LABELS.items()}
 
+# Initial column widths @100% (JobsTab scales them by the live interface scale).
+# `recommendation` is 115 because the widest reco pill, "Don't consider", needs
+# 107px at 100% — at the old 100 it elided to "Don't consi…", which is the one
+# place the row's meaning is carried by text rather than by its colour.
 HIGH_SCORE_COLUMNS = [
     ("score", 50),
     ("deep_score", 70),
-    ("recommendation", 100),
+    ("recommendation", 115),
     ("applicants", 80),
     ("extracted_date", 105),
     ("run_label", 80),
@@ -76,7 +80,7 @@ HIGH_SCORE_COLUMNS = [
 ALL_COLUMNS = [
     ("score", 50),
     ("deep_score", 70),
-    ("recommendation", 100),
+    ("recommendation", 115),
     ("is_seen", 60),
     ("extracted_date", 105),
     ("run_label", 80),

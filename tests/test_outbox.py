@@ -146,8 +146,8 @@ def test_pending_files_sorted_and_scoped(tmp_path):
     ob.mkdir()
     (ob / "local_rows_20260703-2.csv.gz").write_bytes(gzip.compress(b"x"))
     (ob / "local_rows_20260703-1.csv.gz").write_bytes(gzip.compress(b"x"))
-    (ob / "local_stats_20260703-1.csv").write_text("t")
-    (ob / "unrelated.txt").write_text("no")
+    (ob / "local_stats_20260703-1.csv").write_text("t", encoding="utf-8")
+    (ob / "unrelated.txt").write_text("no", encoding="utf-8")
     names = [p.name for p in outbox.pending_files(outbox_dir=ob)]
     assert names == ["local_rows_20260703-1.csv.gz", "local_rows_20260703-2.csv.gz",
                      "local_stats_20260703-1.csv"]
@@ -178,7 +178,7 @@ def _queue(ob: Path, names: list[str]) -> None:
         if n.endswith(".gz"):
             (ob / n).write_bytes(gzip.compress(b"job_posting_id\n1\n"))
         else:
-            (ob / n).write_text("timestamp,input_csv\n")
+            (ob / n).write_text("timestamp,input_csv\n", encoding="utf-8")
 
 
 def test_push_outbox_deletes_only_on_success(tmp_path):

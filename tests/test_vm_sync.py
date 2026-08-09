@@ -151,6 +151,23 @@ def test_run_cmd_invokes_subprocess(monkeypatch):
     assert res.returncode == 0
 
 
+def test_run_cmd_decodes_gcloud_output_as_utf8(monkeypatch):
+    """3.4: text=True without an explicit encoding decodes with the OS default,
+    so a gcloud error body carrying non-ASCII would raise UnicodeDecodeError and
+    surface as a failed sync with no message."""
+    seen = {}
+
+    def _run(cmd, **k):
+        seen.update(k)
+        return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(vm_sync.subprocess, "run", _run)
+    _REAL_RUN_CMD(["gcloud", "version"])
+    assert seen.get("text") is True
+    assert seen.get("encoding") == "utf-8"
+    assert seen.get("errors") == "replace"
+
+
 def _fake_sdk(tmp_path, with_gpy=True, with_bundled=True):
     sdk = tmp_path / "google-cloud-sdk"
     (sdk / "bin").mkdir(parents=True)

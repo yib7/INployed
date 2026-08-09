@@ -44,6 +44,21 @@ def test_no_match_falls_back_to_default(tmp_path, monkeypatch):
     assert chrome._chrome_profile_dir("nobody@example.com") == "Default"
 
 
+def test_silent_fallbacks_are_logged_not_printed(tmp_path, monkeypatch, caplog, capsys):
+    """3.7: the dashboard runs under pythonw with no console, so the two notices
+    this module emits were print()ed into nowhere. Both go to the log now."""
+    import logging
+
+    _write_state(tmp_path, _STATE, monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        chrome._chrome_profile_dir("nobody@example.com")
+        chrome.open_in_chrome("javascript:alert(1)")
+    msgs = " | ".join(r.getMessage() for r in caplog.records)
+    assert "nobody@example.com" in msgs
+    assert "javascript:alert(1)" in msgs
+    assert capsys.readouterr().out == ""
+
+
 def test_local_part_fallback(tmp_path, monkeypatch):
     state = {
         "profile": {

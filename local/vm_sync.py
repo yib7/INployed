@@ -39,9 +39,20 @@ EXCLUDE_REMOTE_FILE = "external_exclude_ids.json"
 # (run by run_scraper.sh before each scrape) drains it into the VM master.
 INCOMING_REMOTE_DIR = "incoming"
 
-# VM connection identifiers (all NON-secret), read from the .env via settings.
-VM_KEYS = ("VM_GCLOUD_PATH", "VM_INSTANCE", "VM_ZONE", "VM_PROJECT", "VM_USER",
-           "VM_REMOTE_DIR")
+# VM connection identifiers (all NON-secret), read from the .env via settings,
+# with the fallback each one gets when it is unset. VMTarget.from_mapping reads
+# its defaults from here rather than repeating them, so VM_KEYS cannot drift out
+# of sync with the fields it is supposed to name (test_settings cross-checks the
+# Settings schema against it).
+VM_ENV_DEFAULTS = {
+    "VM_GCLOUD_PATH": "gcloud",
+    "VM_INSTANCE": "",
+    "VM_ZONE": "",
+    "VM_PROJECT": "",
+    "VM_USER": "",
+    "VM_REMOTE_DIR": "~",
+}
+VM_KEYS = tuple(VM_ENV_DEFAULTS)
 
 
 def merge_crontab(existing: str, managed_block: str) -> str:
@@ -83,16 +94,16 @@ class VMTarget:
 
     @classmethod
     def from_mapping(cls, values: dict) -> "VMTarget":
-        def g(key, default):
+        def g(key):
             v = str(values.get(key, "") or "").strip()
-            return v or default
+            return v or VM_ENV_DEFAULTS[key]
         return cls(
-            gcloud=g("VM_GCLOUD_PATH", "gcloud"),
-            instance=g("VM_INSTANCE", ""),
-            zone=g("VM_ZONE", ""),
-            project=g("VM_PROJECT", ""),
-            user=g("VM_USER", ""),
-            remote_dir=g("VM_REMOTE_DIR", "~"),
+            gcloud=g("VM_GCLOUD_PATH"),
+            instance=g("VM_INSTANCE"),
+            zone=g("VM_ZONE"),
+            project=g("VM_PROJECT"),
+            user=g("VM_USER"),
+            remote_dir=g("VM_REMOTE_DIR"),
         )
 
     @classmethod
@@ -209,7 +220,11 @@ def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run a gcloud argv and capture output. Only ever called from an explicit
     user click in the dashboard — never during the build or tests (mocked).
     `launch_argv` makes the bare `gcloud` name launch on Windows."""
-    return subprocess.run(launch_argv(cmd), capture_output=True, text=True, timeout=300)
+    # Explicit utf-8, not the OS default text=True would use: gcloud echoes
+    # instance names, paths and error bodies that carry non-ASCII, and a
+    # UnicodeDecodeError here would surface as a failed sync with no message.
+    return subprocess.run(launch_argv(cmd), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=300)
 
 
 def sync_exclude_ids_to_vm(target: VMTarget, local_path) -> subprocess.CompletedProcess | None:

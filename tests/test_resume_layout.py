@@ -828,6 +828,31 @@ def test_compile_tex_passes_timeout_180(tmp_path, monkeypatch):
     assert recorded.get("timeout") == 180
 
 
+def test_compile_tex_decodes_pdflatex_output_as_utf8(tmp_path, monkeypatch):
+    """3.4: text=True alone decodes with the OS default (cp1252 on Windows) and
+    pdflatex echoes the document back, so an accented company name or a resume
+    bullet's e-acute came out mangled -- or raised on a stricter locale."""
+    from types import SimpleNamespace
+
+    from resume_tailor import compile as rt_compile
+
+    recorded: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(rt_compile, "pdflatex_available", lambda: True)
+    monkeypatch.setattr(rt_compile.subprocess, "run", fake_run)
+
+    tex = tmp_path / "r.tex"
+    tex.write_text(r"\documentclass{article}\begin{document}x\end{document}", encoding="utf-8")
+    rt_compile.compile_tex(tex, tmp_path / "out")
+
+    assert recorded.get("encoding") == "utf-8"
+    assert recorded.get("errors") == "replace"   # a log is diagnostics, never fatal
+
+
 def test_compile_tex_timeout_expired_returns_friendly_failure(tmp_path, monkeypatch):
     """A pdflatex hang (subprocess.TimeoutExpired) must not raise out of compile_tex -
     it returns a failed CompileResult with a message pointing at the likely cause."""

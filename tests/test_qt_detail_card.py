@@ -45,12 +45,6 @@ def test_job_detail_fields_snapshot_only_and_empty():
     assert "tracker snapshot" in f["note"]
 
 
-def test_job_detail_fields_segments_stay_untouched():
-    # The card's dict feed rides ALONGSIDE job_detail_segments (test-coupled).
-    segs = jobsdata.job_detail_segments(_row())
-    assert any("Riverstone" in t for t, _s in segs)
-
-
 # ---- the JD field: precedence, no truncation --------------------------------------
 
 def test_job_detail_fields_prefers_description_over_a_long_summary():

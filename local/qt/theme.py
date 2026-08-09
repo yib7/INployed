@@ -39,8 +39,6 @@ FLOATING = "#232b38"  # hover, menus, popups (the only shadowed layer)
 # Back-compat aliases (existing import sites).
 BG = WINDOW
 SURFACE = PANEL
-SURFACE2 = RAISED
-ELEV = FLOATING
 
 # --- borders -----------------------------------------------------------------
 BORDER = "#30363d"         # hairline
@@ -102,7 +100,6 @@ SCORE_BADGES = {
 # --- metrics -------------------------------------------------------------------
 RADII = {"checkbox": 4, "badge": 5, "control": 6, "card": 8}   # pill = height/2
 SIZES = {"row": 34, "header_row": 32, "control": 30, "compact": 28}  # @100%
-SPACING = (4, 8, 12, 16, 20, 24)
 
 # Type roles: multiplier of the live base size (never absolute px).
 TYPE_SCALE = {
@@ -167,8 +164,6 @@ AMBER = SEMANTICS["warning"]["base"]
 DANGER = SEMANTICS["danger"]["base"]
 SEL = ACCENT
 SEL_TEXT = "#ffffff"
-BTN = RAISED
-BTN_HOVER = FLOATING
 
 # Per-row tints for the jobs tables (JobsTableModel BackgroundRole fallback,
 # legend swatches, tests). Flat hex, pre-composed over PANEL at the semantic

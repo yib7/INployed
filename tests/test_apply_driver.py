@@ -255,7 +255,7 @@ def test_send_monotonic_seq_and_result(tmp_path, monkeypatch):
     assert r1["seq"] == 1
     r2 = apply_driver.send(workdir, {"action": "dump"})
     assert r2["seq"] == 2
-    assert (workdir / "seq.txt").read_text().strip() == "2"
+    assert (workdir / "seq.txt").read_text(encoding="utf-8").strip() == "2"
 
 
 def test_next_seq_recovers_from_corrupt_seq_file(tmp_path):
@@ -263,15 +263,15 @@ def test_next_seq_recovers_from_corrupt_seq_file(tmp_path):
     int(...) and kill the serve loop. _next_seq must now recover — treat an
     unparseable value as 0 and hand out 1 next — instead of crashing."""
     workdir = tmp_path
-    (workdir / "seq.txt").write_text("not-a-number")
+    (workdir / "seq.txt").write_text("not-a-number", encoding="utf-8")
     assert apply_driver._next_seq(workdir) == 1
-    assert (workdir / "seq.txt").read_text().strip() == "1"
+    assert (workdir / "seq.txt").read_text(encoding="utf-8").strip() == "1"
     # And it keeps counting monotonically from the recovered value.
     assert apply_driver._next_seq(workdir) == 2
 
 
 def test_next_seq_empty_file_starts_at_one(tmp_path):
-    (tmp_path / "seq.txt").write_text("   ")
+    (tmp_path / "seq.txt").write_text("   ", encoding="utf-8")
     assert apply_driver._next_seq(tmp_path) == 1
 
 
@@ -303,7 +303,7 @@ def test_next_seq_concurrent_no_duplicate(tmp_path):
     assert len(got) == n
     assert len(set(got)) == n                    # all distinct — no lost command
     assert sorted(got) == list(range(1, n + 1))  # a clean 1..N run
-    assert int((workdir / "seq.txt").read_text().strip()) == n
+    assert int((workdir / "seq.txt").read_text(encoding="utf-8").strip()) == n
 
 
 def test_send_utf8_safe_output(tmp_path, monkeypatch):
@@ -432,7 +432,7 @@ def test_launch_spawns_detached_and_writes_pid(tmp_path, monkeypatch):
     monkeypatch.setattr(apply_driver.subprocess, "Popen", fake_popen)
     rc = apply_driver.launch(str(tmp_path))
     assert rc == 0
-    assert (tmp_path / "driver.pid").read_text().strip() == "4242"
+    assert (tmp_path / "driver.pid").read_text(encoding="utf-8").strip() == "4242"
     assert (tmp_path / "serve.log").exists()
     assert "serve" in seen["args"] and "--workdir" in seen["args"]
     if os.name == "nt":
@@ -481,26 +481,26 @@ def test_reopen_relaunches_and_navigates_when_dead(tmp_path, monkeypatch):
 def test_cli_serve_help_exits_zero():
     r = subprocess.run(
         [sys.executable, str(REPO / "local" / "apply_driver.py"), "serve", "--help"],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert r.returncode == 0
 
 
 def test_cli_send_help_exits_zero():
     r = subprocess.run(
         [sys.executable, str(REPO / "local" / "apply_driver.py"), "send", "--help"],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert r.returncode == 0
 
 
 def test_cli_launch_help_exits_zero():
     r = subprocess.run(
         [sys.executable, str(REPO / "local" / "apply_driver.py"), "launch", "--help"],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert r.returncode == 0
 
 
 def test_cli_reopen_help_exits_zero():
     r = subprocess.run(
         [sys.executable, str(REPO / "local" / "apply_driver.py"), "reopen", "--help"],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert r.returncode == 0

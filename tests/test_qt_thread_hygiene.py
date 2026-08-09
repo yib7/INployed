@@ -6,7 +6,7 @@ import textwrap
 from unittest.mock import MagicMock
 
 import pandas as pd
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtWidgets
 
 from qt import main_window as mw
 from qt.detail_card import JobDetailCard

@@ -35,7 +35,6 @@ INK = (240, 246, 252)
 MUTED = (139, 148, 158)
 ACCENT = (88, 166, 255)    # the dashboard's link/primary blue
 
-TITLE = "INployed"
 TAGLINE = "Job discovery & résumé tailoring, end to end."
 BULLETS = [
     "Scheduled cloud scraper → two-stage Gemini scorer → desktop triage",

@@ -263,13 +263,11 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
     return combined, id_to_path
 
 
-# Where manually-added jobs (dashboard "Add job by hand") are persisted, both as
-# the canonical master row and as a dashboard-loadable scored gz so the job shows
-# up immediately and survives a restart — the same bridge local_run_files() gives
-# a local scrape, since there is no "manual" RUN_LABEL folder for it to land in.
+# The canonical cumulative store scraper.py / score_jobs.py own. The manual-add
+# bridge (a dashboard-loadable manual/manual_jobs_scored.csv.gz beside whichever
+# master is in play) is derived inside append_manual_job, which takes the master
+# path as an argument.
 MASTER_CSV = REPO_ROOT / "linkedin_jobs_master.csv"
-MANUAL_DIR = REPO_ROOT / "manual"
-MANUAL_SCORED = MANUAL_DIR / "manual_jobs_scored.csv.gz"
 
 
 def local_run_files(base: Path | None = None) -> list[Path]:
@@ -1124,74 +1122,11 @@ def html_to_text(raw: str) -> str:
     return _BULLET_GAP_RE.sub(r"\1\n", text)
 
 
-def job_detail_segments(row, snapshot: dict | None = None) -> list[tuple[str, str]]:
-    """The score-preview content as (text, style) segments — style in
-    {'h','muted','good','bad',''}. `row` is a pandas Series (or None); `snapshot`
-    is the tracker row dict shown when the job is no longer in the loaded data.
-    Toolkit-agnostic so the Qt preview pane and tests share one source of truth."""
-    def cell(col: str) -> str:
-        if row is None:
-            return ""
-        v = row.get(col, "")
-        return "" if pd.isna(v) else str(v)
-
-    if row is None:
-        if snapshot:
-            return [
-                (f"{snapshot.get('job_title') or '?'} — {snapshot.get('company') or '?'}\n", "h"),
-                ("No longer in the loaded data (tracker snapshot only).\n", "muted"),
-                (str(snapshot.get("url") or ""), "muted"),
-            ]
-        return []
-
-    segs: list[tuple[str, str]] = []
-    title = cell("job_title") or "?"
-    company = cell("company_name") or "?"
-    loc = cell("job_location")
-    segs.append((f"{title} — {company}" + (f"  ({loc})" if loc else "") + "\n", "h"))
-
-    meta: list[str] = []
-    for label, col in (("score", "score"), ("deep", "deep_score"),
-                       ("reco", "recommendation"), ("applicants", "applicants"),
-                       ("posted", "job_posted_date"), ("salary", "job_base_pay_range")):
-        v = cell(col).strip()
-        if col == "job_posted_date" and v:
-            v = v[:10]
-        if v:
-            meta.append(f"{label}: {v}")
-    if meta:
-        segs.append(("  ·  ".join(meta) + "\n\n", "muted"))
-
-    reason = cell("reason").strip()
-    if reason:
-        segs.append(("Reason  ", "h"))
-        segs.append((reason + "\n", ""))
-    strengths = [s.strip() for s in cell("strengths").split("|") if s.strip()]
-    if strengths:
-        segs.append(("Strengths\n", "h"))
-        segs.extend((f"  + {s}\n", "good") for s in strengths)
-    gaps = [g.strip() for g in cell("gaps").split("|") if g.strip()]
-    if gaps:
-        segs.append(("Gaps\n", "h"))
-        segs.extend((f"  - {g}\n", "bad") for g in gaps)
-
-    jd = cell("job_summary").strip()
-    if len(jd) < 40:
-        raw = cell("job_description_formatted")
-        jd = re.sub(r"<[^>]+>", " ", raw)
-        jd = re.sub(r"\s+", " ", jd).strip()
-    if jd:
-        segs.append(("\nJD snippet  ", "h"))
-        segs.append((jd[:700] + ("…" if len(jd) > 700 else ""), "muted"))
-    return segs
-
-
 def job_detail_fields(row, snapshot: dict | None = None) -> dict:
     """The job-detail-card content as a flat dict.
 
-    Lives ALONGSIDE `job_detail_segments` (which stays — it is test-coupled and
-    still feeds plain-text renderings); this is the structured source the Qt
-    `JobDetailCard` lays out natively. `row` is a pandas Series (or None);
+    The structured source the Qt `JobDetailCard` lays out natively. `row` is a
+    pandas Series (or None);
     `snapshot` is the tracker row dict used when the job is no longer in the
     loaded data. Returns {} when there is nothing to show.
 

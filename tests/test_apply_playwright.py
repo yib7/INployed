@@ -418,7 +418,7 @@ def test_detach_spawns_child_without_detach_and_writes_pid(tmp_path, monkeypatch
          "--detach"])
     assert rc == 0
     rd = tmp_path / ".apply_run"
-    assert (rd / "driver.pid").read_text().strip() == "7777"
+    assert (rd / "driver.pid").read_text(encoding="utf-8").strip() == "7777"
     assert (rd / "serve.log").exists()
     assert "--detach" not in seen["args"]       # child actually runs the browser
     assert "--url" in seen["args"] and "--folder" in seen["args"]

@@ -7,11 +7,17 @@ falls back to the default browser when Chrome or the profile can't be resolved.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import webbrowser
 from functools import lru_cache
 from pathlib import Path
+
+# The dashboard runs under pythonw with no console, so a print() from this
+# module goes nowhere. Both notices below are things the user is meant to be
+# able to find after the fact, which means the log, not stdout.
+log = logging.getLogger(__name__)
 
 # Open job links in Chrome under this Google account's profile (falls back to the
 # default browser if Chrome or the profile can't be resolved).
@@ -51,7 +57,7 @@ def _chrome_profile_dir(account: str) -> str:
 
     Matches user_name, then gaia_name, then the email local-part, so a profile that
     stores the address differently still resolves. An empty `account` short-circuits
-    to 'Default' so it never matches a blank-user_name (signed-out) profile. Prints a
+    to 'Default' so it never matches a blank-user_name (signed-out) profile. Logs a
     warning when a non-empty account finds no match, so a silent fallback is visible.
     """
     if not account:
@@ -68,7 +74,7 @@ def _chrome_profile_dir(account: str) -> str:
         gaia_name = (meta.get("gaia_name") or "").lower()
         if user_name == want or gaia_name == want or (user_name and user_name.split("@", 1)[0] == want_local):
             return directory
-    print(f"[chrome] no Chrome profile matched {account!r}; using Default profile")
+    log.warning("no Chrome profile matched %r; using the Default profile", account)
     return "Default"
 
 
@@ -94,7 +100,7 @@ def open_in_chrome(url: str) -> None:
     switch (Chromium argument-injection class).
     """
     if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
-        print(f"[chrome] refusing to open non-http(s) URL: {url!r}")
+        log.warning("refusing to open a non-http(s) URL: %r", url)
         return
     launcher = _chrome_launcher()
     if launcher:

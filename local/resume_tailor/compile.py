@@ -53,7 +53,14 @@ def compile_tex(tex_path: Path, work_dir: Path) -> CompileResult:
     last = ""
     for _ in range(2):
         try:
+            # Explicit utf-8 + errors="replace": text=True alone decodes with
+            # the OS default (cp1252 on Windows), and pdflatex echoes the
+            # document back — an é in a résumé bullet or a company name then
+            # comes out mangled, or raises on a stricter locale. The log is
+            # diagnostics; a replacement character beats losing the whole
+            # compile error.
             proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace",
                                   cwd=str(tex_path.parent), creationflags=_NO_WINDOW,
                                   timeout=180)
         except subprocess.TimeoutExpired:

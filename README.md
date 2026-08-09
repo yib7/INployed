@@ -26,23 +26,19 @@ Three pieces do the work:
 
 ---
 
-## Demo
+## Screenshots
 
-![Animated tour of eight INployed dashboard tabs: High Score, All Jobs, Tracker, Auto-apply, Stats, Resume Data, Apply Answers, Settings. High Score shows ranked postings with score badges and a detail card of reason, strengths, and gaps.](docs/demo.gif)
+| Triage: **High Score** | Follow through: **Tracker** |
+|---|---|
+| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill. Under the table, the selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for a 69-day-old application spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
+| Your source of truth: **Resume Data** | Every knob: **Settings** |
+| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. Eleven collapsible sections under a search box, from Credentials and Connection & paths through Scoring, Résumé, Auto-apply and the cloud VM. Engine is expanded, showing the résumé tailor engine and provider dropdowns, each labelled with the config.json key it writes.](docs/settings.png) |
 
-A tour of the full loop, one tab at a time:
+**High Score** surfaces only unseen postings scoring ≥4, ordered by score then fewest
+applicants, so the freshest apply window comes first.
 
-- **High Score** ranks every discovered posting and color-codes the recommendation.
-- Selecting a job opens its **detail card**: reason, strengths, gaps, tailor and apply.
-- **All Jobs** is the same table over everything scraped, seen or not.
-- **Tracker** follows each application from applied through interviewing, offer, rejected.
-- **Auto-apply** is the batch queue the apply helper works through, one job at a time.
-- **Stats** reports per-run pipeline metrics.
-- **Resume Data** is the select-and-rephrase source of truth, plus the bullet-sizing editor.
-- **Apply Answers** holds the reusable answers the apply helper fills into forms.
-- **Settings** configures the whole pipeline.
-
-*(Shown with representative sample data.)*
+*(All four shown with representative sample data: fictional companies, a fictional
+`master_experience.yaml`, and placeholder keys.)*
 
 ---
 
@@ -191,6 +187,27 @@ Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USE
 
 ---
 
+## Demo
+
+The whole loop in 25 seconds: rank a scored run, read one posting's analysis, filter the
+list, walk the tracker, then look at the data the tailor is allowed to draw from.
+
+![Animated tour of the INployed dashboard, thirteen scenes. It starts on High Score, changes the selected row three times so the detail card swaps its reason, strengths and gaps, types "engineer" into the search box to narrow thirteen postings to nine, clears it, then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue, per-run Stats, Resume Data, Apply Answers, and Settings with the Engine section expanded.](docs/demo.gif)
+
+- **High Score** ranks every discovered posting and color-codes the recommendation.
+- Selecting a job opens its **detail card**: reason, strengths, gaps, tailor and apply.
+- **All Jobs** is the same table over everything scraped, seen or not.
+- **Tracker** follows each application from applied through interviewing, offer, rejected.
+- **Auto-apply** is the batch queue the apply helper works through, one job at a time.
+- **Stats** reports per-run pipeline metrics.
+- **Resume Data** is the select-and-rephrase source of truth, plus the bullet-sizing editor.
+- **Apply Answers** holds the reusable answers the apply helper fills into forms.
+- **Settings** configures the whole pipeline.
+
+*(Shown with representative sample data.)*
+
+---
+
 ## Limitations
 
 - **Windows-first.** The dashboard, launcher, and setup script are tested on Windows only;
@@ -277,14 +294,6 @@ python tests/smoke_qt.py    # Qt dashboard smoke test
 The suite sets `QT_QPA_PLATFORM=offscreen` itself, so the same two commands work in
 PowerShell, cmd, and bash. (CI exports it explicitly; see `.github/workflows/ci.yml`.)
 
-## Screenshots
-![The High Score tab. Scored job rows tinted by recommendation, with score badges, deep-score bars, and apply / consider / tailored pills. Below them, the selected job's detail card: score reason, strengths, gaps, and the Tailor résumé and Apply buttons. Sample data.](docs/dashboard.png)
-
-The **High Score** tab surfaces only unseen postings scoring ≥4, ordered by score then
-fewest applicants (the freshest apply window first). Selecting a row opens the job's
-detail card: the model's full analysis (reason, strengths, gaps) plus the **Tailor
-résumé** and **Apply** actions. *(Shown with representative sample data.)*
-
 ## Project layout
 ```
 Open INployed Dashboard.cmd   double-click to launch the dashboard (no terminal)
@@ -303,7 +312,7 @@ scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
 scripts/requirements-vm.txt  pinned VM venv (Python 3.11, pipeline scripts only)
 scripts/setup.ps1       first-run config writer (.env / config.json / master_experience.yaml)
 scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots (synthetic data)
-scripts/build_demo_media.py assembles docs/demo.gif + docs/dashboard.png from those shots
+scripts/build_demo_media.py stamps the four README stills + renders docs/demo.gif
 scripts/build_social_preview.py composes docs/social-preview.png (GitHub's 1280x640 card)
 scripts/build_walkthrough.py  records the captioned MP4 tour of the dashboard (synthetic data)
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)

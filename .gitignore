@@ -29,6 +29,8 @@ local/config.json
 *.json.*.tmp
 search_config.json
 scoring_config.json
+# Legacy flat answer file: apply_answers.py migrates a pre-existing one on first
+# run, so a user upgrading from an older version can still have it here.
 apply_config.json
 apply_answers.json
 
@@ -69,8 +71,8 @@ __pycache__/
 # The optional project-local venv the README and the .cmd launcher look for.
 venv/
 .venv/
-env/
-# Packaging artifacts (no packaging step today; here so one can't slip in).
+# Packaging artifacts. pyproject.toml holds tool config only (no [build-system],
+# nothing to build), so these should never appear -- ignored so one can't slip in.
 build/
 dist/
 *.egg-info/

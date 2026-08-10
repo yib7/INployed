@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from . import assets
-from .latexutil import clean_bullet, fmt_dates, to_latex
+from .latexutil import clean_bullet, escape_url, fmt_dates, to_latex
 
 
 def _header(basics: dict) -> str:
@@ -133,7 +133,7 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         # Link sits inline after the name as " | Link" (italic), mirroring the Work
         # Experience header; empty (no trailing pipe) when the project has no repo.
         if "github.com" in repo:
-            href = to_latex(f"https://{repo}")
+            href = escape_url(f"https://{repo}")
             link = f" $|$ \\href{{{href}}}{{\\textit{{Link}}}}"
         else:
             link = ""

@@ -17,7 +17,7 @@ change it. The one thing to update by hand is a shell script or crontab of your 
 calls `scraper.py` or `score_jobs.py` at the repo root.
 
 ### Added
-- **Ask AI about this job.** A non-modal chat scoped to one posting, from the jobs
+- **Ask AI about this job:** a non-modal chat scoped to one posting, from the jobs
   right-click menu or the Apply panel. It answers from that job's `apply.md` and its job
   description (fenced as untrusted data, like the tailor prompts) and falls back to a bounded
   master-experience extract for a job you have not tailored yet. It answers only from that
@@ -27,14 +27,14 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   `resume.tex` already was, so fixing a word means editing and re-running `pdflatex` instead
   of regenerating the letter.
 - **Optional avoid-AI-writing pass on the cover letter** (Settings → Resume, off by default).
-  Extends the existing two-arm style gate — prompt rules plus a deterministic ban list — with
+  Extends the existing two-arm style gate (prompt rules plus a deterministic ban list) with
   a letter-relevant subset of Conor Bronsdon's MIT-licensed `avoid-ai-writing` skill, credited
   in `docs/CREDITS.md`. The grounding gate still runs last, so a restyled sentence that
   introduces an unsupported fact is still caught.
 - **Toggle for whether Apply opens the posting** (Settings → Dashboard, on by default). Off
   keeps you in the dashboard; the posting URL is still on the apply sheet.
-- **Search box on the Settings tab.** Type a word and the whole tab filters to the rows that
-  mention it — matching the setting's name, its explanation, its config key **and the
+- **Search box on the Settings tab:** type a word and the whole tab filters to the rows that
+  mention it, matching the setting's name, its explanation, its config key **and the
   chips on the row**, so `GEMINI_API_KEYS` finds the box for someone reading a `.env` or
   a GitHub issue, and `restart` finds every setting that needs one. Several
   words narrow rather than widen. Sections with no match fold away, sections with one open
@@ -43,8 +43,8 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
 - **"Show advanced settings" checkbox**, off by default, which folds 18 power-user rows
   (the ten per-stage model pickers, scorer concurrency and retry caps, VM plumbing) out of
   sight. The label counts what it is withholding for *your* configuration, so it does not
-  promise rows a tick cannot deliver. Search ignores the fold — an advanced row still turns
-  up in results, tagged `(advanced)` — because hiding a setting is only defensible while it
+  promise rows a tick cannot deliver. Search ignores the fold, and an advanced row still turns
+  up in results, tagged `(advanced)`, because hiding a setting is only defensible while it
   stays findable. Three knobs stay in plain sight on purpose: **Country code** (a non-US
   user must change it, and a mismatch mis-searches silently), **pdflatex path** (the fix for
   "no PDF came out", so hiding it behind a disclosure would be backwards), and **Max scored
@@ -54,8 +54,8 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   appears only when the tailor bills by key, and so on. Values are never touched by this:
   switch provider, save three times, switch back, and the custom model id you typed is
   still there.
-- **Unsaved-change markers.** A dot beside each edited field, "· 2 changed" on the section
-  header (which stays on screen when the section is folded — the point of it), and a Save
+- **Unsaved-change markers:** a dot beside each edited field, "· 2 changed" on the section
+  header (which stays on screen when the section is folded, which is the point), and a Save
   button that reads "Save 3 changes". A per-field **↺** appears on any row sitting off its
   default and puts that one row back. Credentials get no ↺: their default is blank, so the
   button would be offering to wipe a live key.
@@ -67,7 +67,7 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
 
 ### Changed
 - **The cover-letter PDF lost its letterhead.** It now opens at the date in Times, matching
-  the résumé's font, with no name banner, contact line, or company line — the résumé
+  the résumé's font, with no name banner, contact line, or company line. The résumé
   travelling with it already carries all three.
 - **The cover letter's plain text moved into `apply.md`** as a `## Cover letter` section,
   replacing the separate `_Cover_Letter.txt`. That is what the auto-apply skill pastes into
@@ -88,8 +88,8 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   it. The markup is rendered as paragraphs and bullets, the panel scrolls instead of
   stretching the card, and the text can be selected and copied.
 - **The description opens beside the scoring instead of under it.** Showing it splits the
-  detail card into two columns — reasoning, strengths, and gaps on the left, the posting on
-  the right — and grows the card to at least about half the window, because a full posting
+  detail card into two columns (reasoning, strengths, and gaps on the left, the posting on
+  the right) and grows the card to at least about half the window, because a full posting
   stacked under the scoring in a ~300px pane meant scrolling a column to read anything. Hiding it
   restores the height the card had; if you drag the divider above the card while the
   description is open, that drag wins and hiding leaves your size alone. The split itself is
@@ -105,7 +105,7 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   you can act on, and the status line counts them ("2 settings need fixing"). Fields are
   re-checked when you tab out of them, not only at Save. The one surviving modal is a Save
   that could not write the file. A spin box also **says so when it had to clamp a
-  hand-edited value** — `max_scored_per_run: 99999` shows 5000 with a note naming the file
+  hand-edited value**: `max_scored_per_run: 99999` shows 5000 with a note naming the file
   and the real number, rather than silently rewriting your config on the next Save.
 - **Settings snapshots are one dropdown instead of four knobs.** See *Removed*.
 - **The seven headless scripts live in `pipeline/`.** `scraper.py`, `score_jobs.py`,
@@ -122,7 +122,7 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
 - **The auto-apply inbox map no longer ships a school domain as a default row.** The map now
   seeds consumer providers only, and the help text tells you to add your own work or school
   domain. A map you have already saved is untouched.
-- **Dependency pins refreshed.** pypdf 6.14.2 → 6.15.0 clears CVE-2026-71852 and
+- **Dependency pins refreshed:** pypdf 6.14.2 → 6.15.0 clears CVE-2026-71852 and
   CVE-2026-71870, two crafted-PDF resource-exhaustion bugs in the text-extraction path the
   résumé engine runs over your own PDF. google-genai 2.14.0 → 2.17.0 in both requirements
   files. ruff 0.15.17 → 0.16.2, with the lint selection now written down in `pyproject.toml`
@@ -132,13 +132,13 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
 ### Removed
 - **`mtime_stable_seconds` is gone from the Settings tab.** It is the file-watcher's
   settle delay, in seconds, and the dashboard never read it. Three things follow, and all
-  three are deliberate: **(a)** a saved value keeps working at whatever you set it to —
+  three are deliberate: **(a)** a saved value keeps working at whatever you set it to, because
   `local/watcher.py` starts from its own defaults and merges the file over them, so both an
   absent key and an existing one behave exactly as before; **(b)** the watcher's built-in
   default is 30, which is what a fresh install has always used; **(c)** restoring a settings
   snapshot taken before this change no longer replays the key. Snapshots copy whole *files*,
   but a restore replays only *schema* fields, so a snapshot holding `mtime_stable_seconds: 77`
-  restores your other settings and leaves the live settle value alone — the same as every
+  restores your other settings and leaves the live settle value alone, the same as every
   other non-schema key in `config.json` (`resume_layout`, `ui_scale_pct`, `removed_jobs`),
   none of which were ever restorable either.
 - **`auto_apply_inbox_url` is gone from the Settings tab, but is still honoured.** It was the
@@ -146,15 +146,15 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   reads `config.json` directly and still consults a saved value, so nobody's apply run
   changes; it simply has no editor any more. If you customised it, the map is now where you
   set an inbox per email domain.
-- **A vestigial `apply` settings target.** No field targeted it and no `apply_config.json`
+- **A vestigial `apply` settings target:** no field targeted it and no `apply_config.json`
   exists at the repo root, so the only effect is that a legacy root-level `apply_config.json`
-  is no longer copied into settings snapshots — matching `apply_answers.json`, the live
+  is no longer copied into settings snapshots, matching `apply_answers.json`, the live
   answer store, which never was.
-- **Age-based snapshot retention.** The four snapshot keys (`archive_enabled`,
+- **Age-based snapshot retention:** the four snapshot keys (`archive_enabled`,
   `archive_prune_mode`, `archive_prune_keep`, `archive_prune_days`) are replaced by one
   **Settings snapshots** dropdown: *Off* / *Keep everything* (the default) / *Keep newest 20*
-  / *Keep newest 100*. An existing config is migrated on read under one rule — **never prune
-  more aggressively than the old policy** — so a saved `Keep newest 10` reads as **Keep
+  / *Keep newest 100*. An existing config is migrated on read under one rule, **never prune
+  more aggressively than the old policy**, so a saved `Keep newest 10` reads as **Keep
   newest 20**, rounding *up*; a days-based policy becomes *Keep everything*. **Nothing on
   disk is deleted by this change**, and the four old keys are left in `config.json`
   untouched, so checking out an older commit restores the old behaviour intact. The accepted
@@ -168,7 +168,7 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   page chrome came through as prose on 2,675 of the 2,678 postings in the master file.
   Non-content elements (`script`, `style`, `button`, `icon`, `svg`, `nav`, `header`,
   `footer`, `noscript`, `form`, `select`) are now dropped together with their contents. The
-  rule is structural — nothing is matched against the posting's words — so EEO statements,
+  rule is structural (nothing is matched against the posting's words), so EEO statements,
   agency notices, and scam warnings still show.
 - **Bullet lists in the description read as lists again.** Each `<li>` was ending up with a
   blank line after it, so a 20-bullet posting scrolled like an endless column; bullets in one
@@ -214,7 +214,7 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   read first lost its keys: a deleted job reappeared, or a page of settings did. They share a
   file lock now, and the settings writer no longer strands a `config.json.<pid>.tmp` behind a
   failed write.
-- **Four scoring and grounding defects.** The grounding gate gave an abbreviation a free slot
+- **Four scoring and grounding defects:** the grounding gate gave an abbreviation a free slot
   ("Built ingestion for the U.S. MIT lab" split mid-sentence and handed MIT the slot reserved
   for the generated verb). The tracker's status timestamps were naive local wall-clock, which
   a cross-machine tie-break compares as text, so a 09:00 change in one zone beat a later 10:00
@@ -239,7 +239,7 @@ calls `scraper.py` or `score_jobs.py` at the repo root.
   which the default PowerShell 5.1 execution policy on a clean Windows box refuses. The
   readme-setup CI job mirrors the new wording. Git is named in "You need", and Step 7 says what
   actually breaks without MiKTeX and gcloud.
-- **License disclosure.** README and `docs/CREDITS.md` now state that every pin is MIT, BSD,
+- **License disclosure:** README and `docs/CREDITS.md` now state that every pin is MIT, BSD,
   Apache-2.0 or PSF except PySide6/Qt, which is LGPLv3 or GPL or a commercial Qt license, and
   why a source-only distribution that `pip install`s Qt satisfies the LGPL relink condition.
 

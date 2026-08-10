@@ -58,8 +58,8 @@ résumé PDF and `apply.md` on disk; clicking it opens the posting in Chrome and
 detail card for a right-side **Apply panel** (copyable doc paths + the apply sheet, with an
 **Expand** button that pops it into a large resizable reader; the close button dismisses it, and
 **"I applied to this job"** confirms → records the job applied in the Tracker → closes).
-**Ask AI** — on that panel next to *Open folder*, and in the jobs-table right-click menu as
-*Ask AI about this job* — opens a non-modal per-job chat (`qt/chat_dialog.py` over
+**Ask AI** (on that panel next to *Open folder*, and in the jobs-table right-click menu as
+*Ask AI about this job*) opens a non-modal per-job chat (`qt/chat_dialog.py` over
 `resume_tailor/chat.py`): one window per job, parented to the main window and `deleteLater()`d on
 close, every turn on a worker thread. It answers only from that job's apply sheet and posting, so it
 declines rather than inventing; an untailored job still gets a JD-only conversation.
@@ -92,7 +92,7 @@ including a watcher-launched window, and `load_files`' id-dedup keeps them from
 double-counting once the merged master syncs back down.
 
 ### VM cron pipeline: merge, scrape, score, prune, and retention
-The VM's `run_scraper.sh` (invoked twice daily via cron) orchestrates the job discovery and scoring
+The VM's `run_scraper.sh` (invoked by cron, on the schedule you set) orchestrates the job discovery and scoring
 pipeline. After pulling the company blocklist, it merges any incoming rows from the dashboard
 (`merge_incoming.py`; local scrapes are master-wins deduped on `job_posting_id`), scrapes fresh jobs
 from Bright Data (`scraper.py`), scores them via Gemini (`score_jobs.py`), and finally prunes old job
@@ -172,16 +172,16 @@ swaps in status/follow-up pills and a NEXT STEP line), and a "Show description" 
 **whole, uncapped** JD. Everything below the header and chips rows lives in a horizontal
 `QSplitter` the card owns: scoring on the left, description on the right. Collapsed, the right pane
 is hidden (Qt hides the handle with it) and the card is a plain single column; expanded it defaults
-to 50/50, stays draggable, and keeps the drag for the session. The toggle is **sticky** — a new
-selection swaps the text and resets the scroll but leaves the split open — and the card emits
+to 50/50, stays draggable, and keeps the drag for the session. The toggle is **sticky**: a new
+selection swaps the text and resets the scroll but leaves the split open. The card emits
 `descriptionToggled(bool)` so `MainWindow._on_description_toggled` can grow the outer splitter's
 bottom pane to ~half the window and hand the height back on collapse, without the card reaching up
-into its parent. That growth is a floor, not an assignment — a pane already at least half is left
-alone — and a drag of the outer divider while the description is open retires the recorded sizes
+into its parent. That growth is a floor rather than an assignment (a pane already at least half is
+left alone), and a drag of the outer divider while the description is open retires the recorded sizes
 (`_on_preview_splitter_moved`), so the collapse leaves a hand-set height standing. The description
 pane is a read-only `QPlainTextEdit`, not a label: it keeps
 the posting's paragraphs and bullets, scrolls internally instead of growing the card without bound,
-is selectable/copyable, and is plain text *by construction* — a stronger form of the P2-19 guarantee
+is selectable/copyable, and is plain text *by construction*, a stronger form of the P2-19 guarantee
 than a label's text-format flag, since scraped `<b>`/`<img>` can never be parsed as markup. Its text
 comes from `jobsdata.job_detail_fields`, which prefers `job_description_formatted` →
 `job_description` → `job_summary` (first one over 40 characters, the same order the résumé tailor
@@ -193,7 +193,7 @@ through to the plain tag strip, which leaks a word of chrome rather than swallow
 it); then block tags become line breaks, `<li>` a `• ` bullet, bullets within one list stay on
 consecutive lines (a blank line still separates a list from the prose around it), source
 indentation is stripped per line, and entities are unescaped *after* the tag strip so an escaped
-tag in the posting's own prose stays inert text. The cleanup is structural only — it never
+tag in the posting's own prose stays inert text. The cleanup is structural only: it never
 pattern-matches prose, so EEO statements and agency notices survive. **Restart**
 (`MainWindow._restart_app`) flags the intent and closes the window; `app.main` relaunches a fresh
 process after the single-instance lock is released.
@@ -230,8 +230,8 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
-| `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity + the JD fenced as untrusted data + the folder's `apply.md`, or a bounded master-file digest when the job was never tailored) and `ask` sends only the turns as the user message — the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants, because the whole payload is re-sent (and re-billed) each turn. No style or grounding gate runs on an answer; the grounding rule is carried by the system prompt. |
-| `verify.py` | The grounding backstop. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
+| `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity + the JD fenced as untrusted data + the folder's `apply.md`, or a bounded master-file digest when the job was never tailored) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants, because the whole payload is re-sent (and re-billed) each turn. No style or grounding gate runs on an answer; the grounding rule is carried by the system prompt. |
+| `verify.py` | The grounding gate. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
 | `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` backs the dashboard's "Check setup" button. |
@@ -246,12 +246,12 @@ identity all come from the yaml (the `tailor:` section + `basics`/`education`). 
 is what lets the same code produce anyone's résumé; see `tests/test_tailor_config.py`.
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) — 60 `Field` rows describing every
+`settings.py` is one schema (`SETTINGS_SCHEMA`) of 60 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
-**Settings** tab auto-renders it grouped by collapsible section — `SECTION_ORDER` is Credentials /
-Connection & paths / Engine / Dashboard / Scraper / Scoring / Resume / Auto-apply /
-Settings history / VM (cloud scraper), two of which `SECTION_DISPLAY` retitles for the UI
-as *Job discovery* and *VM (cloud job discovery)*) — inside a scrollable canvas. `load`/`save` read and atomically write
+**Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
+`SECTION_ORDER` is Credentials / Connection & paths / Engine / Dashboard / Scraper / Scoring /
+Resume / Auto-apply / Settings history / VM (cloud scraper), two of which `SECTION_DISPLAY`
+retitles for the UI as *Job discovery* and *VM (cloud job discovery)*. `load`/`save` read and atomically write
 (with a `.bak`) **four** backing files (`TARGET_FILES`): the git-ignored `.env` and
 `local/config.json`, plus the root-level `search_config.json` (read by `scraper.py`) and
 `scoring_config.json` (read by `score_jobs.py`). The VM-standalone scraper/scorer never
@@ -261,24 +261,24 @@ precedence, so an absent file reproduces today's behavior exactly.
 ### Rendering flags vs. validation, on the same dataclass
 Four optional `Field` attributes carry the Settings tab's whole disclosure story as
 declarative data rather than as branches in the form. The first three are **rendering
-decisions only** — `load()`, `save()` and `validate()` never consult them, so a field the
+decisions only**: `load()`, `save()` and `validate()` never consult them, so a field the
 tab is not showing still round-trips its stored value to disk (`collect()` walks the
 schema, not the visible rows; `tests/test_qt_settings.py::test_provider_round_trip_does_not_wipe_hidden_model_choices`
 is the guard). The fourth is the exception that proves the rule.
 
 | Attribute | Contract |
 | --- | --- |
-| `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** — a field is visible only if its own predicate holds *and* its gate field is itself visible — by `settings.is_visible` / `visible_keys`. A typo'd gate key raises rather than degrading to "hidden". |
-| `advanced` (18 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` rather than overriding it — `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
-| `restart` (16 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt — `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
-| `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours — `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
+| `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises rather than degrading to "hidden". |
+| `advanced` (18 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` rather than overriding it; `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
+| `restart` (16 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
+| `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
 
 The tab composes three **view folds** (a collapsed section, the advanced disclosure, an
 active search) against those two **configuration gates** (`show_if`, and the VM section's
 `vm_enabled` master switch). The line between them governs every count and message in the
 form: a view fold may be opened on the user's behalf and is never persisted when it is
 (`_reveal_view_folds`), while a configuration gate is only ever *named*
-(`_blocking_gate_field`) — the form does not flip a user's configuration to make its own
+(`_blocking_gate_field`). The form does not flip a user's configuration to make its own
 message true. A master switch is never reported as hiding itself.
 
 ## Apply automation (`apply.py` + the `apply.md` apply sheet)

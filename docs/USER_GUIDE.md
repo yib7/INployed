@@ -14,7 +14,7 @@ Output (in `~/Downloads/Generated_Resumes/<Company>/<Title>/`): a one-page PDF, 
 PDF and its `.tex` source** (so you can edit a word and re-run `pdflatex` instead of
 regenerating), and `apply.md` (a self-contained apply sheet you paste into
 Claude-in-Chrome). The cover letter's plain text lives in `apply.md`'s `## Cover letter`
-section — that is what you paste into an application's cover-letter box.
+section, which is what you paste into an application's cover-letter box.
 
 ### Fine-tune the résumé layout
 The **Resume Data** tab has a collapsible **Resume Layout** editor for how many bullets
@@ -72,13 +72,13 @@ Selecting a job opens a **detail card** at the bottom: the job's title and meta 
 score / deep-score / applicants chips, the model's reasoning, strengths, and gaps, a
 **Show description** button (on jobs that came with a description), and the per-job
 actions (**Open posting**, **Tailor résumé**, **Apply**). Click **Show description** and
-the card splits into two columns — the scoring stays on the left, the whole posting opens
-beside it on the right — and the card grows to at least about half the window so there is
+the card splits into two columns: the scoring stays on the left, the whole posting opens
+beside it on the right. The card grows to at least about half the window so there is
 room to read. **Hide description** gives that height back, unless you dragged the divider
 above the card while the description was open: then your size stands. The description
 stays open as you click from job to job: only the text changes, so you can read down a
 list without re-opening it each time. It scrolls on its own instead of stretching the
-card, and the text can be selected and copied. Both dividers are draggable — the one
+card, and the text can be selected and copied. Both dividers are draggable: the one
 between the scoring and the description (your split is remembered until you close the
 dashboard) and **the divider above the card**, which sets its height. A job with no
 description at all folds the card back to one column. On the Tracker the card switches to
@@ -135,29 +135,29 @@ one group at a time.
 
 **Finding one setting among sixty.** Three things at the top of the tab, in this order:
 
-- **The search box.** Type a word and the tab filters to the rows that mention it. It
+- **The search box:** type a word and the tab filters to the rows that mention it. It
   matches the setting's name, its explanation, its config key **and the chips on the
   row**, so you can search `GEMINI_API_KEYS` after reading your `.env`, or `restart` to
   list every setting that needs one. Several
   words narrow rather than widen (`gemini key` is the key box, not everything Gemini).
   Sections with no match disappear, sections with one open themselves, and **clearing the
-  box puts your layout back exactly as it was** — an opening the search made for you is
+  box puts your layout back exactly as it was**. An opening the search made for you is
   never saved. If a match exists but your configuration makes it inert, a muted line under
   the results says so and names the switch: *"3 more settings apply when Scoring provider
   is 'claude'"*.
-- **Show advanced settings.** Off by default, folding 18 power-user rows away — the
-  per-stage model pickers, scorer concurrency and retry caps, VM plumbing. The label counts
+- **Show advanced settings:** off by default, folding 18 power-user rows away (the
+  per-stage model pickers, scorer concurrency and retry caps, VM plumbing). The label counts
   what it is currently withholding *for your configuration*, so ticking it really does
   reveal that many rows. Search ignores the fold: an advanced row still turns up in
   results, tagged `(advanced)`.
-- **Unsaved-change markers.** An accent dot appears beside every field you have edited, the
-  section header picks up "· 2 changed" (visible even when the section is folded — that is
+- **Unsaved-change markers:** an accent dot appears beside every field you have edited, the
+  section header picks up "· 2 changed" (visible even when the section is folded, which is
   the point), and the Save button reads "Save 3 changes". A **↺** button appears on any row
   sitting off its default and puts that one row back; credentials do not get one, because
   their default is blank and the click would wipe a live key. **Discard changes** still
   undoes everything back to how the form opened.
 
-Rows whose value only matters to some configurations hide themselves — the Gemini model
+Rows whose value only matters to some configurations hide themselves. The Gemini model
 pickers are absent while the tailor runs on Claude, and vice versa. Nothing is lost by
 this: switch provider, save, switch back, and the custom model id you typed is still
 there. A row tagged **`restart`** is one the dashboard reads only at startup, so saving it
@@ -187,7 +187,7 @@ The sections:
 - **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
   inbox the apply agent opens for verification emails; plus a snapshot of your
   settings on every Save, restorable from **Restore from archive…**. **Settings
-  snapshots** is one dropdown: *Off*, *Keep everything* (the default — nothing is ever
+  snapshots** is one dropdown: *Off*, *Keep everything* (the default; nothing is ever
   deleted), *Keep newest 20*, or *Keep newest 100*. Each snapshot holds a copy of your
   `.env`, so more snapshots means more copies of your keys on this PC.
 - **VM (cloud job discovery):** an **Enable VM features** master toggle (off by default)
@@ -205,8 +205,8 @@ opened) alongside **Restore defaults**, and **Save tells you exactly which field
 
 **When something is wrong, it is flagged where it is.** A rejected value outlines the box
 in red with a note underneath, the form scrolls to the first one you can act on, and the
-status line counts them ("2 settings need fixing") — no modal listing problems and pointing
-at none of them. Fields are re-checked when you tab out of them, not only at Save. If a
+status line counts them ("2 settings need fixing"). There is no modal listing every problem and
+pointing at none of them. Fields are re-checked when you tab out of them, not only at Save. If a
 number you hand-edited into a config file is outside the allowed range, the spin box shows
 the clamped value **and tells you** what the file actually holds, rather than quietly
 rewriting it on the next Save.
@@ -225,10 +225,10 @@ the VM keeps running unchanged.
 
 #### What "Strip AI writing patterns from the cover letter" catches
 Settings → Résumé, off by default. It adds a second, stricter style pass to the **cover
-letter only** — résumé bullets are unaffected — applying a letter-relevant subset of Conor
+letter only** (résumé bullets are unaffected), applying a letter-relevant subset of Conor
 Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`):
 
-- the overused AI vocabulary — *delve*, *pivotal*, *impactful*, *learnings*, *in order to*
+- the overused AI vocabulary: *delve*, *pivotal*, *impactful*, *learnings*, *in order to*
 - *"it's not X, it's Y"* contrast framing
 - hedging, and chatbot tics such as *"I hope this helps"*
 - rhetorical-question openers and *"In conclusion"* endings

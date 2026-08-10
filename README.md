@@ -7,11 +7,11 @@
 ![Python](https://img.shields.io/badge/python-3.14-blue.svg)
 
 A scheduled cloud discovery step feeds a two-stage LLM scorer, which syncs to a
-desktop app that drives a LaTeX generation engine. About **5% of scraped postings
-survive to a recommendation**, so that is all you read.
+desktop app that drives a LaTeX résumé engine. About 5% of scraped postings
+survive to a recommendation, so that is all you read.
 
-The generation engine's rule is **select and re-phrase, never invent**. Every
-résumé bullet traces back to a fact you wrote, and a deterministic grounding pass
+The résumé engine's rule is **select and re-phrase, never invent**. Every
+résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
 (no LLM) drops any bullet that doesn't.
 
 Three pieces do the work:
@@ -20,7 +20,7 @@ Three pieces do the work:
 2. **Scorer** (`pipeline/score_jobs.py`): a two-stage Gemini relevance filter that
    ranks each job against your background.
 3. **Desktop dashboard** (`local/app.py`): a Windows PySide6/Qt app for triage, an
-   application tracker, run statistics, and an on-demand **résumé-tailoring engine**
+   application tracker, run statistics, and an on-demand résumé-tailoring engine
    (`local/resume_tailor/`) that produces a one-page LaTeX résumé, cover letter,
    ATS keyword report, and interview-prep sheet for the selected job.
 
@@ -165,20 +165,20 @@ discovery VM.
 
 ## What it does
 
-- **Triage.** The **High Score** tab ranks unseen postings by the two-stage score and tints
+- **Triage:** the **High Score** tab ranks unseen postings by the two-stage score and tints
   each row by recommendation (apply / consider / skip) and by whether a tailored résumé
   already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
-- **Tailor.** One click writes a one-page LaTeX résumé for that posting, plus an optional
+- **Tailor:** one click writes a one-page LaTeX résumé for that posting, plus an optional
   cover letter (PDF and editable `.tex`), an ATS keyword report, and an interview-prep
   sheet. Batches run in parallel in the background with live progress.
-- **Ask.** Right-click any job for a chat scoped to it. The question goes to the model with
-  that job's apply sheet and description as context, so answers come from your own material
-  — and it says so plainly when the sheet doesn't cover something.
-- **Track.** Applications move through applied → interviewing → offer / rejected, with
+- **Ask:** right-click any job for a chat scoped to it. The question goes to the model with
+  that job's apply sheet and description as context, so answers come from your own material,
+  and it says so plainly when the sheet doesn't cover something.
+- **Track:** applications move through applied → interviewing → offer / rejected, with
   follow-up nudges. The whole history is a local SQLite file you can export and import.
-- **Apply.** Every tailored folder gets a self-contained `apply.md` sheet that a
+- **Apply:** every tailored folder gets a self-contained `apply.md` sheet that a
   browser agent fills page by page and then **stops at the review screen**. It never logs in, and it never clicks submit.
-- **Operate.** Settings is one schema-driven form over every key, path, and tunable the
+- **Operate:** Settings is one schema-driven form over every key, path, and tunable the
   project has (no file editing), including the schedule, pause, and config pushes for the
   cloud discovery VM. Stats reports per-run cost and volume, with a staleness badge when a
   cron run goes missing.
@@ -210,19 +210,19 @@ list, walk the tracker, then look at the data the tailor is allowed to draw from
 
 ## Limitations
 
-- **Windows-first.** The dashboard, launcher, and setup script are tested on Windows only;
+- **Windows-first:** the dashboard, launcher, and setup script are tested on Windows only;
   Linux runs the pipeline scripts (that is the VM), macOS is untested.
-- **Costs money to run at full tilt.** Job discovery bills per collected posting and scoring
+- **Costs money to run at full tilt:** job discovery bills per collected posting and scoring
   bills per token, so an unbounded run is the expensive path. The caps
   (`--max-keywords`, `--limit`, the spend guards) exist because of that.
-- **Single-user by design.** No accounts, no server, no multi-tenancy: it reads one person's
+- **Single-user by design:** no accounts, no server, no multi-tenancy. It reads one person's
   master experience file and writes to one local SQLite file.
-- **Discovery is one vendor deep.** Postings come from a Bright Data LinkedIn dataset; a
+- **Discovery is one vendor deep:** postings come from a Bright Data LinkedIn dataset; a
   broken dataset or a schema change stops the front of the pipeline.
-- **Not an auto-submitter, and not a résumé writer.** The apply flow parks at review, and
+- **Not an auto-submitter, and not a résumé writer:** the apply flow parks at review, and
   the tailor can only select and rephrase facts you wrote yourself. It will never fill a thin
   experience file with impressive-sounding text.
-- **The grounding check has a blind spot.** It traces distinctive tokens (numbers, proper
+- **The grounding gate has a blind spot:** it traces distinctive tokens (numbers, proper
   nouns, tool names). A rephrasing that overstates using only ordinary words gives it
   nothing to catch, so the output is still worth reading before you send it.
 - **Next:** more discovery sources behind the same normalizer, and a scoring calibration
@@ -256,7 +256,7 @@ flowchart LR
     C --> P["tailored PDF"]
 ```
 
-**A grounding backstop enforces it** (`local/resume_tailor/verify.py`), deterministically.
+**A grounding gate enforces it** (`local/resume_tailor/verify.py`), deterministically.
 
 A job description is untrusted internet text riding inside the generation prompt, so
 the prompt alone is not a guarantee. After generation, with no LLM involved, every

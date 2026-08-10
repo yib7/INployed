@@ -4,13 +4,17 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.0] - 2026-08-09
 
 A per-job chat, a plainer cover letter that ships its own source, two new toggles, a detail
 card that opens the full job description beside the scoring, and a Settings tab you can
-find things in. Existing saved configs keep working: the AI-writing pass defaults off, the
-Apply browser-open toggle defaults on, and every removed setting keeps its saved value
-working at its consumer, so nothing changes until you change it.
+find things in. Then a release pass on top of that: the seven headless scripts move into
+`pipeline/`, the dashboard's theme and narrow-window behaviour change how it looks, and a
+batch of pipeline, config and grounding bugs is fixed. Existing saved configs keep working:
+the AI-writing pass defaults off, the Apply browser-open toggle defaults on, and every
+removed setting keeps its saved value working at its consumer, so nothing changes until you
+change it. The one thing to update by hand is a shell script or crontab of your own that
+calls `scraper.py` or `score_jobs.py` at the repo root.
 
 ### Added
 - **Ask AI about this job.** A non-modal chat scoped to one posting, from the jobs
@@ -104,6 +108,26 @@ working at its consumer, so nothing changes until you change it.
   hand-edited value** — `max_scored_per_run: 99999` shows 5000 with a note naming the file
   and the real number, rather than silently rewriting your config on the next Save.
 - **Settings snapshots are one dropdown instead of four knobs.** See *Removed*.
+- **The seven headless scripts live in `pipeline/`.** `scraper.py`, `score_jobs.py`,
+  `run_labels.py`, `keypool.py`, `claude_cli.py`, `merge_incoming.py` and `prune_master.py`
+  moved out of the repo root, which drops to 10 files. Each one resolves its data root as
+  "the repo root when I am inside `pipeline/`, otherwise my own directory", so `.env`, the
+  master CSV and the run-label output folders land exactly where they did before, on a repo
+  checkout and on the VM's flat home alike. The VM needs no coordinated change, and the
+  dashboard, `scripts/setup.ps1` and the docs all name the new paths. **If a shell script or
+  crontab of yours calls one of those scripts, add the `pipeline/` prefix.** In the same move
+  `SECURITY.md` went to `.github/` (GitHub still surfaces it there), `requirements-vm.txt` to
+  `scripts/` beside `run_scraper.sh`, and `pytest.ini` + `ruff.toml` merged into
+  `pyproject.toml`.
+- **The auto-apply inbox map no longer ships a school domain as a default row.** The map now
+  seeds consumer providers only, and the help text tells you to add your own work or school
+  domain. A map you have already saved is untouched.
+- **Dependency pins refreshed.** pypdf 6.14.2 → 6.15.0 clears CVE-2026-71852 and
+  CVE-2026-71870, two crafted-PDF resource-exhaustion bugs in the text-extraction path the
+  résumé engine runs over your own PDF. google-genai 2.14.0 → 2.17.0 in both requirements
+  files. ruff 0.15.17 → 0.16.2, with the lint selection now written down in `pyproject.toml`
+  rather than inherited: ruff 0.16 widened its built-in default and took the same tree from 1
+  finding to 1278 with no code change. numpy stays at 2.4.6 on the VM, which runs Python 3.11.
 
 ### Removed
 - **`mtime_stable_seconds` is gone from the Settings tab.** It is the file-watcher's
@@ -152,6 +176,72 @@ working at its consumer, so nothing changes until you change it.
   around it. A bullet whose text was wrapped in a block element is reunited with its marker,
   empty markers are dropped, and the source HTML's indentation no longer leaks through as a
   gutter down the left of some lines.
+- **A white 1px rule across the top of the window, on all 8 tabs.** The Fusion bevel palette
+  roles were never set, so Qt drew the tab-bar base line in `#ffffff` at every window size and
+  interface scale. The same pass removed the dark slab painted behind every Settings section
+  title, put white-on-accent and white-on-green button text back over 4.5:1 (3.20:1 and
+  2.54:1 before, on the two loudest buttons in the window), lifted the faint subtitle and
+  empty-state text to 4.64:1, and named the three credential boxes so a screen reader
+  announces them on focus instead of skipping the cell.
+- **The window holds its shape at 1100px wide and at 150% scale.** The action-bar hint was
+  sliced to a bare "Ct" and the auto-apply counts caption cut inside a word: both elide
+  properly now and keep the full string in the tooltip. The auto-apply status chips no longer
+  clip at 1280px. Table column widths ride the interface scale, so at 150% they stop opening a
+  third too narrow and "Don't consider" is no longer elided to "Don't consi..." on the one
+  kind of row that states its meaning in words rather than in colour. The Title column has a
+  floor: below it the table scrolls instead of collapsing Title to an ellipsis.
+- **A job title containing markup is rendered as text.** The detail card and the apply-queue
+  panel handed the raw CSV string to a `QLabel` on its AutoText default, so a posting titled
+  `Senior <b>Engineer</b>` would have been drawn as markup. Those labels are PlainText now.
+- **A broken `master_experience.yaml` says which line, not which traceback.** The file is
+  git-ignored personal data you are told to hand-edit, so a bad edit is the likeliest first
+  failure in the whole résumé engine, and it used to surface as a raw `yaml.ParserError`. A
+  fresh clone with no master at all surfaced as a raw `FileNotFoundError`. Both are one error
+  naming the file, the line, the column and the fix, which the Resume Data tab shows as a
+  message instead of crashing on.
+- **Retention had silently stopped pruning.** `prune_master` read two columns in a way that
+  returns a bare `None` for an absent column, so a master written before the scorer had ever
+  run raised, and `run_scraper.sh` swallowed the exit code. It also emitted a traceback where
+  one line naming the exception was enough.
+- **A parse failure no longer sleeps 17 minutes.** The retry logic decided "rate limited" by
+  substring-matching the exception text, and that text can carry up to 500 characters of model
+  output, so a job description about sales quotas turned a deterministic parse failure into
+  30+60+120+240+300+300 seconds of backoff per call. Both provider lanes now classify on a
+  structural error kind before any message is read.
+- **A settings save and a job delete no longer revert each other.** Three writers to
+  `local/config.json` (the dashboard's background queue, the Settings tab on the UI thread,
+  and the watcher in another process entirely) did a lock-free read-modify-write, so whichever
+  read first lost its keys: a deleted job reappeared, or a page of settings did. They share a
+  file lock now, and the settings writer no longer strands a `config.json.<pid>.tmp` behind a
+  failed write.
+- **Four scoring and grounding defects.** The grounding gate gave an abbreviation a free slot
+  ("Built ingestion for the U.S. MIT lab" split mid-sentence and handed MIT the slot reserved
+  for the generated verb). The tracker's status timestamps were naive local wall-clock, which
+  a cross-machine tie-break compares as text, so a 09:00 change in one zone beat a later 10:00
+  change in another and DST inverted an hour a year; they are UTC now. The scraper's
+  `limit_per_input` reached the billed Bright Data trigger URL uncoerced and unquoted, so a
+  config holding `100&limit=5000` rewrote the request. And merged incoming rows were read with
+  inferred dtypes and appended to a string master, writing a score of 5 back as `5.0`.
+- **Text at the subprocess boundaries is read as UTF-8.** Two shipped captures decoded with
+  the OS default (cp1252 on Windows): the `pdflatex` log echo, which quotes your résumé back
+  at you, so an accented company name came out mangled or raised on a stricter locale, and
+  `gcloud`'s error bodies in `vm_sync`. Two user-facing notices in `local/chrome.py` were
+  `print()`ed from a module the windowless dashboard imports, where stdout goes nowhere; they
+  are log warnings now.
+
+### Docs
+- **README leads with the architecture.** The engineering claim is near the top with the
+  measured funnel behind it, a Screenshots grid of four distinct screens (triage, tracker,
+  résumé data, settings) sits after the intro, and the demo GIF moved under "What it does".
+  Every screenshot and the GIF were re-shot against the current UI from synthetic fixtures:
+  13 scenes, 25 seconds, with row selections and a live search filter.
+- **Setup Step 2 calls `venv\Scripts\python.exe` by path** instead of `.\venv\Scripts\activate`,
+  which the default PowerShell 5.1 execution policy on a clean Windows box refuses. The
+  readme-setup CI job mirrors the new wording. Git is named in "You need", and Step 7 says what
+  actually breaks without MiKTeX and gcloud.
+- **License disclosure.** README and `docs/CREDITS.md` now state that every pin is MIT, BSD,
+  Apache-2.0 or PSF except PySide6/Qt, which is LGPLv3 or GPL or a commercial Qt license, and
+  why a source-only distribution that `pip install`s Qt satisfies the LGPL relink condition.
 
 ## [1.7.1] - 2026-07-28
 
@@ -650,7 +740,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.7.1...HEAD
+[1.8.0]: https://github.com/yib7/INployed/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/yib7/INployed/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/yib7/INployed/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/yib7/INployed/compare/v1.6.1...v1.6.2

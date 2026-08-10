@@ -34,8 +34,8 @@ Three pieces do the work:
 | Your source of truth: **Resume Data** | Every knob: **Settings** |
 | ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. Eleven collapsible sections under a search box, from Credentials and Connection & paths through Scoring, Résumé, Auto-apply and the cloud VM. Engine is expanded, showing the résumé tailor engine and provider dropdowns, each labelled with the config.json key it writes.](docs/settings.png) |
 
-**High Score** surfaces only unseen postings scoring ≥4, ordered by score then fewest
-applicants, so the freshest apply window comes first.
+**High Score** surfaces only unseen postings scoring ≥4, newest discovery day first and
+highest score within the day. Click any column header to re-sort.
 
 *(All four shown with representative sample data: fictional companies, a fictional
 `master_experience.yaml`, and placeholder keys.)*

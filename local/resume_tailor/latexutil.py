@@ -35,6 +35,35 @@ def escape_latex(text: str) -> str:
     return "".join(_LATEX_SPECIALS.get(ch, ch) for ch in str(text))
 
 
+# The only characters hyperref needs backslashed inside \href's target argument.
+# Deliberately much smaller than _LATEX_SPECIALS: see escape_url.
+_URL_SPECIALS = {"%": r"\%", "#": r"\#", "{": r"\{", "}": r"\}"}
+
+# Everything a URL may legally carry unencoded, kept out of quote()'s escaping so an
+# address already percent-encoded survives a second pass unchanged.
+_URL_SAFE = "/:?#[]@!$&'()*+,;=~%"
+
+
+def escape_url(url: str) -> str:
+    """Escape a URL for the *target* argument of \\href.
+
+    Not the same job as escape_latex, and using that one here is a real bug: it turns
+    `_` into `\\_` and `~` into `\\textasciitilde{}`, which is right for printed text
+    and wrong for an address, so `github.com/foo_bar` links to a URL with a literal
+    backslash in it. hyperref reads the target nearly verbatim, so only `%`, `#`, `{`
+    and `}` need escaping there. Anything else outside printable ASCII (a space, an
+    accented character) is percent-encoded first, which keeps the .tex pure ASCII and
+    keeps the link resolving.
+    """
+    from urllib.parse import quote
+
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    text = quote(text, safe=_URL_SAFE)
+    return "".join(_URL_SPECIALS.get(ch, ch) for ch in text)
+
+
 def strip_emphasis(text: str) -> str:
     """Remove markdown/LaTeX bold+italic markers, keeping the inner words.
 

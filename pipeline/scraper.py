@@ -22,12 +22,19 @@ DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
 
 # Optional: load a local .env so credentials live outside the repo. The VM path
 # sets these via run_scraper.sh exports, so a missing python-dotenv is fine.
-try:
-    from dotenv import load_dotenv
+#
+# INPLOYED_NO_DOTENV=1 skips the file. This script bills Bright Data on a
+# successful run, and without the opt-out there is no way to exercise its
+# missing-credential path: clearing BRIGHT_DATA_API_TOKEN in the environment
+# does nothing, because this runs at import and puts the real token back before
+# require_credentials() ever looks.
+if os.environ.get("INPLOYED_NO_DOTENV", "") not in ("1", "true", "True"):
+    try:
+        from dotenv import load_dotenv
 
-    load_dotenv(DATA_ROOT / ".env")
-except ImportError:
-    pass
+        load_dotenv(DATA_ROOT / ".env")
+    except ImportError:
+        pass
 
 # Bright Data credentials — supplied via environment (.env locally, exported on
 # the VM). Never hardcode the token in the repo; see .env.example. The presence

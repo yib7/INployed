@@ -4,6 +4,20 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Repo links in the résumé pointed at a mangled address.** The Projects section built its
+  `\href` target with the escaper meant for printed text, so a repo path containing `_` or `~`
+  shipped a link with a literal backslash in it and did not resolve. URLs now go through
+  `escape_url`, which touches only what hyperref needs (`%`, `#`, `{`, `}`) and percent-encodes
+  anything outside printable ASCII.
+
+### Added
+- `INPLOYED_NO_DOTENV=1` makes `pipeline/scraper.py` and `pipeline/score_jobs.py` skip `.env`.
+  Both load it at import, so unsetting a key in the shell never disarmed them, and checking what
+  either does without credentials meant billing a real run to find out.
+
 ## [1.8.0] - 2026-08-09
 
 A per-job chat, a plainer cover letter that ships its own source, two new toggles, a detail
@@ -740,6 +754,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[Unreleased]: https://github.com/yib7/INployed/compare/v1.8.0...HEAD
 [1.8.0]: https://github.com/yib7/INployed/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/yib7/INployed/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/yib7/INployed/compare/v1.6.2...v1.7.0

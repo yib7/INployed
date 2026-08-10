@@ -44,12 +44,17 @@ DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
 
 # Optional: load a local .env so credentials work for manual/local runs. The VM
 # path exports these via run_scraper.sh, so a missing python-dotenv is fine.
-try:
-    from dotenv import load_dotenv
+#
+# INPLOYED_NO_DOTENV=1 skips the file, the same opt-out scraper.py carries and for
+# the same reason: this script spends LLM credits, and clearing a key in the
+# environment cannot make it safe to run while the file is reloaded at import.
+if os.environ.get("INPLOYED_NO_DOTENV", "") not in ("1", "true", "True"):
+    try:
+        from dotenv import load_dotenv
 
-    load_dotenv(DATA_ROOT / ".env")
-except ImportError:
-    pass
+        load_dotenv(DATA_ROOT / ".env")
+    except ImportError:
+        pass
 
 OUTPUT_DIR = DATA_ROOT
 RESUME_PATH = OUTPUT_DIR / "resume.md"

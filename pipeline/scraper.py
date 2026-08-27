@@ -101,7 +101,7 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # silently collects nothing, which is how this went unnoticed for weeks.
 #
 # Bright Data does not publish the threshold, so it was measured directly against
-# dataset gd_exampledataset0001 with one search at limit_per_input=150:
+# the LinkedIn jobs dataset with one search at limit_per_input=150:
 #   2,000 ids -> 4,239,000 bytes of children -> ACCEPTED (collected 128 jobs)
 #   2,679 ids -> 5,262,000 bytes of children -> REJECTED, 100% of inputs
 # 5 MiB (5,242,880) falls between those two, which is almost certainly the real cap.

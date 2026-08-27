@@ -275,6 +275,7 @@ def test_set_secret_cmd_neutralises_the_old_inline_export():
 
 
 def test_valid_secret_values_are_accepted():
+    # Shapes only, all three synthetic. Never paste a live credential here.
     for good in ("11111111-2222-3333-4444-555555555555", "AQ.abc_123", "k1,k2,k3"):
         assert vm_sync.valid_secret_value(good) is True
 

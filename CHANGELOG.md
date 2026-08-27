@@ -29,6 +29,14 @@ All notable changes to INployed are recorded here. The format follows
   to the measured-good side, so 2,000 ids fit at a limit of 150 and proportionally fewer as that
   limit rises. Eviction is by `extracted_date` rather than master row order, so a row merged in
   out of sequence cannot push out a more recent id.
+- **A rejected collection no longer reports success.** When Bright Data refuses every input,
+  the snapshot still finishes as `ready` carrying zero records, so the run printed "No new jobs
+  returned this run" and exited 0. The scheduled runs logged a clean success twice a day while
+  collecting nothing, which is why this went unnoticed for weeks. A run that collected nothing
+  while reporting errors now fails loudly and names the error codes, so both the cron log and
+  the dashboard's error dialog show it. Unchanged: a genuinely quiet 24 hours (zero rows, zero
+  errors) still succeeds, and a run that collected rows despite some `dead_page` errors is
+  still normal.
 - **A valid-looking Bright Data key failed every run with "Invalid credentials".** A token can
   read the dataset catalog and the snapshot history and still lack permission to start a
   billed collection, and the API reports that refusal as an auth failure. The trigger error now

@@ -722,6 +722,40 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
         return (await resp.json())["snapshot_id"]
 
 
+def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
+    """Refuse to call a 100%-rejected collection a successful empty run.
+
+    This is the guard that would have caught the 2026-08-26 outage on day one.
+    When Bright Data refuses every input, the snapshot still finishes with
+    status="ready" and just carries records=0 alongside a non-zero error count.
+    download() then returned [], main() printed "No new jobs returned this run"
+    and exited 0 -- so the VM cron logged a clean success twice a day for weeks
+    while collecting nothing at all. A run that collected NOTHING while reporting
+    errors is a failure, and it has to be loud enough for the cron log and the
+    dashboard's error dialog to show it.
+
+    Deliberately narrow. Zero rows with zero errors is a legitimately quiet 24
+    hours and returns cleanly, and a run that collected rows despite some errors
+    is normal (dead_page / page_too_big appear on nearly every healthy run).
+
+    Pure ASCII: this text lands in the Windows console and the dashboard dialog.
+    """
+    records = progress.get("records") or 0
+    errors = progress.get("errors") or 0
+    if records or not errors:
+        return
+    codes = progress.get("error_codes") or {}
+    hint = ""
+    if "child_input_size_validation" in codes:
+        hint = ("\nThat error means the request itself was too large. It is almost always "
+                "the exclude list (jobs_to_not_include), which is copied onto every one of "
+                "the up-to-limit_per_input child fetches each search spawns. Lower "
+                f"limit_per_input, or MAX_EXCLUDE_IDS (currently {MAX_EXCLUDE_IDS}).")
+    raise RuntimeError(
+        f"Collection {snapshot_id} returned 0 rows with {errors} error(s): {codes}. "
+        f"Bright Data rejected every input, so this run collected nothing.{hint}")
+
+
 async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> None:
     url = f"https://api.brightdata.com/datasets/v3/progress/{snapshot_id}"
     deadline = asyncio.get_event_loop().time() + MAX_WAIT_MINUTES * 60
@@ -746,6 +780,8 @@ async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> 
         status = data.get("status")
         print(f"  status: {status}")
         if status == "ready":
+            # "ready" is not the same as "worked" -- see _assert_collected_something.
+            _assert_collected_something(data, snapshot_id)
             return
         if status == "failed":
             raise RuntimeError(f"Collection failed: {data}")

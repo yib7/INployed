@@ -690,3 +690,64 @@ def test_undated_rows_are_evicted_before_dated_recent_ones(monkeypatch, tmp_path
     ids = scraper._master_ids()
     assert set(ids) == {"dated_recent", "undated"}
     assert ids.index("undated") < ids.index("dated_recent")   # undated evicted first
+
+
+# --- a rejected collection must not look like a quiet day ---------------------
+# THE reason the 2026-08-26 outage ran unnoticed for weeks: when Bright Data
+# refuses every input, the snapshot still finishes with status="ready". download()
+# then returned [], main() printed "No new jobs returned this run" and exited 0.
+# The VM cron logged a clean success twice a day while collecting nothing.
+
+def _progress_session(payload):
+    class _Resp:
+        async def json(self):
+            return payload
+
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Session:
+        def get(self, url, **kw):
+            return _Resp()
+
+    return _Session()
+
+
+def test_ready_with_zero_rows_and_errors_raises():
+    """100% rejection is a failed run, not an empty one."""
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(scraper.wait_until_ready(_progress_session({
+            "status": "ready", "records": 0, "errors": 40,
+            "error_codes": {"child_input_size_validation": 40}}), "sd_x"))
+    msg = str(excinfo.value)
+    assert "child_input_size_validation" in msg     # name what Bright Data said
+    assert "0 rows" in msg or "no rows" in msg.lower()
+
+
+def test_zero_rows_error_names_the_size_cause():
+    """The size failure is self-inflicted and fixable, so say which knob to turn."""
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(scraper.wait_until_ready(_progress_session({
+            "status": "ready", "records": 0, "errors": 2,
+            "error_codes": {"child_input_size_validation": 2}}), "sd_x"))
+    assert "exclude" in str(excinfo.value).lower()
+
+
+def test_zero_rows_with_NO_errors_is_a_normal_quiet_run():
+    """Nothing new posted in the last 24h is legitimate — it must not raise."""
+    asyncio.run(scraper.wait_until_ready(_progress_session({
+        "status": "ready", "records": 0, "errors": 0}), "sd_x"))
+
+
+def test_partial_errors_with_rows_collected_do_not_raise():
+    """dead_page / page_too_big happen on every healthy run (08-14: 252 rows,
+    62 errors). Only a run that collected NOTHING while erroring is a failure."""
+    asyncio.run(scraper.wait_until_ready(_progress_session({
+        "status": "ready", "records": 252, "errors": 62,
+        "error_codes": {"dead_page": 24, "page_too_big": 38}}), "sd_x"))

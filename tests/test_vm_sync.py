@@ -3,6 +3,7 @@
 Pure argv builders. No real gcloud ever runs (the runner is
 mocked); no secret is read — only non-secret connection identifiers.
 """
+import os
 import sys
 import types
 from pathlib import Path
@@ -210,3 +211,215 @@ def test_push_outbox_file_cmd_targets_incoming():
     assert "/local/outbox/local_rows_x.csv.gz" in cmd
     assert "yib@scraper-vm:incoming/local_rows_x.csv.gz" in cmd
     assert "yib@scraper-vm:~/incoming/local_rows_x.csv.gz" not in cmd
+
+
+# --- managed VM secrets (set the Bright Data / Gemini credentials from the GUI) ---
+#
+# The whole point of these is that the SECRET VALUE NEVER TOUCHES THE ARGV: it
+# travels over the ssh stdin pipe, so it can't leak into the local process list,
+# a crash traceback, or gcloud's own logging.
+
+def test_managed_secret_names_are_the_two_the_vm_actually_reads():
+    assert set(vm_sync.MANAGED_SECRETS) == {"BRIGHT_DATA_API_TOKEN", "GEMINI_API_KEYS"}
+
+
+def test_set_secret_cmd_is_ssh_and_names_the_variable():
+    cmd = _target().set_secret_cmd("BRIGHT_DATA_API_TOKEN")
+    assert cmd[:3] == ["gcloud", "compute", "ssh"]
+    assert "BRIGHT_DATA_API_TOKEN" in cmd[-1]
+    assert "scraper_secrets.env" in cmd[-1]
+
+
+def test_set_secret_cmd_NEVER_carries_the_value():
+    """The regression that matters. Two channels were ruled out by measurement:
+    gcloud copies the whole --command into its plaintext debug log, and plink
+    eats stdin. So the value must arrive as a staged file and nothing else."""
+    cmd = _target().set_secret_cmd("BRIGHT_DATA_API_TOKEN")
+    assert vm_sync.SECRET_STAGE_REMOTE_FILE in cmd[-1]   # read from the staged file
+    assert "read -r V" not in cmd[-1]                    # never from stdin
+    for part in cmd:
+        assert "SUPERSECRET" not in part
+
+
+def test_the_staged_secret_file_is_always_deleted_on_the_vm():
+    remote = _target().set_secret_cmd("BRIGHT_DATA_API_TOKEN")[-1]
+    assert "trap 'rm -f" in remote      # an EXIT trap, so a failure cleans up too
+
+
+def test_stage_secret_cmd_is_an_scp_of_the_local_file():
+    cmd = _target().stage_secret_cmd("/tmp/x/value.txt")
+    assert cmd[:3] == ["gcloud", "compute", "scp"]
+    assert "/tmp/x/value.txt" in cmd
+    assert any(vm_sync.SECRET_STAGE_REMOTE_FILE in p for p in cmd)
+
+
+def test_set_secret_cmd_rejects_an_unmanaged_variable_name():
+    """No arbitrary env-var injection through the name."""
+    import pytest
+    with pytest.raises(ValueError):
+        _target().set_secret_cmd("PATH; rm -rf ~")
+
+
+def test_set_secret_cmd_chmods_the_file_and_syntax_checks_the_script():
+    remote = _target().set_secret_cmd("GEMINI_API_KEYS")[-1]
+    assert "chmod 600" in remote
+    assert "bash -n" in remote            # never leave run_scraper.sh unparseable
+    assert ".bak-" in remote               # and always keep a backup to revert to
+
+
+def test_set_secret_cmd_neutralises_the_old_inline_export():
+    """Otherwise the inline `export TOKEN=<dead>` later in run_scraper.sh would
+    override the value we just sourced, and the fix would silently do nothing."""
+    remote = _target().set_secret_cmd("BRIGHT_DATA_API_TOKEN")[-1]
+    assert "^export BRIGHT_DATA_API_TOKEN=" in remote
+
+
+def test_valid_secret_values_are_accepted():
+    for good in ("11111111-2222-3333-4444-555555555555", "AQ.abc_123", "k1,k2,k3"):
+        assert vm_sync.valid_secret_value(good) is True
+
+
+def test_shell_unsafe_secret_values_are_rejected():
+    """The file is sourced by bash, so a `$` or backtick in the value would be
+    interpolated at source time. Reject rather than try to escape."""
+    for bad in ("", "   ", "a b", "$(whoami)", "`id`", 'a"b', "a'b", "a\b", "a$b"):
+        assert vm_sync.valid_secret_value(bad) is False
+
+
+def test_set_vm_secret_stages_the_value_then_installs_it(monkeypatch):
+    seen = []
+
+    def fake_run(cmd):
+        # capture the staged file's CONTENT at scp time; it is gone by the end
+        if "scp" in cmd:
+            src = [p for p in cmd if p.endswith("value.txt")][0]
+            seen.append(("scp", src, open(src, encoding="utf-8").read()))
+        else:
+            seen.append(("ssh", None, None))
+        return types.SimpleNamespace(returncode=0, stdout="SECRET_SET", stderr="")
+
+    monkeypatch.setattr(vm_sync, "run_cmd", fake_run)
+    vm_sync.set_vm_secret(_target(), "BRIGHT_DATA_API_TOKEN", "tok-123")
+
+    assert [s[0] for s in seen] == ["scp", "ssh"]      # stage, then install
+    assert seen[0][2] == "tok-123\n"                  # value rode the file
+    assert not os.path.exists(seen[0][1])              # and the temp dir is gone
+
+
+def test_set_vm_secret_deletes_the_local_temp_even_when_the_push_fails(monkeypatch):
+    seen = {}
+
+    def boom(cmd):
+        seen["src"] = [p for p in cmd if p.endswith("value.txt")][0]
+        raise RuntimeError("scp exploded")
+
+    monkeypatch.setattr(vm_sync, "run_cmd", boom)
+    try:
+        vm_sync.set_vm_secret(_target(), "BRIGHT_DATA_API_TOKEN", "tok-123")
+    except RuntimeError:
+        pass
+    assert not os.path.exists(seen["src"])   # no plaintext credential left behind
+
+
+def test_set_vm_secret_skips_the_install_when_staging_fails(monkeypatch):
+    calls = []
+
+    def fake_run(cmd):
+        calls.append("scp" if "scp" in cmd else "ssh")
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="permission denied")
+
+    monkeypatch.setattr(vm_sync, "run_cmd", fake_run)
+    res = vm_sync.set_vm_secret(_target(), "BRIGHT_DATA_API_TOKEN", "tok-123")
+    assert calls == ["scp"]                 # never ran the installer on a failed upload
+    assert res.returncode == 1
+
+
+def test_set_vm_secret_refuses_an_unconfigured_target():
+    assert vm_sync.set_vm_secret(vm_sync.VMTarget(), "BRIGHT_DATA_API_TOKEN", "x") is None
+
+
+def test_the_remote_secret_script_actually_works_end_to_end(tmp_path):
+    """Run the generated shell against a throwaway $HOME.
+
+    The argv builders above are pure, so nothing else here proves the SCRIPT is
+    correct -- and its failure mode is nasty (a mangled run_scraper.sh on the box
+    that runs the cron). This executes it for real against a fake home holding a
+    stand-in run_scraper.sh, then sources the result to prove the new value wins.
+    """
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if not bash:
+        import pytest
+        pytest.skip("no bash available to run the remote script")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "run_scraper.sh").write_text(
+        "#!/bin/bash\n"
+        "export BRIGHT_DATA_API_TOKEN=deadtoken-old\n"
+        "export BRIGHT_DATA_DATASET_ID=gd_keepme\n"
+        "set -e\n", newline="\n")
+
+    remote = _target().set_secret_cmd("BRIGHT_DATA_API_TOKEN")[-1][len("--command="):]
+    script = tmp_path / "remote.sh"
+    script.write_text(remote, newline="\n")
+    env = {**os.environ, "HOME": str(home)}
+    staged = home / vm_sync.SECRET_STAGE_REMOTE_FILE
+
+    # Twice, to prove it is idempotent: a rotation must replace, never append.
+    for value in ("first-value-111", "second-value-222"):
+        staged.write_text(value + "\n", newline="\n")     # what scp would deliver
+        res = subprocess.run([bash, str(script)], env=env, capture_output=True,
+                             text=True, timeout=60)
+        assert res.returncode == 0, res.stderr
+        assert "SECRET_SET" in res.stdout
+        assert not staged.exists(), "the staged credential must not survive the run"
+
+    secrets = (home / "scraper_secrets.env").read_text()
+    assert secrets.count("export BRIGHT_DATA_API_TOKEN=") == 1   # replaced, not appended
+    assert "second-value-222" in secrets and "first-value-111" not in secrets
+
+    script_text = (home / "run_scraper.sh").read_text()
+    # the dead inline export must be neutralised, or it would override the source
+    assert "\nexport BRIGHT_DATA_API_TOKEN=" not in script_text
+    assert script_text.count("INPLOYED SECRETS BEGIN") == 1      # inserted once only
+    assert "export BRIGHT_DATA_DATASET_ID=gd_keepme" in script_text   # untouched
+
+    # and the whole thing still parses, then yields the NEW value when sourced
+    assert subprocess.run([bash, "-n", str(home / "run_scraper.sh")]).returncode == 0
+    out = subprocess.run(
+        [bash, "-c", 'source "$HOME/run_scraper.sh" >/dev/null; '
+                     'echo "$BRIGHT_DATA_API_TOKEN|$BRIGHT_DATA_DATASET_ID"'],
+        env=env, capture_output=True, text=True, timeout=60).stdout.strip()
+    assert out == "second-value-222|gd_keepme"
+
+
+def test_a_failed_install_still_removes_the_staged_credential(tmp_path):
+    """The EXIT trap, proven: an unreadable run_scraper.sh aborts the script, and
+    the plaintext credential must not be left sitting in the VM's home dir."""
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if not bash:
+        import pytest
+        pytest.skip("no bash available to run the remote script")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "run_scraper.sh").write_text("#!/bin/bash\nif then fi\n", newline="\n")
+    remote = _target().set_secret_cmd("BRIGHT_DATA_API_TOKEN")[-1][len("--command="):]
+    script = tmp_path / "remote.sh"
+    script.write_text(remote, newline="\n")
+    staged = home / vm_sync.SECRET_STAGE_REMOTE_FILE
+    staged.write_text("tok-abc\n", newline="\n")
+
+    res = subprocess.run([bash, str(script)], env={**os.environ, "HOME": str(home)},
+                         capture_output=True, text=True, timeout=60)
+    assert res.returncode != 0
+    assert "SYNTAX_FAIL_REVERTED" in res.stdout
+    assert not staged.exists()
+    # and the original script is back exactly as it was
+    assert (home / "run_scraper.sh").read_text() == "#!/bin/bash\nif then fi\n"

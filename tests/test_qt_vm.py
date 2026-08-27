@@ -212,3 +212,120 @@ def test_panel_seeds_times_from_saved_vm_schedule(qtbot, _cfg):
 def test_panel_seeds_defaults_when_nothing_saved(qtbot):
     panel = _panel(qtbot, _FakeTarget())
     assert panel._times() == ["10:00", "19:00"]
+
+
+# --- credentials section --------------------------------------------------
+# Setting the VM's API keys used to mean an ssh session and a hand-written sed.
+# These guard the two things that make the GUI version safe: the value never
+# reaches the argv or a popup, and it does not linger in the widget afterwards.
+
+def _secret_panel(qtbot, target=None, confirm=True, result=None, boom=None):
+    calls, notes = [], []
+
+    def setter(t, name, value):
+        if boom:
+            raise boom
+        calls.append((name, value))
+        return result if result is not None else types.SimpleNamespace(
+            returncode=0, stdout="SECRET_SET: " + name, stderr="")
+
+    panel = VMPanel(
+        runner=lambda cmd: types.SimpleNamespace(returncode=0, stdout="", stderr=""),
+        confirm=lambda title, msg: confirm,
+        notify=lambda title, msg: notes.append((title, msg)),
+        target_factory=lambda: target or _FakeTarget(),
+        secret_setter=setter,
+    )
+    qtbot.addWidget(panel)
+    panel._calls, panel._notes = calls, notes
+    return panel
+
+
+def _choose(panel, name):
+    idx = panel.secret_name.findData(name)
+    assert idx >= 0, f"{name} missing from the credential picker"
+    panel.secret_name.setCurrentIndex(idx)
+
+
+def test_credential_picker_offers_the_managed_secrets(qtbot):
+    panel = _secret_panel(qtbot)
+    offered = {panel.secret_name.itemData(i) for i in range(panel.secret_name.count())}
+    assert offered == set(vm_sync.MANAGED_SECRETS)
+
+
+def test_secret_field_is_masked(qtbot):
+    """A shoulder-surfable token field is the whole reason this is a password box."""
+    from PySide6 import QtWidgets
+    panel = _secret_panel(qtbot)
+    assert panel.secret_value.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
+
+
+def test_set_secret_passes_the_value_to_the_setter(qtbot):
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    assert panel._calls == [("BRIGHT_DATA_API_TOKEN", "tok-abc123")]
+
+
+def test_set_secret_clears_the_field_after_success(qtbot):
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    assert panel.secret_value.text() == ""
+
+
+def test_set_secret_keeps_the_field_after_a_failure(qtbot):
+    """So a typo or a dropped connection doesn't force a full re-paste."""
+    panel = _secret_panel(qtbot, result=types.SimpleNamespace(
+        returncode=1, stdout="", stderr="ssh: connect failed"))
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    assert panel.secret_value.text() == "tok-abc123"
+
+
+def test_set_secret_NEVER_shows_the_value_in_a_popup(qtbot):
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    assert panel._notes, "expected a confirmation popup"
+    for _title, msg in panel._notes:
+        assert "tok-abc123" not in msg
+
+
+def test_set_secret_refuses_an_empty_value(qtbot):
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("   ")
+    panel.set_secret()
+    assert panel._calls == []
+
+
+def test_set_secret_refuses_a_shell_unsafe_value(qtbot):
+    """The secrets file is sourced by bash; `$(...)` in it would execute."""
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("$(rm -rf ~)")
+    panel.set_secret()
+    assert panel._calls == []
+    assert panel._notes and "letters" in panel._notes[-1][1]
+
+
+def test_set_secret_does_nothing_when_the_confirm_is_declined(qtbot):
+    panel = _secret_panel(qtbot, confirm=False)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    assert panel._calls == []
+    assert panel.secret_value.text() == "tok-abc123"
+
+
+def test_set_secret_requires_a_configured_vm(qtbot):
+    panel = _secret_panel(qtbot, target=_FakeTarget(configured=False))
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    assert panel._calls == []

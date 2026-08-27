@@ -28,7 +28,8 @@ MAX_TIMES = vm_schedule.MAX_TIMES_PER_DAY
 class VMPanel(QtWidgets.QWidget):
     def __init__(self, targets: dict | None = None, runner: Callable | None = None,
                  confirm: Callable | None = None, notify: Callable | None = None,
-                 target_factory: Callable | None = None, parent=None):
+                 target_factory: Callable | None = None,
+                 secret_setter: Callable | None = None, parent=None):
         super().__init__(parent)
         self.targets = targets
         self._runner = runner or vm_sync.run_cmd
@@ -38,6 +39,9 @@ class VMPanel(QtWidgets.QWidget):
         self._notify = notify or (
             lambda title, msg: QtWidgets.QMessageBox.information(self, title, msg))
         self._target_factory = target_factory or (lambda: vm_sync.VMTarget.from_env(self.targets))
+        # Separate from `_runner` on purpose: credentials travel over the ssh
+        # stdin pipe, never the argv the generic runner builds.
+        self._secret_setter = secret_setter or vm_sync.set_vm_secret
 
         self.time_combos: list[QtWidgets.QComboBox] = []
         self._build()
@@ -134,6 +138,37 @@ class VMPanel(QtWidgets.QWidget):
         prow.addWidget(resume_btn)
         prow.addStretch(1)
         v.addLayout(prow)
+
+        # --- credentials ---
+        # The VM's cron runs with a bare environment, so run_scraper.sh exports the
+        # API credentials itself. Before this section, rotating a dead token meant
+        # an ssh session and a hand-written sed; now it is a paste and a click.
+        cred_head = QtWidgets.QLabel("Credentials")
+        cred_head.setProperty("heading", True)
+        v.addWidget(cred_head)
+        cred_note = QtWidgets.QLabel(
+            "Rotate an API key on the VM without touching the command line. The key "
+            "is written to ~/scraper_secrets.env (readable only by your VM user), "
+            "run_scraper.sh is pointed at it, and nothing is stored on this machine.")
+        cred_note.setProperty("muted", True)
+        cred_note.setWordWrap(True)
+        v.addWidget(cred_note)
+        crow = QtWidgets.QHBoxLayout()
+        self.secret_name = QtWidgets.QComboBox()
+        self.secret_name.setAccessibleName("Credential to set")
+        for key, label in vm_sync.MANAGED_SECRETS.items():
+            self.secret_name.addItem(label, key)
+        self.secret_name.setMaximumWidth(190)
+        crow.addWidget(self.secret_name)
+        self.secret_value = QtWidgets.QLineEdit()
+        self.secret_value.setAccessibleName("Credential value")
+        self.secret_value.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.secret_value.setPlaceholderText("paste the key here")
+        crow.addWidget(self.secret_value, 1)
+        self.secret_btn = QtWidgets.QPushButton("Set on VM")
+        self.secret_btn.clicked.connect(self.set_secret)
+        crow.addWidget(self.secret_btn)
+        v.addLayout(crow)
 
         # --- push ---
         push_head = QtWidgets.QLabel("Push")
@@ -300,6 +335,64 @@ class VMPanel(QtWidgets.QWidget):
         if not self._confirm("Resume VM", "Remove the pause and resume the schedule?"):
             return
         self._run(t.resume_cmd())
+
+    def set_secret(self):
+        """Store the typed credential on the VM.
+
+        Deliberate choices, all covered by tests in test_qt_vm.py: the value is
+        never interpolated into a message (a popup echoing a token defeats the
+        masked field), the field is cleared only on success so a failed attempt
+        doesn't force a re-paste, and an unsafe value is rejected here rather
+        than escaped — the remote file is *sourced* by bash, so a `$(...)` in it
+        would execute on the VM.
+        """
+        name = self.secret_name.currentData()
+        label = self.secret_name.currentText()
+        value = self.secret_value.text().strip()
+        if not value:
+            self._notify("Credentials", f"Enter the {label} first.")
+            return
+        if not vm_sync.valid_secret_value(value):
+            self._notify("Credentials",
+                         "That value can't be stored safely on the VM. Allowed: "
+                         "letters, digits and . _ - : , / + = (no spaces or quotes).\n\n"
+                         "If your key really contains other characters, set it over ssh "
+                         "instead.")
+            return
+        t = self._require_configured()
+        if not t:
+            return
+        if not self._confirm("Set credential",
+                             f"Write the {label} to the VM's ~/scraper_secrets.env "
+                             f"and point run_scraper.sh at it?\n\n"
+                             f"The value is not shown here and is not saved on this "
+                             f"machine."):
+            return
+        self.secret_btn.setEnabled(False)
+        self.secret_btn.setText("Setting...")
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        QtWidgets.QApplication.processEvents()   # paint the busy state before we block
+        try:
+            res = self._secret_setter(t, name, value)
+        except Exception as exc:  # noqa: BLE001
+            self._notify("Credentials", f"Could not set the {label}: {exc}")
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            self.secret_btn.setText("Set on VM")
+            self.secret_btn.setEnabled(True)
+        if res is None:
+            self._notify("Credentials", "No VM configured.")
+            return
+        out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()
+        ok = getattr(res, "returncode", 0) == 0
+        if ok:
+            self.secret_value.clear()
+            self._notify("Credentials",
+                         f"{label} set on the VM.\n\n{out[:800]}\n\n"
+                         "If the VM is paused, use Resume now to let the schedule run.")
+        else:
+            self._notify("Credentials", f"Failed to set the {label}.\n\n{out[:800]}")
 
     def push_config(self, skip_confirm: bool = False):
         t = self._require_configured()

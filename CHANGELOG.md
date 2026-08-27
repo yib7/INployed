@@ -6,6 +6,30 @@ All notable changes to INployed are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Rotate the VM's API keys from the dashboard.** Settings, VM section, new Credentials row:
+  pick Bright Data token or Gemini API keys, paste into a masked field, click Set on VM. Until
+  now the VM's credentials lived as inline `export` lines in `~/run_scraper.sh`, so replacing a
+  dead token meant an ssh session and a hand-written `sed`. The key is written to a
+  `chmod 600 ~/scraper_secrets.env`, `run_scraper.sh` is pointed at it by a marker block
+  inserted after the shebang, and any older inline export of the same variable is commented
+  out. That last step matters, because an inline export sits after the source line and would
+  otherwise keep the dead value in force and make the change look like it did nothing. The
+  script is backed up first and restored if `bash -n` rejects the result, so a bad edit cannot
+  leave the VM with an unparseable cron script, and setting the same key twice replaces rather
+  than appends.
+
+  The value never touches the argv. Both obvious channels were measured against a live VM and
+  both leak or fail: gcloud copies the whole `--command` string verbatim into its own plaintext
+  debug log under `gcloud/logs/`, where a token would persist indefinitely, and on Windows
+  gcloud shells out to PuTTY's `plink.exe`, which consumes stdin for its own prompts, so a
+  piped value arrives mangled (a probe sending `probe-value` reached the far end as the single
+  byte `y`). The key therefore rides an `scp` of a mode-600 temp file, which gcloud logs by path
+  but never by content; the temp directory is removed in a `finally`, and the staged file on the
+  VM is deleted by an `EXIT` trap that fires on failure too. Values are restricted to letters,
+  digits and `. _ - : , / + =` because the secrets file is sourced by bash, where a `$` or a
+  backtick would otherwise be interpolated on the VM.
+
 ### Fixed
 - **Finding new jobs collected nothing and reported success.** The exclude list
   (`jobs_to_not_include`) is copied into every search input, and Bright Data expands each

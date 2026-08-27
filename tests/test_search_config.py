@@ -108,3 +108,42 @@ def test_trigger_url_cannot_carry_an_injected_query_parameter(monkeypatch):
     asyncio.run(scraper.trigger(_Session(), {}, "100&limit=5000"))
     assert "&limit=5000" not in seen["url"]
     assert f"limit_per_input={scraper.LIMIT_PER_INPUT}" in seen["url"]
+
+
+# --- exclude_window_days ------------------------------------------------------
+# The dashboard's Settings tab writes exclude_window_days into search_config.json,
+# but scraper.exclude_window_days() only ever read the EXCLUDE_WINDOW_DAYS env var,
+# so a user-set window was silently ignored and every run fell back to the 90-day
+# default. That kept the whole master in jobs_to_not_include and grew the trigger
+# POST until Bright Data rejected it (2026-08-26).
+
+def test_exclude_window_days_honours_search_config(monkeypatch, tmp_path):
+    monkeypatch.delenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, raising=False)
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"exclude_window_days": 14})
+    assert scraper.exclude_window_days() == 14
+
+
+def test_exclude_window_days_env_var_still_wins(monkeypatch, tmp_path):
+    """env > file > default, matching every other override in this module."""
+    monkeypatch.setenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, "30")
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"exclude_window_days": 14})
+    assert scraper.exclude_window_days() == 30
+
+
+def test_exclude_window_days_falls_back_to_the_default(monkeypatch, tmp_path):
+    """The VM runs with no config file and no env var — behaviour must not change."""
+    monkeypatch.delenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, raising=False)
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    assert scraper.exclude_window_days() == scraper.DEFAULT_EXCLUDE_WINDOW_DAYS
+
+
+def test_junk_exclude_window_in_config_falls_back(monkeypatch, tmp_path):
+    """A hand-edited file must not be able to zero the window: a 0/negative/garbage
+    value would empty the exclude set and re-bill every posting."""
+    monkeypatch.delenv(scraper.EXCLUDE_WINDOW_DAYS_ENV, raising=False)
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    for bad in ("banana", 0, -5, None):
+        _write_config(tmp_path, {"exclude_window_days": bad})
+        assert scraper.exclude_window_days() == scraper.DEFAULT_EXCLUDE_WINDOW_DAYS

@@ -7,6 +7,31 @@ All notable changes to INployed are recorded here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Finding new jobs collected nothing and reported success.** The exclude list
+  (`jobs_to_not_include`) is copied into every search input, and Bright Data expands each
+  input into up to `limit_per_input` child inputs that each carry another copy. Once the list
+  had grown to the whole master (2,679 ids, 34.9 KB of a 35,080-byte input) every child was
+  rejected with `child_input_size_validation`. The snapshot still completed "ready" with zero
+  records, so the run printed "No new jobs returned this run" and exited 0, which is why this
+  looked like a quiet day rather than a failure. Three things let the list grow without bound
+  and all three are fixed. `exclude_window_days` written into `search_config.json` by the
+  Settings tab was never read back, so a user-set window was ignored and every run used the
+  90-day default; resolution is now env, then file, then default. The dashboard's VM push
+  wrote its id dump to the very file the local scraper reads as "ids from another machine",
+  where it was unioned back in without windowing, so the set could only ratchet upward; that
+  artifact is now staged in `outbox/` instead. And `build_inputs` now caps the array against a
+  byte budget sized from `limit_per_input`, keeping the most recent ids, which is the bound
+  that holds whatever the configuration says.
+- **A valid-looking Bright Data key failed every run with "Invalid credentials".** A token can
+  read the dataset catalog and the snapshot history and still lack permission to start a
+  billed collection, and the API reports that refusal as an auth failure. The trigger error now
+  says so and points at the token permissions page, and a free `/status` probe runs ahead of
+  the billed POST so a dead token costs nothing. The probe ignores `can_make_requests` and
+  `auth_fail_reason` on purpose: those describe proxy zones, and an account that only uses the
+  Web Scraper API reports `false` and `zone_not_found` permanently while collecting normally.
+- **A failed pipeline run named a flag value instead of the script.** The error dialog took the
+  last argument of the command, so a bounded scrape ending in `--limit 5` opened with
+  "5 failed (exit 1)". It now finds the `.py` in the command.
 - **Repo links in the résumé pointed at a mangled address.** The Projects section built its
   `\href` target with the escaper meant for printed text, so a repo path containing `_` or `~`
   shipped a link with a literal backslash in it and did not resolve. URLs now go through
@@ -14,6 +39,8 @@ All notable changes to INployed are recorded here. The format follows
   anything outside printable ASCII.
 
 ### Added
+- **Check setup now tests the Bright Data token**, off the UI thread so the window stays
+  responsive, without starting or billing a run.
 - `INPLOYED_NO_DOTENV=1` makes `pipeline/scraper.py` and `pipeline/score_jobs.py` skip `.env`.
   Both load it at import, so unsetting a key in the shell never disarmed them, and checking what
   either does without credentials meant billing a real run to find out.

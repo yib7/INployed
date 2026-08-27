@@ -4,8 +4,12 @@ verification run can't fire thousands of billed Bright Data collections.
 Importing `scraper` at module scope (below) is also the regression guard for the
 credential check: it must be deferred to run time, not fire at import, so the
 module stays importable on a clean machine with no Bright Data creds."""
+import asyncio
 import json
 import os
+import urllib.error
+
+import aiohttp
 
 import pandas as pd
 import pytest
@@ -138,6 +142,9 @@ def test_exclude_window_days_env_override_changes_cutoff(monkeypatch, tmp_path):
     # A 30-day-old id is inside the default 90-day window (kept) but outside a
     # 10-day override window (dropped) -- proving the env var moves the cutoff.
     monkeypatch.setattr(scraper, "MASTER_CSV", _dated_master(tmp_path, [("mid", _days_ago(30))]))
+    # exclude_window_days() falls through to search_config.json when the env var is
+    # unset, so point OUTPUT_DIR at an empty tmp_path or the repo's own config leaks in.
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
 
     monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
     assert set(scraper._master_ids()) == {"mid"}          # default 90 -> kept
@@ -146,16 +153,18 @@ def test_exclude_window_days_env_override_changes_cutoff(monkeypatch, tmp_path):
     assert scraper._master_ids() == []                    # window 10 -> dropped
 
 
-def test_exclude_window_days_default_and_env(monkeypatch):
+def test_exclude_window_days_default_and_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)   # no search_config.json here
     monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
     assert scraper.exclude_window_days() == 90            # default
     monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", "30")
     assert scraper.exclude_window_days() == 30            # honored
 
 
-def test_exclude_window_days_invalid_falls_back_to_default(monkeypatch):
+def test_exclude_window_days_invalid_falls_back_to_default(monkeypatch, tmp_path):
     # A garbage / non-positive value must never empty the window (that would re-bill
     # every posting) -- it falls back to the safe default instead.
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)   # no search_config.json here
     for bad in ("banana", "0", "-5", ""):
         monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", bad)
         assert scraper.exclude_window_days() == 90
@@ -404,3 +413,227 @@ def test_load_previous_ids_valid_list_happy_path_unchanged(monkeypatch, tmp_path
     ids_path.write_text(json.dumps(["a", "b", "c"]), encoding="utf-8")
     monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", ids_path)
     assert scraper.load_previous_ids() == ["a", "b", "c"]
+
+
+# --- preflight: catch a DEAD token, and nothing else --------------------------
+#
+# Hard-won: /status reports PROXY capability. This account has scraped for months
+# while reporting can_make_requests=false / zone_not_found, because it only uses the
+# Web Scraper (datasets/v3) API and owns no proxy zones. An earlier version of this
+# preflight aborted on that field and would have blocked every run forever. These
+# tests pin the rule: only an outright 401/403 (token dead) may stop a run.
+
+class _StatusResp:
+    def __init__(self, status=200, body="{}"):
+        self.status = status
+        self._body = body
+
+    async def text(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+class _StatusSession:
+    def __init__(self, resp=None, get_exc=None):
+        self._resp = resp
+        self._get_exc = get_exc
+
+    def get(self, url, timeout=None):
+        if self._get_exc is not None:
+            raise self._get_exc
+        return self._resp
+
+
+def test_preflight_blocks_a_dead_token():
+    for code in (401, 403):
+        session = _StatusSession(_StatusResp(code, "Invalid credentials"))
+        with pytest.raises(RuntimeError) as excinfo:
+            asyncio.run(scraper.preflight(session))
+        msg = str(excinfo.value)
+        assert "rejected the API token" in msg
+        assert "brightdata.com/cp/setting/users" in msg
+
+
+def test_preflight_ignores_proxy_zone_fields():
+    """THE regression guard. can_make_requests=false / zone_not_found is the normal,
+    permanent state of a datasets-only account -- gating on it blocks every run."""
+    session = _StatusSession(_StatusResp(200, json.dumps(
+        {"status": "active", "customer": "hl_42ba1ee2",
+         "can_make_requests": False, "auth_fail_reason": "zone_not_found"})))
+    asyncio.run(scraper.preflight(session))       # must NOT raise
+
+
+def test_preflight_fails_open_when_probe_is_unreachable():
+    for get_exc in (asyncio.TimeoutError(), aiohttp.ClientError("connection reset")):
+        asyncio.run(scraper.preflight(_StatusSession(get_exc=get_exc)))
+
+
+def test_preflight_fails_open_on_server_error():
+    asyncio.run(scraper.preflight(_StatusSession(_StatusResp(500, "boom"))))
+
+
+def _trigger_session(status, body):
+    class _Resp:
+        async def text(self):
+            return body
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    _Resp.status = status
+
+    class _Session:
+        def post(self, url, json=None):
+            return _Resp()
+
+    return _Session()
+
+
+def test_trigger_401_explains_the_permission_trap():
+    """The real 2026-08-26 failure: a replacement token that reads fine but is
+    refused permission to start a collection, reported as 'Invalid credentials'."""
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(scraper.trigger(_trigger_session(401, "Invalid credentials"), {}))
+    msg = str(excinfo.value)
+    assert "Trigger failed 401" in msg                      # raw API detail kept
+    assert "brightdata.com/cp/setting/users" in msg         # plus what it means
+    assert "read-only" in msg
+
+
+def test_trigger_non_auth_error_stays_unannotated():
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(scraper.trigger(_trigger_session(500, "upstream boom"), {}))
+    msg = str(excinfo.value)
+    assert "Trigger failed 500" in msg
+    assert "read-only" not in msg
+
+
+# --- account_problems(): same rule, for the dashboard's Check setup button -----
+
+def _fake_urlopen(monkeypatch, status=200, calls=None):
+    class _Resp:
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _open(req, timeout=None):
+        if calls is not None:
+            calls.append(req)
+        if status >= 400:
+            raise urllib.error.HTTPError(scraper.STATUS_URL, status, "err", {}, None)
+        return _Resp()
+
+    monkeypatch.setattr(scraper.urllib.request, "urlopen", _open)
+
+
+def test_account_problems_reports_a_dead_token(monkeypatch):
+    monkeypatch.setattr(scraper, "API_TOKEN", "tok")
+    monkeypatch.setattr(scraper, "DATASET_ID", "ds")
+    _fake_urlopen(monkeypatch, 401)
+    problems = scraper.account_problems()
+    assert len(problems) == 1
+    assert "rejected the API token" in problems[0]
+
+
+def test_account_problems_silent_for_a_datasets_only_account(monkeypatch):
+    # 200 with can_make_requests=false is HEALTHY here -- must report nothing.
+    monkeypatch.setattr(scraper, "API_TOKEN", "tok")
+    monkeypatch.setattr(scraper, "DATASET_ID", "ds")
+    _fake_urlopen(monkeypatch, 200)
+    assert scraper.account_problems() == []
+
+
+def test_account_problems_silent_when_probe_is_unreachable(monkeypatch):
+    monkeypatch.setattr(scraper, "API_TOKEN", "tok")
+    monkeypatch.setattr(scraper, "DATASET_ID", "ds")
+    _fake_urlopen(monkeypatch, 500)
+    monkeypatch.setattr(scraper.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+    assert scraper.account_problems() == []
+
+
+def test_account_problems_flags_missing_credentials_without_a_call(monkeypatch):
+    monkeypatch.setattr(scraper, "API_TOKEN", "")
+    monkeypatch.setattr(scraper, "DATASET_ID", "")
+    calls = []
+    _fake_urlopen(monkeypatch, 200, calls=calls)
+    problems = scraper.account_problems()
+    assert len(problems) == 1
+    assert "BRIGHT_DATA_API_TOKEN" in problems[0]
+    assert calls == []          # no credentials -> nothing to ask the API about
+
+
+# --- jobs_to_not_include payload cap -----------------------------------------
+# Bright Data expands one search input into up to `limit_per_input` CHILD inputs,
+# each carrying a verbatim copy of the parent's jobs_to_not_include. On 2026-08-26
+# a 2,679-id exclude set (34.9 KB per input) passed at limit_per_input=1 and was
+# rejected on 100% of inputs at limit_per_input=150 with `child_input_size_validation`
+# -- 0 rows collected, no error raised, the run just looked like "no new jobs".
+# These tests pin the bound that makes that unreachable.
+
+def test_exclude_ids_are_capped_so_bright_data_accepts_the_input():
+    """THE regression guard for the 2026-08-26 silent-zero-rows outage."""
+    huge = [str(4_400_000_000 + n) for n in range(5_000)]
+    inputs = scraper.build_inputs(huge, max_keywords=1, limit_per_input=150)
+    for i in inputs:
+        kept = i["jobs_to_not_include"]
+        assert len(kept) < len(huge), "exclude set was not capped at all"
+        budget = scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+        assert len(json.dumps(kept)) * 150 <= budget, (
+            f"{len(kept)} ids x 150 children exceeds the {budget}-byte budget")
+
+
+def test_exclude_cap_scales_with_the_per_input_limit():
+    """A bigger fan-out means each id is paid for more times, so fewer ids fit."""
+    huge = [str(4_400_000_000 + n) for n in range(5_000)]
+    few = scraper.build_inputs(huge, max_keywords=1, limit_per_input=200)
+    many = scraper.build_inputs(huge, max_keywords=1, limit_per_input=10)
+    assert len(few[0]["jobs_to_not_include"]) < len(many[0]["jobs_to_not_include"])
+
+
+def test_exclude_cap_keeps_the_NEWEST_ids():
+    """Order matters: load_exclude_ids() returns oldest-first, and only a recently
+    scraped posting can resurface in a time_range='Past 24 hours' search. Dropping
+    the tail instead of the head would keep exactly the ids that cannot recur."""
+    ids = [str(4_400_000_000 + n) for n in range(5_000)]
+    kept = scraper.build_inputs(ids, max_keywords=1, limit_per_input=150)[0]["jobs_to_not_include"]
+    assert kept == ids[-len(kept):]
+    assert ids[-1] in kept
+
+
+def test_small_exclude_set_is_passed_through_untouched():
+    """The cap is a backstop, not a trim: under budget nothing is dropped, or the
+    scraper would re-collect (and re-bill) jobs it already has."""
+    ids = [str(4_400_000_000 + n) for n in range(40)]
+    inputs = scraper.build_inputs(ids, max_keywords=1, limit_per_input=150)
+    assert all(i["jobs_to_not_include"] == ids for i in inputs)
+
+
+def test_exclude_cap_never_empties_the_set():
+    """Even an absurd limit_per_input must leave a floor of recent ids: an empty
+    exclusion re-collects everything and bills for all of it."""
+    ids = [str(4_400_000_000 + n) for n in range(5_000)]
+    kept = scraper.build_inputs(ids, max_keywords=1,
+                                limit_per_input=10_000)[0]["jobs_to_not_include"]
+    assert len(kept) >= scraper.MIN_EXCLUDE_IDS
+
+
+def test_build_inputs_defaults_the_limit_from_config(monkeypatch, tmp_path):
+    """main() may not thread limit_per_input through; the cap must still apply."""
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    huge = [str(4_400_000_000 + n) for n in range(5_000)]
+    kept = scraper.build_inputs(huge, max_keywords=1)[0]["jobs_to_not_include"]
+    assert len(kept) < len(huge)

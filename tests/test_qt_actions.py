@@ -843,6 +843,13 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     # Stub critical too: a regression must FAIL the assert below, never hang on a modal.
     monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
                         staticmethod(lambda *a, **k: shown.setdefault("critical", True)))
+    # Check setup now probes the job-data account on a worker thread. Drive it
+    # synchronously and stub the probe: this test is about the ENGINE warnings, and
+    # a real Bright Data call would make the suite non-hermetic.
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None:
+                        (on_done(fn()) if on_done else fn()))
+    monkeypatch.setattr(w, "_bright_data_problems", lambda: [])
     w._check_setup()
     assert shown.get("info")
     assert "critical" not in shown
@@ -870,6 +877,13 @@ def test_check_setup_honors_env_provider_override(qtbot, monkeypatch):
                         staticmethod(lambda *a, **k: captured.setdefault("msg", a[2])))
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         staticmethod(lambda *a, **k: captured.setdefault("info", True)))
+    # Check setup now probes the job-data account on a worker thread. Drive it
+    # synchronously and stub the probe: this test is about the ENGINE warnings, and
+    # a real Bright Data call would make the suite non-hermetic.
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None:
+                        (on_done(fn()) if on_done else fn()))
+    monkeypatch.setattr(w, "_bright_data_problems", lambda: [])
     w._check_setup()
     assert "info" not in captured                     # a problem WAS surfaced
     assert "Resume tailor provider is 'claude'" in captured["msg"]
@@ -965,7 +979,7 @@ def test_push_seen_ids_to_vm_pushes_when_configured(monkeypatch, tmp_path):
     monkeypatch.setattr(vm_sync.VMTarget, "from_env",
                         classmethod(lambda cls, targets=None: cfg))
     path = tmp_path / "external_exclude_ids.json"
-    monkeypatch.setattr(scraper, "write_external_exclude_ids", lambda: path)
+    monkeypatch.setattr(scraper, "write_external_exclude_ids", lambda p=None: path)
     seen = {}
 
     def _sync(target, p):
@@ -977,6 +991,32 @@ def test_push_seen_ids_to_vm_pushes_when_configured(monkeypatch, tmp_path):
     MainWindow._push_seen_ids_to_vm(log)
     assert seen["p"] == path
     assert any("OK" in s for s in logs)
+
+
+def test_push_seen_ids_writes_to_outbox_not_the_scrapers_read_path(monkeypatch, tmp_path):
+    """THE ratchet guard for the 2026-08-26 silent-zero-rows outage.
+
+    write_external_exclude_ids() dumps load_exclude_ids(), and load_exclude_ids()
+    reads EXTERNAL_EXCLUDE_FILE straight back in WITHOUT windowing it. Aim the push
+    at that path and every local scrape permanently re-excludes everything it has
+    ever seen: the array grows monotonically until Bright Data rejects every input
+    with child_input_size_validation and the run collects nothing while exiting 0.
+    Nothing pushes this file TO this host, so it must be staged, not published."""
+    import pathlib
+    import scraper
+    import vm_sync
+    cfg = vm_sync.VMTarget(instance="vm", zone="z", user="u")
+    monkeypatch.setattr(vm_sync.VMTarget, "from_env",
+                        classmethod(lambda cls, targets=None: cfg))
+    written = {}
+    monkeypatch.setattr(scraper, "write_external_exclude_ids",
+                        lambda p=None: written.setdefault("p", pathlib.Path(p)))
+    monkeypatch.setattr(vm_sync, "sync_exclude_ids_to_vm", lambda target, p:
+                        types.SimpleNamespace(returncode=0, stdout="", stderr=""))
+    logs, log = _capture_log()
+    MainWindow._push_seen_ids_to_vm(log)
+    assert written["p"] != scraper.EXTERNAL_EXCLUDE_FILE
+    assert written["p"].parent.name == "outbox"
 
 
 # ── recovery: score run CSVs an interrupted scrape left behind ─────────────────
@@ -1050,3 +1090,50 @@ def test_push_seen_ids_to_vm_swallows_errors(monkeypatch):
     logs, log = _capture_log()
     MainWindow._push_seen_ids_to_vm(log)        # must NOT raise
     assert any("scrape unaffected" in s for s in logs)
+
+
+def test_check_setup_surfaces_a_dead_job_data_token(qtbot, monkeypatch):
+    """A rejected Bright Data token must show up in Check setup, so the user can find
+    it without starting (and paying for) a run that would only fail."""
+    w = _win(qtbot)
+    from resume_tailor import master_validate
+    monkeypatch.setattr(master_validate, "check_setup", lambda: {"master": [], "answers": []})
+    monkeypatch.setattr(mw.jobsdata, "_load_cfg", lambda: {"gemini_auth": "vertex"})
+    monkeypatch.setattr(mw.settings, "load", lambda: {})
+    monkeypatch.setattr(mw.settings, "secret_status", lambda: {})
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
+    monkeypatch.delenv("SCORE_PROVIDER", raising=False)
+    monkeypatch.setattr(mw.workers, "run_async",
+                        lambda owner, fn, on_done=None, on_error=None:
+                        (on_done(fn()) if on_done else fn()))
+    monkeypatch.setattr(w, "_bright_data_problems",
+                        lambda: ["[Job data] Bright Data rejected the API token (401)."])
+    captured = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: captured.setdefault("msg", a[2])))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: captured.setdefault("info", True)))
+    w._check_setup()
+    assert "info" not in captured                     # a problem WAS surfaced
+    assert "rejected the API token" in captured["msg"]
+
+
+def test_check_setup_probe_never_invents_a_problem(qtbot, monkeypatch):
+    """_bright_data_problems runs on a worker thread and must swallow anything that
+    goes wrong reaching the probe -- Check setup reports only what it observed."""
+    w = _win(qtbot)
+    import scraper
+    monkeypatch.setattr(scraper, "account_problems",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("probe blew up")))
+    assert w._bright_data_problems() == []
+
+
+def test_pipeline_error_names_the_script_not_a_flag_value(qtbot):
+    """A bounded scrape command ends with "--limit 5", so the failure dialog opened
+    with "5 failed (exit 1)". It must name the script that actually failed."""
+    w = _win(qtbot)
+    assert w._cmd_label(w.scraper_cmd(True)) == "scraper.py"     # bounded: ends in "5"
+    assert w._cmd_label(w.scraper_cmd(False)) == "scraper.py"
+    assert w._cmd_label(w.scorer_cmd()) == "score_jobs.py"
+    assert w._cmd_label([]) == "command"                          # never IndexError

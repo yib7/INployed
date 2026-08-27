@@ -3,7 +3,9 @@ import json
 import os
 import sys
 import tempfile
+import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -87,6 +89,33 @@ EXTRA_MASTER_ENV = "LINKEDIN_EXTRA_MASTER"
 EXCLUDE_WINDOW_DAYS_ENV = "EXCLUDE_WINDOW_DAYS"
 DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 
+# Hard bound on the exclusion array, and the backstop the window above is NOT.
+#
+# Bright Data expands ONE search input into up to `limit_per_input` CHILD inputs,
+# and every child carries a verbatim copy of the parent's fields -- including
+# jobs_to_not_include. The exclusion array is therefore paid for once per CHILD,
+# not once per search, so its cost scales as len(ids) x limit_per_input. Past a
+# threshold Bright Data rejects every child with `child_input_size_validation`:
+# the collection completes "ready" with 0 records, so the run reports "No new jobs
+# returned this run" and exits 0. Nothing raises. The pipeline looks healthy and
+# silently collects nothing, which is how this went unnoticed for weeks.
+#
+# Measured 2026-08-26 against dataset gd_exampledataset0001: 2,679 ids = 34.9 KB per
+# input. At limit_per_input=1 that collected fine; at limit_per_input=150 it failed
+# on 100% of inputs (2 of 2, then 40 of 40). Bright Data does not publish the
+# threshold, so budget well under where it was observed to break.
+#
+# Windowing alone cannot hold this: at ~500 postings/day even a 14-day window is
+# ~7,000 ids. The cap is what actually bounds the request, and it is deliberately
+# tighter than "everything we know" -- the search is time_range="Past 24 hours", so
+# only a recently scraped posting can resurface and older ids are pure payload.
+# Re-collecting a few duplicates costs a little; a rejected collection costs the
+# entire run and still burns the trigger.
+MAX_EXCLUDE_PAYLOAD_BYTES = 500_000
+BYTES_PER_EXCLUDE_ID = 14      # '"4444097977", ' -- aiohttp's json.dumps keeps the space
+MIN_EXCLUDE_IDS = 50           # never exclude nothing: that re-bills every posting
+MAX_EXCLUDE_IDS = 1500         # ~19 KB, the ceiling however small limit_per_input is
+
 # Spammy aggregator companies to drop entirely — from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
 # Add more names here as needed. The dashboard's right-click "Block company"
@@ -116,6 +145,30 @@ HEADERS = {
     "Authorization": f"Bearer {API_TOKEN}",
     "Content-Type": "application/json",
 }
+
+# Free, unbilled token probe. NOTE: /status reports PROXY capability, so an account
+# that only uses the Web Scraper (datasets/v3) API sits at can_make_requests=false /
+# zone_not_found forever, even while collections run perfectly. Never gate a run on
+# those fields — this account has scraped for months with zero zones. Only a 401/403
+# from /status means anything here, and it means the token itself is dead.
+STATUS_URL = "https://api.brightdata.com/status"
+PREFLIGHT_TIMEOUT = 15
+
+# Bright Data answers the billed scrape POST with a bare "401: Invalid credentials"
+# for a token that authenticates fine but lacks permission to START a collection.
+# Read calls (dataset catalog, snapshot list) keep returning 200, so the token looks
+# healthy while every run dies. Replacing a key without matching the old one's
+# permissions lands here, and the raw message sends you hunting for a typo instead.
+# Pure ASCII on purpose: this text is printed to the Windows console and tailed into
+# the dashboard's crash dialog, where a non-ASCII dash comes out as a replacement
+# character. A message whose only job is to be readable at 2am must not be mojibake.
+TOKEN_HINT = (
+    "A Bright Data token that can READ (catalog, snapshots) can still be refused "
+    "permission to START a billed collection, and the API reports that as 'Invalid "
+    "credentials'. If you recently replaced your API key, issue one with full "
+    "permissions -- not read-only -- at https://brightdata.com/cp/setting/users, "
+    "then put it in .env as BRIGHT_DATA_API_TOKEN."
+)
 
 KEYWORDS = [
     '"Data Scientist"',
@@ -198,6 +251,8 @@ def load_search_config() -> dict:
         "time_range": raw.get("time_range", BASE_FILTERS["time_range"]),
         "job_type": raw.get("job_type", BASE_FILTERS["job_type"]),
         "experience_level": raw.get("experience_level", BASE_FILTERS["experience_level"]),
+        "exclude_window_days": _positive_int(raw.get("exclude_window_days"),
+                                             DEFAULT_EXCLUDE_WINDOW_DAYS),
     }
 
 
@@ -218,8 +273,14 @@ def load_previous_ids() -> list[str]:
 
 
 def exclude_window_days() -> int:
-    """Recency window (in days) for pruning the exclude-id set; default
-    DEFAULT_EXCLUDE_WINDOW_DAYS, overridable via the EXCLUDE_WINDOW_DAYS env var.
+    """Recency window (in days) for pruning the exclude-id set.
+
+    Resolution order is env > search_config.json > DEFAULT_EXCLUDE_WINDOW_DAYS,
+    matching every other override in this module. The file leg was missing until
+    2026-08-26: the dashboard's Settings tab has always written
+    `exclude_window_days` into search_config.json, but nothing read it back, so a
+    user who set 14 still got the 90-day default and shipped their whole master in
+    every trigger POST.
 
     A missing, non-integer, or non-positive value falls back to the default: 0 or a
     negative window would empty the exclude set and re-collect (and re-bill) every
@@ -227,7 +288,8 @@ def exclude_window_days() -> int:
     safe default rather than an empty window."""
     raw = os.environ.get(EXCLUDE_WINDOW_DAYS_ENV, "").strip()
     if not raw:
-        return DEFAULT_EXCLUDE_WINDOW_DAYS
+        # _positive_int() already collapses junk/0/negative to the default.
+        return load_search_config()["exclude_window_days"]
     try:
         val = int(raw)
     except ValueError:
@@ -503,7 +565,33 @@ def append_to_master(df: pd.DataFrame) -> int:
     return total
 
 
-def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> list[dict]:
+def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
+    """Trim `exclude_ids` to what Bright Data will actually accept in one input.
+
+    Each search input fans out to up to `limit_per_input` child inputs that each
+    carry a copy of this array, so the budget is spent len(ids) x limit_per_input
+    times over (see MAX_EXCLUDE_PAYLOAD_BYTES). Over budget, Bright Data rejects
+    every child with `child_input_size_validation` and the collection returns zero
+    rows without raising anything.
+
+    Keeps the NEWEST ids. load_exclude_ids() returns this host's master in append
+    order (oldest first) followed by ids pushed from other machines, so the tail is
+    the most recently collected — and with a time_range="Past 24 hours" search those
+    are the only ones that can resurface. Trimming the tail instead would keep
+    precisely the ids that cannot recur.
+    """
+    limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
+    budget = MAX_EXCLUDE_PAYLOAD_BYTES // (BYTES_PER_EXCLUDE_ID * limit)
+    keep = max(MIN_EXCLUDE_IDS, min(budget, MAX_EXCLUDE_IDS))
+    if len(exclude_ids) <= keep:
+        return exclude_ids
+    print(f"  exclude set capped: {len(exclude_ids)} -> {keep} most recent ids "
+          f"(limit_per_input={limit}; Bright Data rejects oversized inputs)")
+    return exclude_ids[-keep:]
+
+
+def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
+                 limit_per_input: int | None = None) -> list[dict]:
     """One search input per (keyword x remote type).
 
     Keywords, remote types, and the base filters come from load_search_config()
@@ -511,10 +599,18 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> lis
     `max_keywords` caps how many keywords are used (the first N) — a spend guard
     for verification runs so a single scrape can't fan out to every keyword.
     None (the default, used by the VM cron) keeps the full keyword list.
+
+    `limit_per_input` is the same value that goes into the trigger URL; it is taken
+    here only to size the jobs_to_not_include cap, which scales with the fan-out.
+    None falls back to the config value, so the cap applies even to a caller that
+    doesn't thread it through.
     """
     cfg = load_search_config()
     keywords = cfg["keywords"] if max_keywords is None else cfg["keywords"][:max_keywords]
     remote_types = cfg["remote_types"]
+    if limit_per_input is None:
+        limit_per_input = cfg["limit_per_input"]
+    exclude_ids = cap_exclude_ids(exclude_ids, limit_per_input)
     base_filters = {
         "location": cfg["location"],
         "country": cfg["country"],
@@ -528,6 +624,63 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None) -> lis
         for kw in keywords
         for remote in remote_types
     ]
+
+
+async def preflight(session: aiohttp.ClientSession) -> None:
+    """Refuse to spend when the Bright Data account can't run a collection.
+
+    One free GET to /status ahead of the billed trigger POST it guards, so a dead
+    account fails in a second with a message naming the cause instead of a false
+    "Invalid credentials" charged against a valid token.
+
+    FAIL OPEN: only an outright 401/403 (the token is dead or revoked) aborts the
+    run. A timeout, a 5xx or anything else prints a warning and continues. This
+    script runs unattended on the VM cron, and a probe that is itself unavailable
+    must never become the reason a working scrape doesn't happen.
+
+    Deliberately does NOT read `can_make_requests` / `auth_fail_reason`: those
+    describe PROXY zones, and this account has run collections for months while
+    reporting can_make_requests=false. Gating on them blocks every run forever.
+    """
+    try:
+        async with session.get(
+            STATUS_URL, timeout=aiohttp.ClientTimeout(total=PREFLIGHT_TIMEOUT)
+        ) as resp:
+            status = resp.status
+            body = (await resp.text())[:200]
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        print(f"  preflight skipped (token check unavailable: {e})")
+        return
+    if status in (401, 403):
+        raise RuntimeError(
+            f"Bright Data rejected the API token ({status}: {body}).\n{TOKEN_HINT}")
+
+
+def account_problems(timeout: int = PREFLIGHT_TIMEOUT) -> list[str]:
+    """Sync mirror of preflight() for the dashboard's Check setup button.
+
+    Returns human-readable problems (empty when the token is fine) so the user can
+    test their Bright Data setup without starting — and paying for — a run. Never
+    raises and never bills. Fail-open like preflight(): a probe that can't reach
+    Bright Data reports nothing rather than inventing a problem, because "offline"
+    and "your token is dead" are not the same finding. Same rule as preflight():
+    `can_make_requests` is a proxy-zone field and must not be treated as a problem.
+    """
+    if not API_TOKEN or not DATASET_ID:
+        return ["Bright Data credentials are not set (BRIGHT_DATA_API_TOKEN / "
+                "BRIGHT_DATA_DATASET_ID), so finding new jobs can't run."]
+    req = urllib.request.Request(
+        STATUS_URL, headers={"Authorization": f"Bearer {API_TOKEN}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return [f"Bright Data rejected the API token ({e.code}). {TOKEN_HINT}"]
+        return []
+    except Exception:  # noqa: BLE001 — offline/blocked/5xx is not a setup problem
+        return []
+    return []
 
 
 async def trigger(session: aiohttp.ClientSession, payload: dict,
@@ -545,7 +698,10 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
     async with session.post(url, json=payload) as resp:
         if resp.status >= 400:
             body = await resp.text()
-            raise RuntimeError(f"Trigger failed {resp.status}: {body}")
+            # Backstop for when preflight failed open (probe down) but the account
+            # is the real problem: 401/403 here means the same thing it does there.
+            hint = f"\n{TOKEN_HINT}" if resp.status in (401, 403) else ""
+            raise RuntimeError(f"Trigger failed {resp.status}: {body}{hint}")
         return (await resp.json())["snapshot_id"]
 
 
@@ -649,9 +805,14 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         if snapshot_id is None:
             # Normal path: trigger a fresh (billed) collection and wait for it.
+            # Preflight first so a dead account costs nothing. The recovery path
+            # below is deliberately NOT gated: that snapshot is already paid for,
+            # and a fail-open probe must never block collecting what you own.
+            await preflight(session)
             exclude_ids = load_exclude_ids()
             print(f"Run: {run_label} | Excluding {len(exclude_ids)} already-scraped job IDs")
-            inputs = build_inputs(exclude_ids, max_keywords=max_keywords)
+            inputs = build_inputs(exclude_ids, max_keywords=max_keywords,
+                                  limit_per_input=limit_per_input)
             payload = {"input": inputs}
             n_keywords = len(cfg["keywords"])
             kw_used = n_keywords if max_keywords is None else min(max_keywords, n_keywords)

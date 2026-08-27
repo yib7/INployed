@@ -1393,6 +1393,18 @@ class MainWindow(QtWidgets.QMainWindow):
         return [_console_python(), "-u", "pipeline/score_jobs.py"]
 
     @staticmethod
+    def _cmd_label(cmd: list[str]) -> str:
+        """Name the script a failed command ran, for the error dialog.
+
+        cmd[-1] is only the script on an UNBOUNDED run; a bounded scrape ends with
+        "--limit 5", so the dialog used to open with "5 failed (exit 1)". Find the
+        .py instead and fall back to the old behaviour if there isn't one."""
+        for part in cmd:
+            if part.endswith(".py"):
+                return Path(part).name
+        return Path(cmd[-1]).name if cmd else "command"
+
+    @staticmethod
     def _scrape_log_path() -> Path:
         try:
             APPDATA.mkdir(parents=True, exist_ok=True)
@@ -1554,7 +1566,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if rc != 0:
                 tail = "".join(captured).strip().splitlines()[-15:]
                 raise RuntimeError(
-                    f"{Path(cmd[-1]).name} failed (exit {rc}).\n\n"
+                    f"{self._cmd_label(cmd)} failed (exit {rc}).\n\n"
                     + ("\n".join(tail) if tail else "(no output captured)")
                     + f"\n\nFull log: {log_path}")
 
@@ -1575,7 +1587,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 log.write("\n=== VM seen-id sync: no VM configured, skipped ===\n")
                 log.flush()
                 return
-            path = scraper.write_external_exclude_ids()
+            # Stage the push artifact in outbox/, NOT next to the scraper. The local
+            # scraper reads OUTPUT_DIR/external_exclude_ids.json as "ids collected on
+            # ANOTHER machine", so writing our own load_exclude_ids() there fed the
+            # file straight back into the next run's exclude set — and those ids are
+            # deliberately NOT windowed, so the exclusion array ratcheted up
+            # monotonically (the whole 2,679-row master by 2026-08-26) until Bright
+            # Data rejected every input with child_input_size_validation and the
+            # scrape silently collected nothing. vm_sync only ever pushes this file
+            # OUT (see push_exclude_ids_cmd), never pulls one in, so on this host it
+            # has no business being read at all. The remote filename is fixed by
+            # vm_sync.EXCLUDE_REMOTE_FILE, so the local name is free to move.
+            outbox_dir = repo / "outbox"
+            outbox_dir.mkdir(parents=True, exist_ok=True)
+            path = scraper.write_external_exclude_ids(
+                outbox_dir / "external_exclude_ids.json")
             log.write(f"\n=== VM seen-id sync: pushing {path.name} to VM ===\n")
             log.flush()
             res = vm_sync.sync_exclude_ids_to_vm(target, path)
@@ -2607,6 +2633,33 @@ class MainWindow(QtWidgets.QMainWindow):
                 tailor_provider, scoring_provider, cli_found))
         except Exception:  # noqa: BLE001
             pass
+        # Everything above is local file reads. The job-data check is a network
+        # call, so it goes to a worker thread — a blocking probe here would freeze
+        # the window, which is exactly the startup bug this dashboard already had.
+        self._set_status("Checking setup...")
+        workers.run_async(
+            self, self._bright_data_problems,
+            on_done=lambda extra: self._show_setup_result(problems + list(extra or [])),
+            on_error=lambda _exc: self._show_setup_result(problems))
+
+    @staticmethod
+    def _bright_data_problems() -> list[str]:
+        """Worker-thread half of Check setup: can the job-data account collect?
+
+        Free and unbilled, so the user can test Bright Data without starting a run.
+        Silent whenever it can't import or reach the probe — Check setup must never
+        report a problem it did not actually observe."""
+        try:
+            repo = Path(__file__).resolve().parents[2]
+            for _p in (str(repo / "pipeline"), str(repo / "local")):
+                if _p not in sys.path:
+                    sys.path.insert(0, _p)
+            import scraper
+            return [f"[Job data] {w}" for w in scraper.account_problems()]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _show_setup_result(self, problems: list[str]) -> None:
         if not problems:
             # The credential checks above read the FILE (settings.load /
             # secret_status), while the tailor and the scorer read this process's

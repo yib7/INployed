@@ -48,9 +48,16 @@ jobs:
   # Linux is a second platform on purpose, but a deliberately narrower one. The README
   # claims Linux for the headless pipeline scripts only -- that is what runs on the
   # production GCP VM -- and does not claim the Qt dashboard there. So this job runs
-  # ruff plus exactly the pipeline test files (scraper.py, score_jobs.py, vm_sync), and
-  # the platform claim gets evidence matching its own scope rather than a broader green
-  # nothing in the docs actually promises. None of these test files imports Qt.
+  # ruff plus the test files covering pipeline/, and the platform claim gets evidence
+  # matching its own scope rather than a broader green nothing in the docs actually
+  # promises. None of these test files imports Qt.
+  #
+  # The rule for this list: a test file belongs here if it covers a module under
+  # pipeline/ (or a script the VM runs) and does not import Qt. Two Qt-free files are
+  # left out on purpose, so their absence does not read as an oversight:
+  # tests/test_pipeline_dotenv_optout.py skips itself without a local .env, which is
+  # always the CI case, so listing it would add a permanently-skipped test that looks
+  # like coverage; tests/test_outbox.py covers local/outbox.py, the Windows side.
   pipeline-linux:
     runs-on: ubuntu-latest
     steps:
@@ -82,6 +89,8 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m pytest -q \
+            tests/test_keypool.py \
+            tests/test_merge_incoming.py \
             tests/test_run_scraper_script.py \
             tests/test_score_jobs.py \
             tests/test_score_jobs_chunked.py \

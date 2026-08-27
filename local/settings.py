@@ -145,13 +145,29 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # GA gemini-3.1-pro (and gemini-3.5-pro doesn't resolve on Vertex projects), so
 # the preview id is the only pro-tier option. It is never a default — only an
 # opt-in "max quality" choice. Re-verified against Google's deprecation table on
-# 2026-07-26: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
-# The 2026-07-21 releases (3.6-flash, 3.5-flash-lite) are offered as opt-in
-# choices; the defaults stay on the flash-lite/flash pair the VM scores with.
+# 2026-08-27: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
+# Every other id here is on Google's Stable list. The only shutdown date in the
+# set is gemini-3.1-flash-lite's, 2027-05-07, and that is the earliest possible
+# retirement date rather than a scheduled one.
+#
+# The newer flash ids (3.7-flash, 3.6-flash, 3.5-flash-lite) are offered as
+# opt-in choices, and the defaults deliberately stay on the flash-lite/flash pair
+# the VM scores with. Price alone would argue for moving the stage-2 default off
+# 3.5-flash, since 3.6/3.7-flash list at $0.75/$3.75 per 1M against 3.5-flash's
+# $1.50/$9.00. Two reasons it stays anyway: scoring normally runs on the free-tier
+# key pool rather than paid credit, so list price is not what this pipeline pays;
+# and a 2026-06-11 downgrade of exactly these two defaults was reversed eight days
+# later on quality grounds. Changing the pair is a re-tune with a scoring run
+# behind it, not a version bump. keypool.LIMITS has free-tier rpm/rpd only for the
+# two defaults; every other id here falls to keypool.DEFAULT_LIMITS on purpose.
 GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash",
-                 "gemini-3.6-flash", "gemini-3.1-pro-preview")
+                 "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview")
 
 # Claude model ids offered in the Claude model dropdowns (also editable_choice).
+# These are passed to the Claude Code CLI, not to the Anthropic API directly.
+# All three re-checked against the current model catalogue on 2026-08-27: active,
+# none deprecated or retired. The tier map (haiku fast, sonnet standard, opus
+# deep) still matches what each tier is for.
 CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
 
 # Settings-snapshot retention: the choices of the archive_mode setting, which

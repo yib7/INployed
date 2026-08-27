@@ -84,6 +84,18 @@ All notable changes to INployed are recorded here. The format follows
   Both load it at import, so unsetting a key in the shell never disarmed them, and checking what
   either does without credentials meant billing a real run to find out.
 
+### Changed
+- **Dependencies pulled forward to current stable.** `google-genai` 2.17.0 to 2.20.0 (both the
+  desktop and VM pin sets), `pypdf` 6.15.0 to 6.16.2, `python-dotenv` 1.2.2 to 1.2.3, `PySide6`
+  6.11.1 to 6.11.2, `ruff` 0.16.2 to 0.16.5. The pypdf bump is the one that matters: 6.16.0 and
+  6.16.1 add a cycle check and an iteration bound to the text-extraction path the résumé engine
+  runs over your PDF. `pytest-timeout` stays at 2.4.0 because 2.5.0 is yanked on PyPI, and
+  `numpy` stays on the 2.4.x line because 2.5 needs Python 3.12 and the VM runs 3.11.
+- `gemini-3.7-flash` is offered in the Settings model dropdowns. The scoring defaults are
+  unchanged.
+- The Linux CI job now also runs the `keypool` and `merge_incoming` tests, so every module
+  under `pipeline/` that runs on the VM has Linux evidence behind the platform claim.
+
 ## [1.8.0] - 2026-08-09
 
 A per-job chat, a plainer cover letter that ships its own source, two new toggles, a detail

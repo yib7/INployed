@@ -1,7 +1,8 @@
 # Local Windows side (C:\Python314, Python 3.14.0): watcher, dashboard,
-# resume tailor, and tests. Pins re-verified against PyPI stable on 2026-08-08
-# (every pin below is the newest stable release on PyPI, and pip-audit reports no
-# known vulnerability against this set).
+# resume tailor, and tests. Pins re-verified against PyPI stable on 2026-08-27
+# (every pin below is the newest installable stable release on PyPI, and pip-audit
+# reports no known vulnerability against this set). The one pin that is not the
+# newest version number is pytest-timeout: see the note at that line.
 #
 #   python -m pip install -r requirements.txt
 #
@@ -14,23 +15,31 @@
 # The VM has its own pin set: see scripts/requirements-vm.txt.
 
 pandas==3.0.5
-google-genai==2.17.0   # unified with scripts/requirements-vm.txt: the VM has run the 2.x line
+google-genai==2.20.0   # unified with scripts/requirements-vm.txt: the VM has run the 2.x line
                        # production since 2026-06 on the same genai.Client surface, so the
-                       # old "hold at 1.x" reason no longer applies (re-verified 2026-08-08;
-                       # 2.15/2.16/2.17 are additive -- audio transcription config, Maps
-                       # grounding, environments -- with no breaking change in the changelog)
+                       # old "hold at 1.x" reason no longer applies (re-verified 2026-08-27;
+                       # 2.18/2.19/2.20 are additive -- audio transcription modes, environment
+                       # files, httpx2 client injection -- with no breaking change in the
+                       # changelog and no removal from the genai.Client surface we call)
 markdownify==1.2.3
-pypdf==6.15.0          # security: 6.14.2 carries CVE-2026-71852 and CVE-2026-71870, two
-                       # crafted-PDF resource-exhaustion bugs in font width / /ToUnicode
-                       # parsing that fire during text extraction, which is exactly what
-                       # resume_tailor does to the user's PDF resume. Fixed in 6.15.0.
+pypdf==6.16.2          # security: this is the text-extraction path resume_tailor runs over the
+                       # user's PDF resume, so it stays on the newest release. 6.15.0 fixed
+                       # CVE-2026-71852 and CVE-2026-71870 (crafted-PDF resource exhaustion in
+                       # font width / /ToUnicode parsing); 6.16.0 and 6.16.1 added two more
+                       # hardening fixes on the same shape -- a cycle check in
+                       # TreeObject.insert_child, and an iteration bound on outline retrieval
+                       # and XForm text extraction.
 PyYAML==6.0.3
 ruamel.yaml==0.19.1
-python-dotenv==1.2.2   # auto-loads .env so secrets stay out of the repo
+python-dotenv==1.2.3   # auto-loads .env so secrets stay out of the repo. 1.2.3 strips a leading
+                       # UTF-8 BOM, which is worth having on Windows: scripts/setup.ps1 writes
+                       # .env with `Set-Content -Encoding UTF8`, and that is UTF-8-with-BOM on
+                       # PowerShell 5.1. Harmless today only because .env.example opens with a
+                       # comment line, so the BOM never lands on a KEY= and no key is lost.
 tzdata==2026.3         # IANA tz database for zoneinfo on Windows (Pacific RPD reset); data refresh 2026-07-12
 
 # desktop UI (local dashboard); abi3 wheels run on Python 3.14
-PySide6==6.11.1
+PySide6==6.11.2
 Send2Trash==2.1.0      # deleting a job moves its tailored-résumé folder to the Recycle Bin
 keyring==25.7.0        # ATS master password lives in the Windows Credential Manager (ats_accounts.py)
 
@@ -52,8 +61,12 @@ requests==2.34.2
 pytest==9.1.1
 pytest-qt==4.5.0       # qtbot fixtures for the Qt UI tests (offscreen, no display)
 pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a thread dump,
-                       # never burns runner hours (see the Run tests step in ci.yml)
-ruff==0.16.2           # the lint command (python -m ruff check .); declared here so CI and a
+                       # never burns runner hours (see the Run tests step in ci.yml).
+                       # Held at 2.4.0 deliberately: 2.5.0 is the newer version number but its
+                       # wheel and sdist are both YANKED on PyPI ("accidental breaking change
+                       # (probably)"), so 2.4.0 is the newest release pip will actually install.
+                       # Revisit when 2.5.1 or later ships (re-checked 2026-08-27).
+ruff==0.16.5           # the lint command (python -m ruff check .); declared here so CI and a
                        # fresh clone lint with the same version instead of whatever is global.
                        # The rule selection lives in pyproject.toml because 0.16 widened ruff's
                        # built-in default rule set -- see the comment at the top of that file.

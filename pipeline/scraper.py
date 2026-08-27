@@ -100,21 +100,25 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # returned this run" and exits 0. Nothing raises. The pipeline looks healthy and
 # silently collects nothing, which is how this went unnoticed for weeks.
 #
-# Measured 2026-08-26 against dataset gd_exampledataset0001: 2,679 ids = 34.9 KB per
-# input. At limit_per_input=1 that collected fine; at limit_per_input=150 it failed
-# on 100% of inputs (2 of 2, then 40 of 40). Bright Data does not publish the
-# threshold, so budget well under where it was observed to break.
+# Bright Data does not publish the threshold, so it was measured directly against
+# dataset gd_exampledataset0001 with one search at limit_per_input=150:
+#   2,000 ids -> 4,239,000 bytes of children -> ACCEPTED (collected 128 jobs)
+#   2,679 ids -> 5,262,000 bytes of children -> REJECTED, 100% of inputs
+# 5 MiB (5,242,880) falls between those two, which is almost certainly the real cap.
+# The budget below sits on the measured-good side, so 2,000 ids fit at
+# limit_per_input=150 and proportionally fewer fit as the fan-out grows.
 #
 # Windowing alone cannot hold this: at ~500 postings/day even a 14-day window is
-# ~7,000 ids. The cap is what actually bounds the request, and it is deliberately
-# tighter than "everything we know" -- the search is time_range="Past 24 hours", so
-# only a recently scraped posting can resurface and older ids are pure payload.
-# Re-collecting a few duplicates costs a little; a rejected collection costs the
-# entire run and still burns the trigger.
-MAX_EXCLUDE_PAYLOAD_BYTES = 500_000
+# ~7,000 ids. The cap is what actually bounds the request -- the search is
+# time_range="Past 24 hours", so only a recently scraped posting can resurface and
+# older ids are pure payload. 2,000 covers roughly the last two runs, which is the
+# overlap a twice-daily schedule can actually re-collect. Re-collecting a few
+# duplicates costs a little; a rejected collection costs the entire run and still
+# burns the trigger.
+MAX_EXCLUDE_PAYLOAD_BYTES = 4_200_000   # = 2,000 ids x 14 bytes x 150 children
 BYTES_PER_EXCLUDE_ID = 14      # '"4444097977", ' -- aiohttp's json.dumps keeps the space
 MIN_EXCLUDE_IDS = 50           # never exclude nothing: that re-bills every posting
-MAX_EXCLUDE_IDS = 1500         # ~19 KB, the ceiling however small limit_per_input is
+MAX_EXCLUDE_IDS = 2000         # the target: ~2 runs' worth, all that can recur
 
 # Spammy aggregator companies to drop entirely — from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
@@ -305,7 +309,10 @@ def exclude_window_days() -> int:
 
 def _window_ids(df: pd.DataFrame, window_days: int) -> list[str]:
     """Unique job_posting_ids in `df`, keeping only those scraped within the last
-    `window_days` days (per the extracted_date column).
+    `window_days` days (per the extracted_date column), OLDEST FIRST.
+
+    The order is part of the contract: cap_exclude_ids() evicts from the front, so
+    this has to be sorted by date, not left in master row order.
 
     Fail toward a SUPERSET -- an exclude set that is too SMALL re-bills already-
     collected jobs, so when recency can't be determined we KEEP the id:
@@ -324,7 +331,17 @@ def _window_ids(df: pd.DataFrame, window_days: int) -> list[str]:
         return df["job_posting_id"].dropna().astype(str).unique().tolist()
     cutoff = pd.Timestamp.now() - pd.Timedelta(days=window_days)
     keep = dates.isna() | (dates >= cutoff)  # NaT (undated) rows are kept
-    return df.loc[keep, "job_posting_id"].dropna().astype(str).unique().tolist()
+    kept = df.loc[keep, ["job_posting_id"]].copy()
+    kept["_extracted"] = dates[keep]
+    # Oldest date FIRST, so cap_exclude_ids' tail slice evicts by date rather than by
+    # master row order. Those usually agree, but a merge_incoming fold on the VM (or a
+    # hand-added row) can land an older posting after a newer one, and evicting on row
+    # order would then drop a recent id and keep a stale one -- backwards for a
+    # "Past 24 hours" search. Undated rows sort first, so they are evicted first: the
+    # window keeps them so the set never silently shrinks, but a date we cannot prove
+    # must not outrank one we can.
+    kept = kept.sort_values("_extracted", na_position="first", kind="stable")
+    return kept["job_posting_id"].dropna().astype(str).unique().tolist()
 
 
 def _master_ids() -> list[str]:
@@ -574,11 +591,11 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     every child with `child_input_size_validation` and the collection returns zero
     rows without raising anything.
 
-    Keeps the NEWEST ids. load_exclude_ids() returns this host's master in append
-    order (oldest first) followed by ids pushed from other machines, so the tail is
-    the most recently collected — and with a time_range="Past 24 hours" search those
-    are the only ones that can resurface. Trimming the tail instead would keep
-    precisely the ids that cannot recur.
+    Keeps the NEWEST ids. load_exclude_ids() returns this host's master sorted by
+    extracted_date (oldest first, see _window_ids) followed by ids pushed from other
+    machines, so the tail is the most recently collected — and with a
+    time_range="Past 24 hours" search those are the only ones that can resurface.
+    Trimming the tail instead would keep precisely the ids that cannot recur.
     """
     limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
     budget = MAX_EXCLUDE_PAYLOAD_BYTES // (BYTES_PER_EXCLUDE_ID * limit)

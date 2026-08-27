@@ -637,3 +637,56 @@ def test_build_inputs_defaults_the_limit_from_config(monkeypatch, tmp_path):
     huge = [str(4_400_000_000 + n) for n in range(5_000)]
     kept = scraper.build_inputs(huge, max_keywords=1)[0]["jobs_to_not_include"]
     assert len(kept) < len(huge)
+
+
+# --- eviction is by DATE, and the target is the newest 2,000 ------------------
+# Measured against Bright Data 2026-08-27, one search at limit_per_input=150:
+# 2,000 ids (4,239,000 bytes of children) was ACCEPTED and collected 128 jobs;
+# 2,679 ids (5,262,000 bytes) was REJECTED. 5 MiB = 5,242,880 sits between them.
+# MAX_EXCLUDE_PAYLOAD_BYTES is set so 150 x 2,000 lands on the measured-good side.
+
+def test_cap_target_is_2000_ids_at_the_configured_limit():
+    ids = [str(4_400_000_000 + n) for n in range(9_000)]
+    kept = scraper.cap_exclude_ids(ids, 150)
+    assert len(kept) == 2000
+    assert len(kept) == scraper.MAX_EXCLUDE_IDS
+
+
+def test_cap_stays_inside_the_measured_good_payload():
+    """150 children x the kept array must not exceed what Bright Data accepted."""
+    ids = [str(4_400_000_000 + n) for n in range(9_000)]
+    kept = scraper.cap_exclude_ids(ids, 150)
+    assert len(json.dumps(kept)) * 150 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES <= 4_239_000
+
+
+def test_master_ids_come_back_oldest_date_first(monkeypatch, tmp_path):
+    """Eviction keeps the TAIL, so the tail has to be the newest BY DATE.
+
+    The master is append-ordered, which is usually the same thing -- but a
+    merge_incoming fold on the VM, or a manual row, can land an older posting
+    after a newer one. Relying on row order would then evict a recent id and keep
+    a stale one, which is exactly backwards for a 'Past 24 hours' search."""
+    master = _dated_master(tmp_path, [
+        ("newest", _days_ago(1)),
+        ("oldest", _days_ago(10)),
+        ("middle", _days_ago(5)),
+    ])
+    monkeypatch.setattr(scraper, "MASTER_CSV", master)
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    assert scraper._master_ids() == ["oldest", "middle", "newest"]
+
+
+def test_undated_rows_are_evicted_before_dated_recent_ones(monkeypatch, tmp_path):
+    """An undated row is KEPT by the window (fail toward a superset) but must not
+    outrank an id we can prove is recent when there is only room for some."""
+    master = _dated_master(tmp_path, [
+        ("dated_recent", _days_ago(1)),
+        ("undated", ""),
+    ])
+    monkeypatch.setattr(scraper, "MASTER_CSV", master)
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    ids = scraper._master_ids()
+    assert set(ids) == {"dated_recent", "undated"}
+    assert ids.index("undated") < ids.index("dated_recent")   # undated evicted first

@@ -22,6 +22,13 @@ All notable changes to INployed are recorded here. The format follows
   artifact is now staged in `outbox/` instead. And `build_inputs` now caps the array against a
   byte budget sized from `limit_per_input`, keeping the most recent ids, which is the bound
   that holds whatever the configuration says.
+- **The exclude list now holds the newest 2,000 job ids and evicts by date.** Bright Data does
+  not publish its request-size limit, so it was measured directly: at `limit_per_input=150`,
+  2,000 ids (4,239,000 bytes once expanded across a search's child fetches) is accepted, while
+  2,679 ids (5,262,000 bytes) is refused, putting the real cap at 5 MiB. The byte budget is set
+  to the measured-good side, so 2,000 ids fit at a limit of 150 and proportionally fewer as that
+  limit rises. Eviction is by `extracted_date` rather than master row order, so a row merged in
+  out of sequence cannot push out a more recent id.
 - **A valid-looking Bright Data key failed every run with "Invalid credentials".** A token can
   read the dataset catalog and the snapshot history and still lack permission to start a
   billed collection, and the API reports that refusal as an auth failure. The trigger error now

@@ -84,9 +84,19 @@ def atomic_write_json(path: Path, data: Any) -> None:
 def read_json_dict(path: Path) -> dict:
     """`path` parsed as a JSON object, {} when missing, unreadable or not an
     object. The lock-free read half of the update cycle: os.replace means a
-    reader sees either the previous or the next complete file, never a mix."""
+    reader sees either the previous or the next complete file, never a mix.
+
+    utf-8-sig, not utf-8: json.loads rejects a leading BOM, and this function
+    swallows that into {} — so a BOM'd config.json read as EMPTY rather than as
+    an error, and every setting in it was silently ignored. That is not
+    hypothetical. scripts/setup.ps1 used `Set-Content -Encoding UTF8`, which
+    writes a BOM on PowerShell 5.1, so the file the documented setup command
+    produced was discarded by the very app it configures. The writer is fixed;
+    this is the half that also covers a user who edits the file in Notepad,
+    which writes a BOM too. utf-8-sig is a superset here — it strips a BOM when
+    there is one and decodes plain UTF-8 identically when there isn't."""
     try:
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
     return raw if isinstance(raw, dict) else {}

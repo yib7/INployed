@@ -50,10 +50,16 @@ def _parse_value(raw: str) -> str:
 
 
 def read(path: str | os.PathLike) -> dict[str, str]:
-    """Parse `path` into {KEY: value}; returns {} when the file is missing/unreadable."""
+    """Parse `path` into {KEY: value}; returns {} when the file is missing/unreadable.
+
+    utf-8-sig so a BOM'd .env (Notepad, or PowerShell 5.1's `Set-Content
+    -Encoding UTF8`) does not glue a U+FEFF onto the first line's key name,
+    which makes _LINE_RE miss it and drops that key. Harmless only while .env
+    starts with a comment -- exactly the kind of guarantee that quietly stops
+    holding."""
     p = Path(path)
     try:
-        text = p.read_text(encoding="utf-8")
+        text = p.read_text(encoding="utf-8-sig")
     except (OSError, ValueError):
         return {}
     out: dict[str, str] = {}
@@ -97,7 +103,10 @@ def update(path: str | os.PathLike, updates: dict[str, str | None]) -> None:
     """
     p = Path(path)
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
+        # utf-8-sig, matching read(): a BOM is stripped on the way in and not
+        # written back, so an update also heals a BOM'd file rather than
+        # carrying the marker forward into every later rewrite.
+        lines = p.read_text(encoding="utf-8-sig").splitlines()
     except (OSError, ValueError):
         lines = []
 

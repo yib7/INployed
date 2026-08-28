@@ -50,10 +50,34 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($Root)) {
     $Root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 }
+# The .NET file calls below resolve a relative path against the PROCESS working
+# directory, which is not PowerShell's. Pin $Root to a full path once, here.
+$Root = (Resolve-Path -LiteralPath $Root).ProviderPath
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
 function Write-Skip($msg) { Write-Host "    $msg" -ForegroundColor DarkGray }
+
+# --- text I/O: UTF-8, no BOM, both directions --------------------------------
+# Neither PowerShell 5.1 default is safe for the files this script owns, and both
+# failures are SILENT, which is why they survived a green CI run that only
+# checked the files exist:
+#
+#   * Writing. `Set-Content -Encoding UTF8` emits a BOM on 5.1. The Python side
+#     parses local/config.json with plain utf-8, and json.loads rejects a leading
+#     BOM -- a rejection jsonutil.read_json_dict swallows into {}. So every value
+#     written here (min_score, followup_days, gdrive_root, mtime_stable_seconds)
+#     was dropped on a fresh install and the dashboard ran on hardcoded defaults,
+#     with nothing to show the user their config had been ignored.
+#   * Reading. `Get-Content` decodes a BOM-less file as the ANSI codepage, so
+#     .env.example's UTF-8 box-drawing comment rules came back as Windows-1252
+#     mojibake and were written into the user's .env that way.
+#
+# UTF8Encoding($false) writes without a BOM; File::ReadAllText detects and strips
+# one, so an existing BOM'd .env or config.json from an older run still reads.
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Read-TextFile($path)        { [System.IO.File]::ReadAllText($path) }
+function Write-TextFile($path, $text) { [System.IO.File]::WriteAllText($path, $text, $script:Utf8NoBom) }
 
 # Prompt with a default; non-interactive callers pass the value as a param.
 function Read-WithDefault($label, $default) {
@@ -96,10 +120,10 @@ Write-Step "Job Scraper setup ($Mode mode) in $Root"
 # --- 1. .env ------------------------------------------------------------------
 if ((Test-Path -LiteralPath $envPath) -and -not $Force) {
     Write-Skip ".env exists (use -Force to regenerate). Updating only provided values."
-    $envText = Get-Content -LiteralPath $envPath -Raw
+    $envText = Read-TextFile $envPath
 } else {
     if (-not (Test-Path -LiteralPath $envExample)) { throw ".env.example not found at $envExample" }
-    $envText = Get-Content -LiteralPath $envExample -Raw
+    $envText = Read-TextFile $envExample
     Write-Ok "Seeded .env from .env.example"
 }
 
@@ -116,7 +140,7 @@ if ($BrightDataDataset) { $envText = Set-EnvValue $envText 'BRIGHT_DATA_DATASET_
 if ($GcpProject)        { $envText = Set-EnvValue $envText 'GOOGLE_CLOUD_PROJECT'    $GcpProject }
 if ($CandidateName)     { $envText = Set-EnvValue $envText 'RESUME_TAILOR_CANDIDATE' ($CandidateName -replace '\s+', '_') }
 
-Set-Content -LiteralPath $envPath -Value $envText -Encoding UTF8 -NoNewline
+Write-TextFile $envPath $envText
 Write-Ok "Wrote $envPath"
 
 # --- 2. master_experience.yaml ------------------------------------------------
@@ -141,7 +165,7 @@ if ($haveMaster -and -not $Force) {
 $cfg = [ordered]@{ gdrive_root = ''; mtime_stable_seconds = 30; min_score = $MinScore; followup_days = $FollowupDays }
 if (Test-Path -LiteralPath $cfgPath) {
     try {
-        $existing = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json
+        $existing = Read-TextFile $cfgPath | ConvertFrom-Json
         foreach ($p in $existing.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
     } catch { Write-Skip "Existing config.json unreadable; writing fresh defaults." }
 }
@@ -161,7 +185,7 @@ if ($GDriveRoot) { $cfg.gdrive_root = $GDriveRoot }
 
 $cfgDir = Split-Path $cfgPath -Parent
 if (-not (Test-Path -LiteralPath $cfgDir)) { New-Item -ItemType Directory -Path $cfgDir | Out-Null }
-($cfg | ConvertTo-Json) | Set-Content -LiteralPath $cfgPath -Encoding UTF8
+Write-TextFile $cfgPath (($cfg | ConvertTo-Json) + "`r`n")
 Write-Ok "Wrote $cfgPath"
 
 # --- 4. dependencies (optional) -----------------------------------------------

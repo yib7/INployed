@@ -55,7 +55,11 @@ requests==2.34.2
 #     apply_playwright.py) imports it lazily: pip install playwright, then
 #     playwright install chromium. The everyday per-job Apply flow needs neither.
 #   * Pillow — maintainers only: regenerates the desktop icon
-#     (python local/assets/make_icon.py).
+#     (python local/assets/make_icon.py) and composes the README media
+#     (scripts/build_demo_media.py, build_social_preview.py, build_walkthrough.py).
+#   * imageio-ffmpeg — maintainers only: supplies the ffmpeg binary that
+#     scripts/build_walkthrough.py encodes the README tour with. Imported
+#     lazily, inside the encode step, so every other script here runs without it.
 
 # dev / tests (python -m pytest tests/ -v)
 pytest==9.1.1

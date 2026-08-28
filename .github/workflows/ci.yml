@@ -126,13 +126,26 @@ jobs:
       - name: README Step 3 - scripts/setup.ps1
         run: powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 
-      - name: README Step 3 - the config files were written
+      # Existence is not enough, and assuming it was hid a real bug for a whole
+      # release: setup.ps1 wrote local/config.json with a BOM (PowerShell 5.1's
+      # `Set-Content -Encoding UTF8`), json.loads rejects a leading BOM, and
+      # jsonutil.read_json_dict swallowed the rejection into {} -- so on a fresh
+      # install the app discarded every value the documented setup command had
+      # just written, silently, with this step green. Load the file the way the
+      # dashboard does, not just Test-Path it.
+      - name: README Step 3 - the config files were written and load
         run: |
           $expected = @('.env', 'local/config.json', 'resume_tailor_files/master_experience.yaml')
           foreach ($f in $expected) {
             if (-not (Test-Path $f)) { throw "setup.ps1 did not create $f" }
           }
           Write-Host 'setup.ps1 wrote all three config files'
+          $cfg = venv\Scripts\python.exe -c "import sys, json; sys.path.insert(0, 'local'); import jsonutil; d = jsonutil.read_json_dict('local/config.json'); print(json.dumps(d))"
+          if ($LASTEXITCODE -ne 0) { throw 'could not load local/config.json' }
+          Write-Host "read_json_dict(local/config.json) -> $cfg"
+          if ($cfg -notmatch 'mtime_stable_seconds') {
+            throw "the dashboard's own reader decoded the fresh config.json as $cfg -- setup.ps1 wrote something it cannot parse"
+          }
 
       # README Step 4 is "double-click Open INployed Dashboard.cmd". The .cmd uses
       # `start`, which detaches, so running it alone proves the batch file parses and

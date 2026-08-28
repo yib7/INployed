@@ -126,3 +126,31 @@ def test_bare_safe_values_written_unquoted(tmp_path):
     envfile.update(p, {"TOKEN": "abc123-XYZ_tok.en"})
     raw = p.read_text(encoding="utf-8")
     assert "TOKEN=abc123-XYZ_tok.en" in raw
+
+
+def test_read_recovers_the_first_key_from_a_bom_prefixed_env(tmp_path):
+    """A BOM must not eat the first key.
+
+    PowerShell 5.1's `Set-Content -Encoding UTF8` and Notepad both write a
+    U+FEFF, which decoded as utf-8 glues itself onto the first line. When that
+    line is `KEY=value`, _LINE_RE no longer matches and the key vanishes with no
+    error. Today .env opens with a comment, so the damage was invisible; that is
+    a property of the template, not a guarantee about the user's file.
+    """
+    p = tmp_path / ".env"
+    # Raw bytes, not a U+FEFF string literal: a real BOM in this file's own
+    # source is invisible to whoever reads the test next.
+    p.write_bytes(b"\xef\xbb\xbf"
+                  + b"BRIGHT_DATA_API_TOKEN=abc\nGEMINI_API_KEY=def\n")
+    assert envfile.read(p) == {"BRIGHT_DATA_API_TOKEN": "abc",
+                               "GEMINI_API_KEY": "def"}
+
+
+def test_update_strips_a_bom_instead_of_carrying_it_forward(tmp_path):
+    """An update heals a BOM'd .env rather than rewriting the marker."""
+    p = tmp_path / ".env"
+    p.write_bytes(b"\xef\xbb\xbf" + b"FOO=1\n# a comment\nBAR=2\n")
+    envfile.update(p, {"BAR": "3"})
+    assert p.read_bytes()[:3] != b"\xef\xbb\xbf"
+    assert envfile.read(p) == {"FOO": "1", "BAR": "3"}
+    assert "# a comment" in p.read_text(encoding="utf-8")

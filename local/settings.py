@@ -648,9 +648,13 @@ def _resolve_targets(targets: dict[str, Path] | None) -> dict[str, Path]:
 
 
 def _read_file(path: Path) -> dict[str, Any]:
-    """Parse a backing JSON file, or {} when missing/unreadable."""
+    """Parse a backing JSON file, or {} when missing/unreadable.
+
+    utf-8-sig for the same reason as jsonutil.read_json_dict: a BOM makes
+    json.loads raise, this catches it, and the whole file reads as empty with
+    nothing said. Notepad and PowerShell 5.1 both write BOMs."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}

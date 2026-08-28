@@ -103,3 +103,38 @@ def test_replace_with_retry_zero_retries_still_replaces(tmp_path):
     jsonutil.replace_with_retry(src, dst, retries=0)
     assert dst.read_text(encoding="utf-8") == "payload"
     assert not src.exists()
+
+
+def test_read_json_dict_reads_a_bom_prefixed_file(tmp_path):
+    """A UTF-8 BOM must not turn a populated config into an empty one.
+
+    read_json_dict catches ValueError, and json.loads raises exactly that on a
+    leading BOM, so the two together used to swallow a whole config file into
+    {} with nothing said. That is how scripts/setup.ps1's output was silently
+    ignored on a fresh install: PowerShell 5.1's `Set-Content -Encoding UTF8`
+    writes a BOM, so min_score / followup_days / gdrive_root never took effect
+    and the dashboard ran on hardcoded defaults. Notepad writes a BOM too.
+    """
+    p = tmp_path / "config.json"
+    p.write_bytes(b"\xef\xbb\xbf" + json.dumps({"min_score": 6}).encode("utf-8"))
+    assert jsonutil.read_json_dict(p) == {"min_score": 6}
+
+
+def test_read_json_dict_still_reads_a_plain_utf8_file(tmp_path):
+    """The BOM fix must not cost the ordinary case: utf-8-sig decodes a
+    BOM-less file identically, including non-ASCII."""
+    payload = {"name": "Curriculum vitae — résumé"}
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    assert p.read_bytes()[:3] != b"\xef\xbb\xbf"
+    assert jsonutil.read_json_dict(p) == payload
+
+
+def test_update_json_locked_survives_a_bom_prefixed_file(tmp_path):
+    """The merge half of the cycle too: a BOM'd file must merge, not be
+    treated as absent and overwritten with only the new keys."""
+    p = tmp_path / "config.json"
+    p.write_bytes(b"\xef\xbb\xbf" + json.dumps({"keep": 1}).encode("utf-8"))
+    merged = jsonutil.update_json_locked(p, {"added": 2})
+    assert merged == {"keep": 1, "added": 2}
+    assert jsonutil.read_json_dict(p) == {"keep": 1, "added": 2}

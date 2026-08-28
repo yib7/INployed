@@ -127,10 +127,13 @@ You need an account for each feature you want:
 |---|---|
 | LLM scoring + résumé tailoring | a **Google Cloud** project with Vertex AI enabled (or a Gemini API key) |
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
-| Running discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create yourself, plus the [gcloud CLI](https://cloud.google.com/sdk/docs/install) signed in. Then switch on **Enable VM features** in Settings → VM. Without it, **Find new jobs** runs the same discovery on your PC. |
+| Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the [gcloud CLI](https://cloud.google.com/sdk/docs/install) signed in |
 
 *(Skip if you only want to look around: the dashboard, tracker, and editors all run
-without keys. The tailor stops with a plain "no key configured" message instead.)*
+without keys. The tailor stops with a plain "no key configured" message instead.
+The VM row is optional even with keys — **Find new jobs** runs the same discovery
+on your PC, and the VM controls stay hidden until you switch on **Enable VM
+features** in Settings.)*
 
 ### Step 6: Enter your experience in the Resume Data tab
 Your experience lives in **`resume_tailor_files/master_experience.yaml`**, the single

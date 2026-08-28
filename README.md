@@ -127,7 +127,7 @@ You need an account for each feature you want:
 |---|---|
 | LLM scoring + résumé tailoring | a **Google Cloud** project with Vertex AI enabled (or a Gemini API key) |
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
-| Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the [gcloud CLI](https://cloud.google.com/sdk/docs/install) signed in |
+| Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the gcloud CLI from Step 7, signed in |
 
 *(Skip if you only want to look around: the dashboard, tracker, and editors all run
 without keys. The tailor stops with a plain "no key configured" message instead.

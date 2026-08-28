@@ -1,4 +1,15 @@
 #!/bin/bash
+# >>> INPLOYED SECRETS BEGIN <<<
+[ -f "$HOME/scraper_secrets.env" ] && . "$HOME/scraper_secrets.env"
+# >>> INPLOYED SECRETS END <<<
+# The block above is where this script gets BRIGHT_DATA_API_TOKEN and
+# GEMINI_API_KEYS. cron runs with a bare environment, so they have to be exported
+# here; keeping them in a chmod-600 ~/scraper_secrets.env instead of inline means
+# rotating one is a dashboard action (Settings -> VM -> Credentials) rather than
+# an ssh-and-edit chore. That screen writes the file and maintains this block; it
+# is committed here so a freshly provisioned VM already has the shape it expects.
+# Do NOT paste a credential into this file: it is tracked in git.
+#
 # Runs on the VM via cron at 10:00 and 19:00 daily.
 # 1. Scrape jobs from Bright Data
 # 2. Score them against the resume with Gemini

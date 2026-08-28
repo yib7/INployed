@@ -147,3 +147,21 @@ def test_junk_exclude_window_in_config_falls_back(monkeypatch, tmp_path):
     for bad in ("banana", 0, -5, None):
         _write_config(tmp_path, {"exclude_window_days": bad})
         assert scraper.exclude_window_days() == scraper.DEFAULT_EXCLUDE_WINDOW_DAYS
+
+
+def test_a_junk_env_var_falls_through_to_the_file_not_past_it(monkeypatch, tmp_path):
+    """Resolution is env > file > default, and a BROKEN env leg must not skip the
+    file leg. It did: a typo in EXCLUDE_WINDOW_DAYS silently overrode the window
+    the user had set in the dashboard, and put the 90-day default back."""
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    (tmp_path / "search_config.json").write_text(
+        json.dumps({"exclude_window_days": 14}), encoding="utf-8")
+    for junk in ("banana", "0", "-5", "  "):
+        monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", junk)
+        assert scraper.exclude_window_days() == 14, f"{junk!r} skipped the file"
+
+
+def test_with_no_file_a_junk_env_var_still_lands_on_the_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", "banana")
+    assert scraper.exclude_window_days() == scraper.DEFAULT_EXCLUDE_WINDOW_DAYS

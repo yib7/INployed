@@ -212,6 +212,27 @@ class VMTarget:
         scraper unions it into load_exclude_ids()."""
         return self.build_scp_cmd(local_path, EXCLUDE_REMOTE_FILE)
 
+    def _require_home_remote_dir(self) -> None:
+        """Refuse a credential install when VM_REMOTE_DIR points somewhere else.
+
+        build_scp_cmd honours remote_dir, but the install script below hardcodes
+        $HOME. Set VM_REMOTE_DIR=/opt/scraper and the staged file lands in
+        /opt/scraper while the script looks in $HOME: every attempt fails with
+        NO_STAGED_VALUE, and every attempt leaves a plaintext credential behind
+        where the EXIT trap will not reach it.
+
+        Refusing beats teaching the script about remote_dir. That value comes from
+        the user's .env and would have to be interpolated into shell text here,
+        which is a new injection surface for a setting nothing else about this
+        feature needs. Every other VM push keeps remote_dir in argv, where it is
+        data. So: fail early, and name the setting.
+        """
+        if self.remote_dir.rstrip("/") not in ("", "~", "."):
+            raise ValueError(
+                f"Installing a credential needs VM_REMOTE_DIR to be the VM's home "
+                f"directory, but it is {self.remote_dir!r}. Clear VM_REMOTE_DIR (or "
+                f"set it to '~') to use this, or set the value on the VM by hand.")
+
     def stage_secret_cmd(self, local_path: str) -> list[str]:
         """scp argv that uploads the one-line secret file `set_secret_cmd` consumes.
 
@@ -229,7 +250,13 @@ class VMTarget:
         scp logs the file's PATH but never its CONTENT, so this is the one channel
         that carries a credential without recording it.
         """
+        self._require_home_remote_dir()
         return self.build_scp_cmd(local_path, SECRET_STAGE_REMOTE_FILE)
+
+    def clear_staged_secret_cmd(self) -> list[str]:
+        """ssh argv that deletes the staged credential, for when the installer
+        never ran to fire its own EXIT trap. See set_vm_secret's except branch."""
+        return self.build_ssh_cmd(f'rm -f "$HOME/{SECRET_STAGE_REMOTE_FILE}"')
 
     def set_secret_cmd(self, name: str) -> list[str]:
         """ssh argv that installs the staged credential into ~/scraper_secrets.env.
@@ -242,12 +269,24 @@ class VMTarget:
         secrets file, replaces just this one variable inside it, makes
         run_scraper.sh source that file (once, via a marker block inserted right
         after the shebang so it runs before anything needs the value), and
-        comments out any older inline `export NAME=` further down. That last step
-        is load-bearing: an inline export sits AFTER the source line and would
+        comments out any older inline assignment further down. That last step is
+        load-bearing: an inline export sits AFTER the source line and would
         otherwise win, leaving the dead credential in force and making the fix
-        look like it silently did nothing. run_scraper.sh is backed up first and
-        restored if `bash -n` rejects the result, so a bad edit can never leave
-        the VM with an unparseable cron script.
+        look like it silently did nothing.
+
+        It then PROVES the result instead of announcing it. `echo SECRET_SET`
+        used to be unconditional, so two shapes reported success while changing
+        nothing the cron run would see: a missing run_scraper.sh (the whole edit
+        block was skipped) and an indented `  export NAME=` (the old sed anchored
+        at column 0, so the dead value still won at source time). Both now fail
+        with a named code. The check is textual on purpose — verifying by
+        SOURCING run_scraper.sh would execute it, and that script starts a billed
+        scrape.
+
+        run_scraper.sh is backed up once, to a fixed name, and restored if the
+        result fails either check, so a bad edit can never leave the VM with a
+        broken cron script. A script that was ALREADY unparseable before we
+        touched it reports SCRIPT_ALREADY_BROKEN rather than blaming this edit.
 
         Raw f-string on purpose: the sed newline escapes below must reach sed as
         two characters, not as real line breaks.
@@ -255,7 +294,12 @@ class VMTarget:
         if name not in MANAGED_SECRETS:
             raise ValueError(f"{name!r} is not a managed VM secret; expected one "
                              f"of {sorted(MANAGED_SECRETS)}")
+        self._require_home_remote_dir()
         src = f'[ -f "$HOME/{SECRETS_REMOTE_FILE}" ] && . "$HOME/{SECRETS_REMOTE_FILE}"'
+        # Matches `export NAME=`, `NAME=`, indented or not, with any run of spaces
+        # after `export`. The old pattern was `^export NAME=` and missed all three
+        # variations, each of which leaves the dead credential winning.
+        inline = rf"^([[:space:]]*)(export[[:space:]]+)?{name}="
         return self.build_ssh_cmd(rf"""set -e
 IN="$HOME/{SECRET_STAGE_REMOTE_FILE}"
 trap 'rm -f "$IN"' EXIT
@@ -265,18 +309,26 @@ V="$(head -n 1 "$IN")"
 umask 077
 F="$HOME/{SECRETS_REMOTE_FILE}"
 touch "$F"; chmod 600 "$F"
-T="$(mktemp)"
-grep -v '^export {name}=' "$F" > "$T" || true
+T="$(mktemp "$F.XXXXXX")"
+grep -v '^export {name}=' "$F" > "$T" || [ $? -eq 1 ]
 printf 'export {name}="%s"\n' "$V" >> "$T"
 mv "$T" "$F"; chmod 600 "$F"
 S="$HOME/run_scraper.sh"
-if [ -f "$S" ]; then
-  B="$S.bak-$(date +%Y%m%d%H%M%S)"
-  cp "$S" "$B"
-  grep -q '{SECRETS_BEGIN}' "$S" || sed -i '1a # {SECRETS_BEGIN}\n{src}\n# {SECRETS_END}' "$S"
-  sed -i 's|^export {name}=|# moved into {SECRETS_REMOTE_FILE} by INployed: export {name}=|' "$S"
-  bash -n "$S" || {{ cp "$B" "$S"; echo SYNTAX_FAIL_REVERTED; exit 1; }}
+[ -s "$S" ] || {{ echo NO_RUN_SCRIPT; exit 1; }}
+B="$S.inployed.bak"
+[ -f "$B" ] || {{ cp "$S" "$B"; chmod 600 "$B"; }}
+PRE=0; bash -n "$S" 2>/dev/null || PRE=1
+grep -q '{SECRETS_BEGIN}' "$S" || sed -i '1a # {SECRETS_BEGIN}\n{src}\n# {SECRETS_END}' "$S"
+sed -i -E 's|{inline}|\1# moved into {SECRETS_REMOTE_FILE} by INployed: \2{name}=|' "$S"
+if ! bash -n "$S" 2>/dev/null; then
+  cp "$B" "$S"
+  if [ "$PRE" = 1 ]; then echo SCRIPT_ALREADY_BROKEN; else echo SYNTAX_FAIL_REVERTED; fi
+  exit 1
 fi
+if grep -Eq '{inline}' "$S"; then
+  cp "$B" "$S"; echo INLINE_ASSIGNMENT_REMAINS; exit 1
+fi
+grep -q '{SECRETS_BEGIN}' "$S" || {{ cp "$B" "$S"; echo SOURCE_LINE_MISSING; exit 1; }}
 echo SECRET_SET: {name}
 """)
 
@@ -350,16 +402,32 @@ def set_vm_secret(target: VMTarget, name: str, value: str):
     """Store one managed credential on the VM: stage it, install it, clean up.
 
     Returns the install step's CompletedProcess, or None when the VM isn't
-    configured. Raises ValueError for an unmanaged name or a value that couldn't
-    live safely in a sourced shell file.
+    configured. Raises ValueError for an unmanaged name, a non-home VM_REMOTE_DIR,
+    or a value that couldn't live safely in a sourced shell file.
 
-    The value touches this machine's disk only as a mode-600 file inside a
-    private temp dir, deleted in the `finally` no matter what — that is the
-    least-bad channel available (see `stage_secret_cmd` for why argv and stdin
-    are both unusable through gcloud).
+    EVERY rejection happens before the upload. The name check used to live in
+    set_secret_cmd, which runs only AFTER the scp has already put the plaintext
+    value on the VM, so a rejected name left the credential sitting there with no
+    EXIT trap ever armed to remove it. Same for the remote-dir check.
+
+    If the install step fails to run at all (gcloud session expired, network
+    drop, the 300s timeout in run_cmd), the staged file is removed with a second
+    ssh rather than left for a trap that never fired.
+
+    The value touches this machine's disk only as a file inside a private temp
+    dir, deleted in the `finally` no matter what — the least-bad channel
+    available (see `stage_secret_cmd` for why argv and stdin are both unusable
+    through gcloud). The 0600 mode passed to os.open is a POSIX no-op on Windows,
+    where CPython honours only the read-only bit; the real protection there is the
+    per-user ACL on %TEMP%. Both are stated because one of them is doing the work
+    on the only platform this dashboard runs on.
     """
     if not target.configured():
         return None
+    if name not in MANAGED_SECRETS:
+        raise ValueError(f"{name!r} is not a managed VM secret; expected one "
+                         f"of {sorted(MANAGED_SECRETS)}")
+    target._require_home_remote_dir()
     value = (value or "").strip()
     if not valid_secret_value(value):
         raise ValueError(
@@ -368,13 +436,32 @@ def set_vm_secret(target: VMTarget, name: str, value: str):
     tmpdir = tempfile.mkdtemp(prefix="inployed-secret-")
     local = Path(tmpdir) / "value.txt"
     try:
-        # 0600 before anything is written, so the value is never briefly readable.
         fd = os.open(local, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(value + "\n")
         staged = run_cmd(target.stage_secret_cmd(str(local)))
         if staged.returncode != 0:
             return staged
-        return run_cmd(target.set_secret_cmd(name))
+        try:
+            return run_cmd(target.set_secret_cmd(name))
+        except BaseException:
+            # The installer never ran, so its EXIT trap never armed. Best effort,
+            # and deliberately silent on failure: we are already unwinding, and a
+            # cleanup error must not replace the real one.
+            try:
+                run_cmd(target.clear_staged_secret_cmd())
+            except Exception:  # noqa: BLE001
+                pass
+            raise
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+        if local.exists():
+            # rmtree swallowed something (a handle still open). Overwrite before
+            # giving up, so a readable plaintext credential is not what is left.
+            try:
+                local.write_text("x" * len(value), encoding="utf-8")
+                local.unlink()
+                Path(tmpdir).rmdir()
+            except OSError:
+                print(f"WARNING: could not remove the staged credential at {local}; "
+                      f"delete it by hand.")

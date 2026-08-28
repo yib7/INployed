@@ -30,7 +30,13 @@ DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
 # missing-credential path: clearing BRIGHT_DATA_API_TOKEN in the environment
 # does nothing, because this runs at import and puts the real token back before
 # require_credentials() ever looks.
-if os.environ.get("INPLOYED_NO_DOTENV", "") not in ("1", "true", "True"):
+#
+# Case-folded and generous about spelling: this is typed by hand at a shell, and
+# an INPLOYED_NO_DOTENV=TRUE that silently re-arms a billed script is the worst
+# possible way to be strict. Note it is read at IMPORT, so setting it inside a
+# process that already imported this module (the dashboard, which loads .env at
+# startup -- local/settings.py:108) does nothing.
+if os.environ.get("INPLOYED_NO_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):
     try:
         from dotenv import load_dotenv
 
@@ -116,9 +122,24 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # duplicates costs a little; a rejected collection costs the entire run and still
 # burns the trigger.
 MAX_EXCLUDE_PAYLOAD_BYTES = 4_200_000   # = 2,000 ids x 14 bytes x 150 children
-BYTES_PER_EXCLUDE_ID = 14      # '"4444097977", ' -- aiohttp's json.dumps keeps the space
+# The width that budget was derived from: '"4444097977", ', the shape a 10-digit
+# posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids no
+# longer USES this -- it measures the ids actually in hand, so an 11-digit id can
+# never quietly overflow the budget -- but the number is what MAX_EXCLUDE_PAYLOAD
+# _BYTES above was computed from, so it stays as the record of that arithmetic.
+BYTES_PER_EXCLUDE_ID = 14
 MIN_EXCLUDE_IDS = 50           # never exclude nothing: that re-bills every posting
 MAX_EXCLUDE_IDS = 2000         # the target: ~2 runs' worth, all that can recur
+
+# Bright Data error codes that mean "we refused your input", as opposed to the
+# per-page codes (dead_page, page_too_big) that show up on healthy runs. Any of
+# these means part or all of the search never ran, so the collection is a failure
+# even when some rows came back. See _assert_collected_something.
+INPUT_REJECTION_CODES = frozenset({
+    "child_input_size_validation",
+    "input_size_validation",
+    "invalid_input",
+})
 
 # Spammy aggregator companies to drop entirely — from every fresh run AND from
 # the cumulative master (case-insensitive substring match on company_name).
@@ -286,10 +307,18 @@ def exclude_window_days() -> int:
     user who set 14 still got the 90-day default and shipped their whole master in
     every trigger POST.
 
-    A missing, non-integer, or non-positive value falls back to the default: 0 or a
-    negative window would empty the exclude set and re-collect (and re-bill) every
-    posting -- the exact failure this guard prevents -- so we always fail toward the
-    safe default rather than an empty window."""
+    A missing, non-integer, or non-positive value falls THROUGH to the next leg,
+    rather than skipping to the built-in default: an env var someone fat-fingered
+    must not silently override a window the user set in the dashboard. Whatever
+    the file holds, _positive_int() collapses junk/0/negative there too, so the
+    walk always terminates on DEFAULT_EXCLUDE_WINDOW_DAYS. 0 or a negative window
+    would empty the exclude set and re-collect (and re-bill) every posting -- the
+    exact failure this guard prevents -- so we always fail toward the safe default
+    rather than an empty window.
+
+    Note the cap dominates the window in practice: MAX_EXCLUDE_IDS trims whatever
+    this returns down to ~2,000 ids, so widening the window past a few days changes
+    nothing. See cap_exclude_ids."""
     raw = os.environ.get(EXCLUDE_WINDOW_DAYS_ENV, "").strip()
     if not raw:
         # _positive_int() already collapses junk/0/negative to the default.
@@ -297,13 +326,13 @@ def exclude_window_days() -> int:
     try:
         val = int(raw)
     except ValueError:
-        print(f"Invalid {EXCLUDE_WINDOW_DAYS_ENV}={raw!r}; using default "
-              f"{DEFAULT_EXCLUDE_WINDOW_DAYS} days")
-        return DEFAULT_EXCLUDE_WINDOW_DAYS
+        print(f"Invalid {EXCLUDE_WINDOW_DAYS_ENV}={raw!r}; falling back to "
+              f"search_config.json")
+        return load_search_config()["exclude_window_days"]
     if val <= 0:
-        print(f"{EXCLUDE_WINDOW_DAYS_ENV}={val} is not positive; using default "
-              f"{DEFAULT_EXCLUDE_WINDOW_DAYS} days")
-        return DEFAULT_EXCLUDE_WINDOW_DAYS
+        print(f"{EXCLUDE_WINDOW_DAYS_ENV}={val} is not positive; falling back to "
+              f"search_config.json")
+        return load_search_config()["exclude_window_days"]
     return val
 
 
@@ -325,14 +354,29 @@ def _window_ids(df: pd.DataFrame, window_days: int) -> list[str]:
         return []
     if "extracted_date" not in df.columns:
         return df["job_posting_id"].dropna().astype(str).unique().tolist()
-    dates = pd.to_datetime(df["extracted_date"], errors="coerce")
+    # utc=True, and a UTC cutoff to match. The master this host writes is plain
+    # YYYY-MM-DD, but merge_incoming folds rows from other machines and a Drive
+    # master can carry an ISO offset. Without utc=True pandas 3 returns a
+    # tz-AWARE column for those, and comparing it to a tz-naive Timestamp.now()
+    # raises "Invalid comparison between dtype=datetime64[us, UTC] and Timestamp"
+    # -- or, for a column mixing offsets, "Mixed timezones detected". Normalising
+    # both sides costs nothing on naive input and removes the whole class.
+    dates = pd.to_datetime(df["extracted_date"], errors="coerce", utc=True)
     if dates.isna().all():
         # No parseable dates at all -> can't window; keep everything.
         return df["job_posting_id"].dropna().astype(str).unique().tolist()
-    cutoff = pd.Timestamp.now() - pd.Timedelta(days=window_days)
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=window_days)
     keep = dates.isna() | (dates >= cutoff)  # NaT (undated) rows are kept
     kept = df.loc[keep, ["job_posting_id"]].copy()
     kept["_extracted"] = dates[keep]
+    # Collapse a repeated id to its NEWEST date before sorting. unique() below keeps
+    # first-appearance order, so without this a job that appears twice (an original
+    # row plus a re-collected one, which is exactly what a merge_incoming fold or a
+    # hand-added row produces) would sort at the position of its OLDEST copy and be
+    # evicted early -- the opposite of what the sort is for.
+    # sort=False keeps first-appearance (master row) order, so ids sharing a date
+    # still come back in the order the master holds them.
+    kept = kept.groupby("job_posting_id", as_index=False, sort=False)["_extracted"].max()
     # Oldest date FIRST, so cap_exclude_ids' tail slice evicts by date rather than by
     # master row order. Those usually agree, but a merge_incoming fold on the VM (or a
     # hand-added row) can land an older posting after a newer one, and evicting on row
@@ -366,6 +410,14 @@ def _master_ids() -> list[str]:
                 # ALL master ids -- a superset never re-bills -- rather than dying.
                 print(f"Could not window exclude ids ({e}); keeping all master ids")
                 return df["job_posting_id"].dropna().astype(str).unique().tolist()
+        if "job_posting_id" not in df.columns:
+            # Parsed, but not a master: a truncated write, or the wrong CSV copied
+            # in. Say so. Falling through silently means an empty exclude set,
+            # which re-collects and re-bills every posting already held -- and on
+            # the VM the only trace would be the ABSENCE of a line in scraper.log.
+            # An empty-but-valid master is a different thing and stays quiet.
+            print(f"WARNING: {MASTER_CSV.name} has no job_posting_id column "
+                  f"(found: {list(df.columns) or 'no columns'}); using last-run ids")
     return load_previous_ids()
 
 
@@ -402,7 +454,16 @@ def load_extra_master_ids() -> list[str]:
         return []
     if "job_posting_id" not in df.columns or df.empty:
         return []
-    return _window_ids(df, exclude_window_days())
+    try:
+        return _window_ids(df, exclude_window_days())
+    except (TypeError, ValueError, pd.errors.ParserError) as e:
+        # Same degrade-to-superset path _master_ids has. Without it an unexpected
+        # extracted_date dtype in the SYNCED master (which this host does not
+        # write, so its shape is not ours to guarantee) took down the whole local
+        # run with a raw traceback, while the identical column in our own master
+        # degraded quietly one function up.
+        print(f"Could not window extra master {path.name} ({e}); keeping all its ids")
+        return df["job_posting_id"].dropna().astype(str).unique().tolist()
 
 
 def load_exclude_ids() -> list[str]:
@@ -416,13 +477,24 @@ def load_exclude_ids() -> list[str]:
     collected on another machine — e.g. a manual local run — and pushed here so a
     scheduled VM run skips them; these are freshly-collected this-session ids and are
     NOT windowed). Falls back to the last-run JSON when this host's master is
-    missing/unreadable."""
-    ids = list(_master_ids())
-    seen = set(ids)
+    missing/unreadable.
+
+    ORDER IS A CONTRACT, not an accident: cap_exclude_ids() keeps the TAIL, so
+    this host's own ids go LAST, newest last. They were appended first until
+    2026-08-27, which put the other machines' ids in the tail and evicted our own
+    -- and on the VM, where the pushed file routinely carries more than
+    MAX_EXCLUDE_IDS entries, the cap then kept 100% foreign ids and 0% of the VM's
+    own master, so every run re-collected what it had collected the day before.
+    Ours are the ids that can actually resurface in a "Past 24 hours" search, so
+    ours are the ones that must survive the cap."""
+    own = _master_ids()                       # dated, oldest-first (see _window_ids)
+    ids: list[str] = []
+    seen = set(own)
     for jid in load_extra_master_ids() + load_external_exclude_ids():
         if jid not in seen:
             ids.append(jid)
             seen.add(jid)
+    ids.extend(own)
     return ids
 
 
@@ -591,15 +663,33 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     every child with `child_input_size_validation` and the collection returns zero
     rows without raising anything.
 
-    Keeps the NEWEST ids. load_exclude_ids() returns this host's master sorted by
-    extracted_date (oldest first, see _window_ids) followed by ids pushed from other
-    machines, so the tail is the most recently collected — and with a
-    time_range="Past 24 hours" search those are the only ones that can resurface.
-    Trimming the tail instead would keep precisely the ids that cannot recur.
+    Keeps the TAIL, which load_exclude_ids() guarantees is this host's own master,
+    oldest first (see its docstring and _window_ids). With a
+    time_range="Past 24 hours" search those are the only ids that can resurface,
+    so trimming the head instead would keep precisely the ids that cannot recur.
+
+    The per-id width is MEASURED off the ids in hand, not assumed. It used to be
+    the BYTES_PER_EXCLUDE_ID constant, which bakes in today's 10-digit LinkedIn
+    posting id; ids are at 4.4e9 now, and the first 11-digit id would silently
+    push the real payload past the cap with nothing noticing.
     """
     limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
-    budget = MAX_EXCLUDE_PAYLOAD_BYTES // (BYTES_PER_EXCLUDE_ID * limit)
-    keep = max(MIN_EXCLUDE_IDS, min(budget, MAX_EXCLUDE_IDS))
+    if not exclude_ids:
+        return exclude_ids
+    per_id = max(1, len(json.dumps(exclude_ids)) // len(exclude_ids))
+    budget = MAX_EXCLUDE_PAYLOAD_BYTES // (per_id * limit)
+    keep = min(budget, MAX_EXCLUDE_IDS)
+    if keep < MIN_EXCLUDE_IDS:
+        # The budget, not the floor, wins here. An exclude set below the floor
+        # re-bills postings we already hold, which is bad; a payload over the cap
+        # gets the collection REJECTED, which costs the whole run and still burns
+        # the trigger. The floor is worth having, but not at the price of the
+        # failure the cap exists to prevent -- so say plainly what to change.
+        print(f"  WARNING: limit_per_input={limit} leaves room for only {keep} "
+              f"exclude ids, under the {MIN_EXCLUDE_IDS}-id floor. Lower "
+              f"limit_per_input in search_config.json; this run will re-collect "
+              f"postings it already has.")
+        keep = max(keep, 1)
     if len(exclude_ids) <= keep:
         return exclude_ids
     print(f"  exclude set capped: {len(exclude_ids)} -> {keep} most recent ids "
@@ -734,26 +824,44 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
     errors is a failure, and it has to be loud enough for the cron log and the
     dashboard's error dialog to show it.
 
-    Deliberately narrow. Zero rows with zero errors is a legitimately quiet 24
-    hours and returns cleanly, and a run that collected rows despite some errors
-    is normal (dead_page / page_too_big appear on nearly every healthy run).
+    Keyed on the error CODES, not on the error count, and that distinction is the
+    whole design:
+
+      * A count-only rule raises on a legitimately quiet day. dead_page and
+        page_too_big appear on nearly every healthy run (a normal one measured
+        08-14: 252 rows, 62 errors), and once the exclude set is doing its job the
+        expected steady state is 0 new rows with those same page errors still
+        present. run_scraper.sh is `set -e`, so raising there would take scoring,
+        the retention prune and the Drive upload down with it: a guard against
+        silent failure that manufactures a loud one.
+      * A count-only rule also MISSES partial rejection. If Bright Data refuses
+        90% of the children and 10% return rows, `records` is truthy and a
+        count-only check waves through a badly degraded collection.
+
+    So: an input-rejection code is fatal whether or not rows came back, and zero
+    rows with only ordinary page errors is a warning, not an exception.
 
     Pure ASCII: this text lands in the Windows console and the dashboard dialog.
     """
     records = progress.get("records") or 0
     errors = progress.get("errors") or 0
-    if records or not errors:
-        return
     codes = progress.get("error_codes") or {}
-    hint = ""
-    if "child_input_size_validation" in codes:
-        hint = ("\nThat error means the request itself was too large. It is almost always "
-                "the exclude list (jobs_to_not_include), which is copied onto every one of "
-                "the up-to-limit_per_input child fetches each search spawns. Lower "
-                f"limit_per_input, or MAX_EXCLUDE_IDS (currently {MAX_EXCLUDE_IDS}).")
-    raise RuntimeError(
-        f"Collection {snapshot_id} returned 0 rows with {errors} error(s): {codes}. "
-        f"Bright Data rejected every input, so this run collected nothing.{hint}")
+    rejected = sorted(c for c in codes if c in INPUT_REJECTION_CODES)
+    if rejected:
+        hint = ""
+        if "child_input_size_validation" in rejected:
+            hint = ("\nThat error means the request itself was too large. It is almost always "
+                    "the exclude list (jobs_to_not_include), which is copied onto every one of "
+                    "the up-to-limit_per_input child fetches each search spawns. Lower "
+                    f"limit_per_input, or MAX_EXCLUDE_IDS (currently {MAX_EXCLUDE_IDS}).")
+        raise RuntimeError(
+            f"Collection {snapshot_id} was rejected by Bright Data: {codes}. "
+            f"It collected {records} row(s), so the inputs it did accept are not the "
+            f"whole search.{hint}")
+    if not records and errors:
+        print(f"  WARNING: collection {snapshot_id} returned 0 rows with {errors} "
+              f"error(s): {codes}. No input was rejected, so this is most likely a "
+              f"genuinely quiet 24 hours -- but check scraper.log if it repeats.")
 
 
 async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> None:

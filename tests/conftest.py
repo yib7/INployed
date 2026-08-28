@@ -50,6 +50,14 @@ os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="inployed-test-appdata-")
 # as the LOCALAPPDATA one above: a test that passes only on a machine whose .env
 # happens to be shaped right, and that writes to real user data on the way.
 #
+# Belt to the braces below: the pipeline scripts also honour INPLOYED_NO_DOTENV,
+# their own documented opt-out, and they read it at import scope. Setting it here
+# means the suite is disarmed even if the monkeypatch underneath ever stops biting
+# (a dotenv release that binds load_dotenv differently, an import that grabs the
+# function before this module runs). setdefault, so a test that deliberately wants
+# the file-loading branch can still export its own value.
+os.environ.setdefault("INPLOYED_NO_DOTENV", "1")
+
 # Neutralise load_dotenv process-wide BEFORE `local/` is importable, and scrub any
 # var that a .env could have set so the modules see documented defaults. A test
 # that wants a value sets it with monkeypatch.setenv, which is undone at teardown.
@@ -220,6 +228,71 @@ def _hermetic_outbox_and_vm(tmp_path):
             args=["blocked"], returncode=97, stdout="",
             stderr="vm_sync.run_cmd blocked by conftest (hermetic tests)")
         mp.setattr(vm_sync, "run_cmd", lambda cmd: blocked)
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_repo_data(tmp_path_factory):
+    """No test may read the developer's REAL repo-root config and data files.
+
+    Measured over the full suite on 2026-08-27 with a Path.read_text probe: 316
+    tests read one of local/config.json (293), search_config.json (235),
+    scoring_config.json (215) or apply_answers.json (192) straight out of the
+    author's working tree. All four are git-ignored personal files, so those tests
+    take one branch on this machine and the other on CI or a fresh clone — the
+    exact "passes only on your machine" hazard the LOCALAPPDATA and load_dotenv
+    redirects above already close for their own stores. It was not theoretical:
+    the author's search_config.json carries limit_per_input=150 and
+    exclude_window_days=14 while scraper.py's built-in defaults are 100 and 90, so
+    every scraper test that reached load_search_config() was asserting against
+    values a fresh clone does not have.
+
+    The pipeline's DATA paths are redirected for the same reason plus one more:
+    scraper.MASTER_CSV and score_jobs.MASTER_CSV point at the real 37 MB personal
+    master, and score_jobs.RESUME_PATH at the user's real résumé.
+
+    settings.TARGET_FILES is deliberately NOT patched — test_settings asserts on
+    that mapping as production config. The reader seam (_resolve_targets) is
+    patched instead, so the map stays truthful while nothing reads through it.
+
+    Same private-MonkeyPatch pattern as the fixtures above: a test that needs real
+    content writes its own file and points at it, and its monkeypatch runs later,
+    so it wins. tests/test_hermetic_repo_data.py fails loudly if this is removed.
+
+    The sandbox comes from tmp_path_factory, NOT tmp_path: a dozen atomic-write
+    tests assert their tmp_path holds no leftover file, and a directory this
+    fixture created would read as one.
+    """
+    import jobsdata
+    import score_jobs
+    import scraper
+    import settings
+    import watcher
+    from resume_tailor import apply_answers, apply_config
+
+    d = tmp_path_factory.mktemp("hermetic_repo")
+    with pytest.MonkeyPatch.context() as mp:
+        # jobsdata.HERE, not _cfg_path: HERE is the seam test_config_write_lock's
+        # own fixture already redirects, and replacing the function instead would
+        # silently no-op that fixture (its HERE patch would apply to a _cfg_path
+        # that no longer reads HERE). HERE is otherwise only read at import, for
+        # sys.path and REPO_ROOT, so moving it at runtime touches nothing else.
+        mp.setattr(jobsdata, "HERE", d)
+        mp.setattr(watcher, "CONFIG_PATH", d / "config.json")
+        mp.setattr(settings, "_resolve_targets",
+                   lambda targets: {k: d / v.name for k, v in settings.TARGET_FILES.items()}
+                   if targets is None else targets)
+        mp.setattr(apply_answers, "STORE_PATH", d / "apply_answers.json")
+        mp.setattr(apply_config, "APPLY_CONFIG", d / "apply_config.json")
+        mp.setattr(scraper, "OUTPUT_DIR", d)
+        mp.setattr(scraper, "MASTER_CSV", d / "linkedin_jobs_master.csv")
+        mp.setattr(scraper, "PREVIOUS_IDS_FILE", d / "last_run_job_ids.json")
+        mp.setattr(scraper, "EXTERNAL_EXCLUDE_FILE", d / "external_exclude_ids.json")
+        mp.setattr(scraper, "BLOCKLIST_FILE", d / "company_blocklist.txt")
+        mp.setattr(score_jobs, "OUTPUT_DIR", d)
+        mp.setattr(score_jobs, "MASTER_CSV", d / "linkedin_jobs_master.csv")
+        mp.setattr(score_jobs, "RESUME_PATH", d / "resume.md")
+        mp.setattr(score_jobs, "RUN_STATS_CSV", d / "run_stats.csv")
         yield
 
 

@@ -36,12 +36,21 @@ def escape_latex(text: str) -> str:
 
 
 # The only characters hyperref needs backslashed inside \href's target argument.
-# Deliberately much smaller than _LATEX_SPECIALS: see escape_url.
-_URL_SPECIALS = {"%": r"\%", "#": r"\#", "{": r"\{", "}": r"\}"}
+# Deliberately much smaller than _LATEX_SPECIALS: see escape_url. Just the two --
+# `{` and `}` are not listed because they never reach this map: they are absent
+# from _URL_SAFE below, so quote() has already turned them into %7B / %7D.
+_URL_SPECIALS = {"%": r"\%", "#": r"\#"}
 
 # Everything a URL may legally carry unencoded, kept out of quote()'s escaping so an
 # address already percent-encoded survives a second pass unchanged.
-_URL_SAFE = "/:?#[]@!$&'()*+,;=~%"
+#
+# `&` is deliberately NOT here. render.py passes the finished \href as argument #2
+# of \resumeProjectHeadingInline, and that macro drops #2 inside a tabular* row
+# right before the column separator (resume_template.tex:94). TeX reads a raw `&`
+# there as an alignment tab, so a repo URL carrying one fails the build with
+# "Extra alignment tab has been changed to \cr". Percent-encoding it costs nothing
+# and resolves identically.
+_URL_SAFE = "/:?#[]@!$'()*+,;=~%"
 
 
 def escape_url(url: str) -> str:

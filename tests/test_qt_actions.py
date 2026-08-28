@@ -1015,8 +1015,13 @@ def test_push_seen_ids_writes_to_outbox_not_the_scrapers_read_path(monkeypatch, 
                         types.SimpleNamespace(returncode=0, stdout="", stderr=""))
     logs, log = _capture_log()
     MainWindow._push_seen_ids_to_vm(log)
+    import outbox
     assert written["p"] != scraper.EXTERNAL_EXCLUDE_FILE
-    assert written["p"].parent.name == "outbox"
+    # Assert against the module that OWNS the outbox path, not the literal name.
+    # main_window used to rebuild `repo / "outbox"` by hand, which is a second
+    # copy of the expression the conftest redirect does not cover -- so this line
+    # was mkdir'ing into the real repo every time the suite ran.
+    assert written["p"].parent == outbox.OUTBOX_DIR
 
 
 # ── recovery: score run CSVs an interrupted scrape left behind ─────────────────

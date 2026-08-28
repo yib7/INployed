@@ -1598,7 +1598,13 @@ class MainWindow(QtWidgets.QMainWindow):
             # OUT (see push_exclude_ids_cmd), never pulls one in, so on this host it
             # has no business being read at all. The remote filename is fixed by
             # vm_sync.EXCLUDE_REMOTE_FILE, so the local name is free to move.
-            outbox_dir = repo / "outbox"
+            #
+            # Ask the outbox module for its own directory rather than rebuilding
+            # `repo / "outbox"` here. Same path, but one owner: a second copy of
+            # the expression is a copy the conftest redirect does not cover, so
+            # this line was mkdir'ing into the real repo during the test suite.
+            import outbox
+            outbox_dir = outbox.OUTBOX_DIR
             outbox_dir.mkdir(parents=True, exist_ok=True)
             path = scraper.write_external_exclude_ids(
                 outbox_dir / "external_exclude_ids.json")
@@ -2596,6 +2602,12 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- check setup ---------------------------------------------------------
 
     def _check_setup(self) -> None:
+        # One probe at a time. The Bright Data half runs on a worker thread and
+        # can sit on a 15-second timeout, so an impatient double-click would queue
+        # a second thread and pop a second modal behind the first.
+        if getattr(self, "_setup_check_running", False):
+            self._set_status("Setup check already running...")
+            return
         from resume_tailor import master_validate
         try:
             result = master_validate.check_setup()
@@ -2637,6 +2649,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # call, so it goes to a worker thread — a blocking probe here would freeze
         # the window, which is exactly the startup bug this dashboard already had.
         self._set_status("Checking setup...")
+        self._setup_check_running = True
         workers.run_async(
             self, self._bright_data_problems,
             on_done=lambda extra: self._show_setup_result(problems + list(extra or [])),
@@ -2660,6 +2673,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return []
 
     def _show_setup_result(self, problems: list[str]) -> None:
+        # Cleared before the modal, not after: the dialog blocks until dismissed,
+        # and a flag still set behind it would refuse the next click.
+        self._setup_check_running = False
         if not problems:
             # The credential checks above read the FILE (settings.load /
             # secret_status), while the tailor and the scorer read this process's
@@ -2674,8 +2690,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 "launching, restart the dashboard for it to actually be used.")
             self._set_status("Setup check passed.")
         else:
+            # Same launch-snapshot caveat as the all-good branch, and it matters
+            # MORE here: scraper.API_TOKEN is bound once at import, so right after
+            # a rotation this reports the OLD token as dead and looks like the new
+            # one failed. The message a mid-rotation user sees is the one that
+            # needs the hint, so it gets it too.
             QtWidgets.QMessageBox.critical(
-                self, "Check setup", "Problems found:\n\n- " + "\n- ".join(problems))
+                self, "Check setup", "Problems found:\n\n- " + "\n- ".join(problems)
+                + "\n\nThese are checked against the settings this dashboard loaded "
+                "at launch. If you just changed a key or path, restart the "
+                "dashboard and check again before chasing one of these.")
             self._set_status(f"Setup check: {len(problems)} problem(s) — see the list.")
 
     # ---- tracker extras ------------------------------------------------------

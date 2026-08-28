@@ -623,12 +623,39 @@ def test_small_exclude_set_is_passed_through_untouched():
 
 
 def test_exclude_cap_never_empties_the_set():
-    """Even an absurd limit_per_input must leave a floor of recent ids: an empty
+    """A sane limit_per_input must always leave a floor of recent ids: an empty
     exclusion re-collects everything and bills for all of it."""
     ids = [str(4_400_000_000 + n) for n in range(5_000)]
     kept = scraper.build_inputs(ids, max_keywords=1,
-                                limit_per_input=10_000)[0]["jobs_to_not_include"]
+                                limit_per_input=500)[0]["jobs_to_not_include"]
     assert len(kept) >= scraper.MIN_EXCLUDE_IDS
+
+
+def test_an_absurd_limit_keeps_the_payload_legal_and_says_why(capsys):
+    """When the floor and the byte budget disagree, the BUDGET wins.
+
+    max(MIN_EXCLUDE_IDS, budget) was backwards: past limit_per_input ~= 6000 the
+    50-id floor produced a payload OVER the cap, so the floor written to stop a
+    re-billing run instead guaranteed a rejected one -- which re-bills everything
+    AND collects nothing. Honour the budget, and name the setting to change."""
+    ids = [str(4_400_000_000 + n) for n in range(5_000)]
+    kept = scraper.cap_exclude_ids(ids, 10_000)
+    assert 0 < len(kept) < scraper.MIN_EXCLUDE_IDS
+    assert len(json.dumps(kept)) * 10_000 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+    out = capsys.readouterr().out
+    assert "WARNING" in out and "limit_per_input" in out
+
+
+def test_the_cap_measures_the_ids_it_has_rather_than_assuming_a_width():
+    """BYTES_PER_EXCLUDE_ID bakes in today's 10-digit posting ids. Ids are at
+    4.4e9; the first 11-digit one would have quietly pushed the real payload past
+    the cap with nothing noticing, because nothing measured it."""
+    wide = [str(44_000_000_000 + n) for n in range(9_000)]      # 11 digits
+    kept = scraper.cap_exclude_ids(wide, 150)
+    assert len(json.dumps(kept)) * 150 <= scraper.MAX_EXCLUDE_PAYLOAD_BYTES
+    # and a wider id must buy FEWER slots than a narrow one, not the same 2,000
+    narrow = scraper.cap_exclude_ids([str(4_400_000_000 + n) for n in range(9_000)], 150)
+    assert len(kept) < len(narrow)
 
 
 def test_build_inputs_defaults_the_limit_from_config(monkeypatch, tmp_path):
@@ -727,7 +754,35 @@ def test_ready_with_zero_rows_and_errors_raises():
             "error_codes": {"child_input_size_validation": 40}}), "sd_x"))
     msg = str(excinfo.value)
     assert "child_input_size_validation" in msg     # name what Bright Data said
-    assert "0 rows" in msg or "no rows" in msg.lower()
+    assert "rejected" in msg.lower()
+
+
+def test_partial_rejection_raises_even_though_rows_came_back():
+    """The check keys on the CODES, not the row count.
+
+    Bright Data can refuse most children and still return rows from the few it
+    accepted. A records-based rule sees a truthy `records` and waves that through,
+    so a badly degraded collection is silently treated as a good one -- which is
+    the same class of miss as the outage this guard was written for."""
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(scraper.wait_until_ready(_progress_session({
+            "status": "ready", "records": 12, "errors": 88,
+            "error_codes": {"child_input_size_validation": 88}}), "sd_x"))
+    assert "child_input_size_validation" in str(excinfo.value)
+
+
+def test_zero_rows_with_ordinary_page_errors_warns_but_does_not_raise(capsys):
+    """The false positive that would have been worse than the bug.
+
+    Once the exclude set is doing its job the expected steady state IS zero new
+    rows, and dead_page / page_too_big are on nearly every run. run_scraper.sh is
+    `set -e`, so raising here takes scoring, the retention prune and the Drive
+    upload down with it -- a guard against silent failure manufacturing a loud
+    one, twice a day, on a healthy box."""
+    asyncio.run(scraper.wait_until_ready(_progress_session({
+        "status": "ready", "records": 0, "errors": 7,
+        "error_codes": {"dead_page": 7}}), "sd_x"))
+    assert "WARNING" in capsys.readouterr().out       # loud, just not fatal
 
 
 def test_zero_rows_error_names_the_size_cause():
@@ -751,3 +806,88 @@ def test_partial_errors_with_rows_collected_do_not_raise():
     asyncio.run(scraper.wait_until_ready(_progress_session({
         "status": "ready", "records": 252, "errors": 62,
         "error_codes": {"dead_page": 24, "page_too_big": 38}}), "sd_x"))
+
+
+# --- who survives the cap: ordering is a contract, not an accident -----------
+
+def test_this_hosts_own_ids_are_the_ones_that_survive_the_cap(monkeypatch, tmp_path):
+    """load_exclude_ids() puts OUR ids last, because cap_exclude_ids keeps the tail.
+
+    They were appended FIRST until 2026-08-27, which put other machines' ids in
+    the tail. On the VM the pushed external file routinely carries more than
+    MAX_EXCLUDE_IDS entries, so the cap then kept 100% foreign ids and 0% of the
+    VM's own master -- and ours are the only ids that can resurface in a
+    "Past 24 hours" search, so every run re-collected the previous day's work."""
+    monkeypatch.setattr(scraper, "MASTER_CSV", _master(tmp_path, *[f"own{n}" for n in range(10)]))
+    ext = tmp_path / "external_exclude_ids.json"
+    ext.write_text(json.dumps([f"foreign{n}" for n in range(5_000)]), encoding="utf-8")
+    monkeypatch.setattr(scraper, "EXTERNAL_EXCLUDE_FILE", ext)
+
+    ids = scraper.load_exclude_ids()
+    assert ids[-10:] == [f"own{n}" for n in range(10)]      # ours last, newest last
+
+    kept = scraper.cap_exclude_ids(ids, 150)
+    assert set(f"own{n}" for n in range(10)) <= set(kept), "our own ids were evicted"
+
+
+def test_a_repeated_id_sorts_by_its_NEWEST_date(monkeypatch, tmp_path):
+    """unique() keeps first-appearance order, so without a collapse a job that
+    appears twice sorts at the position of its OLDEST copy and gets evicted early
+    -- exactly what a merge_incoming fold or a hand-added row produces."""
+    master = _dated_master(tmp_path, [
+        ("dup", _days_ago(40)),        # the stale copy, first in the file
+        ("mid", _days_ago(20)),
+        ("dup", _days_ago(1)),         # re-collected yesterday
+    ])
+    monkeypatch.setattr(scraper, "MASTER_CSV", master)
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    ids = scraper.load_exclude_ids()
+    assert ids == ["mid", "dup"], "the re-collected id did not sort by its newest date"
+
+
+def test_a_timezone_aware_extracted_date_does_not_crash_the_run(monkeypatch, tmp_path):
+    """merge_incoming folds rows from other machines and the synced Drive master
+    can carry an ISO offset. pandas 3 then returns a tz-AWARE column, and
+    comparing it to a tz-naive Timestamp.now() raised straight out of the run."""
+    master = _dated_master(tmp_path, [
+        ("aware_recent", "2099-01-01T08:00:00+00:00"),
+        ("aware_offset", "2099-01-01T08:00:00-05:00"),
+    ])
+    monkeypatch.setattr(scraper, "MASTER_CSV", master)
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert set(scraper.load_exclude_ids()) == {"aware_recent", "aware_offset"}
+
+
+def test_an_extra_master_with_odd_dates_degrades_instead_of_dying(monkeypatch, tmp_path):
+    """The SYNCED master is not written by this host, so its column shape is not
+    ours to guarantee. _master_ids already degraded to keep-all on a windowing
+    failure; this path raised, taking the whole local run with it."""
+    extra = tmp_path / "drive_master.csv"
+    extra.write_text("job_posting_id,extracted_date\nx1,2099-01-01T08:00:00+00:00\n"
+                     "x2,2099-01-01T08:00:00-05:00\n", encoding="utf-8")
+    monkeypatch.setenv(scraper.EXTRA_MASTER_ENV, str(extra))
+    monkeypatch.delenv("EXCLUDE_WINDOW_DAYS", raising=False)
+    assert set(scraper.load_extra_master_ids()) == {"x1", "x2"}
+
+
+def test_a_master_with_no_job_posting_id_column_says_so(monkeypatch, tmp_path, capsys):
+    """A truncated write or the wrong CSV copied in leaves an EMPTY exclude set,
+    which re-collects and re-bills every posting already held. Falling through
+    quietly meant the only trace on the VM was the ABSENCE of a log line."""
+    wrong = tmp_path / "linkedin_jobs_master.csv"
+    wrong.write_text("company,title\nAcme,Engineer\n", encoding="utf-8")
+    monkeypatch.setattr(scraper, "MASTER_CSV", wrong)
+    monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "missing.json")
+    assert scraper.load_exclude_ids() == []
+    out = capsys.readouterr().out
+    assert "WARNING" in out and "job_posting_id" in out
+
+
+def test_an_empty_but_valid_master_stays_quiet(monkeypatch, tmp_path, capsys):
+    """A real master with no rows yet is not a problem and must not shout."""
+    empty = tmp_path / "linkedin_jobs_master.csv"
+    empty.write_text("job_posting_id,extracted_date\n", encoding="utf-8")
+    monkeypatch.setattr(scraper, "MASTER_CSV", empty)
+    monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "missing.json")
+    assert scraper.load_exclude_ids() == []
+    assert "WARNING" not in capsys.readouterr().out

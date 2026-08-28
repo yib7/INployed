@@ -79,3 +79,23 @@ def test_underscored_repo_href_target_has_no_backslash_escape(monkeypatch):
     tex = render._projects(_SEL, _BULLETS)
     assert r"\href{https://github.com/x/my_repo}" in tex
     assert r"my\_repo" not in tex
+
+
+def test_escape_url_percent_encodes_an_ampersand():
+    r"""render.py drops the finished \href into argument #2 of
+    \resumeProjectHeadingInline, and that macro puts #2 inside a tabular* row
+    right before the column separator (resume_template.tex). TeX reads a raw `&`
+    there as an alignment tab, so a repo URL carrying one failed the whole build
+    with "Extra alignment tab has been changed to \cr"."""
+    # the % of the escape is itself backslashed, the same as any other % in a URL
+    assert escape_url("https://git.example/q?a=1&b=2") == r"https://git.example/q?a=1\%26b=2"
+    assert "&" not in escape_url("https://x.dev/a&b&c")
+
+
+def test_escape_url_never_emits_a_bare_brace():
+    r"""`{` and `}` would close \href's argument early. They are percent-encoded
+    by quote() before the backslash map is consulted, so the map needs no entry
+    for them -- pinned here because the map USED to carry two that were dead."""
+    out = escape_url("https://x.dev/a{b}c")
+    assert "{" not in out and "}" not in out
+    assert out == r"https://x.dev/a\%7Bb\%7Dc"

@@ -39,8 +39,10 @@ class VMPanel(QtWidgets.QWidget):
         self._notify = notify or (
             lambda title, msg: QtWidgets.QMessageBox.information(self, title, msg))
         self._target_factory = target_factory or (lambda: vm_sync.VMTarget.from_env(self.targets))
-        # Separate from `_runner` on purpose: credentials travel over the ssh
-        # stdin pipe, never the argv the generic runner builds.
+        # Separate from `_runner` on purpose: a credential never goes in argv. It
+        # rides an scp'd mode-600 file that the remote script deletes; ssh stdin
+        # is unusable through plink on Windows. See vm_sync.stage_secret_cmd for
+        # the measurements behind both halves of that.
         self._secret_setter = secret_setter or vm_sync.set_vm_secret
 
         self.time_combos: list[QtWidgets.QComboBox] = []
@@ -366,22 +368,33 @@ class VMPanel(QtWidgets.QWidget):
                              f"Write the {label} to the VM's ~/scraper_secrets.env "
                              f"and point run_scraper.sh at it?\n\n"
                              f"The value is not shown here and is not saved on this "
-                             f"machine."):
+                             f"machine.\n\n"
+                             f"This talks to the VM over gcloud, so the window will "
+                             f"be unresponsive for a few seconds (longer if the VM "
+                             f"is asleep)."):
             return
         self.secret_btn.setEnabled(False)
         self.secret_btn.setText("Setting...")
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         QtWidgets.QApplication.processEvents()   # paint the busy state before we block
+        # The dialog is raised AFTER the finally, not inside the except: a modal
+        # opened here blocks until dismissed, so the user would be reading the
+        # error under a wait cursor with the button still saying "Setting...".
+        failure = ""
         try:
             res = self._secret_setter(t, name, value)
         except Exception as exc:  # noqa: BLE001
-            self._notify("Credentials", f"Could not set the {label}: {exc}")
-            return
+            res, failure = None, f"Could not set the {label}: {exc}"
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
             self.secret_btn.setText("Set on VM")
             self.secret_btn.setEnabled(True)
+        if failure:
+            self._notify("Credentials", failure)
+            return
         if res is None:
+            # _require_configured already passed, so set_vm_secret's unconfigured
+            # branch is not reachable from here; an injected setter still can be.
             self._notify("Credentials", "No VM configured.")
             return
         out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()
@@ -390,7 +403,11 @@ class VMPanel(QtWidgets.QWidget):
             self.secret_value.clear()
             self._notify("Credentials",
                          f"{label} set on the VM.\n\n{out[:800]}\n\n"
-                         "If the VM is paused, use Resume now to let the schedule run.")
+                         "If the VM is paused, use Resume now to let the schedule "
+                         "run.\n\nThe first install kept a copy of the old "
+                         "run_scraper.sh at ~/run_scraper.sh.inployed.bak. If it "
+                         "held a credential inline, delete it once you have "
+                         "confirmed the rotation worked.")
         else:
             self._notify("Credentials", f"Failed to set the {label}.\n\n{out[:800]}")
 

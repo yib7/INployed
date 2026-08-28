@@ -48,7 +48,9 @@ DATA_ROOT = _HERE.parent if _HERE.name == "pipeline" else _HERE
 # INPLOYED_NO_DOTENV=1 skips the file, the same opt-out scraper.py carries and for
 # the same reason: this script spends LLM credits, and clearing a key in the
 # environment cannot make it safe to run while the file is reloaded at import.
-if os.environ.get("INPLOYED_NO_DOTENV", "") not in ("1", "true", "True"):
+# Case-folded and generous about spelling, and read at IMPORT -- see the longer
+# note on the same guard in scraper.py.
+if os.environ.get("INPLOYED_NO_DOTENV", "").strip().lower() not in ("1", "true", "yes", "on"):
     try:
         from dotenv import load_dotenv
 

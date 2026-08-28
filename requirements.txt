@@ -32,10 +32,11 @@ pypdf==6.16.2          # security: this is the text-extraction path resume_tailo
 PyYAML==6.0.3
 ruamel.yaml==0.19.1
 python-dotenv==1.2.3   # auto-loads .env so secrets stay out of the repo. 1.2.3 strips a leading
-                       # UTF-8 BOM, which is worth having on Windows: scripts/setup.ps1 writes
-                       # .env with `Set-Content -Encoding UTF8`, and that is UTF-8-with-BOM on
-                       # PowerShell 5.1. Harmless today only because .env.example opens with a
-                       # comment line, so the BOM never lands on a KEY= and no key is lost.
+                       # UTF-8 BOM, which is worth having on Windows even now that nothing here
+                       # writes one: scripts/setup.ps1 used `Set-Content -Encoding UTF8` (that is
+                       # UTF-8-WITH-BOM on PowerShell 5.1) until this release and now writes
+                       # without a BOM, but a user who opens .env in Notepad still gets one back.
+                       # local/envfile.py reads utf-8-sig for the same reason.
 tzdata==2026.3         # IANA tz database for zoneinfo on Windows (Pacific RPD reset); data refresh 2026-07-12
 
 # desktop UI (local dashboard); abi3 wheels run on Python 3.14
@@ -57,7 +58,7 @@ requests==2.34.2
 #   * Pillow — maintainers only: regenerates the desktop icon
 #     (python local/assets/make_icon.py) and composes the README media
 #     (scripts/build_demo_media.py, build_social_preview.py, build_walkthrough.py).
-#   * imageio-ffmpeg — maintainers only: supplies the ffmpeg binary that
+#   * imageio-ffmpeg (maintainers only): supplies the ffmpeg binary that
 #     scripts/build_walkthrough.py encodes the README tour with. Imported
 #     lazily, inside the encode step, so every other script here runs without it.
 

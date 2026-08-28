@@ -76,6 +76,17 @@ All notable changes to INployed are recorded here. The format follows
   shipped a link with a literal backslash in it and did not resolve. URLs now go through
   `escape_url`, which touches only what hyperref needs (`%`, `#`, `{`, `}`) and percent-encodes
   anything outside printable ASCII.
+- **Setup wrote a config the dashboard silently ignored.** `scripts/setup.ps1` saved
+  `local/config.json` with `Set-Content -Encoding UTF8`, which on PowerShell 5.1 means UTF-8
+  *with* a byte-order mark. `json.loads` rejects a leading BOM and the reader treats an
+  unparseable file as an empty one, so on every fresh install the dashboard threw away the
+  `min_score`, `followup_days`, `gdrive_root` and `mtime_stable_seconds` it had just been given
+  and ran on built-in defaults instead, with no error and nothing in the log. The same script
+  read `.env.example` through `Get-Content`, which decodes a BOM-less UTF-8 file as the ANSI
+  code page, so the template's comment rules arrived in the new `.env` as mojibake. Setup now
+  reads and writes UTF-8 without a BOM in both directions, and re-running it repairs a config
+  written by the old version. The readers take `utf-8-sig` as well, so a file edited in Notepad
+  no longer disappears the same way.
 
 ### Added
 - **Check setup now tests the Bright Data token**, off the UI thread so the window stays

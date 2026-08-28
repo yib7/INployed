@@ -131,7 +131,7 @@ You need an account for each feature you want:
 
 *(Skip if you only want to look around: the dashboard, tracker, and editors all run
 without keys. The tailor stops with a plain "no key configured" message instead.
-The VM row is optional even with keys — **Find new jobs** runs the same discovery
+The VM row is optional even with keys: **Find new jobs** runs the same discovery
 on your PC, and the VM controls stay hidden until you switch on **Enable VM
 features** in Settings.)*
 

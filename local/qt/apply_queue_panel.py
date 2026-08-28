@@ -93,6 +93,26 @@ def _kickoff_argv(scoped: bool = False) -> list[str]:
     return ["powershell", "-NoExit", "-EncodedCommand", encoded]
 
 
+def _drain_console_env() -> dict:
+    """`os.environ` with every non-Anthropic credential removed.
+
+    The drain console ends in `claude`, and `local/app.py` calls `load_dotenv()`
+    at startup — so this process's environment holds BRIGHT_DATA_API_TOKEN and
+    GEMINI_API_KEYS, and a bare Popen would hand both to an unrelated vendor's
+    CLI (and to the agent it runs, which has file and Bash access) purely by
+    inheritance. `pipeline/claude_cli._child_env` already does exactly this scrub
+    for the direct `claude` calls; ask it rather than keeping a second list here,
+    so the two can never drift. Nothing in the scrub list is needed by `claude`,
+    which authenticates through its own stored login.
+    """
+    import sys
+    pipeline = str(REPO_ROOT / "pipeline")
+    if pipeline not in sys.path:
+        sys.path.insert(0, pipeline)
+    from claude_cli import _child_env    # the single owner of the scrub list
+    return _child_env()
+
+
 def _spawn_kickoff(scoped: bool = False) -> None:
     """Default on_start_run: launch the drain in a brand-new, visible console.
     `scoped` selects the safer allowlisted variant over the blanket bypass.
@@ -101,7 +121,7 @@ def _spawn_kickoff(scoped: bool = False) -> None:
     box (CI, a dev's Mac) never raises at import time.
     """
     subprocess.Popen(
-        _kickoff_argv(scoped),
+        _kickoff_argv(scoped), env=_drain_console_env(),
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 

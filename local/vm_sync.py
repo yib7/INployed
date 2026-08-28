@@ -269,10 +269,18 @@ class VMTarget:
         secrets file, replaces just this one variable inside it, makes
         run_scraper.sh source that file (once, via a marker block inserted right
         after the shebang so it runs before anything needs the value), and
-        comments out any older inline assignment further down. That last step is
-        load-bearing: an inline export sits AFTER the source line and would
-        otherwise win, leaving the dead credential in force and making the fix
-        look like it silently did nothing.
+        replaces any older inline assignment further down with a comment. That
+        last step is load-bearing: an inline export sits AFTER the source line and
+        would otherwise win, leaving the dead credential in force and making the
+        fix look like it silently did nothing.
+
+        The replacement takes the WHOLE line, retired value included, rather than
+        commenting the assignment out in place. The point of this feature is to get
+        credentials out of run_scraper.sh, and that script is mode 755 on the VM;
+        keeping `# ... export NAME=<old token>` there left the value readable in
+        the one file the whole feature exists to clean, forever. The retired value
+        is not lost: the first install copies the untouched script to a mode-600
+        run_scraper.sh.inployed.bak, and every revert path restores from it.
 
         It then PROVES the result instead of announcing it. `echo SECRET_SET`
         used to be unconditional, so two shapes reported success while changing
@@ -283,10 +291,32 @@ class VMTarget:
         SOURCING run_scraper.sh would execute it, and that script starts a billed
         scrape.
 
-        run_scraper.sh is backed up once, to a fixed name, and restored if the
-        result fails either check, so a bad edit can never leave the VM with a
-        broken cron script. A script that was ALREADY unparseable before we
-        touched it reports SCRIPT_ALREADY_BROKEN rather than blaming this edit.
+        Two different copies of run_scraper.sh are involved and conflating them is
+        a data-loss bug, so they are separate on purpose:
+
+          * `$B` (`run_scraper.sh.inployed.bak`) is the user-facing ARCHIVE of the
+            script as it was before the very first install, made once and never
+            refreshed. It is what the success dialog tells the user to delete once
+            a rotation is confirmed, because it is the copy that still holds the
+            retired inline credential.
+          * `$R` is a per-RUN rollback copy, taken immediately before this run's
+            edits and deleted by the EXIT trap. Every revert restores `$R`.
+
+        Reverting from `$B` instead was a real bug: from the second install
+        onward `$B` is a snapshot from before the FIRST install, so any failed
+        check rewound run_scraper.sh past every successful install and every edit
+        the user had made since -- deleting the source block, silently
+        reinstating a retired credential, and taking the user's own changes to
+        the VM's cron entry point with it.
+
+        So a bad edit can never leave the VM with a broken cron script, and a
+        script that was ALREADY unparseable before we touched it reports
+        SCRIPT_ALREADY_BROKEN rather than blaming this edit.
+
+        The staged file is chmod 600 on arrival: scp does not preserve the source
+        mode without -p, and the source mode is meaningless on Windows anyway
+        (CPython honours only the read-only bit there), so the file lands at the
+        remote umask -- 0644 on a stock VM -- until this line runs.
 
         Raw f-string on purpose: the sed newline escapes below must reach sed as
         two characters, not as real line breaks.
@@ -302,8 +332,10 @@ class VMTarget:
         inline = rf"^([[:space:]]*)(export[[:space:]]+)?{name}="
         return self.build_ssh_cmd(rf"""set -e
 IN="$HOME/{SECRET_STAGE_REMOTE_FILE}"
-trap 'rm -f "$IN"' EXIT
+T="$IN.none"; R="$IN.none"
+trap 'rm -f "$IN" "$T" "$R"' EXIT
 [ -s "$IN" ] || {{ echo NO_STAGED_VALUE; exit 1; }}
+chmod 600 "$IN"
 V="$(head -n 1 "$IN")"
 [ -n "$V" ] || {{ echo EMPTY_VALUE; exit 1; }}
 umask 077
@@ -317,18 +349,20 @@ S="$HOME/run_scraper.sh"
 [ -s "$S" ] || {{ echo NO_RUN_SCRIPT; exit 1; }}
 B="$S.inployed.bak"
 [ -f "$B" ] || {{ cp "$S" "$B"; chmod 600 "$B"; }}
+R="$(mktemp "$S.inployed.rollback.XXXXXX")"
+cp "$S" "$R"; chmod 600 "$R"
 PRE=0; bash -n "$S" 2>/dev/null || PRE=1
 grep -q '{SECRETS_BEGIN}' "$S" || sed -i '1a # {SECRETS_BEGIN}\n{src}\n# {SECRETS_END}' "$S"
-sed -i -E 's|{inline}|\1# moved into {SECRETS_REMOTE_FILE} by INployed: \2{name}=|' "$S"
+sed -i -E 's|{inline}.*|\1# {name} moved into {SECRETS_REMOTE_FILE} by INployed (old value dropped)|' "$S"
 if ! bash -n "$S" 2>/dev/null; then
-  cp "$B" "$S"
+  cp "$R" "$S"
   if [ "$PRE" = 1 ]; then echo SCRIPT_ALREADY_BROKEN; else echo SYNTAX_FAIL_REVERTED; fi
   exit 1
 fi
 if grep -Eq '{inline}' "$S"; then
-  cp "$B" "$S"; echo INLINE_ASSIGNMENT_REMAINS; exit 1
+  cp "$R" "$S"; echo INLINE_ASSIGNMENT_REMAINS; exit 1
 fi
-grep -q '{SECRETS_BEGIN}' "$S" || {{ cp "$B" "$S"; echo SOURCE_LINE_MISSING; exit 1; }}
+grep -q '{SECRETS_BEGIN}' "$S" || {{ cp "$R" "$S"; echo SOURCE_LINE_MISSING; exit 1; }}
 echo SECRET_SET: {name}
 """)
 
@@ -367,7 +401,21 @@ def launch_argv(cmd: list[str]) -> list[str]:
     cmd = list(cmd)
     if os.name != "nt" or not cmd:
         return cmd
-    resolved = shutil.which(cmd[0]) or cmd[0]
+    found = shutil.which(cmd[0])
+    if found and not os.path.dirname(cmd[0]):
+        # shutil.which inserts os.curdir at the FRONT of the search path on
+        # Windows (it mirrors CreateProcess's own lookup), so a gcloud.exe sitting
+        # in the dashboard's working directory beats the real SDK. That process
+        # would receive the generated --command script and the scp of the staged
+        # credential's file, so this is the one lookup here that must not be
+        # cwd-relative. A bare program name comes from PATH or not at all.
+        here = os.path.normcase(os.path.abspath(os.curdir))
+        if os.path.normcase(os.path.dirname(os.path.abspath(found))) == here:
+            raise RuntimeError(
+                f"Refusing to run {cmd[0]!r} from the working directory ({here}): "
+                f"on Windows that shadows the real one on PATH. Delete it, or set "
+                f"VM_GCLOUD_PATH to the full path of your gcloud.")
+    resolved = found or cmd[0]
     if resolved.lower().endswith((".cmd", ".bat")):
         bypass = _bypass_argv(resolved, cmd[1:])
         if bypass is not None:
@@ -398,6 +446,53 @@ def sync_exclude_ids_to_vm(target: VMTarget, local_path) -> subprocess.Completed
     return run_cmd(target.push_exclude_ids_cmd(str(local_path)))
 
 
+def leftover_staging_dirs() -> list[Path]:
+    """Any `inployed-secret-*` temp dirs still on this machine's disk.
+
+    set_vm_secret deletes its own in a `finally`, so a survivor means BOTH that
+    cleanup and its overwrite fallback failed -- a handle still open on the file,
+    which on Windows is usually an antivirus scan of something just written. The
+    only notice it gives is a print(), and the dashboard runs under pythonw with
+    no console, so that warning goes nowhere. The panel asks this instead, and
+    gets previous runs' leftovers thrown in.
+    """
+    try:
+        return sorted(Path(tempfile.gettempdir()).glob("inployed-secret-*"))
+    except OSError:
+        return []
+
+
+# Everything the remote installer can print. Any of them proves the script RAN,
+# which means its EXIT trap fired and the staged credential is already gone. A
+# non-zero exit carrying NONE of them means the script never started -- gcloud or
+# plink failed between the two calls, the session expired, the transport died --
+# so the trap never armed and this side has to clear the VM itself.
+INSTALLER_MARKERS = (
+    "SECRET_SET", "NO_STAGED_VALUE", "EMPTY_VALUE", "NO_RUN_SCRIPT",
+    "SYNTAX_FAIL_REVERTED", "SCRIPT_ALREADY_BROKEN", "INLINE_ASSIGNMENT_REMAINS",
+    "SOURCE_LINE_MISSING",
+)
+
+
+def _installer_ran(res) -> bool:
+    out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or ""))
+    return any(m in out for m in INSTALLER_MARKERS)
+
+
+def _clear_staged(target: VMTarget) -> None:
+    """Best-effort `rm -f` of the staged credential on the VM.
+
+    Deliberately silent on its own failure: it runs while something else has
+    already gone wrong, and a cleanup error must never replace the real one. When
+    the VM is unreachable this achieves nothing, which is fine -- nothing reached
+    the VM in that case either.
+    """
+    try:
+        run_cmd(target.clear_staged_secret_cmd())
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def set_vm_secret(target: VMTarget, name: str, value: str):
     """Store one managed credential on the VM: stage it, install it, clean up.
 
@@ -410,9 +505,13 @@ def set_vm_secret(target: VMTarget, name: str, value: str):
     value on the VM, so a rejected name left the credential sitting there with no
     EXIT trap ever armed to remove it. Same for the remote-dir check.
 
-    If the install step fails to run at all (gcloud session expired, network
-    drop, the 300s timeout in run_cmd), the staged file is removed with a second
-    ssh rather than left for a trap that never fired.
+    NO failure path leaves the staged credential on the VM. The EXIT trap covers
+    only the case where the remote script actually ran, so this side clears it
+    whenever it did not: the scp reported failure (which cannot prove nothing
+    landed -- a transfer that dies after the bytes arrive reports failure too),
+    the install raised (gcloud session expired, network drop, run_cmd's 300s
+    timeout), or the install exited non-zero without printing any of
+    INSTALLER_MARKERS, which means the script never started.
 
     The value touches this machine's disk only as a file inside a private temp
     dir, deleted in the `finally` no matter what — the least-bad channel
@@ -441,18 +540,24 @@ def set_vm_secret(target: VMTarget, name: str, value: str):
             fh.write(value + "\n")
         staged = run_cmd(target.stage_secret_cmd(str(local)))
         if staged.returncode != 0:
+            # A failed scp cannot prove nothing landed: a transfer that dies after
+            # the bytes arrive reports failure too, and the installer -- the only
+            # thing that arms the EXIT trap -- is never going to run now.
+            _clear_staged(target)
             return staged
         try:
-            return run_cmd(target.set_secret_cmd(name))
+            done = run_cmd(target.set_secret_cmd(name))
         except BaseException:
-            # The installer never ran, so its EXIT trap never armed. Best effort,
-            # and deliberately silent on failure: we are already unwinding, and a
-            # cleanup error must not replace the real one.
-            try:
-                run_cmd(target.clear_staged_secret_cmd())
-            except Exception:  # noqa: BLE001
-                pass
+            # The installer never ran, so its EXIT trap never armed.
+            _clear_staged(target)
             raise
+        if done.returncode != 0 and not _installer_ran(done):
+            # Non-zero with none of the script's own markers in the output: the
+            # remote script never started (gcloud/plink failure, expired session,
+            # a transport error), so again no trap ever armed. A failure that DID
+            # print a marker ran the trap itself and needs no second ssh.
+            _clear_staged(target)
+        return done
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
         if local.exists():

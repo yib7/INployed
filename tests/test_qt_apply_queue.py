@@ -1043,3 +1043,27 @@ def test_settings_schema_has_auto_apply_fields():
     assert "auto_apply_batch_cap" in settings.validate({"auto_apply_batch_cap": 26})
     assert "auto_apply_batch_cap" in settings.validate({"auto_apply_batch_cap": 0})
     assert settings.validate({"auto_apply_batch_cap": 10}) == {}
+
+
+def test_the_drain_console_never_inherits_another_vendors_credentials(monkeypatch):
+    """local/app.py load_dotenv()s at startup, so this process's environment holds
+    the Bright Data token and the Gemini key pool. The drain console ends in
+    `claude`, and a bare Popen would hand both to an unrelated vendor's CLI -- and
+    to the agent it runs, which has file and Bash access -- purely by inheritance.
+    claude_cli._child_env() already strips them for the direct calls; the console
+    has to use the same list."""
+    import claude_cli
+    monkeypatch.setenv("BRIGHT_DATA_API_TOKEN", "bd-should-not-travel")
+    monkeypatch.setenv("GEMINI_API_KEYS", "g1,g2")
+    monkeypatch.setenv("ANTHROPIC_SOMETHING", "kept")
+    seen = {}
+    monkeypatch.setattr(aqp.subprocess, "Popen",
+                        lambda *a, **k: seen.update(k) or None)
+    aqp._spawn_kickoff()
+
+    env = seen["env"]
+    assert env is not None, "the drain console inherited the parent environment"
+    for name in claude_cli._SCRUBBED_ENV_VARS:
+        assert name not in env, f"{name} rode into the claude console"
+    assert env.get("ANTHROPIC_SOMETHING") == "kept"   # only credentials are stripped
+    assert "PATH" in env or "Path" in env             # ... and the rest survives

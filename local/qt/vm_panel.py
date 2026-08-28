@@ -8,6 +8,7 @@ from .env via settings; auth is the user's existing `gcloud` login.
 """
 from __future__ import annotations
 
+import subprocess
 from datetime import date, timedelta
 from typing import Callable
 
@@ -60,6 +61,17 @@ class VMPanel(QtWidgets.QWidget):
         status = (f"Connected target: {t.user}@{t.instance} (zone {t.zone})" if t.configured()
                   else "No VM configured — set VM_INSTANCE / VM_ZONE / VM_USER in Settings.")
         self.status_label = QtWidgets.QLabel(status)
+        # PlainText, not QLabel's AutoText default: this is the one label here whose
+        # text starts with interpolated values (VM_USER / VM_INSTANCE / VM_ZONE from
+        # the .env), so an instance name carrying markup would render as HTML
+        # instead of as the name.
+        #
+        # Measured rather than assumed, because the obvious explanation is wrong:
+        # Qt's sniffer gives up at the first NEWLINE, not after a literal prefix.
+        # That is what makes every other string here safe -- they all put gcloud's
+        # output after a blank line -- and it is why the failure messages in
+        # set_secret break before their detail instead of appending it to a colon.
+        self.status_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.status_label.setProperty("muted", True)
         self.status_label.setWordWrap(True)
         v.addWidget(self.status_label)
@@ -383,8 +395,22 @@ class VMPanel(QtWidgets.QWidget):
         failure = ""
         try:
             res = self._secret_setter(t, name, value)
+        except subprocess.SubprocessError as exc:
+            # TimeoutExpired and CalledProcessError put the WHOLE argv in
+            # str(), which for the installer is the entire generated bash
+            # script plus the staged file's path. No credential (the value is
+            # never in argv), but a wall of internal detail where one line
+            # belongs -- and the user cannot act on any of it.
+            res, failure = None, (
+                f"Could not set the {label}.\n\n{type(exc).__name__} from "
+                "gcloud. Is the instance running, and is your gcloud login "
+                "still current?")
         except Exception as exc:  # noqa: BLE001
-            res, failure = None, f"Could not set the {label}: {exc}"
+            # The detail goes on its own line rather than after a colon:
+            # Qt's rich-text sniffer gives up at the first newline, so a
+            # one-line message ending in interpolated text is the one shape
+            # here that could be rendered as HTML. Measured, not assumed.
+            res, failure = None, f"Could not set the {label}.\n\n{exc}"
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
             self.secret_btn.setText("Set on VM")
@@ -407,9 +433,29 @@ class VMPanel(QtWidgets.QWidget):
                          "run.\n\nThe first install kept a copy of the old "
                          "run_scraper.sh at ~/run_scraper.sh.inployed.bak. If it "
                          "held a credential inline, delete it once you have "
-                         "confirmed the rotation worked.")
+                         "confirmed the rotation worked." + self._leftover_note())
         else:
-            self._notify("Credentials", f"Failed to set the {label}.\n\n{out[:800]}")
+            self._notify(
+                "Credentials",
+                f"Failed to set the {label}.\n\n{out[:800]}"
+                + self._leftover_note())
+
+    @staticmethod
+    def _leftover_note() -> str:
+        """Warn when a copy of the value is still in %TEMP% on THIS machine.
+
+        set_vm_secret deletes its staging dir in a `finally` and only print()s
+        when both that and its overwrite fallback fail -- and the dashboard
+        runs under pythonw, so that print goes to a console which does not
+        exist. Ask the module instead, and put the answer in the dialog the
+        user is already reading.
+        """
+        left = vm_sync.leftover_staging_dirs()
+        if not left:
+            return ""
+        return ("\n\nWARNING: a copy of the value could not be "
+                "deleted from this machine. Delete by hand: "
+                + ", ".join(str(d) for d in left[:3]))
 
     def push_config(self, skip_confirm: bool = False):
         t = self._require_configured()

@@ -7,6 +7,7 @@ module stays importable on a clean machine with no Bright Data creds."""
 import asyncio
 import json
 import os
+import types
 import urllib.error
 
 import aiohttp
@@ -518,7 +519,14 @@ def test_trigger_non_auth_error_stays_unannotated():
 
 # --- account_problems(): same rule, for the dashboard's Check setup button -----
 
-def _fake_urlopen(monkeypatch, status=200, calls=None):
+def _fake_urlopen(monkeypatch, status=200, calls=None, handlers=None):
+    """Stand in for the redirect-refusing opener account_problems builds.
+
+    Patches build_opener rather than urlopen: the probe carries the API token in
+    an Authorization header, so it deliberately does NOT use the module-level
+    urlopen (see scraper._NoRedirect). `handlers` collects what the opener was
+    built with, so a test can prove the redirect guard is still wired in.
+    """
     class _Resp:
         def read(self):
             return b"{}"
@@ -536,7 +544,12 @@ def _fake_urlopen(monkeypatch, status=200, calls=None):
             raise urllib.error.HTTPError(scraper.STATUS_URL, status, "err", {}, None)
         return _Resp()
 
-    monkeypatch.setattr(scraper.urllib.request, "urlopen", _open)
+    def _build_opener(*hs):
+        if handlers is not None:
+            handlers.extend(hs)
+        return types.SimpleNamespace(open=_open)
+
+    monkeypatch.setattr(scraper.urllib.request, "build_opener", _build_opener)
 
 
 def test_account_problems_reports_a_dead_token(monkeypatch):
@@ -559,9 +572,40 @@ def test_account_problems_silent_for_a_datasets_only_account(monkeypatch):
 def test_account_problems_silent_when_probe_is_unreachable(monkeypatch):
     monkeypatch.setattr(scraper, "API_TOKEN", "tok")
     monkeypatch.setattr(scraper, "DATASET_ID", "ds")
-    _fake_urlopen(monkeypatch, 500)
-    monkeypatch.setattr(scraper.urllib.request, "urlopen",
-                        lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+
+    def _offline(*_a):
+        def _open(req, timeout=None):
+            raise OSError("offline")
+        return types.SimpleNamespace(open=_open)
+
+    monkeypatch.setattr(scraper.urllib.request, "build_opener", _offline)
+    assert scraper.account_problems() == []
+
+
+def test_the_token_probe_never_follows_a_redirect(monkeypatch):
+    """The probe sends the Bright Data token in an Authorization header, and
+    urllib copies every header onto a redirect target -- including one on a
+    different host (HTTPRedirectHandler.redirect_request drops only
+    content-length and content-type). aiohttp strips Authorization across
+    origins, so the async paths are safe; this one has to refuse the redirect.
+    """
+    monkeypatch.setattr(scraper, "API_TOKEN", "tok")
+    monkeypatch.setattr(scraper, "DATASET_ID", "ds")
+    handlers = []
+    _fake_urlopen(monkeypatch, 200, handlers=handlers)
+    assert scraper.account_problems() == []
+    assert scraper._NoRedirect in handlers, "the redirect guard was not installed"
+    # and the guard actually declines, rather than rewriting the request
+    assert scraper._NoRedirect().redirect_request(
+        None, None, 302, "Found", {}, "https://elsewhere.example/steal") is None
+
+
+def test_a_redirected_probe_reports_no_problem_rather_than_a_dead_token(monkeypatch):
+    """Refusing the redirect surfaces as an HTTPError carrying the 30x code.
+    That is not 401/403, so the fail-open rule applies: say nothing."""
+    monkeypatch.setattr(scraper, "API_TOKEN", "tok")
+    monkeypatch.setattr(scraper, "DATASET_ID", "ds")
+    _fake_urlopen(monkeypatch, 302)
     assert scraper.account_problems() == []
 
 

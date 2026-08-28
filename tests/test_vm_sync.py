@@ -353,16 +353,25 @@ def test_set_vm_secret_deletes_the_local_temp_even_when_the_push_fails(monkeypat
 
 
 def test_set_vm_secret_skips_the_install_when_staging_fails(monkeypatch):
+    """A failed scp must not run the installer -- but it MUST still try to clear
+    the staged file. A transfer that dies after the bytes arrive reports failure
+    too, and the installer is the only thing that ever arms the EXIT trap.
+    """
     calls = []
 
     def fake_run(cmd):
-        calls.append("scp" if "scp" in cmd else "ssh")
+        calls.append(cmd)
         return types.SimpleNamespace(returncode=1, stdout="", stderr="permission denied")
 
     monkeypatch.setattr(vm_sync, "run_cmd", fake_run)
     res = vm_sync.set_vm_secret(_target(), "BRIGHT_DATA_API_TOKEN", "tok-123")
-    assert calls == ["scp"]                 # never ran the installer on a failed upload
     assert res.returncode == 1
+    kinds = ["scp" if "scp" in c else "ssh" for c in calls]
+    assert kinds == ["scp", "ssh"]
+    # the one ssh is the cleanup, never the installer
+    assert any(p.startswith("--command=rm -f") and vm_sync.SECRET_STAGE_REMOTE_FILE in p
+               for p in calls[1])
+    assert not any("SECRET_SET" in p for p in calls[1]), "the installer ran anyway"
 
 
 def test_set_vm_secret_refuses_an_unconfigured_target():
@@ -573,3 +582,159 @@ def test_a_crash_on_the_install_step_clears_the_staged_credential(monkeypatch):
     assert any(any(p.startswith("--command=rm -f") and vm_sync.SECRET_STAGE_REMOTE_FILE in p
                    for p in c) for c in calls), \
         "no cleanup was attempted for the staged credential"
+
+
+def test_the_retired_inline_credential_is_removed_not_just_commented(tmp_path):
+    """The whole point of this feature is to get credentials OUT of run_scraper.sh,
+    which is mode 755 on the VM. The sed used to keep `\2NAME=` in the replacement,
+    so the neutralised line still carried the retired token in that exact file,
+    forever. The value is not lost -- the mode-600 backup holds the original."""
+    home = _fake_home(tmp_path,
+                      "#!/bin/bash\n"
+                      "export BRIGHT_DATA_API_TOKEN=deadtoken-old\n"
+                      "  export GEMINI_API_KEYS=indented-dead-keys\n"
+                      "export BRIGHT_DATA_DATASET_ID=gd_keepme\n"
+                      "set -e\n")
+    res, _ = _install(tmp_path, home, "new-value-666")
+    assert res.returncode == 0, res.stdout + res.stderr
+
+    script_text = (home / "run_scraper.sh").read_text(encoding="utf-8")
+    assert "deadtoken-old" not in script_text, "the retired token is still in the script"
+    assert "BRIGHT_DATA_API_TOKEN moved into scraper_secrets.env" in script_text
+    # only the variable being installed is touched
+    assert "indented-dead-keys" in script_text
+    assert "export BRIGHT_DATA_DATASET_ID=gd_keepme" in script_text
+    # the original is preserved once, in the mode-600 backup
+    backup = (home / "run_scraper.sh.inployed.bak").read_text(encoding="utf-8")
+    assert "deadtoken-old" in backup
+
+
+def test_a_second_install_rolls_back_to_THIS_run_not_the_first_ever(tmp_path):
+    """The revert paths used to restore $B, the create-once backup. From install
+    two onward that is a snapshot from before install ONE, so any failed check
+    rewound run_scraper.sh past every successful install and every edit the user
+    had made since -- deleting the source block, reinstating a credential the
+    user had already rotated away, and taking their own edits with it.
+
+    Reproduced by installing once (which succeeds), editing the script the way a
+    user would, then forcing the second install's post-check to fail.
+    """
+    home = _fake_home(tmp_path,
+                      "#!/bin/bash\n"
+                      "export BRIGHT_DATA_API_TOKEN=deadtoken-old\n"
+                      "set -e\n")
+    res, _ = _install(tmp_path, home, "first-value-111")
+    assert res.returncode == 0, res.stdout + res.stderr
+
+    script = home / "run_scraper.sh"
+    after_first = script.read_text(encoding="utf-8")
+    assert "INPLOYED SECRETS BEGIN" in after_first
+    assert "deadtoken-old" not in after_first
+    # the user then edits their own cron entry point
+    script.write_text(after_first + "echo 'my own line'\n", newline="\n", encoding="utf-8")
+
+    # now make the second install hit a revert path. Any of them does the same
+    # cp; an unparseable script is the one that can be triggered deterministically.
+    script.write_text(script.read_text(encoding="utf-8") + "if then fi\n",
+                      newline="\n", encoding="utf-8")
+    before_second = script.read_text(encoding="utf-8")
+    res2, _ = _install(tmp_path, home, "second-value-222")
+    assert res2.returncode != 0
+    assert "SCRIPT_ALREADY_BROKEN" in res2.stdout
+
+    reverted = script.read_text(encoding="utf-8")
+    assert reverted == before_second, "the revert did not restore THIS run's state"
+    assert "my own line" in reverted, "the user's own edit was destroyed"
+    assert "INPLOYED SECRETS BEGIN" in reverted, "the source block was rewound away"
+    assert "deadtoken-old" not in reverted, "a retired credential was reinstated"
+
+
+def test_no_rollback_temp_file_survives_the_run(tmp_path):
+    """The per-run rollback copy is a temp file next to run_scraper.sh, so the
+    EXIT trap has to remove it on success AND on every failure path -- otherwise
+    the feature leaves a mode-600 copy of the cron script per click, which is the
+    pile P1-5 removed in the first place."""
+    home = _fake_home(tmp_path, "#!/bin/bash\nexport KEEP=me\nset -e\n")
+    ok, _ = _install(tmp_path, home, "value-777")
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert sorted(p.name for p in home.glob("run_scraper.sh.*")) == \
+        ["run_scraper.sh.inployed.bak"]
+
+    # and on a failing run too
+    (home / "run_scraper.sh").write_text("#!/bin/bash\nif then fi\n",
+                                         newline="\n", encoding="utf-8")
+    bad, _ = _install(tmp_path, home, "value-888")
+    assert bad.returncode != 0
+    assert sorted(p.name for p in home.glob("run_scraper.sh.*")) == \
+        ["run_scraper.sh.inployed.bak"]
+
+
+def test_the_staged_credential_is_chmodded_before_it_is_read(tmp_path):
+    """scp does not preserve the source mode without -p, and the 0600 os.open
+    passes on Windows is a no-op anyway (CPython honours only the read-only bit
+    there), so the file lands at the REMOTE umask -- 0644 on a stock VM. The
+    installer narrows it before reading the value out."""
+    remote = _target().set_secret_cmd("BRIGHT_DATA_API_TOKEN")[-1]
+    body = remote[len("--command="):]
+    assert 'chmod 600 "$IN"' in body
+    assert body.index('chmod 600 "$IN"') < body.index('V="$(head -n 1 "$IN")"')
+
+
+def test_an_install_that_never_started_clears_the_staged_credential(monkeypatch):
+    """A non-zero exit carrying NONE of the installer's own markers means the
+    remote script never ran -- gcloud or plink failed between the two calls -- so
+    its EXIT trap never armed and this side has to clear the VM itself. A failure
+    that DID print a marker ran the trap and must not cost a second ssh."""
+    def run_with(stdout, rc=1):
+        calls = []
+
+        def fake_run(cmd):
+            calls.append(cmd)
+            if "scp" in cmd:
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            if any(p.startswith("--command=rm -f") for p in cmd):
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            return types.SimpleNamespace(returncode=rc, stdout=stdout, stderr="")
+
+        monkeypatch.setattr(vm_sync, "run_cmd", fake_run)
+        vm_sync.set_vm_secret(_target(), "BRIGHT_DATA_API_TOKEN", "tok-123")
+        return [c for c in calls
+                if any(p.startswith("--command=rm -f") for p in c)]
+
+    # transport died, no marker -> clean up
+    assert run_with("ERROR: (gcloud.compute.ssh) Could not fetch resource"), \
+        "a transport failure left the staged credential on the VM"
+    # the script ran and failed on its own terms -> its trap already fired
+    assert run_with("NO_RUN_SCRIPT") == []
+    assert run_with("SECRET_SET: BRIGHT_DATA_API_TOKEN", rc=0) == []
+
+
+def test_a_bare_gcloud_is_never_taken_from_the_working_directory(tmp_path, monkeypatch):
+    """shutil.which puts os.curdir FIRST on Windows, so a gcloud.exe dropped in
+    the dashboard's working directory beats the real SDK -- and that process would
+    receive the generated --command script and the scp of the staged credential's
+    path. A bare program name comes from PATH or not at all."""
+    import pytest
+    monkeypatch.setattr(vm_sync.os, "name", "nt")
+    planted = tmp_path / "gcloud.exe"
+    planted.write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(vm_sync.shutil, "which", lambda name: str(planted))
+    with pytest.raises(RuntimeError, match="working directory"):
+        vm_sync.launch_argv(["gcloud", "compute", "ssh"])
+
+    # an explicit path is the user's own choice and is left alone
+    monkeypatch.setattr(vm_sync.shutil, "which", lambda name: str(planted))
+    assert vm_sync.launch_argv([str(planted), "compute", "ssh"])[0] == str(planted)
+
+
+def test_leftover_staging_dirs_reports_what_the_finally_could_not_delete(tmp_path,
+                                                                        monkeypatch):
+    """set_vm_secret's warning is a print(), and the dashboard runs under pythonw
+    with no console, so the panel asks this instead."""
+    monkeypatch.setattr(vm_sync.tempfile, "gettempdir", lambda: str(tmp_path))
+    assert vm_sync.leftover_staging_dirs() == []
+    (tmp_path / "inployed-secret-abc").mkdir()
+    (tmp_path / "unrelated-dir").mkdir()
+    found = vm_sync.leftover_staging_dirs()
+    assert [d.name for d in found] == ["inployed-secret-abc"]

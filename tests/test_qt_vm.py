@@ -329,3 +329,88 @@ def test_set_secret_requires_a_configured_vm(qtbot):
     panel.secret_value.setText("tok-abc123")
     panel.set_secret()
     assert panel._calls == []
+
+
+def test_the_connected_target_label_is_plain_text(qtbot):
+    """QLabel defaults to AutoText, which sniffs the START of the string for
+    markup. This is the only label in the panel whose text starts with
+    interpolated values (VM_USER / VM_INSTANCE / VM_ZONE from the .env), so it is
+    the only one AutoText could misread. Cycle 7 found five labels rendering
+    scraped job titles as HTML this way; this pins the new one shut."""
+    from PySide6 import QtCore
+    panel = _panel(qtbot, _FakeTarget())
+    assert panel.status_label.textFormat() == QtCore.Qt.TextFormat.PlainText
+
+
+def test_the_vm_result_messages_break_before_gcloud_output(qtbot):
+    """The other half of the same class, and the reason the message boxes are safe
+    without a format override. QMessageBox is AutoText too, but Qt's rich-text
+    sniffer gives up at the first NEWLINE (measured, not assumed -- the obvious
+    "it only looks at the start" story is wrong in a way that matters), so putting
+    gcloud's output after a blank line keeps markup coming back from the VM out of
+    the window the sniffer actually reads."""
+    panel = _panel(qtbot, _FakeTarget())
+    panel._runner = lambda cmd: types.SimpleNamespace(
+        returncode=0, stdout="<b>ready</b>", stderr="")
+    ok, text = panel._run_result(["gcloud", "whatever"])
+    assert ok and text.startswith("Done.")
+    panel._runner = lambda cmd: types.SimpleNamespace(
+        returncode=1, stdout="", stderr="<img src=x>boom")
+    ok, text = panel._run_result(["gcloud", "whatever"])
+    assert not ok and text.startswith("Failed.")
+
+
+def test_a_gcloud_timeout_does_not_dump_the_whole_script_into_the_dialog(qtbot):
+    """subprocess.TimeoutExpired renders its whole argv in str(), which for the
+    installer is the entire generated bash script plus the staged file's path.
+    No credential (the value is never in argv), but a wall of internal detail
+    where one actionable line belongs."""
+    import subprocess
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    argv = ["gcloud", "compute", "ssh", "--command=set -e\nIN=$HOME/.inployed_secret_in"]
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired(argv, 300)
+
+    panel._secret_setter = boom
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+
+    msg = panel._notes[-1][1]
+    assert "TimeoutExpired" in msg
+    assert "--command=" not in msg, "the dialog printed the generated remote script"
+    assert ".inployed_secret_in" not in msg
+    assert "gcloud login" in msg
+
+
+def test_a_failure_detail_starts_on_its_own_line(qtbot):
+    """Qt's rich-text sniffer gives up at the first newline. A one-line message
+    ending in interpolated text is the one shape here that renders as HTML, so
+    the detail always goes after a blank line."""
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+
+    def boom(*a, **k):
+        raise ValueError("<b>nope</b>")
+
+    panel._secret_setter = boom
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    msg = panel._notes[-1][1]
+    assert msg.startswith("Could not set the ")
+    assert "\n\n<b>nope</b>" in msg
+
+
+def test_a_leftover_staging_dir_is_named_in_the_dialog(qtbot, monkeypatch):
+    """The only other notice is a print() into a console pythonw does not have."""
+    from pathlib import Path
+    panel = _secret_panel(qtbot)
+    _choose(panel, "BRIGHT_DATA_API_TOKEN")
+    monkeypatch.setattr(vm_sync, "leftover_staging_dirs",
+                        lambda: [Path("C:/Temp/inployed-secret-xyz")])
+    panel.secret_value.setText("tok-abc123")
+    panel.set_secret()
+    msg = panel._notes[-1][1]
+    assert "inployed-secret-xyz" in msg
+    assert "Delete by hand" in msg

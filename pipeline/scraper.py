@@ -763,6 +763,28 @@ async def preflight(session: aiohttp.ClientSession) -> None:
             f"Bright Data rejected the API token ({status}: {body}).\n{TOKEN_HINT}")
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects, so the API token cannot leave api.brightdata.com.
+
+    urllib copies EVERY request header onto a redirect target -- see
+    HTTPRedirectHandler.redirect_request, which drops only content-length and
+    content-type -- and it does that even when the redirect crosses to a different
+    host. account_problems() sends the Bright Data token in an Authorization
+    header, so a 30x from /status to any other origin would hand that token to
+    whoever answered. aiohttp already guards this (it calls
+    headers.popall(hdrs.AUTHORIZATION) whenever the redirect origin differs), which
+    is why the async paths in this module are fine and this one is not.
+
+    Returning None means "this handler cannot deal with it", so the redirect
+    surfaces as an HTTPError carrying the 30x code, which account_problems()
+    treats as "not 401/403" and reports as no problem. Fail-open, same as every
+    other unexpected answer from the probe.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def account_problems(timeout: int = PREFLIGHT_TIMEOUT) -> list[str]:
     """Sync mirror of preflight() for the dashboard's Check setup button.
 
@@ -772,14 +794,20 @@ def account_problems(timeout: int = PREFLIGHT_TIMEOUT) -> list[str]:
     Bright Data reports nothing rather than inventing a problem, because "offline"
     and "your token is dead" are not the same finding. Same rule as preflight():
     `can_make_requests` is a proxy-zone field and must not be treated as a problem.
+
+    Goes through a redirect-refusing opener rather than the module-level
+    urlopen(): this is the one request in the pipeline that carries a credential
+    over urllib instead of aiohttp, and urllib forwards Authorization across
+    hosts. See _NoRedirect.
     """
     if not API_TOKEN or not DATASET_ID:
         return ["Bright Data credentials are not set (BRIGHT_DATA_API_TOKEN / "
                 "BRIGHT_DATA_DATASET_ID), so finding new jobs can't run."]
     req = urllib.request.Request(
         STATUS_URL, headers={"Authorization": f"Bearer {API_TOKEN}"})
+    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             resp.read()
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):

@@ -18,18 +18,44 @@ half (Qt dashboard, résumé engine, VM control). `scripts/` is ops and maintain
 ### 1. Job discovery (`pipeline/scraper.py`)
 The discovery step is an async Bright Data client. Triggers keyword × remote-type searches, polls the
 snapshot to "ready", downloads rows, dedupes, drops blocklisted companies, and
-appends to a cumulative master CSV. Two cost-aware details:
+appends to a cumulative master CSV. Four cost-aware details:
 - It excludes job ids already collected within a recency window (the last
   `EXCLUDE_WINDOW_DAYS` days, default 90) from re-collection (Bright Data bills
   per collected posting, so re-fetching a job we already have wastes money). The set
   is windowed rather than unbounded: the search only looks back 24h, so a posting
-  older than the window can't reappear and its id is pure payload, so capping it keeps
-  the Bright Data trigger POST from eventually overflowing its request-size limit.
-  Windowing fails toward a superset (undated/unparseable rows are kept), so it never
-  drops an id it should have excluded. See `load_exclude_ids()` / `_window_ids()`.
+  older than the window can't reappear and its id is pure payload. Windowing fails
+  toward a superset (undated/unparseable rows are kept), so it never drops an id it
+  should have excluded. The set is the union of this host's own windowed master, the
+  synced Drive master named by `$LINKEDIN_EXTRA_MASTER`, and `external_exclude_ids.json`
+  (ids another machine collected and pushed here, deliberately not windowed). See
+  `load_exclude_ids()` / `_window_ids()`.
+- **The window is not the real bound; `cap_exclude_ids()` is.** Bright Data copies the
+  `jobs_to_not_include` array onto every one of the up-to-`limit_per_input` child fetches
+  a single search input fans out to, so the payload is spent `len(ids) x limit_per_input`
+  times over. Past `MAX_EXCLUDE_PAYLOAD_BYTES` (4.2 MB) the whole collection is rejected
+  with `child_input_size_validation` and returns zero rows. So the set is trimmed to
+  whatever fits that budget, hard-capped at `MAX_EXCLUDE_IDS` (2,000, about two runs'
+  worth), with the per-id width **measured** off the ids in hand rather than assumed from
+  today's 10-digit LinkedIn ids. Two orderings are load-bearing: `_window_ids()` yields
+  oldest first so the cap evicts by date, and `load_exclude_ids()` puts this host's own
+  ids **last** so the tail the cap keeps is the only ids a "Past 24 hours" search can
+  actually resurface. Below `MIN_EXCLUDE_IDS` (50) the run warns and proceeds, because a
+  rejected collection costs more than some re-collected rows.
+- **A rejected collection is a failure, not a quiet empty run.** When Bright Data refuses
+  every input the snapshot still reports `status="ready"` with `records=0`, which used to
+  read as "no new jobs" and exit 0, so the VM cron logged clean successes for weeks while
+  collecting nothing. `_assert_collected_something()` keys on the error *codes*: an
+  input-rejection code raises whether or not rows came back, while zero rows alongside the
+  ordinary `dead_page` / `page_too_big` noise is only a warning (that is the healthy steady
+  state once the exclude set is working).
 - `--snapshot <id>` re-downloads an already-collected (already-billed) snapshot
   without triggering a new collection: the recovery path when a run dies after
   billing.
+
+Both pipeline scripts call `load_dotenv()` at import scope, so importing either one arms a
+billed entry point. `INPLOYED_NO_DOTENV=1` (accepted as `1`/`true`/`yes`/`on`, nothing else,
+so a typo can never silently re-arm the script) skips that load, which is what makes it safe
+to import them in tests and in an audit.
 
 ### 2. Score (`pipeline/score_jobs.py`)
 A two-stage Gemini filter. Stage 1 (cheap flash-lite) does a fast relevance pass;
@@ -118,6 +144,34 @@ off by default). A stripped row that was never scored is parked with `filtered_o
 (an empty description can't be scored, so it must not sit in the rescore queue forever). Prune never
 deletes rows; it only blanks one column, runs chunked and idempotent, and is best-effort (a nonzero exit
 does not fail the cron).
+
+### Driving the VM from the dashboard (`local/vm_sync.py` + `local/qt/vm_panel.py`)
+Every VM action the dashboard offers goes through one module. `vm_sync` builds `gcloud compute
+ssh/scp` argv (on Windows it bypasses `gcloud.cmd` and invokes the underlying Python entry point
+directly, because the batch wrapper mangles arguments; see `launch_argv`/`_bypass_argv`), pushes
+config and the exclude-id file, drains the outbox, and reads `VMTarget` out of the same
+`settings.load()` the Settings tab writes, so the six `VM_*` keys need no restart.
+
+Two parts of it are worth knowing before touching it:
+
+- **Managed credentials.** cron runs with a bare environment, so `run_scraper.sh` has to export
+  `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They used to be pasted inline in that
+  script, which made rotating a dead token an ssh-and-sed chore. They now live in a chmod-600
+  `~/scraper_secrets.env` that the script sources on line 3, and the VM panel's **Credentials**
+  section writes them (`vm_sync.set_vm_secret`). Only the names in `MANAGED_SECRETS` are
+  accepted, and a value has to match `_SAFE_SECRET` (`valid_secret_value`), because the file is
+  *sourced* by bash: a value carrying `$`, a backtick, a quote or whitespace would be
+  interpolated or word-split at source time, and every credential this pipeline actually uses
+  fits the safe set, so it validates and rejects rather than trying to escape. Both checks run
+  **before** the upload, and no failure path leaves a staged credential on the VM: the remote
+  installer's `EXIT` trap covers the case where the script ran, and this side clears the staging
+  slot whenever `INSTALLER_MARKERS` prove it did not. The plaintext touches this machine only as
+  a file in a private temp dir, deleted in a `finally`; `leftover_staging_dirs()` is how the panel
+  notices the rare survivor, since the dashboard runs under `pythonw` with no console to print to.
+- **Crontab merges rather than replaces.** `merge_crontab()` strips any prior managed block and
+  appends the new one, keeping every line outside the markers verbatim. A whole-crontab replace
+  used to wipe the user-added `HEALTHCHECKS_URL=` and `GOOGLE_CLOUD_PROJECT=` lines that
+  `run_scraper.sh` reads. It is pure text, so the round-trip is unit-testable with no live VM.
 
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
 `seen.db` (`SeenRegistry.export_to` via SQLite `VACUUM INTO`; `import_from` merges, with newer

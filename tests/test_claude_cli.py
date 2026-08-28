@@ -1,4 +1,4 @@
-"""Hermetic tests for the root claude_cli.py headless-CLI transport.
+"""Hermetic tests for the pipeline/claude_cli.py headless-CLI transport.
 
 Every test fakes `claude_cli.subprocess.run` and `claude_cli.find_claude` --
 the real `claude` binary is NEVER invoked and no network call is made. Retry

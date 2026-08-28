@@ -3,7 +3,12 @@
 # Any .env variant (.env.local, .env.vm, …) — but keep the committed template.
 .env.*
 !.env.example
-# Keys, certs, and service-account JSON, wherever they land.
+# Keys, certs, and service-account JSON, wherever they land. why they stay even
+# though no such file exists here and nothing in the repo writes one: this block is
+# prophylactic, not a record. `service-account*.json` is the one with a real
+# consumer (score_jobs.py authenticates to Vertex via GOOGLE_APPLICATION_CREDENTIALS);
+# the rest are the shapes a credential arrives in when someone drops it beside the
+# code, and the cost of an unmatched pattern is a leaked key that cannot be unleaked.
 *.pem
 *.key
 *.p12
@@ -35,6 +40,10 @@ apply_config.json
 apply_answers.json
 
 # ── LaTeX build artifacts ────────────────────────────────────────────────────
+# why these are here when the tailored PDFs are not: compile.py runs pdflatex with
+# cwd set to the .tex's own folder, and that folder is RESUME_TAILOR_OUTPUT, which
+# defaults to ~/Downloads/Generated_Resumes, outside the tree. These patterns cover
+# the user who repoints that env var at a path inside the repo.
 *.aux
 # why so broad: `*.log` also covers the pipeline's runtime logs (scraper.log,
 # watcher.log, open_dashboard crash log) — no log file in this project is committed.

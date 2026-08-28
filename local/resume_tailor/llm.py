@@ -3,7 +3,7 @@
 Gemini (default) is reached via Vertex AI or a dedicated API key, selected by
 config.gemini_auth(). The optional "claude" provider (config.tailor_provider())
 runs the headless Claude Code CLI (`claude -p`) on the user's subscription via
-the root-level claude_cli.py transport. One public entry-point:
+the pipeline/claude_cli.py transport. One public entry-point:
 call(system, user, tier, **kwargs) dispatches to whichever provider is
 configured. JSON mode returns parsed Python; text mode returns a stripped
 string. Retries a few times on transient errors, with backoff for 429s /

@@ -56,7 +56,7 @@ def test_save_state_leaves_file_untouched_on_replace_failure(tmp_path, monkeypat
 
 
 # P1-8: list_target_files / latest_for_ui must iterate the canonical RUN_LABELS
-# (local/run_labels.py: morning/afternoon/evening/night), not a hardcoded
+# (pipeline/run_labels.py: morning/afternoon/evening/night), not a hardcoded
 # morning/evening pair. run_scraper.sh uploads to afternoon/ and night/ too --
 # scored files there must not be invisible to the watcher.
 

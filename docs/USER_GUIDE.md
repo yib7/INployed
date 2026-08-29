@@ -251,7 +251,7 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
 | the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
 | the employer's application site | only when you run auto-apply on a queued job | the answers you approved, in your own Chrome; it never submits |
-| your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; it runs under your own `gcloud` login and no secret is sent |
+| your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; plus, only when you click **Set on VM**, the one API key you typed into that box. It runs under your own `gcloud` login |
 | healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
 The healthchecks ping is a dead-man's switch so a silently failing cron run emails
@@ -262,7 +262,8 @@ Your credentials never cross providers: the Gemini and Bright Data secrets are
 stripped from the environment before the `claude` CLI is launched, the ATS master
 password lives in the Windows Credential Manager and only ever exits to the
 clipboard, and nothing is written to the repo. Secrets stay in your git-ignored
-`.env`.
+`.env`. The one credential that leaves this PC is the one you hand to **Set on VM**,
+and it goes to your own VM so its cron runs can authenticate.
 
 ### Manage the VM from the dashboard
 If you run discovery + scoring on a GCP VM, the dashboard drives it without
@@ -285,6 +286,16 @@ then appear at the bottom of Settings, letting you:
   up with one click. And whenever you save a setting that **actually changes** a file
   the VM reads, the dashboard asks if you'd like to push the changed file(s) right
   then; re-saving the same values (or any non-VM setting) never prompts.
+- **Credentials:** rotate the VM's own API keys without an ssh session. Pick **Bright
+  Data token** or **Gemini API keys**, paste the new value into the masked box, and click
+  **Set on VM**. The key is written to a `chmod 600 ~/scraper_secrets.env`,
+  `run_scraper.sh` is pointed at that file, and any older inline `export` of the same
+  variable is commented out so the dead value cannot stay in force. The script is backed
+  up first and restored if `bash -n` rejects the result. The value is sent as a file over
+  `scp`, never on a command line, because `gcloud` writes every remote command verbatim
+  into its own plaintext debug log. Nothing is stored on this PC. Only those two names are
+  accepted, and a value has to be letters, digits and `. _ - : , / + =`, because the
+  secrets file is sourced by bash.
 
 Every VM action asks for confirmation first and runs through `gcloud`; nothing
 happens automatically. With **Enable VM features** off, none of these prompts ever

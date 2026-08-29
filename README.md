@@ -7,8 +7,8 @@
 ![Python](https://img.shields.io/badge/python-3.14-blue.svg)
 
 A scheduled cloud discovery step feeds a two-stage LLM scorer, which syncs to a
-desktop app that drives a LaTeX résumé engine. About 5% of scraped postings
-survive to a recommendation, so that is all you read.
+desktop app that drives a LaTeX résumé engine. 15,754 postings collected to date,
+about 5% of them survive to a recommendation, so that is all you read.
 
 The résumé engine's rule is **select and re-phrase, never invent**. Every
 résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
@@ -32,7 +32,7 @@ Three pieces do the work:
 |---|---|
 | ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill. Under the table, the selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for a 69-day-old application spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
 | Your source of truth: **Resume Data** | Every knob: **Settings** |
-| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. Eleven collapsible sections under a search box, from Credentials and Connection & paths through Scoring, Résumé, Auto-apply and the cloud VM. Engine is expanded, showing the résumé tailor engine and provider dropdowns, each labelled with the config.json key it writes.](docs/settings.png) |
+| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. Ten collapsible sections under a search box, from Credentials and Connection & paths through Job discovery, Scoring, Resume, Auto-apply and the cloud VM. Engine is expanded, showing the résumé tailor engine and provider dropdowns, each labelled with the config.json key it writes.](docs/settings.png) |
 
 **High Score** surfaces only unseen postings scoring ≥4, newest discovery day first and
 highest score within the day. Click any column header to re-sort.
@@ -47,16 +47,27 @@ highest score within the day. Click any column header to re-sort.
 ```mermaid
 flowchart TD
     subgraph Cloud["GCP VM (cron, on the schedule you set)"]
-        A["pipeline/scraper.py<br/>job discovery"] --> B["pipeline/score_jobs.py<br/>2-stage Gemini scorer"]
+        M["merge_incoming.py<br/>fold in rows from the PC"] --> A["pipeline/scraper.py<br/>job discovery"]
+        A --> B["pipeline/score_jobs.py<br/>2-stage Gemini scorer"]
+        B --> PR["prune_master.py<br/>retention: blank old descriptions"]
     end
-    B -->|scored CSVs| C[("Google Drive")]
+    PR -->|scored master| C[("Google Drive")]
     C -->|Drive desktop sync| D["Local synced jobs folder"]
     subgraph Desktop["Windows PC"]
         D --> E["app.py dashboard (Qt)<br/>triage / tracker / stats"]
-        E -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - layout - LaTeX"]
-        F --> G["Tailored PDF + cover letter<br/>+ ATS report + prep sheet"]
+        E -->|Find new jobs| L["local scrape<br/>outbox/local_rows_*.csv.gz"]
+        E -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - verify - LaTeX"]
+        F --> G["Tailored PDF + cover letter<br/>+ ATS report + prep sheet + apply.md"]
+        G -->|Apply| H["browser agent fills the form,<br/>parks at the review page"]
+        H --> T[("Tracker<br/>local SQLite")]
     end
+    L -->|gcloud scp into the VM incoming folder| M
+    E -.->|schedule, pause, config push, key rotation| Cloud
 ```
+
+One master CSV, two writers. The VM owns it; anything discovered on the PC rides
+the outbox back up and is merged in before the next scrape, so a job is only ever
+paid for once.
 
 ---
 
@@ -169,6 +180,11 @@ discovery VM.
 
 ## What it does
 
+- **Discover:** job discovery runs on the VM's cron schedule, or on demand from the
+  dashboard's **Find new jobs**. It never pays twice for the same posting: the exclude list
+  it sends the vendor is capped at the newest 2,000 ids, evicted by date. A run that
+  collects nothing while the vendor reports input errors fails with those error codes
+  instead of logging a clean success.
 - **Triage:** the **High Score** tab ranks unseen postings by the two-stage score and tints
   each row by recommendation (apply / consider / skip) and by whether a tailored résumé
   already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
@@ -183,9 +199,11 @@ discovery VM.
 - **Apply:** every tailored folder gets a self-contained `apply.md` sheet that a
   browser agent fills page by page and then **stops at the review screen**. It never logs in, and it never clicks submit.
 - **Operate:** Settings is one schema-driven form over every key, path, and tunable the
-  project has (no file editing), including the schedule, pause, and config pushes for the
-  cloud discovery VM. Stats reports per-run cost and volume, with a staleness badge when a
-  cron run goes missing.
+  project has (no file editing), including the schedule, pause, config pushes, and API-key
+  rotation for the cloud discovery VM. A rotated key lands in a mode-600
+  `~/scraper_secrets.env` that the cron script sources; the value rides an `scp` rather
+  than an argv, so it never reaches a gcloud log. Stats reports per-run cost and volume,
+  with a staleness badge when a cron run goes missing.
 
 Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
@@ -222,7 +240,9 @@ list, walk the tracker, then look at the data the tailor is allowed to draw from
 - **Single-user by design:** no accounts, no server, no multi-tenancy. It reads one person's
   master experience file and writes to one local SQLite file.
 - **Discovery is one vendor deep:** postings come from a Bright Data LinkedIn dataset; a
-  broken dataset or a schema change stops the front of the pipeline.
+  broken dataset or a schema change stops the front of the pipeline. The vendor does not
+  publish its request-size limit, so the 2,000-id exclude cap is a number measured against
+  the live API, and a vendor-side change can move it.
 - **Not an auto-submitter, and not a résumé writer:** the apply flow parks at review, and
   the tailor can only select and rephrase facts you wrote yourself. It will never fill a thin
   experience file with impressive-sounding text.
@@ -297,6 +317,10 @@ python tests/smoke_qt.py    # Qt dashboard smoke test
 ```
 The suite sets `QT_QPA_PLATFORM=offscreen` itself, so the same two commands work in
 PowerShell, cmd, and bash. (CI exports it explicitly; see `.github/workflows/ci.yml`.)
+
+Both pipeline scripts load `.env` when they are imported, so clearing a key in your shell
+does not disarm them and a "no credentials" run bills a real collection. Set
+`INPLOYED_NO_DOTENV=1` in the environment to make them skip that load.
 
 ## Project layout
 ```

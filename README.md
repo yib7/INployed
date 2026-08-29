@@ -30,7 +30,7 @@ Three pieces do the work:
 
 | Triage: **High Score** | Follow through: **Tracker** |
 |---|---|
-| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill. Under the table, the selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for a 69-day-old application spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
+| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill. Under the table, the selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
 | Your source of truth: **Resume Data** | Every knob: **Settings** |
 | ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. Ten collapsible sections under a search box, from Credentials and Connection & paths through Job discovery, Scoring, Resume, Auto-apply and the cloud VM. Engine is expanded, showing the résumé tailor engine and provider dropdowns, each labelled with the config.json key it writes.](docs/settings.png) |
 
@@ -206,13 +206,15 @@ Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USE
 
 ## Demo
 
-The whole loop in 25 seconds: rank a scored run, read one posting's analysis, filter the
-list, walk the tracker, then look at the data the tailor is allowed to draw from.
+The whole loop in 38 seconds: rank a scored run, read one posting's analysis, filter the
+list live, open the apply sheet the tailor wrote for one job, walk the tracker, then
+look at the data every generated bullet had to come from.
 
-![Animated tour of the INployed dashboard, thirteen scenes. It starts on High Score, changes the selected row three times so the detail card swaps its reason, strengths and gaps, types "engineer" into the search box to narrow thirteen postings to nine, clears it, then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue, per-run Stats, Resume Data, Apply Answers, and Settings with the Engine section expanded.](docs/demo.gif)
+![Animated tour of the INployed dashboard, sixteen scenes. It starts on High Score and changes the selected row three times so the detail card swaps its reason, strengths and gaps; types "engineer" into the search box one letter at a time while the table sheds rows from thirteen to nine, then clears it; opens the Apply panel for the tailored job and scrolls its apply.md through the candidate details, work experience, projects and skills; then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue, per-run Stats, Resume Data, Apply Answers, and Settings with the Engine section expanded.](docs/demo.gif)
 
 - **High Score** ranks every discovered posting and color-codes the recommendation.
 - Selecting a job opens its **detail card**: reason, strengths, gaps, tailor and apply.
+- **Tailor** writes the résumé, cover letter and a self-contained `apply.md` for that job.
 - **All Jobs** is the same table over everything scraped, seen or not.
 - **Tracker** follows each application from applied through interviewing, offer, rejected.
 - **Auto-apply** is the batch queue the apply helper works through, one job at a time.

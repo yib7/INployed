@@ -16,9 +16,11 @@ Requires `imageio-ffmpeg` (maintainer-only, not in requirements.txt):
 
     pip install imageio-ffmpeg
 
-Nothing here touches the network, the user's data, or any paid API. The résumé
-tailoring step is represented by its inputs (the Resume Data tab), not by a live
-run -- a real run costs API credits and would put real personal data on screen.
+Nothing here touches the network, the user's data, or any paid API. The tour DOES
+show the tailoring step, because it is the middle of the primary user journey, but
+it shows a pre-built tailored folder (`ui_screenshots._tailored_folder`) rather
+than a live run: a real run costs API credits and would put real personal data on
+screen.
 """
 
 from __future__ import annotations
@@ -91,34 +93,76 @@ def _search(win, text: str) -> None:
     win.high_tab._apply_filters()   # the live box debounces; the tour cannot wait
 
 
+def _scroll(widget, steps: int) -> None:
+    """Nudge a scrollable widget's vertical bar by `steps` of its own line step."""
+    bar = widget.verticalScrollBar()
+    bar.setValue(bar.value() + steps * max(1, bar.singleStep()))
+
+
+TYPED_QUERY = "engineer"
+
+
 def scenes(win):
+    """The tour, one entry per FRAME: (tab title, action, caption, seconds).
+
+    Several entries share a caption on purpose. A step whose caption repeats the
+    one before it is a beat inside the same scene rather than a new one, and it is
+    what keeps the result moving: eight frames of a query being typed, with the
+    table shedding rows underneath it, read as a person using the app. Thirteen
+    frames each held for a second and a half read as a slide deck.
+    """
+    tailored = win._demo_tailored_folder   # planted by render_scenes, see below
+    typing = "Search filters the ranked list live, without a re-run"
+    tailor = "Tailor writes the resume, cover letter and apply sheet for THIS job"
     return [
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 0),
-         "High Score - what a scored run leaves you to actually look at", 6.0),
+         "High Score - what a scored run leaves you to actually look at", 5.0),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 1),
-         "Every row carries the model's reason, strengths and gaps", 5.5),
+         "Every row carries the model's reason, strengths and gaps", 2.2),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 2),
-         "Colour tracks tailoring state: tailored, failed, untouched", 5.0),
-        ("High Score (Unseen)", lambda: _search(win, "engineer"),
-         "Search and filter narrow the list without a re-run", 5.0),
-        ("High Score (Unseen)", lambda: (_search(win, ""), _pick(win.high_tab, 0)),
-         "Clearing the filter restores the ranked list", 3.5),
-        ("All Jobs", lambda: _pick(win.all_tab, 0),
-         "All Jobs - every posting collected, scored or not", 5.5),
+         "Every row carries the model's reason, strengths and gaps", 2.2),
+        ("High Score (Unseen)", lambda: _pick(win.high_tab, 7),
+         "Colour tracks tailoring state: tailored, failed, untouched", 3.0),
+        # Typed one character at a time so the table visibly sheds rows.
+        *[("High Score (Unseen)",
+           (lambda n=n: _search(win, TYPED_QUERY[:n])), typing, 0.34)
+          for n in range(1, len(TYPED_QUERY) + 1)],
+        ("High Score (Unseen)", lambda: None, typing, 2.6),
+        ("High Score (Unseen)", lambda: (_search(win, ""), _pick(win.high_tab, 7)),
+         "Clearing it restores the ranked list", 3.0),
+        # The journey's middle: tailor the selected job, then read what it wrote.
+        ("High Score (Unseen)", lambda: uis._show_apply_panel(win, tailored),
+         tailor, 5.0),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
+         "apply.md - one self-contained sheet, every bullet traced to your data", 2.4),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
+         "apply.md - one self-contained sheet, every bullet traced to your data", 2.4),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
+         "apply.md - one self-contained sheet, every bullet traced to your data", 2.4),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
+         "The browser agent fills a form from this, and stops before Submit", 3.6),
+        ("All Jobs", lambda: (win._close_apply_panel(), _pick(win.all_tab, 0)),
+         "All Jobs - every posting collected, scored or not", 4.5),
         ("Tracker", lambda: _pick(win.tracker_tab, 0),
-         "Tracker - application status, with follow-ups flagged when due", 6.5),
+         "Tracker - application status, with follow-ups flagged when due", 5.5),
+        ("Tracker", lambda: _pick(win.tracker_tab, 2),
+         "Statuses run applied through interviewing, offer and rejected", 2.4),
         ("Tracker", lambda: _pick(win.tracker_tab, 3),
-         "Statuses run applied through interviewing, offer and rejected", 5.0),
+         "Statuses run applied through interviewing, offer and rejected", 3.4),
         ("Auto-apply", lambda: None,
-         "Auto-apply queue - batch tailoring that stops short of submitting", 6.0),
+         "Auto-apply queue - batch tailoring that stops short of submitting", 5.0),
         ("Stats", lambda: None,
-         "Stats - per-run counts, token spend and rescore outcomes", 6.5),
+         "Stats - per-run counts, token spend and rescore outcomes", 5.0),
         ("Resume Data", lambda: None,
-         "Resume Data - the atoms every generated bullet must trace back to", 7.0),
+         "Resume Data - the atoms every generated bullet must trace back to", 5.0),
+        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 8),
+         "Resume Data - the atoms every generated bullet must trace back to", 2.4),
+        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 8),
+         "Resume Data - the atoms every generated bullet must trace back to", 3.0),
         ("Apply Answers", lambda: None,
-         "Apply Answers - reusable responses for application forms", 5.5),
+         "Apply Answers - reusable responses for application forms", 4.5),
         ("Settings", lambda: None,
-         "Settings - keys, paths, schedule and engine options, no file editing", 6.5),
+         "Settings - keys, paths, schedule and engine options, no file editing", 5.5),
     ]
 
 
@@ -146,9 +190,14 @@ def _encode(entries, out: Path) -> None:
     listing.unlink()
 
 
-def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float]]:
+def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float], list[str]]:
     """Drive the real MainWindow offscreen through `scenes()` and return one
-    captioned still per scene plus its seconds-on-screen.
+    captioned frame per storyboard step, its seconds-on-screen, and its caption.
+
+    The captions come back because they are what tells a consumer where the SCENE
+    boundaries are: a step repeating the caption before it is a beat inside one
+    scene (a keystroke, a scroll) and wants a hard cut, while a changed caption is
+    a real cut and wants a crossfade. `build_demo_media` re-times on exactly that.
 
     Shared with `scripts/build_demo_media.py`, which re-times the same
     storyboard into `docs/demo.gif`, so the video and the GIF can never drift
@@ -172,6 +221,7 @@ def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float]]:
     theme.set_scale(app, 1.0)
     win = MainWindow(csv_paths=[], registry=uis._registry(resume_dir))
     win.show()
+    uis._freeze_auto_reload(win)
     win.resize(WIN_W, WIN_H)
     app.processEvents()
 
@@ -187,10 +237,14 @@ def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float]]:
     uis._write_queue(queue_path, uis._queue_jobs())
     win.apply_queue_panel.refresh()
     uis._expand_settings_section(win)
+    # The finished tailor run the tour opens its apply sheet from. Built once, up
+    # front, so the scene that shows it is a panel opening rather than a wait.
+    win._demo_tailored_folder = uis._tailored_folder(tmp_dir)
     app.processEvents()
 
     holds: list[Image.Image] = []
     secs: list[float] = []
+    captions: list[str] = []
     for title, action, caption, dur in scenes(win):
         _tab(win, title)
         app.processEvents()
@@ -203,7 +257,8 @@ def render_scenes(tmp_dir: Path) -> tuple[list[Image.Image], list[float]]:
             continue
         holds.append(_band(Image.open(raw).convert("RGB"), caption))
         secs.append(dur)
-    return holds, secs
+        captions.append(caption)
+    return holds, secs, captions
 
 
 def main() -> int:
@@ -212,21 +267,24 @@ def main() -> int:
     frames_dir = tmp_dir / "frames"
     frames_dir.mkdir()
 
-    holds, secs = render_scenes(tmp_dir)
+    holds, secs, captions = render_scenes(tmp_dir)
     if not holds:
         print("no frames captured")
         return 1
 
-    # Write holds + crossfade frames as PNGs, then let ffmpeg time them.
+    # Write holds + crossfade frames as PNGs, then let ffmpeg time them. A fade is
+    # written only where the caption changes; a beat inside a scene (a keystroke, a
+    # scroll) hard-cuts, because dissolving one keystroke into the next is a blur,
+    # not a transition.
     entries: list[tuple[Path, float]] = []
     fade_dur = 1.0 / FPS
     for i, (hold, dur) in enumerate(zip(holds, secs)):
-        p = frames_dir / f"hold_{i:02d}.png"
+        p = frames_dir / f"hold_{i:03d}.png"
         hold.save(p)
         entries.append((p, dur))
-        if i + 1 < len(holds):
+        if i + 1 < len(holds) and captions[i + 1] != captions[i]:
             for k in range(1, FADE_FRAMES + 1):
-                fp = frames_dir / f"fade_{i:02d}_{k:02d}.png"
+                fp = frames_dir / f"fade_{i:03d}_{k:02d}.png"
                 Image.blend(hold, holds[i + 1], k / (FADE_FRAMES + 1)).save(fp)
                 entries.append((fp, fade_dur))
 
@@ -234,8 +292,8 @@ def main() -> int:
     _encode(entries, OUT)
     total = sum(d for _, d in entries)
     mb = OUT.stat().st_size / 1e6
-    print(f"{OUT} -> {len(holds)} scenes, {total:.0f}s, {mb:.1f} MB, "
-          f"{holds[0].width}x{holds[0].height}")
+    print(f"{OUT} -> {len(set(captions))} scenes, {len(holds)} frames, {total:.0f}s, "
+          f"{mb:.1f} MB, {holds[0].width}x{holds[0].height}")
     if mb > 10:
         print("WARNING: GitHub caps comment-box video uploads at 10 MB.")
     print("\nTo publish it (browser only -- there is no API for this):")

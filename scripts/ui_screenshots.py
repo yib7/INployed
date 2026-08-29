@@ -27,12 +27,33 @@ if os.name == "nt":
     windir = os.environ.get("WINDIR", r"C:\Windows")
     os.environ.setdefault("QT_QPA_FONTDIR", str(Path(windir) / "Fonts"))
 REPO = Path(__file__).resolve().parent.parent
+
+# Keep the maintainer's real `.env` out of this process, BEFORE anything under
+# `local/` is imported. `resume_tailor.config` calls `load_dotenv()` at import
+# scope and does not honour INPLOYED_NO_DOTENV, so its values would land in
+# `os.environ` -- and `output.candidate_slug()` reads RESUME_TAILOR_CANDIDATE
+# from there, which would put the real candidate name on the two file paths the
+# Apply panel prints in the walkthrough. Patching the attribute (rather than
+# setting the flag alone) is what actually works: `from dotenv import load_dotenv`
+# inside that module resolves against this object. Both fixture values are then
+# pinned, so a maintainer who exports either one in their shell still gets Jane.
+os.environ["INPLOYED_NO_DOTENV"] = "1"
+try:
+    import dotenv
+
+    dotenv.load_dotenv = lambda *a, **k: False
+except ImportError:
+    pass
+os.environ["RESUME_TAILOR_CANDIDATE"] = "Jane_Doe"
+os.environ["RESUME_TAILOR_OUTPUT"] = r"C:\Users\jane\Downloads\Generated_Resumes"
+
 sys.path.insert(0, str(REPO / "local"))
 
 import pandas as pd  # noqa: E402
 from PySide6 import QtWidgets  # noqa: E402
 
 import apply_queue  # noqa: E402
+import jobsdata  # noqa: E402
 import resume_md  # noqa: E402
 import settings as _settings  # noqa: E402
 from resume_tailor import apply_answers as _apply_answers  # noqa: E402
@@ -40,6 +61,7 @@ from resume_tailor import config as _rt_config  # noqa: E402
 from qt import theme  # noqa: E402
 from qt.jobs_tab import JobsTab  # noqa: E402
 from qt.main_window import TAB_TITLES, MainWindow  # noqa: E402
+from qt.settings_tab import SECTION_ORDER  # noqa: E402
 
 OUT_DIR = REPO / ".screenshots"
 SCALES = (0.75, 1.0, 1.5)
@@ -90,13 +112,17 @@ def _jobs_df() -> pd.DataFrame:
             "is_seen": seen,
             "applicants": appl,
             "job_num_applicants": appl,
-            "extracted_date": f"2026-07-{10 + (i % 2):02d}",
+            # Two discovery days, yesterday and the day before, so the High Score
+            # tab shows its newest-day-first-then-score ranking. Relative for the
+            # same reason the tracker's dates are (see `_status_rows`): a README
+            # still that says "Found 2026-07-11" reads as abandoned a year on.
+            "extracted_date": _ago(2 - (i % 2)),
             "run_label": "synthetic",
             "job_title": title,
             "company_name": company,
             "job_location": "Remote, US" if i % 2 else "New York, NY",
             "url": f"https://example.com/jobs/{jid}",
-            "job_posted_date": "2026-07-09",
+            "job_posted_date": _ago(3),
             "is_easy_apply": bool(i % 2),
             "job_base_pay_range": "$105k–$135k" if i % 2 == 0 else "",
             "reason": (f"Synthetic reason: {title} matches the LLM-pipeline "
@@ -112,29 +138,42 @@ def _jobs_df() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _ago(days: int) -> str:
+    """An ISO date `days` before today."""
+    return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+
 def _status_rows() -> list[dict]:
-    """Tracker rows covering every status + follow-up done AND DUE."""
+    """Tracker rows covering every status + follow-up done AND DUE.
+
+    Dated in days-before-today rather than as literals. The Tracker's Days column
+    and its NEXT STEP card both count from `applied_date` to now, so a fixed date
+    made those numbers a function of when the media was shot: the same fixture
+    read "69 days" in August and "88 days" three weeks later, silently rotting the
+    README alt text that quotes it. Offsets keep the frame saying the same thing
+    at every re-shoot.
+    """
     return [
         # applied long ago, never followed up -> follow_up == DUE
-        {"job_posting_id": "j1", "status": "applied", "status_date": "2026-06-01",
-         "applied_date": "2026-06-01", "followed_up_at": "",
+        {"job_posting_id": "j1", "status": "applied", "status_date": _ago(88),
+         "applied_date": _ago(88), "followed_up_at": "",
          "job_title": "Senior Data Engineer", "company": "Acme Analytics",
          "url": "https://example.com/jobs/j1"},
         # applied + followed up -> follow_up == done
-        {"job_posting_id": "j2", "status": "applied", "status_date": "2026-06-20",
-         "applied_date": "2026-06-20", "followed_up_at": "2026-06-28",
+        {"job_posting_id": "j2", "status": "applied", "status_date": _ago(69),
+         "applied_date": _ago(69), "followed_up_at": _ago(61),
          "job_title": "ML Platform Engineer", "company": "Globex",
          "url": "https://example.com/jobs/j2"},
-        {"job_posting_id": "j3", "status": "interviewing", "status_date": "2026-07-01",
-         "applied_date": "2026-06-15", "followed_up_at": "",
+        {"job_posting_id": "j3", "status": "interviewing", "status_date": _ago(58),
+         "applied_date": _ago(74), "followed_up_at": "",
          "job_title": "Data Scientist", "company": "Initech",
          "url": "https://example.com/jobs/j3"},
-        {"job_posting_id": "j4", "status": "offer", "status_date": "2026-07-08",
-         "applied_date": "2026-06-10", "followed_up_at": "2026-06-25",
+        {"job_posting_id": "j4", "status": "offer", "status_date": _ago(51),
+         "applied_date": _ago(79), "followed_up_at": _ago(64),
          "job_title": "Analytics Engineer", "company": "Umbrella Corp",
          "url": "https://example.com/jobs/j4"},
-        {"job_posting_id": "j5", "status": "rejected", "status_date": "2026-07-05",
-         "applied_date": "2026-06-18", "followed_up_at": "",
+        {"job_posting_id": "j5", "status": "rejected", "status_date": _ago(54),
+         "applied_date": _ago(71), "followed_up_at": "",
          "job_title": "BI Developer", "company": "Hooli",
          "url": "https://example.com/jobs/j5"},
     ]
@@ -157,7 +196,10 @@ def _queue_jobs() -> list[dict]:
         e["notes"] = f"synthetic {status} entry"
         if status == "needs_human":
             e["missing_answers"] = ["desired_salary", "notice_period"]
-        e["updated_at"] = "2026-07-11T09:00:00"
+        # Relative, like every other fixture date: a queue whose rows are all
+        # stamped with one long-past day reads as an abandoned run.
+        e["updated_at"] = (datetime.now() - timedelta(hours=2 + i)
+                           ).strftime("%Y-%m-%dT%H:%M:%S")
         entries.append(e)
     return entries
 
@@ -191,9 +233,45 @@ def _write_queue(path: Path, jobs: list[dict]) -> None:
                     encoding="utf-8")
 
 
+# Dashboard preferences the grab must not inherit from whoever runs it, with the
+# value each one is pinned to. `settings_collapsed` folds every Settings section
+# (the harness then unfolds exactly one, see `_expand_settings_section`), which is
+# what keeps Credentials and its masked secret rows off a README image whatever
+# the author last clicked. `ui_scale_pct` has to agree with the scale the frame is
+# rendered at, or the "Interface size" readout in the action bar states a number
+# the pixels above it contradict.
+SYNTHETIC_CONFIG = {
+    "settings_collapsed": list(SECTION_ORDER),
+    "settings_show_advanced": False,
+    "ui_scale_pct": 100,
+    "hidden_columns": {},
+    "removed_jobs": [],
+    "min_score": 4,
+    "followup_days": 5,
+    "gdrive_root": "",
+}
+
+
+def _pin_dashboard_config(tmp_dir: Path) -> Path:
+    """Redirect `local/config.json` to a synthetic copy for the duration of a run.
+
+    Everything in `SYNTHETIC_CONFIG` is a per-user preference read straight out of
+    that file, so without this the committed media records whoever ran the script:
+    the sections they left unfolded, the columns they hid, the interface scale they
+    set. It leaked twice before this existed -- an expanded Credentials card with
+    masked key rows on screen, and a 120% readout under a frame drawn at 100%.
+    Pinning also means no `save_*` helper fired by the tour can reach the real file.
+    """
+    cfg = tmp_dir / "config.json"
+    cfg.write_text(json.dumps(SYNTHETIC_CONFIG, indent=1), encoding="utf-8")
+    jobsdata._cfg_path = lambda: cfg
+    return cfg
+
+
 def _sanitize_personal_tabs(tmp_dir: Path) -> None:
     """Point the Resume Data + Apply Answers editors at fictional files so no
     real personal data (the user's yaml / answer store) can appear in a grab."""
+    _pin_dashboard_config(tmp_dir)
     example = REPO / "resume_tailor_files" / "master_experience.example.yaml"
     synth_yaml = tmp_dir / "master_experience.yaml"
     synth_yaml.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
@@ -201,10 +279,14 @@ def _sanitize_personal_tabs(tmp_dir: Path) -> None:
     resume_md.MASTER_YAML_PATH = synth_yaml
     store = tmp_dir / "apply_answers.json"
     answers = _apply_answers.load_with_defaults(path=store)  # defaults only
+    # Keys must be the answer-store ids from `apply_answers` defaults, not the
+    # field labels: an id that matches nothing silently leaves the real default in
+    # place, which is how five of these went unset (and the apply sheet's Address
+    # block rendered with only a country) until 8B caught it in a frame.
     fictional = {
-        "years_experience": "3", "street_address": "100 Example Street",
-        "city": "Springfield", "state": "Illinois", "zip": "00000",
-        "country": "United States", "how_heard": "LinkedIn",
+        "years_experience": "3", "address_street": "100 Example Street",
+        "address_city": "Springfield", "address_state": "IL", "address_zip": "00000",
+        "address_country": "United States", "how_did_you_hear": "LinkedIn",
     }
     for e in answers:
         if e["id"] in fictional:
@@ -239,6 +321,140 @@ def _registry(resume_dir: Path) -> MagicMock:
     reg.resume_path.return_value = ""                        # Apply button stays disabled
     reg.all_ids.return_value = set()
     return reg
+
+
+# The job the tour tailors: j1, the row the registry already tints "Tailored".
+TAILORED_JOB = {"job_posting_id": "j1", "company_name": "Acme Analytics",
+                "job_title": "Senior Data Engineer",
+                "url": "https://example.com/jobs/j1"}
+
+# Where the panel SAYS the tailored folder is. The real one is a temp dir whose
+# path carries the OS account name of whoever runs this, and that path is on
+# screen in two copyable fields, so the frame shows the synthetic output root the
+# rest of the fixtures use (`RESUME_TAILOR_OUTPUT` in `_sanitize_personal_tabs`)
+# instead. Cosmetic, and the only string in the media that is not what the code
+# produced.
+SHOWN_OUTPUT_ROOT = r"C:\Users\jane\Downloads\Generated_Resumes"
+
+# One re-phrased line per atom in `master_experience.example.yaml`, keyed the way
+# the tailor keys them (the atom ids joined by "+"). Written by hand here for the
+# same reason the résumé engine writes them at all: every one traces to a `what` /
+# `how` / `scope` / `impact` field in that file, and nothing is invented.
+_DEMO_BULLETS = {
+    "pipeline_speedup": (
+        "Rebuilt a nightly ingestion pipeline over ~2M records/day from 12 source "
+        "systems, replacing sequential REST calls with a batched async fetcher: "
+        "runtime 6h to 90min and about $400/mo less cloud spend."),
+    "test_coverage": (
+        "Raised billing-service test coverage from 42% to 81% with pytest suites "
+        "and CI gates, catching 3 regressions before release."),
+    "core_feature": (
+        "Built a web app that turns plain English into runnable queries, with an "
+        "LLM drafting the query, a validator checking it and results streaming "
+        "back, so non-technical users never write SQL."),
+    "membership_growth": (
+        "Ran weekly workshops as club president and grew active membership from "
+        "20 to 60 over one academic year."),
+}
+
+_DEMO_SELECTION = {
+    "experience": [{"name": "Example Corp",
+                    "groups": [["pipeline_speedup"], ["test_coverage"]]}],
+    "projects": [{"name": "ExampleApp", "groups": [["core_feature"]]}],
+    "leadership": [{"name": "Campus Coding Club", "groups": [["membership_growth"]]}],
+}
+
+_DEMO_SKILL_LINES = [
+    {"label": "Languages", "items": "Python, JavaScript, SQL, Java"},
+    {"label": "Frameworks", "items": "React, FastAPI, Spark"},
+    {"label": "Developer tools", "items": "Git, Docker, AWS, GitHub Actions, PostgreSQL"},
+    {"label": "Libraries", "items": "pandas, NumPy, PyTorch, scikit-learn"},
+]
+
+_DEMO_COVER = (
+    "Dear Hiring Team,\n\n"
+    "I am applying for the Senior Data Engineer role at Acme Analytics. Rebuilding "
+    "a nightly ingestion pipeline over ~2M records a day, and cutting its runtime "
+    "from six hours to ninety minutes, is the closest thing I have to the batch "
+    "work your posting describes.\n\n"
+    "Thank you for your time.\n\nJane Doe\n"
+)
+
+
+def _tailored_folder(tmp_dir: Path) -> Path:
+    """A folder that looks exactly like a finished tailor run, produced without one.
+
+    `apply_data.write` is the real writer, reading the real synthetic master and
+    answer store, so the apply sheet on screen is the shipped format rather than a
+    mock-up of it. What a real run would add on top is an LLM call that picks the
+    atoms and re-phrases them; both are supplied here as fixtures, which is why
+    this costs nothing and puts no personal data on screen. The two PDFs are
+    placeholders: `build_apply_context` only checks that the résumé one exists.
+    """
+    from resume_tailor import apply_data, output
+    folder = tmp_dir / "tailored_j1"
+    folder.mkdir(exist_ok=True)
+    (folder / output.resume_filename()).write_bytes(b"%PDF-1.4 synthetic\n")
+    (folder / output.cover_filename()).write_bytes(b"%PDF-1.4 synthetic\n")
+    apply_data.write(TAILORED_JOB, folder, sel=_DEMO_SELECTION, bullets=_DEMO_BULLETS,
+                     skill_lines=_DEMO_SKILL_LINES, cover_body=_DEMO_COVER)
+    return folder
+
+
+def _show_apply_panel(win: MainWindow, folder: Path) -> None:
+    """Open the right-side Apply panel on `folder`, the way a finished Tailor does.
+
+    Goes through `apply.build_apply_context`, so the sheet is parsed and rendered
+    by shipped code; only the two path strings the panel prints are swapped for
+    `SHOWN_OUTPUT_ROOT` before it sees them. `_finish_apply_ok` is deliberately not
+    used: it would put a path on the machine's real clipboard.
+    """
+    from resume_tailor import apply as apply_mod
+    ctx = apply_mod.build_apply_context(folder)
+    shown = Path(SHOWN_OUTPUT_ROOT) / TAILORED_JOB["company_name"] / TAILORED_JOB["job_title"]
+    for key in ("resume_pdf", "cover_letter_pdf"):   # the two fields the panel prints
+        if ctx.get(key):
+            ctx[key] = str(shown / Path(ctx[key]).name)
+    win.apply_panel.show_application(ctx)
+    win._apply_panel_open = True
+    win.preview.setVisible(False)
+    win._preview_shown = False
+    win.apply_panel.show()
+    sizes = win.hsplit.sizes()
+    if len(sizes) >= 2 and sizes[-1] < 50:
+        total = sum(sizes) or 1000
+        win.hsplit.setSizes([max(420, total - 560), 560])
+
+
+def _freeze_auto_reload(win: MainWindow) -> None:
+    """Stop the dashboard reloading itself out from under a capture.
+
+    The real window watches its source CSVs and polls every 15s, and both paths
+    end in a reload from `csv_paths`, which is EMPTY here: the harness installs
+    its synthetic frame directly. A capture that outruns the poll therefore gets
+    a half-blank dashboard, and it did -- the walkthrough grew past 15s and its
+    last four frames came back reading "0 jobs / 0 unseen" under a populated
+    Settings tab.
+
+    The reload ENTRY POINTS are what get neutered, not just the timers: every
+    later `_apply_df_views` calls `_rearm_watcher`, so a freeze that only stopped
+    the timers would be undone by the next line of fixture setup (it was, and the
+    blank frames moved by one instead of going away).
+    """
+    for name in ("_poll_timer", "_reload_timer", "_scale_debounce"):
+        timer = getattr(win, name, None)
+        if timer is not None:
+            timer.stop()
+    win._auto_reload = lambda *a, **k: None
+    win._poll_for_changes = lambda *a, **k: None
+    win._on_fs_change = lambda *a, **k: None
+    win._rearm_watcher = lambda *a, **k: None
+    watcher = getattr(win, "_fs_watcher", None)
+    if watcher is not None:
+        if watcher.files():
+            watcher.removePaths(watcher.files())
+        if watcher.directories():
+            watcher.removePaths(watcher.directories())
 
 
 def _expand_settings_section(win: MainWindow, section: str = "Engine") -> None:
@@ -304,6 +520,7 @@ def main() -> int:
     theme.apply_theme(app)
     win = MainWindow(csv_paths=[], registry=_registry(resume_dir))
     win.show()
+    _freeze_auto_reload(win)
     app.processEvents()
 
     # Pass 1: empty states (no jobs df, empty queue, mock tracker rows already

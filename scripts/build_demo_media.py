@@ -53,11 +53,13 @@ STILLS = [
      "settings.png"),
 ]
 
-# GIF timing. Holds are far shorter than the MP4's (a loop that lingers reads as
-# a slideshow), and the crossfade runs at 25 fps so the cut itself is motion.
-FIRST_HOLD_MS = 2000
-HOLD_MS = 1500
-FADE_FRAMES = 10
+# GIF timing. Every frame keeps the RELATIVE length the storyboard gave it, taken
+# down by GIF_SPEED: a loop that lingers on each screen the way the video does
+# reads as a slideshow, but flattening all of them to one hold length throws away
+# the eight 0.34 s keystrokes that are the only thing making it read as motion.
+GIF_SPEED = 0.40
+MIN_MS, MAX_MS = 100, 2000    # 100ms: below ~50ms most viewers substitute their own delay
+FADE_FRAMES = 8
 FADE_MS = 40
 GIF_COLORS = 128
 
@@ -103,7 +105,7 @@ def build_gif() -> Path:
     import build_walkthrough as bw
 
     tmp = tempfile.TemporaryDirectory(prefix="demo_gif_")
-    holds, _secs = bw.render_scenes(Path(tmp.name))
+    holds, secs, captions = bw.render_scenes(Path(tmp.name))
     if not holds:
         raise SystemExit("no frames captured")
 
@@ -111,10 +113,13 @@ def build_gif() -> Path:
     durations: list[int] = []
     for i, hold in enumerate(holds):
         frames.append(hold)
-        durations.append(FIRST_HOLD_MS if i == 0 else HOLD_MS)
-        nxt = holds[(i + 1) % len(holds)]  # the tour loops, so the last fades to the first
+        durations.append(int(min(MAX_MS, max(MIN_MS, secs[i] * 1000 * GIF_SPEED))))
+        # The tour loops, so the last frame crossfades back to the first.
+        nxt_i = (i + 1) % len(holds)
+        if captions[nxt_i] == captions[i]:
+            continue        # a beat inside one scene: hard cut, and it is the motion
         for k in range(1, FADE_FRAMES + 1):
-            frames.append(Image.blend(hold, nxt, k / (FADE_FRAMES + 1)))
+            frames.append(Image.blend(hold, holds[nxt_i], k / (FADE_FRAMES + 1)))
             durations.append(FADE_MS)
 
     # One shared adaptive palette: the theme is flat and dark, so 128 colours
@@ -132,8 +137,9 @@ def build_gif() -> Path:
         optimize=True,
         disposal=1,   # keep the previous frame: lets optimize() write deltas only
     )
-    secs = sum(durations) / 1000
-    print(f"{gif} -> {len(holds)} scenes, {len(frames)} frames, {secs:.0f}s, "
+    total = sum(durations) / 1000
+    print(f"{gif} -> {len(set(captions))} scenes, {len(holds)} storyboard frames, "
+          f"{len(frames)} total, {total:.1f}s, "
           f"{frames[0].width}x{frames[0].height}, {gif.stat().st_size / 1e6:.2f} MB")
     return gif
 

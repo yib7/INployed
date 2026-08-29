@@ -414,3 +414,43 @@ def test_a_leftover_staging_dir_is_named_in_the_dialog(qtbot, monkeypatch):
     msg = panel._notes[-1][1]
     assert "inployed-secret-xyz" in msg
     assert "Delete by hand" in msg
+
+
+# --- layout at other interface scales (Phase 7) -----------------------------
+
+
+def test_crontab_preview_fits_four_lines_at_every_scale(qtbot):
+    """It used to be a flat 90px, measured at 100%, and swallowed the END marker
+    at 125% and the line above it at 150% — the preview clipping the preview."""
+    from PySide6 import QtWidgets
+    from qt import theme
+    app = QtWidgets.QApplication.instance()
+    panel = _panel(qtbot, _FakeTarget())
+    panel.set_times(["09:00", "18:00"])       # -> a four-line crontab
+    try:
+        for scale in (0.75, 1.0, 1.25, 1.5):
+            theme.set_scale(app, scale)
+            needed = panel.preview.fontMetrics().lineSpacing() * 4
+            assert panel.preview.height() >= needed, scale
+    finally:
+        theme.set_scale(app, 1.0)
+
+
+def test_credentials_row_keeps_the_action_next_to_the_field(qtbot):
+    """picker -> field -> Set on VM, then a stretch, like every other action row
+    in this panel. Unbounded, the field ate the width and stranded the button
+    against the far edge of a maximised window."""
+    panel = _panel(qtbot, _FakeTarget())
+    row = None
+    lay = panel.layout()
+    for i in range(lay.count()):
+        item = lay.itemAt(i).layout()
+        if item is not None and item.indexOf(panel.secret_btn) >= 0:
+            row = item
+    assert row is not None
+    assert row.itemAt(row.count() - 1).spacerItem() is not None   # trailing stretch
+    assert panel.secret_value.maximumWidth() < 16777215           # bounded
+    # ...and the picker carries no cap of its own, so it can never clip its label
+    assert panel.secret_name.maximumWidth() == 16777215
+    assert panel.secret_name.sizeHint().width() >= panel.secret_name.fontMetrics(
+    ).horizontalAdvance("Bright Data token")

@@ -19,11 +19,39 @@ import local_task
 import settings
 import vm_schedule
 import vm_sync
+from qt import theme
 
 WEEKDAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 BLANK = "—"
 HOUR_OPTIONS = [f"{h:02d}:00" for h in range(24)]
 MAX_TIMES = vm_schedule.MAX_TIMES_PER_DAY
+
+
+class _CronPreview(QtWidgets.QPlainTextEdit):
+    """The crontab preview box, four lines tall at whatever the live scale is.
+
+    It used to be `setFixedHeight(90)`, measured at 100%. Everything inside it
+    scales with the interface size, so at 125% the box swallowed the last line
+    and at 150% it cut `# INPLOYED-SCHEDULE-END` and half the line above it —
+    the preview clipping the thing it exists to preview. `set_scale` re-fonts
+    every live widget, so re-deriving the height on FontChange keeps it right
+    without the panel having to know a rescale happened.
+    """
+
+    LINES = 4
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._fit_lines()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.FontChange:
+            self._fit_lines()
+
+    def _fit_lines(self) -> None:
+        fm = self.fontMetrics()
+        self.setFixedHeight(fm.lineSpacing() * self.LINES + fm.height())
 
 
 class VMPanel(QtWidgets.QWidget):
@@ -56,6 +84,11 @@ class VMPanel(QtWidgets.QWidget):
         v.setContentsMargins(0, 8, 0, 0)
         head = QtWidgets.QLabel("Cloud job-discovery VM")
         head.setProperty("heading", True)
+        # One step up the type scale from the four sub-headings below it
+        # (Pause / Credentials / Push / Local watcher task), which carry the same
+        # `heading` property. Without this the panel title and its sections were
+        # typographically identical and the panel read as one flat list.
+        theme.set_type_role(head, "section")
         v.addWidget(head)
         t = self._target_factory()
         status = (f"Connected target: {t.user}@{t.instance} (zone {t.zone})" if t.configured()
@@ -109,10 +142,9 @@ class VMPanel(QtWidgets.QWidget):
         v.addLayout(freq_row)
 
         v.addWidget(QtWidgets.QLabel("crontab preview:"))
-        self.preview = QtWidgets.QPlainTextEdit()
+        self.preview = _CronPreview()
         self.preview.setAccessibleName("crontab preview")
         self.preview.setReadOnly(True)
-        self.preview.setFixedHeight(90)
         v.addWidget(self.preview)
 
         sbar = QtWidgets.QHBoxLayout()
@@ -135,6 +167,11 @@ class VMPanel(QtWidgets.QWidget):
         self.pause_date = QtWidgets.QDateEdit()
         self.pause_date.setAccessibleName("Pause until date")
         self.pause_date.setCalendarPopup(True)
+        # ISO, like every other date the panel shows: the crontab preview, the
+        # confirm dialog ("Pause job discovery until 2026-08-29") and the value
+        # written to the VM. The locale default rendered the same date as
+        # 8/29/2026 in the one place the user picks it.
+        self.pause_date.setDisplayFormat("yyyy-MM-dd")
         tomorrow = date.today() + timedelta(days=1)
         self.pause_date.setMinimumDate(QtCore.QDate(tomorrow.year, tomorrow.month, tomorrow.day))
         self.pause_date.setDate(QtCore.QDate(tomorrow.year, tomorrow.month, tomorrow.day))
@@ -172,16 +209,28 @@ class VMPanel(QtWidgets.QWidget):
         self.secret_name.setAccessibleName("Credential to set")
         for key, label in vm_sync.MANAGED_SECRETS.items():
             self.secret_name.addItem(label, key)
-        self.secret_name.setMaximumWidth(190)
+        # No width cap: the combo has no stretch in this row, so it already sizes
+        # to its longest label. The 190px cap it used to carry was measured at
+        # 100% and "Bright Data token" needs 187 at 150%, three pixels short of
+        # eating its own text on a bigger system font.
         crow.addWidget(self.secret_name)
         self.secret_value = QtWidgets.QLineEdit()
         self.secret_value.setAccessibleName("Credential value")
         self.secret_value.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.secret_value.setPlaceholderText("paste the key here")
+        # Bounded, then a trailing stretch, so the row reads picker -> field ->
+        # action like the four other action rows in this panel. Unbounded, the
+        # field ate the whole width and stranded "Set on VM" against the right
+        # edge — a thousand pixels of empty password well away from the picker it
+        # belongs to on a maximised window. A maximum can't clip anything (the
+        # field scrolls, and its content is masked), and it scales for the same
+        # reason JobsTab's column widths do.
+        self.secret_value.setMaximumWidth(round(420 * theme._current_scale))
         crow.addWidget(self.secret_value, 1)
         self.secret_btn = QtWidgets.QPushButton("Set on VM")
         self.secret_btn.clicked.connect(self.set_secret)
         crow.addWidget(self.secret_btn)
+        crow.addStretch(1)
         v.addLayout(crow)
 
         # --- push ---

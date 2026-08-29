@@ -820,11 +820,15 @@ def test_kickoff_command_constants_shape():
 def test_panel_has_start_run_button(qtbot, tmp_path):
     p = _panel(qtbot, _qfile(tmp_path))
     assert p.start_run_btn.text() == "Start auto-apply run"
-    # accent-styled, FIRST among the header's buttons
-    header = p.layout().itemAt(0).layout()
-    header_buttons = [header.itemAt(i).widget() for i in range(header.count())
-                      if isinstance(header.itemAt(i).widget(), QtWidgets.QPushButton)]
-    assert header_buttons[0] is p.start_run_btn
+    # accent-styled, and the trailing action on the header's second row. The
+    # header is two rows: status chips + counts caption over the actions
+    # (master-password cluster, then Start), so that the chips keep their labels
+    # at 125% and 150% on a window narrower than about 1600px.
+    chips_row, actions = p.layout().itemAt(0).layout(), p.layout().itemAt(1).layout()
+    assert chips_row.itemAt(0).widget() is p.status_chips
+    assert actions.itemAt(actions.count() - 1).widget() is p.start_run_btn
+    assert not [actions.itemAt(i).widget() for i in range(actions.count() - 1)
+                if isinstance(actions.itemAt(i).widget(), QtWidgets.QPushButton)]
     assert p.start_run_btn.property("accent") is True
     tip = p.start_run_btn.toolTip().lower()
     assert "new terminal" in tip
@@ -1067,3 +1071,50 @@ def test_the_drain_console_never_inherits_another_vendors_credentials(monkeypatc
         assert name not in env, f"{name} rode into the claude console"
     assert env.get("ANTHROPIC_SOMETHING") == "kept"   # only credentials are stripped
     assert "PATH" in env or "Path" in env             # ... and the rest survives
+
+
+# --- header layout at other interface scales (Phase 7) -----------------------
+
+
+def test_count_columns_stay_wider_than_their_own_headings(qtbot, tmp_path):
+    """A header section clips instead of eliding, so a column narrower than its
+    title silently drops the first and last letter: Attempts and Missing shipped
+    at 70px and 60px with 18px of padding inside them and read "ttempt" and
+    "lissin" at 150%. They size themselves now, so no scale can strand them."""
+    from qt import theme
+    app = QtWidgets.QApplication.instance()
+    p = _panel(qtbot, _qfile(tmp_path))
+    header = p.table.horizontalHeader()
+    try:
+        for scale in (0.75, 1.0, 1.25, 1.5):
+            theme.set_scale(app, scale)
+            p.table.resizeColumnsToContents()
+            for name in ("Attempts", "Missing"):
+                i = aqp.COLUMNS.index(name)
+                assert header.sectionResizeMode(i) == \
+                    QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+                assert header.sectionSize(i) >= \
+                    header.fontMetrics().horizontalAdvance(name), (name, scale)
+    finally:
+        theme.set_scale(app, 1.0)
+
+
+def test_status_chips_keep_their_labels_on_a_narrow_window(qtbot, tmp_path):
+    """One header row needed 1428px at 150%; below that Qt took the deficit out
+    of the chips and they read "Ready to su" / "Needs revie"."""
+    from qt import theme
+    app = QtWidgets.QApplication.instance()
+    p = _panel(qtbot, _qfile(tmp_path))
+    p.show()
+    try:
+        for scale in (1.0, 1.25, 1.5):
+            theme.set_scale(app, scale)
+            for width in (1000, 1280, 1920):
+                p.resize(width, 700)
+                app.processEvents()
+                for key, chip in p.status_chips._chips.items():
+                    assert chip.width() >= chip.sizeHint().width(), \
+                        (key, scale, width)
+    finally:
+        theme.set_scale(app, 1.0)
+        p.hide()

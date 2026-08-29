@@ -95,3 +95,42 @@ def test_apply_theme_accepts_scale(qtbot):
         assert app.font().pointSizeF() == pytest.approx(theme.BASE_FONT_PT * 1.2)
     finally:
         theme.apply_theme(app)  # back to 1.0
+
+
+def test_rescale_keeps_the_weight_the_stylesheet_paints(qtbot):
+    """The QSS bolds QPushButton, QHeaderView::section and QLabel[heading], and
+    paints them DemiBold whatever font the widget carries. sizeHint() is measured
+    from that font, so a rescale that pushed a Normal-weight font onto them asked
+    the layout for narrower text than got painted: "Start auto-apply run" came up
+    7px short at 125% and rendered with its S and its n sliced in half."""
+    app = _app()
+    btn = QtWidgets.QPushButton("Start auto-apply run")
+    head = QtWidgets.QLabel("Credentials")
+    head.setProperty("heading", True)
+    plain = QtWidgets.QLabel("body text")
+    for w in (btn, head, plain):
+        qtbot.addWidget(w)
+    try:
+        for scale in (0.75, 1.0, 1.25, 1.5):
+            theme.set_scale(app, scale)
+            assert btn.font().weight() >= QtGui.QFont.Weight.DemiBold, scale
+            assert head.font().weight() >= QtGui.QFont.Weight.DemiBold, scale
+            assert plain.font().weight() == QtGui.QFont.Weight.Normal, scale
+            painted = QtGui.QFontMetrics(btn.font()).horizontalAdvance(btn.text())
+            assert btn.sizeHint().width() >= painted, scale
+    finally:
+        theme.set_scale(app, 1.0)
+
+
+def test_a_self_painting_chip_is_left_at_the_body_weight(qtbot):
+    """`chrome.Chip` is a QAbstractButton the QSS never matches — it paints from
+    its own font, so bolding it would change the pixels, not just the metrics."""
+    from qt.chrome import Chip
+    app = _app()
+    chip = Chip("Ready to submit", checkable=False)
+    qtbot.addWidget(chip)
+    try:
+        theme.set_scale(app, 1.5)
+        assert chip.font().weight() == QtGui.QFont.Weight.Normal
+    finally:
+        theme.set_scale(app, 1.0)

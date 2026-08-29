@@ -125,6 +125,40 @@ def _spawn_kickoff(scoped: bool = False) -> None:
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 
+class _ShrinkableCaption(ElidedLabel):
+    """An `ElidedLabel` that still asks for its full width.
+
+    `ElidedLabel` declares an Ignored horizontal policy, which is right for the
+    one caption in a row that shares the row with a stretch, and wrong inside a
+    fixed cluster: with no stretch to claim, Ignored means Qt hands it zero width
+    even on a 1920px window, so the caption disappears entirely. Preferred asks
+    for the whole string; a zero minimum still lets a crowded row take it back a
+    character at a time, which is the point.
+    """
+
+    def __init__(self, text: str = "", parent=None) -> None:
+        super().__init__(text, parent)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                           QtWidgets.QSizePolicy.Policy.Preferred)
+
+    def sizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        """Width of the FULL caption, not of the elision currently painted.
+
+        `ElidedLabel` elides by writing the shortened string into QLabel itself,
+        so QLabel's own sizeHint measures the truncated text — asking for less
+        room, which elides it further. Left alone it ratchets to nothing and
+        never recovers when the window is widened again.
+        """
+        fm = self.fontMetrics()
+        margins = self.contentsMargins()
+        return QtCore.QSize(
+            fm.horizontalAdvance(self.text()) + margins.left() + margins.right(),
+            super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:  # noqa: N802 (Qt naming)
+        return QtCore.QSize(0, super().minimumSizeHint().height())
+
+
 COLUMNS = ("Company", "Title", "Status", "Attempts", "Missing", "Updated", "Note")
 # Column ids the row delegate keys its renderers on (status pill + dot,
 # right-aligned mono counts, mono muted timestamp), 1:1 with COLUMNS.
@@ -371,7 +405,12 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
 
-        # Header: status chips + counts caption | master-password cluster | Start.
+        # Header, two rows: what the queue is doing (chips + counts caption) over
+        # what you can do about it (master password, Start). One row held these
+        # four side by side and needed 1428px at 150%, so on anything narrower
+        # than a maximised window Qt took the deficit out of the status chips and
+        # they read "Ready to su" / "Needs revie". Splitting also groups the row
+        # by what it is rather than by what fit.
         header = QtWidgets.QHBoxLayout()
         self.status_chips = ChipBar(
             [(s, STATUS_LABELS.get(s, s.capitalize()),
@@ -396,7 +435,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         ch = QtWidgets.QHBoxLayout(cluster)
         ch.setContentsMargins(12, 4, 8, 4)
         ch.setSpacing(8)
-        self.pw_label = QtWidgets.QLabel("")
+        # Elides, for the same reason the counts caption does: at 125% and 150%
+        # the header row wants more width than a 1100-1280px window has, and once
+        # the deficit outran the counts caption Qt took the rest out of the status
+        # chips, which read "Ready to su" / "Needs revie". This caption is the
+        # next-least load-bearing thing in the row — the pill beside it says SET
+        # or NOT SET in words either way — so it gives ground next. `.text()`
+        # still returns the full string, which is the cluster's accessible label.
+        self.pw_label = _ShrinkableCaption("")
         self.pw_label.setProperty("muted", True)
         ch.addWidget(self.pw_label)
         self.pw_pill = Pill("NOT SET", "neutral")
@@ -418,7 +464,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.clear_pw_btn.setToolTip("Clear the master password from the clipboard.")
         self.clear_pw_btn.clicked.connect(self._clear_password)
         ch.addWidget(self.clear_pw_btn)
-        header.addWidget(cluster)
+        v.addLayout(header)
+
+        actions = QtWidgets.QHBoxLayout()
+        actions.addWidget(cluster)
+        actions.addStretch(1)
 
         self.start_run_btn = QtWidgets.QPushButton("Start auto-apply run")
         self.start_run_btn.setProperty("accent", True)
@@ -429,8 +479,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             "through up to batch_cap queued jobs; every application is PARKED at "
             "its review page for your approval — nothing is ever submitted.")
         self.start_run_btn.clicked.connect(self._start_run)
-        header.addWidget(self.start_run_btn)
-        v.addLayout(header)
+        actions.addWidget(self.start_run_btn)
+        v.addLayout(actions)
 
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(list(COLUMNS))
@@ -451,8 +501,22 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.table.setWordWrap(False)
         hh = self.table.horizontalHeader()
         hh.setStretchLastSection(True)
-        for i, w in enumerate((150, 220, 150, 70, 60, 150, 200)):
-            self.table.setColumnWidth(i, w)
+        # Widths are @100% and scale with the live interface size, the same way
+        # JobsTab._set_column_widths does.
+        scale = theme._current_scale
+        for i, w in enumerate((150, 220, 150, 90, 80, 150, 200)):
+            self.table.setColumnWidth(i, round(w * scale))
+        # ...except the two count columns, which size themselves. A header
+        # section is the one piece of table text Qt clips instead of eliding, so
+        # a column narrower than its own title silently loses the first and last
+        # letter: "Attempts" and "Missing" shipped at 70px and 60px with 18px of
+        # QSS padding inside them and read as "ttempt" and "lissin". A pinned
+        # width only moves that failure to another interface scale, and neither
+        # column holds anything a user would want to drag wider than its own
+        # heading, so let the header measure them instead.
+        for i in (COLUMN_IDS.index("attempts"), COLUMN_IDS.index("missing")):
+            hh.setSectionResizeMode(
+                i, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.itemSelectionChanged.connect(self._update_details)
         v.addWidget(self.table, 1)
 

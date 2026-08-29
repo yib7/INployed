@@ -445,6 +445,35 @@ _CONTROL_CLASSES = (
     "QAbstractSpinBox", "QCheckBox", "QTabBar", "QAbstractItemView",
 )
 
+# The QSS bolds four things outright: `QPushButton`, `QHeaderView::section`,
+# `QLabel[heading="true"]` and `QToolButton[sectionHeader="true"]`.
+_BOLD_CLASSES = ("QPushButton", "QHeaderView")
+_BOLD_PROPERTIES = ("heading", "sectionHeader")
+
+
+def _with_qss_weight(font: QtGui.QFont, cls: str = "",
+                     widget: QtWidgets.QWidget | None = None) -> QtGui.QFont:
+    """`font`, bolded where the stylesheet bolds the thing it is going on.
+
+    The style paints those four DemiBold whatever font the widget carries, but
+    `sizeHint()` is measured from that font — so pushing a Normal-weight font
+    onto them, which is what every rescale does, asks the layout for narrower
+    text than actually gets painted. "Start auto-apply run" came up 7px short at
+    125% and rendered with its S and its n sliced in half. This is a MEASUREMENT
+    fix only: the weight on screen is the one the stylesheet was already drawing.
+    Only the four selectors above qualify, so a custom-painted button that draws
+    from its own font (`chrome.Chip`) is left alone.
+    """
+    bold = cls in _BOLD_CLASSES
+    if widget is not None and not bold:
+        bold = (isinstance(widget, (QtWidgets.QPushButton, QtWidgets.QHeaderView))
+                or any(widget.property(p) for p in _BOLD_PROPERTIES))
+    if not bold or font.weight() >= QtGui.QFont.Weight.DemiBold:
+        return font
+    out = QtGui.QFont(font)
+    out.setWeight(QtGui.QFont.Weight.DemiBold)
+    return out
+
 
 def font_for(role: str, scale: float | None = None) -> QtGui.QFont:
     """QFont for a type role at the given (default: current) scale.
@@ -572,9 +601,11 @@ def set_scale(app: QtWidgets.QApplication, scale: float) -> None:
     app.setFont(font_for("body", scale))  # default for any widget created later
     control_font = font_for("control", scale)
     for cls in _CONTROL_CLASSES:
-        app.setFont(control_font, cls)
-    app.setFont(font_for("caption", scale), "QHeaderView")
+        app.setFont(_with_qss_weight(control_font, cls), cls)
+    app.setFont(_with_qss_weight(font_for("caption", scale), "QHeaderView"),
+                "QHeaderView")
     for w in app.allWidgets():
-        w.setFont(font_for(_role_for(w), scale))  # override stylesheet-pinned fonts
+        # override stylesheet-pinned fonts
+        w.setFont(_with_qss_weight(font_for(_role_for(w), scale), widget=w))
         if isinstance(w, QtWidgets.QTableView):
             _apply_table_metrics(w, scale)

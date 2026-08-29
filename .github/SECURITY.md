@@ -17,9 +17,16 @@ impact you observed. Expect an initial reply within about a week.
 This is a desktop + local-CLI tool with an optional self-hosted GCP scraper VM. The reports
 most relevant to it:
 
-- Secrets handling: keys live only in a git-ignored `.env` (and, by the user's choice, in the
-  local `settings_archive/` snapshots, also git-ignored). A path that logs, prints, transmits,
-  or commits a secret is in scope.
+- Secrets handling: keys live in a git-ignored `.env` (and, by the user's choice, in the local
+  `settings_archive/` snapshots, also git-ignored). A path that logs, prints, transmits, or
+  commits a secret is in scope.
+- The one path that sends a key off the machine on purpose: **Settings → VM → Credentials**
+  copies a single key to the user's own GCP VM, over `scp`, into a mode-600 file that
+  `run_scraper.sh` sources. A way to make it stage the value somewhere else, leave it readable,
+  put it on a command line, or write it to a log is in scope.
+- A credential reaching a process that has no use for it. The tailor, the scorer and the
+  auto-apply runner are given a scrubbed environment on purpose, and a gap in that scrub is in
+  scope.
 - The résumé/apply pipeline reading untrusted input (a pasted job description or URL, a scraped
   posting) in a way that escapes its sandbox, runs unintended code, or writes outside the
   intended output folder. LaTeX is compiled with `-no-shell-escape`; a bypass is in scope.

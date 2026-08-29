@@ -4,7 +4,17 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.0] - 2026-08-29
+
+The dashboard can install a new API key on the scraper VM, so rotating a dead token stops
+meaning an ssh session and a hand-written `sed`. Under that sits the fix for a scrape that
+had been collecting nothing twice a day while reporting success: the exclude list Bright
+Data was rejecting is now bounded and evicted by date, and a collection whose inputs are all
+refused fails and names the error codes instead of logging a quiet empty run. A fresh
+install keeps the config `setup.ps1` writes for it, the dashboard stops clipping its own
+button labels at 125% and 150%, and a security pass closed two paths that carried a
+credential to a service with no business holding it. Nothing to migrate: no setting changed
+meaning, no config key moved, and no entry point moved.
 
 ### Added
 - **Rotate the VM's API keys from the dashboard.** Settings, VM section, new Credentials row:
@@ -29,6 +39,23 @@ All notable changes to INployed are recorded here. The format follows
   VM is deleted by an `EXIT` trap that fires on failure too. Values are restricted to letters,
   digits and `. _ - : , / + =` because the secrets file is sourced by bash, where a `$` or a
   backtick would otherwise be interpolated on the VM.
+- **Check setup now tests the Bright Data token**, off the UI thread so the window stays
+  responsive, without starting or billing a run.
+- `INPLOYED_NO_DOTENV=1` makes `pipeline/scraper.py` and `pipeline/score_jobs.py` skip `.env`.
+  Both load it at import, so unsetting a key in the shell never disarmed them, and checking what
+  either does without credentials meant billing a real run to find out.
+
+### Changed
+- **Dependencies pulled forward to current stable.** `google-genai` 2.17.0 to 2.20.0 (both the
+  desktop and VM pin sets), `pypdf` 6.15.0 to 6.16.2, `python-dotenv` 1.2.2 to 1.2.3, `PySide6`
+  6.11.1 to 6.11.2, `ruff` 0.16.2 to 0.16.5. The pypdf bump is the one that matters: 6.16.0 and
+  6.16.1 add a cycle check and an iteration bound to the text-extraction path the résumé engine
+  runs over your PDF. `pytest-timeout` stays at 2.4.0 because 2.5.0 is yanked on PyPI, and
+  `numpy` stays on the 2.4.x line because 2.5 needs Python 3.12 and the VM runs 3.11.
+- `gemini-3.7-flash` is offered in the Settings model dropdowns. The scoring defaults are
+  unchanged.
+- The Linux CI job now also runs the `keypool` and `merge_incoming` tests, so every module
+  under `pipeline/` that runs on the VM has Linux evidence behind the platform claim.
 
 ### Fixed
 - **Finding new jobs collected nothing and reported success.** The exclude list
@@ -75,7 +102,8 @@ All notable changes to INployed are recorded here. The format follows
   `\href` target with the escaper meant for printed text, so a repo path containing `_` or `~`
   shipped a link with a literal backslash in it and did not resolve. URLs now go through
   `escape_url`, which touches only what hyperref needs (`%`, `#`, `{`, `}`) and percent-encodes
-  anything outside printable ASCII.
+  anything outside printable ASCII. An `&` in a URL is percent-encoded before it reaches a
+  `tabular*` cell, where LaTeX would otherwise read it as a column separator.
 - **Setup wrote a config the dashboard silently ignored.** `scripts/setup.ps1` saved
   `local/config.json` with `Set-Content -Encoding UTF8`, which on PowerShell 5.1 means UTF-8
   *with* a byte-order mark. `json.loads` rejects a leading BOM and the reader treats an
@@ -87,25 +115,47 @@ All notable changes to INployed are recorded here. The format follows
   reads and writes UTF-8 without a BOM in both directions, and re-running it repairs a config
   written by the old version. The readers take `utf-8-sig` as well, so a file edited in Notepad
   no longer disappears the same way.
+- **The dashboard clipped its own labels at 125% and 150% interface scale.** The stylesheet
+  paints buttons, table headers and section headings DemiBold, but the scaling pass pushed a
+  Normal-weight font onto every widget, so each one was sized from narrower text than it drew:
+  `Start auto-apply run` came up 7px short and rendered with its first and last letters sliced
+  in half. Widgets are measured at the weight they are painted at now. The same pass replaced
+  the fixed pixel widths behind the rest of it, which cut the Auto-apply status chips to
+  "Ready to su", the Attempts and Missing headers to "ttempt" and "lissin", and the VM
+  crontab preview's own END marker. The pause date reads ISO like everything around it.
+- **Two paths carried a credential to a service with no business holding it.** The Bright Data
+  account check sent its token through `urllib`, which copies every header onto a redirect
+  target including one on another host; it goes through a redirect-refusing opener now. And
+  the auto-apply drain console passed its whole environment to the `claude` CLI, an unattended
+  agent with shell and browser access, so it was handed the Bright Data token and the Gemini
+  key pool. The console uses the same scrub list the direct call path already had.
+- **Three ways job discovery fell over on real data.** A timezone-aware `extracted_date`
+  crashed the run; a master with no `job_posting_id` column silently emptied the exclude set
+  instead of saying so; and an id appearing on two rows sorted by whichever row came first
+  rather than by its newest date.
+- **The test suite read the developer's own config and job data.** 316 tests opened git-ignored
+  files at the repo root, and `scraper.MASTER_CSV` pointed at the real 37 MB master, so a
+  scraper test that reached `load_search_config()` was asserting against numbers a fresh clone
+  does not have. `conftest` redirects every repo-root config and data path into a throwaway
+  directory, and a guard test fails if one escapes.
 
-### Added
-- **Check setup now tests the Bright Data token**, off the UI thread so the window stays
-  responsive, without starting or billing a run.
-- `INPLOYED_NO_DOTENV=1` makes `pipeline/scraper.py` and `pipeline/score_jobs.py` skip `.env`.
-  Both load it at import, so unsetting a key in the shell never disarmed them, and checking what
-  either does without credentials meant billing a real run to find out.
-
-### Changed
-- **Dependencies pulled forward to current stable.** `google-genai` 2.17.0 to 2.20.0 (both the
-  desktop and VM pin sets), `pypdf` 6.15.0 to 6.16.2, `python-dotenv` 1.2.2 to 1.2.3, `PySide6`
-  6.11.1 to 6.11.2, `ruff` 0.16.2 to 0.16.5. The pypdf bump is the one that matters: 6.16.0 and
-  6.16.1 add a cycle check and an iteration bound to the text-extraction path the résumé engine
-  runs over your PDF. `pytest-timeout` stays at 2.4.0 because 2.5.0 is yanked on PyPI, and
-  `numpy` stays on the 2.4.x line because 2.5 needs Python 3.12 and the VM runs 3.11.
-- `gemini-3.7-flash` is offered in the Settings model dropdowns. The scoring defaults are
-  unchanged.
-- The Linux CI job now also runs the `keypool` and `merge_incoming` tests, so every module
-  under `pipeline/` that runs on the VM has Linux evidence behind the platform claim.
+### Docs
+- The README's architecture diagram traces the whole loop: the VM's merge and prune, the outbox
+  that carries a local scrape back to the one master, the apply-and-track tail on the desktop
+  side, and the dashboard's control channel to the VM. Nine nodes at 647x1320, sized so
+  GitHub's content column does not shrink the text past reading.
+- The VM key rotation, the bounded exclude list and the loud failure are documented rather than
+  shipped silently, in "What it does" and in the user guide's VM and Discover sections. The
+  user guide's "what leaves your machine" table said no secret is ever sent to the VM, which
+  stopped being true in this release; it now says which key goes, when, and only on a click.
+- `docs/ARCHITECTURE.md` covers the exclude cap as the bound that actually holds, since the
+  array is copied onto every child fetch a search input fans out to, plus the two orderings
+  that keep the right ids and the `INPLOYED_NO_DOTENV=1` opt-out.
+- The four screenshots and the demo GIF were re-shot against the UI that ships now. The GIF
+  runs 16 scenes in 37.8s and covers Tailor and the `apply.md` it writes, which the 13-still
+  version skipped. The capture harness had five ways of recording the machine it was shot on,
+  including the maintainer's own Settings state and a mid-capture reload that blanked the last
+  four frames; all five are closed.
 
 ## [1.8.0] - 2026-08-09
 
@@ -843,7 +893,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
-[Unreleased]: https://github.com/yib7/INployed/compare/v1.8.0...HEAD
+[1.9.0]: https://github.com/yib7/INployed/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/yib7/INployed/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/yib7/INployed/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/yib7/INployed/compare/v1.6.2...v1.7.0

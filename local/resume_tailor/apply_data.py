@@ -16,7 +16,7 @@ already computed — the selection (`sel`), the bullets that survived one-page
 enforcement (`bullets`, keyed by group key), and the compressed `skill_lines` —
 so the apply sheet mirrors the PDF exactly and needs **no extra LLM call**. Only
 the blocks the tailor selected for this job appear (mirroring render.py's grouping).
-Replaces the old apply_data.json — nothing here ever submits.
+Nothing here ever submits.
 """
 from __future__ import annotations
 

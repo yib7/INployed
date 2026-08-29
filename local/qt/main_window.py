@@ -475,7 +475,7 @@ class MainWindow(QtWidgets.QMainWindow):
             bar.addWidget(b)
             return b
 
-        # Tailor/Apply live on the job detail card now (Phase 3c) — the bar keeps
+        # Tailor/Apply live on the job detail card, not here — the bar keeps
         # the selection-utility actions, with Find new jobs as its primary.
         button("Mark seen (selected)", self._mark_seen_selected)
         self.btn_undo_seen = button("Undo seen", self._undo_seen)
@@ -514,7 +514,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # It's a filter, so it lives in the Filters popup (and counts toward the badge).
         self.tracker_tab.add_filter_row(
             self.tracker_due_only, is_active=self.tracker_due_only.isChecked)
-        # Pipeline chip bar (Phase 3d): exclusive status chips below the filter
+        # Pipeline chip bar: exclusive status chips below the filter
         # bar. "Follow-up due" PROXIES the (test-coupled) popup checkbox above.
         self._tracker_status_filter = "all"
         self.tracker_chips = ChipBar(
@@ -585,7 +585,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except OSError:
                 complete = False
             if not complete:
-                continue   # still tailoring, or genuinely never finished — leave it
+                continue   # still tailoring, or never finished — leave it
             try:
                 self.registry.record_resume(jid, str(folder))
             except Exception:  # noqa: BLE001 - bookkeeping only (mirrors _finish_tailor)
@@ -1218,7 +1218,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def _scrape_in_flight(self) -> bool:
-        """True only when a scrape/score run is genuinely still executing — the
+        """True only when a scrape/score run is still executing — the
         `_scraping` flag AND a live background thread, same gating rationale as
         `_tailor_in_flight` (the flag alone can linger set)."""
         if not getattr(self, "_scraping", False):
@@ -1232,7 +1232,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return False
 
     def _tailor_in_flight(self) -> bool:
-        """True only when a tailor run is genuinely still executing — the
+        """True only when a tailor run is still executing — the
         `_tailoring` flag AND a live background thread. The flag alone can linger
         set (e.g. if a launch stub never spawns a real worker), so closeEvent
         gates its "wait for tailoring?" prompt on this to avoid blocking on a
@@ -1286,7 +1286,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_seen_locally(self, ids: list[str], value: str) -> None:
         """Optimistic seen-flip: update the in-memory frame + views instantly, then
-        queue the CSV rewrite in the background (the freeze used to live there)."""
+        queue the CSV rewrite in the background (rewriting a ~27 MB gzipped CSV on
+        the UI thread freezes the window)."""
         if not self.df.empty and "is_seen" in self.df.columns:
             idset = {str(i) for i in ids}
             mask = self.df["job_posting_id"].astype(str).isin(idset)
@@ -1416,7 +1417,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("Find new jobs")
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
-        box.setText("Finding new jobs collects fresh postings through the discovery service — this "
+        box.setText("Finding new jobs collects fresh postings through the job-data provider — this "
                     "spends real money / API credits.\n\n- Small test run: 1 keyword, 5 postings/search "
                     "(cheap check).\n- Full run: your full search config (normal daily cost).\n\nIt then "
                     "scores the new jobs and refreshes the dashboard.")

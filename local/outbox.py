@@ -1,7 +1,7 @@
 """Durable outbox: full master rows from LOCAL scrapes / manual adds, queued for the VM.
 
-A local run's data used to live only on this PC. Now every successful dashboard scrape
-and manual add writes its new rows (full local-master rows, JD included) plus the whole
+There is one master, and a job discovered on this PC still has to reach it. Every
+successful dashboard scrape and manual add writes its new rows (full local-master rows, JD included) plus the whole
 run_stats.csv into <repo>/outbox/, and the dashboard best-effort-pushes every pending
 outbox file to the VM's ~/incoming/ (vm_sync transport). merge_incoming.py on the VM
 folds them into the real master before each scheduled scrape. Files are deleted locally

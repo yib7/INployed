@@ -190,13 +190,13 @@ def _run_inline(fn: Callable[[], Any],
 
 
 class _DetailsPanel(QtWidgets.QFrame):
-    """The structured details card under the queue table (Phase 3e).
+    """The structured details card under the queue table.
 
-    Replaces the old read-only QPlainTextEdit: header (title + status pill),
-    muted meta line, a WHY PAUSED/NOTES lede, a warning callout listing the
-    missing answers with an "Answer now" jump to the Apply Answers tab, and a
-    mono artifacts block. `toPlainText()` mirrors the SAME composed text the
-    old pane held (test-coupled — e.g. missing questions must appear in it).
+    Header (title + status pill), muted meta line, a WHY PAUSED/NOTES lede, a
+    warning callout listing the missing answers with an "Answer now" jump to the
+    Apply Answers tab, and a mono artifacts block. `toPlainText()` composes the
+    same text the card paints, and the tests read it (missing questions must
+    appear there), so the two have to stay in step.
     """
 
     _EMPTY = ("Select a queued application to see its status, answers, "
@@ -419,7 +419,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             checkable=False)
         header.addWidget(self.status_chips)
         # The per-status counts caption is the longest thing in this row and the
-        # least load-bearing (every count it names is already on a chip). It is
+        # least informative (every count it names is already on a chip). It is
         # the one element with no minimum width, so at 1280 the status chips keep
         # their labels ("Ready to submit", not "Ready to su") and the caption
         # elides instead.
@@ -439,7 +439,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # the header row wants more width than a 1100-1280px window has, and once
         # the deficit outran the counts caption Qt took the rest out of the status
         # chips, which read "Ready to su" / "Needs revie". This caption is the
-        # next-least load-bearing thing in the row — the pill beside it says SET
+        # next-least informative thing in the row — the pill beside it says SET
         # or NOT SET in words either way — so it gives ground next. `.text()`
         # still returns the full string, which is the cluster's accessible label.
         self.pw_label = _ShrinkableCaption("")

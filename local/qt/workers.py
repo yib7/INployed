@@ -1,7 +1,6 @@
 """Run a blocking callable off the UI thread, Qt-style.
 
-Replaces the old Tk `threading.Thread` + `root.after(0, ...)` marshaling: a
-`Worker` runs `fn()` on a `QThread` and emits `finished(result)` / `failed(exc)`,
+A `Worker` runs `fn()` on a `QThread` and emits `finished(result)` / `failed(exc)`,
 which `run_async` marshals back onto the OWNER's thread before invoking the
 callbacks. The marshaling needs a real QObject receiver (`_Relay`): PySide6
 invokes a plain-callable slot directly in the EMITTING thread, so connecting

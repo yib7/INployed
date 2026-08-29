@@ -16,7 +16,8 @@ résumé bullet traces back to a fact you wrote, and a deterministic grounding g
 
 Three pieces do the work:
 
-1. **Job discovery** (`pipeline/scraper.py`): pulls in fresh job postings to evaluate.
+1. **Job discovery** (`pipeline/scraper.py`): collects postings from the job-data provider
+   and dedupes them against everything collected before.
 2. **Scorer** (`pipeline/score_jobs.py`): a two-stage Gemini relevance filter that
    ranks each job against your background.
 3. **Desktop dashboard** (`local/app.py`): a Windows PySide6/Qt app for triage, an
@@ -177,8 +178,8 @@ discovery VM.
 
 - **Discover:** job discovery runs on the VM's cron schedule, or on demand from the
   dashboard's **Find new jobs**. It never pays twice for the same posting: the exclude list
-  it sends the vendor is capped at the newest 2,000 ids, evicted by date. A run that
-  collects nothing while the vendor reports input errors fails with those error codes
+  it sends the job-data provider is capped at the newest 2,000 ids, evicted by date. A run
+  that collects nothing while the provider reports input errors fails with those error codes
   instead of logging a clean success.
 - **Triage:** the **High Score** tab ranks unseen postings by the two-stage score and tints
   each row by recommendation (apply / consider / skip) and by whether a tailored résumé
@@ -236,16 +237,16 @@ look at the data every generated bullet had to come from.
   (`--max-keywords`, `--limit`, the spend guards) exist because of that.
 - **Single-user by design:** no accounts, no server, no multi-tenancy. It reads one person's
   master experience file and writes to one local SQLite file.
-- **Discovery is one vendor deep:** postings come from a Bright Data LinkedIn dataset; a
-  broken dataset or a schema change stops the front of the pipeline. The vendor does not
+- **Discovery is one provider deep:** postings come from a Bright Data LinkedIn dataset; a
+  broken dataset or a schema change stops the front of the pipeline. The provider does not
   publish its request-size limit, so the 2,000-id exclude cap is a number measured against
-  the live API, and a vendor-side change can move it.
+  the live API, and a change on their side can move it.
 - **Not an auto-submitter, and not a résumé writer:** the apply flow parks at review, and
   the tailor can only select and rephrase facts you wrote yourself. It will never fill a thin
   experience file with impressive-sounding text.
 - **The grounding gate has a blind spot:** it traces distinctive tokens (numbers, proper
   nouns, tool names). A rephrasing that overstates using only ordinary words gives it
-  nothing to catch, so the output is still worth reading before you send it.
+  nothing to catch, so read the output before you send it.
 - **Next:** more discovery sources behind the same normalizer, and a scoring calibration
   loop that learns from tracker outcomes instead of a fixed rubric.
 

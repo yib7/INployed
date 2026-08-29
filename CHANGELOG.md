@@ -85,7 +85,7 @@ meaning, no config key moved, and no entry point moved.
   returned this run" and exited 0. The scheduled runs logged a clean success twice a day while
   collecting nothing, which is why this went unnoticed for weeks. A run that collected nothing
   while reporting errors now fails loudly and names the error codes, so both the cron log and
-  the dashboard's error dialog show it. Unchanged: a genuinely quiet 24 hours (zero rows, zero
+  the dashboard's error dialog show it. Unchanged: a quiet 24 hours (zero rows, zero
   errors) still succeeds, and a run that collected rows despite some `dead_page` errors is
   still normal.
 - **A valid-looking Bright Data key failed every run with "Invalid credentials".** A token can
@@ -430,7 +430,7 @@ configs keep working; the one new option (`drop_easy_apply`) defaults to off.
   to push the new config, instead of leaving the VM silently running the old one.
 
 ### Fixed
-- **Security.** The prep-sheet prompt fenced its job description like the others; the Claude CLI
+- **Security:** the prep-sheet prompt fenced its job description like the others; the Claude CLI
   child process no longer inherits other providers' API keys; two paths that could reach the
   résumé writer around the grounding gate are closed; `manual_add.fetch_url_text` is
   SSRF-hardened (no redirects to private address space).
@@ -505,7 +505,7 @@ résumé-engine behavior changes for an existing saved config.
 - `auto_apply_inbox_map`'s built-in default was missing three webmail-domain rows
   (`googlemail.com`, `live.com`, `msn.com`) that `apply_queue.DEFAULT_INBOX_MAP` already
   carried; the two are now pinned in sync by a test.
-- Dropped the dead `tailor_cover_letter` setting (no code path ever read it — every tailor
+- Dropped the dead `tailor_cover_letter` setting (no code path ever read it; every tailor
   call site prompts live instead) and relocated `tailor_open_folder` to the Resume section
   and `BRIGHT_DATA_DATASET_ID` to Connection & paths, where they actually belong.
 - Removed the dead slider-warning UI machinery (`warn_above`/`warn_text`) and an unreachable
@@ -533,7 +533,7 @@ résumé-engine behavior changes; the `.env` keys and config schema are untouche
   pipeline chips, a restyled auto-apply panel, and card-style Settings sections with
   secrets masked by default.
 - UI copy pass: vendor-neutral wording throughout (job "discovery" instead of
-  scraper/vendor names — settings labels, help text, and dialogs; the underlying `.env`
+  scraper/vendor names across settings labels, help text, and dialogs; the underlying `.env`
   keys and config schema are unchanged), "Found"/"Link" column headers (were
   "Scraped"/"URL"), clearer High Score legend labels including a neutral "Don't consider"
   swatch, and a shorter search placeholder.
@@ -584,7 +584,7 @@ redeploying the scripts (and `prune_master.py`) to the VM.
   quota and spilled to paid Vertex; it now reloads the day's state and attributes usage to
   the right date.
 - The apply queue orders blank-`queued_at` entries fairly. A hand-edited or pre-schema
-  entry now sorts last instead of jumping ahead of genuinely older queued jobs.
+  entry now sorts last instead of jumping ahead of older queued jobs.
 - The watcher validates the shape of `state.json` before using it, so a bad hand-edit
   can't brick scheduled runs, and it writes one config key at a time to avoid a
   lost-update race with the dashboard.
@@ -600,7 +600,7 @@ so local scrapes feed the cloud pipeline, **bounded-memory** VM master I/O with 
 and a large dashboard + cover-letter pass. All prior work since 1.4.0 is folded in here.
 
 ### Added
-- **Claude subscription backend (optional).** The résumé tailor and the *local* job scorer
+- **Claude subscription backend (optional):** the résumé tailor and the *local* job scorer
   can each run on your Claude Code CLI subscription instead of Gemini, selected by Settings
   provider dropdowns (`tailor_provider` / `provider`, both default `gemini`). It drives the
   headless CLI with subscription auth (no API key) through a new stdlib-only `claude_cli.py`
@@ -609,15 +609,15 @@ and a large dashboard + cover-letter pass. All prior work since 1.4.0 is folded 
   the cache write once. Tier map: fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`,
   deep → `claude-opus-4-8`. The cloud VM always scores with Gemini and falls back safely if a
   Claude config ever reaches it.
-- **Auto-apply batch queue.** A new **Auto-apply** tab mirrors a batch apply queue
+- **Auto-apply batch queue:** a new **Auto-apply** tab mirrors a batch apply queue
   (`Queue auto-apply` adds tailored jobs; the tab tracks queued / in progress / ready to
   submit / needs human), backed by a lock-guarded, atomic queue store and an ATS-accounts
   ledger that keeps passwords in the OS credential manager only. Draining runs the same
   parks-at-review, never-auto-submits flow one job at a time (advanced/optional path).
-- **Unified master.** Local scrapes and hand-added jobs now feed the cloud master through a
+- **Unified master:** local scrapes and hand-added jobs now feed the cloud master through a
   durable local outbox that pushes to the VM's `incoming/`, which `merge_incoming.py` drains
-  into the master (master-wins, chunked) — so a job discovered locally is never stranded.
-- **VM master retention + bounded memory.** `run_scraper.sh` merges `incoming/` before
+  into the master (master-wins, chunked), so a job discovered locally is never stranded.
+- **VM master retention + bounded memory:** `run_scraper.sh` merges `incoming/` before
   scraping; master append / rescore / merge are chunked for bounded memory, and
   `prune_master.py` keeps a rolling 3-day description-retention window.
 - **healthchecks.io dead-man's switch** for the VM scraper so a missed cron run is noticed.
@@ -639,9 +639,9 @@ and a large dashboard + cover-letter pass. All prior work since 1.4.0 is folded 
   splits the scorer prompt at the résumé/job boundary for cache reuse.
 
 ### Fixed
-- `apply_playwright.run()` now writes a terminal `report.json` on **every** exit — a
+- `apply_playwright.run()` now writes a terminal `report.json` on **every** exit. A
   fill/upload-phase crash records `failed:`, and a post-submit crash records
-  `submitted (unconfirmed)` — so a crashed run can't leave the queue stuck or cause a
+  `submitted (unconfirmed)`, so a crashed run can't leave the queue stuck or cause a
   double-apply.
 - `seen.db` self-heals a malformed database (quarantine-and-recreate + atomic `app_status`
   backup/restore); the pytest suite is fully hermetic (redirected app-data, no real DB/logs).
@@ -707,8 +707,8 @@ and a large dashboard + cover-letter pass. All prior work since 1.4.0 is folded 
   single-instance lock, the anchored alias maps and Methods concepts line, the
   `resume.md` concepts-pool guarantee, and module-table rows for `measure.py` /
   `master_edit.py` / `master_validate.py` / `apply_answers.py`.
-- The Methods concepts line now pads to a ~7-item target (was ~6), so one more genuinely
-  earned concept buzzword reaches the page. Still width-capped to one printed line and still
+- The Methods concepts line now pads to a ~7-item target (was ~6), so one more earned
+  concept buzzword reaches the page. Still width-capped to one printed line and still
   drawn only from concepts the user declared (`RESUME_TAILOR_SKILL_TARGETS` overrides).
 - The underfull-bullet fill rescue now only grows a bullet whose printed line is below 50%
   full, instead of anything under the 90%/75% rephrase aim. The rephrase still aims for a
@@ -771,7 +771,7 @@ happy-path behavior change):
 ### Added
 - Anchored `skill_aliases` layer + a rendered "Methods" concepts line, so the résumé
   surfaces the concept buzzwords an ATS screens for ("data analysis", "ETL", "A/B testing",
-  "data wrangling", "stakeholder management") that the candidate genuinely demonstrates but
+  "data wrangling", "stakeholder management") that the candidate demonstrates but
   the résumé might never spell. Two root causes are fixed: the ATS matcher was literal (a JD
   synonym of an owned concept read as a false MISSING), and the `concepts_and_methodologies`
   pool was rendered nowhere (so those terms could never match the page). A new optional
@@ -826,7 +826,7 @@ happy-path behavior change):
 - Underfull-bullet fill: when a tailored bullet renders shorter than its configured line
   target and the page has room, the engine now folds one concrete detail from an unused atom
   in the SAME block into that bullet (re-phrasing the group) so it fills toward its target,
-  instead of leaving the line half-empty. It is strictly grounded -- the extra detail can only
+  instead of leaving the line half-empty. It is strictly grounded: the extra detail can only
   come from a real atom in the same entry, and a bullet whose block has no spare atom is left
   exactly as-is, so it never fabricates. Runs as one extra flash call only when a bullet is
   actually underfull with spare material; one-page enforcement stays the backstop. Toggle with

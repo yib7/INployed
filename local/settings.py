@@ -318,7 +318,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # NOT advanced, deliberately: this is the only ceiling on an LLM bill, so it
     # stays where a user worried about spend can find it without first learning
     # that a disclosure toggle exists. `rescore_cap` below reads like its twin but
-    # is retry-of-failures plumbing — genuinely advanced.
+    # is retry-of-failures plumbing — advanced.
     Field("max_scored_per_run", "Max scored per run", "int", 800, "Scoring", "scoring",
           help="Spend guard: cap on LLM-scored jobs per run.", min=1, max=5000),
     Field("rescore_cap", "Rescore cap", "int", 200, "Scoring", "scoring", advanced=True,
@@ -415,7 +415,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # Field.key is the exact environment-variable name the pipeline reads.
     Field("BRIGHT_DATA_API_TOKEN", "Job-data API token", "str", "",
           "Credentials", "env", secret=True, optional=True, restart=True,
-          help="Needed for job discovery. Create one in your job-data API dashboard - API tokens."),
+          help="Needed for job discovery. Create one in your job-data API dashboard, under API tokens."),
     Field("GEMINI_API_KEYS", "Gemini API keys (job scorer)", "str", "",
           "Credentials", "env", secret=True, optional=True, restart=True,
           help="Powers the JOB SCORER, which rates every collected job. A pool of one or more keys, "

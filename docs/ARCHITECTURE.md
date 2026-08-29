@@ -36,7 +36,7 @@ appends to a cumulative master CSV. Four cost-aware details:
   with `child_input_size_validation` and returns zero rows. So the set is trimmed to
   whatever fits that budget, hard-capped at `MAX_EXCLUDE_IDS` (2,000, about two runs'
   worth), with the per-id width **measured** off the ids in hand rather than assumed from
-  today's 10-digit LinkedIn ids. Two orderings are load-bearing: `_window_ids()` yields
+  today's 10-digit LinkedIn ids. Two orderings matter: `_window_ids()` yields
   oldest first so the cap evicts by date, and `load_exclude_ids()` puts this host's own
   ids **last** so the tail the cap keeps is the only ids a "Past 24 hours" search can
   actually resurface. Below `MIN_EXCLUDE_IDS` (50) the run warns and proceeds, because a
@@ -152,9 +152,9 @@ directly, because the batch wrapper mangles arguments; see `launch_argv`/`_bypas
 config and the exclude-id file, drains the outbox, and reads `VMTarget` out of the same
 `settings.load()` the Settings tab writes, so the six `VM_*` keys need no restart.
 
-Two parts of it are worth knowing before touching it:
+Two parts of it are easy to get wrong:
 
-- **Managed credentials.** cron runs with a bare environment, so `run_scraper.sh` has to export
+- **Managed credentials:** cron runs with a bare environment, so `run_scraper.sh` has to export
   `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They used to be pasted inline in that
   script, which made rotating a dead token an ssh-and-sed chore. They now live in a chmod-600
   `~/scraper_secrets.env` that the script sources on line 3, and the VM panel's **Credentials**
@@ -195,7 +195,7 @@ edited in the same tab's projects control (`_projects_control`) via the "Bullets
 tiers are typed as `projects:bullets` pairs and round-tripped by `jobsdata.load/save_project_bullet_tiers`.
 With zero jobs loaded the High Score tab shows a first-run get-started hint (`JobsTab.set_empty_widget`).
 
-A few **readability** affordances. The look is driven by a **design-token module** (`local/qt/theme.py`):
+A few **readability** affordances: the look is driven by a **design-token module** (`local/qt/theme.py`):
 named surface/border/text colors plus a `SEMANTICS` dict (accent / success / warning / danger /
 followup / followup_sent / neutral, each with base, hover, and tint alphas) that every row tint,
 pill, and badge derives from; the legacy `ROW_*` constants are pre-composed blends of those tokens,

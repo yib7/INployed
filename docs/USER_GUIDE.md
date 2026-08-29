@@ -116,7 +116,7 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
   python pipeline/scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
   python pipeline/score_jobs.py                           # needs Vertex AI / ADC (auto-loads .env locally)
   ```
-  `--max-keywords N` / `--limit N` cap a run's cost: the discovery service bills per
+  `--max-keywords N` / `--limit N` cap a run's cost: the job-data provider bills per
   collected posting, so the full keyword list (the VM default) can collect
   thousands. Use the caps for a quick check.
 - **Hands-off (recommended for daily use):** run that pair on a small GCP VM via

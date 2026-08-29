@@ -37,7 +37,7 @@ ACCENT = (88, 166, 255)    # the dashboard's link/primary blue
 
 TAGLINE = "Job discovery & résumé tailoring, end to end."
 BULLETS = [
-    "Scheduled cloud scraper → two-stage Gemini scorer → desktop triage",
+    "Scheduled cloud discovery → two-stage Gemini scorer → desktop triage",
     "One-click LaTeX résumé built only from facts you wrote yourself",
 ]
 FOOTER = "github.com/yib7/INployed"

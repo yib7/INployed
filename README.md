@@ -47,22 +47,17 @@ highest score within the day. Click any column header to re-sort.
 ```mermaid
 flowchart TD
     subgraph Cloud["GCP VM (cron, on the schedule you set)"]
-        M["merge_incoming.py<br/>fold in rows from the PC"] --> A["pipeline/scraper.py<br/>job discovery"]
-        A --> B["pipeline/score_jobs.py<br/>2-stage Gemini scorer"]
-        B --> PR["prune_master.py<br/>retention: blank old descriptions"]
+        M["merge_incoming.py<br/>fold in rows from the PC"] --> A["pipeline/scraper.py<br/>job discovery"] --> B["pipeline/score_jobs.py<br/>2-stage Gemini scorer"]
     end
-    PR -->|scored master| C[("Google Drive")]
-    C -->|Drive desktop sync| D["Local synced jobs folder"]
+    B -->|scored master| C[("Google Drive")]
+    C -->|Drive desktop sync| E
     subgraph Desktop["Windows PC"]
-        D --> E["app.py dashboard (Qt)<br/>triage / tracker / stats"]
-        E -->|Find new jobs| L["local scrape<br/>outbox/local_rows_*.csv.gz"]
-        E -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - verify - LaTeX"]
-        F --> G["Tailored PDF + cover letter<br/>+ ATS report + prep sheet + apply.md"]
-        G -->|Apply| H["browser agent fills the form,<br/>parks at the review page"]
-        H --> T[("Tracker<br/>local SQLite")]
+        E["app.py dashboard (Qt)<br/>triage / tracker / stats"] -->|Tailor resume| F["resume_tailor/<br/>select - rephrase - verify - LaTeX<br/>PDF, cover letter, ATS report, apply.md"]
+        F -->|Apply| H["browser agent fills the form,<br/>parks at the review page"] --> T[("Tracker<br/>local SQLite")]
+        E -->|Find new jobs| L["local scrape<br/>outbox/*.csv.gz"]
     end
-    L -->|gcloud scp into the VM incoming folder| M
-    E -.->|schedule, pause, config push, key rotation| Cloud
+    L -->|scp to the VM incoming folder| M
+    E -.->|schedule, pause, config, key rotation| Cloud
 ```
 
 One master CSV, two writers. The VM owns it; anything discovered on the PC rides

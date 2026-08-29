@@ -464,7 +464,7 @@ def test_preflight_ignores_proxy_zone_fields():
     """THE regression guard. can_make_requests=false / zone_not_found is the normal,
     permanent state of a datasets-only account -- gating on it blocks every run."""
     session = _StatusSession(_StatusResp(200, json.dumps(
-        {"status": "active", "customer": "hl_42ba1ee2",
+        {"status": "active", "customer": "hl_00000000",
          "can_make_requests": False, "auth_fail_reason": "zone_not_found"})))
     asyncio.run(scraper.preflight(session))       # must NOT raise
 

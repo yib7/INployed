@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local"))
 
-from resume_tailor import compose, llm  # noqa: E402
+from resume_tailor import compose, llm, selection, skills  # noqa: E402
 
 
 # ── the normalizer itself ─────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ def test_as_dict_garbage_roots_become_empty(garbage):
 def test_select_survives_array_wrapped_selection(monkeypatch):
     wrapped = [{"experience": [], "projects": [], "leadership": [],
                 "skill_focus": "general", "skills": {}, "rationale": ""}]
-    monkeypatch.setattr(compose, "call", lambda *a, **k: wrapped)
+    monkeypatch.setattr(selection, "call", lambda *a, **k: wrapped)
     out = compose.select("Analyze data in Python and SQL.", "Data Analyst", "CalPERS")
     assert isinstance(out, dict) and "experience" in out
 
@@ -63,7 +63,7 @@ def _fake_assets(monkeypatch):
     monkeypatch.setattr(compose.assets, "blocks", lambda: {
         "experience": [{"name": "Globex", "atoms": ["a1", "a2"]}],
         "projects": [], "leadership": []})
-    monkeypatch.setattr(compose, "_required_blocks", lambda: {})
+    monkeypatch.setattr(selection, "_required_blocks", lambda: {})
     monkeypatch.setattr(compose.config, "_config_json", lambda: {})
 
 
@@ -95,7 +95,7 @@ def test_normalize_selection_non_dict_root(monkeypatch):
 # ── rephrase: bullets must recover losslessly ─────────────────────────────────
 def _rephrase_scaffold(monkeypatch):
     monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
-    monkeypatch.setattr(compose, "_block_of", lambda a: "Globex")
+    monkeypatch.setattr(selection, "_block_of", lambda a: "Globex")
     monkeypatch.setattr(compose.assets, "example_text", lambda: "exemplar")
 
 
@@ -164,7 +164,7 @@ def test_enforce_style_recovers_repair_from_bare_array(monkeypatch):
 
 # ── skills: array root falls back to pool completion, never a crash ───────────
 def test_compress_skills_survives_array_root(monkeypatch):
-    monkeypatch.setattr(compose, "call", lambda *a, **k: ["junk"])
+    monkeypatch.setattr(skills, "call", lambda *a, **k: ["junk"])
     lines = compose.compress_skills("jd", "Data Analyst", {})
     assert [ln["label"] for ln in lines] == [
         "Languages", "Frameworks", "Developer Tools", "Libraries"]

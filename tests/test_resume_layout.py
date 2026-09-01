@@ -102,7 +102,7 @@ def test_projects_mode_env_overrides_config(monkeypatch):
     assert config.projects_mode() == "exact"
 
 
-from resume_tailor import compose  # noqa: E402
+from resume_tailor import compose, selection, skills  # noqa: E402
 
 
 def _fake_sel():
@@ -194,7 +194,7 @@ def test_cap_projects_applies_tiers(monkeypatch):
         {"projects": 1, "bullets": 1},
     ]})
     atoms = {"P1": ["e1", "e2", "e3"], "P2": ["f1", "f2", "f3"], "P3": ["g1"]}
-    monkeypatch.setattr(compose, "_block_atoms", lambda section, name: atoms.get(name, []))
+    monkeypatch.setattr(selection, "_block_atoms", lambda section, name: atoms.get(name, []))
     sel = _fake_sel()
     compose._cap_projects(sel)
     by = {e["name"]: e["groups"] for e in sel["projects"]}
@@ -211,7 +211,7 @@ def test_cap_projects_per_name_config_beats_tiers(monkeypatch):
         "project_layout": {"P1": {"line_targets": [1]}},
         "project_bullet_tiers": [{"projects": 3, "bullets": 3}]})
     atoms = {"P1": ["e1", "e2", "e3"], "P2": ["f1", "f2", "f3"], "P3": ["g1", "g2", "g3"]}
-    monkeypatch.setattr(compose, "_block_atoms", lambda section, name: atoms.get(name, []))
+    monkeypatch.setattr(selection, "_block_atoms", lambda section, name: atoms.get(name, []))
     sel = _fake_sel()
     compose._cap_projects(sel)
     by = {e["name"]: e["groups"] for e in sel["projects"]}
@@ -247,7 +247,7 @@ def test_cap_projects_tiers_best_effort_when_thin(monkeypatch):
     monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX", raising=False)
     monkeypatch.setattr(config, "_config_json",
                         lambda: {"project_bullet_tiers": [{"projects": 1, "bullets": 3}]})
-    monkeypatch.setattr(compose, "_block_atoms", lambda section, name: ["e1"])
+    monkeypatch.setattr(selection, "_block_atoms", lambda section, name: ["e1"])
     sel = {"experience": [], "leadership": [],
            "projects": [{"name": "P1", "groups": [["e1"]]}]}
     compose._cap_projects(sel)
@@ -313,7 +313,7 @@ def test_select_uses_four_skill_pools_no_keyerror(monkeypatch):
         return {"experience": [], "projects": [], "leadership": [],
                 "skill_focus": "general", "skills": {}, "rationale": ""}
 
-    monkeypatch.setattr(compose, "call", fake_call)
+    monkeypatch.setattr(selection, "call", fake_call)
     compose.select("Build data pipelines in Python and SQL.", "Data Analyst", "ACME")
     for label in ("Languages:", "Frameworks:", "Developer Tools:", "Libraries:"):
         assert label in captured["user"]
@@ -493,7 +493,7 @@ def test_finalize_skill_lines_drops_bottom_to_fit_one_line(monkeypatch):
     fit — never padded, never wrapped."""
     # Languages pool holds exactly the fed tokens so all four ANCHOR (SP7) -- this test
     # isolates the width TRIM, not the anchor gate; empty pools elsewhere stay empty.
-    monkeypatch.setattr(compose, "_skill_pools", lambda: {
+    monkeypatch.setattr(skills, "_skill_pools", lambda: {
         "Languages": ["Python", "SQL", "JavaScript", "TypeScript"],
         "Frameworks": [], "Developer Tools": [], "Libraries": []})
     monkeypatch.setattr(compose.layout, "skill_targets", lambda: {
@@ -684,7 +684,7 @@ def test_block_briefs_swallows_call_failure(monkeypatch):
 
 def test_rephrase_groups_by_block_and_threads_brief(monkeypatch):
     monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
-    monkeypatch.setattr(compose, "_block_of",
+    monkeypatch.setattr(selection, "_block_of",
                         lambda a: "Globex" if a.startswith("a") else "P1")
     monkeypatch.setattr(compose.assets, "example_text", lambda: "exemplar voice")
     captured = {}
@@ -709,7 +709,7 @@ def test_rephrase_groups_by_block_and_threads_brief(monkeypatch):
 
 def test_rephrase_backward_compatible_without_briefs(monkeypatch):
     monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
-    monkeypatch.setattr(compose, "_block_of", lambda a: "Globex")
+    monkeypatch.setattr(selection, "_block_of", lambda a: "Globex")
     monkeypatch.setattr(compose.assets, "example_text", lambda: "exemplar")
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: {"bullets": [{"gkey": "a1", "text": "Built A."}]})

@@ -15,7 +15,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
-from resume_tailor import assets, compose, config  # noqa: E402
+from resume_tailor import assets, compose, config, selection  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -82,7 +82,7 @@ def test_render_verb_palette_groups_verbs_under_their_headings():
 
 def test_rephrase_prompt_carries_categorized_palette_and_no_reuse_rule(monkeypatch):
     monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
-    monkeypatch.setattr(compose, "_block_of", lambda a: "Globex")
+    monkeypatch.setattr(selection, "_block_of", lambda a: "Globex")
     monkeypatch.setattr(compose.assets, "example_text", lambda: "exemplar voice")
     monkeypatch.setattr(compose.assets, "active_verbs",
                         lambda: {"Technical Skills": ["Built", "Engineered", "Automated"]})

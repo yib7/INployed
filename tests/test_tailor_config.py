@@ -17,7 +17,8 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
-from resume_tailor import assets, compose, config, measure, output, render  # noqa: E402
+from resume_tailor import (assets, compose, config, measure, output,  # noqa: E402
+                           render, selection, skills)
 from resume_tailor import run as rt_run  # noqa: E402
 
 _CACHED = (
@@ -336,7 +337,7 @@ def test_select_prompt_includes_project_guidance(synthetic_master, monkeypatch):
         return {"experience": [], "projects": [], "leadership": [],
                 "skill_focus": "general", "skills": {}, "rationale": ""}
 
-    monkeypatch.setattr(compose, "call", fake_call)
+    monkeypatch.setattr(selection, "call", fake_call)
     compose.select("Build data pipelines.", "Data Analyst", "ACME")
     assert "ProjTwo" in captured["user"] and "bullet group" in captured["user"]
     assert "weaker ones ~1 group" not in captured["user"]
@@ -660,7 +661,7 @@ def test_select_prompt_leads_projects_with_overview(synthetic_master, monkeypatc
         return {"experience": [], "projects": [], "leadership": [],
                 "skill_focus": "general", "skills": {}, "rationale": ""}
 
-    monkeypatch.setattr(compose, "call", fake_call)
+    monkeypatch.setattr(selection, "call", fake_call)
     compose.select("Build data pipelines.", "Data Analyst", "ACME")
     assert "overview" in captured["user"].lower()
 
@@ -741,7 +742,7 @@ def test_methods_line_tier2_anchors_to_pool(synthetic_master):
 
 
 def test_methods_line_none_when_pool_empty(synthetic_master, monkeypatch):
-    monkeypatch.setattr(compose, "_methods_pool", lambda: [])
+    monkeypatch.setattr(skills, "_methods_pool", lambda: [])
     assert compose.methods_line("Experimentation", {"methods": ["Hypothesis Testing"]}) is None
 
 

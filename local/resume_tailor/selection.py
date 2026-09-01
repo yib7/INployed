@@ -57,9 +57,10 @@ def _catalog() -> str:
 #   required:                       # blocks that must always render (default: all)
 #     experience: all               #   'all' or a list of block names
 #     leadership: [Org A, Org B]
-#   fixed_blocks:                   # hard per-bullet line budgets (default: none)
-#     Side Gig: {line_targets: [2, 1]}   # EXACTLY len(line_targets) bullets
-#   leadership_entry_lines: 2       # each leadership org forced to N printed lines
+#
+# `required` is the whole schema. Per-block bullet counts and printed-line targets
+# come from config.json's `resume_layout` / `project_layout` (config.block_targets,
+# config.project_targets), not from this file.
 def _required_blocks() -> Dict[str, List[str]]:
     """Section -> block names that must always render. Default: every block in
     experience and leadership (projects are selected, never force-injected).

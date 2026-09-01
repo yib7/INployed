@@ -1,21 +1,19 @@
-"""Layout spec for the resume's fixed sections (skill counts + leadership planning).
+"""Layout spec for the resume's fixed sections (skill counts + leadership line budget).
 
 Line FITTING (both body bullets and skills lines) is now width-aware: run._trim_to_caps
-and compose._cap_items measure the real rendered glyph width (resume_tailor/measure.py,
+and skills._cap_items measure the real rendered glyph width (resume_tailor/measure.py,
 calibrated against the compiled PDF) instead of a flat character count, so a wide-word
 bullet or a wide tech-stack item is cut only when it actually overflows its printed line.
-This module keeps the candidate-COUNT spec (best-N per skill line) and leadership planning.
+This module keeps the candidate-COUNT spec (best-N per skill line).
 """
 from __future__ import annotations
 
 import os
-from typing import Dict, List
+from typing import Dict
 
 # ── The strict spec ──────────────────────────────────────────────────────────
-# Each Leadership org defaults to this many printed lines (overridable via
-# `tailor.leadership_entry_lines`). Realised as either two 1-line bullets or one
-# 2-line bullet, chosen deterministically from how many atoms the org has (see
-# plan_leadership_lines).
+# How many printed lines each Leadership org gets. Read as a plain constant by
+# selection.py when it builds the leadership guidance; there is no config override.
 LEADERSHIP_ENTRY_LINES = 2
 
 # Technical Skills: 4 fixed category lines (Languages / Frameworks / Developer
@@ -40,17 +38,3 @@ def skill_targets() -> Dict[str, int]:
             except ValueError:
                 pass
     return targets
-
-
-# ── Bullet-count planning for the fixed blocks ───────────────────────────────
-def plan_leadership_lines(group_count: int, entry_lines: int = LEADERSHIP_ENTRY_LINES) -> List[int]:
-    """Per-bullet line targets for one Leadership org given how many bullets it has.
-
-    2+ bullets -> two 1-line bullets (extra bullets, if any, also 1 line);
-    1 bullet   -> a single `entry_lines`-line bullet.  Either way the org totals
-    ~`entry_lines` printed lines. `entry_lines` is config-overridable (yaml
-    `tailor.leadership_entry_lines`) so the spec isn't tied to one resume.
-    """
-    if group_count <= 1:
-        return [entry_lines]
-    return [1] * group_count

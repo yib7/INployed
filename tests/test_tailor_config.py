@@ -28,11 +28,6 @@ _CACHED = (
 )
 
 _MASTER = textwrap.dedent("""
-    tailor:
-      fixed_blocks:
-        Side Gig:
-          line_targets: [2, 1]
-      leadership_entry_lines: 2
     basics:
       name: Jane Q. Public
       location: City, ST

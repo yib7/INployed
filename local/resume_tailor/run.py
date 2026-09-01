@@ -14,30 +14,120 @@ import re
 import shutil
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from . import (apply_data, ats, compose, config, coverletter, llm, measure, output,
                research, verify)
 from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
+WarnFn = Optional[Callable[[str], None]]
+
+# The name of the durable per-run record tailor() leaves in the output folder.
+REPORT_NAME = "tailor_report.txt"
+
+# The warning taxonomy. Every collected warning carries its kind as a prefix, so a
+# line stays self-describing once it is out of the report and in a Qt dialog.
+#   GROUNDING — the grounding gate reverted or dropped a bullet (with the tokens).
+#   PAGE_LIMIT — the PDF shipped over config.PAGE_LIMIT pages.
+#   ADVISORY  — one of the optional artifacts failed; the résumé itself is fine.
+KIND_GROUNDING = "grounding"
+KIND_PAGE_LIMIT = "page limit"
+KIND_ADVISORY = "advisory"
 
 
 def _noop(_msg: str) -> None:
     pass
 
 
-def _cover_text(body: str, company: str, log: Callable[[str], None]) -> str:
+@dataclass
+class RunLog:
+    """What actually happened during one tailor run.
+
+    `log` (the status callback) goes to a transient Qt status line and is gone the
+    moment the next message replaces it, which is how a half-worked run used to read
+    as a clean one. This is the durable half: the stages that ran, every warning with
+    its kind, and the final page count. It is written to `tailor_report.txt` in the
+    output folder and, when the caller passes `on_warning`, streamed out live.
+    """
+    on_warning: WarnFn = None
+    stages: List[str] = field(default_factory=list)
+    entries: List[Tuple[str, str]] = field(default_factory=list)
+    pages: int = 0
+
+    def stage(self, name: str) -> None:
+        self.stages.append(name)
+
+    def warn(self, kind: str, message: str) -> None:
+        """Record a warning and hand it to the caller's collector.
+
+        The collector is somebody else's code, so it is fenced: a broken callback
+        degrades the report, it never sinks a run that already produced a PDF."""
+        line = f"{kind}: {message}"
+        self.entries.append((kind, line))
+        if self.on_warning is not None:
+            try:
+                self.on_warning(line)
+            except Exception:  # noqa: BLE001 - a bad collector must not sink the run
+                pass
+
+    def advisory(self, message: str) -> None:
+        self.warn(KIND_ADVISORY, message)
+
+    @property
+    def warnings(self) -> List[str]:
+        return [line for _kind, line in self.entries]
+
+
+def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: str,
+                 out_dir: Path) -> str:
+    """Render `tailor_report.txt`: the run's stages, its warnings, its page count."""
+    def section(title: str, body: List[str], empty: str) -> List[str]:
+        return ["", title, "-" * len(title)] + ([f"  {b}" for b in body] or [f"  {empty}"])
+
+    lines = [
+        "INployed tailor report",
+        "======================",
+        f"job     : {job_title} @ {company}",
+        f"job id  : {_field(job, 'job_posting_id') or '(none)'}",
+        f"run at  : {datetime.now().isoformat(timespec='seconds')}",
+        f"output  : {out_dir}",
+        f"pages   : {rep.pages or 'not measured'} (limit {config.PAGE_LIMIT})",
+    ]
+    lines += section(f"stages ({len(rep.stages)})", rep.stages, "none")
+    lines += section(f"warnings ({len(rep.entries)})", rep.warnings, "none")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_report(rep: RunLog, out_dir: Path, *, job: Dict[str, str], company: str,
+                  job_title: str, log: Callable[[str], None]) -> None:
+    """Write the run report into the output folder. Never sinks the run — but a
+    failure to write the record of failures is itself said out loud."""
+    try:
+        (Path(out_dir) / REPORT_NAME).write_text(
+            _report_text(rep, job=job, company=company, job_title=job_title,
+                         out_dir=Path(out_dir)),
+            encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 - the report is a record, never the run
+        log(f"{REPORT_NAME} not written ({exc})")
+
+
+def _cover_text(body: str, company: str, log: Callable[[str], None],
+                warn: WarnFn = None) -> str:
     """The copy-pasteable plain-text letter, bound for apply.md's `## Cover letter`
     section (the folder ships the letter's .tex, and LaTeX is useless in a paste
     box). Advisory: a failure never sinks the (already-written) PDF, it just
-    logs and the sheet carries no letter."""
+    logs, warns and the sheet carries no letter."""
     try:
         return coverletter.cover_letter_text(body, company)
     except Exception as exc:  # noqa: BLE001 - the text is a convenience, never fatal
         log(f"cover letter text skipped ({exc})")
+        if warn is not None:
+            warn(f"cover letter text skipped ({exc})")
         return ""
 
 
@@ -259,6 +349,10 @@ class PassCtx:
 
     `bullets` is mutated IN PLACE; a pass must never rebind it, because the driver
     snapshots and re-verifies that same dict.
+
+    `report` is optional so a caller can drive the passes without one; when it is
+    present the driver records each stage and `_gate` routes the gate's findings
+    into it.
     """
     jd: str
     job_title: str
@@ -267,6 +361,7 @@ class PassCtx:
     verbatim: Dict[str, str]
     reserved: FrozenSet[str]
     log: Callable[[str], None]
+    report: Optional[RunLog] = None
 
 
 def _always() -> bool:
@@ -292,18 +387,32 @@ class Pass:
     verify: bool = True
 
 
-def _gate(ctx: PassCtx, *,
+def _gate(ctx: PassCtx, *, stage: str = "rephrase",
           fallback: Optional[Dict[str, str]] = None) -> Dict[str, List[str]]:
     """The single call site for the deterministic grounding gate. Returns
     {gkey: unseen_tokens} for every bullet it reverted or dropped (empty = all
     grounded).
 
-    That return value is currently discarded, which is exactly how a half-grounded run
-    reads as a clean one. It is the seam SP3 needs: routing it to a warning collector
-    is a change to this function (plus a field on PassCtx), not to four scattered call
-    sites.
+    That return value used to be discarded at all four call sites, which is exactly
+    how a half-grounded run read as a clean one — the gate is silent by design on
+    grounded text, so the .tex it produces after a drop is indistinguishable from one
+    that never needed the gate. Here it is folded into `ctx.report` instead, labelled
+    with the stage that caused it, and whether the bullet survived: a gkey still in
+    `bullets` after the call was REVERTED to its snapshot, one that is gone was
+    DROPPED outright (no grounded text to fall back to).
+
+    `enforce_grounded` itself is deliberately untouched — the suite pins its exact
+    signature `(sel, bullets, *, fallback=None, log=None)` — so this reads the return
+    value rather than taking a callback.
     """
-    return verify.enforce_grounded(ctx.sel, ctx.bullets, fallback=fallback, log=ctx.log)
+    handled = verify.enforce_grounded(ctx.sel, ctx.bullets, fallback=fallback, log=ctx.log)
+    if handled and ctx.report is not None:
+        for gkey, tokens in handled.items():
+            action = "reverted" if gkey in ctx.bullets else "dropped"
+            ctx.report.warn(
+                KIND_GROUNDING,
+                f"[{stage}] {action} bullet '{gkey}' (ungrounded: {', '.join(tokens)})")
+    return handled
 
 
 def _pass_dedupe_verbs(ctx: PassCtx) -> None:
@@ -360,12 +469,14 @@ def _run_bullet_passes(ctx: PassCtx,
     for p in passes:
         if not p.enabled():
             continue
+        if ctx.report is not None:
+            ctx.report.stage(p.name)
         snapshot = dict(ctx.bullets) if p.verify else None
         p.run(ctx)
         if p.retrim:
             _trim_to_caps(ctx.sel, ctx.bullets)
         if p.verify:
-            _gate(ctx, fallback=snapshot)
+            _gate(ctx, stage=p.name, fallback=snapshot)
 
 
 def tailor(
@@ -376,9 +487,21 @@ def tailor(
     prep_sheet: bool = False,
     tone: str = "professional",
     on_status: StatusFn = None,
+    on_warning: WarnFn = None,
     reset_usage: bool = True,
 ) -> Path:
+    """Tailor one job end to end; returns the output folder.
+
+    `on_status` is the live progress line (transient). `on_warning` is the DEGRADED
+    channel: it fires once per warning — a grounding-gate revert or drop, a résumé
+    that shipped over `config.PAGE_LIMIT` pages, or any of the optional artifacts
+    (ATS report, company research, cover letter body/compile/text, prep sheet,
+    apply.md) failing. Optional, defaulting to None, so no existing call site
+    changes; the same warnings are written to `tailor_report.txt` in the output
+    folder either way, which is the copy that outlives a status bar.
+    """
     log = on_status or _noop
+    report = RunLog(on_warning=on_warning)
     # Parallel callers reset llm.USAGE once before fan-out and pass reset_usage=False,
     # so concurrent jobs don't clear each other's token accounting (see DECISIONS).
     if reset_usage:
@@ -393,6 +516,7 @@ def tailor(
         raise RuntimeError("Job description is empty/too short to tailor against.")
 
     log(f"selecting evidence for: {job_title} @ {company}")
+    report.stage("select")
     sel = compose.select(jd, job_title, company)
     if not sel.get("experience"):
         raise RuntimeError("Selection returned no experience — aborting (check the JD/model).")
@@ -404,18 +528,21 @@ def tailor(
     # bullets don't lead. Runs BEFORE briefs/rephrase, so the cohesion framing and the
     # per-position line budgets build on the corrected order. Projects only; never invents.
     if config.lead_overview_enabled():
+        report.stage("lead overview")
         compose.lead_with_overview(jd, job_title, sel)
     # One cheap batched call: a cohesion brief per (non-verbatim) block so its bullets
     # read as one story instead of glued-together atoms.
     log("framing each block for cohesion…")
+    report.stage("block briefs")
     briefs = compose.block_briefs(jd, job_title, sel)
+    report.stage("rephrase")
     bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
     ctx = PassCtx(
         jd=jd, job_title=job_title, sel=sel, bullets=bullets, verbatim=verbatim,
         # The verbatim blocks' opening verbs: reserved, because the dedupe pass may
         # not rewrite the user's own text, so it must not reuse their openers either.
         reserved=frozenset(compose.leading_verb(t) for t in verbatim.values()),
-        log=log,
+        log=log, report=report,
     )
     # Deterministic grounding gate (audit P1-2): every bullet's distinctive tokens
     # must trace to its own group's atoms — a hallucinated or JD-injected fact is
@@ -423,13 +550,14 @@ def tailor(
     # fallback-less one: there is no earlier grounded text to revert to yet. Every
     # later bullet-mutating pass re-runs it against its own snapshot, reverting
     # instead of dropping when it can (see _run_bullet_passes).
-    _gate(ctx)
+    _gate(ctx, stage="rephrase")
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
     # Verb dedupe -> verbatim merge + trim -> underfull fill + re-trim -> style gate.
     _run_bullet_passes(ctx)
 
     log("compressing skills…")
+    report.stage("skills")
     skill_lines = compose.compress_skills(jd, job_title, sel)
 
     # Optional 5th line: the JD's concept buzzwords the candidate genuinely owns (anchored
@@ -437,6 +565,7 @@ def tailor(
     # with the model's role-relevant ranking). Never invents; one-page enforcement is the
     # backstop. Appended last so it sits below the four tool lines.
     if config.methods_line_enabled():
+        report.stage("methods line")
         methods = compose.methods_line(jd, sel)
         if methods:
             skill_lines.append(methods)
@@ -446,25 +575,43 @@ def tailor(
         tmp_path = Path(tmp)
         tex_path = tmp_path / "resume.tex"
         log("rendering + compiling (one-page enforcement)…")
+        report.stage("render + compile")
         result, final_bullets, tex = enforce_one_page(
             sel, bullets, skill_lines, tex_path, tmp_path, jd, on_status=log
         )
         if not result.ok or not result.pdf_path:
             raise RuntimeError(f"LaTeX compile failed: {result.error}\n{result.log_tail}")
 
+        # enforce_one_page returns ok=True on an OVER-LENGTH pdf when it ran out of
+        # project bullets to drop (overflow that originates elsewhere is not something
+        # it can fix). The PDF still ships — a two-page résumé beats no résumé — but
+        # the run stops claiming it was clean. getattr, because the field is new and a
+        # stubbed enforce_one_page may return a result without it; 0 means "never
+        # measured", which is not evidence of overflow.
+        report.pages = int(getattr(result, "pages", 0) or 0)
+        if report.pages > config.PAGE_LIMIT:
+            report.warn(KIND_PAGE_LIMIT,
+                        f"résumé shipped on {report.pages} pages "
+                        f"(limit is {config.PAGE_LIMIT}); nothing was left to drop")
+            log(f"WARNING: résumé is {report.pages} pages, over the "
+                f"{config.PAGE_LIMIT}-page limit")
+
         shutil.copyfile(result.pdf_path, out_dir / output.resume_filename())
         shutil.copyfile(tex_path, out_dir / "resume.tex")  # keep source for inspection
 
         if ats_report:
+            report.stage("ats report")
             try:
                 cov = ats.write_report(jd, out_dir / output.resume_filename(), out_dir)
                 log(f"ATS keyword coverage: {cov:.0%} (details in ats_report.txt)")
             except Exception as exc:  # noqa: BLE001 - the report is advisory, never fatal
                 log(f"ATS check skipped ({exc})")
+                report.advisory(f"ATS check skipped ({exc})")
 
         cover_body = ""      # the paste-ready letter apply.md embeds, when generated
         if cover_letter:
             log("writing cover letter…")
+            report.stage("cover letter")
             try:
                 blurb = ""
                 try:
@@ -472,6 +619,7 @@ def tailor(
                     blurb = research.company_blurb(company, job_title)
                 except Exception as exc:  # noqa: BLE001 - research is optional
                     log(f"company research unavailable ({exc})")
+                    report.advisory(f"company research unavailable ({exc})")
                 body = coverletter.generate_body(jd, job_title, company, final_bullets,
                                                  research=blurb, tone=tone)
                 cl_tex = tmp_path / "cover_letter.tex"
@@ -481,14 +629,17 @@ def tailor(
                     # Ship the source too (as resume.tex is): a hand fix recompiles
                     # instead of regenerating the letter from scratch.
                     shutil.copyfile(cl_tex, out_dir / output.cover_tex_filename())
-                    cover_body = _cover_text(body, company, log)
+                    cover_body = _cover_text(body, company, log, warn=report.advisory)
                 else:
                     log(f"cover letter compile failed: {cl_res.error}")
+                    report.advisory(f"cover letter compile failed ({cl_res.error})")
             except Exception as exc:  # noqa: BLE001 - cover letter is optional, never fatal
                 log(f"cover letter skipped ({exc})")
+                report.advisory(f"cover letter skipped ({exc})")
 
         if prep_sheet:
             log("building interview-prep sheet…")
+            report.stage("interview prep")
             try:
                 # Same path the "Interview prep" button uses; reads the resume.tex
                 # we just wrote into out_dir for the tailored-bullet evidence.
@@ -497,14 +648,21 @@ def tailor(
                 log("interview_prep.md written")
             except Exception as exc:  # noqa: BLE001 - advisory artifact, never fatal
                 log(f"interview prep skipped ({exc})")
+                report.advisory(f"interview prep skipped ({exc})")
 
+        report.stage("apply sheet")
         try:
             apply_data.write(job, out_dir, sel=sel, bullets=final_bullets,
                              skill_lines=skill_lines, cover_body=cover_body)
             log("apply.md written (self-contained apply sheet)")
         except Exception as exc:  # noqa: BLE001 - advisory artifact, never fatal
             log(f"apply sheet skipped ({exc})")
+            report.advisory(f"apply sheet skipped ({exc})")
 
+    # The durable record, written last so it carries everything above it.
+    _write_report(report, out_dir, job=job, company=company, job_title=job_title, log=log)
+    if report.entries:
+        log(f"finished with {len(report.entries)} warning(s); see {REPORT_NAME}")
     log(f"done -> {out_dir}")
     log("token usage: " + llm.usage_summary())
     return out_dir

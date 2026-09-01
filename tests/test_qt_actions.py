@@ -759,6 +759,88 @@ def test_finish_tailor_records_successes_and_reports(qtbot, monkeypatch, tmp_pat
     assert w._tailoring is False and reloaded == [1]
 
 
+def test_finish_tailor_surfaces_degraded_runs(qtbot, monkeypatch, tmp_path):
+    """A job that produced a PDF but warned on the way (a two-page résumé, a
+    grounding-gate drop, a skipped artifact) is no longer reported as a clean success.
+    It stays a SUCCESS as far as the registry is concerned — binary contract unchanged,
+    resume folder recorded — it just shows up in the summary."""
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.settings, "load", lambda: {})
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    shown = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.setdefault("text", a[2])))
+    w._finish_tailor([
+        {"id": "1", "label": "Eng @ A", "dir": tmp_path / "1", "error": None,
+         "warnings": ["page limit: résumé shipped on 2 pages (limit is 1)"]},
+        {"id": "2", "label": "Eng @ B", "dir": tmp_path / "2", "error": None,
+         "warnings": []},
+    ])
+    w.registry.record_resume.assert_any_call("1", str(tmp_path / "1"))   # still a success
+    w.registry.record_tailor_failure.assert_not_called()
+    assert "Eng @ A" in shown["text"] and "2 pages" in shown["text"]
+    assert "Eng @ B" not in shown["text"]                 # the clean job isn't listed
+    assert "tailor_report.txt" in shown["text"]           # points at the durable record
+    assert "1 with warnings" in w.statusBar().currentMessage()
+
+
+def test_finish_tailor_reports_degraded_runs_alongside_failures(qtbot, monkeypatch, tmp_path):
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.settings, "load", lambda: {})
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    shown = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.setdefault("text", a[2])))
+    w._finish_tailor([
+        {"id": "1", "label": "Eng @ A", "dir": tmp_path / "1", "error": None,
+         "warnings": ["advisory: ATS check skipped (boom)"]},
+        {"id": "2", "label": "Eng @ B", "dir": None, "error": "429 quota"},
+    ])
+    assert "429 quota" in shown["text"]                   # the outright failure, as before
+    assert "ATS check skipped" in shown["text"]           # ...and the degraded success
+    msg = w.statusBar().currentMessage()
+    assert "1 failed" in msg and "1 with warnings" in msg
+
+
+def test_finish_tailor_stays_quiet_when_nothing_warned(qtbot, monkeypatch, tmp_path):
+    """No dialog for a clean batch: the degraded path must not turn every run into a
+    pop-up (results predating the field carry no "warnings" key at all)."""
+    w = _win(qtbot)
+    monkeypatch.setattr(mw.settings, "load", lambda: {})
+    monkeypatch.setattr(w, "reload_data_async", lambda: None)
+    shown = {}
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.setdefault("text", a[2])))
+    w._finish_tailor([{"id": "1", "label": "Eng @ A", "dir": tmp_path / "1", "error": None}])
+    assert shown == {}
+    assert "Resume(s) ready (1)." == w.statusBar().currentMessage()
+
+
+def test_tailor_warning_lines_truncates_a_noisy_job():
+    """A bad grounding day can warn once per bullet; the dialog stays a summary and
+    points at the folder's report for the rest."""
+    rows = [{"label": "Eng @ A", "warnings": [f"w{i}" for i in range(9)]}]
+    block = mw._tailor_warning_lines(rows)
+    assert block.count("Eng @ A") == mw.MAX_TAILOR_WARNINGS_SHOWN + 1
+    assert "...and 4 more (see tailor_report.txt)" in block
+
+
+def test_tailor_work_collects_per_job_warnings(qtbot, monkeypatch, tmp_path):
+    """_tailor_work hands tailor() an on_warning collector and carries what it caught
+    into that job's result dict, which is what _finish_tailor reads."""
+    w = _win(qtbot)
+
+    def fake_tailor(job, **k):
+        k["on_warning"]("page limit: résumé shipped on 2 pages (limit is 1)")
+        return tmp_path / job["job_posting_id"]
+
+    monkeypatch.setattr("resume_tailor.tailor", fake_tailor, raising=False)
+    results = w._tailor_work([{"job_posting_id": "1", "company_name": "C", "job_title": "T"}],
+                             {"cover_letter": False, "ats_report": True,
+                              "prep_sheet": False, "tone": "professional"})
+    assert results[0]["warnings"] == ["page limit: résumé shipped on 2 pages (limit is 1)"]
+
+
 def test_finish_tailor_opens_folder_only_when_enabled(qtbot, monkeypatch, tmp_path):
     w = _win(qtbot)
     monkeypatch.setattr(w, "reload_data", lambda: None)

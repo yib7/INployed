@@ -772,6 +772,46 @@ def test_enforce_one_page_resolves_keep_projects_from_config(tmp_path, monkeypat
     assert seen["keep"] is True
 
 
+def test_enforce_one_page_records_the_page_count_on_the_result(tmp_path, monkeypatch):
+    """The page count enforce_one_page measures every iteration now travels OUT on
+    CompileResult.pages instead of being thrown away. Without it a caller checking only
+    `ok` cannot tell a genuine one-pager from the best-effort return below."""
+    from resume_tailor import compile as rt_compile
+    monkeypatch.setattr(rt_compile.render, "render", lambda *a, **k: "TEX")
+    monkeypatch.setattr(rt_compile, "compile_tex",
+                        lambda tex_path, work_dir: rt_compile.CompileResult(True, tex_path, ""))
+    monkeypatch.setattr(rt_compile, "page_count", lambda p: 1)
+    res, _final, _tex = rt_compile.enforce_one_page(
+        {"projects": []}, {"g": "x"}, [], tmp_path / "r.tex", tmp_path)
+    assert res.ok and res.pages == 1
+
+
+def test_enforce_one_page_reports_the_pages_of_a_best_effort_return(tmp_path, monkeypatch):
+    """The silent two-page PDF: overflow that does NOT originate in projects exhausts
+    _drop_weakest_group, and enforce_one_page returns ok=True on an over-length document.
+    It still returns best effort — that part is deliberate — but the result now carries
+    the page count that says so."""
+    from resume_tailor import compile as rt_compile
+    monkeypatch.setattr(rt_compile.render, "render", lambda *a, **k: "TEX")
+    monkeypatch.setattr(rt_compile, "compile_tex",
+                        lambda tex_path, work_dir: rt_compile.CompileResult(True, tex_path, ""))
+    monkeypatch.setattr(rt_compile, "page_count", lambda p: 2)
+    monkeypatch.setattr(rt_compile, "_drop_weakest_group",
+                        lambda sel, bullets, keep_projects=False: None)  # nothing left to drop
+    res, _final, _tex = rt_compile.enforce_one_page(
+        {"projects": []}, {"g": "x"}, [], tmp_path / "r.tex", tmp_path)
+    assert res.ok                      # unchanged: the PDF still ships
+    assert res.pages == 2              # ...but the run can now see that it is over-length
+    assert res.pages > config.PAGE_LIMIT
+
+
+def test_compile_result_pages_defaults_to_zero():
+    """Additive with a default, so the existing 3-positional construction and every
+    monkeypatched fake_enforce in the suite keep working. 0 = never measured."""
+    from resume_tailor import compile as rt_compile
+    assert rt_compile.CompileResult(True, None, "").pages == 0
+
+
 def test_compile_tex_suppresses_console_window(tmp_path, monkeypatch):
     """pdflatex must spawn headless: compile_tex passes creationflags=_NO_WINDOW so the
     windowless dashboard (pythonw) never flashes a console window per compile pass — the

@@ -18,7 +18,9 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 from resume_tailor import coverletter  # noqa: E402
+from resume_tailor import prep as prep_mod  # noqa: E402
 from resume_tailor import run as run_mod  # noqa: E402
+from resume_tailor.compile import CompileResult  # noqa: E402
 
 
 # --- tone_directive ----------------------------------------------------------
@@ -236,3 +238,171 @@ def test_tone_threads_into_cover_letter(offline_tailor, monkeypatch):
     monkeypatch.setattr(run_mod.coverletter, "generate_body", capture_body)
     run_mod.tailor(_JOB, cover_letter=True, tone="impactful")
     assert seen["tone"] == "impactful"
+
+
+# --- SP3: degraded runs say so (warnings + tailor_report.txt) -----------------
+#
+# The stated pain with this pipeline was that failures surface late or not at all.
+# Two holes fed it: enforce_one_page returning ok=True on a two-page PDF (the page
+# count was computed every iteration and then discarded), and seven advisory `except`
+# blocks that only called log() — a transient Qt status line that is gone by the next
+# message. These tests pin the fix: a run that degrades emits warnings and leaves a
+# durable record in the output folder, while still producing every artifact it
+# produced before.
+
+def _report(out: Path) -> str:
+    return (out / run_mod.REPORT_NAME).read_text(encoding="utf-8")
+
+
+def _boom(*_a, **_k):
+    raise RuntimeError("boom")
+
+
+def _enforce_returning_pages(pages: int, pdf: Path):
+    """A fake enforce_one_page that reports a real page count on its CompileResult."""
+    def fake(sel, bullets, skills, tex_path, tmp_, jd, on_status=None, keep_projects=None):
+        Path(tex_path).write_text("\\resumeItem{did a thing}", encoding="utf-8")
+        return CompileResult(True, pdf, "", None, pages), dict(bullets), "TEX"
+    return fake
+
+
+def test_over_length_resume_warns_and_still_ships_the_pdf(offline_tailor, monkeypatch,
+                                                          tmp_path):
+    """The silent two-page PDF. tailor() used to check only `result.ok`, copy the PDF
+    out and report success; now it compares CompileResult.pages against
+    config.PAGE_LIMIT. The PDF still ships (a long résumé beats no résumé), the run
+    just stops claiming it was clean."""
+    pdf = tmp_path / "two_pages.pdf"
+    pdf.write_bytes(b"%PDF-1.4 two")
+    monkeypatch.setattr(run_mod, "enforce_one_page", _enforce_returning_pages(2, pdf))
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append)
+    assert [w for w in warns if w.startswith("page limit:") and "2 pages" in w]
+    assert (out / "resume.pdf").exists()          # the artifact is still produced
+    assert "page limit:" in _report(out)
+
+
+def test_one_page_result_produces_no_warning(offline_tailor, monkeypatch, tmp_path):
+    pdf = tmp_path / "one_page.pdf"
+    pdf.write_bytes(b"%PDF-1.4 one")
+    monkeypatch.setattr(run_mod, "enforce_one_page", _enforce_returning_pages(1, pdf))
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append)
+    assert warns == []
+    text = _report(out)
+    assert "pages   : 1 (limit 1)" in text
+    assert "warnings (0)" in text and "  none" in text
+
+
+def test_a_result_without_pages_is_not_read_as_overflow(offline_tailor):
+    """The fixture's own fake_enforce predates the field and returns a result with no
+    `pages` at all — every such stub in the suite must keep meaning "never measured",
+    never "overflowed"."""
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append)
+    assert warns == []
+    assert "pages   : not measured" in _report(out)
+
+
+_ADVISORY_CASES = [
+    ("ats", {},
+     lambda mp: mp.setattr(run_mod.ats, "write_report", _boom),
+     "advisory: ATS check skipped (boom)"),
+    ("research", {"cover_letter": True},
+     lambda mp: mp.setattr(run_mod.research, "company_blurb", _boom),
+     "advisory: company research unavailable (boom)"),
+    ("cover body", {"cover_letter": True},
+     lambda mp: mp.setattr(run_mod.coverletter, "generate_body", _boom),
+     "advisory: cover letter skipped (boom)"),
+    ("cover compile", {"cover_letter": True},
+     lambda mp: mp.setattr(
+         run_mod.coverletter, "render_cover_letter",
+         lambda body, company, tex_path, work_dir: (
+             types.SimpleNamespace(ok=False, pdf_path=None, error="latex died"), "")),
+     "advisory: cover letter compile failed (latex died)"),
+    ("cover text", {"cover_letter": True},
+     lambda mp: mp.setattr(run_mod.coverletter, "cover_letter_text", _boom),
+     "advisory: cover letter text skipped (boom)"),
+    ("prep", {"prep_sheet": True},
+     lambda mp: mp.setattr(prep_mod, "generate_prep_sheet", _boom),
+     "advisory: interview prep skipped (boom)"),
+    ("apply.md", {},
+     lambda mp: mp.setattr(run_mod.apply_data, "write", _boom),
+     "advisory: apply sheet skipped (boom)"),
+]
+
+
+@pytest.mark.parametrize("opts,setup,expected", [c[1:] for c in _ADVISORY_CASES],
+                         ids=[c[0] for c in _ADVISORY_CASES])
+def test_each_advisory_failure_reaches_the_collector_and_the_report(
+        offline_tailor, monkeypatch, opts, setup, expected):
+    """All seven advisory swallows. Each `except` still logs exactly as before; it now
+    ALSO records a warning, so a half-worked run leaves evidence that outlives the
+    status bar."""
+    setup(monkeypatch)
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append, **opts)
+    assert expected in warns
+    assert expected in _report(out)
+
+
+def test_grounding_gate_findings_reach_the_warning_collector(offline_tailor, monkeypatch):
+    """The gate's {gkey: unseen_tokens} return was discarded at all four call sites, and
+    the gate is silent on grounded text — so a run it had to salvage rendered identically
+    to one it never touched. Now every reverted or dropped bullet becomes a warning
+    naming the pass that caused it, the bullet, and the tokens with no trace in its own
+    atoms."""
+    monkeypatch.setattr(run_mod, "_resolve_bullets",
+                        lambda *a, **k: {"a": "Kept the thing.", "b": "Broke the thing."})
+    real = run_mod.verify.enforce_grounded
+    calls: list[bool] = []
+
+    def gate(sel, bullets, *, fallback=None, log=None):
+        calls.append(fallback is None)
+        if len(calls) == 2:            # the first fallback-bearing pass: verb dedupe
+            del bullets["b"]           # no grounded fallback -> dropped outright
+            return {"a": ["MIT"], "b": ["PhD"]}   # 'a' survives -> reverted
+        return real(sel, bullets, fallback=fallback, log=log)
+
+    monkeypatch.setattr(run_mod.verify, "enforce_grounded", gate)
+    warns: list[str] = []
+    out = run_mod.tailor(_JOB, on_warning=warns.append)
+    assert "grounding: [verb dedupe] reverted bullet 'a' (ungrounded: MIT)" in warns
+    assert "grounding: [verb dedupe] dropped bullet 'b' (ungrounded: PhD)" in warns
+    assert "dropped bullet 'b'" in _report(out)
+
+
+def test_run_report_lists_the_stages_that_ran(offline_tailor):
+    """The report's stage list is keyed off Pass.name, so the pipeline itself names the
+    stages instead of a hand-kept second copy of the order."""
+    out = run_mod.tailor(_JOB)
+    text = _report(out)
+    for stage in ("select", "block briefs", "rephrase", "verb dedupe", "verbatim + trim",
+                  "style gate", "skills", "render + compile", "ats report", "apply sheet"):
+        assert f"\n  {stage}\n" in text, stage
+    assert "BigCo" in text and "Engineer" in text        # the job it was written for
+
+
+def test_report_is_written_without_an_on_warning_callback(offline_tailor):
+    """on_warning defaults to None (no churn at any existing call site); the durable
+    record is written either way."""
+    out = run_mod.tailor(_JOB)
+    assert (out / run_mod.REPORT_NAME).exists()
+
+
+def test_a_failed_report_write_is_logged_not_raised(offline_tailor, monkeypatch):
+    """Writing the record of failures must never itself sink a run that produced a PDF,
+    and it must not fail silently either."""
+    monkeypatch.setattr(run_mod, "_report_text", _boom)
+    msgs: list[str] = []
+    out = run_mod.tailor(_JOB, on_status=msgs.append)
+    assert (out / "resume.pdf").exists()
+    assert any(f"{run_mod.REPORT_NAME} not written" in m for m in msgs)
+
+
+def test_a_broken_warning_collector_never_sinks_the_run(offline_tailor, monkeypatch):
+    """on_warning is somebody else's code. A raising collector degrades the live stream,
+    not the run, and the report still records the warning."""
+    monkeypatch.setattr(run_mod.ats, "write_report", _boom)
+    out = run_mod.tailor(_JOB, on_warning=_boom)
+    assert "advisory: ATS check skipped (boom)" in _report(out)

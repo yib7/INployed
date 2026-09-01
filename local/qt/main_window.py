@@ -109,6 +109,28 @@ def _tailor_pool_size(n_jobs: int) -> int:
     return max(1, min(n_jobs, MAX_PARALLEL_TAILORS))
 
 
+# How many warning lines one degraded job contributes to the batch dialog before the
+# rest are summarised. A grounding gate having a bad day can produce one per bullet,
+# and a message box that tall is a wall, not a report — the folder's tailor_report.txt
+# is the complete copy.
+MAX_TAILOR_WARNINGS_SHOWN = 5
+
+
+def _tailor_warning_lines(rows: list[dict]) -> str:
+    """The dialog block for jobs that finished WITH warnings: '  - <label>: <warning>'
+    per warning, truncated per job so one noisy run can't bury the others."""
+    out: list[str] = []
+    for r in rows:
+        label = r.get("label") or r.get("id") or "job"
+        warns = list(r.get("warnings") or [])
+        for w in warns[:MAX_TAILOR_WARNINGS_SHOWN]:
+            out.append(f"  - {label}: {w}")
+        extra = len(warns) - MAX_TAILOR_WARNINGS_SHOWN
+        if extra > 0:
+            out.append(f"  - {label}: ...and {extra} more (see tailor_report.txt)")
+    return "\n".join(out)
+
+
 def _console_python(exe: str | None = None) -> str:
     """The console Python to run child scripts with.
 
@@ -2097,16 +2119,24 @@ class MainWindow(QtWidgets.QMainWindow):
         def one(job: dict) -> dict:
             nonlocal done
             label = f'{job.get("job_title") or "Role"} @ {job.get("company_name") or "?"}'
+            # Degraded-run channel: a grounding-gate drop, an over-length PDF, or a
+            # failed optional artifact. The engine also writes them to the folder's
+            # tailor_report.txt; collecting them here is what lets _finish_tailor stop
+            # reporting a half-worked job as a clean success. Appending from the pool
+            # thread is safe: the list is this job's alone and is only read after the
+            # call returns.
+            warnings: list[str] = []
             try:
                 out = tailor_resume(job, cover_letter=opts["cover_letter"],
                                     ats_report=opts["ats_report"], prep_sheet=opts["prep_sheet"],
                                     tone=opts["tone"], reset_usage=False,
-                                    on_status=lambda m, lbl=label: report(lbl, m))
+                                    on_status=lambda m, lbl=label: report(lbl, m),
+                                    on_warning=warnings.append)
                 result = {"id": job.get("job_posting_id"), "label": label,
-                          "dir": out, "error": None}
+                          "dir": out, "error": None, "warnings": warnings}
             except Exception as exc:  # noqa: BLE001 - capture per-job; report in the summary
                 result = {"id": job.get("job_posting_id"), "label": label,
-                          "dir": None, "error": str(exc)}
+                          "dir": None, "error": str(exc), "warnings": warnings}
             with done_lock:
                 done += 1
             # Queued to the UI thread: the registry records this job NOW, so an
@@ -2161,14 +2191,32 @@ class MainWindow(QtWidgets.QMainWindow):
             if r.get("id") and r["id"] not in recorded:
                 self._record_tailor_result(r)
         total = len(results)
+        # A job that produced a PDF but warned on the way (a two-page résumé, a
+        # grounding-gate drop, a skipped ATS report) is still a SUCCESS — the registry
+        # contract stays binary and it keeps its recorded resume folder. It just no
+        # longer gets reported as a clean one. Full detail lives in the folder's
+        # tailor_report.txt; the dialog carries enough to know to go look.
+        degraded = [r for r in oks if r.get("warnings")]
         if fails:
             lines = "\n".join(
                 f"  - {r.get('label') or r.get('id') or 'job'}: "
                 f"{r.get('error') or 'unknown error'}" for r in fails)
+            text = f"Tailored {len(oks)} of {total} resume(s).\n\nFailed:\n{lines}"
+            if degraded:
+                text += f"\n\nFinished with warnings:\n{_tailor_warning_lines(degraded)}"
+            QtWidgets.QMessageBox.warning(self, "Tailor resume", text)
+            status = f"Tailored {len(oks)} of {total}; {len(fails)} failed (see dialog)."
+            if degraded:
+                status += f" {len(degraded)} with warnings."
+            self._set_status(status)
+        elif degraded:
             QtWidgets.QMessageBox.warning(
                 self, "Tailor resume",
-                f"Tailored {len(oks)} of {total} resume(s).\n\nFailed:\n{lines}")
-            self._set_status(f"Tailored {len(oks)} of {total}; {len(fails)} failed (see dialog).")
+                f"Tailored {len(oks)} of {total} resume(s), {len(degraded)} with "
+                f"warnings:\n\n{_tailor_warning_lines(degraded)}\n\n"
+                f"Each folder's tailor_report.txt has the full record.")
+            self._set_status(
+                f"Resume(s) ready ({len(oks)}); {len(degraded)} with warnings (see dialog).")
         elif oks:
             self._set_status(f"Resume(s) ready ({len(oks)}).")
         last = oks[-1]["dir"] if oks else None

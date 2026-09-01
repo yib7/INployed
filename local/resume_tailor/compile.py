@@ -25,10 +25,24 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 @dataclass
 class CompileResult:
+    """Outcome of one pdflatex run.
+
+    `pages` is the PDF's real page count, filled in by enforce_one_page (0 =
+    never measured, i.e. a compile that failed before a PDF existed). It exists
+    because the count used to be computed on every enforcement pass and then
+    thrown away: when overflow originated outside projects, _drop_weakest_group
+    ran out of bullets to sacrifice, enforce_one_page returned ok=True on a
+    TWO-page PDF, and run.tailor() — which checks only `ok` — shipped it as a
+    clean success. Carrying the number out is what lets the caller notice.
+
+    Additive with a default on purpose: the 3-tuple return shape and every
+    monkeypatched `fake_enforce` in the suite keep working untouched.
+    """
     ok: bool
     pdf_path: Optional[Path]
     log_tail: str
     error: Optional[str] = None
+    pages: int = 0
 
 
 def pdflatex_available() -> bool:
@@ -144,6 +158,9 @@ def enforce_one_page(
         if not result.ok:
             return result, cur, tex
         pages = page_count(result.pdf_path)
+        # Carry the measurement out on the result itself, so a best-effort return
+        # below is distinguishable from a genuinely one-page compile.
+        result.pages = pages
         log(f"compiled to {pages} page(s)")
         if pages <= config.PAGE_LIMIT:
             return result, cur, tex

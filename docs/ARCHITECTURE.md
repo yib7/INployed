@@ -275,11 +275,14 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. |
 | `llm.py` | The single LLM transport: Gemini (`call()` → `_call_gemini`) or the local Claude Code CLI when the provider is 'claude' (dispatch in `call()`; `claude -p` subprocess, same rate-limit budget). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
 | `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config) and the LaTeX preamble. |
-| `compose.py` | The LLM stages: `select` → `rephrase` → `compress_skills`, plus the deterministic `methods_line` (the optional 5th "Methods" skills line: concepts from the master's `concepts_and_methodologies` pool that the JD actually references, printed in the JD's own spelling on an alias hit). |
-| `layout.py` | The hard layout spec: per-bullet printed-line budgets and fill floors (single-line ≥75%, multi-line last line ≥50%), all calibrated to the template. |
+| `common.py` | The three primitives the composition modules share: the `_PRINCIPLE` prompt clause, `fence_jd` (wraps an untrusted JD as data), and `_gkey`. |
+| `selection.py` | Stage 1. `select` asks the model which atoms to use and how to group them, then makes the answer safe deterministically: `_normalize_selection` drops ids the model invented, `_ensure_required_blocks` forces the yaml's `tailor.required` blocks to render, `_order_fixed_blocks` restores template order, and `_enforce_fixed_counts` / `_cap_projects` / `_resize_to_count` pin each block to its configured bullet count. Also owns `bullet_line_targets`. |
+| `compose.py` | The bullet stages: `block_briefs` (one cohesion brief per block), `rephrase`, `lead_with_overview`, `dedupe_leading_verbs` / `reverb` (no opener reused across the page), `fill_underfull`, and `enforce_style`. |
+| `skills.py` | The four technical-skills lines and the optional 5th "Methods" concepts line. `compress_skills` ranks each category's pool against the JD; the anchoring layer (`_anchored`, `_base_anchors`, `_merged_members`, `_complete_to_count`, `_cap_items`) is what stops a skill the user does not own from reaching the page. `methods_line` prints concepts from the master's `concepts_and_methodologies` pool that the JD actually references, in the JD's own spelling on an alias hit. |
+| `layout.py` | The count spec: best-N items per skill line (`skill_targets`, env-overridable) and the leadership per-entry line budget. Printed-line *widths* are `measure.py`'s job. |
 | `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. |
 | `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. |
-| `compile.py` | Runs `pdflatex` and enforces one page (drop-weakest-bullet + shrink loop). |
+| `compile.py` | Runs `pdflatex` and enforces one page (drop-weakest-project-bullet loop). `CompileResult.pages` carries the final page count, so a run that could not fit one page is recorded rather than silently accepted. |
 | `latexutil.py` | Escaping, emphasis stripping, date formatting, unicode-math → LaTeX. |
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
@@ -290,14 +293,44 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
 | `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` backs the dashboard's "Check setup" button. |
 | `apply_answers.py` | The reusable screening-answer bank (git-ignored `apply_answers.json`): seeds from `apply_config.DEFAULTS`, migrates legacy overrides, and feeds the standard answers into `apply.md`. |
-| `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are config-driven and default-preserving. |
+| `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are config-driven and default-preserving. The bullet stages run as a declarative pass list; see "The bullet pass pipeline" and "Run reporting" below. |
 | `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder (by the `apply.md` meta marker), build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO, structured address). |
 
 ### Why it's config-driven
-`compose.py`/`layout.py`/`render.py` deliberately hardcode **no employer names**.
-Which blocks are required, the fixed per-block line budgets, and the candidate's
-identity all come from the yaml (the `tailor:` section + `basics`/`education`). That
-is what lets the same code produce anyone's résumé; see `tests/test_tailor_config.py`.
+`selection.py`/`compose.py`/`skills.py`/`layout.py`/`render.py` deliberately hardcode
+**no employer names**. Which blocks must always render and the candidate's identity come
+from the yaml (`tailor.required` + `basics`/`education`); the per-block bullet counts and
+printed-line targets come from `local/config.json` (`resume_layout`, `project_layout`),
+which the dashboard's Résumé Data tab edits. That is what lets the same code produce
+anyone's résumé; see `tests/test_tailor_config.py`.
+
+### The bullet pass pipeline
+Every stage after `rephrase` mutates the same `bullets` dict, and every one of them can
+introduce an ungrounded token. The rule is that a mutation is always followed by a
+re-check against the atoms, reverting to the last grounded text when there is one.
+
+That rule used to be written out by hand at each stage, which meant it could be forgotten.
+It is now structural. `run.py` declares a `Pass` (name, the callable, an `enabled`
+predicate, `retrim`, `verify`) and `_run_bullet_passes` does the snapshot, runs the pass,
+re-trims when asked, and re-verifies against the snapshot. `_BULLET_PASSES` reads as the
+sequence itself: verb dedupe, verbatim merge and trim, underfull fill, style gate.
+`verify.enforce_grounded` has exactly one call site, `_gate`.
+
+`rephrase` and its first gate stay outside the list. That gate runs with no fallback,
+because there is no earlier grounded text to revert to yet.
+
+### Run reporting
+A tailor run can succeed and still have gone partly wrong: the ATS report can fail, the
+cover letter can fail to compile, the grounding gate can drop a bullet, and the one-page
+loop can run out of project bullets to drop and ship two pages. All of that used to go to
+the dashboard's status line and vanish.
+
+`tailor()` now collects those as warnings and writes `tailor_report.txt` into the output
+folder on every run: which passes ran, every bullet the gate reverted or dropped and the
+token that caused it, the final page count, and each advisory failure. Callers can also
+pass `on_warning` to receive them live; the dashboard does this and reports degraded runs
+in the batch summary, so a two-page résumé is no longer indistinguishable from a clean
+one. A degraded run is still a success that produced a PDF. It is just no longer silent.
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
 `settings.py` is one schema (`SETTINGS_SCHEMA`) of 60 `Field` rows describing every
@@ -353,11 +386,24 @@ sheet" copies the raw source; the user pastes `apply.md` into Claude-in-Chrome t
 and **stop for human review; nothing auto-submits.** (That fill-it-out contract lives at the top of every `apply.md`.)
 
 ### The one-page guarantee
-`layout.py` derives a `(min, max)` character window per bullet from empirically
-calibrated chars-per-line constants. `rephrase` is told each fixed bullet's window;
-a fit loop in `run.py` then `refit`s (grounded) or word-trims (deterministic) any
-bullet outside its window, and `compile.enforce_one_page` drops the weakest bullet
-and shrinks until it fits one page.
+Three deterministic stages, none of which can invent text.
+
+`measure.py` holds the width model: hard-coded Times advance-width tables calibrated
+against a compiled PDF, so `measure.line_count(text)` returns how many printed lines a
+bullet will actually occupy. `run._trim_to_caps` trims every bullet to its per-bullet
+printed-line target (`config.block_targets` / `config.project_targets`) by real rendered
+width, cutting at a clause or word boundary and stripping any dangling connective.
+Under-length bullets are left alone, since padding them would mean inventing facts.
+
+`compile.enforce_one_page` then loops render, compile, measure. When the PDF is over
+`config.PAGE_LIMIT` it drops the weakest project bullet (`_drop_weakest_group`, working
+from the last project backwards) and re-renders. Experience and leadership are never
+touched.
+
+That loop is best-effort, not a guarantee. When the overflow originates outside projects
+it runs out of droppable bullets and returns the over-length PDF rather than failing.
+`CompileResult.pages` carries the final page count so `run.tailor()` records a warning in
+that case instead of reporting a clean run. See "Run reporting" below.
 
 ## Data flow, end to end
 ```mermaid

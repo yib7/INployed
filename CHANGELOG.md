@@ -4,6 +4,53 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+A legibility pass over the résumé engine. A tailor run that half-worked now says so instead
+of reporting a clean success, the bullet stages are declared as a list rather than written
+out by hand, and the largest module is split along its two real seams. Résumé output is
+unchanged: a golden-output regression test pins the exact bullets and the exact `.tex`, and
+it passed unmodified after every step. Nothing to migrate.
+
+### Added
+- **`tailor_report.txt` in every output folder.** A run could fail partly and still report
+  success: the ATS report, company research, cover letter, prep sheet and `apply.md` each
+  fail advisorily, and the grounding gate can revert or drop a bullet. All of that went to
+  the dashboard's status line and was gone. The report records which passes ran, every
+  bullet the gate touched and the token that caused it, the final page count, and each
+  advisory failure. `tailor()` also takes an optional `on_warning` callback for callers that
+  want them live; the default is `None`, so existing callers are unaffected.
+- **Degraded runs are visible in the dashboard.** The per-job result carries its warnings and
+  the batch summary reports them alongside outright failures.
+- **`CompileResult.pages`.** The one-page loop only ever drops *project* bullets, so when the
+  overflow comes from somewhere else it exhausts them and returns a two-page PDF with
+  `ok=True`. The page count was computed on every iteration and discarded, so the run was
+  reported as clean. It is now carried on the result and checked.
+
+### Changed
+- **The bullet stages are a declarative pass list.** Each stage that mutates a bullet has to
+  be followed by a re-check against its atoms, reverting to the last grounded text where one
+  exists. That was written out by hand at four sites, so it could be forgotten. `run.py` now
+  declares the passes and a driver does the snapshot, the re-trim and the re-verification.
+  `verify.enforce_grounded` has one call site instead of four.
+- **`compose.py` split along its two seams**, from 1,571 lines to 751. Selection and the
+  deterministic count enforcement moved to `selection.py`; the skills lines, the anchoring
+  layer and the Methods line moved to `skills.py`; three shared prompt primitives moved to
+  `common.py`. The moved bodies are unchanged. `compose.py` re-exports the public names, so
+  no caller changed.
+
+### Removed
+- `layout.plan_leadership_lines()`, which nothing called.
+- The `tailor.fixed_blocks` and `tailor.leadership_entry_lines` yaml keys from the
+  documentation, the example master and the test fixture. Both were documented and neither
+  was ever read: per-block bullet counts come from `config.json`'s `resume_layout`, and the
+  leadership line budget is a module constant. `tailor.required` is the whole schema.
+
+### Fixed
+- `docs/ARCHITECTURE.md` described the one-page guarantee in terms of a `refit` step and
+  character windows in `layout.py`, neither of which exists. It now describes the actual
+  mechanism, including the case where the loop cannot reach one page.
+
 ## [1.9.0] - 2026-08-29
 
 The dashboard can install a new API key on the scraper VM, so rotating a dead token stops

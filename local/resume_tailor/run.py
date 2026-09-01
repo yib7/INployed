@@ -14,8 +14,9 @@ import re
 import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence
 
 from . import (apply_data, ats, compose, config, coverletter, llm, measure, output,
                research, verify)
@@ -241,6 +242,132 @@ def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:
         bullets[gk] = _fit_to_lines(text, target_lines)
 
 
+# ── The bullet passes ────────────────────────────────────────────────────────
+# Every stage that mutates the bullets after the first grounding gate obeys the same
+# discipline: snapshot -> mutate -> (optionally) re-trim -> re-verify against that
+# snapshot, so a pass that pushes a bullet off its own atoms reverts to the last
+# grounded text instead of printing. That used to be four hand-copied
+# snapshot / `verify.enforce_grounded(...)` pairs written out inline in
+# tailor(), and forgetting one was SILENT: the gate is a no-op on grounded text, so a
+# missing call site changes neither the compile nor the rendered .tex. It is structural
+# now — a pass declares what bracketing it needs and the driver does the bookkeeping.
+
+
+@dataclass
+class PassCtx:
+    """What a bullet pass may read and mutate.
+
+    `bullets` is mutated IN PLACE; a pass must never rebind it, because the driver
+    snapshots and re-verifies that same dict.
+    """
+    jd: str
+    job_title: str
+    sel: Dict[str, Any]
+    bullets: Dict[str, str]
+    verbatim: Dict[str, str]
+    reserved: FrozenSet[str]
+    log: Callable[[str], None]
+
+
+def _always() -> bool:
+    return True
+
+
+@dataclass(frozen=True)
+class Pass:
+    """One bullet-mutating stage, plus how the driver has to bracket it.
+
+    name    — human-readable stage label (SP3 keys its per-run report off this).
+    run     — mutates `ctx.bullets` in place.
+    enabled — consulted once per run, so a config toggle stays live.
+    retrim  — re-run `_trim_to_caps` after the pass (for a pass that lengthens text).
+    verify  — snapshot before the pass and re-run the grounding gate after it, with
+              that snapshot as the revert target. False only for a pass that cannot
+              un-ground anything (the verbatim merge folds in the user's own text).
+    """
+    name: str
+    run: Callable[["PassCtx"], None]
+    enabled: Callable[[], bool] = _always
+    retrim: bool = False
+    verify: bool = True
+
+
+def _gate(ctx: PassCtx, *,
+          fallback: Optional[Dict[str, str]] = None) -> Dict[str, List[str]]:
+    """The single call site for the deterministic grounding gate. Returns
+    {gkey: unseen_tokens} for every bullet it reverted or dropped (empty = all
+    grounded).
+
+    That return value is currently discarded, which is exactly how a half-grounded run
+    reads as a clean one. It is the seam SP3 needs: routing it to a warning collector
+    is a change to this function (plus a field on PassCtx), not to four scattered call
+    sites.
+    """
+    return verify.enforce_grounded(ctx.sel, ctx.bullets, fallback=fallback, log=ctx.log)
+
+
+def _pass_dedupe_verbs(ctx: PassCtx) -> None:
+    """Guarantee every tailored bullet opens with a DISTINCT action verb — none reused,
+    none colliding with a verbatim block's opener (verbatim text is reserved, never
+    modified)."""
+    compose.dedupe_leading_verbs(ctx.bullets, compose.group_map(ctx.sel), ctx.jd,
+                                 reserved=ctx.reserved)
+
+
+def _pass_merge_verbatim(ctx: PassCtx) -> None:
+    """Fold in the user's exact (untailored) bullets, then trim every tailored bullet to
+    its per-bullet printed-line target. Unverified on purpose: the merged text is the
+    user's own, and the trim only shortens text the gate already passed."""
+    if ctx.verbatim:
+        ctx.bullets.update(ctx.verbatim)
+        ctx.log(f"using {len(ctx.verbatim)} verbatim bullet(s) (untailored, as typed).")
+    _trim_to_caps(ctx.sel, ctx.bullets)
+
+
+def _pass_fill_underfull(ctx: PassCtx) -> None:
+    """Grow any bullet that rendered shorter than its configured line target by folding in
+    one detail from an unused SAME-block atom (never fabricates — a no-op when there's no
+    spare material). `retrim=True` re-trims the (over)filled bullets back to a clean line
+    boundary before the gate re-checks them."""
+    ctx.log("filling underfull bullets from spare atoms…")
+    compose.fill_underfull(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
+
+
+def _pass_enforce_style(ctx: PassCtx) -> None:
+    """Deterministic style gate: banned AI-tell phrasing (em dashes, contrast framing,
+    buzzword verbs, ...) never reaches the page."""
+    fixed = compose.enforce_style(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
+    if fixed:
+        ctx.log(f"style gate: repaired {fixed} bullet(s).")
+
+
+# The order of this tuple IS the pipeline: it transcribes the sequence tailor() used to
+# spell out inline, and reordering it is now the only way to reorder the stages.
+# `enabled` holds the toggle FUNCTION rather than its value, so it is read per run.
+_BULLET_PASSES = (
+    Pass("verb dedupe", _pass_dedupe_verbs),
+    Pass("verbatim + trim", _pass_merge_verbatim, verify=False),
+    Pass("underfull fill", _pass_fill_underfull,
+         enabled=config.fill_underfull_enabled, retrim=True),
+    Pass("style gate", _pass_enforce_style),
+)
+
+
+def _run_bullet_passes(ctx: PassCtx,
+                       passes: Sequence[Pass] = _BULLET_PASSES) -> None:
+    """Run each enabled pass under the snapshot -> mutate -> re-trim -> re-verify
+    discipline. Nobody writes a snapshot by hand, so nobody can forget one."""
+    for p in passes:
+        if not p.enabled():
+            continue
+        snapshot = dict(ctx.bullets) if p.verify else None
+        p.run(ctx)
+        if p.retrim:
+            _trim_to_caps(ctx.sel, ctx.bullets)
+        if p.verify:
+            _gate(ctx, fallback=snapshot)
+
+
 def tailor(
     job: Dict[str, str],
     *,
@@ -283,42 +410,24 @@ def tailor(
     log("framing each block for cohesion…")
     briefs = compose.block_briefs(jd, job_title, sel)
     bullets = _resolve_bullets(jd, job_title, sel, log, briefs=briefs)
+    ctx = PassCtx(
+        jd=jd, job_title=job_title, sel=sel, bullets=bullets, verbatim=verbatim,
+        # The verbatim blocks' opening verbs: reserved, because the dedupe pass may
+        # not rewrite the user's own text, so it must not reuse their openers either.
+        reserved=frozenset(compose.leading_verb(t) for t in verbatim.values()),
+        log=log,
+    )
     # Deterministic grounding gate (audit P1-2): every bullet's distinctive tokens
     # must trace to its own group's atoms — a hallucinated or JD-injected fact is
-    # dropped here, never printed. Re-checked after every later bullet-mutating
-    # pass, reverting to the last grounded text instead of dropping when possible.
-    verify.enforce_grounded(sel, bullets, log=log)
+    # dropped here, never printed. This first call is the prologue and the only
+    # fallback-less one: there is no earlier grounded text to revert to yet. Every
+    # later bullet-mutating pass re-runs it against its own snapshot, reverting
+    # instead of dropping when it can (see _run_bullet_passes).
+    _gate(ctx)
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
-    # Guarantee every tailored bullet opens with a DISTINCT action verb — none reused, none
-    # colliding with a verbatim block's opener (verbatim text is reserved, never modified).
-    reserved = frozenset(compose.leading_verb(t) for t in verbatim.values())
-    grounded_snap = dict(bullets)
-    compose.dedupe_leading_verbs(bullets, compose.group_map(sel), jd, reserved=reserved)
-    verify.enforce_grounded(sel, bullets, fallback=grounded_snap, log=log)
-    if verbatim:
-        bullets.update(verbatim)
-        log(f"using {len(verbatim)} verbatim bullet(s) (untailored, as typed).")
-
-    _trim_to_caps(sel, bullets)
-
-    # Grow any bullet that rendered shorter than its configured line target by folding in one
-    # detail from an unused SAME-block atom (never fabricates — a no-op when there's no spare
-    # material), then re-trim the (over)filled bullets back to a clean line boundary.
-    if config.fill_underfull_enabled():
-        log("filling underfull bullets from spare atoms…")
-        grounded_snap = dict(bullets)
-        compose.fill_underfull(jd, job_title, sel, bullets)
-        _trim_to_caps(sel, bullets)
-        verify.enforce_grounded(sel, bullets, fallback=grounded_snap, log=log)
-
-    # Deterministic style gate: banned AI-tell phrasing (em dashes, contrast
-    # framing, buzzword verbs, ...) never reaches the page.
-    grounded_snap = dict(bullets)
-    fixed = compose.enforce_style(jd, job_title, sel, bullets)
-    if fixed:
-        log(f"style gate: repaired {fixed} bullet(s).")
-    verify.enforce_grounded(sel, bullets, fallback=grounded_snap, log=log)
+    # Verb dedupe -> verbatim merge + trim -> underfull fill + re-trim -> style gate.
+    _run_bullet_passes(ctx)
 
     log("compressing skills…")
     skill_lines = compose.compress_skills(jd, job_title, sel)

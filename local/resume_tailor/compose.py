@@ -59,6 +59,11 @@ log = logging.getLogger(__name__)
 # only the always-slop subset; the context-sensitive tells (scalable/dynamic/smart,
 # 'drove X', significant, multiple, end-to-end, grandiosity) live only in this
 # prompt text, where model judgment can spare the legitimate technical uses.
+#
+# Every prompt in this package is itself free of the characters listed here (em
+# dashes, spaced double hyphens): a model copies the punctuation it is shown, and
+# a copied em dash costs an enforce_style repair call on a bullet that was already
+# correct. tests/test_prompt_hygiene.py holds that line.
 BANNED_PHRASING = (
     "em dashes; contrast framing ('not X, but Y', 'X, not Y', 'not just', "
     "'rather than', 'instead of'); participial tails (', enabling/ensuring/"
@@ -258,9 +263,9 @@ def lead_with_overview(jd: str, job_title: str, sel: Dict[str, Any]) -> None:
     picks: Dict[str, int] = {}
     system = (
         "You order resume bullets for narrative flow. For each project you are given its "
-        "selected bullets, numbered. Pick the ONE bullet that best introduces the project — "
+        "selected bullets, numbered. Pick the ONE bullet that best introduces the project: "
         "the high-level overview a reader needs ('what is this project at a glance') BEFORE the "
-        "detail bullets make sense — and return its number. This is PURE ORDERING: you write no "
+        "detail bullets make sense. Return its number. This is PURE ORDERING: you write no "
         "prose, you invent nothing, you only choose which EXISTING bullet should lead.\n" + _PRINCIPLE
     )
     user = f"""TARGET JOB: {job_title}
@@ -315,9 +320,9 @@ def block_briefs(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]
     system = (
         "You frame resume blocks for cohesion. For each block (one job, project, or "
         "leadership entry), write a 1-2 sentence BRIEF describing how its bullets should "
-        "read together: the shared theme, the logical order, and — if the block's purpose "
-        "is not obvious from the atoms — the high-level context the FIRST bullet should "
-        "establish (e.g. what a project is at a glance). Derive the brief ONLY from the "
+        "read together: the shared theme, the logical order, and the high-level context the "
+        "FIRST bullet should establish when the block's purpose is not obvious from the "
+        "atoms (e.g. what a project is at a glance). Derive the brief ONLY from the "
         "given atoms; never introduce a fact, tool, metric, or claim not present in them. "
         "The brief guides phrasing only; it is not itself a bullet."
     )
@@ -378,34 +383,34 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
         "line that states only what those atoms say. You are a translator turning structured "
         "facts into one polished line, not a writer inventing content.\n" + _PRINCIPLE + "\n"
         "COHESION: the bullets are grouped BY BLOCK (one job / project / leadership entry). "
-        "Within a block, make the bullets read as ONE coherent story — shared framing and "
+        "Within a block, make the bullets read as ONE coherent story: shared framing and "
         "tense, no two bullets making the same point, ordered so they build logically. When "
         "a block carries a 'brief', follow its framing/ordering; if the brief says the block's "
         "purpose isn't obvious, let the FIRST bullet establish that context using ONLY grounded "
-        "atom facts. NEVER move a fact from one group's atoms into another bullet — each bullet "
+        "atom facts. NEVER move a fact from one group's atoms into another bullet. Each bullet "
         "still re-phrases ONLY its own group's atoms.\n"
         "REDUNDANCY (across the WHOLE resume, not just within a block): a distinctive number "
-        "or metric appears ONCE — when two groups' atoms cite the same figure (an accuracy "
+        "or metric appears ONCE. When two groups' atoms cite the same figure (an accuracy "
         "percentage, a corpus size), state it in the bullet where it lands hardest and let the "
         "other bullet carry its remaining facts. Vary the nouns: a pet word like 'pipeline' "
-        "repeated across many bullets reads templated — after two uses, say what the thing "
+        "repeated across many bullets reads templated; after two uses, say what the thing "
         "concretely is instead. Don't end several bullets the same way (e.g. test counts); "
         "fold at most one or two test-coverage claims into the page.\n"
         "STYLE: past tense, no first-person pronouns, no markdown, no LaTeX, NO bold or "
         "italics. One sentence (a fused group may run to ~2 clauses). Each bullet MUST be a "
         "COMPLETE sentence that ends naturally WITHIN its own character budget (the "
-        "'length_target' given below) — never write a longer sentence assuming it will be "
+        "'length_target' given below). Never write a longer sentence assuming it will be "
         "trimmed; a truncated bullet ending mid-clause is a failure. "
         "BANNED PHRASING (a bullet using any of these is wrong): " + BANNED_PHRASING + "\n"
         "Front-load the result/impact that matters for THIS job. Open every bullet with a "
         "strong action verb chosen from the categorized list below, picking a "
         "category-appropriate verb that matches the atom's real ownership. Every bullet's "
-        "opening verb MUST be DISTINCT — never reuse a leading verb anywhere on the resume "
+        "opening verb MUST be DISTINCT: never reuse a leading verb anywhere on the resume "
         "(the list is large; there is always an unused, fitting choice). Numbers exactly "
         "as written. Write 'greater than or equal to' style comparisons with the symbols "
         ">= and <= (they are converted to proper math notation later).\n"
-        "SPACE: a bullet that fits on ONE printed line should fill at least ~90% of it — "
-        "never leave a stubby half-empty line (fold in more grounded detail from the atoms "
+        "SPACE: a bullet that fits on ONE printed line should fill at least ~90% of it. "
+        "Never leave a stubby half-empty line (fold in more grounded detail from the atoms "
         "or fuse, but NEVER invent facts to pad). A bullet that wraps to multiple lines may "
         "let its last line run shorter, but it should still be at least ~75% full."
     )
@@ -415,10 +420,10 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
 
 ACTION VERBS (open each bullet with one of these, grouped by category; pick a
 category-appropriate verb matching the atom's real ownership, and use each leading verb at
-most ONCE across the whole resume — no two bullets may start with the same verb):
+most ONCE across the whole resume, so no two bullets start with the same verb):
 {verbs}
 
-STYLE EXEMPLAR (match this voice, length and density — NEVER copy its facts):
+STYLE EXEMPLAR (match this voice, length and density; NEVER copy its facts):
 {example}
 
 BLOCKS (write exactly ONE bullet per gkey, re-phrasing ONLY that group's atoms; make
@@ -426,7 +431,7 @@ each block's bullets cohere per its 'brief' when present):
 {json.dumps(payload, ensure_ascii=False, indent=1)}
 
 LENGTH (hard ceiling): each bullet's "length_target" gives a character cap. Write a
-COMPLETE sentence that fits within that cap and ends naturally — a 2-line target
+COMPLETE sentence that fits within that cap and ends naturally. A 2-line target
 wants a dense, fully-developed line; a 1-line target wants one tight, self-contained
 line. Do NOT exceed the cap and do NOT end mid-clause expecting truncation. Never
 invent facts to pad and never drop a number to shorten.
@@ -607,7 +612,7 @@ def fill_underfull(jd: str, job_title: str, sel: Dict[str, Any],
         "and fold in ONE concrete detail drawn ONLY from the newly-added atom so the line fills "
         "toward its 'length_target'. You MAY slightly overshoot the target (it is trimmed back "
         "deterministically). If nothing in the extra atom fits naturally, return the bullet "
-        "UNCHANGED -- never pad with filler.\n" + _PRINCIPLE
+        "UNCHANGED; never pad with filler.\n" + _PRINCIPLE
     )
     user = f"""TARGET JOB: {job_title}
 

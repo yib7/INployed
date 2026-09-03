@@ -28,6 +28,12 @@ BULLETS = {"a1": "Shipped the viewer with 178 tests",
 # code that shipped before this toggle existed. The shared tail is referenced
 # (not copied) so an intentional edit to compose.BANNED_PHRASING -- which the
 # résumé arm shares -- doesn't fail here with a misleading message.
+#
+# What these two pins protect is the DELTA (the rules block is appended and
+# nothing else moves), not the wording of the head itself. A deliberate reword of
+# the cover-letter prompt re-pins the head here; a head that drifts without anyone
+# meaning to is the failure this catches. Cycle 10 re-pinned two em dashes out
+# (see tests/test_prompt_hygiene.py for why a prompt may not use them).
 _TODAYS_GENERATE_HEAD = (
     'Write a concise, genuine cover-letter body (3 short paragraphs) for an '
     'early-career candidate. Use ONLY facts present in the provided resume bullets and '
@@ -35,7 +41,7 @@ _TODAYS_GENERATE_HEAD = (
     'salutation and no sign-off (the template adds them). Plain text, paragraphs '
     'separated by a blank line. Warm but professional; write like a person, in plain '
     'declarative sentences, no clichés. Show genuine but MEASURED interest: never gush '
-    'or over-sell — no exclamation-point excitement, no '
+    'or over-sell: no exclamation-point excitement, no '
     "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
     'over-eager tone reads as AI-written. Use a confident, professional tone. Use the '
     'correct tense for education, based on the EDUCATION line: if the candidate has '
@@ -54,7 +60,7 @@ _TODAYS_REFINE_HEAD = (
     "bullets below; never add a company, number, skill, or claim that isn't supported, "
     'and cut anything the draft invented. Keep the meaning and roughly the same length; '
     'no salutation and no sign-off. Show genuine but MEASURED interest: do NOT be '
-    'over-the-top or gushing — no exclamation-point enthusiasm, no '
+    'over-the-top or gushing. No exclamation-point enthusiasm, no '
     "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
     'over-eager tone reads as AI-written. Use a confident, professional tone.\nBANNED '
     'PHRASING (do not introduce any of these): '

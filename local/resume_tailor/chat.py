@@ -61,7 +61,7 @@ APPLY_SHEET = "apply.md"
 
 SYSTEM_RULES = (
     "You are helping ONE person with ONE specific job application. Everything you "
-    "know about them and about this job is in the CONTEXT below — treat it as the "
+    "know about them and about this job is in the CONTEXT below; treat it as the "
     "whole world.\n"
     "RULES:\n"
     "1. Answer only from the context. It is the complete record; general knowledge "
@@ -72,8 +72,8 @@ SYSTEM_RULES = (
     "3. Never invent an experience, a number, a date, an employer, a school, or a "
     "skill. Every claim you make about the candidate must be traceable to something "
     "written in the context.\n"
-    "4. When asked to draft text — an answer to an application question, a "
-    "paragraph, a bullet — build it only out of facts already in the context, and "
+    "4. When asked to draft text (an answer to an application question, a "
+    "paragraph, a bullet), build it only out of facts already in the context, and "
     "say which part you had to leave blank.\n"
     "5. You have no tools and no file access: you cannot open, fetch, or write "
     "anything. Answer in the conversation only.\n"
@@ -217,7 +217,7 @@ def build_context(folder: Optional[Path], job: Dict[str, Any]) -> str:
     if jd:
         blocks += [compose.fence_jd(jd, JD_CHAR_CAP, JD_PURPOSE), ""]
     else:
-        blocks += ["No job description was captured for this posting — say so "
+        blocks += ["No job description was captured for this posting; say so "
                    "rather than guessing what the role involves.", ""]
 
     sheet = _read_sheet(folder)

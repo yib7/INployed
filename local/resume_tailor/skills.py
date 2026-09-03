@@ -348,12 +348,12 @@ def compress_skills(jd: str, job_title: str, sel: Dict[str, Any]) -> List[Dict[s
     system = (
         "Select the candidate's technical skills into EXACTLY FOUR fixed lines: "
         "'Languages', 'Frameworks', 'Developer Tools', 'Libraries'. "
-        "Selection only — only include skills present in that line's pool. "
+        "Selection only: only include skills present in that line's pool. "
         "RANK each line's pool by relevance to THIS job and return the BEST few, most-relevant "
         "FIRST: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of "
         "a smaller pool. Lead with every skill the JD explicitly mentions or strongly implies, "
         "then the strongest complementary skills (adjacent languages, transferable tools). Do "
-        "NOT pad with weak/unrelated filler to reach the count — a few sharp skills beat a long "
+        "NOT pad with weak/unrelated filler to reach the count. A few sharp skills beat a long "
         "list. You MAY merge closely-related API entries into one compact token (e.g. "
         "'Gemini/OpenAI/Claude API'). Preserve confidence qualifiers like '(conceptual)' / "
         "'(from scratch)' verbatim."
@@ -369,8 +369,8 @@ Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
 Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
 Rules:
-- Return each line ranked most-relevant-first: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries — or all of a smaller pool. JD-matching skills first, then adjacent/complementary skills that add signal.
-- Don't pad to hit the count with obscure or unrelated items — a few sharp, relevant skills beat a long list. Lead with the items this JOB cares about most.
+- Return each line ranked most-relevant-first: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool. JD-matching skills first, then adjacent/complementary skills that add signal.
+- Don't pad to hit the count with obscure or unrelated items; a few sharp, relevant skills beat a long list. Lead with the items this JOB cares about most.
 
 Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}}"""
     try:

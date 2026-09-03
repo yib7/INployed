@@ -1,13 +1,13 @@
-"""Golden-output oracle for the cycle-9 résumé-tailor legibility refactor.
+"""Golden-output oracle for the résumé-tailor engine.
 
-This file exists for one reason: the cycle-9 pass over ``local/resume_tailor/``
-(design spec: ``docs/superpowers/specs/2026-09-01-tailor-legibility-design.md``)
-moves code without changing what the engine produces. SP2 turns ``run.tailor()``'s
-hand-written stage sequence into a declarative pass pipeline, SP4 splits
-``compose.py`` into ``selection.py`` + ``skills.py``, and SP5 deletes the parts of
-the tree that were documented but never real. **All three are required to leave the
-output byte-identical**, and "byte-identical" is not something a reviewer can eyeball
-across a 1,571-line module move. So it is pinned here instead.
+The file was born in cycle 9 (design spec:
+``docs/superpowers/specs/2026-09-01-tailor-legibility-design.md``), a pass over
+``local/resume_tailor/`` that moved code without changing what the engine produces:
+SP2 turned ``run.tailor()``'s hand-written stage sequence into a declarative pass
+pipeline, SP4 split ``compose.py`` into ``selection.py`` + ``skills.py``, SP5 deleted
+the parts of the tree that were documented but never real. All three had to leave the
+output byte-identical, and "byte-identical" is not something a reviewer can eyeball
+across a 1,571-line module move. So it was pinned here instead.
 
 The test drives the whole bullet pipeline in the exact order ``run.tailor()`` runs it —
 ``select`` -> ``inject_verbatim`` -> ``lead_with_overview`` -> ``block_briefs`` ->
@@ -18,9 +18,20 @@ The test drives the whole bullet pipeline in the exact order ``run.tailor()`` ru
 they were produced by running this pipeline once and pasting what came out, so the test
 compares the engine against a frozen recording rather than against itself.
 
-**It must pass unchanged after SP2, SP4 and SP5.** A diff here is either a real behaviour
-change (fix it) or a deliberate one (then the whole premise of the cycle is void and the
-plan needs revisiting). Do not "update the golden" to make a refactor land.
+**The contract changed at cycle 10.** Cycle 9 was a pure refactor, so any diff here was
+a bug and the rule was "do not update the golden to make a refactor land". Cycle 10
+deliberately changes what the engine writes — prompt wording, selection, style repair —
+so the golden is now a change **detector**, not a change **preventer**. What it detects
+is an output change nobody meant to make. The rules:
+
+* A phase that does NOT intend to change output leaves this file untouched. A diff there
+  is still a real regression: find it, don't re-pin it.
+* A phase that DOES change output re-pins the literals below **and records the exact
+  before/after diff in that phase's entry in ``.autopilot/PLAN.md``**, so the change is
+  reviewable as text rather than as a wall of new expected values.
+* **A re-pin with no recorded diff is a failed checkpoint**, not a passing test. Pasting
+  fresh output into the literals is exactly how a regression ships disguised as a
+  refactor, and the recorded diff is the only thing standing in the way.
 
 Four tests, each catching a different kind of drift:
 

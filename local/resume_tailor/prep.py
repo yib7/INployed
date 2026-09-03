@@ -79,15 +79,15 @@ def generate_prep_sheet(job: Dict[str, str], out_dir: Optional[Path] = None) -> 
 
 {compose.fence_jd(jd, 7000, "identifying the role's requirements")}
 
-CANDIDATE EVIDENCE — ATOM CATALOG (the only allowed source of claims):
+CANDIDATE EVIDENCE / ATOM CATALOG (the only allowed source of claims):
 {compose._catalog()}{bullets_block}
 
 Write a markdown prep sheet with EXACTLY these sections:
 
-# Interview Prep — {job_title} @ {company}
+# Interview Prep: {job_title} @ {company}
 
 ## Requirement → Evidence Map
-One line per major JD requirement: `- **<requirement>** → <atom id(s) / bullet> — <one-clause talking point>`.
+One line per major JD requirement: `- **<requirement>** → <atom id(s) / bullet>: <one-clause talking point>`.
 Use `→ GAP` when nothing matches, with a one-clause honest mitigation.
 
 ## Likely Screening Questions
@@ -99,7 +99,7 @@ The 2-4 weakest spots vs. this JD and a suggested honest framing for each.
 
 ## Questions To Ask Them
 4-6 specific, informed questions for the interviewer (about the team, stack,
-roadmap — tied to details actually in the JD)."""
+roadmap, tied to details actually in the JD)."""
 
     text = call(system, user, config.TIER_FLASH, json_out=False, temperature=0.3)
     path = out_dir / "interview_prep.md"

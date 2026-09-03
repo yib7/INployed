@@ -512,7 +512,7 @@ def test_rephrase_dropped_budgets_param():
     assert "budgets" not in inspect.signature(compose.rephrase).parameters
 
 
-from resume_tailor import run as rt_run  # noqa: E402
+from resume_tailor import measure, run as rt_run  # noqa: E402
 
 
 def test_trim_to_caps_trims_over_length(monkeypatch):
@@ -573,6 +573,76 @@ def test_word_trim_drops_orphaned_prepositional_phrase():
     budget = text.find("data such") + 3           # cut = '...on categorical dat'
     out = rt_run._word_trim(text, budget + 1)     # max_visible - 1 == budget
     assert out.endswith("linear regressions"), out
+
+
+# ── the clause-cut permission floor (_CLAUSE_CUT_FLOOR) ───────────────────────
+# One text, two budgets. `_HEAD` is 60 chars and holds the ONLY ';'/',' in the
+# string, so the separator's position as a fraction of the budget is just
+# 60/budget: 62% at budget 97, 90% at budget 67. That is the whole knob under
+# test, and driving both cases off one string keeps the two halves honest — a
+# floor of 1.0 would satisfy the first test while silently disabling the feature,
+# which is what the second test exists to catch.
+_CUT_HEAD = "Rebuilt the nightly ingestion pipeline and cut batch runtime"
+_CUT_TEXT = _CUT_HEAD + ", keeping the warehouse green through the whole summer for the analysts"
+
+
+def test_word_trim_declines_a_clause_cut_that_guts_the_line():
+    """A clause boundary low in the budget must NOT buy a clause cut.
+
+    The floor is a PERMISSION threshold, not a target: the loop takes the
+    rightmost ';'/',' in the over-budget prefix and only asks whether it sits
+    high enough. At the old 0.6 this separator (62% of budget) qualified, so the
+    trim returned the bare `_CUT_HEAD` — 60 of the 97 chars that fit, 38% of the
+    line thrown away in one step, with nothing downstream to grow it back (the
+    underfull fill runs BEFORE the trim, never after; `enforce_one_page` only
+    drops whole bullets). At 0.85 it falls through to the word cut instead, which
+    sheds one partial word and keeps 89 of the 97.
+    """
+    budget = 97
+    assert _CUT_TEXT.index(",") == len(_CUT_HEAD) == 60      # the only separator
+    assert len(_CUT_HEAD) / budget == pytest.approx(0.62, abs=0.01)
+    out = rt_run._word_trim(_CUT_TEXT, budget + 1)           # max_visible - 1 == budget
+    assert out == _CUT_HEAD + ", keeping the warehouse green"
+    assert len(out) <= budget
+    assert out != _CUT_HEAD, "old behaviour: the clause cut discarded the whole tail"
+
+
+def test_word_trim_still_takes_a_clause_cut_near_the_budget():
+    """The other side of the floor: a separator that barely shortens the line IS
+    still cut on, so raising the threshold did not disable the feature.
+
+    Same text, smaller budget — the separator now sits at 90% of it, so the
+    clause cut fires and the line ends on a real boundary instead of a
+    word-boundary chop mid-phrase.
+    """
+    budget = 67
+    assert len(_CUT_HEAD) / budget == pytest.approx(0.90, abs=0.01)
+    out = rt_run._word_trim(_CUT_TEXT, budget + 1)
+    assert out == _CUT_HEAD                                  # cut AT the comma
+
+
+def test_word_trim_never_introduces_a_style_violation():
+    """A trim can only REMOVE text, so it cannot un-fix what the style gate fixed.
+
+    This is what makes `retrim=True` on the style-gate pass safe (SP2): the
+    re-trim runs after the last repair and no later pass re-checks the phrasing,
+    so a trim that could manufacture a banned pattern would ship one. It cannot —
+    `_word_trim` returns a prefix aligned to a word boundary, and none of
+    `compose._STYLE_BANS` is end-anchored, so every match in the trimmed text is a
+    match at the same offset in the original.
+    """
+    texts = [
+        "Rebuilt the ingestion service rather than the warehouse, and cut runtime by half",
+        "Rebuilt the marts, ensuring the analysts got fresh numbers every single morning",
+        "Rebuilt a robust ingestion service and cut the nightly batch runtime by half",
+        "Rebuilt the nightly marts and cut runtime, not by rewriting the whole warehouse",
+        _CUT_TEXT,
+    ]
+    for text in texts:
+        before = set(compose.style_violations(text))
+        for budget in range(20, len(text) + 5):
+            out = rt_run._word_trim(text, budget)
+            assert set(compose.style_violations(out)) <= before, (budget, out)
 
 
 def test_strip_dangling_drops_prepositional_fragments():
@@ -649,6 +719,52 @@ def test_trim_to_caps_never_trims_verbatim(monkeypatch):
     bullets = dict(verbatim)
     rt_run._trim_to_caps(sel, bullets)
     assert bullets[gk] == "x" * 400                                # exact text, never trimmed
+
+
+def test_style_gate_retrims_a_repair_that_overshoots_its_line_budget(
+        master_tmp, monkeypatch):
+    """SP2(a): the style gate is the LAST bullet pass, and its repair REWRITES the
+    bullet. The prompt asks the model to stay within `max_chars`, but nothing
+    verified that, and `compile.enforce_one_page` downstream only drops whole
+    bullets — it never re-trims text. So a repair that came back longer than the
+    text it replaced shipped over its line budget and silently wrapped onto an
+    extra line. `Pass("style gate", ..., retrim=True)` closes that.
+
+    Driven through the real driver and the real `Pass` object rather than by
+    calling `_trim_to_caps` by hand: the defect was in the pass WIRING, so
+    flipping `retrim` back to False has to fail this test.
+    """
+    monkeypatch.setattr(measure, "BODY_LINE_CAPACITY", 53464)
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"resume_layout": {"Example Corp": {"line_targets": [1]}}})
+    sel = {"experience": [{"name": "Example Corp", "groups": [["a1"]]}],
+           "projects": [], "leadership": []}
+    gk = compose._gkey(["a1"])
+    # Every word after the opening verb is lowercase and there are no numbers, so
+    # the grounding gate has nothing distinctive to trace: it cannot revert the
+    # repair, and what this test sees is the retrim alone.
+    offender = "Rebuilt the nightly pipeline while leveraging the warehouse"
+    repair = ("Rebuilt the nightly pipeline and kept the ingestion service green "
+              "for the whole summer, then wrote the runbook the on-call rotation "
+              "followed")
+    assert compose.style_violations(offender) == ["buzzword verb"]
+    assert compose.style_violations(repair) == []      # a strict improvement -> committed
+    assert measure.line_count(offender) == 1           # the bullet it replaces FITS
+    assert measure.line_count(repair) == 2             # the repair does not
+    monkeypatch.setattr(compose, "call",
+                        lambda *a, **k: {"bullets": [{"gkey": gk, "text": repair}]})
+
+    bullets = {gk: offender}
+    ctx = rt_run.PassCtx(jd="Data engineering role.", job_title="Data Engineer",
+                         sel=sel, bullets=bullets, verbatim={},
+                         reserved=frozenset(), log=lambda _m: None)
+    style_pass = next(p for p in rt_run._BULLET_PASSES if p.name == "style gate")
+    rt_run._run_bullet_passes(ctx, passes=(style_pass,))
+
+    assert bullets[gk].startswith("Rebuilt the nightly pipeline and kept")  # repair kept
+    assert bullets[gk] != repair                       # ... and then trimmed
+    assert measure.line_count(bullets[gk]) == 1        # back inside its line budget
+    assert compose.style_violations(bullets[gk]) == []  # the trim left it clean
 
 
 def test_block_briefs_one_batched_call_per_block(monkeypatch):

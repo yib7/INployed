@@ -316,6 +316,13 @@ re-trims when asked, and re-verifies against the snapshot. `_BULLET_PASSES` read
 sequence itself: verb dedupe, verbatim merge and trim, underfull fill, style gate.
 `verify.enforce_grounded` has exactly one call site, `_gate`.
 
+`retrim=True` on both passes that can LENGTHEN a bullet (underfull fill, style gate). Both
+ask a model for new text under a stated length limit, and neither answer is length-checked,
+so without the re-trim an over-long reply prints: nothing downstream re-trims text, and
+`compile.enforce_one_page` only drops whole bullets. The re-trim is safe to run after the
+style gate because `_word_trim` only ever returns a word-boundary prefix, and no pattern in
+`compose._STYLE_BANS` is end-anchored, so a trim can never manufacture a banned phrase.
+
 `rephrase` and its first gate stay outside the list. That gate runs with no fallback,
 because there is no earlier grounded text to revert to yet.
 

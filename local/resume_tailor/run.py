@@ -268,20 +268,43 @@ def _strip_dangling(text: str) -> str:
     return " ".join(words).rstrip(",;: ")
 
 
+# How full a clause cut has to leave the line before `_word_trim` will take one.
+#
+# This is a PERMISSION threshold, not a target: the loop below takes the RIGHTMOST
+# ';'/',' in the over-budget prefix, and this constant only decides whether that
+# separator is high enough to use. So the fraction is a floor on how much text
+# survives, and every separator above it is equally acceptable — there is no
+# preference for the one nearest the budget, because there is only ever one candidate
+# (the rightmost).
+#
+# It was 0.6, which reads like "keep the line reasonably full" but actually means
+# "accept a cut that throws away up to 40% of the bullet". When a bullet's only
+# separator sits low — say at 62% of budget — the clause cut fired and the bullet lost
+# more than a third of its text in one step, with nothing downstream to grow it back:
+# the underfull fill runs BEFORE the trim in `_BULLET_PASSES`, never after, and
+# `compile.enforce_one_page` only drops whole bullets, it never re-lengthens one.
+#
+# At 0.85 a clause cut is taken only when it barely shortens (<= 15% lost) — which is
+# the case it was actually for, ending on a real clause boundary instead of mid-phrase.
+# Below that we fall through to the word cut, which sheds one or two words and is
+# grammar-protected by `_strip_dangling`.
+_CLAUSE_CUT_FLOOR = 0.85
+
+
 def _word_trim(text: str, max_visible: int) -> str:
     """Trim to <= max_visible rendered glyphs, ending on a clean grammatical
     boundary (clean_bullet re-adds the trailing period). Numbers/impact are
     front-loaded, so trimming the tail preserves the metrics. Prefer cutting at a
-    clause boundary (comma/semicolon) that keeps the line reasonably full; else
-    word-trim and strip any dangling connective. The deterministic last resort
-    when the model overshoots its length target."""
+    clause boundary (comma/semicolon) that keeps the line nearly full
+    (_CLAUSE_CUT_FLOOR); else word-trim and strip any dangling connective. The
+    deterministic last resort when the model overshoots its length target."""
     text = text.rstrip().rstrip(".")
     budget = max_visible - 1  # leave room for the period clean_bullet appends
     if len(text) <= budget:
         return text
     cut = text[:budget]
     # A clause boundary makes the cleanest cut, if it doesn't gut the line.
-    floor = int(budget * 0.6)
+    floor = int(budget * _CLAUSE_CUT_FLOOR)
     for sep in (";", ","):
         idx = cut.rfind(sep)
         while idx >= floor:
@@ -444,7 +467,13 @@ def _pass_fill_underfull(ctx: PassCtx) -> None:
 
 def _pass_enforce_style(ctx: PassCtx) -> None:
     """Deterministic style gate: banned AI-tell phrasing (em dashes, contrast framing,
-    buzzword verbs, ...) never reaches the page."""
+    buzzword verbs, ...) never reaches the page.
+
+    `retrim=True` because the repair REWRITES a bullet: the prompt asks it to stay
+    within `max_chars`, but nothing verified that, and this is the LAST bullet pass —
+    downstream `compile.enforce_one_page` only drops whole bullets, it never re-trims
+    text. So a repair that came back longer than the text it replaced used to ship
+    over its line budget and silently wrap onto an extra line."""
     fixed = compose.enforce_style(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
     if fixed:
         ctx.log(f"style gate: repaired {fixed} bullet(s).")
@@ -458,7 +487,7 @@ _BULLET_PASSES = (
     Pass("verbatim + trim", _pass_merge_verbatim, verify=False),
     Pass("underfull fill", _pass_fill_underfull,
          enabled=config.fill_underfull_enabled, retrim=True),
-    Pass("style gate", _pass_enforce_style),
+    Pass("style gate", _pass_enforce_style, retrim=True),
 )
 
 

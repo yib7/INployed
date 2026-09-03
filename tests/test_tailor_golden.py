@@ -12,8 +12,8 @@ across a 1,571-line module move. So it was pinned here instead.
 The test drives the whole bullet pipeline in the exact order ``run.tailor()`` runs it —
 ``select`` -> ``inject_verbatim`` -> ``lead_with_overview`` -> ``block_briefs`` ->
 ``rephrase`` -> grounding gate -> ``dedupe_leading_verbs`` -> gate -> verbatim merge ->
-``_trim_to_caps`` -> ``fill_underfull`` -> retrim -> gate -> ``enforce_style`` -> gate ->
-``compress_skills`` -> ``methods_line`` -> ``render.render`` — and asserts the EXACT final
+``_trim_to_caps`` -> ``fill_underfull`` -> retrim -> gate -> ``enforce_style`` -> retrim ->
+gate -> ``compress_skills`` -> ``methods_line`` -> ``render.render`` — and asserts the EXACT final
 ``bullets`` dict and the EXACT rendered ``.tex``. The expected values below are literals:
 they were produced by running this pipeline once and pasting what came out, so the test
 compares the engine against a frozen recording rather than against itself.
@@ -478,6 +478,7 @@ def _run_bullet_pipeline():
 
     grounded_snap = dict(bullets)
     compose.enforce_style(jd, job_title, sel, bullets)
+    rt_run._trim_to_caps(sel, bullets)     # SP2: the style repair may lengthen a bullet
     verify.enforce_grounded(sel, bullets, fallback=grounded_snap)
 
     skill_lines = compose.compress_skills(jd, job_title, sel)
@@ -504,10 +505,15 @@ _GOLDEN_STAGES = [
 ]
 
 _GOLDEN_BULLETS = {
+    # SP2 re-pin (clause-cut floor 0.6 -> 0.85). Was "...new raw event volume": the only
+    # comma in the over-budget prefix sat at char 204 of a 254-char 2-line budget (80%),
+    # which cleared the old 60% floor, so the clause cut fired and threw away 50 chars
+    # that FIT. It now falls through to the word cut, which keeps 232 of the 254 and lands
+    # on "...the runbook" (_strip_dangling sheds the trailing "that ..." fragment).
     "gx_etl":
         "Rebuilt the nightly ETL pipeline in Python against PostgreSQL and cut batch runtime 42%, "
         "keeping the ingestion service green across the whole summer while the warehouse kept taking on "
-        "new raw event volume",
+        "new raw event volume, and wrote the runbook",
     "gx_dbt":
         "Consolidated 12 dbt marts that replaced hand-written SQL extracts.",
     "th_model":
@@ -563,7 +569,7 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \resumeSubheadingOneLine
 {Data Engineering Intern}{Globex Analytics}{Austin, TX}{June 2024 -- August 2024}
 \resumeItemListStart
-\resumeItem{Rebuilt the nightly ETL pipeline in Python against PostgreSQL and cut batch runtime 42\%, keeping the ingestion service green across the whole summer while the warehouse kept taking on new raw event volume.}
+\resumeItem{Rebuilt the nightly ETL pipeline in Python against PostgreSQL and cut batch runtime 42\%, keeping the ingestion service green across the whole summer while the warehouse kept taking on new raw event volume, and wrote the runbook.}
 \resumeItem{Consolidated 12 dbt marts that replaced hand-written SQL extracts.}
 \resumeItemListEnd
 

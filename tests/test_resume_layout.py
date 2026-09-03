@@ -41,7 +41,7 @@ def test_block_targets_bad_shape_falls_back(monkeypatch):
 
 
 def test_constants_present():
-    assert config.MAX_LINE_CHARS == 130
+    assert not hasattr(config, "MAX_LINE_CHARS")   # retired: the length budget is measured now
     assert config.PROJECTS_MAX == 3 and config.PROJECT_BULLETS_MAX == 2
     assert config.PROJECTS_MAX_LIMIT == 6
 
@@ -291,15 +291,18 @@ def test_enforce_fixed_counts_fallback_to_default_line_targets(monkeypatch):
 
 
 def test_length_hint_has_floor_and_ceiling():
-    """A3: the hint now carries a soft floor (>=90% single-line, >=75% last line of
-    a multi-line bullet) plus the hard ceiling = target_lines * MAX_LINE_CHARS."""
-    per = config.MAX_LINE_CHARS
+    """A3: the hint carries a soft floor (>=90% single-line, >=75% of the last line of
+    a multi-line bullet) plus a hard ceiling. SP3: the ceiling is measure.char_budget —
+    the real MEASURED capacity of that many printed lines, not target_lines * a flat
+    chars-per-line, which overshot what fits (measure.char_budget explains why)."""
+    cap1, cap2 = measure.char_budget(1), measure.char_budget(2)
     h1 = compose._length_hint(1)
-    assert str(per) in h1                       # ceiling = one line
-    assert str(ceil(0.90 * per)) in h1          # single-line floor >=90%
+    assert str(cap1) in h1                          # ceiling = one line's real capacity
+    assert str(ceil(0.90 * cap1)) in h1             # single-line floor >=90% of it
     h2 = compose._length_hint(2)
-    assert str(2 * per) in h2                    # ceiling = two lines
-    assert str(ceil((1 + 0.75) * per)) in h2    # multi-line last-line floor >=75%
+    assert str(cap2) in h2                          # ceiling = two lines' real capacity
+    assert str(ceil((1.75 / 2) * cap2)) in h2       # last line >=75%, earlier lines full
+    assert cap2 < 2 * cap1                          # sublinear: wrap waste at the break
 
 
 def test_select_uses_four_skill_pools_no_keyerror(monkeypatch):
@@ -524,7 +527,7 @@ def test_trim_to_caps_trims_over_length(monkeypatch):
     long_text = "Led " + "x" * 200  # ~204 chars, target 1 line -> cap 100
     bullets = {gk: long_text}
     rt_run._trim_to_caps(sel, bullets)
-    assert len(bullets[gk]) <= config.MAX_LINE_CHARS
+    assert measure.line_count(bullets[gk]) <= 1   # the trim's real contract: printed lines
     assert bullets[gk].startswith("Led")  # front-loaded content preserved
 
 

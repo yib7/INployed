@@ -76,6 +76,11 @@ for _leaked in (
     "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
     "RESUME_TAILOR_OUTPUT", "RESUME_TAILOR_CANDIDATE", "RESUME_TAILOR_GEMINI_AUTH",
     "RESUME_TAILOR_PROVIDER", "LINKEDIN_EXTRA_MASTER", "APPLY_QUEUE_PATH",
+    # Import-time layout constants (measure.py): a developer override would otherwise
+    # decide the golden and the fill-fraction defaults the suite asserts.
+    "RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
+    "RESUME_TAILOR_UNDERFULL_FILL", "RESUME_TAILOR_BODY_LINE_CAPACITY",
+    "RESUME_TAILOR_SKILL_LINE_CAPACITY",
 ):
     os.environ.pop(_leaked, None)
 

@@ -1,7 +1,7 @@
 """Width-aware line measurement for resume body bullets.
 
 The pipeline used to approximate a bullet's printed line count as
-``len(text) / MAX_LINE_CHARS`` — a flat character count that can't tell a wide word
+``len(text) / <chars per line>`` — a flat character count that can't tell a wide word
 ('cross-encoder') from a narrow one ('it'), so a bullet sitting at the 2-line boundary
 could silently wrap to a 3rd line. This models the ACTUAL render instead: each
 character's advance width (standard Times-Roman metrics, in 1/1000 em — close to the
@@ -94,6 +94,63 @@ def line_count(text: str, capacity: int | None = None) -> int:
     return n
 
 
+# ── The character budget we ASK the model for ────────────────────────────────
+# The rephrase prompt has to state a bullet's length as a CHARACTER cap (the model cannot
+# measure glyph widths), so we convert the width budget above into characters here.
+#
+# Two things make that conversion non-obvious, and both are load-bearing:
+#
+#  1. Characters are not all the same width, so the cap has to assume the WIDEST realistic
+#     prose, not the average. Measured over a set of representative bullets — binary-search
+#     the longest prefix with line_count(prefix) <= n — the effective width per character at
+#     the tightest bullet lands at 421-424 units, against a 411-unit mean. Using the mean
+#     would invite an over-length bullet on every denser-than-average line.
+#
+#  2. Capacity is SUBLINEAR in the line count. Greedy word wrap loses part of a line at every
+#     break: the word that will not fit is pushed down whole, leaving the line before it
+#     short. So an n-line bullet holds LESS than n times a one-line bullet — measured, the
+#     per-line char rate falls 127 -> 126.5 -> 126 as n goes 1 -> 2 -> 3. `n * per_line` is
+#     therefore wrong in PRINCIPLE, not merely mistuned; it overshoots by ~10 chars at n=2 and
+#     ~13 at n=3, which is exactly enough to push a bullet onto an extra line and hand it to
+#     the deterministic trim. Do not "simplify" this back to a flat multiply.
+#
+# Both constants are in the same 1/1000-em units as BODY_LINE_CAPACITY / are dimensionless, so
+# char_budget() tracks the capacity if the template is ever recalibrated.
+_BUDGET_CHAR_WIDTH = 422   # conservative advance width of one character of bullet prose
+_WRAP_WASTE = 0.06         # fraction of a line greedy wrap loses at each break
+
+
+def char_budget(target_lines: int, capacity: int | None = None) -> int:
+    """The largest character count we can ask the model for and still expect the bullet to
+    render within `target_lines` printed lines. Deliberately at or below the MINIMUM real
+    capacity measured for that line count (126 / 245 / 364 at the calibrated default, against
+    real minima of 127 / 250 / 377), because a bullet that overshoots gets cut by the
+    deterministic trim — a cap that is a few characters short costs nothing by comparison.
+    See the block comment above for why this is not `target_lines * chars_per_line`."""
+    cap = BODY_LINE_CAPACITY if capacity is None else capacity
+    n = max(1, int(target_lines))
+    usable = (n - (n - 1) * _WRAP_WASTE) * cap
+    return max(1, int(usable / _BUDGET_CHAR_WIDTH))
+
+
+def _env_fraction(name: str, default: float, lo: float = 0.05, hi: float = 1.0) -> float:
+    """A 0-1 fill fraction from the environment, falling back to `default` for anything that
+    is not a real number inside [lo, hi]. These feed the prompt's fill AIM and the underfull
+    RESCUE trigger, so a 0 (every bullet is 'full enough') or a 2.0 (nothing ever is) must
+    not reach the engine — a typo in a .env should degrade to the documented default, never
+    crash the run or silently disable a stage."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if not (lo <= val <= hi):   # also rejects nan, which compares False against everything
+        return default
+    return val
+
+
 # Two distinct fill fractions, intentionally DECOUPLED:
 #   * the rephrase AIM (FULL_LINE_FILL / LAST_LINE_FILL) is how full we ASK the model to make a
 #     bullet (compose._length_hint): a single-line bullet aims for >=90% of its line, a multi-line
@@ -102,9 +159,12 @@ def line_count(text: str, capacity: int | None = None) -> int:
 #     folding in a spare same-block atom (fill_floor_width -> is_underfull -> compose.fill_underfull).
 #     Set low (50%) so only a genuinely sparse line is grown; some white space above it is fine and
 #     kept for readability.
-FULL_LINE_FILL = 0.90    # _length_hint aim (single line)
-LAST_LINE_FILL = 0.75    # _length_hint aim (last line of a multi-line bullet)
-UNDERFULL_FILL = 0.50    # is_underfull / fill_underfull trigger (rescue only below half-full)
+# All three are env-overridable (power users only — deliberately NOT Settings GUI fields, same
+# call as RESUME_TAILOR_TIMEOUTS: a fraction a non-technical user can set to 0 is a footgun,
+# and the three interact). Out-of-range or unparseable values fall back to the default below.
+FULL_LINE_FILL = _env_fraction("RESUME_TAILOR_FULL_LINE_FILL", 0.90)   # aim (single line)
+LAST_LINE_FILL = _env_fraction("RESUME_TAILOR_LAST_LINE_FILL", 0.75)   # aim (last line, multi)
+UNDERFULL_FILL = _env_fraction("RESUME_TAILOR_UNDERFULL_FILL", 0.50)   # rescue trigger
 
 
 def fill_floor_width(target_lines: int, capacity: int | None = None) -> int:

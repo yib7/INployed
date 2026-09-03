@@ -79,9 +79,11 @@ def _config_json() -> dict:
 # ── Resume layout (per-bullet line targets for the constant blocks) ───────────
 # Editable from the dashboard; persisted in local/config.json under "resume_layout"
 # as {block_name: {"line_targets": [int, ...]}}. The list length is the bullet
-# count for that block; each int is that bullet's printed-line target, which drives
-# the soft length hint in rephrase and the deterministic trim cap (lines * MAX_LINE_CHARS).
-MAX_LINE_CHARS = int(os.getenv("RESUME_TAILOR_MAX_LINE_CHARS", "130"))
+# count for that block; each int is that bullet's printed-line target. Both consumers of
+# that target are WIDTH-aware and live in measure.py — the prompt's soft length hint
+# (measure.char_budget, via compose._length_hint) and the deterministic trim
+# (measure.line_count, via run._fit_to_lines) — so there is no flat chars-per-line
+# constant here any more; the old MAX_LINE_CHARS was the last thing reading one.
 DEFAULT_LINE_TARGETS = [2, 2, 2]
 PROJECTS_MAX = int(os.getenv("RESUME_TAILOR_PROJECTS_MAX", "3"))  # built-in default / fallback
 PROJECTS_MAX_LIMIT = 6  # hard ceiling for the configurable cap: the resume is one page.

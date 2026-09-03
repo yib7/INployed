@@ -177,16 +177,21 @@ def group_map(sel: Dict[str, Any]) -> Dict[str, List[str]]:
 
 # ── Stage 2: rephrase ────────────────────────────────────────────────────────
 def _length_hint(target_lines: int) -> str:
-    """A soft floor + hard ceiling for one bullet. The ceiling is the trim cap
-    (target_lines * MAX_LINE_CHARS); the floor keeps the bullet from sitting
-    stubby — a single-line bullet should fill >=90% of its line, and a wrapping
-    bullet's last line should fill >=75% (so floor = ((n-1)+0.75)*cap_per_line)."""
-    per_line = config.MAX_LINE_CHARS
-    cap = target_lines * per_line
+    """A soft floor + hard ceiling for one bullet, both in characters (the model cannot
+    measure glyph widths, so the printed-line budget has to be stated as a char count).
+
+    The ceiling is `measure.char_budget`: the real, MEASURED capacity of that many printed
+    lines. It is deliberately NOT `target_lines * <chars per line>` — greedy word wrap loses
+    part of a line at every break, so capacity is sublinear in the line count and the flat
+    multiply invited the model to write past what fits (see measure.char_budget). The floor
+    keeps the bullet from sitting stubby: a single-line bullet fills FULL_LINE_FILL of its
+    budget, a wrapping bullet fills all but its last line and LAST_LINE_FILL of that one."""
+    cap = measure.char_budget(target_lines)
     if target_lines <= 1:
-        floor = ceil(measure.FULL_LINE_FILL * per_line)
+        floor = ceil(measure.FULL_LINE_FILL * cap)
     else:
-        floor = ceil(((target_lines - 1) + measure.LAST_LINE_FILL) * per_line)
+        share = ((target_lines - 1) + measure.LAST_LINE_FILL) / target_lines
+        floor = ceil(share * cap)
     unit = "line" if target_lines == 1 else "lines"
     return (f"about {target_lines} {unit} ({floor}-{cap} characters; aim to fill "
             f"the line(s), never exceed {cap})")
@@ -409,10 +414,15 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
         "(the list is large; there is always an unused, fitting choice). Numbers exactly "
         "as written. Write 'greater than or equal to' style comparisons with the symbols "
         ">= and <= (they are converted to proper math notation later).\n"
-        "SPACE: a bullet that fits on ONE printed line should fill at least ~90% of it. "
+        # The two percentages are FORMATTED from measure's constants, never written out as
+        # literals: they are the same numbers _length_hint's floor is computed from, and a
+        # prompt that states its own copy drifts silently the moment a constant is retuned.
+        f"SPACE: a bullet that fits on ONE printed line should fill at least "
+        f"~{measure.FULL_LINE_FILL:.0%} of it. "
         "Never leave a stubby half-empty line (fold in more grounded detail from the atoms "
         "or fuse, but NEVER invent facts to pad). A bullet that wraps to multiple lines may "
-        "let its last line run shorter, but it should still be at least ~75% full."
+        f"let its last line run shorter, but it should still be at least "
+        f"~{measure.LAST_LINE_FILL:.0%} full."
     )
     user = f"""TARGET JOB: {job_title}
 

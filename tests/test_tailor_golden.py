@@ -417,13 +417,19 @@ def pinned_engine(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     # Import-time constants: env can no longer reach them, so pin the attributes.
-    monkeypatch.setattr(config, "MAX_LINE_CHARS", 130)
+    # (config.MAX_LINE_CHARS was pinned here until SP3 retired it — the length budget is
+    # derived from measure.BODY_LINE_CAPACITY below, which is pinned instead.)
     monkeypatch.setattr(config, "DEFAULT_LINE_TARGETS", [2, 2, 2])
     monkeypatch.setattr(config, "PROJECTS_MAX", 3)
     monkeypatch.setattr(config, "PROJECT_BULLETS_MAX", 2)
     monkeypatch.setattr(config, "PROJECT_BULLET_LINES", 2)
     monkeypatch.setattr(measure, "BODY_LINE_CAPACITY", 53464)
     monkeypatch.setattr(measure, "SKILL_LINE_CAPACITY", 53464)
+    # SP3 made the fill fractions env-overridable at import time. UNDERFULL_FILL decides which
+    # bullets fill_underfull rewrites, so an exported override would otherwise pick the golden.
+    monkeypatch.setattr(measure, "FULL_LINE_FILL", 0.90)
+    monkeypatch.setattr(measure, "LAST_LINE_FILL", 0.75)
+    monkeypatch.setattr(measure, "UNDERFULL_FILL", 0.50)
     monkeypatch.setattr(layout, "LEADERSHIP_ENTRY_LINES", 2)
 
     # Prompt-only assets that would otherwise read files absent from a fresh clone

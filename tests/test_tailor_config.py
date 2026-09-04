@@ -1013,3 +1013,72 @@ def test_load_master_top_level_list_raises_value_error(tmp_path, monkeypatch):
             assets.load_master()
     finally:
         assets.load_master.cache_clear()
+
+
+# ── import-time env constants degrade instead of crashing the import (3A) ─────
+# PROJECTS_MAX / PROJECT_BULLETS_MAX / PROJECT_BULLET_LINES are resolved at IMPORT
+# scope. A bare int(os.getenv(...)) turned `RESUME_TAILOR_PROJECTS_MAX=three` into
+# a ValueError raised while importing config -- which takes down every caller with
+# a raw traceback and makes projects_max()'s own try/except unreachable, since the
+# module it lives in never finishes loading.
+
+_PROJECT_ENV = ("RESUME_TAILOR_PROJECTS_MAX", "RESUME_TAILOR_PROJECT_BULLETS_MAX",
+                "RESUME_TAILOR_PROJECT_BULLET_LINES")
+_PROJECT_DEFAULTS = (3, 2, 2)
+
+
+@pytest.fixture()
+def reload_config(tmp_path):
+    """Re-import config under a chosen environment, then restore the defaults.
+
+    importlib.reload mutates the module object in place, so every other module that
+    did `from . import config` keeps seeing the same object.
+
+    It also RE-RUNS the module body, which silently undoes conftest's
+    _hermetic_repo_data patch of `config.CONFIG_JSON` -- so a reloaded config reads
+    the author's real local/config.json again. Re-point it at an empty tmp file
+    after every reload, or these tests report on that machine's settings."""
+    import importlib
+    import os
+
+    cfg_json = tmp_path / "config.json"
+
+    def _load(**env):
+        for name in _PROJECT_ENV:
+            os.environ.pop(name, None)
+        os.environ.update(env)
+        mod = importlib.reload(config)
+        mod.CONFIG_JSON = cfg_json          # reload restored the real path
+        return mod
+
+    yield _load
+    for name in _PROJECT_ENV:
+        os.environ.pop(name, None)
+    importlib.reload(config)
+    config.CONFIG_JSON = cfg_json
+
+
+def _project_consts(mod):
+    return (mod.PROJECTS_MAX, mod.PROJECT_BULLETS_MAX, mod.PROJECT_BULLET_LINES)
+
+
+def test_project_env_overrides_are_honoured(reload_config):
+    c = reload_config(RESUME_TAILOR_PROJECTS_MAX="5",
+                      RESUME_TAILOR_PROJECT_BULLETS_MAX="3",
+                      RESUME_TAILOR_PROJECT_BULLET_LINES="1")
+    assert _project_consts(c) == (5, 3, 1)
+
+
+@pytest.mark.parametrize("bad", ["", "  ", "three", "3.0", "None", "3 projects", "0", "-1"])
+def test_project_constants_default_instead_of_failing_the_import(reload_config, bad):
+    c = reload_config(RESUME_TAILOR_PROJECTS_MAX=bad,
+                      RESUME_TAILOR_PROJECT_BULLETS_MAX=bad,
+                      RESUME_TAILOR_PROJECT_BULLET_LINES=bad)
+    assert _project_consts(c) == _PROJECT_DEFAULTS
+
+
+def test_projects_max_still_resolves_after_a_garbage_env(reload_config):
+    """The live resolver keeps working, which is the whole point: before the fix it
+    was unreachable code because the import raised first."""
+    c = reload_config(RESUME_TAILOR_PROJECTS_MAX="three")
+    assert c.projects_max() == 3

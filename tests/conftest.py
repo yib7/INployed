@@ -81,6 +81,13 @@ for _leaked in (
     "RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
     "RESUME_TAILOR_UNDERFULL_FILL", "RESUME_TAILOR_BODY_LINE_CAPACITY",
     "RESUME_TAILOR_SKILL_LINE_CAPACITY",
+    # config.py's import-time layout constants, for exactly the same reason. These
+    # were handled ad hoc instead: tests/test_resume_layout.py carries twelve
+    # `monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX")` lines and the golden pins
+    # all three by attribute. Scrub them once here so a shell export cannot decide
+    # what any other test sees.
+    "RESUME_TAILOR_PROJECTS_MAX", "RESUME_TAILOR_PROJECT_BULLETS_MAX",
+    "RESUME_TAILOR_PROJECT_BULLET_LINES",
     # The simple/tiers model switch and its one-model ids. Read LIVE from
     # os.environ by config.model_for / claude_model_for, so a shell export (the
     # author's own .env is about to say `simple`) would re-point every tier in the
@@ -281,6 +288,7 @@ def _hermetic_repo_data(tmp_path_factory):
     import settings
     import watcher
     from resume_tailor import apply_answers, apply_config
+    from resume_tailor import config as rt_config
 
     d = tmp_path_factory.mktemp("hermetic_repo")
     with pytest.MonkeyPatch.context() as mp:
@@ -296,6 +304,12 @@ def _hermetic_repo_data(tmp_path_factory):
                    if targets is None else targets)
         mp.setattr(apply_answers, "STORE_PATH", d / "apply_answers.json")
         mp.setattr(apply_config, "APPLY_CONFIG", d / "apply_config.json")
+        # resume_tailor.config keeps its OWN binding to local/config.json, so the
+        # jobsdata.HERE redirect above never covered it: config._config_json() read
+        # the author's real file. Caught in 3A by asking projects_max() for a
+        # default and getting 4 -- the value in the author's config.json, where a
+        # fresh clone has no file at all and answers 3.
+        mp.setattr(rt_config, "CONFIG_JSON", d / "config.json")
         mp.setattr(scraper, "OUTPUT_DIR", d)
         mp.setattr(scraper, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(scraper, "PREVIOUS_IDS_FILE", d / "last_run_job_ids.json")

@@ -51,11 +51,27 @@ _CHAR_W_BOLD = {
 _DEFAULT_W = 500
 _DEFAULT_W_BOLD = 556
 
+def _env_int(name: str, default: int, lo: int = 1) -> int:
+    """A positive int from the environment, falling back to `default` for anything that
+    is not one. Same contract as `_env_fraction` below, and for the same reason: these
+    run at IMPORT scope, so a bare `int(os.getenv(...))` would turn a typo in a .env
+    (`RESUME_TAILOR_BODY_LINE_CAPACITY=53,464`) into a ValueError that takes down the
+    whole package with a raw traceback before any handler exists to catch it."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        val = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return val if val >= lo else default
+
+
 # Body text-column capacity in the same 1/1000-em units (calibrated; see module docstring).
-BODY_LINE_CAPACITY = int(os.getenv("RESUME_TAILOR_BODY_LINE_CAPACITY", "53464"))
+BODY_LINE_CAPACITY = _env_int("RESUME_TAILOR_BODY_LINE_CAPACITY", 53464)
 # A skills line shares the body text column AND font size (verified against the real PDF:
 # both 9.96pt at the same x indent), so its one-line capacity is identical by default.
-SKILL_LINE_CAPACITY = int(os.getenv("RESUME_TAILOR_SKILL_LINE_CAPACITY", str(BODY_LINE_CAPACITY)))
+SKILL_LINE_CAPACITY = _env_int("RESUME_TAILOR_SKILL_LINE_CAPACITY", BODY_LINE_CAPACITY)
 
 
 def text_width(s: str, bold: bool = False) -> int:

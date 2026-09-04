@@ -428,8 +428,10 @@ def test_prompt_space_percentages_track_the_fill_constants(monkeypatch):
 
 # --- SP3: env overrides for the three fill fractions ----------------------------
 _FILL_ENV = ("RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
-             "RESUME_TAILOR_UNDERFULL_FILL")
+             "RESUME_TAILOR_UNDERFULL_FILL",
+             "RESUME_TAILOR_BODY_LINE_CAPACITY", "RESUME_TAILOR_SKILL_LINE_CAPACITY")
 _FILL_DEFAULTS = (0.90, 0.75, 0.50)
+_CAPACITY_DEFAULT = 53464
 
 
 @pytest.fixture()
@@ -487,3 +489,39 @@ def test_underfull_env_override_reaches_the_trigger(reload_measure):
     m = reload_measure(RESUME_TAILOR_UNDERFULL_FILL="0.30")
     assert m.fill_floor_width(1) == ceil(0.30 * m.BODY_LINE_CAPACITY)
     assert m.fill_floor_width(2) == ceil(1.30 * m.BODY_LINE_CAPACITY)
+
+
+# ── the capacity overrides parse defensively (3A) ─────────────────────────────
+# BODY_LINE_CAPACITY / SKILL_LINE_CAPACITY are read at IMPORT scope, so a bare
+# int(os.getenv(...)) turned a typo in a .env into a ValueError raised while
+# importing measure -- which takes the whole tailor path down with a raw
+# traceback, in a module whose own _env_fraction documents the opposite rule
+# ("a typo in a .env should degrade to the documented default, never crash").
+
+
+def test_capacity_env_override_is_honoured(reload_measure):
+    m = reload_measure(RESUME_TAILOR_BODY_LINE_CAPACITY="40000")
+    assert m.BODY_LINE_CAPACITY == 40000
+    assert m.SKILL_LINE_CAPACITY == 40000     # defaults to the body column
+
+
+def test_skill_capacity_can_differ_from_the_body_column(reload_measure):
+    m = reload_measure(RESUME_TAILOR_BODY_LINE_CAPACITY="40000",
+                       RESUME_TAILOR_SKILL_LINE_CAPACITY="30000")
+    assert (m.BODY_LINE_CAPACITY, m.SKILL_LINE_CAPACITY) == (40000, 30000)
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "53,464", "fifty", "53464.0", "None", "0x1"])
+def test_capacity_defaults_on_garbage_instead_of_failing_the_import(reload_measure, bad):
+    m = reload_measure(RESUME_TAILOR_BODY_LINE_CAPACITY=bad,
+                       RESUME_TAILOR_SKILL_LINE_CAPACITY=bad)
+    assert m.BODY_LINE_CAPACITY == _CAPACITY_DEFAULT
+    assert m.SKILL_LINE_CAPACITY == _CAPACITY_DEFAULT
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "-53464"])
+def test_capacity_rejects_a_non_positive_column(reload_measure, bad):
+    """A capacity of 0 makes char_budget and line_count meaningless (every bullet
+    is infinitely over-long), so it degrades to the calibrated default."""
+    m = reload_measure(RESUME_TAILOR_BODY_LINE_CAPACITY=bad)
+    assert m.BODY_LINE_CAPACITY == _CAPACITY_DEFAULT

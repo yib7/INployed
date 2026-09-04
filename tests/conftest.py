@@ -95,6 +95,13 @@ for _leaked in (
     # developer's shell. Same reason RESUME_TAILOR_PROVIDER is on this list.
     "RESUME_TAILOR_MODEL_MODE", "RESUME_TAILOR_MODEL_ALL",
     "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
+    # score_jobs' scoring config: env beats the file, and these decide the
+    # module constants frozen at import (see _hermetic_repo_data).
+    "SCORE_PROVIDER", "SCORE_STAGE1_MODEL", "SCORE_STAGE2_MODEL",
+    "SCORE_STAGE1_MODEL_CLAUDE", "SCORE_STAGE2_MODEL_CLAUDE",
+    "SCORE_STAGE1_CONCURRENCY", "SCORE_STAGE2_CONCURRENCY",
+    "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
+    "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY", "SCORE_HTTP_TIMEOUT_S",
 ):
     os.environ.pop(_leaked, None)
 
@@ -319,6 +326,31 @@ def _hermetic_repo_data(tmp_path_factory):
         mp.setattr(score_jobs, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(score_jobs, "RESUME_PATH", d / "resume.md")
         mp.setattr(score_jobs, "RUN_STATS_CSV", d / "run_stats.csv")
+        # score_jobs runs `_SCORING = load_scoring_config()` at IMPORT scope, long
+        # before this function-scoped fixture can move OUTPUT_DIR -- so the module
+        # constants below were frozen from the author's gitignored
+        # scoring_config.json and stayed that way for the whole session. Measured:
+        # STAGE1_MODEL came back as the author's configured id, not the built-in
+        # default, and tests/test_scoring_config.py's
+        # `test_absent_file_uses_builtin_defaults` passed only because that file
+        # happened to carry the same MIN_FILTER_YEARS and STAGE2_THRESHOLD.
+        # Re-resolve against the sandbox and rebind, so every test sees the
+        # documented defaults. A test wanting other values writes its own file and
+        # calls load_scoring_config() itself.
+        _scoring = score_jobs.load_scoring_config()
+        _provider, _s1, _s2 = score_jobs._active_scoring(_scoring)
+        mp.setattr(score_jobs, "_SCORING", _scoring)
+        mp.setattr(score_jobs, "SCORING_PROVIDER", _provider)
+        mp.setattr(score_jobs, "STAGE1_MODEL", _s1)
+        mp.setattr(score_jobs, "STAGE2_MODEL", _s2)
+        for _attr, _key in (("STAGE1_CONCURRENCY", "stage1_concurrency"),
+                            ("STAGE2_CONCURRENCY", "stage2_concurrency"),
+                            ("STAGE2_THRESHOLD", "stage2_threshold"),
+                            ("MAX_SCORED_PER_RUN", "max_scored_per_run"),
+                            ("RESCORE_CAP", "rescore_cap"),
+                            ("MIN_FILTER_YEARS", "min_filter_years"),
+                            ("DROP_EASY_APPLY", "drop_easy_apply")):
+            mp.setattr(score_jobs, _attr, _scoring[_key])
         yield
 
 

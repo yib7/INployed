@@ -300,8 +300,8 @@ def refine_body(jd: str, job_title: str, company: str, body: str,
     used = "\n".join(f"- {t}" for t in bullets.values())
     system = (
         "You are an editor doing a final polish pass on a cover-letter body. Improve "
-        "cohesion and flow so it reads as one connected argument, not stitched-together "
-        "sentences. Stay grounded: use ONLY facts already in the draft and the resume "
+        "cohesion and flow so the sentences build ONE connected argument. "
+        "Stay grounded: use ONLY facts already in the draft and the resume "
         "bullets below; never add a company, number, skill, or claim that isn't "
         "supported, and cut anything the draft invented. Keep the meaning and roughly "
         "the same length; no salutation and no sign-off. Show genuine but MEASURED "

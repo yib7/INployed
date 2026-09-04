@@ -98,11 +98,16 @@ cd INployed
 ### Step 2: Install the dependencies into a project venv
 ```powershell
 python -m venv venv
+venv\Scripts\python.exe -m pip install --upgrade pip
 venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests. Calling
 the venv's `python.exe` by path means you never have to activate it, which Windows' default
-execution policy blocks. The launcher in Step 4 finds this `venv` on its own.
+execution policy blocks. The launcher in Step 4 finds this `venv` on its own. The pip upgrade
+comes first because `python -m venv` seeds whatever pip shipped with your interpreter (25.2 on
+Python 3.14.0), and six advisories against pip 25.2 are fixed by 26.2: path traversal in
+entry-point names, a symlink escape in its fallback tar extractor, and a doubly-encoded index
+URL it resolved wrong.
 
 ### Step 3: Create your local config files
 ```powershell
@@ -368,11 +373,14 @@ see [docs/CREDITS.md](docs/CREDITS.md) for full attribution.
 No dependency is redistributed here. The repo is source only, and `pip` fetches each
 one from PyPI under its own license when you run Step 2.
 
-Every pin is MIT, BSD, Apache-2.0 or PSF except **PySide6/Qt**, which is LGPLv3 (or
-GPL, or a commercial Qt license). The dashboard imports PySide6 as an ordinary Python
-module and bundles no Qt binaries, so LGPLv3's relink condition is met by
-construction: you have the full source and can swap the PySide6 version with one
-`pip install`.
+Across the tree `pip` actually installs, direct pins and transitive ones together, the
+licenses are MIT, BSD-2/3, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi, pulled in
+by requests and httpx). All of those permit an MIT release. The one copyleft dependency is
+**PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercial from
+The Qt Company. The dashboard imports PySide6 as an ordinary Python module and bundles no
+Qt binaries, so LGPLv3's relink condition is met by construction: you have the full source
+and can swap the PySide6 version with one `pip install`. `docs/CREDITS.md` lists the same
+set per library.
 
 Freezing this into a single-file executable is a different case, and those
 obligations would be yours.

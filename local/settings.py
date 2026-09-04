@@ -145,29 +145,51 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # GA gemini-3.1-pro (and gemini-3.5-pro doesn't resolve on Vertex projects), so
 # the preview id is the only pro-tier option. It is never a default — only an
 # opt-in "max quality" choice. Re-verified against Google's deprecation table on
-# 2026-08-27: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
-# Every other id here is on Google's Stable list. The only shutdown date in the
-# set is gemini-3.1-flash-lite's, 2027-05-07, and that is the earliest possible
-# retirement date rather than a scheduled one.
+# 2026-09-04: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
+# Every other id here is on Google's Stable list.
 #
-# The newer flash ids (3.7-flash, 3.6-flash, 3.5-flash-lite) are offered as
-# opt-in choices, and the defaults deliberately stay on the flash-lite/flash pair
-# the VM scores with. Price alone would argue for moving the stage-2 default off
-# 3.5-flash, since 3.6/3.7-flash list at $0.75/$3.75 per 1M against 3.5-flash's
-# $1.50/$9.00. Two reasons it stays anyway: scoring normally runs on the free-tier
-# key pool rather than paid credit, so list price is not what this pipeline pays;
-# and a 2026-06-11 downgrade of exactly these two defaults was reversed eight days
-# later on quality grounds. Changing the pair is a re-tune with a scoring run
-# behind it, not a version bump. keypool.LIMITS has free-tier rpm/rpd only for the
-# two defaults; every other id here falls to keypool.DEFAULT_LIMITS on purpose.
+# gemini-3.1-flash-lite is the one id in this tuple carrying a shutdown date, and
+# as of the 2026-09-04 re-check that row also names a REPLACEMENT: Google's
+# lifecycle table now reads `gemini-3.1-flash-lite | May 7, 2026 | May 7, 2027 |
+# gemini-3.5-flash-lite`. Every other 3.x flash id has no shutdown date and no
+# replacement. The date is still the earliest possible retirement rather than a
+# scheduled one, and the model is still on the Stable list, so nothing breaks
+# today -- but it is the stage-1 scoring default and the tailor's flash-lite tier,
+# so the migration is real and dated. It is NOT done here because it needs two
+# things this repo cannot get from documentation: gemini-3.5-flash-lite's
+# free-tier rpm/rpd (Google's rate-limits page stopped publishing per-model
+# numbers and points at each account's AI Studio dashboard), without which the
+# pool would fall back to keypool.DEFAULT_LIMITS and gate 5x tighter than the
+# 15/500 it gates gemini-3.1-flash-lite at; and a scoring run to confirm the
+# swap is not a quality regression. Tracked in .autopilot/BACKLOG.md.
+#
+# The newer flash ids (3.8-flash, 3.7-flash, 3.6-flash, 3.5-flash-lite) are
+# offered as opt-in choices, and the defaults deliberately stay on the
+# flash-lite/flash pair the VM scores with. Price alone would argue for moving the
+# stage-2 default off 3.5-flash, since 3.6/3.7/3.8-flash list at $0.75/$3.75 per
+# 1M through 2026-12-31 against 3.5-flash's $1.50/$9.00. Two reasons it stays
+# anyway: scoring normally runs on the free-tier key pool rather than paid credit,
+# so list price is not what this pipeline pays; and a 2026-06-11 downgrade of
+# exactly these two defaults was reversed eight days later on quality grounds.
+# Changing the pair is a re-tune with a scoring run behind it, not a version bump.
+# keypool.LIMITS has free-tier rpm/rpd only for the two defaults; every other id
+# here falls to keypool.DEFAULT_LIMITS on purpose.
 GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash",
-                 "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview")
+                 "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash",
+                 "gemini-3.1-pro-preview")
 
 # Claude model ids offered in the Claude model dropdowns (also editable_choice).
-# These are passed to the Claude Code CLI, not to the Anthropic API directly.
-# All three re-checked against the current model catalogue on 2026-08-27: active,
-# none deprecated or retired. The tier map (haiku fast, sonnet standard, opus
-# deep) still matches what each tier is for.
+# These are passed to the Claude Code CLI, not to the Anthropic API directly, so
+# the API-side deprecation of temperature/top_p/top_k on Opus 4.7 and later does
+# not reach this project: llm._call_claude accepts those arguments for signature
+# parity with _call_gemini and drops them, because print-mode exposes neither.
+# All three re-checked against Anthropic's model-deprecation table on 2026-09-04:
+# state Active, none deprecated, none retired. The tier map (haiku fast, sonnet
+# standard, opus deep) still matches what each tier is for. The nearest horizon in
+# the whole model set, Gemini included, is claude-haiku-4-5-20251001's tentative
+# retirement "not sooner than October 15, 2026"; Anthropic gives at least 60 days'
+# notice and there is no newer haiku to move to, so the id stays and this comment
+# is the reminder to re-check it.
 CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
 
 # How the résumé tailor picks a model for each stage, per provider. The strings

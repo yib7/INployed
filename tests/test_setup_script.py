@@ -49,7 +49,8 @@ def run_setup(root: Path, *args: str) -> subprocess.CompletedProcess:
     """Invoke setup.ps1 the way the README's Step 3 tells the reader to."""
     cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile",
            "-File", str(root / "scripts" / "setup.ps1"), "-Root", str(root), *args]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    return subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=90)
 
 
 def test_setup_writes_a_config_the_dashboard_can_actually_read(staged_repo):

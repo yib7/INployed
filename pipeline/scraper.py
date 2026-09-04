@@ -157,7 +157,7 @@ def load_blocklist() -> tuple[str, ...]:
     have = {b.lower() for b in merged}
     if BLOCKLIST_FILE.exists():
         try:
-            for line in BLOCKLIST_FILE.read_text(encoding="utf-8").splitlines():
+            for line in BLOCKLIST_FILE.read_text(encoding="utf-8-sig").splitlines():
                 name = line.strip()
                 if name and not name.startswith("#") and name.lower() not in have:
                     merged.append(name)
@@ -262,7 +262,16 @@ def load_search_config() -> dict:
     raw: dict = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+# utf-8-sig, not utf-8: json.loads rejects a leading BOM outright, and the
+        # handler below then discards the WHOLE file and falls back to built-ins
+        # with only a line in scraper.log to show for it. Notepad writes a BOM,
+        # PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM, and this is a
+        # file users hand-edit and the dashboard pushes here. local/jsonutil.py's
+        # read_json_dict already reads the same file BOM-tolerantly, so without
+        # this the two halves disagree about one file: the dashboard honours it,
+        # the VM silently ignores it. utf-8-sig is a superset -- it strips a BOM
+        # when there is one and decodes plain UTF-8 identically when there isn't.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict):
                 raw = data
         except (OSError, ValueError) as e:
@@ -289,7 +298,7 @@ def load_previous_ids() -> list[str]:
     if not PREVIOUS_IDS_FILE.exists():
         return []
     try:
-        with open(PREVIOUS_IDS_FILE, "r", encoding="utf-8") as f:
+        with open(PREVIOUS_IDS_FILE, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
         print(f"Could not read {PREVIOUS_IDS_FILE.name} ({e}); ignoring last-run ids")
@@ -426,7 +435,7 @@ def load_external_exclude_ids() -> list[str]:
     if not EXTERNAL_EXCLUDE_FILE.exists():
         return []
     try:
-        with open(EXTERNAL_EXCLUDE_FILE, "r", encoding="utf-8") as f:
+        with open(EXTERNAL_EXCLUDE_FILE, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
         return [str(x) for x in data] if isinstance(data, list) else []
     except (OSError, ValueError) as e:

@@ -191,6 +191,12 @@ Write-Ok "Wrote $cfgPath"
 # --- 4. dependencies (optional) -----------------------------------------------
 if ($InstallDeps) {
     Write-Step "Installing Python dependencies (requirements.txt)"
+    # Upgrade pip first, same as README Step 2: a fresh interpreter ships pip 25.2,
+    # which carries six advisories fixed by 26.2 (path traversal in entry-point
+    # names, a symlink escape in the fallback tar extractor, a doubly-encoded
+    # index URL). This is the installer, not a project pin, so it is not in
+    # requirements.txt.
+    python -m pip install --upgrade pip
     python -m pip install -r (Join-Path $Root 'requirements.txt')
     Write-Ok "Dependencies installed"
 }

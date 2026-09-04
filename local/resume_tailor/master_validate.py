@@ -96,7 +96,26 @@ def validate_answers(answers: List[Dict[str, Any]]) -> List[str]:
 
 
 def check_setup() -> Dict[str, List[str]]:
-    """Run both validators against the live files for the dashboard."""
+    """Run both validators against the live files for the dashboard.
+
+    The example-master check comes first and short-circuits the rest. With no
+    personal master_experience.yaml, `assets.load_master` falls back to the
+    committed example, so every validator below was passing on DEMO data and
+    "Check setup" told a brand-new user their résumé data was fine. It is not
+    fine: the tailor would render Jane Doe's career, which is precisely what the
+    select-and-rephrase contract exists to prevent. Reporting the example's own
+    (clean) lint on top of that would be noise, so it is skipped.
+    """
+    if assets.using_example_master():
+        return {
+            "master": [
+                "No résumé data yet — the tailor is using the built-in example "
+                "(master_experience.example.yaml), so it would generate someone "
+                "else's career. Add yours on the Resume Data tab, or run "
+                "scripts/setup.ps1."
+            ],
+            "answers": validate_answers(apply_answers.load()),
+        }
     return {
         "master": validate_master(assets.load_master()),
         "answers": validate_answers(apply_answers.load()),

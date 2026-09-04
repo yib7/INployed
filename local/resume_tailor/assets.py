@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
@@ -26,16 +27,34 @@ from . import config
 _PREAMBLE_MARKER = "\\begin{document}"
 
 
-@lru_cache(maxsize=1)
-def load_master() -> Dict[str, Any]:
+def master_source() -> Path:
+    """The file `load_master` will actually read.
+
+    Exists so a caller can tell the user's own master apart from the committed
+    example, which `load_master` silently falls back to. That fallback is what
+    keeps a fresh clone and CI working, but it also means a brand-new user gets
+    a résumé built entirely from demo data with nothing saying so — and the whole
+    contract of this engine is that every bullet traces to a fact the USER wrote.
+    """
     path = config.MASTER_YAML
     if not path.exists():
-        # No personal master configured yet (e.g. a fresh clone before setup.ps1,
-        # or CI): fall back to the committed example so the engine and the test
-        # suite work with demo data instead of crashing on a missing file.
         example = path.with_name("master_experience.example.yaml")
         if example.exists():
-            path = example
+            return example
+    return path
+
+
+def using_example_master() -> bool:
+    """True when no personal master exists and the committed example is standing in."""
+    return master_source() != config.MASTER_YAML
+
+
+@lru_cache(maxsize=1)
+def load_master() -> Dict[str, Any]:
+    # No personal master configured yet (e.g. a fresh clone before setup.ps1, or
+    # CI): master_source falls back to the committed example so the engine and
+    # the test suite work with demo data instead of crashing on a missing file.
+    path = master_source()
     try:
         with path.open(encoding="utf-8") as fh:
             data = yaml.safe_load(fh)

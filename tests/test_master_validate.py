@@ -76,3 +76,42 @@ def test_check_setup_returns_two_keys():
     out = mv.check_setup()
     assert set(out) == {"master", "answers"}
     assert all(isinstance(v, list) for v in out.values())
+
+
+def test_no_personal_master_is_reported_not_silently_passed(tmp_path, monkeypatch):
+    """The example fallback used to make Check setup say "all good" on demo data.
+
+    assets.load_master falls back to the committed master_experience.example.yaml
+    when there is no personal one, which is what keeps a fresh clone and CI
+    working. But it also meant validate_master was linting Jane Doe's file, so a
+    brand-new user was told their resume data was fine while the tailor would
+    have rendered someone else's career.
+    """
+    from resume_tailor import assets, config
+    missing = tmp_path / "master_experience.yaml"
+    example = tmp_path / "master_experience.example.yaml"
+    example.write_text("basics:\n  name: Jane Doe\n  email: jane@example.com\n",
+                       encoding="utf-8")
+    monkeypatch.setattr(config, "MASTER_YAML", missing)
+    assert assets.master_source() == example
+    assert assets.using_example_master() is True
+    out = mv.check_setup()
+    assert len(out["master"]) == 1
+    msg = out["master"][0]
+    assert "example" in msg and "Resume Data" in msg
+
+
+def test_a_real_master_is_linted_normally(tmp_path, monkeypatch):
+    """The short-circuit must not swallow real lint findings."""
+    from resume_tailor import assets, config
+    real = tmp_path / "master_experience.yaml"
+    real.write_text("experience: []\n", encoding="utf-8")   # no basics.name
+    monkeypatch.setattr(config, "MASTER_YAML", real)
+    assets.load_master.cache_clear()
+    try:
+        assert assets.using_example_master() is False
+        errs = mv.check_setup()["master"]
+        assert any("basics.name" in e for e in errs)
+        assert not any("example" in e for e in errs)
+    finally:
+        assets.load_master.cache_clear()

@@ -135,7 +135,16 @@ def register(times, task_name: str = TASK_NAME, runner=None) -> tuple[bool, str]
             fh.write(xml)
         argv = ["schtasks", "/Create", "/F", "/TN", str(task_name), "/XML", tmp]
         try:
-            res = runner(argv, capture_output=True, text=True)
+            # Explicit utf-8 + errors="replace", the same contract vm_sync and
+            # compile use: bare text=True decodes with the OS default, and
+            # schtasks writes its message in the console OEM codepage. On a
+            # non-English Windows that either mangles the one line the user is
+            # shown or raises UnicodeDecodeError, turning a task that registered
+            # fine into a reported failure. schtasks' text is ASCII whenever it
+            # succeeds, so utf-8 round-trips it and only degrades the rare
+            # localized error into replacement characters.
+            res = runner(argv, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
         except OSError as exc:
             return False, f"schtasks failed to launch: {exc}"
         out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()

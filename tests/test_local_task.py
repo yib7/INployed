@@ -119,6 +119,25 @@ def test_register_builds_schtasks_argv_and_utf16_file(monkeypatch):
     assert not os.path.exists(argv[-1])                    # temp file cleaned up
 
 
+def test_register_decodes_schtasks_output_as_explicit_utf8():
+    """Bare text=True would decode with the OS default codepage.
+
+    schtasks writes its one user-visible line in the console OEM codepage, so on
+    a non-English Windows the default decode either mangles that line or raises
+    UnicodeDecodeError and reports a successful registration as a failure.
+    """
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        return _Res(0)
+
+    ok, _ = local_task.register(["09:00"], runner=fake_run)
+    assert ok
+    assert seen.get("encoding") == "utf-8"
+    assert seen.get("errors") == "replace"
+
+
 def test_register_task_name_overridable():
     seen = {}
 

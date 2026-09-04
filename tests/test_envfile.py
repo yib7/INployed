@@ -154,3 +154,52 @@ def test_update_strips_a_bom_instead_of_carrying_it_forward(tmp_path):
     assert p.read_bytes()[:3] != b"\xef\xbb\xbf"
     assert envfile.read(p) == {"FOO": "1", "BAR": "3"}
     assert "# a comment" in p.read_text(encoding="utf-8")
+
+
+def test_update_refuses_a_value_carrying_a_newline(tmp_path):
+    """A newline in a value does not round-trip through this format.
+
+    Every value becomes ONE physical `KEY=VALUE` line and `read()` parses line by
+    line, so writing "a\nGEMINI_API_KEY=stolen" would put a second assignment in
+    the file that nobody typed — and the reader would honour it. The realistic way
+    in is a paste: an API key copied out of a wrapped terminal line, or two pool
+    keys copied on separate lines. Refused rather than stripped, because silently
+    rewriting a credential yields a key that fails later with no clue why.
+    """
+    import pytest
+
+    p = tmp_path / ".env"
+    p.write_text("FOO=1\n", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        envfile.update(p, {"GEMINI_API_KEYS": "key1\nBRIGHT_DATA_API_TOKEN=injected"})
+    assert "GEMINI_API_KEYS" in str(exc.value)
+    # ...and the file is untouched: the check runs before anything is written.
+    assert envfile.read(p) == {"FOO": "1"}
+
+
+def test_update_rejects_every_bad_key_before_writing_any_good_one(tmp_path):
+    """The refusal is all-or-nothing — a half-updated .env is the worse outcome."""
+    import pytest
+
+    p = tmp_path / ".env"
+    p.write_text("FOO=1\nBAR=2\n", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        envfile.update(p, {"FOO": "9", "BAR": "ok\r\nEVIL=1", "BAZ": "x\x00y"})
+    msg = str(exc.value)
+    assert "BAR" in msg and "BAZ" in msg and "FOO" not in msg   # names only the offenders
+    assert envfile.read(p) == {"FOO": "1", "BAR": "2"}          # nothing written
+
+
+def test_update_still_accepts_the_awkward_but_legal_values(tmp_path):
+    """The guard is control characters only: spaces, quotes and backslashes stay."""
+    p = tmp_path / ".env"
+    p.write_text("FOO=1\n", encoding="utf-8")
+    envfile.update(p, {"WINPATH": r"C:\Program Files\MiKTeX\pdflatex.exe",
+                       "QUOTED": "it's fine",
+                       "POOL": "key1,key2,key3"})
+    assert envfile.read(p) == {
+        "FOO": "1",
+        "WINPATH": r"C:\Program Files\MiKTeX\pdflatex.exe",
+        "QUOTED": "it's fine",
+        "POOL": "key1,key2,key3",
+    }

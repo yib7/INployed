@@ -114,6 +114,31 @@ def _config_int(value, default: int, key: str) -> int:
         return default
 
 
+# The two spend guards are the only config values whose SIGN changes their meaning,
+# because both are spent as a pandas row slice and pandas reads a negative count as
+# "all but N": `head(-1)` returns every row but the last, `tail(-200)` every row but
+# the first 200. So `SCORE_MAX_PER_RUN=-1` -- the obvious way to write "no cap" --
+# takes the `len(to_score) > MAX_SCORED_PER_RUN` branch, prints "Spend guard:
+# capping at -1 of 4000 jobs", and then scores 3999 of them. The guard announces
+# itself and lifts itself, which is the one failure mode a spend guard must not
+# have. Reachable from `SCORE_MAX_PER_RUN` in the VM crontab or a hand-edited
+# scoring_config.json; the dashboard's own min=1 is a form control, not the
+# enforcement point, and score_jobs.py is what actually spends the money.
+#
+# Zero is deliberately left alone: `head(0)`/`tail(0)` are empty, so "score nothing"
+# already means what it says and fails closed.
+_SPEND_CAP_KEYS = ("max_scored_per_run", "rescore_cap")
+
+
+def _spend_cap(value: int, default: int, key: str) -> int:
+    """A spend guard's value, with a negative collapsed to the built-in default."""
+    if value < 0:
+        print(f"scoring config: {key}={value} is negative, which would DISABLE the "
+              f"spend guard rather than lift it; using {default}")
+        return default
+    return value
+
+
 def _as_bool(v) -> bool:
     if isinstance(v, bool):
         return v
@@ -155,6 +180,8 @@ def load_scoring_config() -> dict:
             value = default
         if kind == "int":
             cfg[key] = _config_int(value, default, key)
+            if key in _SPEND_CAP_KEYS:
+                cfg[key] = _spend_cap(cfg[key], default, key)
         elif kind == "bool":
             cfg[key] = _as_bool(value)
         else:

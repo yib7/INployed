@@ -30,6 +30,16 @@ _LINE_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 # A value safe to write without any quoting (no spaces, quotes, #, or backslash).
 _BARE_SAFE_RE = re.compile(r"^[A-Za-z0-9_./:@,+=-]+$")
 
+# Characters that cannot survive this format at all. Every value here becomes ONE
+# `KEY=VALUE` line, and `read()` parses line by line, so a newline in a value does
+# not round-trip -- it writes a second physical line that the reader then treats as
+# a whole new assignment. Pasting a key that wrapped across two lines, or two pool
+# keys on separate lines, would therefore invent a `.env` entry nobody typed. NUL
+# and the other C0 controls cannot be represented either. Rejected rather than
+# stripped: silently rewriting a credential produces a key that fails later with no
+# clue why, which is worse than being told now.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
 
 def _parse_value(raw: str) -> str:
     """Recover a value from the text right of `=`.
@@ -100,7 +110,19 @@ def update(path: str | os.PathLike, updates: dict[str, str | None]) -> None:
     else appended); a `None` value removes its line. Comments, blank lines, key
     order, and keys not in `updates` are left untouched. Written atomically with
     a `.bak` backup.
+
+    Raises ValueError for a value carrying a newline or another control character
+    (see `_CONTROL_RE`) -- checked for EVERY key before anything is written, so a
+    rejected value cannot leave the file half-updated.
     """
+    bad = sorted(k for k, v in updates.items()
+                 if v is not None and _CONTROL_RE.search(str(v)))
+    if bad:
+        raise ValueError(
+            f"Cannot write {', '.join(bad)} to {Path(path).name}: the value contains "
+            "a line break or control character, and each setting has to fit on one "
+            "line. Remove the line break (a key pasted from a wrapped line is the "
+            "usual cause; a list of keys goes on one line, comma-separated).")
     p = Path(path)
     try:
         # utf-8-sig, matching read(): a BOM is stripped on the way in and not

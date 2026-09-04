@@ -17,13 +17,14 @@ extract, else "" -- and ``compose`` bounds it on a LINE boundary instead of mid-
 Two rules this file holds that production's own gate deliberately does not:
 
 * **The participial impact tail.** ``compose._STYLE_BANS`` matches a CLOSED verb list
-  (``, enabling|ensuring|allowing|driving|resulting in|...``) because a false positive
-  there buys a repair call that can damage a correct bullet. That closed list does not
-  catch "..., minimizing manual review bottlenecks and enabling product expansion" --
-  the exact tail the old exemplar taught -- because the participle after the comma is
-  not on it. Curation is not production: here the SHAPE is what must not be shown, so
-  the check is any participle after a comma. It stays test-side on purpose; widening
-  ``_STYLE_BANS`` would change what the engine repairs, which is not this phase's job.
+  (``enabling|ensuring|allowing|driving|resulting in|...``) because a false positive
+  there buys a repair call that can damage a correct bullet. Cycle 11 widened that
+  pattern's REACH so the listed verb no longer has to sit directly after the comma,
+  which is what made it miss "..., minimizing manual review bottlenecks and enabling
+  product expansion", the exact tail the old exemplar taught. The verb LIST is still
+  closed, so "..., reducing runtime from 4h to 20m" is still clean in production.
+  Curation is not production: here the SHAPE is what must not be shown, so the check
+  below stays broader -- any participle after a comma, listed or not.
 * **Decorative marketing frames.** ``BANNED_PHRASING`` quotes 'end-to-end', 'one place'
   and 'all-in-one' verbatim, but they are absent from ``_STYLE_BANS`` for the same
   false-positive reason (a real bullet may mean end-to-end literally). An exemplar has

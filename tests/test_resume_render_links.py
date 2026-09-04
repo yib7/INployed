@@ -99,3 +99,36 @@ def test_escape_url_never_emits_a_bare_brace():
     out = escape_url("https://x.dev/a{b}c")
     assert "{" not in out and "}" not in out
     assert out == r"https://x.dev/a\%7Bb\%7Dc"
+
+
+# 3A: a master entry with no `title:` / `location:` must not print "None".
+
+
+_EXP_SEL = {"experience": [{"name": "Globex", "groups": [["a1"]]}]}
+
+
+def test_experience_omits_a_missing_title_instead_of_printing_none(monkeypatch):
+    """assets.blocks() builds every key with e.get(...), so a master entry that
+    simply has no `title:` line arrives here as {"title": None} -- the key is
+    PRESENT, so b.get('title', '') returns None and to_latex(None) renders the
+    literal word "None" onto the PDF. master_validate.validate_master requires
+    neither field, so a master that passes "Check setup" can ship it."""
+    monkeypatch.setattr(assets, "blocks", lambda: {"experience": [
+        {"name": "Globex", "title": None, "location": None, "dates": None,
+         "atoms": ["a1"]}]})
+    tex = render._experience(_EXP_SEL, _BULLETS)
+    assert "Globex" in tex
+    assert "None" not in tex
+
+
+def test_leadership_and_projects_omit_a_missing_name_instead_of_printing_none(monkeypatch):
+    """Same defect, same shape, in the other two block renderers."""
+    monkeypatch.setattr(assets, "blocks", lambda: {"leadership": [
+        {"name": None, "dates": None, "atoms": ["a1"]}]})
+    assert "None" not in render._leadership(
+        {"leadership": [{"name": None, "groups": [["a1"]]}]}, _BULLETS)
+    monkeypatch.setattr(assets, "blocks", lambda: {"projects": [
+        {"name": None, "dates": None, "live_url": None, "repo": None,
+         "atoms": ["a1"]}]})
+    assert "None" not in render._projects(
+        {"projects": [{"name": None, "groups": [["a1"]]}]}, _BULLETS)

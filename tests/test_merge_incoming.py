@@ -90,6 +90,67 @@ def test_bad_rows_file_quarantined_others_merge(tmp_path):
     assert not (inc / "local_rows_ok.csv.gz").exists()
 
 
+# gzip header bytes, written as ints so the file stays pure ASCII source.
+_GZIP_MAGIC = bytes([0x1F, 0x8B, 0x08, 0x00])
+
+
+def _corrupt_deflate_gz(path: Path) -> None:
+    """A valid gzip header over a corrupt deflate stream.
+
+    Raises `zlib.error`, which is NOT an OSError, a ValueError, an EOFError or a
+    gzip.BadGzipFile — so the old enumerated `_BAD_FILE_ERRORS` tuple missed it.
+    That is a different failure from `b"this is not gzip"` (BadGzipFile, caught)
+    and from a truncated stream (EOFError, caught), which is why neither of the
+    existing quarantine tests covered it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_GZIP_MAGIC + b" corrupted deflate payload, header only")
+
+
+def test_a_corrupt_deflate_stream_is_quarantined_not_raised(tmp_path):
+    """This used to exit 1 with a raw traceback and quarantine nothing.
+
+    Under run_scraper.sh's `set -e` that stops the whole cron run before the
+    scrape, and because the file is never moved, every later fire dies the same
+    way — a permanent, silent halt to job discovery from one bad upload.
+    """
+    inc, master, stats = _setup(tmp_path)
+    _corrupt_deflate_gz(inc / "local_rows_corrupt.csv.gz")
+    _gz(inc / "local_rows_ok.csv.gz", pd.DataFrame([{"job_posting_id": "5"}]))
+    assert merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats,
+                               min_age_seconds=0) == 0
+    assert list(pd.read_csv(master, dtype=str)["job_posting_id"]) == ["5"]
+    assert [p.name for p in (inc / "bad").iterdir()] == ["local_rows_corrupt.csv.gz"]
+
+
+def test_a_corrupt_deflate_stats_file_is_quarantined_too(tmp_path):
+    inc, master, stats = _setup(tmp_path)
+    inc.mkdir(parents=True, exist_ok=True)
+    (inc / "local_stats_corrupt.csv").write_bytes(bytes(range(0x80, 0x90)))
+    assert merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats,
+                               min_age_seconds=0) == 0
+    assert [p.name for p in (inc / "bad").iterdir()] == ["local_stats_corrupt.csv"]
+
+
+def test_a_corrupt_master_still_reports_before_it_aborts(tmp_path, capsys):
+    """The abort is intended; losing the message that explains it is not.
+
+    A master whose bytes are not decodable raised out of the reader before the
+    CRITICAL line could print, so the operator got a traceback in scraper.log
+    with no statement of what to do about it.
+    """
+    inc, master, stats = _setup(tmp_path)
+    master.write_bytes(_GZIP_MAGIC + b" not a csv at all")
+    _gz(inc / "local_rows_a.csv.gz", pd.DataFrame([{"job_posting_id": "7"}]))
+    rc = merge_incoming.main(incoming_dir=inc, master_csv=master, stats_csv=stats,
+                             min_age_seconds=0)
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "CRITICAL" in out and "linkedin_jobs_master.csv" in out
+    assert "aborting" in out
+    assert (inc / "local_rows_a.csv.gz").exists()   # nothing consumed
+
+
 def test_all_duplicate_rows_still_consume_file(tmp_path):
     inc, master, stats = _setup(tmp_path)
     pd.DataFrame([{"job_posting_id": "1", "job_title": "t"}]).to_csv(master, index=False)

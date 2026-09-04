@@ -12,7 +12,6 @@ Deployed standalone beside scraper.py on the VM — stdlib + pandas only, no loc
 from __future__ import annotations
 
 import argparse
-import gzip
 import os
 import shutil
 import sys
@@ -35,10 +34,21 @@ RUN_STATS_CSV = HOME / "run_stats.csv"
 STATS_KEY = ["timestamp", "input_csv"]
 CHUNK = 2000  # Chunked streaming row count for the master-wins merge (memory bounded)
 
-# Per-file parse/read failures that must quarantine-and-continue rather than
-# raise. NOT included: unreadable *master*, which is the one case that must
-# abort the whole run (handled separately, outside this tuple).
-_BAD_FILE_ERRORS = (OSError, ValueError, pd.errors.ParserError, EOFError, gzip.BadGzipFile)
+# Per-file parse/read failures that must be HANDLED rather than raised: the row
+# and stats readers quarantine-and-continue, and the master reader prints its own
+# CRITICAL line before aborting. Deliberately `Exception`, not a list of types.
+#
+# It was a list -- (OSError, ValueError, pd.errors.ParserError, EOFError,
+# gzip.BadGzipFile) -- and a `.csv.gz` whose deflate stream is CORRUPT rather
+# than merely truncated raises `zlib.error`, which is none of them. Proved by
+# feeding one to a sandbox copy: raw traceback, exit 1, nothing quarantined, so
+# the file stays in ~/incoming and every later cron fire dies the same way. Under
+# run_scraper.sh's `set -e` that stops the whole run before the scrape, which is
+# the exact opposite of this module's contract ("Per-file problems quarantine to
+# ~/incoming/bad/ and NEVER fail the cron run"). Enumerating decompressor error
+# types is a losing game; the reason each site catches is "this file did not
+# read", whatever the library chose to raise.
+_BAD_FILE_ERRORS = Exception
 
 
 def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:

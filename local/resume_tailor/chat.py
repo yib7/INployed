@@ -217,8 +217,8 @@ def build_context(folder: Optional[Path], job: Dict[str, Any]) -> str:
     if jd:
         blocks += [compose.fence_jd(jd, JD_CHAR_CAP, JD_PURPOSE), ""]
     else:
-        blocks += ["No job description was captured for this posting; say so "
-                   "rather than guessing what the role involves.", ""]
+        blocks += ["No job description was captured for this posting; say so and "
+                   "never guess what the role involves.", ""]
 
     sheet = _read_sheet(folder)
     if sheet:

@@ -1,29 +1,43 @@
 # -*- coding: utf-8 -*-
-"""Prompt hygiene: a tailor prompt may not use the characters it bans.
+"""Prompt hygiene: a tailor prompt may not use the punctuation or the sentence
+shapes it bans.
 
-``compose.BANNED_PHRASING`` opens by telling the model that em dashes are wrong,
-and ``compose._STYLE_BANS`` backs that with a regex (``—`` or a spaced ``--``).
-For a long time the prompts carrying that instruction were themselves full of em
-dashes, which is not merely embarrassing: the model copies the punctuation it is
-shown. Every copied em dash makes ``compose.style_violations()`` non-empty, which
-buys a flash-tier ``enforce_style`` repair call and hands an otherwise-correct
-bullet to a rewriter that can damage it. ``aiwriting.RULES_PROMPT`` already
-carried the fix ("Deliberately free of em dashes, since it is telling the model
-to avoid them"); this test carries it across the whole package.
+``compose.BANNED_PHRASING`` tells the model that em dashes and contrast framing
+("X, not Y") are wrong, and ``compose._STYLE_BANS`` backs both with regexes. For a
+long time the prompts carrying that instruction were themselves full of em dashes,
+which is not merely embarrassing: the model copies what it is shown. Every copied
+em dash makes ``compose.style_violations()`` non-empty, which buys a flash-tier
+``enforce_style`` repair call and hands an otherwise-correct bullet to a rewriter
+that can damage it. ``aiwriting.RULES_PROMPT`` already carried the fix
+("Deliberately free of em dashes, since it is telling the model to avoid them");
+this test carries it across the whole package.
+
+Cycle 11 widened it from characters to the whole of ``_STYLE_BANS``. The same
+argument covers both: a prompt that says "never write 'X, not Y'" while itself
+saying "IGNORED, not followed" is teaching the construction it forbids. Six prose
+sites were rewritten to close that (``common._PRINCIPLE``, ``common.fence_jd``,
+``chat``'s no-JD note, two lines of ``compose.rephrase``'s system prompt, and
+``coverletter``'s refine prompt).
 
 **Scope: string literals that reach a model.** Comments and docstrings keep their
 em dashes -- that is this repo's prose style and no model ever sees it. Comments
 never appear in an AST at all, and docstrings are excluded explicitly, so a
 blanket grep would be wrong where this test is right.
 
+**The one exemption: the ban lists themselves.** ``compose.BANNED_PHRASING`` and
+``aiwriting.RULES_PROMPT`` are enumerations -- they cannot forbid "holistic" or
+"rather than" without quoting them. They are therefore skipped for the phrasing
+patterns and only for those. The character bans still apply to them, because a
+list of banned words never needs an em dash to name one.
+
 The modules are read as SOURCE TEXT and parsed with ``ast``. Nothing here imports
 ``local.resume_tailor``: ``config.py`` calls ``load_dotenv()`` at import, so
 importing the package inside a test would pull the developer's live credentials
 into the process.
 
-Only characters the prompts actually ban are checked. En dashes and curly quotes
-are deliberately NOT checked -- no prompt in this package forbids them, so
-banning them here would enforce a rule the engine does not have.
+Only what the prompts actually ban is checked. En dashes and curly quotes are
+deliberately NOT checked -- no prompt in this package forbids them, so banning
+them here would enforce a rule the engine does not have.
 """
 from __future__ import annotations
 
@@ -35,11 +49,42 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 PKG = Path(__file__).resolve().parents[1] / "local" / "resume_tailor"
 
 # What ``compose._STYLE_BANS``'s "em dash" pattern matches, as a literal check.
-# (name, compiled pattern) -- keep in step with that regex.
-BANNED: Tuple[Tuple[str, re.Pattern], ...] = (
+# (name, compiled pattern) -- keep in step with that regex. Checked in EVERY
+# literal that reaches a model, the ban enumerations included.
+BANNED_CHARS: Tuple[Tuple[str, re.Pattern], ...] = (
     ("em dash", re.compile("—")),
     ("spaced double hyphen", re.compile(r"\s--\s")),
 )
+
+# The sentence shapes ``compose._STYLE_BANS`` rejects in a bullet, copied verbatim
+# from it -- keep the two in step. Skipped inside the ENUMERATIONS below.
+BANNED_PHRASINGS: Tuple[Tuple[str, re.Pattern], ...] = (
+    ("contrast framing",
+     re.compile(r",\s*not\s|\bnot just\b|\brather than\b|\binstead of\b", re.I)),
+    ("participial tail",
+     re.compile(r",\s*(?:[a-z]+\s+){0,6}?(?:enabling|ensuring|allowing|driving"
+                r"|resulting in|empowering|showcasing|highlighting|demonstrating)\b",
+                re.I)),
+    ("buzzword verb",
+     re.compile(r"\b(?:leverag|utiliz|spearhead|harness|empower|streamlin"
+                r"|supercharg|turbocharg|revolutioniz|democratiz)\w*", re.I)),
+    ("hollow intensifier",
+     re.compile(r"\b(?:seamless\w*|robust\w*|comprehensive|cutting-edge|innovative"
+                r"|holistic|state-of-the-art|powerful\w*|world-class|best-in-class"
+                r"|top-notch|groundbreaking|unparalleled|turnkey|blazing\w*"
+                r"|lightning[- ]fast|game[- ]?chang\w*|revolutionar\w*|very"
+                r"|successfully)\b", re.I)),
+    ("vague quantifier",
+     re.compile(r"\b(?:various|numerous|myriad|consistently|regularly)\b"
+                r"|\ba (?:wide range|wide variety|plethora) of\b", re.I)),
+)
+
+BANNED: Tuple[Tuple[str, re.Pattern], ...] = BANNED_CHARS + BANNED_PHRASINGS
+
+# Module-level constants that ENUMERATE the bans, so they must quote them. Only
+# the phrasing patterns are waived here; the character bans still apply. Adding a
+# name here waives a real check, so it takes a list that is a ban list.
+ENUMERATIONS: Tuple[str, ...] = ("BANNED_PHRASING", "RULES_PROMPT")
 
 # The package's one LLM entry point: ``llm.call(system, user, tier, ...)``.
 # Reached bare (``from .llm import call``) and as an attribute
@@ -167,7 +212,18 @@ class _Index:
         # compose.py, and `from .common import ...` erases the module prefix.
         self.globals: Dict[str, Tuple[str, ast.AST]] = {}
         self.funcs: Dict[str, Tuple[str, ast.AST]] = {}
+        # Constant nodes living inside a ban ENUMERATION, which is allowed to
+        # quote the phrasings it forbids (but not the characters).
+        self.enumerations: Dict[str, Set[int]] = {}
         for mod, tree in self.trees.items():
+            enum_ids: Set[int] = set()
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and any(
+                        isinstance(t, ast.Name) and t.id in ENUMERATIONS
+                        for t in node.targets):
+                    enum_ids |= {id(c) for c in ast.walk(node.value)
+                                 if isinstance(c, ast.Constant)}
+            self.enumerations[mod] = enum_ids
             per_scope = {id(tree): _assignments(tree)}
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -214,7 +270,10 @@ def _reachable_constants(index: _Index) -> List[Tuple[str, ast.Constant]]:
     function's locals, then the module's globals, then the package's (which is how
     ``_PRINCIPLE`` and ``BANNED_PHRASING`` get pulled in), and a ``Call`` to a
     package helper is followed into that helper's ``return`` expressions (which is
-    how ``common.fence_jd``'s untrusted-JD banner gets pulled in)."""
+    how ``common.fence_jd``'s untrusted-JD banner gets pulled in). An ``Attribute``
+    on a sibling module resolves against that module's own module-level bindings,
+    which is how ``aiwriting.RULES_PROMPT`` -- appended to three cover-letter
+    prompts and invisible to a bare-name lookup -- gets pulled in."""
     found: Dict[Tuple[str, int], Tuple[str, ast.Constant]] = {}
     seen: Set[Tuple[str, int]] = set()
     work = list(_prompt_roots(index))
@@ -245,6 +304,12 @@ def _reachable_constants(index: _Index) -> List[Tuple[str, ast.Constant]]:
                     fmod, fnode = fn
                     work += [(fmod, fnode, r.value) for r in ast.walk(fnode)
                              if isinstance(r, ast.Return) and r.value is not None]
+            elif isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name):
+                sib = f"{inner.value.id}.py"
+                stree = index.trees.get(sib)
+                if stree is not None:
+                    work += [(sib, stree, v) for v in
+                             index.scope_locals(sib, stree).get(inner.attr, [])]
     return list(found.values())
 
 
@@ -279,11 +344,12 @@ def _source_lines(index: _Index, mod: str, node: ast.Constant,
 
 
 def scan(pkg: Path = PKG) -> List[Dict[str, Any]]:
-    """Banned characters found in literals that reach a model. Empty = clean."""
+    """Banned characters and phrasings in literals that reach a model. Empty = clean."""
     index = _Index(pkg)
     out: List[Dict[str, Any]] = []
     for mod, node in _reachable_constants(index):
-        for label, pattern in BANNED:
+        in_enum = id(node) in index.enumerations.get(mod, ())
+        for label, pattern in (BANNED_CHARS if in_enum else BANNED):
             matches = list(pattern.finditer(node.value))
             at = _source_lines(index, mod, node, pattern)
             if len(at) != len(matches):          # escapes: attribution unreliable
@@ -297,12 +363,14 @@ def scan(pkg: Path = PKG) -> List[Dict[str, Any]]:
 
 
 def _report(hits: List[Dict[str, Any]]) -> str:
-    head = (f"{len(hits)} banned character(s) in prompt text sent to the model.\n"
-            "These prompts tell the model not to use them, so every one here is an "
-            "example the model will copy -- and a copied em dash costs an "
-            "enforce_style repair call. Rewrite with a comma, colon, parenthesis "
-            "or sentence break (comments and docstrings are exempt and are not "
-            "checked).\n")
+    head = (f"{len(hits)} banned character(s)/phrasing(s) in prompt text sent to the "
+            "model.\nThese prompts tell the model not to use them, so every one here "
+            "is an example the model will copy -- and a copied em dash or 'X, not Y' "
+            "costs an enforce_style repair call on a bullet that was already correct. "
+            "Rewrite it: state the positive claim once, and reach for a comma, colon, "
+            "parenthesis or sentence break instead of a dash (comments and docstrings "
+            "are exempt and are not checked; the ban lists in ENUMERATIONS are exempt "
+            "from the phrasing patterns only).\n")
     body = "\n".join(f"  local/resume_tailor/{h['module']}:{h['line']}: "
                      f"{h['ban']} -> ...{h['snippet']}..." for h in hits)
     return head + body
@@ -322,7 +390,7 @@ def test_the_trace_still_reaches_every_prompt_module():
     the modules whose prompts must stay in view."""
     index = _Index(PKG)
     reached = {mod for mod, _ in _reachable_constants(index)}
-    expected = {"chat.py", "common.py", "compose.py", "coverletter.py",
+    expected = {"aiwriting.py", "chat.py", "common.py", "compose.py", "coverletter.py",
                 "master_gaps.py", "prep.py", "research.py", "selection.py",
                 "skills.py"}
     assert expected <= reached, (
@@ -337,6 +405,7 @@ def _fake_pkg(tmp_path: Path) -> Path:
     (pkg / "shared.py").write_text(
         '"""A docstring with an em dash — which must be ignored."""\n'
         'PRINCIPLE = "shared rule — imported into another module"\n'
+        'BANNED_PHRASING = "never write \'X, not Y\' — and never dash"\n'
         '\n'
         'def banner(text):\n'
         '    """Docstring — ignored."""\n'
@@ -344,6 +413,7 @@ def _fake_pkg(tmp_path: Path) -> Path:
         '    return "BANNER — from a helper: " + text\n',
         encoding="utf-8")
     (pkg / "writer.py").write_text(
+        'from . import shared\n'
         'from .shared import PRINCIPLE, banner\n'
         'from .llm import call\n'
         '\n'
@@ -351,7 +421,7 @@ def _fake_pkg(tmp_path: Path) -> Path:
         '\n'
         'def go(jd):\n'
         '    system = "inline literal — straight in the call" + PRINCIPLE\n'
-        '    user = f"{banner(jd)}\\n{CLEAN}"\n'
+        '    user = f"{banner(jd)}\\n{CLEAN}\\n{shared.BANNED_PHRASING}"\n'
         '    return call(system, user, "tier")\n'
         '\n'
         'def unused():\n'
@@ -362,10 +432,37 @@ def _fake_pkg(tmp_path: Path) -> Path:
 
 def test_scan_detects_every_route_a_literal_takes_into_a_prompt(tmp_path):
     hits = scan(_fake_pkg(tmp_path))
-    by_module = {(h["module"], h["line"]) for h in hits}
-    assert ("writer.py", 7) in by_module, "inline literal in the call argument"
-    assert ("shared.py", 2) in by_module, "module constant imported across modules"
-    assert ("shared.py", 7) in by_module, "return value of a helper called in the prompt"
-    assert all(h["ban"] == "em dash" for h in hits)
-    assert len(hits) == 3, ("docstrings, comments and unreachable functions must "
+    by_module = {(h["module"], h["line"], h["ban"]) for h in hits}
+    assert ("writer.py", 8, "em dash") in by_module, "inline literal in the call argument"
+    assert ("shared.py", 2, "em dash") in by_module, "module constant imported across modules"
+    assert ("shared.py", 8, "em dash") in by_module, "return value of a helper in the prompt"
+    assert ("shared.py", 3, "em dash") in by_module, (
+        "a sibling module's constant reached by attribute (aiwriting.RULES_PROMPT's route)")
+    assert len(hits) == 4, ("docstrings, comments and unreachable functions must "
                             f"not be flagged; got {hits}")
+
+
+def test_ban_enumerations_may_quote_the_phrasings_they_forbid(tmp_path):
+    """``BANNED_PHRASING`` cannot say "never write 'X, not Y'" without writing it.
+
+    The waiver is narrow on purpose: the enumeration is skipped for the PHRASING
+    patterns and for nothing else, so the em dash on the same line is still a hit
+    (asserted above). Without that split the gate would either fail forever on its
+    own ban list or stop policing the ban list's punctuation."""
+    hits = scan(_fake_pkg(tmp_path))
+    assert not [h for h in hits if h["ban"] == "contrast framing"], (
+        "the enumeration's quoted 'X, not Y' must not be flagged as a violation; "
+        f"got {hits}")
+
+
+def test_a_phrasing_ban_is_enforced_outside_an_enumeration(tmp_path):
+    """Guard against a vacuous exemption: the phrasing patterns must still bite."""
+    pkg = _fake_pkg(tmp_path)
+    (pkg / "writer.py").write_text(
+        (pkg / "writer.py").read_text(encoding="utf-8").replace(
+            'CLEAN = "no banned punctuation here"',
+            'CLEAN = "say so rather than guessing what the role involves"'),
+        encoding="utf-8")
+    hits = scan(pkg)
+    assert ("writer.py", 5, "contrast framing") in {
+        (h["module"], h["line"], h["ban"]) for h in hits}, hits

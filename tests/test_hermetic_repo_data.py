@@ -86,3 +86,27 @@ def test_the_pipeline_dotenv_optout_is_armed_for_the_whole_suite():
     import os
     assert os.environ.get("INPLOYED_NO_DOTENV", "").strip().lower() in (
         "1", "true", "yes", "on")
+
+
+def test_score_jobs_scoring_constants_are_the_builtin_defaults():
+    """The concrete symptom of the import-time freeze, pinned.
+
+    score_jobs runs `_SCORING = load_scoring_config()` at IMPORT scope, so these
+    module constants were resolved from the author's gitignored
+    scoring_config.json before any fixture could redirect OUTPUT_DIR — and stayed
+    that way for the whole session. _hermetic_repo_data now re-resolves them
+    against the sandbox. Without that, STAGE1_MODEL reads back as whatever the
+    author last picked in the Settings tab, and a fresh clone disagrees.
+    """
+    import score_jobs
+    defaults = {k: v[1] for k, v in score_jobs._SCORING_DEFAULTS.items()}
+    assert score_jobs.STAGE1_MODEL == defaults["stage1_model"]
+    assert score_jobs.STAGE2_MODEL == defaults["stage2_model"]
+    assert score_jobs.SCORING_PROVIDER == defaults["provider"]
+    assert score_jobs.STAGE1_CONCURRENCY == defaults["stage1_concurrency"]
+    assert score_jobs.STAGE2_CONCURRENCY == defaults["stage2_concurrency"]
+    assert score_jobs.STAGE2_THRESHOLD == defaults["stage2_threshold"]
+    assert score_jobs.MAX_SCORED_PER_RUN == defaults["max_scored_per_run"]
+    assert score_jobs.RESCORE_CAP == defaults["rescore_cap"]
+    assert score_jobs.MIN_FILTER_YEARS == defaults["min_filter_years"]
+    assert score_jobs.DROP_EASY_APPLY == defaults["drop_easy_apply"]

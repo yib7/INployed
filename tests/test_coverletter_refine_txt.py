@@ -35,7 +35,7 @@ def _master(monkeypatch, basics):
 # ── refine_body ───────────────────────────────────────────────────────────────
 def test_refine_body_returns_polished_text(monkeypatch):
     monkeypatch.setattr(compose, "call", lambda *a, **k: "  polished body  ")
-    out = coverletter.refine_body("jd", "Engineer", "Acme",
+    out = coverletter.refine_body("Engineer", "Acme",
                                   "rough draft", BULLETS)
     assert out == "polished body"
 
@@ -49,7 +49,7 @@ def test_refine_body_prompt_is_grounded_and_measured(monkeypatch):
         return "ok"
 
     monkeypatch.setattr(compose, "call", fake_call)
-    coverletter.refine_body("jd", "Engineer", "Acme", "the draft body", BULLETS,
+    coverletter.refine_body("Engineer", "Acme", "the draft body", BULLETS,
                             tone="concise")
     # grounding: only the resume bullets, never invent
     assert "ONLY facts" in seen["system"]
@@ -67,7 +67,7 @@ def test_refine_body_prompt_is_grounded_and_measured(monkeypatch):
 
 def test_refine_body_empty_result_keeps_draft(monkeypatch):
     monkeypatch.setattr(compose, "call", lambda *a, **k: "   ")
-    out = coverletter.refine_body("jd", "Engineer", "Acme", "keep me", BULLETS)
+    out = coverletter.refine_body("Engineer", "Acme", "keep me", BULLETS)
     assert out == "keep me"
 
 
@@ -76,14 +76,14 @@ def test_refine_body_call_failure_keeps_draft(monkeypatch):
         raise RuntimeError("no network")
 
     monkeypatch.setattr(compose, "call", boom)
-    out = coverletter.refine_body("jd", "Engineer", "Acme", "keep me", BULLETS)
+    out = coverletter.refine_body("Engineer", "Acme", "keep me", BULLETS)
     assert out == "keep me"
 
 
 def test_refine_body_blank_draft_makes_no_call(monkeypatch):
     calls = []
     monkeypatch.setattr(compose, "call", lambda *a, **k: calls.append(1) or "x")
-    assert coverletter.refine_body("jd", "Engineer", "Acme", "   ", BULLETS) == ""
+    assert coverletter.refine_body("Engineer", "Acme", "   ", BULLETS) == ""
     assert calls == []
 
 
@@ -100,11 +100,11 @@ def test_generate_body_runs_generation_then_refine_then_gate(monkeypatch):
         order.append("generate")
         return "Gen"
 
-    def fake_refine(jd, jt, co, body, bullets, **k):
+    def fake_refine(jt, co, body, bullets, **k):
         order.append(f"refine({body})")
         return "Refined"
 
-    def fake_gate(jd, jt, co, body, bullets, **k):
+    def fake_gate(jt, co, body, bullets, **k):
         order.append(f"gate({body})")
         return "Gated"
 

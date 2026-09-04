@@ -56,8 +56,7 @@ def test_open_dashboard_no_drive_but_local_runs_returns_empty_ok(monkeypatch):
     monkeypatch.setattr(watcher, "detect_gdrive_root", lambda: None)
     monkeypatch.setattr(jobsdata, "local_run_files",
                         lambda base=None: [Path("evening/a_scored.csv.gz")])
-    sources, err = open_dashboard._resolve_sources()
-    assert err is None and sources == []   # app.main folds the local files in
+    assert open_dashboard._resolve_sources() == []   # app.main folds the local files in
 
 
 def test_open_dashboard_no_drive_no_local_opens_get_started(monkeypatch):
@@ -67,5 +66,4 @@ def test_open_dashboard_no_drive_no_local_opens_get_started(monkeypatch):
     import watcher
     monkeypatch.setattr(watcher, "load_config", lambda: {})
     monkeypatch.setattr(watcher, "detect_gdrive_root", lambda: None)
-    sources, err = open_dashboard._resolve_sources()
-    assert sources == [] and err is None
+    assert open_dashboard._resolve_sources() == []

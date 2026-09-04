@@ -28,7 +28,7 @@ def test_enforce_body_style_repairs_offender(monkeypatch):
     repaired = ("I cut latency by 30% so responses stay fast.\n\n"
                 "I would bring the same care to Acme.")
     monkeypatch.setattr(compose, "call", lambda *a, **k: repaired)
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", body, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", body, BULLETS)
     assert out == repaired
 
 
@@ -37,7 +37,7 @@ def test_enforce_body_style_rejects_non_improving_repair(monkeypatch):
     # The "repair" still carries a participial tail -> must be rejected.
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "I cut latency, ensuring speed.")
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", body, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", body, BULLETS)
     assert out == body
 
 
@@ -48,7 +48,7 @@ def test_enforce_body_style_em_dash_backstop_on_call_failure(monkeypatch):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(compose, "call", boom)
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", body, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", body, BULLETS)
     assert "—" not in out
     assert out == "I built the sandbox, no network, no secrets."
 
@@ -57,7 +57,7 @@ def test_enforce_body_style_clean_body_makes_no_call(monkeypatch):
     calls = []
     monkeypatch.setattr(compose, "call", lambda *a, **k: calls.append(1) or "")
     body = "I shipped the viewer with 178 tests.\n\nI would do the same at Acme."
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", body, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", body, BULLETS)
     assert out == body
     assert calls == []  # no violations -> no LLM call at all
 
@@ -68,7 +68,7 @@ def test_enforce_body_style_strips_em_dash_surviving_repair(monkeypatch):
     body = "I cut latency by 30%, ensuring fast responses — a big win."
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "I cut latency by 30% — a big win.")
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", body, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", body, BULLETS)
     assert "—" not in out
     assert out == "I cut latency by 30%, a big win."
 
@@ -84,7 +84,7 @@ def test_generate_body_gates_model_output(monkeypatch):
     # Isolate the deterministic style gate: skip the (separately tested) flash
     # refine pass so the two compose.call responses are generation + gate repair.
     monkeypatch.setattr(coverletter, "refine_body",
-                        lambda jd, jt, co, body, bullets, **k: body)
+                        lambda jt, co, body, bullets, **k: body)
     responses = ["I admire the team — its work is robust.",   # generation (slop)
                  "I admire the team and its published work."]  # repair (clean)
     monkeypatch.setattr(compose, "call", lambda *a, **k: responses.pop(0))

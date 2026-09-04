@@ -687,14 +687,6 @@ def live_resume_ids(resume_paths) -> set[str]:
     return live
 
 
-def visible_columns(all_cols: list[str], hidden) -> list[str]:
-    """Display order with `hidden` column ids removed. Never empty — if every
-    column is hidden it falls back to showing all (a blank table is never useful)."""
-    hidden = set(hidden)
-    vis = [c for c in all_cols if c not in hidden]
-    return vis or list(all_cols)
-
-
 def load_hidden_columns() -> dict[str, list[str]]:
     """Per-table hidden column ids, persisted in config.json under 'hidden_columns'.
     Keyed by table ('high' / 'all' / 'tracker'). Shape-checked so a hand-edited or

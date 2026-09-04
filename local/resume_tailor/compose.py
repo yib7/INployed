@@ -80,20 +80,6 @@ BANNED_PHRASING = (
     "numbers over adjectives."
 )
 
-# A curated palette of strong, role-relevant action verbs. Replaces the 6KB raw
-# PDF dump (jumbled multi-column OCR — weak signal AND expensive): the model only
-# needs a clean set of openers, so this is both cheaper and higher-quality.
-_CORE_VERBS = (
-    "Built, Designed, Engineered, Developed, Implemented, Architected, Automated, "
-    "Optimized, Accelerated, Reduced, Improved, Increased, Streamlined, Scaled, "
-    "Refactored, Deployed, Integrated, Migrated, Launched, Shipped, Analyzed, "
-    "Modeled, Forecasted, Quantified, Evaluated, Validated, Diagnosed, Researched, "
-    "Led, Directed, Coordinated, Mentored, Spearheaded, Drove, Owned, Delivered, "
-    "Resolved, Standardized, Consolidated, Boosted, Generated, Produced, Trained, "
-    "Benchmarked, Prototyped, Instrumented"
-)
-
-
 # How much style exemplar the rephrase prompt carries. Against the curated
 # style_exemplar.txt (a handful of bullets, well under 1k chars) this never bites: with a
 # curated source the cap is no longer rationing a noisy 3.5KB page dump, it is a guard

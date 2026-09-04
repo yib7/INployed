@@ -8,8 +8,8 @@ that slice spent its first 472 characters on name / contact / education, deliver
 complete bullets out of 14 plus a fourth cut mid-word, glued the next section's heading
 onto several bullets, and demonstrated a participial impact tail that the very same
 prompt's ``BANNED_PHRASING`` forbids. The package had already made this call once for a
-different consumer: ``compose._CORE_VERBS`` records that the raw PDF dump was dropped for
-the verb palette as "jumbled multi-column OCR -- weak signal AND expensive".
+different consumer: ``assets._FALLBACK_VERBS`` records that the raw PDF dump was dropped
+for the verb palette as "jumbled multi-column OCR -- weak signal AND expensive".
 
 So ``assets.example_text()`` is now a three-arm resolver -- curated file, else PDF
 extract, else "" -- and ``compose`` bounds it on a LINE boundary instead of mid-word.

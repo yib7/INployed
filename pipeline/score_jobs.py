@@ -96,6 +96,24 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
 }
 
 
+def _config_int(value, default: int, key: str) -> int:
+    """Coerce a scoring-config value to an int, falling back to `default`.
+
+    load_scoring_config() runs at IMPORT scope (see _SCORING below), so a bare
+    int(value) turns one bad entry -- a hand-edited scoring_config.json, or a
+    SCORE_* export -- into a ValueError raised while importing this module. On
+    the VM that lands at run_scraper.sh's `python score_jobs.py` under `set -e`,
+    AFTER scraper.py has already billed Bright Data, and the master upload that
+    follows never runs. scraper._positive_int exists for exactly this reason on
+    the search-config side; the asymmetry was the bug.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        print(f"scoring config: {key}={value!r} is not a number; using {default}")
+        return default
+
+
 def _as_bool(v) -> bool:
     if isinstance(v, bool):
         return v
@@ -127,7 +145,7 @@ def load_scoring_config() -> dict:
         else:
             value = default
         if kind == "int":
-            cfg[key] = int(value)
+            cfg[key] = _config_int(value, default, key)
         elif kind == "bool":
             cfg[key] = _as_bool(value)
         else:
@@ -528,7 +546,7 @@ def requires_advanced_degree(text: Any) -> bool:
     """
     if not isinstance(text, str):
         return False
-    low = text.lower().replace("'", "'")  # normalize curly apostrophe
+    low = text.lower().replace("’", "'")  # normalize curly apostrophe
     for m in _DEGREE_TOKEN.finditer(low):
         lo = max(0, m.start() - 60)
         hi = min(len(low), m.end() + 60)
@@ -858,7 +876,10 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
         df["recommendation"] = ""
         return df
 
-    sem1 = asyncio.Semaphore(STAGE1_CONCURRENCY)
+    # max(1, ...): a Semaphore(0) is never released, so asyncio.gather below would
+    # block forever -- and on the VM that holds run_scraper.sh's flock for good, so
+    # every later cron fire logs "already running" and job discovery stops silently.
+    sem1 = asyncio.Semaphore(max(1, STAGE1_CONCURRENCY))
     print(f"Stage 1: scoring {len(to_score)} jobs with {STAGE1_MODEL}")
     s1_tasks = [
         score_stage1(pool, sem1, resume, r.job_posting_id, r.job_description_md)
@@ -874,7 +895,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
     print(f"Stage 2: {len(s2_ids)} jobs at threshold >= {STAGE2_THRESHOLD}")
 
     if s2_ids:
-        sem2 = asyncio.Semaphore(STAGE2_CONCURRENCY)
+        sem2 = asyncio.Semaphore(max(1, STAGE2_CONCURRENCY))   # see sem1 on max(1, ...)
         # Dispatch highest Stage-1 score first so the scarce free flash budget
         # goes to the best-fit jobs; the overflow tail spills to Vertex.
         rank = {jid: i for i, jid in enumerate(s2_ids)}

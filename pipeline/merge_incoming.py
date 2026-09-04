@@ -117,7 +117,13 @@ def merge_stats(existing_df: pd.DataFrame | None, incoming_df: pd.DataFrame) -> 
     never collide with anything, present or future, and would just
     accumulate as junk).
     """
+    # Both NA and blank: the readers below use dtype=str, keep_default_na=False,
+    # so a missing key arrives as "" rather than NaN and dropna alone would let it
+    # through un-keyed.
     incoming_df = incoming_df.dropna(subset=STATS_KEY)
+    for col in STATS_KEY:
+        if col in incoming_df.columns:
+            incoming_df = incoming_df[incoming_df[col].astype(str).str.strip() != ""]
     if existing_df is None:
         combined = incoming_df.copy()
     else:
@@ -161,7 +167,13 @@ def _process_stats_files(paths: list[Path], bad_dir: Path) -> tuple[list[pd.Data
     good_paths: list[Path] = []
     for path in paths:
         try:
-            df = pd.read_csv(path)
+            # Same dtype=str, keep_default_na=False contract as the rows reader
+            # above, and for the same reason. merge_stats column-union-concats
+            # frames of DIFFERENT width -- exactly what score_jobs'
+            # append_run_stats header self-heal produces -- and with inferred
+            # dtypes that concat upcasts int64 to float64, so an integer counter
+            # comes back out of run_stats.csv written as "1.0".
+            df = pd.read_csv(path, dtype=str, keep_default_na=False)
         except _BAD_FILE_ERRORS as e:
             _quarantine(path, bad_dir, f"unreadable: {e}")
             continue
@@ -314,7 +326,7 @@ def main(
             existing_df = None
             if stats_csv.exists():
                 try:
-                    existing_df = pd.read_csv(stats_csv)
+                    existing_df = pd.read_csv(stats_csv, dtype=str, keep_default_na=False)
                 except _BAD_FILE_ERRORS as e:
                     _say(
                         f"WARNING: {stats_csv.name} exists but is unreadable ({e}); "

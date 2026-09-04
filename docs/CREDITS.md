@@ -7,7 +7,9 @@ This project stands on a lot of other people's work.
   from the widely-used **"Jake's Resume"** template by Jake Gutierrez
   (https://github.com/jakegut/resume), MIT-licensed. The `\resumeItem`,
   `\resumeSubheading`, and section macros come from that template; the generation
-  pipeline fills them from `master_experience.yaml`.
+  pipeline fills them from `master_experience.yaml`. The MIT permission notice
+  travels with the file itself, in the comment header at the top of
+  `resume_template.tex`.
 
 ## Avoid-AI-writing rules
 - The optional cover-letter style pass in `local/resume_tailor/aiwriting.py`
@@ -36,7 +38,14 @@ This project stands on a lot of other people's work.
 pandas · google-genai · aiohttp · PyYAML · ruamel.yaml · pypdf · markdownify ·
 python-dotenv · tzdata · requests · Send2Trash · keyring · PySide6 (Qt) · pytest ·
 pytest-qt · pytest-timeout · ruff · and the Python standard library (asyncio, sqlite3,
-argparse).
+argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy** (BSD-3).
+
+Four more are optional and installed only if you want the feature they serve, so
+`requirements.txt` lists them without installing them: **playwright** (Apache-2.0), the
+advanced auto-apply driver; and, for maintainers regenerating art and README media,
+**Pillow** (MIT-CMU) plus **imageio-ffmpeg** (BSD-2), which downloads its own **FFmpeg**
+binary (LGPL-2.1-or-later) at first use. No FFmpeg binary, and nothing else from that
+list, is committed here.
 
 None of these are redistributed with this project; `pip` installs each from PyPI under
 its own license. Across the full pinned dependency tree the licenses are MIT, BSD-2/3,

@@ -38,6 +38,16 @@ KIND_GROUNDING = "grounding"
 KIND_PAGE_LIMIT = "page limit"
 KIND_ADVISORY = "advisory"
 
+# The NOTE taxonomy — same line shape ("<kind>: <message>"), one severity down.
+# A note records something the run could not fully deliver but that leaves a
+# correct, shippable résumé, so it is written to the report and NOT streamed to
+# `on_warning`. That callback is what the dashboard's batch summary calls a
+# degraded run; putting cosmetic findings on it would make "finished with
+# warnings" mean nothing (see DECISIONS, SP4).
+#   UNDERFULL — a bullet the underfull fill rewrote is still underfull after the
+#               re-trim: the fill was paid for and the trim took it back.
+KIND_UNDERFULL = "underfull"
+
 
 def _noop(_msg: str) -> None:
     pass
@@ -52,10 +62,14 @@ class RunLog:
     as a clean one. This is the durable half: the stages that ran, every warning with
     its kind, and the final page count. It is written to `tailor_report.txt` in the
     output folder and, when the caller passes `on_warning`, streamed out live.
+
+    `notes` is the same record one severity down: written to the report, never
+    streamed, so it cannot mark a run degraded.
     """
     on_warning: WarnFn = None
     stages: List[str] = field(default_factory=list)
     entries: List[Tuple[str, str]] = field(default_factory=list)
+    notes: List[Tuple[str, str]] = field(default_factory=list)
     pages: int = 0
 
     def stage(self, name: str) -> None:
@@ -77,14 +91,27 @@ class RunLog:
     def advisory(self, message: str) -> None:
         self.warn(KIND_ADVISORY, message)
 
+    def note(self, kind: str, message: str) -> None:
+        """Record something the report should carry but that must NOT make the run
+        read as degraded. Deliberately does not touch `on_warning`: that channel is
+        the dashboard's degraded-run signal, and a cosmetic finding on it would cry
+        wolf against a résumé that is correct and shippable."""
+        self.notes.append((kind, f"{kind}: {message}"))
+
     @property
     def warnings(self) -> List[str]:
         return [line for _kind, line in self.entries]
 
+    @property
+    def note_lines(self) -> List[str]:
+        return [line for _kind, line in self.notes]
+
 
 def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: str,
                  out_dir: Path) -> str:
-    """Render `tailor_report.txt`: the run's stages, its warnings, its page count."""
+    """Render `tailor_report.txt`: the run's stages, its warnings, its notes, its
+    page count. Notes sit directly under warnings, one severity down: same
+    `<kind>: <message>` line shape, but a note never made the run degraded."""
     def section(title: str, body: List[str], empty: str) -> List[str]:
         return ["", title, "-" * len(title)] + ([f"  {b}" for b in body] or [f"  {empty}"])
 
@@ -99,6 +126,7 @@ def _report_text(rep: RunLog, *, job: Dict[str, str], company: str, job_title: s
     ]
     lines += section(f"stages ({len(rep.stages)})", rep.stages, "none")
     lines += section(f"warnings ({len(rep.entries)})", rep.warnings, "none")
+    lines += section(f"notes ({len(rep.notes)})", rep.note_lines, "none")
     lines.append("")
     return "\n".join(lines)
 
@@ -402,12 +430,17 @@ class Pass:
     verify  — snapshot before the pass and re-run the grounding gate after it, with
               that snapshot as the revert target. False only for a pass that cannot
               un-ground anything (the verbatim merge folds in the user's own text).
+    recheck_fill — after the bracketing above, re-measure every bullet this pass
+              actually changed and note the ones that are STILL underfull. Only
+              meaningful on a pass whose job is to lengthen (see
+              `_note_still_underfull` for why the re-check has to be last).
     """
     name: str
     run: Callable[["PassCtx"], None]
     enabled: Callable[[], bool] = _always
     retrim: bool = False
     verify: bool = True
+    recheck_fill: bool = False
 
 
 def _gate(ctx: PassCtx, *, stage: str = "rephrase",
@@ -438,6 +471,52 @@ def _gate(ctx: PassCtx, *, stage: str = "rephrase",
     return handled
 
 
+def _note_still_underfull(ctx: PassCtx, before: Dict[str, str], *,
+                          stage: str) -> List[str]:
+    """Re-measure the bullets `stage` actually changed and note the ones that are STILL
+    underfull. Returns their gkeys (empty = every fill stuck).
+
+    The underfull fill runs *measure -> ask the model to lengthen -> trim back*, and
+    until now nothing re-measured after that trim. `_fit_to_lines` can hand back
+    exactly the text the fill was paid to grow — a filled bullet whose extra material
+    pushes it onto one more printed line is binary-searched back to the longest prefix
+    that fits, and when the added material is one wide token that prefix IS the
+    original. The run then reported a fill that did not happen.
+
+    Three things about the shape of this check are load-bearing:
+
+      * It runs LAST, after the re-trim AND the grounding gate, because both can undo
+        the fill and only the final text is worth reporting.
+      * It only looks at bullets whose text this pass CHANGED (a committed fill re-keys
+        the bullet onto its borrowed atom, so it is not in `before` at all). A bullet
+        left underfull because its block had no spare atom was never filled, is a
+        documented no-op, and reporting it would be noise.
+      * It is a NOTE, not a warning. Nothing is re-called: a second billed model call
+        per bullet to recover a part-empty last line is not worth it, and with the
+        user's two-line layout a short last line is a cosmetic blemish, not a broken
+        résumé. The report says so; the run does not claim to be degraded over it.
+    """
+    targets = compose.bullet_line_targets(ctx.sel)
+    still: List[str] = []
+    for gkey, text in ctx.bullets.items():
+        if compose.is_verbatim_gkey(gkey) or before.get(gkey) == text:
+            continue
+        target = targets.get(gkey, config.PROJECT_BULLET_LINES)
+        if not measure.is_underfull(text, target):
+            continue
+        still.append(gkey)
+        if ctx.report is not None:
+            fill = measure.text_width(text) / max(1, target * measure.BODY_LINE_CAPACITY)
+            ctx.report.note(
+                KIND_UNDERFULL,
+                f"[{stage}] bullet '{gkey}' is still underfull after the re-trim "
+                f"(fills {fill:.0%} of its {target}-line budget)")
+    if still:
+        ctx.log(f"{len(still)} filled bullet(s) trimmed back to underfull; "
+                f"see {REPORT_NAME}.")
+    return still
+
+
 def _pass_dedupe_verbs(ctx: PassCtx) -> None:
     """Guarantee every tailored bullet opens with a DISTINCT action verb — none reused,
     none colliding with a verbatim block's opener (verbatim text is reserved, never
@@ -460,7 +539,8 @@ def _pass_fill_underfull(ctx: PassCtx) -> None:
     """Grow any bullet that rendered shorter than its configured line target by folding in
     one detail from an unused SAME-block atom (never fabricates — a no-op when there's no
     spare material). `retrim=True` re-trims the (over)filled bullets back to a clean line
-    boundary before the gate re-checks them."""
+    boundary before the gate re-checks them, and `recheck_fill=True` re-measures the result
+    (the trim can hand back exactly what the fill was paid to grow)."""
     ctx.log("filling underfull bullets from spare atoms…")
     compose.fill_underfull(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
 
@@ -486,26 +566,29 @@ _BULLET_PASSES = (
     Pass("verb dedupe", _pass_dedupe_verbs),
     Pass("verbatim + trim", _pass_merge_verbatim, verify=False),
     Pass("underfull fill", _pass_fill_underfull,
-         enabled=config.fill_underfull_enabled, retrim=True),
+         enabled=config.fill_underfull_enabled, retrim=True, recheck_fill=True),
     Pass("style gate", _pass_enforce_style, retrim=True),
 )
 
 
 def _run_bullet_passes(ctx: PassCtx,
                        passes: Sequence[Pass] = _BULLET_PASSES) -> None:
-    """Run each enabled pass under the snapshot -> mutate -> re-trim -> re-verify
-    discipline. Nobody writes a snapshot by hand, so nobody can forget one."""
+    """Run each enabled pass under the snapshot -> mutate -> re-trim -> re-verify ->
+    (optionally) re-measure discipline. Nobody writes a snapshot by hand, so nobody can
+    forget one."""
     for p in passes:
         if not p.enabled():
             continue
         if ctx.report is not None:
             ctx.report.stage(p.name)
-        snapshot = dict(ctx.bullets) if p.verify else None
+        snapshot = dict(ctx.bullets) if (p.verify or p.recheck_fill) else None
         p.run(ctx)
         if p.retrim:
             _trim_to_caps(ctx.sel, ctx.bullets)
         if p.verify:
             _gate(ctx, stage=p.name, fallback=snapshot)
+        if p.recheck_fill:
+            _note_still_underfull(ctx, snapshot or {}, stage=p.name)
 
 
 def tailor(
@@ -528,6 +611,10 @@ def tailor(
     apply.md) failing. Optional, defaulting to None, so no existing call site
     changes; the same warnings are written to `tailor_report.txt` in the output
     folder either way, which is the copy that outlives a status bar.
+
+    A finding that leaves a correct, shippable résumé — a bullet the underfull fill
+    could not keep full once it was re-trimmed — is a NOTE instead: report only,
+    never on `on_warning`, so it cannot mark the run degraded.
     """
     log = on_status or _noop
     report = RunLog(on_warning=on_warning)

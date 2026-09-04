@@ -311,10 +311,10 @@ re-check against the atoms, reverting to the last grounded text when there is on
 
 That rule used to be written out by hand at each stage, which meant it could be forgotten.
 It is now structural. `run.py` declares a `Pass` (name, the callable, an `enabled`
-predicate, `retrim`, `verify`) and `_run_bullet_passes` does the snapshot, runs the pass,
-re-trims when asked, and re-verifies against the snapshot. `_BULLET_PASSES` reads as the
-sequence itself: verb dedupe, verbatim merge and trim, underfull fill, style gate.
-`verify.enforce_grounded` has exactly one call site, `_gate`.
+predicate, `retrim`, `verify`, `recheck_fill`) and `_run_bullet_passes` does the snapshot,
+runs the pass, re-trims when asked, re-verifies against the snapshot, and re-measures when
+asked. `_BULLET_PASSES` reads as the sequence itself: verb dedupe, verbatim merge and trim,
+underfull fill, style gate. `verify.enforce_grounded` has exactly one call site, `_gate`.
 
 `retrim=True` on both passes that can LENGTHEN a bullet (underfull fill, style gate). Both
 ask a model for new text under a stated length limit, and neither answer is length-checked,
@@ -322,6 +322,15 @@ so without the re-trim an over-long reply prints: nothing downstream re-trims te
 `compile.enforce_one_page` only drops whole bullets. The re-trim is safe to run after the
 style gate because `_word_trim` only ever returns a word-boundary prefix, and no pattern in
 `compose._STYLE_BANS` is end-anchored, so a trim can never manufacture a banned phrase.
+
+`recheck_fill=True` on the underfull fill, because that pass's own re-trim can undo it. The
+sequence is measure-underfull → ask the model to lengthen → trim back, and `_fit_to_lines`
+returns the longest prefix that fits the line target — when the folded-in material is one
+wide token, that prefix is the original text. `_note_still_underfull` re-measures the
+bullets the pass actually CHANGED (a committed fill re-keys the bullet onto its borrowed
+atom) and records the ones that are still short. It never re-calls the model: a second
+billed call per bullet to recover a part-empty last line is not worth it, and a bullet the
+fill skipped for want of a spare atom is a documented no-op, not a finding.
 
 `rephrase` and its first gate stay outside the list. That gate runs with no fallback,
 because there is no earlier grounded text to revert to yet.
@@ -338,6 +347,14 @@ token that caused it, the final page count, and each advisory failure. Callers c
 pass `on_warning` to receive them live; the dashboard does this and reports degraded runs
 in the batch summary, so a two-page résumé is no longer indistinguishable from a clean
 one. A degraded run is still a success that produced a PDF. It is just no longer silent.
+
+The report has a second, quieter section: **notes**. Same `<kind>: <message>` line shape,
+one severity down, and deliberately NOT streamed to `on_warning` — a note is something the
+run could not fully deliver that still leaves a correct, shippable résumé, so it must not
+make the batch summary call the job degraded. The one note kind today is `underfull`: a
+bullet the fill pass grew and the re-trim took straight back. With the user's two-line
+layout that is a part-empty last line, a cosmetic blemish; putting it on the degraded
+channel would make "finished with warnings" mean nothing.
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
 `settings.py` is one schema (`SETTINGS_SCHEMA`) of 60 `Field` rows describing every

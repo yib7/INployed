@@ -552,6 +552,139 @@ def test_fill_underfull_skips_verbatim_bullets(synthetic_master, monkeypatch):
     assert out == {gk: "Short verbatim bullet."}
 
 
+# --- SP4: re-check the fill AFTER the re-trim ------------------------------------
+# The fill pass runs measure-underfull -> ask the model to lengthen -> trim back, and
+# nothing used to re-measure after that trim. `_fit_to_lines` binary-searches the
+# longest prefix that fits the line target, so when the folded-in material is one wide
+# token the prefix it lands on IS the original text: the run paid for a fill, shipped
+# the bullet exactly as underfull as it started, and the report said the stage ran.
+#
+# The re-check names the bullet in `tailor_report.txt`. It does NOT re-call the model
+# (a second billed call per bullet for a part-empty last line is not worth it) and it
+# is a NOTE, not a warning, so it never marks the run degraded.
+
+_UNDERFULL_BASE = "Built the nightly ingestion pipeline feeding the warehouse"
+# One wide unbreakable token. It pushes the bullet onto a 2nd line, so the re-trim
+# fires; the longest 1-line prefix cuts back inside it, so the word-boundary trim hands
+# back exactly _UNDERFULL_BASE. Deliberately all-lowercase with no digits: the grounding
+# gate traces only numbers and capitalized/inner-case words, so what this test observes
+# is the trim alone, never a revert.
+_WIDE_TOKEN = "cross-encoder-reranking-checkpoint-orchestration-and-throughput-monitoring"
+
+
+def _one_line_project(monkeypatch):
+    """A ProjTwo selection whose single bullet has a 1-LINE target and a spare atom."""
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"project_layout": {"ProjTwo": {"line_targets": [1]}}})
+    return {"experience": [], "leadership": [],
+            "projects": [{"name": "ProjTwo", "groups": [["p2a"]]}]}
+
+
+def _fill_pass_run(sel, bullets, monkeypatch, filled_text):
+    """Drive the REAL underfull-fill Pass (stubbed `call`) through the REAL driver.
+
+    Not a hand-rolled copy of the pass loop: the defect is in the pass WIRING, so the
+    test has to go through `_run_bullet_passes` and the `Pass` object it declares.
+    Returns the RunLog the driver wrote into.
+    """
+    monkeypatch.setattr(compose, "call", _fake_bullets(("p2a", filled_text)))
+    report = rt_run.RunLog()
+    ctx = rt_run.PassCtx(jd="Data engineering role.", job_title="Data Engineer",
+                         sel=sel, bullets=bullets, verbatim={}, reserved=frozenset(),
+                         log=lambda _m: None, report=report)
+    fill_pass = next(p for p in rt_run._BULLET_PASSES if p.name == "underfull fill")
+    rt_run._run_bullet_passes(ctx, passes=(fill_pass,))
+    return report
+
+
+def test_a_fill_the_retrim_undoes_is_named_in_the_run_report(synthetic_master,
+                                                             monkeypatch):
+    sel = _one_line_project(monkeypatch)
+    bullets = {"p2a": _UNDERFULL_BASE}
+    assert measure.is_underfull(_UNDERFULL_BASE, 1)          # underfull before the fill
+    filled = f"{_UNDERFULL_BASE} {_WIDE_TOKEN}"
+    assert measure.line_count(filled) == 2                   # ... so the re-trim fires
+    assert not measure.is_underfull(filled, 1)               # ... on a bullet that was full
+
+    report = _fill_pass_run(sel, bullets, monkeypatch, filled)
+
+    gk = "p2a+p2b"                                           # the fill borrowed a spare atom
+    assert bullets[gk] == _UNDERFULL_BASE                    # the trim handed back the original
+    assert measure.is_underfull(bullets[gk], 1)              # ... still underfull
+    line = f"underfull: [underfull fill] bullet '{gk}' is still underfull after the re-trim"
+    assert [n for n in report.note_lines if n.startswith(line)]
+    text = rt_run._report_text(report, job={}, company="BigCo", job_title="Engineer",
+                               out_dir=Path("out"))
+    assert "notes (1)" in text and f"bullet '{gk}'" in text
+
+
+def test_a_fill_that_survives_its_retrim_produces_no_underfull_note(synthetic_master,
+                                                                    monkeypatch):
+    """The control. Without it the test above passes against code that reports every
+    filled bullet, or every bullet, unconditionally."""
+    sel = _one_line_project(monkeypatch)
+    bullets = {"p2a": _UNDERFULL_BASE}
+    filled = (f"{_UNDERFULL_BASE} with incremental snapshot checkpoints and drift "
+              "alerts that the on-call rotation reads every morning")
+    assert measure.line_count(filled) > 1                    # the re-trim still fires
+
+    report = _fill_pass_run(sel, bullets, monkeypatch, filled)
+
+    gk = "p2a+p2b"
+    assert bullets[gk] != filled                             # the re-trim really did cut
+    assert bullets[gk] != _UNDERFULL_BASE                    # ... but the fill survived it
+    assert not measure.is_underfull(bullets[gk], 1)
+    assert report.note_lines == []
+
+
+def test_a_bullet_the_fill_never_touched_is_not_noted(synthetic_master, monkeypatch):
+    """ProjOne has ONE atom, so there is no spare to fold in and the fill is a
+    documented no-op. The bullet stays underfull, and that is not a finding: reporting
+    every short bullet the engine could not have grown is exactly the noise that makes
+    a report unread."""
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"project_layout": {"ProjOne": {"line_targets": [1]}}})
+    monkeypatch.setattr(compose, "call",
+                        _fake_bullets(("p1", "never reached")))
+    sel = {"experience": [], "leadership": [],
+           "projects": [{"name": "ProjOne", "groups": [["p1"]]}]}
+    bullets = {"p1": _UNDERFULL_BASE}
+    report = rt_run.RunLog()
+    ctx = rt_run.PassCtx(jd="Data engineering role.", job_title="Data Engineer",
+                         sel=sel, bullets=bullets, verbatim={}, reserved=frozenset(),
+                         log=lambda _m: None, report=report)
+    fill_pass = next(p for p in rt_run._BULLET_PASSES if p.name == "underfull fill")
+    rt_run._run_bullet_passes(ctx, passes=(fill_pass,))
+
+    assert bullets == {"p1": _UNDERFULL_BASE}                # untouched
+    assert measure.is_underfull(_UNDERFULL_BASE, 1)          # ... and still short
+    assert report.note_lines == []                           # ... and not a finding
+
+
+def test_a_still_underfull_bullet_never_marks_the_run_degraded(synthetic_master,
+                                                               monkeypatch):
+    """The severity call, pinned. `on_warning` is the dashboard's degraded-run channel
+    (`main_window._tailor_warning_lines` keys the batch summary off a job having ANY
+    warning). With the user's layout most bullets are two-line and a part-empty last
+    line is a cosmetic blemish, so this finding goes to the report only: `entries` stays
+    empty, the collector is never called, and the run is still clean."""
+    sel = _one_line_project(monkeypatch)
+    bullets = {"p2a": _UNDERFULL_BASE}
+    monkeypatch.setattr(compose, "call",
+                        _fake_bullets(("p2a", f"{_UNDERFULL_BASE} {_WIDE_TOKEN}")))
+    collected: list[str] = []
+    report = rt_run.RunLog(on_warning=collected.append)
+    ctx = rt_run.PassCtx(jd="Data engineering role.", job_title="Data Engineer",
+                         sel=sel, bullets=bullets, verbatim={}, reserved=frozenset(),
+                         log=lambda _m: None, report=report)
+    fill_pass = next(p for p in rt_run._BULLET_PASSES if p.name == "underfull fill")
+    rt_run._run_bullet_passes(ctx, passes=(fill_pass,))
+
+    assert len(report.notes) == 1                            # the report carries it
+    assert report.entries == [] and report.warnings == []    # ... as a note, not a warning
+    assert collected == []                                   # ... and never as "degraded"
+
+
 # --- config gate: RESUME_TAILOR_FILL_UNDERFULL ----------------------------------
 
 def test_fill_underfull_enabled_default_true(synthetic_master, monkeypatch):

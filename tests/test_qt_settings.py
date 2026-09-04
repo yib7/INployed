@@ -682,6 +682,86 @@ def test_form_hides_a_gated_field_transitively(qtbot, tmp_path):
     assert not _rows_visible(form, "RESUME_TAILOR_MODEL_PRO")
 
 
+_GEMINI_TIER_ROWS = ("RESUME_TAILOR_MODEL_FLASH_LITE", "RESUME_TAILOR_MODEL_FLASH",
+                     "RESUME_TAILOR_MODEL_PRO")
+_CLAUDE_TIER_ROWS = ("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE",
+                     "RESUME_TAILOR_CLAUDE_MODEL_FLASH", "RESUME_TAILOR_CLAUDE_MODEL_PRO")
+
+
+def test_simple_mode_shows_one_model_row_and_tiers_shows_three(qtbot, tmp_path):
+    """The user-facing shape of the setting, through the real widgets.
+
+    `simple` is for someone who wants one model everywhere and does not want to
+    learn what "pro" buys, so the three per-stage rows must actually GO — leaving
+    them on screen next to a box that overrides them is worse than not having the
+    mode. `tiers` is the default and must be the form exactly as it shipped.
+    """
+    form = _form(tmp_path, show_advanced=True)   # the three tier pickers are advanced
+    qtbot.addWidget(form)
+    mode = form._widgets["RESUME_TAILOR_MODEL_MODE"]
+    assert mode.currentText() == "tiers"                       # the shipped default
+    assert all(_rows_visible(form, k) for k in _GEMINI_TIER_ROWS)
+    assert not _rows_visible(form, "RESUME_TAILOR_MODEL_ALL")
+
+    mode.setCurrentText("simple")
+    assert _rows_visible(form, "RESUME_TAILOR_MODEL_ALL")
+    assert not any(_rows_visible(form, k) for k in _GEMINI_TIER_ROWS)
+
+    mode.setCurrentText("tiers")                               # and back again
+    assert all(_rows_visible(form, k) for k in _GEMINI_TIER_ROWS)
+    assert not _rows_visible(form, "RESUME_TAILOR_MODEL_ALL")
+
+
+def test_the_mode_row_itself_needs_no_advanced_tick(qtbot, tmp_path):
+    """The feature exists for the user who never ticks 'show advanced', so the
+    mode dropdown and the box it reveals are both plain rows — even though the
+    three per-stage pickers they replace stay advanced."""
+    form = _form(tmp_path)                       # show_advanced=False, as shipped
+    qtbot.addWidget(form)
+    assert _rows_visible(form, "RESUME_TAILOR_MODEL_MODE")
+    assert not _rows_visible(form, "RESUME_TAILOR_MODEL_PRO")      # folded away
+    form._widgets["RESUME_TAILOR_MODEL_MODE"].setCurrentText("simple")
+    assert _rows_visible(form, "RESUME_TAILOR_MODEL_ALL")
+    assert form._advanced_check.isChecked() is False
+
+
+def test_the_wrong_providers_mode_and_every_row_under_it_stay_hidden(qtbot, tmp_path):
+    """The gate CHAIN through the real widgets: `simple` on the Gemini side must
+    not put a Claude row on screen, and switching provider takes the whole block
+    with it — the tier rows transitively, since they gate on the mode, not the
+    provider."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._widgets["RESUME_TAILOR_MODEL_MODE"].setCurrentText("simple")
+    assert not _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_MODE")
+    assert not _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_ALL")
+    assert not any(_rows_visible(form, k) for k in _CLAUDE_TIER_ROWS)
+
+    form._widgets["tailor_provider"].setCurrentText("claude")
+    assert not _rows_visible(form, "RESUME_TAILOR_MODEL_MODE")
+    assert not _rows_visible(form, "RESUME_TAILOR_MODEL_ALL")   # the Gemini 'simple' box
+    assert _rows_visible(form, "RESUME_TAILOR_CLAUDE_MODEL_MODE")
+    assert all(_rows_visible(form, k) for k in _CLAUDE_TIER_ROWS)   # claude default: tiers
+
+
+def test_a_hidden_tier_model_survives_a_trip_through_simple_mode(qtbot, tmp_path):
+    """Hiding is a rendering decision, never a data one — and this is the case
+    where that matters most: a user who tries `simple`, dislikes it and switches
+    back must find their tuned per-stage ids intact, not reset to the defaults."""
+    form = _form(tmp_path, show_advanced=True)
+    qtbot.addWidget(form)
+    form._setters["RESUME_TAILOR_MODEL_PRO"]("gemini-9-deep")
+
+    form._widgets["RESUME_TAILOR_MODEL_MODE"].setCurrentText("simple")
+    assert not _rows_visible(form, "RESUME_TAILOR_MODEL_PRO")
+    values, errors = form.collect()
+    assert errors == {}
+    assert values["RESUME_TAILOR_MODEL_PRO"] == "gemini-9-deep"   # hidden is not dropped
+
+    form._widgets["RESUME_TAILOR_MODEL_MODE"].setCurrentText("tiers")
+    assert form._getters["RESUME_TAILOR_MODEL_PRO"]() == "gemini-9-deep"
+
+
 def test_hidden_field_still_collects_its_stored_value(qtbot, tmp_path):
     """`collect()` iterates the SCHEMA and reads `self._getters`, so a hidden
     widget still returns what it holds. This is the round-trip guarantee: hiding
@@ -2552,9 +2632,15 @@ def test_search_finds_the_words_printed_on_a_rows_own_chips(qtbot, tmp_path):
 
     form.set_search("advanced")
     shown = _on_screen_field_keys(form)
-    assert shown and all(next(x for x in settings.SETTINGS_SCHEMA if x.key == k).advanced
-                         for k in shown)
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    assert shown
     assert "stage1_concurrency" in shown          # found despite the fold
+    # The one UNCHIPPED row that legitimately matches: the model-mode dropdown,
+    # whose help names 'Show advanced settings' because that is where its own
+    # per-stage pickers went. The chip is not the only way the word can reach a
+    # row, so this arm names the exception rather than asserting there is none —
+    # but it still names it, so an accidental new one fails here.
+    assert {k for k in shown if not by_key[k].advanced} == {"RESUME_TAILOR_MODEL_MODE"}
 
     form.set_search("")
     assert "restart" not in form._search_terms

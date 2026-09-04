@@ -81,6 +81,13 @@ for _leaked in (
     "RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
     "RESUME_TAILOR_UNDERFULL_FILL", "RESUME_TAILOR_BODY_LINE_CAPACITY",
     "RESUME_TAILOR_SKILL_LINE_CAPACITY",
+    # The simple/tiers model switch and its one-model ids. Read LIVE from
+    # os.environ by config.model_for / claude_model_for, so a shell export (the
+    # author's own .env is about to say `simple`) would re-point every tier in the
+    # suite and quietly turn the "the default is tiers" tests into a report on the
+    # developer's shell. Same reason RESUME_TAILOR_PROVIDER is on this list.
+    "RESUME_TAILOR_MODEL_MODE", "RESUME_TAILOR_MODEL_ALL",
+    "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
 ):
     os.environ.pop(_leaked, None)
 

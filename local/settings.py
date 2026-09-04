@@ -170,6 +170,20 @@ GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-f
 # deep) still matches what each tier is for.
 CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
 
+# How the résumé tailor picks a model for each stage, per provider. The strings
+# are the ones `local/resume_tailor/config.py` compares against
+# (config.MODEL_MODE_TIERS / MODEL_MODE_SIMPLE) — the coupling that makes the
+# dropdown mean anything — and this is a plain `choice`, not `editable_choice`,
+# because a value outside the pair is not a custom model id, it is a typo the
+# runtime would silently read as 'tiers'.
+#
+# Index 0 is 'tiers' because it is the DEFAULT twice over: `settings_tab._set_combo`
+# falls back to `choices[0]` for an unrecognised stored value, and 'tiers' is the
+# mode that reproduces what every install did before this setting existed.
+MODEL_MODE_TIERS = "tiers"
+MODEL_MODE_SIMPLE = "simple"
+MODEL_MODES = (MODEL_MODE_TIERS, MODEL_MODE_SIMPLE)
+
 # Settings-snapshot retention: the choices of the archive_mode setting, which
 # replaced a four-key retention DSL (archive_enabled + archive_prune_mode +
 # archive_prune_keep + archive_prune_days). ARCHIVE_KEEP_ALL is deliberately the
@@ -490,31 +504,68 @@ SETTINGS_SCHEMA: list[Field] = [
     # --- Resume tailor models: which Gemini model each tailoring stage uses, ----
     # written to .env (read by local/resume_tailor/config.py as RESUME_TAILOR_MODEL_*).
     # Editable dropdowns: pick a 3.x model or type a custom id.
+    #
+    # The MODE field is the gate for the rest, per provider, and the gate CHAIN is
+    # what makes that work: a Field has exactly one `show_if`, so the tier rows
+    # cannot carry both "provider is gemini" and "mode is tiers". They gate on the
+    # mode field, which gates on the provider — `is_visible` walks the chain, so a
+    # tier row is hidden by EITHER the wrong provider or `simple` mode.
+    #
+    # Two mode fields rather than one shared: the user only ever sees the one their
+    # provider uses, and the two sides can differ (one model everywhere on Claude,
+    # the tuned tier split on Gemini) without a third "which provider does this
+    # apply to?" question. `config.py` reads them as two independent env vars.
+    Field("RESUME_TAILOR_MODEL_MODE", "Tailor models — simple or per stage",
+          "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
+          show_if=("tailor_provider", ("gemini",)), restart=True,
+          help="'simple' uses ONE model for every step of tailoring — the one named in "
+               "'Tailor model — one for every step'. 'tiers' uses a different model per "
+               "stage (the three per-stage pickers, under 'Show advanced settings'): a cheap "
+               "one to choose bullets, a stronger one to write them. 'tiers' is the default."),
+    Field("RESUME_TAILOR_MODEL_ALL", "Tailor model — one for every step",
+          "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("simple",)), restart=True,
+          help="The single model every tailoring stage uses while 'Tailor models — simple or "
+               "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
+               "tailoring quietly falls back to the three per-stage models."),
     Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model — fast (selection)",
           "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Cheapest model — the bullet-selection / quick stages of tailoring."),
     Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model — standard (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Default model — re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Deliberately defaults to the same model as 'Tailor model — standard "
                "(writing)' to keep costs down — set it to gemini-3.1-pro-preview yourself "
                "for the strongest writing (slower / pricier)."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_MODE", "Claude models — simple or per stage",
+          "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
+          show_if=("tailor_provider", ("claude",)), restart=True,
+          help="Claude provider only. 'simple' uses ONE model for every step of tailoring — "
+               "the one named in 'Claude model — one for every step'. 'tiers' uses a different "
+               "model per stage (the three per-stage pickers, under 'Show advanced settings'): "
+               "haiku to choose bullets, sonnet or opus to write them."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_ALL", "Claude model — one for every step",
+          "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("simple",)), restart=True,
+          help="The single model every tailoring stage uses while 'Claude models — simple or "
+               "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
+               "tailoring quietly falls back to the three per-stage models."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: cheapest tier (bullet selection / quick stages)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model — standard (writing)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
           "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: highest-quality tier (rephrase / cover letter)."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --

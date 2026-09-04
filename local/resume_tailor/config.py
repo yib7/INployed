@@ -1,7 +1,9 @@
 """Paths, model tiers, and Vertex settings for the resume tailor.
 
 Everything is env-overridable so the flash-lite / flash / pro split can be
-re-tuned against the $300 credit without code changes.
+re-tuned against the $300 credit without code changes — or dropped entirely:
+RESUME_TAILOR_MODEL_MODE=simple points every stage at one model id (see
+MODEL_MODE_TIERS, and RESUME_TAILOR_CLAUDE_MODEL_MODE for the Claude side).
 """
 from __future__ import annotations
 
@@ -77,6 +79,66 @@ _TIER_ENV = {
     TIER_FLASH: ("RESUME_TAILOR_MODEL_FLASH", MODEL_FLASH),
     TIER_PRO: ("RESUME_TAILOR_MODEL_PRO", MODEL_PRO),
 }
+
+# ── One model for every step (the 'simple' mode) ──────────────────────────────
+# The tier split (flash_lite / flash / pro) is a cost-tuning knob, and a leaky
+# abstraction for someone who just wants ONE model everywhere: today that takes
+# setting three env vars consistently, per provider. `simple` mode collapses all
+# three tiers onto a single id.
+#
+#   RESUME_TAILOR_MODEL_MODE        = tiers (default) | simple   -> model_for()
+#   RESUME_TAILOR_CLAUDE_MODEL_MODE = tiers (default) | simple   -> claude_model_for()
+#   RESUME_TAILOR_MODEL_ALL / RESUME_TAILOR_CLAUDE_MODEL_ALL     the single id
+#
+# `tiers` is the default so an existing install keeps resolving exactly the model
+# it resolved before this switch existed. The two providers carry their OWN mode
+# so a Claude user's choice cannot silently re-point the Gemini side (and the
+# Settings tab only ever shows the one matching the active provider).
+MODEL_MODE_TIERS = "tiers"
+MODEL_MODE_SIMPLE = "simple"
+MODEL_MODES = (MODEL_MODE_TIERS, MODEL_MODE_SIMPLE)
+
+MODEL_MODE_ENV = "RESUME_TAILOR_MODEL_MODE"
+MODEL_ALL_ENV = "RESUME_TAILOR_MODEL_ALL"
+CLAUDE_MODEL_MODE_ENV = "RESUME_TAILOR_CLAUDE_MODEL_MODE"
+CLAUDE_MODEL_ALL_ENV = "RESUME_TAILOR_CLAUDE_MODEL_ALL"
+
+
+def _model_mode(env: str) -> str:
+    """Normalised value of a model-mode env var: 'simple' or 'tiers'.
+
+    Read live from os.environ, like model_for() reads the tier vars. Normalised
+    (strip + lower) the way tailor_provider() / projects_mode() normalise theirs;
+    anything ELSE — a typo, a blank, an unset var — reads as 'tiers', so a bad
+    value keeps today's per-stage behaviour instead of routing every step through
+    a mode the user never asked for."""
+    val = os.getenv(env, "")
+    val = val.strip().lower() if isinstance(val, str) else ""
+    return MODEL_MODE_SIMPLE if val == MODEL_MODE_SIMPLE else MODEL_MODE_TIERS
+
+
+def model_mode() -> str:
+    """Gemini model mode: 'tiers' (default) or 'simple'. See _model_mode."""
+    return _model_mode(MODEL_MODE_ENV)
+
+
+def claude_model_mode() -> str:
+    """Claude model mode: 'tiers' (default) or 'simple'. See _model_mode."""
+    return _model_mode(CLAUDE_MODEL_MODE_ENV)
+
+
+def _one_model(mode_env: str, all_env: str) -> str:
+    """The single model id every tier resolves to, or '' to let the tier map decide.
+
+    '' is returned both in 'tiers' mode and when 'simple' mode has no id to use —
+    an unset or blank/whitespace "all" var. Falling back to the tier map there is
+    deliberate: a blank model id reaching the API is an opaque runtime error two
+    layers away from the setting that caused it, while quietly doing what the
+    install already did is the safe failure."""
+    if _model_mode(mode_env) != MODEL_MODE_SIMPLE:
+        return ""
+    val = os.getenv(all_env, "")
+    return val.strip() if isinstance(val, str) else ""
 
 
 def _config_json() -> dict:
@@ -373,8 +435,15 @@ _CLAUDE_TIER_ENV = {
 
 
 def claude_model_for(tier: str) -> str:
-    """Concrete Claude model for a tier, resolved live like model_for()
-    (config.py:330). Unknown tier falls back to the flash (sonnet) model."""
+    """Concrete Claude model for a tier, resolved live like model_for().
+
+    RESUME_TAILOR_CLAUDE_MODEL_MODE='simple' collapses all three tiers onto
+    RESUME_TAILOR_CLAUDE_MODEL_ALL; 'tiers' (the default) and a blank "all" value
+    both fall through to the per-tier map. Unknown tier falls back to the flash
+    (sonnet) model."""
+    one = _one_model(CLAUDE_MODEL_MODE_ENV, CLAUDE_MODEL_ALL_ENV)
+    if one:
+        return one
     env, default = _CLAUDE_TIER_ENV.get(tier, (None, CLAUDE_MODEL_FLASH))
     return os.getenv(env, default) if env else default
 
@@ -411,7 +480,15 @@ def model_for(tier: str) -> str:
     The new value is only visible to a process that re-reads env after the
     write -- e.g. the dashboard restarting, or the var being set directly in
     the environment (not just the .env file) before the process starts. An
-    unrecognized tier falls back to the flash model."""
+    unrecognized tier falls back to the flash model.
+
+    RESUME_TAILOR_MODEL_MODE='simple' short-circuits the tier map entirely and
+    returns RESUME_TAILOR_MODEL_ALL for EVERY tier -- one model for every step.
+    'tiers' (the default) keeps the per-stage split, and so does 'simple' with a
+    blank/unset "all" id: this never returns ''."""
+    one = _one_model(MODEL_MODE_ENV, MODEL_ALL_ENV)
+    if one:
+        return one
     env, default = _TIER_ENV.get(tier, (None, MODEL_FLASH))
     return os.getenv(env, default) if env else default
 

@@ -756,26 +756,37 @@ def test_prune_deletes_nothing_for_keep_everything_or_off(tmp_path):
 
 # --- show_if: a field is on screen only when it can actually do something ------
 
-# The twelve gates, spelled out so the schema can't drift without a failure here.
+# The sixteen gates, spelled out so the schema can't drift without a failure here.
+#
+# The six tailor-model tier rows do NOT gate on `tailor_provider` directly, even
+# though the provider is exactly what should hide them: a Field has one `show_if`,
+# and they need a second condition (the simple/tiers mode). They gate on their
+# provider's MODE field, which gates on `tailor_provider` — `is_visible` walks the
+# chain, so the wrong provider still hides them, transitively.
 SHOW_IF_GATES = {
     "stage1_model": ("provider", ("gemini",)),
     "stage2_model": ("provider", ("gemini",)),
     "stage1_model_claude": ("provider", ("claude",)),
     "stage2_model_claude": ("provider", ("claude",)),
-    "RESUME_TAILOR_MODEL_FLASH_LITE": ("tailor_provider", ("gemini",)),
-    "RESUME_TAILOR_MODEL_FLASH": ("tailor_provider", ("gemini",)),
-    "RESUME_TAILOR_MODEL_PRO": ("tailor_provider", ("gemini",)),
-    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": ("tailor_provider", ("claude",)),
-    "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("tailor_provider", ("claude",)),
-    "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("tailor_provider", ("claude",)),
+    "RESUME_TAILOR_MODEL_MODE": ("tailor_provider", ("gemini",)),
+    "RESUME_TAILOR_MODEL_ALL": ("RESUME_TAILOR_MODEL_MODE", ("simple",)),
+    "RESUME_TAILOR_MODEL_FLASH_LITE": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_MODEL_FLASH": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_MODEL_PRO": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_MODE": ("tailor_provider", ("claude",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_ALL": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("simple",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "gemini_auth": ("tailor_provider", ("gemini",)),
     "RESUME_TAILOR_GEMINI_API_KEY": ("gemini_auth", ("api_key",)),
 }
 
 
-def test_the_twelve_gates_are_declared_on_the_schema():
+def test_the_sixteen_gates_are_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
+    assert len(SHOW_IF_GATES) == 16
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():
@@ -869,17 +880,22 @@ def test_is_visible_falls_back_to_the_gates_default_when_it_is_absent():
     assert settings.is_visible(by_key["min_score"], {}) is True           # ungated
 
 
-def test_visible_keys_at_the_shipped_defaults_hides_the_six_inapplicable_fields(tmp_path):
+def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields(tmp_path):
     """The audit's headline finding, pinned. At the shipped defaults
-    (provider=gemini, tailor_provider=gemini, gemini_auth=vertex) these six
-    describe machinery that cannot run — two Claude scorer pickers, three Claude
-    tailor pickers, and the Gemini API key that only 'api_key' billing reads."""
+    (provider=gemini, tailor_provider=gemini, gemini_auth=vertex,
+    RESUME_TAILOR_MODEL_MODE=tiers) these nine describe machinery that cannot run
+    — two Claude scorer pickers, the Claude tailor block (its mode field, its
+    one-model box and three tier pickers, the last four hidden TRANSITIVELY
+    through the mode field), the Gemini one-model box that only 'simple' mode
+    reads, and the Gemini API key that only 'api_key' billing reads."""
     values = settings.load(_targets(tmp_path))
     hidden = {f.key for f in settings.SETTINGS_SCHEMA} - set(settings.visible_keys(values))
     assert hidden == {
         "stage1_model_claude", "stage2_model_claude",
+        "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
         "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
-        "RESUME_TAILOR_CLAUDE_MODEL_PRO", "RESUME_TAILOR_GEMINI_API_KEY",
+        "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+        "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_GEMINI_API_KEY",
     }
 
 
@@ -993,6 +1009,12 @@ RESTART_KEYS = {
     "RESUME_TAILOR_MODEL_FLASH_LITE", "RESUME_TAILOR_MODEL_FLASH", "RESUME_TAILOR_MODEL_PRO",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
     "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+    # the simple/tiers switch and its one-model id. Read live from os.environ by
+    # config._model_mode / _one_model — which puts them in the same bucket as the
+    # API key row under it, not the frozen-constant bucket above: live off a
+    # snapshot that a .env write does not reach.
+    "RESUME_TAILOR_MODEL_MODE", "RESUME_TAILOR_MODEL_ALL",
+    "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
     # read live from os.environ — but os.environ is the stale startup snapshot
     "RESUME_TAILOR_GEMINI_API_KEY",     # llm.py, per call
     "GEMINI_API_KEYS",                  # keypool.KeyPool.from_env, per run
@@ -1005,7 +1027,7 @@ RESTART_KEYS = {
 def test_the_restart_set_is_declared_on_the_schema():
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.restart}
     assert declared == RESTART_KEYS
-    assert len(RESTART_KEYS) == 16
+    assert len(RESTART_KEYS) == 20
 
 
 def test_every_env_field_needs_a_restart_except_the_six_the_vm_tab_re_reads():

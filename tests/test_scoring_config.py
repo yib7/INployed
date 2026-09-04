@@ -140,3 +140,68 @@ def test_a_plain_utf8_config_still_reads_identically(monkeypatch, tmp_path):
     assert not (tmp_path / "scoring_config.json").read_bytes().startswith(_BOM)
     cfg = score_jobs.load_scoring_config()
     assert cfg["stage2_threshold"] == 7 and cfg["min_filter_years"] == 3
+
+
+def test_a_negative_spend_cap_falls_back_instead_of_disabling_the_guard(
+        monkeypatch, tmp_path):
+    """`SCORE_MAX_PER_RUN=-1` must not read as "no cap".
+
+    Both spend guards are spent as a pandas row slice, and pandas reads a negative
+    count as "all but N": `df.head(-1)` returns every row but the last. So the old
+    loader let `-1` -- the obvious way to write "unlimited" -- take the
+    `len(to_score) > MAX_SCORED_PER_RUN` branch, print "capping at -1 of N jobs",
+    and then score N-1 of them. A guard that announces itself and lifts itself.
+    """
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("SCORE_MAX_PER_RUN", "-1")
+    monkeypatch.setenv("SCORE_RESCORE_CAP", "-500")
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["max_scored_per_run"] == 800     # the built-in default, not -1
+    assert cfg["rescore_cap"] == 200
+
+
+def test_the_negative_cap_in_the_json_file_is_caught_too(monkeypatch, tmp_path):
+    """scoring_config.json is hand-edited and scp'd to the VM; same rule there."""
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"max_scored_per_run": -1, "rescore_cap": -1})
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["max_scored_per_run"] == 800
+    assert cfg["rescore_cap"] == 200
+
+
+def test_zero_is_left_alone_because_it_already_fails_closed(monkeypatch, tmp_path):
+    """`head(0)`/`tail(0)` are empty, so 0 means what it says: score nothing.
+
+    Collapsing 0 to the default would turn "spend nothing this run" into "spend up
+    to 800", which is the wrong direction for a guard to round.
+    """
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("SCORE_MAX_PER_RUN", "0")
+    monkeypatch.setenv("SCORE_RESCORE_CAP", "0")
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["max_scored_per_run"] == 0
+    assert cfg["rescore_cap"] == 0
+
+
+def test_a_positive_cap_is_untouched(monkeypatch, tmp_path):
+    """The clamp must not move a value anybody would actually set."""
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("SCORE_MAX_PER_RUN", "1500")
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["max_scored_per_run"] == 1500
+
+
+def test_the_other_int_settings_may_still_go_negative(monkeypatch, tmp_path):
+    """The clamp is scoped to the two spend guards, not to every int.
+
+    `min_filter_years` is a cutoff, not a row slice; -1 there is meaningless but
+    harmless, and widening the clamp would be a behaviour change dressed as a fix.
+    """
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setenv("SCORE_MIN_FILTER_YEARS", "-1")
+    assert score_jobs.load_scoring_config()["min_filter_years"] == -1

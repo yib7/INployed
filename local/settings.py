@@ -132,6 +132,9 @@ class Field:
 # the literal environment-variable name, so values round-trip straight to .env.
 ENV_TARGETS = {"env"}
 
+# Same character class envfile._CONTROL_RE refuses on write; see validate().
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
 # The field types whose value is a plain string, i.e. the only ones a
 # `Field.pattern` can be matched against. Pinned by
 # test_a_pattern_is_only_declared_on_a_text_field so a pattern on, say, a list
@@ -866,6 +869,16 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
             continue
         if not _coerce_ok(f, value):
             errors[key] = f"Expected {f.type}, got {type(value).__name__}."
+            continue
+        # An .env value is one physical KEY=VALUE line and envfile.read parses line
+        # by line, so a newline does not round-trip: it writes a second line the
+        # reader takes for a whole new assignment. envfile.update refuses it too,
+        # but that raise happens mid-save with some targets already written, and it
+        # is one message rather than a mark against the offending field. Catch it
+        # here so the form says which box is wrong before anything is written.
+        if f.target in ENV_TARGETS and isinstance(value, str) and _CONTROL_RE.search(value):
+            errors[key] = ("No line breaks — this is stored as a single line in "
+                           ".env. (Several keys go on one line, comma-separated.)")
             continue
         if f.type == "int":
             if f.min is not None and value < f.min:

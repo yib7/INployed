@@ -1167,3 +1167,40 @@ def test_no_help_string_points_at_a_row_by_position():
 
     offenders = {f.key for f in settings.SETTINGS_SCHEMA if positional.search(f.help)}
     assert offenders == set(), "name the setting instead of its position"
+
+
+def test_validate_rejects_a_line_break_in_an_env_field(tmp_path):
+    """A .env value is one physical line, so a newline cannot round-trip.
+
+    envfile.update refuses it too, but that raise fires mid-save with earlier
+    targets already written and carries no field name. Catching it in validate()
+    keeps the refusal atomic and points at the box that is wrong.
+    """
+    errs = settings.validate({"GEMINI_API_KEYS": "key1\nkey2"})
+    assert "GEMINI_API_KEYS" in errs
+    assert "line break" in errs["GEMINI_API_KEYS"].lower()
+
+
+def test_validate_rejects_control_characters_across_the_env_field_types(tmp_path):
+    """Every .env-backed field is string-shaped, and all of them go through the
+    same one-line writer, so the check cannot be scoped to the secret boxes."""
+    for key, bad in (("BRIGHT_DATA_API_TOKEN", "tok\rEVIL=1"),   # str
+                     ("PDFLATEX_PATH", "C:\\tex\\pdflatex.exe\n"),  # path
+                     ("RESUME_TAILOR_MODEL_FLASH", "gemini\x00-flash")):  # editable_choice
+        errs = settings.validate({key: bad})
+        assert key in errs, key
+
+
+def test_validate_leaves_json_backed_fields_and_ordinary_values_alone(tmp_path):
+    """The rule belongs to the .env writer, not to every setting.
+
+    A config.json value is JSON-encoded, where a newline is representable, and
+    the awkward-but-legal .env values (Windows paths, apostrophes, comma-joined
+    key pools) must keep passing.
+    """
+    assert settings.validate({"cover_letter_tone": "warm\nand direct"}) == {}
+    assert settings.validate({
+        "PDFLATEX_PATH": r"C:\Program Files\MiKTeX\pdflatex.exe",
+        "GEMINI_API_KEYS": "key1,key2,key3",
+        "RESUME_TAILOR_CANDIDATE": "Jane_Doe",
+    }) == {}

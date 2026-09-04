@@ -230,8 +230,10 @@ Write the body now."""
     # Second (flash) pass: tighten cohesion/flow, strip any invented claim, and dial
     # back over-the-top excitement — THEN the deterministic ban gate runs last, so the
     # refine can never sneak banned phrasing past it.
-    body = refine_body(jd, job_title, company, body, bullets, tone=tone)
-    body = enforce_body_style(jd, job_title, company, body, bullets, tone=tone)
+    # No jd: both passes are grounded ONLY in the draft and the resume bullets,
+    # so neither prompt ever carried the job description.
+    body = refine_body(job_title, company, body, bullets, tone=tone)
+    body = enforce_body_style(job_title, company, body, bullets, tone=tone)
     # Deterministic grounding gate (audit P2-9, the letter arm of P1-2): every
     # distinctive token in the body must trace to the candidate's own facts, the
     # bullets, the research blurb, or the posting itself. One repair attempt for a
@@ -283,7 +285,7 @@ Rewrite the body now with every unsupported item removed."""
     return fixed or body
 
 
-def refine_body(jd: str, job_title: str, company: str, body: str,
+def refine_body(job_title: str, company: str, body: str,
                 bullets: Dict[str, str], tone: str = "professional") -> str:
     """One flash-tier cohesion/grounding/tone pass over the generated body.
 
@@ -328,7 +330,7 @@ Return ONLY the revised body: same paragraph structure, no preamble, no sign-off
     return refined or body
 
 
-def enforce_body_style(jd: str, job_title: str, company: str, body: str,
+def enforce_body_style(job_title: str, company: str, body: str,
                        bullets: Dict[str, str], tone: str = "professional") -> str:
     """The letter arm of the deterministic style gate (compose.enforce_style is the
     bullet arm): the generation prompt bans AI-tell phrasing, but a model can still

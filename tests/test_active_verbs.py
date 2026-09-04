@@ -66,7 +66,7 @@ def test_active_verbs_falls_back_to_builtin_when_file_absent(monkeypatch, tmp_pa
     verbs = assets.active_verbs()
     assert verbs, "fallback must be non-empty so the engine still has a palette"
     flat = [v for items in verbs.values() for v in items]
-    assert "Built" in flat and "Engineered" in flat            # the built-in _CORE_VERBS set
+    assert "Built" in flat and "Engineered" in flat        # assets._FALLBACK_VERBS
 
 
 # --- SP1: _render_verb_palette + the rephrase prompt rule ------------------------

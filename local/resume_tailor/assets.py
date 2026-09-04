@@ -246,6 +246,12 @@ def example_text() -> str:
 # A built-in palette used only when active_words.md is missing/unparseable (fresh clone,
 # CI, or a user who deleted it) — keeps the engine working with a sane verb set. The real
 # source is the curated, categorized resume_tailor_files/active_words.md.
+#
+# Curated rather than extracted, and that was a measured decision: the openers used to
+# come from the 6KB raw résumé-PDF dump (jumbled multi-column OCR — weak signal AND
+# expensive) and the model only needs a clean set of verbs, so this is both cheaper and
+# better. `compose._CORE_VERBS` used to record that here; it was a dead duplicate of this
+# list and was deleted, so the note lives with the list it describes.
 _FALLBACK_VERBS: Dict[str, List[str]] = {
     "Technical Skills": [
         "Built", "Designed", "Engineered", "Developed", "Implemented", "Architected",

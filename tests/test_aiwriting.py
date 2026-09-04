@@ -286,7 +286,7 @@ def _capture_refine_system(monkeypatch):
         return "I shipped the viewer with 178 tests."
 
     monkeypatch.setattr(compose, "call", fake_call)
-    coverletter.refine_body("jd", "Engineer", "Acme", "A draft body.", BULLETS)
+    coverletter.refine_body("Engineer", "Acme", "A draft body.", BULLETS)
     return seen["system"]
 
 
@@ -311,7 +311,7 @@ def test_gate_ignores_aiwriting_patterns_when_off(monkeypatch, toggle):
     toggle(False)
     calls = []
     monkeypatch.setattr(compose, "call", lambda *a, **k: calls.append(1) or "")
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert out == _AIWRITING_ONLY
     assert calls == []  # clean under compose's bans alone -> no LLM call at all
 
@@ -320,7 +320,7 @@ def test_gate_repairs_aiwriting_patterns_when_on(monkeypatch, toggle):
     toggle(True)
     repaired = "I read your compiler work closely.\n\nI shipped the viewer with 178 tests."
     monkeypatch.setattr(compose, "call", lambda *a, **k: repaired)
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert out == repaired
 
 
@@ -330,7 +330,7 @@ def test_gate_rejects_a_repair_that_does_not_strictly_improve(monkeypatch, toggl
     # The "repair" swaps one tier-1 word for another: same violation count -> reject.
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "In conclusion, this is a pivotal role for me.")
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert out == _AIWRITING_ONLY
 
 
@@ -343,7 +343,7 @@ def test_gate_repair_prompt_carries_the_rules_when_on(monkeypatch, toggle):
         return "I read your compiler work.\n\nI shipped the viewer with 178 tests."
 
     monkeypatch.setattr(compose, "call", fake_call)
-    coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert aiwriting.RULES_PROMPT in seen["system"]
     assert "tier-1 vocabulary" in seen["user"]  # the named violations reach the repair
 
@@ -353,7 +353,7 @@ def test_grounding_gate_still_runs_last_with_the_toggle_on(monkeypatch, toggle):
     toggle(True)
     _fake_master(monkeypatch)
     monkeypatch.setattr(coverletter, "refine_body",
-                        lambda jd, jt, co, body, bullets, **k: body)
+                        lambda jt, co, body, bullets, **k: body)
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "I led the Zorblatt migration for 12 teams.")
     with pytest.raises(coverletter.LLMError, match="ungrounded"):

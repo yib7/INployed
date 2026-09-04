@@ -52,7 +52,12 @@ class JobsTab(QtWidgets.QWidget):
         # "Ask AI about this job": a chat scoped to ONE job, so it appears only on a
         # single-row selection. None (the default) means unwired — no menu item.
         self._on_ask_ai = on_ask_ai
-        self._hidden: set[str] = set((hidden_columns or {}).get(table_key, []))
+        # Intersected with col_ids, not taken verbatim: a persisted id for a column
+        # that no longer exists would never be cleared (line 432 re-saves the set as
+        # is), and once len(_hidden) >= len(col_ids) the guard in set_column_hidden is
+        # permanently true -- the Columns dialog goes silently inert.
+        _saved = (hidden_columns or {}).get(table_key, [])
+        self._hidden: set[str] = {c for c in _saved if c in self.col_ids}
         self._save_hidden = save_hidden or (lambda key, hidden: None)
         self._base = pd.DataFrame()
         self._resume_ids = frozenset()
@@ -420,17 +425,32 @@ class JobsTab(QtWidgets.QWidget):
             self.table.setColumnHidden(i, cid in self._hidden)
         self._update_stretch()
 
-    def set_column_hidden(self, cid: str, hidden: bool) -> None:
-        """Hide/show one column; never lets every column be hidden (blank table)."""
+    def set_column_hidden(self, cid: str, hidden: bool) -> bool:
+        """Hide/show one column; never lets every column be hidden (blank table).
+
+        Returns False when the request was refused, so a caller driving this from a
+        checkbox can put the checkbox back: silently ignoring the toggle used to
+        leave an unchecked box beside a still-visible column."""
         target = set(self._hidden)
         target.discard(cid)
         if hidden:
             target.add(cid)
         if len(target) >= len(self.col_ids):
-            return
+            return False
         self._hidden = target
         self._save_hidden(self.table_key, sorted(self._hidden))
         self._apply_column_visibility()
+        return True
+
+    def _on_column_toggled(self, box, cid: str, checked: bool) -> None:
+        """Apply the checkbox, and undo it in the UI when the tab refuses.
+
+        blockSignals around the reset so putting the box back does not re-enter
+        this slot and toggle it a second time."""
+        if not self.set_column_hidden(cid, not checked):
+            box.blockSignals(True)
+            box.setChecked(not checked)
+            box.blockSignals(False)
 
     def _choose_columns(self) -> None:
         dlg = QtWidgets.QDialog(self)
@@ -440,7 +460,8 @@ class JobsTab(QtWidgets.QWidget):
         for cid in self.col_ids:
             cb = QtWidgets.QCheckBox(COLUMN_LABELS.get(cid, cid))
             cb.setChecked(cid not in self._hidden)
-            cb.toggled.connect(lambda checked, c=cid: self.set_column_hidden(c, not checked))
+            cb.toggled.connect(
+                lambda checked, c=cid, box=cb: self._on_column_toggled(box, c, checked))
             v.addWidget(cb)
         close = QtWidgets.QPushButton("Close")
         close.setProperty("accent", True)

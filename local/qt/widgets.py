@@ -75,9 +75,6 @@ class CollapsibleSection(QtWidgets.QFrame):
 
         self.set_collapsed(collapsed)
 
-    def content_layout(self) -> QtWidgets.QVBoxLayout:
-        return self._body_layout
-
     def add_widget(self, w: QtWidgets.QWidget) -> None:
         self._body_layout.addWidget(w)
 

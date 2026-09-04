@@ -386,8 +386,8 @@ Measured, that slice spent its first 472 characters on name, contact, education 
 delivered 3 complete bullets out of 14 plus a fourth cut mid-word at "Proc"; glued the next
 section's heading onto several bullets ("Projects CodeCaster"); and demonstrated a
 participial impact tail that the same prompt's `BANNED_PHRASING` forbids. The package had
-already made this call once for a different consumer — `_CORE_VERBS` records that the raw PDF
-dump was dropped for the verb palette as weak signal and expensive.
+already made this call once for a different consumer — `assets._FALLBACK_VERBS` records that
+the raw PDF dump was dropped for the verb palette as weak signal and expensive.
 
 `example_text()` is now a three-arm resolver: the curated
 `resume_tailor_files/style_exemplar.txt` (`config.STYLE_EXEMPLAR_TXT` — one bullet per line,

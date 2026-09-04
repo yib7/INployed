@@ -80,7 +80,12 @@ PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 # The off-thread reload payload: the merged job frame + resume-path map, plus the
 # run_stats frame and staleness threshold read alongside them so no UI-thread
 # repaint ever touches the Drive-synced stats file (audit P1-5).
-LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours")
+# `problems` carries the (path, reason) pairs for sources that exist but could
+# not be read, so the empty state can say "this file is unreadable" instead of
+# "no jobs yet". Defaulted so the four-field construction older tests use, and
+# the bare (df, id_to_path) tuple _apply_frames also accepts, both still work.
+LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours problems",
+                          defaults=((),))
 
 # How long a cached resume-folder disk probe stays valid (audit P2-24: resume
 # folders can live under the Drive root, so per-selection stats must not hit the
@@ -239,22 +244,32 @@ class MainWindow(QtWidgets.QMainWindow):
             save_hidden=self._save_hidden,
         )
 
+    # The two states the empty panel can be in. "Nothing yet" is the first run;
+    # "unreadable" is a source file that exists and could not be parsed, which
+    # used to render identically to the first run and so told a user with a
+    # half-synced 37 MB master that they had no jobs.
+    EMPTY_FIRST_RUN = ("No jobs yet",
+                       "Three steps: set your keys and folders in Settings, fetch "
+                       "and score new jobs, then add your résumé data so jobs get "
+                       "matched to you.")
+    EMPTY_UNREADABLE_TITLE = "Your job file could not be read"
+
     def _build_empty_hint(self) -> QtWidgets.QWidget:
         """First-run hint shown on the High Score tab when no jobs are loaded yet."""
         w = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(w)
         v.addStretch(1)
-        title = QtWidgets.QLabel("No jobs yet")
+        title = QtWidgets.QLabel(self.EMPTY_FIRST_RUN[0])
         title.setProperty("heading", True)
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
-        msg = QtWidgets.QLabel(
-            "Three steps: set your keys and folders in Settings, fetch and score "
-            "new jobs, then add your résumé data so jobs get matched to you.")
+        msg = QtWidgets.QLabel(self.EMPTY_FIRST_RUN[1])
         msg.setWordWrap(True)
         msg.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         msg.setProperty("muted", True)
         v.addWidget(msg)
+        self._empty_title, self._empty_msg = title, msg
+        self._refresh_empty_hint()
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)
         b_settings = QtWidgets.QPushButton("Open Settings")
@@ -271,6 +286,39 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addLayout(row)
         v.addStretch(1)
         return w
+
+    def unreadable_sources_message(self) -> str:
+        """What the empty panel says when every source that exists failed to parse.
+
+        Names the file and the parser's own reason, because "check your Drive" is
+        not actionable without knowing WHICH file is broken. Kept a plain string
+        so the wording is testable without building a window."""
+        problems = tuple(getattr(self, "_load_problems", ()) or ())
+        if not problems:
+            return ""
+        lines = [f"{Path(p).name} ({reason})" for p, reason in problems[:3]]
+        if len(problems) > 3:
+            lines.append(f"and {len(problems) - 3} more")
+        return (
+            f"{len(problems)} job file(s) exist but could not be read, so nothing "
+            "is showing. This is usually a sync that has not finished or a file "
+            "that was cut short, not lost data. Wait for Google Drive to finish, "
+            "then press Refresh; if it persists, delete the file below and let the "
+            "next run re-sync it.\n\n" + "\n".join(lines))
+
+    def _refresh_empty_hint(self) -> None:
+        """Swap the empty panel between its first-run and its unreadable wording."""
+        title = getattr(self, "_empty_title", None)
+        msg = getattr(self, "_empty_msg", None)
+        if title is None or msg is None:
+            return
+        problem_text = self.unreadable_sources_message()
+        if problem_text:
+            title.setText(self.EMPTY_UNREADABLE_TITLE)
+            msg.setText(problem_text)
+        else:
+            title.setText(self.EMPTY_FIRST_RUN[0])
+            msg.setText(self.EMPTY_FIRST_RUN[1])
 
     def _show_tab(self, title: str) -> None:
         page = self._tab_widgets.get(title)
@@ -631,7 +679,8 @@ class MainWindow(QtWidgets.QMainWindow):
         the staleness threshold (audit P1-5 — previously a synchronous Drive read
         on every UI-thread repaint). Touches neither Qt nor the SQLite registry
         (both thread-affine) — those wait for _apply_frames."""
-        df, id_to_path = load_files(self.csv_paths)
+        problems: list[tuple[Path, str]] = []
+        df, id_to_path = load_files(self.csv_paths, problems=problems)
         df = drop_blocklisted(df, load_local_blocklist(self.csv_paths))
         stats_df = None
         root = gdrive_root_dir(self.csv_paths)
@@ -642,7 +691,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except (OSError, ValueError, pd.errors.ParserError):
                 stats_df = None
         stale_hours = int(settings.load().get("stale_after_hours", 36) or 36)
-        return LoadedFrames(df, id_to_path, stats_df, stale_hours)
+        return LoadedFrames(df, id_to_path, stats_df, stale_hours, tuple(problems))
 
     def _apply_frames(self, loaded) -> None:
         """The UI-thread half of a reload: overlay the seen registry, install the
@@ -651,8 +700,11 @@ class MainWindow(QtWidgets.QMainWindow):
             df, id_to_path = loaded.df, loaded.id_to_path
             self._stats_df = loaded.stats
             self._stale_hours = loaded.stale_hours
+            self._load_problems = tuple(loaded.problems or ())
         else:  # bare (df, id_to_path) — older callers/tests
             df, id_to_path = loaded
+            self._load_problems = ()
+        self._refresh_empty_hint()
         self._disk_cache = {}   # resume-folder stats may be stale (audit P2-24)
         self.id_to_path = id_to_path
         if not df.empty:
@@ -669,6 +721,11 @@ class MainWindow(QtWidgets.QMainWindow):
         parts = [f"{total:,} jobs", f"{len(self.df_high)} unseen ≥ {self.min_score}"]
         if self._last_run_label:
             parts.append(f"last discovery run {self._last_run_label}")
+        # A partial failure never reaches the empty panel (the frame is not
+        # empty), so the status bar is the only place it can be said at all.
+        n_bad = len(getattr(self, "_load_problems", ()) or ())
+        if n_bad:
+            parts.append(f"{n_bad} source file(s) unreadable")
         return " · ".join(parts)
 
     def _update_identity_counts(self) -> None:

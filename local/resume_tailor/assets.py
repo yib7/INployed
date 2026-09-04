@@ -4,7 +4,9 @@
                              the optional `tailor:` layout config
 - resume_template.tex     -> the LaTeX preamble (candidate-independent), reused
                              verbatim; header/Education/body are rendered from the yaml
-- example resume PDF      -> extracted text, used as a style exemplar in prompts
+- style_exemplar.txt      -> the curated one-bullet-per-line voice sample used in
+                             prompts; falls back to the example resume PDF's
+                             extracted text, then to "" (see example_text)
 """
 from __future__ import annotations
 
@@ -200,8 +202,41 @@ def _pdf_text(path) -> str:
     return "\n".join((pg.extract_text() or "") for pg in reader.pages).strip()
 
 
+def _exemplar_lines(path) -> str:
+    """The curated style exemplar as bullet lines: one bullet per line, `#` comment
+    lines and blanks dropped, every line stripped of trailing whitespace.
+
+    Returns "" for a file that is missing, unreadable, or holds nothing but comments —
+    the caller then falls back to the PDF rather than sending the model an empty (or
+    comment-only) exemplar."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    kept = [line.strip() for line in text.splitlines()]
+    return "\n".join(ln for ln in kept if ln and not ln.startswith("#"))
+
+
 @lru_cache(maxsize=1)
 def example_text() -> str:
+    """The style exemplar injected (bounded) into the rephrase prompt, resolved in
+    priority order: the curated style_exemplar.txt, else the sample PDF's extracted
+    text, else "".
+
+    The PDF arm is the original source and stays so an existing install that never
+    writes the .txt behaves exactly as before; the curated arm exists because that
+    extract is a whole résumé page — name/contact/education before the first bullet,
+    next-section headings glued onto bullet tails, column collisions — of which the
+    prompt could only afford the first slice. See config.STYLE_EXEMPLAR_TXT.
+
+    Swallows everything on purpose: the exemplar is a nice-to-have, and no tailoring
+    run may die because a personal file is absent or malformed."""
+    try:
+        curated = _exemplar_lines(config.STYLE_EXEMPLAR_TXT)
+    except Exception:  # noqa: BLE001 - e.g. a non-UTF-8 file; fall through to the PDF
+        curated = ""
+    if curated:
+        return curated
     try:
         return _pdf_text(config.EXAMPLE_PDF)
     except Exception:

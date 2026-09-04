@@ -94,6 +94,37 @@ _CORE_VERBS = (
 )
 
 
+# How much style exemplar the rephrase prompt carries. Against the curated
+# style_exemplar.txt (a handful of bullets, well under 1k chars) this never bites: with a
+# curated source the cap is no longer rationing a noisy 3.5KB page dump, it is a guard
+# against a user pasting an entire résumé — or against the PDF fallback, which still is
+# that page dump — inflating every rephrase call.
+#
+# The cut is on a LINE boundary, never mid-word. A flat `[:1200]` slice of the PDF extract
+# ended the exemplar at "• Proc", so the same prompt that calls a bullet ending mid-clause
+# "a failure" was showing the model one; a whole bullet dropped is a cost, a fragment
+# taught as an example is a defect.
+EXEMPLAR_CHAR_CAP = 1200
+
+
+def _exemplar_for_prompt(text: str, cap: int = EXEMPLAR_CHAR_CAP) -> str:
+    """`text` bounded to `cap` characters, keeping whole lines: lines are taken in order
+    while they fit and the first that would overflow ends the exemplar. A single opening
+    line longer than `cap` is hard-cut (one over-long line is not a bullet list, and
+    something has to give)."""
+    text = text.strip()
+    if len(text) <= cap:
+        return text
+    kept: List[str] = []
+    used = 0
+    for line in text.splitlines():
+        used += len(line) + (1 if kept else 0)      # +1 for the joining newline
+        if used > cap:
+            break
+        kept.append(line)
+    return "\n".join(kept) if kept else text[:cap]
+
+
 def _render_verb_palette(verbs: Dict[str, List[str]]) -> str:
     """Render the categorized action verbs as a compact grouped block for the prompt:
     one `Category: v1, v2, ...` line per category, in file order. The model picks a
@@ -381,7 +412,7 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
             block_entry["brief"] = briefs[name]
         payload.append(block_entry)
     verbs = _render_verb_palette(assets.active_verbs())
-    example = assets.example_text()[:1200]
+    example = _exemplar_for_prompt(assets.example_text())
     system = (
         "You write resume bullets by faithfully RE-PHRASING fact-atoms for a specific job. "
         "Each group is one bullet: if it has multiple atoms, FUSE them into a single dense "

@@ -27,6 +27,9 @@ resume_tailor_files/master_experience.yaml
 # Covers the user's resume_sample.pdf (style example the engine reads via
 # config.EXAMPLE_PDF) and any personal resume PDFs kept beside the master.
 resume_tailor_files/resume_*.pdf
+# The curated style exemplar (config.STYLE_EXEMPLAR_TXT): the user's own résumé bullets,
+# one per line, so it is personal content exactly like the PDF it takes priority over.
+resume_tailor_files/style_exemplar.txt
 local/config.json
 # Sidecar lock (locks.file_lock) and the PID-tagged temp an atomic write leaves
 # behind if the replace fails — both land next to the config they guard.

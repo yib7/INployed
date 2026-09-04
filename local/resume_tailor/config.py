@@ -25,7 +25,18 @@ ASSETS_DIR = SCRAPE_DIR / "resume_tailor_files"
 
 MASTER_YAML = ASSETS_DIR / "master_experience.yaml"
 TEMPLATE_TEX = ASSETS_DIR / "resume_template.tex"
-# Style exemplar fed (bounded) into the rephrase prompt — the one-page look the user likes.
+# Style exemplar fed (bounded) into the rephrase prompt — the voice, length and density
+# the user's own bullets have. assets.example_text() resolves the two in this order:
+#
+#   1. style_exemplar.txt — a CURATED file the user writes: one bullet per line, blank
+#      lines and `#` comments ignored. Preferred, because it is already the shape the
+#      prompt wants (no name/contact/education header eating the budget, no glued-on
+#      section headings or column collisions from PDF extraction).
+#   2. resume_sample.pdf — the older hand-written résumé, text-extracted. The original
+#      source; kept so an install that never writes the .txt behaves exactly as before.
+#
+# Both are personal and git-ignored; a fresh clone has neither and the exemplar is empty.
+STYLE_EXEMPLAR_TXT = ASSETS_DIR / "style_exemplar.txt"
 EXAMPLE_PDF = ASSETS_DIR / "resume_sample.pdf"
 # Curated, categorized résumé action verbs the rephrase pass draws openers from (one per
 # bullet, never reused). Universal (not personal), so it is tracked; built-in fallback if absent.

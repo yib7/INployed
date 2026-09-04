@@ -14,6 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 import scraper  # noqa: E402
 
 
+# The UTF-8 byte order mark, written as ints so this source stays pure ASCII.
+_BOM = bytes([0xEF, 0xBB, 0xBF])
+
+
 def _write_config(tmp_path: Path, data: dict) -> Path:
     p = tmp_path / "search_config.json"
     p.write_text(json.dumps(data), encoding="utf-8")
@@ -165,3 +169,37 @@ def test_with_no_file_a_junk_env_var_still_lands_on_the_default(monkeypatch, tmp
     monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
     monkeypatch.setenv("EXCLUDE_WINDOW_DAYS", "banana")
     assert scraper.exclude_window_days() == scraper.DEFAULT_EXCLUDE_WINDOW_DAYS
+
+
+def test_a_bom_does_not_discard_the_whole_config(monkeypatch, tmp_path):
+    """Same failure as scoring_config.json, same fix: see that test for the why.
+
+    This is the file the dashboard's Settings tab writes and pushes to the VM, so
+    a BOM'd copy meant the VM scraped with the built-in keywords while the UI
+    showed the user's.
+    """
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    (tmp_path / "search_config.json").write_text(
+        json.dumps({"location": "Canada", "country": "CA", "limit_per_input": 25}),
+        encoding="utf-8-sig")
+    assert (tmp_path / "search_config.json").read_bytes().startswith(_BOM)
+    cfg = scraper.load_search_config()
+    assert cfg["location"] == "Canada"
+    assert cfg["country"] == "CA"
+    assert cfg["limit_per_input"] == 25
+
+
+def test_a_plain_utf8_search_config_still_reads_identically(monkeypatch, tmp_path):
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"location": "Canada", "limit_per_input": 25})
+    assert not (tmp_path / "search_config.json").read_bytes().startswith(_BOM)
+    cfg = scraper.load_search_config()
+    assert cfg["location"] == "Canada" and cfg["limit_per_input"] == 25
+
+
+def test_a_bom_does_not_discard_the_external_exclude_ids(monkeypatch, tmp_path):
+    """Pushed from another machine, so it is written by whatever wrote it there."""
+    p = tmp_path / "external_exclude_ids.json"
+    p.write_text(json.dumps(["a", "b"]), encoding="utf-8-sig")
+    monkeypatch.setattr(scraper, "EXTERNAL_EXCLUDE_FILE", p)
+    assert scraper.load_external_exclude_ids() == ["a", "b"]

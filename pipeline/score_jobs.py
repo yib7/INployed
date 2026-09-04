@@ -130,7 +130,16 @@ def load_scoring_config() -> dict:
     raw: dict = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+# utf-8-sig, not utf-8: json.loads rejects a leading BOM outright, and the
+        # handler below then discards the WHOLE file and falls back to built-ins
+        # with only a line in scraper.log to show for it. Notepad writes a BOM,
+        # PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM, and this is a
+        # file users hand-edit and the dashboard pushes here. local/jsonutil.py's
+        # read_json_dict already reads the same file BOM-tolerantly, so without
+        # this the two halves disagree about one file: the dashboard honours it,
+        # the VM silently ignores it. utf-8-sig is a superset -- it strips a BOM
+        # when there is one and decodes plain UTF-8 identically when there isn't.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict):
                 raw = data
         except (OSError, ValueError) as e:
@@ -1023,7 +1032,9 @@ def load_resume() -> str:
     """Read resume.md, or exit with a friendly message instead of a raw traceback."""
     if not RESUME_PATH.exists():
         sys.exit("resume.md not found - generate it from the dashboard's Resume Data tab")
-    return RESUME_PATH.read_text(encoding="utf-8")
+    # utf-8-sig: a BOM would otherwise ride into the scoring prompt as a stray
+    # character on the resume's first heading.
+    return RESUME_PATH.read_text(encoding="utf-8-sig")
 
 
 async def main() -> None:

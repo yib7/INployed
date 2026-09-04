@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 import score_jobs  # noqa: E402
 
 
+# The UTF-8 byte order mark, written as ints so this source stays pure ASCII.
+_BOM = bytes([0xEF, 0xBB, 0xBF])
+
+
 def _write_config(tmp_path: Path, data: dict) -> Path:
     p = tmp_path / "scoring_config.json"
     p.write_text(json.dumps(data), encoding="utf-8")
@@ -106,3 +110,33 @@ def test_drop_easy_apply_env_zero_is_false(monkeypatch, tmp_path):
     monkeypatch.setenv("SCORE_DROP_EASY_APPLY", "0")  # "0" must coerce to False
     cfg = score_jobs.load_scoring_config()
     assert cfg["drop_easy_apply"] is False
+
+
+def test_a_bom_does_not_discard_the_whole_config(monkeypatch, tmp_path):
+    """Notepad and PowerShell 5.1's Set-Content -Encoding UTF8 both write a BOM.
+
+    json.loads rejects a leading BOM, so reading this file as plain utf-8 threw
+    the WHOLE config away and fell back to built-ins with one line in
+    scraper.log. local/jsonutil.read_json_dict has read the same file utf-8-sig
+    since the setup script was caught doing exactly this, so the two halves used
+    to disagree about one file: the dashboard honoured it, the VM ignored it.
+    """
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    (tmp_path / "scoring_config.json").write_text(
+        json.dumps({"stage2_threshold": 7, "min_filter_years": 3}), encoding="utf-8-sig")
+    raw = (tmp_path / "scoring_config.json").read_bytes()
+    assert raw.startswith(_BOM)            # the premise
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["stage2_threshold"] == 7
+    assert cfg["min_filter_years"] == 3
+
+
+def test_a_plain_utf8_config_still_reads_identically(monkeypatch, tmp_path):
+    """utf-8-sig must be a superset, not a swap: no BOM, same result."""
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"stage2_threshold": 7, "min_filter_years": 3})
+    assert not (tmp_path / "scoring_config.json").read_bytes().startswith(_BOM)
+    cfg = score_jobs.load_scoring_config()
+    assert cfg["stage2_threshold"] == 7 and cfg["min_filter_years"] == 3

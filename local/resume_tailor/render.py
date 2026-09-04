@@ -104,10 +104,15 @@ def _experience(sel: dict, bullets: Dict[str, str]) -> str:
         items = _group_bullets(entry, bullets)
         if not b or not items:
             continue
+        # `or ''`, not a .get default: assets.blocks() writes every key with
+        # e.get(...), so a master entry with no `title:` has the key present and
+        # set to None -- and to_latex(None) prints the literal "None" onto the
+        # PDF. master_validate does not require title/location, so a master that
+        # passes "Check setup" can reach here. Same guard as _header/_education.
         out.append(
             f"\\resumeSubheadingOneLine\n"
-            f"{{{to_latex(b.get('title',''))}}}{{{to_latex(b.get('name',''))}}}"
-            f"{{{to_latex(b.get('location',''))}}}{{{fmt_dates(b.get('dates',''))}}}\n"
+            f"{{{to_latex(b.get('title') or '')}}}{{{to_latex(b.get('name') or '')}}}"
+            f"{{{to_latex(b.get('location') or '')}}}{{{fmt_dates(b.get('dates') or '')}}}\n"
             + _bullet_list(items)
         )
     if not out:
@@ -124,7 +129,7 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         items = _group_bullets(entry, bullets)
         if not b or not items:
             continue
-        name = to_latex(b.get("name", ""))
+        name = to_latex(b.get("name") or "")            # see _experience on `or ''`
         repo = (b.get("repo") or "").strip()
         # Strip any scheme the yaml already stored -- master_experience.yaml may hold
         # either a bare host+path (github.com/x/y) or a full URL (https://github.com/x/y);
@@ -157,7 +162,8 @@ def _leadership(sel: dict, bullets: Dict[str, str]) -> str:
             continue
         out.append(
             f"\\resumeProjectHeading\n"
-            f"{{\\textbf{{{to_latex(b.get('name',''))}}}}}{{{fmt_dates(b.get('dates',''))}}}\n"
+            f"{{\\textbf{{{to_latex(b.get('name') or '')}}}}}"
+            f"{{{fmt_dates(b.get('dates') or '')}}}\n"
             + _bullet_list(items)
         )
     if not out:

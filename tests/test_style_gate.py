@@ -24,6 +24,11 @@ from resume_tailor import compose  # noqa: E402
     ("Ran locally instead of in the cloud", ["contrast framing"]),
     ("Cut latency, ensuring fast responses", ["participial tail"]),
     ("Indexed articles, enabling instant search", ["participial tail"]),
+    # The listed participle need not sit right after the comma. This is the
+    # textbook impact tail and the closed verb list used to miss it entirely,
+    # because the word after the comma ("minimizing") is not one of the nine.
+    ("Cut triage time 30%, minimizing manual review and enabling product expansion",
+     ["participial tail"]),
     ("Utilized synthetic chats for the demo", ["buzzword verb"]),
     ("Leveraging Gemini for scoring", ["buzzword verb"]),
     ("Built a robust, seamless pipeline", ["hollow intensifier"]),
@@ -58,6 +63,23 @@ def test_style_violations_clean_bullet():
     clean = ("Rebuilt the extraction model as LBR 2.0, raising accuracy from 80% "
              "to 95% and cutting per-run cost by 65%")
     assert compose.style_violations(clean) == []
+
+
+def test_participial_tail_reach_stops_at_the_clause():
+    """The reach fix widened WHERE a listed participle may sit, not WHICH verbs count.
+
+    Both halves matter. A bullet whose tail uses an unlisted participle stays
+    clean (opening the verb list is a separate, riskier change: a false positive
+    buys a repair call that can damage a correct bullet). And the intervening
+    words are `[a-z]+\\s+`, so the match cannot walk past a sentence break into an
+    unrelated clause."""
+    for legit in (
+        "Built an ETL job, reducing runtime from 4h to 20m",   # unlisted participle
+        "Trained 4 analysts on SQL, Python, and dashboards",   # a plain list
+        "Analyzed 12 datasets covering 3 years of claims",     # no comma at all
+        "Shipped 3 services. Ensuring uptime was the on-call rota's job",
+    ):
+        assert compose.style_violations(legit) == [], legit
 
 
 def test_style_violations_spares_legit_words():
@@ -122,3 +144,23 @@ def test_enforce_style_skips_verbatim_and_clean(monkeypatch):
     bullets = {"a1": "Shipped a clean bullet with 3 facts"}
     assert compose.enforce_style("jd", "Engineer", sel, bullets) == 0
     assert calls == []  # no offenders -> no LLM call at all
+
+
+def test_enforce_style_leaves_a_verbatim_bullet_completely_alone(monkeypatch):
+    """Verbatim text is the user's own, so neither arm of the gate may touch it.
+
+    The repair arm already excluded it; the em-dash backstop did not, so a user who
+    typed an em dash into a "use my exact bullets" block had it silently rewritten
+    to a comma. Both arms are asserted here because the old test used a plain gkey
+    and therefore proved nothing about verbatim at all."""
+    calls = []
+    monkeypatch.setattr(compose, "call", lambda *a, **k: calls.append(1) or {})
+    monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
+    gk = compose._VERBATIM_PREFIX + "Globex/0"
+    assert compose.is_verbatim_gkey(gk)
+    # Both a banned phrasing and an em dash, so each arm has something to grab.
+    original = "Ran ops — leveraging the on-call rota, ensuring uptime"
+    bullets = {gk: original}
+    assert compose.enforce_style("jd", "Engineer", _sel_with(["a1"]), bullets) == 0
+    assert calls == []
+    assert bullets[gk] == original

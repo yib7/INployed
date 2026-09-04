@@ -711,9 +711,17 @@ _STYLE_BANS: Tuple[Tuple[str, re.Pattern], ...] = (
     ("em dash", re.compile(r"—|\s--\s")),
     ("contrast framing",
      re.compile(r",\s*not\s|\bnot just\b|\brather than\b|\binstead of\b", re.I)),
+    # The banned participle need not sit right after the comma: the textbook
+    # impact tail is "..., minimizing X and enabling Y", where the listed verb is
+    # five words downstream. Allow up to six intervening lowercase words. This
+    # widens the pattern's REACH, not its verb list -- it still fires only when
+    # one of the nine listed participles is present, so the false-positive
+    # argument above is unchanged. `[a-z]+\s+` cannot cross a period or a comma,
+    # so the tail stays inside one clause (a comma just restarts the match).
     ("participial tail",
-     re.compile(r",\s*(?:enabling|ensuring|allowing|driving|resulting in|empowering"
-                r"|showcasing|highlighting|demonstrating)\b", re.I)),
+     re.compile(r",\s*(?:[a-z]+\s+){0,6}?(?:enabling|ensuring|allowing|driving"
+                r"|resulting in|empowering|showcasing|highlighting|demonstrating)\b",
+                re.I)),
     ("buzzword verb",
      re.compile(r"\b(?:leverag|utiliz|spearhead|harness|empower|streamlin"
                 r"|supercharg|turbocharg|revolutioniz|democratiz)\w*", re.I)),
@@ -788,8 +796,14 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<repaired bullet>"}
                     and len(style_violations(text)) < len(style_violations(offenders[gk]))):
                 bullets[gk] = text
                 changed += 1
-    # Unconditional backstop: an em dash must never reach the page.
+    # Backstop: a MODEL-written em dash must never reach the page. Verbatim
+    # bullets are exempt, like everywhere else in the pipeline (the offenders dict
+    # above, dedupe_leading_verbs, _trim_to_caps, fill_underfull): that text is the
+    # user's own, opted into by "use my exact bullets", and an em dash they typed
+    # themselves is not an AI tell to repair.
     for gk, text in bullets.items():
+        if is_verbatim_gkey(gk):
+            continue
         fixed = _strip_em_dashes(text)
         if fixed != text:
             bullets[gk] = fixed

@@ -262,7 +262,8 @@ The composition pipeline (in `local/resume_tailor/`) is built around one rule,
    construction.
 2. **rephrase** (pro): write one bullet per group, fusing only that group's facts.
 3. **layout**: bullets are driven to exact printed-line budgets so the résumé
-   fills one page cleanly (single-line bullets ≥75% full, no stubby lines).
+   fills one page cleanly (a single-line bullet aims to fill ≥90% of its line, a
+   wrapping bullet's last line ≥75%; no stubby lines).
 4. **compile**: render LaTeX and enforce one page.
 
 ```mermaid
@@ -277,6 +278,10 @@ flowchart LR
     LO --> C["compile LaTeX<br/>enforce one page"]
     C --> P["tailored PDF"]
 ```
+
+The flash / pro labels are the default split, which keeps the cheap stages cheap. One
+setting (Settings → Engine, *simple or per stage*) points every stage at a single model
+instead; see [the user guide](docs/USER_GUIDE.md).
 
 **A grounding gate enforces it** (`local/resume_tailor/verify.py`), deterministically.
 

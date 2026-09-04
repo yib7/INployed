@@ -9,8 +9,17 @@ All notable changes to INployed are recorded here. The format follows
 A legibility pass over the résumé engine. A tailor run that half-worked now says so instead
 of reporting a clean success, the bullet stages are declared as a list rather than written
 out by hand, and the largest module is split along its two real seams. Résumé output is
-unchanged: a golden-output regression test pins the exact bullets and the exact `.tex`, and
-it passed unmodified after every step. Nothing to migrate.
+unchanged by that work: a golden-output regression test pins the exact bullets and the exact
+`.tex`, and it passed unmodified after every step.
+
+Then a quality pass over the bullets themselves. The prompts were demonstrating the
+punctuation they ban. The character budget handed to the model was larger than the line it
+had to fit, so the deterministic trim spent every run cutting text back — and the trim's own
+clause cut could discard a third of a bullet that already fitted. Bullet text does change
+here, which is the point: the model is now asked for a length the page can actually hold, and
+shown the user's own bullets rather than a slice of a PDF dump. Alongside it, one setting
+retires the fast / standard / deep vocabulary for anyone who just wants a single model.
+Nothing to migrate either way: every new key defaults to what your install already did.
 
 ### Added
 - **`tailor_report.txt` in every output folder.** A run could fail partly and still report
@@ -26,6 +35,31 @@ it passed unmodified after every step. Nothing to migrate.
   overflow comes from somewhere else it exhausts them and returns a two-page PDF with
   `ok=True`. The page count was computed on every iteration and discarded, so the run was
   reported as clean. It is now carried on the result and checked.
+- **One model for every tailoring step.** The tier split (fast / standard / deep) is a
+  cost-tuning knob, and a leaky abstraction for anyone who just wants one model: saying so
+  meant setting three env vars consistently, per provider, and first learning what "deep"
+  buys. Settings → Engine gains a **simple or per stage** row ahead of the model pickers; on
+  `simple`, a single **one for every step** dropdown supplies every stage and the three
+  per-stage pickers hide themselves. `tiers` is the default, so an existing install resolves exactly the model it
+  resolved before. The two providers carry their own mode (`RESUME_TAILOR_MODEL_MODE` /
+  `RESUME_TAILOR_CLAUDE_MODEL_MODE`, with `..._MODEL_ALL` for the id), so a Claude user's
+  choice cannot re-point the Gemini side. A blank id, or an unrecognised mode, falls back to
+  the tier map rather than sending an empty model id to the API.
+- **A curated style exemplar, `resume_tailor_files/style_exemplar.txt`.** Optional, git-ignored,
+  one bullet per line with `#` comments. The rephrase prompt showed the model a 1200-character
+  slice of the *sample résumé PDF*; measured, that slice spent its first 472 characters on
+  name, contact, education and honors, delivered 3 complete bullets out of 14 plus a fourth
+  cut mid-word, glued the next section's heading onto several bullets, and demonstrated a
+  participial impact tail the same prompt bans. Write the `.txt` and it is used instead; skip
+  it and the PDF is read exactly as before; a fresh clone has neither and still runs.
+- **`RESUME_TAILOR_FULL_LINE_FILL` / `_LAST_LINE_FILL` / `_UNDERFULL_FILL`.** The three fill
+  fractions are now env-overridable. Deliberately no Settings field: the three interact, and
+  a fraction a non-technical user can set to 0 is a footgun. Anything unparseable or outside
+  0.05-1.0 falls back to the documented default, so a typo cannot silently disable a stage.
+- **A notes section in `tailor_report.txt`.** Same line shape as the warnings, one severity
+  down, and never streamed to `on_warning`: a note is something the run could not fully
+  deliver that still leaves a correct, shippable résumé, so it must not make the batch summary
+  call the job degraded.
 
 ### Changed
 - **The bullet stages are a declarative pass list.** Each stage that mutates a bullet has to
@@ -38,18 +72,57 @@ it passed unmodified after every step. Nothing to migrate.
   layer and the Methods line moved to `skills.py`; three shared prompt primitives moved to
   `common.py`. The moved bodies are unchanged. `compose.py` re-exports the public names, so
   no caller changed.
+- **The prompt's character ceiling is measured, not multiplied.** It was
+  `target_lines * 130`. Greedy word wrap loses part of a line at every break — the word that
+  will not fit is pushed down whole — so real capacity is *sublinear* in the line count, and
+  a flat multiply is wrong in principle rather than mistuned: it stated 130 / 260 / 390
+  characters for 1 / 2 / 3 lines where the measured minima are 127 / 250 / 377. The model was
+  invited past the line, the bullet wrapped, and the trim cut it back on every run. New
+  `measure.char_budget` derives 126 / 245 / 364 from the calibrated column capacity, so the
+  ceiling follows if the template is ever recalibrated.
+- **The rephrase prompt's fill percentages are formatted from the constants** they were
+  duplicating, so retuning `FULL_LINE_FILL` or `LAST_LINE_FILL` can no longer move the floor
+  without changing what the model is told.
 
 ### Removed
 - `layout.plan_leadership_lines()`, which nothing called.
+- `config.MAX_LINE_CHARS` and `RESUME_TAILOR_MAX_LINE_CHARS`. The prompt's length hint was the
+  last thing reading a flat chars-per-line number; the trim has been width-based since the
+  measurement work. A "bullet wrap width" that nothing wraps by is a stale meaning waiting to
+  mislead.
 - The `tailor.fixed_blocks` and `tailor.leadership_entry_lines` yaml keys from the
   documentation, the example master and the test fixture. Both were documented and neither
   was ever read: per-block bullet counts come from `config.json`'s `resume_layout`, and the
   leadership line budget is a module constant. `tailor.required` is the whole schema.
 
 ### Fixed
+- **The prompts were demonstrating the punctuation they ban.** 45 em dashes (and one spaced
+  `--`) sat in prompt string literals across nine modules while the same prompts told the
+  model not to use them. Every copied instance buys a billed `enforce_style` repair.
+  `tests/test_prompt_hygiene.py` now AST-lints the literals so it cannot come back.
+- **Over-length bullets could reach the PDF.** The underfull fill and the style gate both ask
+  a model for new text under a stated length limit, and neither answer was length-checked.
+  Nothing downstream re-trims text, and the one-page loop only drops whole bullets, so an
+  over-long reply printed. Both passes now re-trim.
+- **The trim could discard a third of a bullet that already fitted.** `_word_trim` prefers a
+  clause boundary over a mid-phrase cut, but the permission floor was 0.6 of the budget, so
+  the rightmost qualifying separator could sit at 62% and take the remaining 38% with it. A
+  clause cut is for ending cleanly, not for shortening; the floor is now 0.85 and anything
+  below falls through to the word cut.
+- **A fill the re-trim took straight back looked like a success.** The underfull pass measures,
+  asks the model to lengthen, then trims to the line target — and when the folded-in material
+  is one wide token, the longest fitting prefix is the original text. Nothing re-measured, so
+  the run reported a fill it had not delivered. The bullets the pass actually changed are now
+  re-measured and the still-short ones recorded as notes. It never re-calls the model: a second
+  billed call to recover a part-empty last line is not worth it.
+- **The style exemplar ended mid-word.** The 1200-character cap was a flat slice that left the
+  exemplar at "• Proc" — the prompt that calls a bullet ending mid-clause a failure was showing
+  the model one. The cap now cuts on a line boundary.
 - `docs/ARCHITECTURE.md` described the one-page guarantee in terms of a `refit` step and
   character windows in `layout.py`, neither of which exists. It now describes the actual
   mechanism, including the case where the loop cannot reach one page.
+- `README.md` said single-line bullets aim to fill at least 75% of their line. The single-line
+  aim is 90%; 75% is the aim for the *last* line of a bullet that wraps.
 
 ## [1.9.0] - 2026-08-29
 

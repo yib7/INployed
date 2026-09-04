@@ -239,7 +239,14 @@ class KeyPool:
         # Bounded HTTP timeout on every client: without it a hung generate_content
         # call blocks forever, and with semaphores one stuck call stalls the whole
         # stage on the unattended VM (SDK takes the timeout in milliseconds).
-        timeout_ms = int(os.environ.get("SCORE_HTTP_TIMEOUT_S", "120")) * 1000
+        # Parsed defensively: a typo (`SCORE_HTTP_TIMEOUT_S=2m`) used to raise
+        # ValueError out of from_env and kill the whole nightly scoring run with a
+        # raw traceback, which is the worst place to learn about a .env typo.
+        try:
+            timeout_s = int(str(os.environ.get("SCORE_HTTP_TIMEOUT_S", "120")).strip())
+        except (TypeError, ValueError):
+            timeout_s = 120
+        timeout_ms = (timeout_s if timeout_s > 0 else 120) * 1000
         http_options = genai_types.HttpOptions(timeout=timeout_ms)
 
         keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]

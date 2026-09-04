@@ -158,10 +158,30 @@ def _config_json() -> dict:
 # (measure.line_count, via run._fit_to_lines) — so there is no flat chars-per-line
 # constant here any more; the old MAX_LINE_CHARS was the last thing reading one.
 DEFAULT_LINE_TARGETS = [2, 2, 2]
-PROJECTS_MAX = int(os.getenv("RESUME_TAILOR_PROJECTS_MAX", "3"))  # built-in default / fallback
+
+
+def _env_int(name: str, default: int, lo: int = 1) -> int:
+    """A positive int from the environment, falling back to `default` for anything else.
+
+    These three run at IMPORT scope, so a bare `int(os.getenv(...))` turned a typo in a
+    .env (`RESUME_TAILOR_PROJECTS_MAX=three`) into a ValueError raised while importing
+    this module — taking down the dashboard's whole tailor path with a raw traceback,
+    and making `projects_max()`'s careful try/except below unreachable. Mirrors
+    `measure._env_int` and `measure._env_fraction`."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        val = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return val if val >= lo else default
+
+
+PROJECTS_MAX = _env_int("RESUME_TAILOR_PROJECTS_MAX", 3)  # built-in default / fallback
 PROJECTS_MAX_LIMIT = 6  # hard ceiling for the configurable cap: the resume is one page.
-PROJECT_BULLETS_MAX = int(os.getenv("RESUME_TAILOR_PROJECT_BULLETS_MAX", "2"))
-PROJECT_BULLET_LINES = int(os.getenv("RESUME_TAILOR_PROJECT_BULLET_LINES", "2"))
+PROJECT_BULLETS_MAX = _env_int("RESUME_TAILOR_PROJECT_BULLETS_MAX", 2)
+PROJECT_BULLET_LINES = _env_int("RESUME_TAILOR_PROJECT_BULLET_LINES", 2)
 
 
 def _clamp_projects(n: int) -> int:

@@ -413,7 +413,8 @@ def _install(tmp_path, home, value, name="BRIGHT_DATA_API_TOKEN"):
     staged = home / vm_sync.SECRET_STAGE_REMOTE_FILE
     staged.write_text(value + "\n", newline="\n", encoding="utf-8")
     res = subprocess.run([bash, str(script)], env={**os.environ, "HOME": str(home)},
-                         capture_output=True, text=True, timeout=60)
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=60)
     return res, staged
 
 
@@ -451,7 +452,8 @@ def test_the_remote_secret_script_actually_works_end_to_end(tmp_path):
         [bash, "-c", 'source "$HOME/run_scraper.sh" >/dev/null; '
                      'echo "$BRIGHT_DATA_API_TOKEN|$BRIGHT_DATA_DATASET_ID"'],
         env={**os.environ, "HOME": str(home)},
-        capture_output=True, text=True, timeout=60).stdout.strip()
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60).stdout.strip()
     assert out == "second-value-222|gd_keepme"
 
 
@@ -475,7 +477,8 @@ def test_an_indented_inline_export_is_neutralised_not_left_to_win(tmp_path):
         [bash, "-c", 'source "$HOME/run_scraper.sh" >/dev/null; '
                      'printf %s "$BRIGHT_DATA_API_TOKEN"'],
         env={**os.environ, "HOME": str(home)},
-        capture_output=True, text=True, timeout=60).stdout.strip()
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60).stdout.strip()
     assert out == "new-value-333", "the indented dead export still won"
 
 

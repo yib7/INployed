@@ -64,7 +64,8 @@ def test_dotenv_optout_controls_whether_env_file_loads(script, flag, expected):
         env.pop("INPLOYED_NO_DOTENV", None)
     code = _SNIPPET.format(mod=script, path=str(path), key=key)
     out = subprocess.run(
-        [sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120
     )
     assert out.returncode == 0, out.stderr[-2000:]
     assert out.stdout.strip().endswith(expected)
@@ -114,7 +115,8 @@ def _probe_with_temp_env(tmp_path, script, flag):
         env["INPLOYED_NO_DOTENV"] = flag
     code = _SNIPPET_TMP.format(mod=script, path=str(root / "pipeline" / script))
     out = subprocess.run([sys.executable, "-c", code], env=env,
-                         capture_output=True, text=True, timeout=120)
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=120)
     assert out.returncode == 0, out.stderr[-2000:]
     return out.stdout.strip().splitlines()[-1]
 

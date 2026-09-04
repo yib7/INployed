@@ -217,8 +217,20 @@ def add_extracted_date(df: pd.DataFrame,
     return df
 
 
-def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
-    """Load and concatenate CSVs; return (df, id_to_source_path)."""
+def load_files(paths: list[Path], *,
+               problems: list[tuple[Path, str]] | None = None,
+               ) -> tuple[pd.DataFrame, dict[str, Path]]:
+    """Load and concatenate CSVs; return (df, id_to_source_path).
+
+    Skipping a source must never stop the others loading, so a bad file is
+    dropped rather than raised. But a silent drop is its own failure: a master
+    that Drive delivered half-synced, or a truncated .gz, produced an empty frame
+    indistinguishable from a fresh install, and the dashboard told a user with
+    15,700 collected jobs "No jobs yet" and offered to set them up from scratch.
+    Pass `problems` to collect `(path, reason)` for every source that EXISTS and
+    was skipped anyway, so the caller can say which file and why. A path that is
+    simply absent is not a problem — that is the normal first-run state.
+    """
     frames: list[pd.DataFrame] = []
     id_to_path: dict[str, Path] = {}
     for p in paths:
@@ -226,9 +238,21 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
             continue
         try:
             df = read_csv_gz(p)
-        except (OSError, ValueError):
+        except Exception as exc:  # noqa: BLE001 - see below; one bad file, not all of them
+            # Deliberately broad. This used to be `(OSError, ValueError)`, which
+            # misses the two commonest ways a synced .csv.gz actually breaks: a
+            # half-written gzip raises `zlib.error` and a cut-short one raises
+            # `EOFError`, and NEITHER is an OSError or a ValueError. So the
+            # exception escaped the per-file skip, unwound the whole loop, and
+            # took every other source down with it — a truncated Drive master
+            # meant the local scrape files did not load either. The entire point
+            # of this loop is that one unreadable source costs only that source.
+            if problems is not None:
+                problems.append((p, f"{type(exc).__name__}: {exc}"))
             continue
         if "job_posting_id" not in df.columns:
+            if problems is not None:
+                problems.append((p, "no job_posting_id column"))
             continue
         df["job_posting_id"] = df["job_posting_id"].astype(str)
         df["_source"] = str(p)

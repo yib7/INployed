@@ -234,7 +234,7 @@ def main(
                 # Cheap probe: usecols=["job_posting_id"] parses every row but
                 # materializes only that one column, so this never holds the
                 # full 92 MB master in memory. It doubles as the readability
-                # check (a genuinely corrupt master must still raise here,
+                # check (a corrupt master must still raise here,
                 # same contract as the old full pd.read_csv did) and gives us
                 # existing_ids + before_len for free before the chunked stream
                 # below even starts.

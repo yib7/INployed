@@ -17,7 +17,7 @@ So the rule is: every text-mode read, write and subprocess pins ``encoding=``.
 
 **2. Line endings.** ``.gitattributes`` settles what is stored and what is checked
 out, which is what stops a Windows commit from arriving on Linux as CRLF. Two
-extensions genuinely cannot be left to ``text=auto``: ``.sh`` is scp'd to the
+extensions cannot be left to ``text=auto``: ``.sh`` is scp'd to the
 Linux VM, where a CRLF shebang fails with a bare "not found"; ``.cmd`` and
 ``.ps1`` are the Windows launchers, and PowerShell 5.1 is only reliably parsed as
 CRLF. A UTF-8 BOM is the third failure in this family — ``scripts/setup.ps1`` once

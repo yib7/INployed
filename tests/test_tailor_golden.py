@@ -61,11 +61,11 @@ Hermetic by construction, and it must stay that way:
   ``selection.py``. Patching by sweep means this file survives that move untouched, which
   is the point. Any stage that reaches the stub with an unrecognised prompt raises
   instead of falling through to the network.
-* **No user data.** A synthetic master (``_MASTER``) replaces the real
+* **No user data reaches this file.** A synthetic master (``_MASTER``) replaces the real
   ``resume_tailor_files/master_experience.yaml``, which is gitignored personal data and
   absent on a fresh clone.
-* **No pdflatex.** The pipeline stops at ``render.render()``; nothing compiles.
-* **No unpinned config.** Every toggle the pipeline reads is pinned in ``pinned_engine``
+* **No pdflatex ever runs.** The pipeline stops at ``render.render()``; nothing compiles.
+* **No config is left unpinned.** Every toggle the pipeline reads is pinned in ``pinned_engine``
   — the ``config.json`` map, the env-var overrides, the import-time constants, and the
   glyph-width capacities. A default flipped in ``config.py`` must fail its own test, not
   quietly rewrite this golden.

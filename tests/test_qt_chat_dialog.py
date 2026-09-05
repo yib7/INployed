@@ -5,7 +5,7 @@ that sends a turn swaps `workers.run_async` for the synchronous stand-in the res
 of the Qt suite uses, and `resume_tailor.chat.ask` is monkeypatched, so no real
 LLM call and no real QThread is ever created.
 
-The load-bearing test here is the lifetime one. This dialog is non-modal and the
+The test that carries the most weight here is the lifetime one. This dialog is non-modal and the
 main window holds a reference to it, which is exactly the widget-leak shape
 `conftest._drain_qt_widgets` exists to catch: an accumulating pile of
 closed-but-alive widgets makes `theme.apply_theme`'s `app.allWidgets()` sweep grow

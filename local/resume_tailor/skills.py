@@ -274,7 +274,7 @@ def _complete_to_count(items: str, pool: List[str], target: int, jd: str = "") -
     JD-relevant ones first (`_completion_order`), then the user's pool order -- until the
     line has min(target, len(pool)) items, refilling any slot a dropped hallucination
     freed; then cap the count at `target`. No char floor -- the printed-line cap (applied
-    later) is the only size limit, so a genuinely short list is never padded to fill the
+    later) is the only size limit, so a short list is never padded to fill the
     line."""
     pool_norms = {ats._norm_skill(c) for c in pool}
     pool_norms.discard("")
@@ -382,7 +382,7 @@ Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Develop
 
 # ── Methods line (optional 5th concepts line) ────────────────────────────────
 def methods_line(jd: str, sel: Dict[str, Any]) -> Optional[Dict[str, str]]:
-    """Build the optional 'Methods' concepts line: the buzzwords the candidate genuinely
+    """Build the optional 'Methods' concepts line: the buzzwords the candidate
     owns, surfaced so an ATS/reader sees them. Two tiers, anchored to the concepts pool —
     never invents, never empty:
 

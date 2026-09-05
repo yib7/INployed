@@ -58,8 +58,8 @@ class RunLog:
     """What actually happened during one tailor run.
 
     `log` (the status callback) goes to a transient Qt status line and is gone the
-    moment the next message replaces it, which is how a half-worked run used to read
-    as a clean one. This is the durable half: the stages that ran, every warning with
+    moment the next message replaces it, which on its own lets a half-worked run
+    read as a clean one. This is the durable half: the stages that ran, every warning with
     its kind, and the final page count. It is written to `tailor_report.txt` in the
     output folder and, when the caller passes `on_warning`, streamed out live.
 
@@ -387,11 +387,11 @@ def _trim_to_caps(sel: Dict[str, str], bullets: Dict[str, str]) -> None:
 # Every stage that mutates the bullets after the first grounding gate obeys the same
 # discipline: snapshot -> mutate -> (optionally) re-trim -> re-verify against that
 # snapshot, so a pass that pushes a bullet off its own atoms reverts to the last
-# grounded text instead of printing. That used to be four hand-copied
-# snapshot / `verify.enforce_grounded(...)` pairs written out inline in
-# tailor(), and forgetting one was SILENT: the gate is a no-op on grounded text, so a
-# missing call site changes neither the compile nor the rendered .tex. It is structural
-# now — a pass declares what bracketing it needs and the driver does the bookkeeping.
+# grounded text instead of printing. Copied out by hand at each site, that
+# bracketing is easy to forget, and forgetting one is SILENT: the gate is a no-op on
+# grounded text, so a missing call site changes neither the compile nor the rendered
+# .tex. So it is structural: a pass declares what bracketing it needs and the driver
+# does the bookkeeping.
 
 
 @dataclass
@@ -449,10 +449,10 @@ def _gate(ctx: PassCtx, *, stage: str = "rephrase",
     {gkey: unseen_tokens} for every bullet it reverted or dropped (empty = all
     grounded).
 
-    That return value used to be discarded at all four call sites, which is exactly
-    how a half-grounded run read as a clean one — the gate is silent by design on
-    grounded text, so the .tex it produces after a drop is indistinguishable from one
-    that never needed the gate. Here it is folded into `ctx.report` instead, labelled
+    Discarding that return value is exactly how a half-grounded run reads as a clean
+    one: the gate is silent by design on grounded text, so the .tex it produces after
+    a drop is indistinguishable from one that never needed the gate. Here it is
+    folded into `ctx.report` instead, labelled
     with the stage that caused it, and whether the bullet survived: a gkey still in
     `bullets` after the call was REVERTED to its snapshot, one that is gone was
     DROPPED outright (no grounded text to fall back to).
@@ -483,7 +483,7 @@ def _note_still_underfull(ctx: PassCtx, before: Dict[str, str], *,
     that fits, and when the added material is one wide token that prefix IS the
     original. The run then reported a fill that did not happen.
 
-    Three things about the shape of this check are load-bearing:
+    Three things about the shape of this check matter:
 
       * It runs LAST, after the re-trim AND the grounding gate, because both can undo
         the fill and only the final text is worth reporting.
@@ -676,7 +676,7 @@ def tailor(
     report.stage("skills")
     skill_lines = compose.compress_skills(jd, job_title, sel)
 
-    # Optional 5th line: the JD's concept buzzwords the candidate genuinely owns (anchored
+    # Optional 5th line: the JD's concept buzzwords the candidate owns (anchored
     # to concepts_and_methodologies; the JD's own spelling via skill_aliases, then padded
     # with the model's role-relevant ranking). Never invents; one-page enforcement is the
     # backstop. Appended last so it sits below the four tool lines.

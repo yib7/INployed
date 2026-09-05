@@ -123,7 +123,7 @@ def test_resume_tailor_claude_model_fields_exist():
 # --- one model for every step: the mode switch and its two "all" rows ------------
 
 def test_the_two_model_mode_fields_are_bounded_dropdowns_defaulting_to_tiers():
-    """`choice`, not `editable_choice`, and that is the load-bearing part.
+    """`choice`, not `editable_choice`, and that distinction is the point.
 
     The four sibling model rows are editable so a model id newer than this repo
     is never blocked. A MODE is the opposite kind of value: there are exactly two

@@ -123,8 +123,8 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # burns the trigger.
 MAX_EXCLUDE_PAYLOAD_BYTES = 4_200_000   # = 2,000 ids x 14 bytes x 150 children
 # The width that budget was derived from: '"4444097977", ', the shape a 10-digit
-# posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids no
-# longer USES this -- it measures the ids actually in hand, so an 11-digit id can
+# posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids does
+# not USE this -- it measures the ids actually in hand, so an 11-digit id can
 # never quietly overflow the budget -- but the number is what MAX_EXCLUDE_PAYLOAD
 # _BYTES above was computed from, so it stays as the record of that arithmetic.
 BYTES_PER_EXCLUDE_ID = 14
@@ -695,10 +695,10 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     time_range="Past 24 hours" search those are the only ids that can resurface,
     so trimming the head instead would keep precisely the ids that cannot recur.
 
-    The per-id width is MEASURED off the ids in hand, not assumed. It used to be
-    the BYTES_PER_EXCLUDE_ID constant, which bakes in today's 10-digit LinkedIn
-    posting id; ids are at 4.4e9 now, and the first 11-digit id would silently
-    push the real payload past the cap with nothing noticing.
+    The per-id width is MEASURED off the ids in hand, not assumed: the
+    BYTES_PER_EXCLUDE_ID constant bakes in a 10-digit LinkedIn posting id, ids are
+    at 4.4e9 now, and the first 11-digit id would silently push the real payload
+    past the cap with nothing noticing.
     """
     limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
     if not exclude_ids:
@@ -917,7 +917,7 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
     if not records and errors:
         print(f"  WARNING: collection {snapshot_id} returned 0 rows with {errors} "
               f"error(s): {codes}. No input was rejected, so this is most likely a "
-              f"genuinely quiet 24 hours -- but check scraper.log if it repeats.")
+              f"quiet 24 hours -- but check scraper.log if it repeats.")
 
 
 async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> None:

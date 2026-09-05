@@ -592,7 +592,7 @@ def fill_underfull(jd: str, job_title: str, sel: Dict[str, Any],
     Implemented as group-augmentation: a committed fill appends the borrowed id to that group in
     `sel` and re-keys `bullets[old_gk] -> bullets[new_gk]`, so render / bullet_line_targets /
     one-page drop / fact-trace all key off the same atom ids and the borrowed atom becomes
-    genuinely "used". Mutates `sel` and `bullets`; returns `bullets`. Best-effort: any failure
+    "used" for real. Mutates `sel` and `bullets`; returns `bullets`. Best-effort: any failure
     leaves `bullets` unchanged (advisory, never fatal -- like block_briefs / shrink)."""
     targets = bullet_line_targets(sel)
     used: set[str] = {

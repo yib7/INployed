@@ -16,7 +16,7 @@ extract, else "" -- and ``compose`` bounds it on a LINE boundary instead of mid-
 
 Two rules this file holds that production's own gate deliberately does not:
 
-* **The participial impact tail.** ``compose._STYLE_BANS`` matches a CLOSED verb list
+* **The participial impact tail:** ``compose._STYLE_BANS`` matches a CLOSED verb list
   (``enabling|ensuring|allowing|driving|resulting in|...``) because a false positive
   there buys a repair call that can damage a correct bullet. Cycle 11 widened that
   pattern's REACH so the listed verb no longer has to sit directly after the comma,
@@ -25,7 +25,7 @@ Two rules this file holds that production's own gate deliberately does not:
   closed, so "..., reducing runtime from 4h to 20m" is still clean in production.
   Curation is not production: here the SHAPE is what must not be shown, so the check
   below stays broader -- any participle after a comma, listed or not.
-* **Decorative marketing frames.** ``BANNED_PHRASING`` quotes 'end-to-end', 'one place'
+* **Decorative marketing frames:** ``BANNED_PHRASING`` quotes 'end-to-end', 'one place'
   and 'all-in-one' verbatim, but they are absent from ``_STYLE_BANS`` for the same
   false-positive reason (a real bullet may mean end-to-end literally). An exemplar has
   no reason to take that risk, so it is checked here.
@@ -158,7 +158,7 @@ def test_a_directory_at_the_exemplar_path_never_breaks_a_tailoring_run(paths):
 
 def test_example_text_stays_cached(paths):
     """main_window._tailor_work pre-warms this before fanning out across threads, so the
-    lru_cache is load-bearing, not incidental: N concurrent tailors must not each re-read."""
+    lru_cache is required, not incidental: N concurrent tailors must not each re-read."""
     txt, _ = paths
     txt.write_text("First answer.\n", encoding="utf-8")
     assert assets.example_text() == "First answer."

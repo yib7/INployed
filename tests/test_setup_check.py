@@ -1,9 +1,8 @@
 """Tests for the toolkit-agnostic "Check setup" logic (local/setup_check.py).
 
-The two `*_warnings` truth tables moved here from tests/test_jobsdata_engine.py
-when the helpers left jobsdata; the rest is new coverage that the dashboard could
-not give this logic, because it used to live inside MainWindow and could only be
-reached through a QApplication and two mocked message boxes.
+The two `*_warnings` truth tables cover the pure helpers; the rest covers what
+the dashboard cannot reach cheaply, since anything living inside MainWindow needs
+a QApplication and two mocked message boxes to test at all.
 """
 import sys
 from pathlib import Path

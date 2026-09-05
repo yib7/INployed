@@ -292,7 +292,7 @@ def refine_body(job_title: str, company: str, body: str,
     A final editor polish: make the paragraphs read as one connected argument,
     keep it strictly grounded in the resume bullets (cut anything the draft
     invented — no company/number/skill/claim that isn't supported), and pull an
-    over-eager, gushing tone back to measured, genuine interest (that AI-slop
+    over-eager, gushing tone back to measured interest (that AI-slop
     over-excitement is exactly what the user flagged). Best-effort and advisory:
     an empty result or a failed call leaves the original body untouched, and the
     deterministic style gate still runs after this. Pure aside from the LLM call."""

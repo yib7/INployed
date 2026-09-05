@@ -263,10 +263,10 @@ def test_claim_fifo_oldest_first(tmp_path):
 
 def test_claim_blank_queued_at_sorts_after_real_timestamps(tmp_path):
     """P2-7: a blank queued_at (from a hand-edited / pre-schema entry) must NOT
-    jump the FIFO ahead of genuinely-queued jobs. '' sorts lexicographically
-    BEFORE every ISO stamp, so a blank entry used to be claimed first; the fix
-    treats blank as newest-unknown, sorting it AFTER every real timestamp. The
-    genuinely-oldest real-timestamp job is claimed first; the blank one last."""
+    jump the FIFO ahead of jobs that carry one. '' sorts lexicographically BEFORE
+    every ISO stamp, so a plain sort claims a blank entry first; the claim treats
+    blank as newest-unknown and sorts it AFTER every real timestamp. The oldest
+    real-timestamp job is claimed first; the blank one last."""
     q = _q(tmp_path)
     for jid in ("old", "blank", "new"):
         apply_queue.enqueue(_entry(jid), path=q)

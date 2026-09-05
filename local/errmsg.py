@@ -1,9 +1,9 @@
 """One place to render an exception for a message a USER will see.
 
 The dashboard shows exception text in message boxes, the status bar and the
-empty-state panel, because "something went wrong" is not actionable and the
-parser's own reason usually is. The problem is what comes along with it: Python
-puts the offending path into an OSError's own message, so
+empty-state panel, because "something went wrong" does not tell anyone what to
+do next and the parser's own reason usually does. The problem is what rides along
+with it: Python puts the offending path into an OSError's own message, so
 
     PermissionError: [Errno 13] Permission denied:
     'C:\\Users\\<name>\\My Drive\\linkedin_jobs_master.csv.gz'
@@ -31,8 +31,9 @@ import re
 __all__ = ["for_user", "scrub_paths"]
 
 # A drive-letter path: C:\a\b\file.ext or C:/a/b/file.ext -> file.ext. The
-# lookbehind is load-bearing: without it the "s:/" inside "https://host/p" is a
-# drive-letter match, and an error naming an API endpoint came out as "httpp".
+# lookbehind is what stops it over-matching: without it the "s:/" inside
+# "https://host/p" is a drive-letter match, and an error naming an API endpoint
+# came out as "httpp".
 _WIN_PATH_RE = re.compile(
     r"""(?<![A-Za-z0-9])[A-Za-z]:[\\/](?:[^\\/\r\n<>|"']*[\\/])*([^\\/\r\n<>|"']*)""")
 # A POSIX absolute path with at least one directory: /home/u/f -> f. The

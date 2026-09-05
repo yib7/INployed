@@ -291,8 +291,8 @@ def test_reconcile_is_seen_tolerates_a_frame_without_the_column():
 
 def test_reconcile_persists_blank_normalization(tmp_path, monkeypatch):
     """The pass also rewrites literal ""/"nan"/"None" in is_seen to "no". That
-    edit used to be built into the temp file and then discarded whenever the
-    seen-flag counter was the only thing gating the replace. It matters on disk
+    edit is built into the temp file, so gating the replace on the seen-flag
+    counter alone would write it and then throw it away. It matters on disk
     because prune_master.py and merge_incoming.py read the master with plain
     pd.read_csv and would see the literal "nan"."""
     monkeypatch.setattr(csv_io, "_RECONCILE_CHUNK", 2)

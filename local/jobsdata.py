@@ -240,14 +240,14 @@ def load_files(paths: list[Path], *,
         try:
             df = read_csv_gz(p)
         except Exception as exc:  # noqa: BLE001 - see below; one bad file, not all of them
-            # Deliberately broad. This used to be `(OSError, ValueError)`, which
-            # misses the two commonest ways a synced .csv.gz actually breaks: a
-            # half-written gzip raises `zlib.error` and a cut-short one raises
-            # `EOFError`, and NEITHER is an OSError or a ValueError. So the
-            # exception escaped the per-file skip, unwound the whole loop, and
-            # took every other source down with it — a truncated Drive master
-            # meant the local scrape files did not load either. The entire point
-            # of this loop is that one unreadable source costs only that source.
+            # Deliberately broad. `(OSError, ValueError)` misses the two
+            # commonest ways a synced .csv.gz breaks: a half-written gzip raises
+            # `zlib.error` and a cut-short one raises `EOFError`, and NEITHER is
+            # an OSError or a ValueError. A narrower clause lets the exception
+            # escape the per-file skip, unwind the whole loop, and take every
+            # other source down with it, so one truncated Drive master would stop
+            # the local scrape files loading too. The entire point of this loop is
+            # that one unreadable source costs only that source.
             if problems is not None:
                 # errmsg.for_user, not str(exc): the caller renders this beside
                 # `Path(p).name` in the dashboard's empty panel, and an OSError
@@ -1054,7 +1054,7 @@ _BULLET_GAP_RE = re.compile(r"^(• .*)\n\n+(?=• )", re.M)
 # An `<li>` whose content is wrapped in a block tag (`<li><p>text</p></li>`)
 # breaks the line right after the marker, orphaning it from its OWN text — 41
 # of the 59 stray markers in the master. Rejoin those; only then is a marker
-# with nothing after it genuinely an EMPTY `<li>`, which drops out entirely.
+# with nothing after it an EMPTY `<li>`, which drops out entirely.
 # The gap is the tell: a block tag between the marker and the next text emits a
 # second newline, so an ADJACENT line is the item's own content, and only a
 # non-bullet one (`(?=[^\s•])`) is text rather than the next marker.

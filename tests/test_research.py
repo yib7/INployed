@@ -62,7 +62,7 @@ def test_empty_model_reply_becomes_empty(calls):
 
 def test_the_sentinel_check_is_a_prefix_and_swallows_a_none_opener(calls):
     """Pinning the real behaviour: the check is `.upper().startswith("NONE")`,
-    so a genuine blurb opening "None of the products…" is discarded as if it
+    so a valid blurb opening "None of the products…" is discarded as if it
     were the sentinel. Deliberately left conservative — dropping one usable
     blurb costs a JD-only cover letter, while the other direction puts the
     literal word NONE into a shipped PDF."""

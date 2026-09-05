@@ -93,7 +93,7 @@ class CollapsibleSection(QtWidgets.QFrame):
         `changed` property) so it stops reading as background text.
 
         `hint` becomes the tooltip. The caller uses it to say so when some of what
-        it counted is not merely folded but genuinely off screen — expanding the
+        it counted is not merely folded but off screen entirely — expanding the
         section would then show fewer marks than the number promises, and a count
         the user can audit and find wrong is worse than no count.
         """
@@ -179,11 +179,11 @@ class _LegendSwatch(QtWidgets.QWidget):
     """One legend swatch, painted as a miniature of the row it stands for.
 
     A row is a tint fill plus the delegate's 3px saturated category stripe down
-    its leading edge; the swatch used to be the tint alone, which measures
-    1.04-1.09:1 against the panel behind it — the five High Score swatches were
-    five identical dark squares unless you put your face against the screen, so
-    the key that exists to teach the colour code taught nothing. Drawing the
-    stripe too is both legible and honest: it is exactly what the row shows.
+    its leading edge. The tint alone measures 1.04-1.09:1 against the panel
+    behind it, which makes the five High Score swatches five identical dark
+    squares unless you put your face against the screen, so a key painted that
+    way teaches nothing about the colour code it exists for. Drawing the stripe
+    too is both legible and honest: it is exactly what the row shows.
 
     Sized off `theme._current_scale` rather than a fixed 13px, and a plain
     QWidget rather than a QLabel so its minimum height is its own box and not

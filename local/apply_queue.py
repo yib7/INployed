@@ -377,7 +377,7 @@ def claim(claimed_by: str = "agent", path: Optional[Path] = None
           ) -> Optional[Dict[str, Any]]:
     """Claim the FIFO-oldest "queued" entry (by queued_at; list order breaks
     ties). A blank/missing queued_at sorts LAST (newest-unknown), so a
-    hand-edited or pre-schema entry never jumps ahead of genuinely-older jobs.
+    hand-edited or pre-schema entry never jumps ahead of older jobs.
     Sets in_progress / attempts+1 / started_at / claimed_by. Entries that are
     tailoring or terminal are never claimed. None when nothing is queued."""
     with locked(path):

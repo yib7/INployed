@@ -316,7 +316,7 @@ NONREQ_CTX = ("founded", "founding", " ago", "of service", "sabbatical",
 MIN_FILTER_YEARS = _SCORING["min_filter_years"]
 
 # --- security-clearance requirement -------------------------------------------
-# A new grad provably cannot hold an active US clearance, so any genuine
+# A new grad provably cannot hold an active US clearance, so a real
 # clearance requirement is a hard drop. The negation guard keeps "no clearance
 # required" / "clearance is not required" postings (precision bias: keep on doubt).
 # Note: a bare mention of a clearance LEVEL ("Secret clearance shop", "team holds
@@ -561,7 +561,7 @@ def is_junk_desc(text: Any) -> bool:
     return any(p.search(text) for p in JUNK_DESC_PATTERNS)
 
 def requires_clearance(text: Any) -> bool:
-    """True when the JD genuinely requires a US security clearance / polygraph.
+    """True when the JD requires a US security clearance / polygraph.
 
     Suppressed by an explicit negation ("no clearance required") so such postings
     survive (precision bias favors keeping a job on doubt).
@@ -766,7 +766,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
     s = s.drop_duplicates(subset=["job_posting_id"], keep="last").set_index("job_posting_id")
 
     # Validate readability up front so a corrupt-but-present master raises a
-    # loud, actionable error (never a raw pandas ParserError out of save_output
+    # loud error naming the fix (never a raw pandas ParserError out of save_output
     # -> main after the scored gz is already written). Same guard/message idiom
     # as scraper.append_to_master and merge_incoming's master probe.
     def _unreadable(e):
@@ -790,7 +790,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
         # Lazily stream one chunk at a time (memory bounded). A row deep in the
         # stream with the wrong field count only trips the parser here (the
         # nrows=0 header read above passes), so convert those parse errors on the
-        # READ (next(reader)) to the same actionable OSError. Write-side errors
+        # READ (next(reader)) to the same fix-or-restore OSError. Write-side errors
         # (to_csv/os.replace OSError, update TypeError) are raised in the loop
         # body, are NOT parse errors, and still propagate unrelabelled.
         # dtype=object + keep_default_na=False (audit P2-26): the master must
@@ -998,7 +998,7 @@ async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     """Retry failed/missing master rows. Returns (attempted, newly_scored)."""
     if not MASTER_CSV.exists():
         return 0, 0
-    # A malformed master must produce the same actionable message the fold path
+    # A malformed master must produce the same fix-or-restore message the fold path
     # gives, not a raw pandas ParserError traceback out of a cron run (audit C6-6).
     def _unreadable(e):
         return OSError(

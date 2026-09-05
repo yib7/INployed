@@ -15,7 +15,7 @@ import apply_verify  # noqa: E402
 
 # A Greenhouse "Security code" email, in the shape the real one arrives in: CRLF
 # paragraphs, the code alone on its own line, an inline year in the footer. Codes
-# and text are synthetic; only the layout is load-bearing for extract_code.
+# and text are synthetic; only the layout matters to extract_code.
 _GREENHOUSE_BODY = (
     "Hi Jane,\r\n\r\nCopy and paste this code into the security code field "
     "on your application:\r\n\r\nQ7X4ZTB2\r\n\r\nAfter you enter the code, "

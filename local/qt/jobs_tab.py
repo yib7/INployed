@@ -10,7 +10,7 @@ so the widget is decoupled and testable without the full app.
 from __future__ import annotations
 
 import pandas as pd
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import jobsdata
 from jobsdata import COLUMN_LABELS, LABEL_TO_COLUMN
@@ -249,6 +249,30 @@ class JobsTab(QtWidgets.QWidget):
         n = self._active_filter_count()
         self._filters_btn.setText(f"Filters ({n})" if n else "Filters")
 
+    # QSS `QHeaderView::section { padding: 7px 9px; border-right: 1px }`. Those
+    # are fixed pixels: they do NOT shrink with the interface scale, while the
+    # column widths do, so a narrow column loses its header text faster than the
+    # type shrinks. This is that padding, plus the border and a pixel of slack.
+    _HEADER_CHROME_PX = 9 + 9 + 1 + 1
+
+    def _header_floor(self, index: int) -> int:
+        """The narrowest `index` can be and still paint its whole header label.
+
+        A header section is the one piece of table text Qt CLIPS instead of
+        eliding, and it centres what it clips, so an overrun eats both ends:
+        "Score" rendered as "core" in a 38px column at 75%. Applied as a floor
+        only -- a column already wide enough is left exactly as it is.
+        """
+        model = self.table.model()
+        if model is None:
+            return 0
+        label = model.headerData(index, QtCore.Qt.Orientation.Horizontal)
+        if not label:
+            return 0
+        header = self.table.horizontalHeader()
+        return (QtGui.QFontMetrics(header.font()).horizontalAdvance(str(label))
+                + self._HEADER_CHROME_PX)
+
     def _set_column_widths(self, widths: list[int]) -> None:
         """Initial widths, scaled by the live interface scale.
 
@@ -259,7 +283,8 @@ class JobsTab(QtWidgets.QWidget):
         this only sets where they start."""
         scale = theme._current_scale
         for i, w in enumerate(widths):
-            self.table.setColumnWidth(i, round(w * scale))
+            self.table.setColumnWidth(i, max(round(w * scale),
+                                             self._header_floor(i)))
 
     def rescale_columns(self, factor: float) -> None:
         """Re-scale the live column widths by `factor` after an interface-scale
@@ -281,7 +306,8 @@ class JobsTab(QtWidgets.QWidget):
             if hh.sectionResizeMode(i) != interactive:
                 hh.setSectionResizeMode(i, interactive)
         for i in range(len(self.col_ids)):
-            self.table.setColumnWidth(i, max(1, round(hh.sectionSize(i) * factor)))
+            self.table.setColumnWidth(i, max(1, round(hh.sectionSize(i) * factor),
+                                             self._header_floor(i)))
         self._update_stretch()
         if self._legend is not None:
             self._legend.rescale()

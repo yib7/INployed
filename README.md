@@ -15,8 +15,8 @@ The résumé engine's rule is **select and re-phrase, never invent**. Every
 résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
 (no LLM) drops any bullet that doesn't.
 
-2,593 tests cover the pipeline, the Qt UI and the résumé engine, and run on every
-push against Windows and Linux plus a clean-room job that installs from this
+2,593 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
+push against Windows and Linux, plus a clean-room job that installs from this
 README's own setup steps.
 
 Three pieces do the work:
@@ -110,9 +110,9 @@ Everything is version-pinned in `requirements.txt`, so you get the exact set CI 
 the venv's `python.exe` by path means you never have to activate it, which Windows' default
 execution policy blocks. The launcher in Step 4 finds this `venv` on its own. The pip upgrade
 comes first because `python -m venv` seeds whatever pip shipped with your interpreter (25.2 on
-Python 3.14.0), and six advisories against pip 25.2 are fixed by 26.2: path traversal in
-entry-point names, a symlink escape in its fallback tar extractor, and a doubly-encoded index
-URL it resolved wrong.
+Python 3.14.0), and six advisories against pip 25.2 are fixed by 26.2, among them path
+traversal in entry-point names, a symlink escape in its fallback tar extractor, and a
+doubly-encoded index URL it resolved wrong.
 
 ### Step 3: Create your local config files
 ```powershell
@@ -301,7 +301,7 @@ raise the deep tier yourself when you want stronger writing. One setting
 single model instead; see [the user guide](docs/USER_GUIDE.md). The same three tiers
 map onto Claude models when the tailor provider is set to `claude`.
 
-**A grounding gate enforces it** (`local/resume_tailor/verify.py`), deterministically.
+**A deterministic grounding gate enforces it** (`local/resume_tailor/verify.py`).
 
 A job description is untrusted internet text riding inside the generation prompt, so
 the prompt alone is not a guarantee. After generation, with no LLM involved, every

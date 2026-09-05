@@ -266,8 +266,8 @@ Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`)
 
 The rules ride in the writing prompt, and the worst offenders are also caught afterwards by
 a deterministic checker that buys exactly one rewrite. It is off by default because it is a
-taste call, and turning it off leaves the letter exactly as it was before the setting
-existed. The grounding gate still runs last either way, so a restyled sentence that
+taste call: with it off, the cover letter goes through the ordinary style pass and
+nothing else. The grounding gate still runs last either way, so a restyled sentence that
 introduces an unsupported fact is still rejected.
 
 ### What leaves your machine
@@ -361,8 +361,8 @@ fill the structured employment fields), and the active standard answers. It list
 files to upload**; it's built from the tailoring run's own output, so it mirrors the PDF
 exactly with no extra AI call. To apply:
 
-1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card). Tailoring no longer pops
-   open File Explorer by default; flip **Settings → Open output folder after tailoring**
+1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card). Tailoring does not open
+   File Explorer by default; flip **Settings → Open output folder after tailoring**
    on if you want that.
 2. Click **Apply** on the detail card. The Apply button is **green only once the job has
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and

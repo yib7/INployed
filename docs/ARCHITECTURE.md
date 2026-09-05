@@ -42,9 +42,9 @@ appends to a cumulative master CSV. Four cost-aware details:
   actually resurface. Below `MIN_EXCLUDE_IDS` (50) the run warns and proceeds, because a
   rejected collection costs more than some re-collected rows.
 - **A rejected collection is a failure, not a quiet empty run.** When Bright Data refuses
-  every input the snapshot still reports `status="ready"` with `records=0`, which used to
-  read as "no new jobs" and exit 0, so the VM cron logged clean successes for weeks while
-  collecting nothing. `_assert_collected_something()` keys on the error *codes*: an
+  every input the snapshot still reports `status="ready"` with `records=0`. Read naively that
+  looks like "no new jobs" and exits 0, which is how the VM cron logged clean successes for
+  weeks while collecting nothing. `_assert_collected_something()` keys on the error *codes*: an
   input-rejection code raises whether or not rows came back, while zero rows alongside the
   ordinary `dead_page` / `page_too_big` noise is only a warning (that is the healthy steady
   state once the exclude set is working).
@@ -174,10 +174,10 @@ config and the exclude-id file, drains the outbox, and reads `VMTarget` out of t
 Two parts of it are easy to get wrong:
 
 - **Managed credentials:** cron runs with a bare environment, so `run_scraper.sh` has to export
-  `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They used to be pasted inline in that
-  script, which made rotating a dead token an ssh-and-sed chore. They now live in a chmod-600
+  `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They live in a chmod-600
   `~/scraper_secrets.env` that the script sources on line 3, and the VM panel's **Credentials**
-  section writes them (`vm_sync.set_vm_secret`). Only the names in `MANAGED_SECRETS` are
+  section writes them (`vm_sync.set_vm_secret`), so rotating a dead token is a form field
+  rather than an ssh-and-sed chore against a value pasted inline in the script. Only the names in `MANAGED_SECRETS` are
   accepted, and a value has to match `_SAFE_SECRET` (`valid_secret_value`), because the file is
   *sourced* by bash: a value carrying `$`, a backtick, a quote or whitespace would be
   interpolated or word-split at source time, and every credential this pipeline actually uses
@@ -189,7 +189,7 @@ Two parts of it are easy to get wrong:
   notices the rare survivor, since the dashboard runs under `pythonw` with no console to print to.
 - **Crontab merges rather than replaces.** `merge_crontab()` strips any prior managed block and
   appends the new one, keeping every line outside the markers verbatim. A whole-crontab replace
-  used to wipe the user-added `HEALTHCHECKS_URL=` and `GOOGLE_CLOUD_PROJECT=` lines that
+  wipes the user-added `HEALTHCHECKS_URL=` and `GOOGLE_CLOUD_PROJECT=` lines that
   `run_scraper.sh` reads. It is pure text, so the round-trip is unit-testable with no live VM.
 
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
@@ -260,7 +260,7 @@ comes from `jobsdata.job_detail_fields`, which prefers `job_description_formatte
 `job_description` → `job_summary` (first one over 40 characters, the same order the résumé tailor
 uses) and passes the markup through `jobsdata.html_to_text`: non-content elements (`script`,
 `style`, `button`, `icon`, `svg`, `nav`, `header`, `footer`, `noscript`, `form`, `select`) are
-dropped **with their text** first, so LinkedIn's "Show more"/"Show less" chrome no longer reaches
+dropped **with their text** first, so LinkedIn's "Show more"/"Show less" chrome does not reach
 the card (each pattern spans an opener to its own closer; a self-closing or unclosed opener falls
 through to the plain tag strip, which leaks a word of chrome rather than swallowing the prose after
 it); then block tags become line breaks, `<li>` a `• ` bullet, bullets within one list stay on
@@ -329,8 +329,8 @@ Every stage after `rephrase` mutates the same `bullets` dict, and every one of t
 introduce an ungrounded token. The rule is that a mutation is always followed by a
 re-check against the atoms, reverting to the last grounded text when there is one.
 
-That rule used to be written out by hand at each stage, which meant it could be forgotten.
-It is now structural. `run.py` declares a `Pass` (name, the callable, an `enabled`
+The rule is structural rather than repeated by hand at each stage, so no stage can forget it.
+`run.py` declares a `Pass` (name, the callable, an `enabled`
 predicate, `retrim`, `verify`, `recheck_fill`) and `_run_bullet_passes` does the snapshot,
 runs the pass, re-trims when asked, re-verifies against the snapshot, and re-measures when
 asked. `_BULLET_PASSES` reads as the sequence itself: verb dedupe, verbatim merge and trim,
@@ -380,7 +380,7 @@ The fill fractions are the other half, and they are two distinct ideas kept deco
 `FULL_LINE_FILL` (0.90) and `LAST_LINE_FILL` (0.75) are the **aim** — what the prompt asks
 for, and what `_length_hint`'s floor is computed from. `UNDERFULL_FILL` (0.50) is the
 **rescue trigger**, which decides which bullets `fill_underfull` rewrites; it sits far lower
-because some white space above a bullet is fine and only a genuinely sparse line is worth a
+because some white space above a bullet is fine and only a sparse line is worth a
 billed call. The prompt formats its two percentages from those constants instead of spelling
 them out, because a prompt carrying its own copy of a number drifts silently the moment the
 constant is retuned. All three are env-overridable (`RESUME_TAILOR_FULL_LINE_FILL`,
@@ -400,44 +400,43 @@ not for shortening; below the floor the word cut takes over, shedding one or two
 
 ### The style exemplar
 The rephrase prompt carries a sample of the user's own bullets so the model can match a voice
-rather than invent one. It used to be `assets.example_text()[:1200]`: a flat slice of text
-extracted from the user's older résumé PDF, which is a whole page, not a bullet list.
-Measured, that slice spent its first 472 characters on name, contact, education and honors;
-delivered 3 complete bullets out of 14 plus a fourth cut mid-word at "Proc"; glued the next
-section's heading onto several bullets ("Projects CodeCaster"); and demonstrated a
-participial impact tail that the same prompt's `BANNED_PHRASING` forbids. The package had
-already made this call once for a different consumer — `assets._FALLBACK_VERBS` records that
-the raw PDF dump was dropped for the verb palette as weak signal and expensive.
+rather than invent one. `example_text()` resolves that sample from three arms in order: the
+curated `resume_tailor_files/style_exemplar.txt` (`config.STYLE_EXEMPLAR_TXT`, one bullet per
+line, blank lines and `#` comments ignored), else an extract from the user's older résumé PDF,
+else `""`. A file holding nothing but comments falls through to the PDF rather than sending
+the model an empty exemplar, and a fresh clone runs with neither file present, both being
+git-ignored personal content. The `lru_cache` and the swallow-everything posture are
+deliberate: the exemplar is a nice-to-have, and no tailoring run may die because a personal
+file is absent or malformed.
 
-`example_text()` is now a three-arm resolver: the curated
-`resume_tailor_files/style_exemplar.txt` (`config.STYLE_EXEMPLAR_TXT` — one bullet per line,
-blank lines and `#` comments ignored), else the PDF extract, else `""`. The PDF arm is
-the original source and stays, so an install that never writes the `.txt` behaves exactly as
-before, and a fresh clone — which has neither file, both being git-ignored personal content —
-still runs. A file holding nothing but comments falls through to the PDF rather than sending
-the model an empty exemplar. The `lru_cache` and the swallow-everything posture are kept on
-purpose: the exemplar is a nice-to-have, and no tailoring run may die because a personal file
-is absent or malformed.
+The curated arm sits first because the PDF is a whole page, not a bullet list, and the
+measurements say how badly that reads as an exemplar. A flat 1200-character slice of it spends
+its first 472 characters on name, contact, education and honors; delivers 3 complete bullets
+out of 14 plus a fourth cut mid-word at "Proc"; glues the next section's heading onto several
+bullets ("Projects CodeCaster"); and demonstrates a participial impact tail that the same
+prompt's `BANNED_PHRASING` forbids. The package makes the same call for a different consumer:
+`assets._FALLBACK_VERBS` records the raw PDF dump as weak signal and expensive for the verb
+palette.
 
-`compose.EXEMPLAR_CHAR_CAP` (1200) stays. Against a curated file it never bites; it now
-bounds the PDF fallback and guards against a user pasting a whole résumé into the `.txt` and
-inflating every rephrase call. What changed is that `_exemplar_for_prompt` cuts on a **line**
-boundary, taking whole lines while they fit. The flat slice ended the exemplar at "• Proc",
-so the prompt that calls a bullet ending mid-clause a failure was itself showing the model
-one: a whole bullet dropped is a cost, a fragment taught as an example is a defect.
+`compose.EXEMPLAR_CHAR_CAP` (1200) bounds the PDF fallback and guards against a user pasting a
+whole résumé into the `.txt` and inflating every rephrase call; against a curated file it never
+bites. `_exemplar_for_prompt` cuts on a **line** boundary, taking whole lines while they fit.
+A character cut ends the exemplar at "• Proc", so the prompt that calls a bullet ending
+mid-clause a failure would itself be showing the model one: a whole bullet dropped is a cost,
+a fragment taught as an example is a defect.
 
 ### Run reporting
 A tailor run can succeed and still have gone partly wrong: the ATS report can fail, the
 cover letter can fail to compile, the grounding gate can drop a bullet, and the one-page
-loop can run out of project bullets to drop and ship two pages. All of that used to go to
-the dashboard's status line and vanish.
+loop can run out of project bullets to drop and ship two pages. None of that is fatal, which
+is exactly why a status line that only says "done" hides all of it.
 
-`tailor()` now collects those as warnings and writes `tailor_report.txt` into the output
+`tailor()` collects those as warnings and writes `tailor_report.txt` into the output
 folder on every run: which passes ran, every bullet the gate reverted or dropped and the
 token that caused it, the final page count, and each advisory failure. Callers can also
 pass `on_warning` to receive them live; the dashboard does this and reports degraded runs
-in the batch summary, so a two-page résumé is no longer indistinguishable from a clean
-one. A degraded run is still a success that produced a PDF. It is just no longer silent.
+in the batch summary, so a two-page résumé reads differently from a clean one. A degraded
+run is still a success that produced a PDF. It is just not a silent one.
 
 The report has a second, quieter section: **notes**. Same `<kind>: <message>` line shape,
 one severity down, and deliberately NOT streamed to `on_warning` — a note is something the

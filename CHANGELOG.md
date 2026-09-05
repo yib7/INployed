@@ -83,6 +83,23 @@ Nothing to migrate either way: every new key defaults to what your install alrea
 - **The rephrase prompt's fill percentages are formatted from the constants** they were
   duplicating, so retuning `FULL_LINE_FILL` or `LAST_LINE_FILL` can no longer move the floor
   without changing what the model is told.
+- **`local/chrome.py` is now `local/chrome_launch.py`.** The repo had two modules named
+  `chrome.py` and `local/qt/main_window.py` imported both, so in one file `chrome.open_in_chrome`
+  and `chrome.Pill` named different modules. The launcher took the new name; `local/qt/chrome.py`
+  kept the old one, since inside the Qt package "chrome" is the standard word for the screen
+  furniture. Imports here are flat (`import chrome_launch`), which is also why the new name is
+  not the more generic `browser`.
+- **"Check setup" has its own module, `local/setup_check.py`.** Its two warning builders were
+  private functions in `local/jobsdata.py` that `main_window.py` reached across the module
+  boundary to call. The new module is Qt-free and split by cost rather than by topic:
+  `local_problems()` is file and environment reads and is safe inline, `job_data_problems()`
+  makes one unbilled network probe and belongs on a worker thread. The dashboard keeps only the
+  presentation.
+- **User-facing error text goes through `local/errmsg.py`.** `for_user` keeps the exception
+  class and its message and reduces every absolute path in it to a bare file name, because a
+  locked master CSV used to put `C:\Users\<name>\...` on screen, and from there into
+  screenshots and bug reports. Log files keep their full paths; this is only for text a user
+  reads.
 
 ### Removed
 - `layout.plan_leadership_lines()`, which nothing called.

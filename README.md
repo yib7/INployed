@@ -7,8 +7,9 @@
 ![Python](https://img.shields.io/badge/python-3.14-blue.svg)
 
 A scheduled cloud discovery step feeds a two-stage LLM scorer, which syncs to a
-desktop app that drives a LaTeX résumé engine. 15,754 postings collected to date,
-about 5% of them survive to a recommendation, so that is all you read.
+desktop app that drives a LaTeX résumé engine. 17,366 postings collected as of
+September 2026; 8% of them earn a second-stage recommendation and 5% come back
+*apply*, so that is all you read.
 
 The résumé engine's rule is **select and re-phrase, never invent**. Every
 résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
@@ -204,8 +205,8 @@ discovery VM.
   project has (no file editing), including the schedule, pause, config pushes, and API-key
   rotation for the cloud discovery VM. A rotated key lands in a mode-600
   `~/scraper_secrets.env` that the cron script sources; the value rides an `scp` rather
-  than an argv, so it never reaches a gcloud log. Stats reports per-run cost and volume,
-  with a staleness badge when a cron run goes missing.
+  than an argv, so it never reaches a gcloud log. Stats reports per-run volume, token
+  spend and rescore outcomes, with a staleness badge when a cron run goes missing.
 
 Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
@@ -263,20 +264,23 @@ look at the data every generated bullet had to come from.
 The composition pipeline (in `local/resume_tailor/`) is built around one rule,
 **select and re-phrase, never invent**:
 
-1. **select** (flash): pick the best experiences/projects and group their atoms.
+1. **select** (fast tier): pick the best experiences/projects and group their atoms.
    Selection can only choose from your atoms, so every bullet is grounded by
    construction.
-2. **rephrase** (pro): write one bullet per group, fusing only that group's facts.
-3. **layout**: bullets are driven to exact printed-line budgets so the résumé
-   fills one page cleanly (a single-line bullet aims to fill ≥90% of its line, a
-   wrapping bullet's last line ≥75%; no stubby lines).
+2. **rephrase** (deep tier): write one bullet per group, fusing only that group's facts.
+3. **layout**: bullets are driven to measured printed-line budgets so the résumé
+   fills one page cleanly. Line length is modelled from real Times glyph widths
+   calibrated against the compiled PDF, not a flat character count, so the budget
+   holds for a wide-word bullet too (a single-line bullet aims to fill ≥90% of its
+   line, a wrapping bullet's last line ≥75%; below 50% the engine folds in a spare
+   fact from the same entry rather than shipping a stub).
 4. **compile**: render LaTeX and enforce one page.
 
 ```mermaid
 flowchart LR
-    Y[("master_experience.yaml<br/>your atoms")] --> S["select (flash)<br/>choose + group atoms"]
+    Y[("master_experience.yaml<br/>your atoms")] --> S["select (fast tier)<br/>choose + group atoms"]
     JD["job description"] --> S
-    S --> R["rephrase (pro)<br/>one bullet per group"]
+    S --> R["rephrase (deep tier)<br/>one bullet per group"]
     R --> V{"verify.py<br/>every distinctive token<br/>traces to an atom?"}
     V -->|yes| LO["layout<br/>fit exact line budgets"]
     V -->|no| RV["revert to last grounded<br/>text, else drop"]
@@ -285,9 +289,13 @@ flowchart LR
     C --> P["tailored PDF"]
 ```
 
-The flash / pro labels are the default split, which keeps the cheap stages cheap. One
-setting (Settings → Engine, *simple or per stage*) points every stage at a single model
-instead; see [the user guide](docs/USER_GUIDE.md).
+Three model tiers back those stages — fast, standard, deep. Out of the box only the
+fast tier drops to a cheaper model (`gemini-3.1-flash-lite`); standard and deep both
+sit on `gemini-3.5-flash`, so the default costs what a mid-tier model costs and you
+raise the deep tier yourself when you want stronger writing. One setting
+(Settings → Engine, *Tailor models — simple or per stage*) points every stage at a
+single model instead; see [the user guide](docs/USER_GUIDE.md). The same three tiers
+map onto Claude models when the tailor provider is set to `claude`.
 
 **A grounding gate enforces it** (`local/resume_tailor/verify.py`), deterministically.
 
@@ -316,8 +324,9 @@ works for anyone's résumé.
 ---
 
 ## Tech stack
-Python 3.14 · Gemini (Vertex AI) · Bright Data · pandas · SQLite · LaTeX (MiKTeX) ·
-PySide6/Qt · Google Drive · cron · pytest · ruff.
+Python 3.14 · Gemini (Vertex AI) · Claude Code CLI *(optional second provider)* ·
+Bright Data · pandas · SQLite · LaTeX (MiKTeX) · PySide6/Qt · Google Drive ·
+GCP Compute Engine + cron · pytest · ruff.
 
 ## Tests
 ```bash
@@ -353,8 +362,12 @@ scripts/build_demo_media.py stamps the four README stills + renders docs/demo.gi
 scripts/build_social_preview.py composes docs/social-preview.png (GitHub's 1280x640 card)
 scripts/build_walkthrough.py  records the captioned MP4 tour of the dashboard (synthetic data)
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
+local/open_dashboard.pyw  the launcher's target: resolves the synced master, then opens app.py, no console
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
+local/settings.py       the one schema behind the Settings tab: 64 fields, where each is stored
+local/setup_check.py    what's missing or misconfigured, in plain sentences (the Check setup button)
+local/errmsg.py         the single renderer for user-facing exception text (no home paths, no secrets)
 local/chrome_launch.py  open job/resume links in the configured Chrome profile
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
@@ -363,7 +376,7 @@ local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + 
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
 docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CREDITS
-                        (attribution), plus the README's media
+                        (attribution), the README's media, and the GitHub social card
 ```
 
 ## License
@@ -375,8 +388,9 @@ No dependency is redistributed here. The repo is source only, and `pip` fetches 
 one from PyPI under its own license when you run Step 2.
 
 Across the tree `pip` actually installs, direct pins and transitive ones together, the
-licenses are MIT, BSD-2/3, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi, pulled in
-by requests and httpx). All of those permit an MIT release. The one copyleft dependency is
+licenses are MIT, BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi,
+pulled in by requests and httpx; the Zlib, CC0-1.0 and 0BSD arms come from numpy's
+composite expression, under pandas). All of those permit an MIT release. The one copyleft dependency is
 **PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercial from
 The Qt Company. The dashboard imports PySide6 as an ordinary Python module and bundles no
 Qt binaries, so LGPLv3's relink condition is met by construction: you have the full source

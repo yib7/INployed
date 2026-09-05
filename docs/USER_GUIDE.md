@@ -337,8 +337,9 @@ The scorer matches every job against `resume.md`. When you edit your **Resume Da
 **Resume Data** tab shows an **amber warning banner** whenever `resume.md` is older than
 your data (so the scorer isn't quietly matching against a stale résumé), with a one-click
 **Regenerate resume.md**. To regenerate: on the
-**Resume Data** tab, pick a model (`gemini-3.5-flash` by default, or 3.1 flash-lite /
-3.1 pro) and click **Generate from my data**. It uses Gemini to rebuild `resume.md`
+**Resume Data** tab, pick a model (`gemini-3.5-flash` by default; the dropdown lists every
+3.x flash and pro id the Settings tab offers, and you can type your own) and click
+**Generate from my data**. It uses Gemini to rebuild `resume.md`
 **faithfully, selecting and rephrasing your data, never inventing.** You **review (and
 can edit) the result before it's saved**; saving backs up the old file to `resume.md.bak`.
 If VM features are on, it then offers to push the new `resume.md` to the VM, and a

@@ -41,12 +41,13 @@ pytest-qt · pytest-timeout · ruff · and the Python standard library (asyncio,
 argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy**, whose own
 declared expression is `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`.
 
-Four more are optional and installed only if you want the feature they serve, so
-`requirements.txt` lists them without installing them: **playwright** (Apache-2.0), the
-advanced auto-apply driver; and, for maintainers regenerating art and README media,
-**Pillow** (MIT-CMU) plus **imageio-ffmpeg** (BSD-2), which downloads its own **FFmpeg**
-binary (LGPL-2.1-or-later) at first use. No FFmpeg binary, and nothing else from that
-list, is committed here.
+Three more are optional and installed only if you want the feature they serve, so
+`requirements.txt` names them in a comment without installing them: **playwright**
+(Apache-2.0), the advanced auto-apply driver; and, for maintainers regenerating art and
+README media, **Pillow** (MIT-CMU) plus **imageio-ffmpeg** (BSD-2). A fourth license
+arrives without a pin: imageio-ffmpeg downloads its own **FFmpeg** binary
+(LGPL-2.1-or-later) at first use, so no requirements file can name it. No FFmpeg binary,
+and nothing else from that list, is committed here.
 
 None of these are redistributed with this project; `pip` installs each from PyPI under
 its own license. Across the full pinned dependency tree the licenses are MIT, BSD-2/3,

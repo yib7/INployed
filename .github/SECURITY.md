@@ -6,8 +6,12 @@ I read every vulnerability report and will fix what I can.
 ## Reporting a vulnerability
 
 Use GitHub's private vulnerability reporting: open the repository's **Security** tab and
-click **Report a vulnerability**. That keeps the details private until a fix is out. Please
-do not file a public issue for a security problem.
+click **Report a vulnerability**. That keeps the details private until a fix is out.
+
+If that button is not on the Security tab, private reporting has not been switched on yet.
+In that case open an ordinary issue that asks for a private channel and says nothing else —
+a title like "security report: request a private channel", no file names, no reproduction
+steps — and I will open one. Either way, please keep the details out of a public issue.
 
 Include enough to reproduce it: affected file or component, the version or commit, and the
 impact you observed. Expect an initial reply within about a week.

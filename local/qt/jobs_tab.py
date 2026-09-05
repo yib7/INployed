@@ -261,6 +261,31 @@ class JobsTab(QtWidgets.QWidget):
         for i, w in enumerate(widths):
             self.table.setColumnWidth(i, round(w * scale))
 
+    def rescale_columns(self, factor: float) -> None:
+        """Re-scale the live column widths by `factor` after an interface-scale
+        change, then re-decide the Title stretch.
+
+        `_set_column_widths` only runs at construction, so before this existed a
+        user who dragged the interface-size slider got bigger type inside columns
+        still sized for the old scale: at 150% the High Score header read "cor"
+        and "licants" (a header section is the one piece of table text Qt clips
+        instead of eliding) and the Found column showed "2026-0…". Multiplying
+        the CURRENT widths rather than re-applying the defaults is what keeps a
+        column the user dragged wider proportionally wider afterwards.
+        """
+        if factor <= 0 or abs(factor - 1.0) < 1e-9:
+            return
+        hh = self.table.horizontalHeader()
+        interactive = QtWidgets.QHeaderView.ResizeMode.Interactive
+        for i in range(len(self.col_ids)):
+            if hh.sectionResizeMode(i) != interactive:
+                hh.setSectionResizeMode(i, interactive)
+        for i in range(len(self.col_ids)):
+            self.table.setColumnWidth(i, max(1, round(hh.sectionSize(i) * factor)))
+        self._update_stretch()
+        if self._legend is not None:
+            self._legend.rescale()
+
     def _update_stretch(self) -> None:
         """Spend the table's spare width on Title, not on the trailing Link
         column. Link holds one fixed-width "Open" link, so stretching the last

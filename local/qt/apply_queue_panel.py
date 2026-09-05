@@ -520,6 +520,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                 i, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.itemSelectionChanged.connect(self._update_details)
         v.addWidget(self.table, 1)
+        self._auto_width_columns = (COLUMN_IDS.index("attempts"),
+                                    COLUMN_IDS.index("missing"))
 
         # Structured details panel. It keeps a `toPlainText()` mirror of the composed
         # text because the tests assert against that flattened form.
@@ -669,6 +671,18 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             table.blockSignals(False)
         if reselect is not None:
             table.selectRow(reselect)
+
+    def rescale_columns(self, factor: float) -> None:
+        """Re-scale the live column widths by `factor` after an interface-scale
+        change (the widths above are only applied at construction). The two
+        ResizeToContents columns measure themselves and are left alone."""
+        if factor <= 0 or abs(factor - 1.0) < 1e-9:
+            return
+        hh = self.table.horizontalHeader()
+        for i in range(self.table.columnCount()):
+            if i in self._auto_width_columns:
+                continue
+            self.table.setColumnWidth(i, max(1, round(hh.sectionSize(i) * factor)))
 
     def _update_counts(self) -> None:
         counts = {s: 0 for s in apply_queue.STATUSES}

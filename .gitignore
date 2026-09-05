@@ -55,9 +55,15 @@ apply_answers.json
 *.out
 
 # ── Generated / runtime data ─────────────────────────────────────────────────
-# seen.db = SQLite application tracker; *.csv covers the scraped job data
-# (incl. linkedin_jobs_master.csv); the json/txt below are scraper/scorer run-state.
-seen.db
+# why *.db rather than the old `seen.db`: the live application tracker has never
+# lived in the tree (seen_db.py has resolved it under %LOCALAPPDATA% since the
+# first commit), so that one name could never match. What CAN land here is a
+# Tracker -> Export backup of the same personal history: main_window.py offers a
+# save dialog defaulting to inployed-tracker-<date>.db, and the user can point it
+# anywhere. The extension is the thing worth covering. No tracked file is a .db.
+*.db
+# *.csv covers the scraped job data (linkedin_jobs_master.csv, run_stats.csv, the
+# per-run-label outputs); the json/txt below are scraper/scorer run-state.
 *.csv
 *.csv.gz
 last_run_job_ids.json
@@ -80,7 +86,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-# The optional project-local venv the README and the .cmd launcher look for.
+# The optional project-local venv README Step 2 creates and the .cmd launcher
+# prefers (venv\Scripts\pythonw.exe). `.venv/` is not a name this repo uses
+# anywhere; it stays because uv and `python -m venv .venv` produce it, and a
+# committed virtualenv is the single worst thing that can land in a clone.
 venv/
 .venv/
 # Packaging artifacts. pyproject.toml holds tool config only (no [build-system],
@@ -90,6 +99,10 @@ dist/
 *.egg-info/
 
 # ── OS / editor / IDE ────────────────────────────────────────────────────────
+# why these stay when none has ever been committed here: they are per-contributor
+# junk rather than project files, so today's absence says nothing about the next
+# clone. .DS_Store is kept even though macOS sits outside the support matrix,
+# because osopen.py carries a darwin branch and the tree gets read on Macs.
 .DS_Store
 Thumbs.db
 .vscode/

@@ -69,7 +69,8 @@ PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
 application tracker (`local/seen_db.py`) with follow-up nudges, a stats tab, the
 Settings/Resume Data/Apply Answers editors, and the **Tailor résumé** button. The
 job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pure
-data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome_launch.py`).
+data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome_launch.py`,
+`local/setup_check.py`, `local/errmsg.py`).
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
@@ -99,6 +100,24 @@ arrived. Its summary also flags a master run older than the `stale_after_hours` 
 dashboard share one concurrent-instance guard, `local/locks.py:SingleInstance` (an OS-level
 msvcrt/fcntl file lock): the dashboard uses it to no-op a relaunch over a live window, the watcher
 to skip a trigger while a previous fire is still working.
+
+Two of those toolkit-agnostic modules carry policy the Qt layer would otherwise re-implement
+per call site. **`local/setup_check.py`** answers "what is missing or misconfigured" as plain
+problem strings for the **Check setup** button, split by *cost* rather than by topic:
+`local_problems()` is file and environment reads (it runs `resume_tailor/master_validate.py`'s
+`check_setup()` over the master and the answer store, then adds the engine-credential checks)
+and is safe inline, while `job_data_problems()` makes one unbilled network probe of the job-data
+account and therefore belongs on a worker thread. `MainWindow` owns only the presentation: which
+half runs where, and which dialog it lands in. Its two `*_warnings` helpers take every input as
+an argument and do no I/O, so the whole matrix is unit-tested with no `QApplication`
+(`tests/test_setup_check.py`). **`local/errmsg.py`** is the single renderer for exception text a
+*user* will see: `for_user` keeps the exception class and its message and reduces every absolute
+path inside it to a bare file name. `PermissionError: [Errno 13] Permission denied:
+'C:\Users\<name>\My Drive\linkedin_jobs_master.csv.gz'` is what an antivirus scanner or an
+open Excel window produces, and that string names the person, often their employer, and travels
+straight into a screenshot or a bug report. The caller already knows which file it was working
+on and says so itself. It is deliberately **not** a log scrubber: `watcher.log` and `scraper.log`
+keep their full paths, because a log on the user's own disk is exactly where a path belongs.
 
 **Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
 jobs" run or manual add writes its new full master rows to `<repo>/outbox/local_rows_*.csv.gz`
@@ -287,11 +306,12 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
+| `aiwriting.py` | An optional extra AI-writing gate for the cover-letter body, **off by default**: a bounded, letter-relevant extract of the MIT-licensed *avoid-ai-writing* skill (attribution in its docstring and `docs/CREDITS.md`), split the same two ways the résumé style gate is. `RULES_PROMPT` is the judgment half, appended to the generation, refine and repair prompts; `EXTRA_BANS` / `violations()` is the deterministic half. A phrase earns a ban only when it is always slop, because a false positive buys a repair call that can damage correct text. |
 | `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity + the JD fenced as untrusted data + the folder's `apply.md`, or a bounded master-file digest when the job was never tailored) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants, because the whole payload is re-sent (and re-billed) each turn. No style or grounding gate runs on an answer; the grounding rule is carried by the system prompt. |
 | `verify.py` | The grounding gate. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
-| `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` backs the dashboard's "Check setup" button. |
+| `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` is the local half of the dashboard's "Check setup" button, reached through `local/setup_check.py`. |
 | `apply_answers.py` | The reusable screening-answer bank (git-ignored `apply_answers.json`): seeds from `apply_config.DEFAULTS`, migrates legacy overrides, and feeds the standard answers into `apply.md`. |
 | `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are config-driven and default-preserving. The bullet stages run as a declarative pass list; see "The bullet pass pipeline" and "Run reporting" below. |
 | `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder (by the `apply.md` meta marker), build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO, structured address). |

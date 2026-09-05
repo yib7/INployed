@@ -690,7 +690,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             s = e.get("status")
             if s in counts:
                 counts[s] += 1
-        parts = [f"{s}: {n}" for s, n in counts.items() if n]
+        # The same words the chips beside this caption use, not the raw status
+        # ids: one row read "In progress 1 · Ready to submit 1 · Needs review 1"
+        # on the chips and "in_progress: 1 · ready_to_submit: 1 · needs_human: 1"
+        # in the caption immediately to their right — two vocabularies for one
+        # set of states, with the machine's spelling the more prominent of the
+        # two. Lower-cased because this is a caption, not a set of labels.
+        parts = [f"{STATUS_LABELS.get(s, s.replace('_', ' ')).lower()}: {n}"
+                 for s, n in counts.items() if n]
         parts.append(f"total: {len(self._jobs)}")
         self.counts_label.setText(" · ".join(parts))
         self.status_chips.set_counts(counts)

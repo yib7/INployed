@@ -63,11 +63,20 @@ class StatsTab(QtWidgets.QWidget):
         theme.register_table(self.table)
         self._delegate = _MetricDelegate(stats_cols, self.table)
         self.table.setItemDelegate(self._delegate)
-        # Stretching the last section made "Out tok" a half-empty column the
-        # width of the window; leave the spare width as table background.
-        self.table.horizontalHeader().setStretchLastSection(False)
+        # Stretching the LAST section made "Out tok" a half-empty column the
+        # width of the window. Leaving the spare width as bare table background
+        # was the other extreme: on a maximised window the header band stopped
+        # ~430px short of the table's own border, and the seam where it ended
+        # read as a half-drawn table. Spend it on "Input file" instead — the one
+        # column here holding a variable-length string, and the same trade
+        # `JobsTab._update_stretch` makes when it stretches Title rather than the
+        # trailing Link column.
+        hh = self.table.horizontalHeader()
+        hh.setStretchLastSection(False)
         for i, (_, w) in enumerate(STATS_COLUMNS):
             self.table.setColumnWidth(i, round(w * theme._current_scale))
+        stretch = [c for c, _ in STATS_COLUMNS].index("input_csv")
+        hh.setSectionResizeMode(stretch, QtWidgets.QHeaderView.ResizeMode.Stretch)
         v.addWidget(self.table, 1)
 
         # A passive readout of the applied-vs-recommendation labels (no export).

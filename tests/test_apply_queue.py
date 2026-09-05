@@ -900,7 +900,7 @@ def test_new_entry_collapses_newlines_in_scraped_display_fields():
 
 
 def test_new_entry_drops_a_non_http_apply_url():
-    """local/chrome.py refuses a non-http(s) URL at the "Open posting" button;
+    """local/chrome_launch.py refuses a non-http(s) URL at the "Open posting" button;
     the queue is the other entry point and stores what an agent later navigates
     to, so the same rule applies here -- on the way in, once, rather than at
     every later reader."""

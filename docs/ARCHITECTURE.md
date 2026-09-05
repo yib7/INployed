@@ -69,7 +69,7 @@ PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
 application tracker (`local/seen_db.py`) with follow-up nudges, a stats tab, the
 Settings/Resume Data/Apply Answers editors, and the **Tailor résumé** button. The
 job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pure
-data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome.py`).
+data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome_launch.py`).
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a

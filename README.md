@@ -354,7 +354,7 @@ scripts/build_walkthrough.py  records the captioned MP4 tour of the dashboard (s
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
-local/chrome.py         open job/resume links in the configured Chrome profile
+local/chrome_launch.py  open job/resume links in the configured Chrome profile
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
 local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores

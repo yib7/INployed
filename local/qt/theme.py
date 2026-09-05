@@ -44,6 +44,15 @@ SURFACE = PANEL
 BORDER = "#30363d"         # hairline
 BORDER_SOFT = "#21262d"    # dividers inside cards
 BORDER_STRONG = "#3f4a5a"  # hovered controls
+# Input wells and checkbox indicators only. Every OTHER hairline separates two
+# surfaces that already differ (a PANEL card on WINDOW, a table on its tab), so
+# the border is decoration and 1.55:1 is fine. An input is the one component
+# whose fill is the SAME WINDOW as the ground it sits on -- 1.09:1 -- so its
+# 1px outline is the only thing that says "you can type here", and WCAG 1.4.11
+# wants 3:1 for exactly that case. #636c78 measures 3.56:1 on WINDOW and 3.25:1
+# on PANEL (the Settings cards), and still sits dimmer than the MUTED label text
+# beside it, so the field reads as a field without shouting.
+BORDER_INPUT = "#636c78"
 
 # --- text tiers ----------------------------------------------------------------
 TEXT = "#e6edf3"           # primary
@@ -327,7 +336,7 @@ def _qss() -> str:
 
     /* Inputs — wells sit on the deepest surface; focus = 1px accent, no glow. */
     QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QDateEdit {{
-        background: {WINDOW}; color: {TEXT}; border: 1px solid {BORDER};
+        background: {WINDOW}; color: {TEXT}; border: 1px solid {BORDER_INPUT};
         border-radius: {RADII["control"]}px; padding: 6px 8px;
         selection-background-color: {SEL}; selection-color: {SEL_TEXT}; }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
@@ -367,7 +376,7 @@ def _qss() -> str:
     QTableCornerButton::section {{ background: {RAISED}; border: 0; }}
 
     QCheckBox {{ spacing: 7px; }}
-    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER};
+    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER_INPUT};
         border-radius: {RADII["checkbox"]}px; background: {WINDOW}; }}
     QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
 

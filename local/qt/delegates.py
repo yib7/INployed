@@ -272,8 +272,16 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         num_w = QtGui.QFontMetrics(mono).horizontalAdvance(label)
         gap = round(6 * s)
         # The bar yields to the numeral in a narrow column (Deep is ~70px):
-        # the value must never be clipped away by the track.
-        bw = max(round(16 * s), min(round(56 * s), rect.width() - num_w - gap))
+        # the value must never be clipped away by the track. It reserved EXACTLY
+        # num_w and no more, so the numeral sat at the elide threshold at every
+        # scale (measured room == num_w at 75/100/125/150%) and one pixel of
+        # QRect rounding tipped it: the Deep column read "9…", "8…", "7…" while
+        # the whole numbers beside them were fine. Reserve a few pixels of slack,
+        # and clamp so the 16px bar floor can never re-take them.
+        slack = round(3 * s)
+        bw = max(round(16 * s),
+                 min(round(56 * s), rect.width() - num_w - gap - slack))
+        bw = min(bw, max(0, rect.width() - num_w - gap - slack))
         bh = max(2, round(6 * s))
         r = 3 * s
         track = QtCore.QRectF(rect.left(), rect.center().y() - bh / 2 + 1, bw, bh)

@@ -176,11 +176,12 @@ Two parts of it are easy to get wrong:
 - **Managed credentials:** cron runs with a bare environment, so `run_scraper.sh` has to export
   `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They live in a chmod-600
   `~/scraper_secrets.env` that the script sources on line 3, and the VM panel's **Credentials**
-  section writes them (`vm_sync.set_vm_secret`), so rotating a dead token is a form field
-  rather than an ssh-and-sed chore against a value pasted inline in the script. Only the names in `MANAGED_SECRETS` are
-  accepted, and a value has to match `_SAFE_SECRET` (`valid_secret_value`), because the file is
-  *sourced* by bash: a value carrying `$`, a backtick, a quote or whitespace would be
-  interpolated or word-split at source time, and every credential this pipeline actually uses
+  section writes them (`vm_sync.set_vm_secret`), so rotating a dead token is a form
+  field rather than an ssh-and-sed chore against a value pasted inline in the script.
+  Only the names in `MANAGED_SECRETS` are accepted, and a value has to match
+  `_SAFE_SECRET` (`valid_secret_value`), because the file is *sourced* by bash: a value
+  carrying `$`, a backtick, a quote or whitespace would be interpolated or word-split at
+  source time, and every credential this pipeline actually uses
   fits the safe set, so it validates and rejects rather than trying to escape. Both checks run
   **before** the upload, and no failure path leaves a staged credential on the VM: the remote
   installer's `EXIT` trap covers the case where the script ran, and this side clears the staging
@@ -329,9 +330,9 @@ Every stage after `rephrase` mutates the same `bullets` dict, and every one of t
 introduce an ungrounded token. The rule is that a mutation is always followed by a
 re-check against the atoms, reverting to the last grounded text when there is one.
 
-The rule is structural rather than repeated by hand at each stage, so no stage can forget it.
-`run.py` declares a `Pass` (name, the callable, an `enabled`
-predicate, `retrim`, `verify`, `recheck_fill`) and `_run_bullet_passes` does the snapshot,
+The rule is structural rather than repeated by hand at each stage, so no stage can
+forget it. `run.py` declares a `Pass` (name, the callable, an `enabled` predicate,
+`retrim`, `verify`, `recheck_fill`) and `_run_bullet_passes` does the snapshot,
 runs the pass, re-trims when asked, re-verifies against the snapshot, and re-measures when
 asked. `_BULLET_PASSES` reads as the sequence itself: verb dedupe, verbatim merge and trim,
 underfull fill, style gate. `verify.enforce_grounded` has exactly one call site, `_gate`.

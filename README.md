@@ -253,7 +253,7 @@ look at the data every generated bullet had to come from.
   publish its request-size limit, so the 2,000-id exclude cap is a number measured against
   the live API, and a change on their side can move it.
 - **Not an auto-submitter, and not a résumé writer:** the apply flow parks at review, and
-  the tailor can only select and rephrase facts you wrote yourself. It will never fill a thin
+  the tailor can only select and re-phrase facts you wrote yourself. It will never fill a thin
   experience file with impressive-sounding text.
 - **The grounding gate has a blind spot:** it traces distinctive tokens (numbers, proper
   nouns, tool names). A rephrasing that overstates using only ordinary words gives it

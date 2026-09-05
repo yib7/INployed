@@ -67,7 +67,7 @@ class StatsTab(QtWidgets.QWidget):
         # width of the window; leave the spare width as table background.
         self.table.horizontalHeader().setStretchLastSection(False)
         for i, (_, w) in enumerate(STATS_COLUMNS):
-            self.table.setColumnWidth(i, w)
+            self.table.setColumnWidth(i, round(w * theme._current_scale))
         v.addWidget(self.table, 1)
 
         # A passive readout of the applied-vs-recommendation labels (no export).

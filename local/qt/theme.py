@@ -197,6 +197,22 @@ def row_color(name: str) -> QtGui.QColor:
     return QtGui.QColor(_ROW_TINTS.get(name, ""))
 
 
+# Row tint -> the saturated family colour the delegate paints the row's 3px
+# category stripe with. A tint alone measures ~1.05:1 against PANEL, which is
+# exactly right behind a whole row of text and useless in a 13px legend swatch;
+# the stripe is what makes the category readable at that size. Two tints are
+# shared by two tags each (has_resume/applied, tailor_failed/rejected) and both
+# members of each pair belong to the same family, so the mapping is unambiguous.
+_TINT_STRIPES = {_tint(name): SEMANTICS[name]["base"] for name in SEMANTICS}
+_TINT_STRIPES.update({_tint(name, True): SEMANTICS[name]["base"] for name in SEMANTICS})
+
+
+def stripe_for_tint(tint_hex: str) -> str:
+    """The category-stripe colour for a row tint hex, or the tint itself if it
+    isn't one of ours."""
+    return _TINT_STRIPES.get(str(tint_hex).lower(), tint_hex)
+
+
 def _dark_palette() -> QtGui.QPalette:
     p = QtGui.QPalette()
     C = QtGui.QColor

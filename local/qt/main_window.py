@@ -386,8 +386,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Clamp to [theme.MIN_SCALE, theme.MAX_SCALE] (75..150%), re-scale the
         live UI (font only — fast), sync the bar, and persist via jobsdata."""
         pct = max(75, min(150, int(pct)))
+        previous = self._ui_scale_pct
         self._ui_scale_pct = pct
         theme.set_scale(QtWidgets.QApplication.instance(), pct / 100.0)
+        self._rescale_geometry(pct / previous if previous else 1.0)
         if hasattr(self, "_scale_slider"):
             self._scale_slider.blockSignals(True)
             self._scale_slider.setValue(pct)
@@ -408,6 +410,44 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._restart_requested = True
         self.close()
+
+    def _rescale_geometry(self, factor: float) -> None:
+        """Re-scale the pixel geometry that was sized off the interface scale.
+
+        `theme.set_scale` re-scales what rides on the font — type, row heights,
+        every painted metric — but three things are pixel values applied ONCE,
+        at construction, from the scale that was current then: each table's
+        column widths, and the height this window's vertical splitter hands the
+        detail card. Both were already scale-aware at startup (see
+        `JobsTab._set_column_widths` and the `setSizes` below `self.splitter`),
+        so the bug only appeared on the LIVE path — drag the interface-size
+        slider and the type grows inside geometry that doesn't: at 150% the High
+        Score header clipped to "cor" / "licants" and the detail card kept its
+        100% height, which cut the last STRENGTHS line through the middle. A
+        restart then fixed it, which is why it survived this long.
+
+        Multiplicative, so a column the user dragged wider stays proportionally
+        wider. Best-effort: a geometry hiccup must never break the scale change
+        itself, which has already been applied by the time this runs.
+        """
+        if factor <= 0 or abs(factor - 1.0) < 1e-9:
+            return
+        for tab in (self.high_tab, self.all_tab, self.tracker_tab):
+            try:
+                tab.rescale_columns(factor)
+            except Exception:  # noqa: BLE001 - cosmetic; never break rescaling
+                pass
+        panel = getattr(self, "apply_queue_panel", None)
+        if panel is not None:
+            try:
+                panel.rescale_columns(factor)
+            except Exception:  # noqa: BLE001
+                pass
+        sizes = self.splitter.sizes()
+        if len(sizes) == 2 and sizes[1] > 0:
+            total = sizes[0] + sizes[1]
+            detail = min(round(sizes[1] * factor), max(0, total - 120))
+            self.splitter.setSizes([total - detail, detail])
 
     def _setup_zoom_shortcuts(self) -> None:
         """Ctrl++ / Ctrl+- step the interface size by 10%; Ctrl+0 resets to 100%.

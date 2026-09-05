@@ -653,38 +653,6 @@ def _save_cfg(updates: dict) -> None:
         pass
 
 
-def _engine_credential_warnings(auth: str, project: str, has_api_key: bool) -> list[str]:
-    """Warn when the chosen résumé-tailor engine is missing the credential it needs.
-
-    'api_key' needs a Gemini API key; 'vertex' needs a Google Cloud project. Pure
-    (no I/O) so it can be unit-tested; returns [] when the engine has what it needs.
-    """
-    if auth == "api_key" and not has_api_key:
-        return ["Resume tailor engine is 'api_key' but no Gemini API key is saved "
-                "(Settings -> Credentials -> Gemini API key (resume tailor))."]
-    if auth == "vertex" and not str(project).strip():
-        return ["Resume tailor engine is 'vertex' but no Google Cloud project is set "
-                "(Settings -> Connection & paths -> Google Cloud project ID)."]
-    return []
-
-
-def _claude_cli_warnings(tailor_provider: str, scoring_provider: str,
-                          cli_found: bool) -> list[str]:
-    """Warn when a provider is 'claude' but the CLI isn't installed. Pure (caller
-    passes shutil.which('claude') is not None) so it unit-tests like
-    _engine_credential_warnings."""
-    if cli_found:
-        return []
-    out = []
-    if tailor_provider == "claude":
-        out.append("Resume tailor provider is 'claude' but the `claude` CLI is not "
-                    "on PATH. Install Claude Code and run `claude` once to log in.")
-    if scoring_provider == "claude":
-        out.append("Scoring provider is 'claude' but the `claude` CLI is not on "
-                    "PATH -- local scoring will fall back to Gemini.")
-    return out
-
-
 def load_min_score(default: int = 4) -> int:
     try:
         return int(_load_cfg().get("min_score", default))

@@ -355,7 +355,7 @@ def test_apply_work_opens_url_only_when_asked(qtbot, monkeypatch, open_url, expe
     monkeypatch.setattr(apply_mod, "build_apply_context",
                         lambda folder: {"apply_url": "https://x/1", "job": {"company": "Acme"}})
     opened = []
-    monkeypatch.setattr(mw.chrome, "open_in_chrome", opened.append)
+    monkeypatch.setattr(mw.chrome_launch, "open_in_chrome", opened.append)
     ctx = w._apply_work("1", {"job_posting_id": "1"}, open_url)
     assert ctx["apply_url"] == "https://x/1"
     assert opened == expected
@@ -369,7 +369,7 @@ def test_apply_work_defaults_to_opening(qtbot, monkeypatch):
     monkeypatch.setattr(apply_mod, "build_apply_context",
                         lambda folder: {"apply_url": "https://x/1", "job": {}})
     opened = []
-    monkeypatch.setattr(mw.chrome, "open_in_chrome", opened.append)
+    monkeypatch.setattr(mw.chrome_launch, "open_in_chrome", opened.append)
     w._apply_work("1", {"job_posting_id": "1"})
     assert opened == ["https://x/1"]
 
@@ -931,7 +931,7 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     monkeypatch.setattr(mw.workers, "run_async",
                         lambda owner, fn, on_done=None, on_error=None:
                         (on_done(fn()) if on_done else fn()))
-    monkeypatch.setattr(w, "_bright_data_problems", lambda: [])
+    monkeypatch.setattr(mw.setup_check, "job_data_problems", lambda: [])
     w._check_setup()
     assert shown.get("info")
     assert "critical" not in shown
@@ -953,7 +953,7 @@ def test_check_setup_honors_env_provider_override(qtbot, monkeypatch):
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     monkeypatch.setenv("RESUME_TAILOR_PROVIDER", "claude")
     monkeypatch.delenv("SCORE_PROVIDER", raising=False)
-    monkeypatch.setattr(mw.shutil, "which", lambda name: None)  # no `claude` on PATH
+    monkeypatch.setattr(mw.setup_check.shutil, "which", lambda name: None)  # no `claude` on PATH
     captured = {}
     monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
                         staticmethod(lambda *a, **k: captured.setdefault("msg", a[2])))
@@ -965,7 +965,7 @@ def test_check_setup_honors_env_provider_override(qtbot, monkeypatch):
     monkeypatch.setattr(mw.workers, "run_async",
                         lambda owner, fn, on_done=None, on_error=None:
                         (on_done(fn()) if on_done else fn()))
-    monkeypatch.setattr(w, "_bright_data_problems", lambda: [])
+    monkeypatch.setattr(mw.setup_check, "job_data_problems", lambda: [])
     w._check_setup()
     assert "info" not in captured                     # a problem WAS surfaced
     assert "Resume tailor provider is 'claude'" in captured["msg"]
@@ -1194,7 +1194,7 @@ def test_check_setup_surfaces_a_dead_job_data_token(qtbot, monkeypatch):
     monkeypatch.setattr(mw.workers, "run_async",
                         lambda owner, fn, on_done=None, on_error=None:
                         (on_done(fn()) if on_done else fn()))
-    monkeypatch.setattr(w, "_bright_data_problems",
+    monkeypatch.setattr(mw.setup_check, "job_data_problems",
                         lambda: ["[Job data] Bright Data rejected the API token (401)."])
     captured = {}
     monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
@@ -1206,14 +1206,15 @@ def test_check_setup_surfaces_a_dead_job_data_token(qtbot, monkeypatch):
     assert "rejected the API token" in captured["msg"]
 
 
-def test_check_setup_probe_never_invents_a_problem(qtbot, monkeypatch):
-    """_bright_data_problems runs on a worker thread and must swallow anything that
-    goes wrong reaching the probe -- Check setup reports only what it observed."""
-    w = _win(qtbot)
+def test_check_setup_probe_never_invents_a_problem(monkeypatch):
+    """setup_check.job_data_problems runs on a worker thread and must swallow
+    anything that goes wrong reaching the probe -- Check setup reports only what
+    it observed. (Kept here as well as in tests/test_setup_check.py because this
+    is the exact failure the dashboard's Check setup button has to survive.)"""
     import scraper
     monkeypatch.setattr(scraper, "account_problems",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("probe blew up")))
-    assert w._bright_data_problems() == []
+    assert mw.setup_check.job_data_problems() == []
 
 
 def test_pipeline_error_names_the_script_not_a_flag_value(qtbot):

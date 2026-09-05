@@ -10,10 +10,10 @@ A résumé-engine quality pass, then a full ship audit over the top of it. The h
 audit is a live Bright Data token that had been sitting in a test fixture since 2026-08-27:
 the commit that claimed to scrub it only added a comment. It is out of the tree now, and the
 history and the provider-side rotation are recorded as the two things only a human can do.
-Under that, three spend and injection guards that a bad value walked straight past — a
+Under that, three spend and injection guards that a bad value walked straight past (a
 negative `--max-keywords` ran 19 of 20 keywords, a negative `SCORE_MAX_PER_RUN` scored 3,999
 of 4,000 jobs, and a `.env` value could carry three line-break characters the guard did not
-know about — plus a job posting that could choose the email typed into a real application, a
+know about), plus a job posting that could choose the email typed into a real application, a
 byte-order mark that made the pipeline discard your whole config, and a corrupt `.csv.gz`
 that could stop job discovery permanently in three separate places. The dashboard was
 measured rather than eyeballed: 175 colour pairs against WCAG, and every column at four
@@ -28,12 +28,12 @@ unchanged by that work: a golden-output regression test pins the exact bullets a
 
 Then a quality pass over the bullets themselves. The prompts were demonstrating the
 punctuation they ban. The character budget handed to the model was larger than the line it
-had to fit, so the deterministic trim spent every run cutting text back — and the trim's own
+had to fit, so the deterministic trim spent every run cutting text back, and the trim's own
 clause cut could discard a third of a bullet that already fitted. Bullet text does change
 here, which is the point: the model is now asked for a length the page can actually hold, and
 shown the user's own bullets rather than a slice of a PDF dump. Alongside it, one setting
 retires the fast / standard / deep vocabulary for anyone who just wants a single model.
-Nothing to migrate either way: every new key defaults to what your install already did.
+Nothing to migrate either way: `tiers` stays the default.
 
 ### Added
 - **`tailor_report.txt` in every output folder.** A run could fail partly and still report
@@ -70,13 +70,13 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   fractions are now env-overridable. Deliberately no Settings field: the three interact, and
   a fraction a non-technical user can set to 0 is a footgun. Anything unparseable or outside
   0.05-1.0 falls back to the documented default, so a typo cannot silently disable a stage.
-- **A notes section in `tailor_report.txt`.** Same line shape as the warnings, one severity
+- **`tailor_report.txt` carries a quieter notes section too.** Same line shape as the warnings, one severity
   down, and never streamed to `on_warning`: a note is something the run could not fully
   deliver that still leaves a correct, shippable résumé, so it must not make the batch summary
   call the job degraded.
 - **Check setup says when the tailor is reading the example résumé instead of yours.**
   `assets.load_master` falls back to the committed `master_experience.example.yaml` when there
-  is no personal one, which is what keeps a fresh clone and CI working — so Check setup was
+  is no personal one, which is what keeps a fresh clone and CI working, so Check setup was
   linting Jane Doe's file and reporting it clean, and a brand-new user was told their résumé
   data was fine while the tailor would have rendered someone else's career. The check now leads
   with which file is actually in play.
@@ -97,8 +97,8 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   `common.py`. The moved bodies are unchanged. `compose.py` re-exports the public names, so
   no caller changed.
 - **The prompt's character ceiling is measured, not multiplied.** It was
-  `target_lines * 130`. Greedy word wrap loses part of a line at every break — the word that
-  will not fit is pushed down whole — so real capacity is *sublinear* in the line count, and
+  `target_lines * 130`. Greedy word wrap loses part of a line at every break (the word that
+  will not fit is pushed down whole), so real capacity is *sublinear* in the line count, and
   a flat multiply is wrong in principle rather than mistuned: it stated 130 / 260 / 390
   characters for 1 / 2 / 3 lines where the measured minima are 127 / 250 / 377. The model was
   invited past the line, the bullet wrapped, and the trim cut it back on every run. New
@@ -172,13 +172,13 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   clause cut is for ending cleanly, not for shortening; the floor is now 0.85 and anything
   below falls through to the word cut.
 - **A fill the re-trim took straight back looked like a success.** The underfull pass measures,
-  asks the model to lengthen, then trims to the line target — and when the folded-in material
+  asks the model to lengthen, then trims to the line target. When the folded-in material
   is one wide token, the longest fitting prefix is the original text. Nothing re-measured, so
   the run reported a fill it had not delivered. The bullets the pass actually changed are now
   re-measured and the still-short ones recorded as notes. It never re-calls the model: a second
   billed call to recover a part-empty last line is not worth it.
 - **The style exemplar ended mid-word.** The 1200-character cap was a flat slice that left the
-  exemplar at "• Proc" — the prompt that calls a bullet ending mid-clause a failure was showing
+  exemplar at "• Proc", so the prompt that calls a bullet ending mid-clause a failure was showing
   the model one. The cap now cuts on a line boundary.
 - `docs/ARCHITECTURE.md` described the one-page guarantee in terms of a `refit` step and
   character windows in `layout.py`, neither of which exists. It now describes the actual
@@ -187,19 +187,19 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   aim is 90%; 75% is the aim for the *last* line of a bullet that wraps.
 - **A real Bright Data API token was in the tree, in a test fixture.** A previous pass
   identified the UUID in `tests/test_vm_sync.py` as the live token and committed a message
-  saying it had scrubbed all three fixture values — it added a comment and changed nothing, so
+  saying it had scrubbed all three fixture values. It added a comment and changed nothing, so
   the value hashed identically before and after and stayed in every commit since 2026-08-27.
   Replaced with an all-zero v4 UUID; the fixture only feeds `valid_secret_value`, which matches
   a shape and not a value, so nothing depended on the real one. Rotating the token at Bright
   Data and purging it from the published history are both human-only and are not done here.
 - **A job posting could choose the email typed into a real application.** `apply.md` is not
   prose: `apply_playwright.parse_apply_md` reads it line by line, switches section on any
-  `##`/`###` line, and took the *last* value for each key — and `apply_data` built the file by
+  `##`/`###` line, and took the *last* value for each key, while `apply_data` built the file by
   plain concatenation. So a second `## Candidate` block later in the file replaced the real
   address. There were two ways in, both from data an employer controls: the cover-letter body
   is written by a model from the job description, and the H1 carried the scraped job title and
   company with only a `.strip()`, so a newline in either opened a section before the real one.
-  Fixed on both sides — every structured value has its whitespace runs collapsed, the free-text
+  Fixed on both sides: every structured value has its whitespace runs collapsed, the free-text
   letter body has heading-shaped and key-shaped lines backslash-escaped (markdown renders the
   escape as a literal `#`, so the letter still reads and pastes correctly), and a repeated
   section heading is now ignored rather than honoured.
@@ -217,7 +217,7 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   `shutil.which("python")` twenty lines above a comment explaining why that exact lookup must
   not be cwd-relative on Windows; both lookups now share the guarded helper.
 - **Two spend guards a negative value walked straight past.** `--max-keywords` is spent as
-  `keywords[:n]`, and Python reads a negative slice bound as "all but n" — so
+  `keywords[:n]`, and Python reads a negative slice bound as "all but n", so
   `--max-keywords -1`, which is how somebody writes "no limit", kept the guard's announcement
   and dropped its effect: 19 of 20 keywords, 38 of the 40 billed Bright Data searches a full run
   fires. The scoring side had the same shape through pandas: `SCORE_MAX_PER_RUN=-1` printed
@@ -228,7 +228,7 @@ Nothing to migrate either way: every new key defaults to what your install alrea
 - **The `.env` line-break guard missed three of the characters that break a line.** Every value
   becomes one physical `KEY=VALUE` line and both the reader and the writer split with
   `str.splitlines()`, which breaks on more than CR/LF. The guard's class was C0 plus DEL, so
-  U+0085, U+2028 and U+2029 all passed — and a value of
+  U+0085, U+2028 and U+2029 all passed, and a value of
   `key1<U+2028>BRIGHT_DATA_API_TOKEN=injected` was written as one quoted line and came back out
   as two assignments. None of those three is exotic; they ride along in text pasted from a PDF
   or a web page, which is how an API key gets into that box in the first place. The regression
@@ -238,15 +238,15 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   leading BOM, and each of these readers responded by discarding the entire file for built-in
   defaults with one line in `scraper.log`. Notepad writes a BOM; so did PowerShell 5.1's
   `Set-Content -Encoding UTF8`. `local/jsonutil.py` has read `utf-8-sig` since that bit the
-  dashboard, but the pipeline half never got the fix — so the two halves disagreed about the
+  dashboard, but the pipeline half never got the fix, so the two halves disagreed about the
   same two files, and the scraper ran the built-in keywords while the Settings tab showed
   yours. Six readers moved to `utf-8-sig`: both configs, `last_run_job_ids.json`,
   `external_exclude_ids.json`, `company_blocklist.txt` and `resume.md`.
 - **A corrupt `.csv.gz` could stop job discovery for good, in three separate places.** A
   half-written gzip raises `zlib.error` and a cut-short one raises `EOFError`, and every one of
   these handlers caught `(OSError, ValueError)`. In `merge_incoming` that meant a raw traceback
-  and exit 1 with nothing quarantined, so the file stayed in `~/incoming` and — under
-  `run_scraper.sh`'s `set -e` — killed every later cron fire before the scrape, silently,
+  and exit 1 with nothing quarantined, so the file stayed in `~/incoming` and (under
+  `run_scraper.sh`'s `set -e`) killed every later cron fire before the scrape, silently,
   forever. In the watcher the exception escaped `main()` outright, so `sync_back_to_vm` never
   ran and the dashboard never popped. In the dashboard's `load_files` it unwound the whole loop,
   so one mid-sync Drive master stopped the local scrape files and manual adds loading too. The
@@ -258,7 +258,7 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   problems: the empty panel names the file and the parser's own reason, and a partial failure
   reaches the status line.
 - **The degree filter normalized a curly apostrophe only in its comment.**
-  `requires_advanced_degree()` read `.replace("'", "'")` — both arguments U+0027, a no-op — so
+  `requires_advanced_degree()` read `.replace("'", "'")` (both arguments U+0027, a no-op), so
   a posting written with U+2019, which is what a recruiter's web editor produces, never matched
   "Master's degree" and scored as though it named no degree requirement at all. Two more on the
   same cron path: `load_scoring_config()` coerced ints with a bare `int(value)` at import scope,
@@ -269,7 +269,7 @@ Nothing to migrate either way: every new key defaults to what your install alrea
 - **A bad environment variable killed the tailor at import instead of degrading.** Five
   constants across `config.py` and `measure.py` were bare `int(os.getenv(...))` at import scope,
   so `RESUME_TAILOR_PROJECTS_MAX=three` took the whole tailor path down with a raw traceback and
-  made `projects_max()`'s own `try`/`except` unreachable — the module never finished loading.
+  made `projects_max()`'s own `try`/`except` unreachable, because the module never finished loading.
   `measure._env_fraction` already documented the opposite rule for the fill fractions; both
   modules now have an `_env_int` with the same contract, and `keypool.from_env` parses
   `SCORE_HTTP_TIMEOUT_S` the same way rather than killing the nightly VM run over a typo.
@@ -297,18 +297,18 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   measures 1.04–1.09:1 against the panel behind it, so the five High Score swatches were five
   identical dark squares; it now paints the row's category stripe alongside the tint.
 - **The two places a measured contrast ratio came in under WCAG AA.** Every pair the dashboard
-  paints was computed from `theme.py`'s own values — alpha-composited the way the painters
-  composite it, then run through the relative-luminance formula — rather than eyeballed. 175
+  paints was computed from `theme.py`'s own values (alpha-composited the way the painters
+  composite it, then run through the relative-luminance formula) rather than eyeballed. 175
   pairs, two real failures. Dates on a *selected* row: selection deepens the tint and `MUTED`
   has no headroom left, so the Found / Run / Posted columns on the one row you are looking at
   measured 3.83:1 on the selected apply green. They paint one tier up while a row is selected:
   7.62:1 at worst. And input and checkbox borders: an input's fill is the same colour as the
   ground under it (1.09:1), which makes its 1px outline the only thing saying "you can type
-  here" — exactly the case WCAG 1.4.11 asks 3:1 for. A dedicated border token measures 3.56:1.
+  here", exactly the case WCAG 1.4.11 asks 3:1 for. A dedicated border token measures 3.56:1.
 - **A job-table column could be narrower than its own header label.**
   `QHeaderView::section` carries fixed-pixel padding and a border that do not shrink with the
   interface scale while the column widths do, and a header section is the one piece of table
-  text Qt clips instead of eliding — centred, so the overrun eats both ends. At 75% the Score
+  text Qt clips instead of eliding, and it is centred, so the overrun eats both ends. At 75% the Score
   column was 38px with 20px of chrome inside it and read "core". Both width paths now take the
   header's own text width as a floor: twelve findings across three tables at four scales before,
   zero after, and nothing moves on a column already wide enough.
@@ -324,7 +324,7 @@ Nothing to migrate either way: every new key defaults to what your install alrea
 - **A rename left one live import behind.** `local/chrome.py` became `chrome_launch.py` and
   thirteen references were updated; the fourteenth was a function-body import in
   `resume_tailor/apply.py` wrapped in `except Exception: webbrowser.open(url)`. Nothing imports
-  it at module load, so no test touched it and the fallback swallowed the `ImportError` — "open
+  it at module load, so no test touched it and the fallback swallowed the `ImportError`, so "open
   the posting in Chrome with your configured profile" would have degraded silently to the
   default browser for everyone on this build, with no error anywhere.
 - **`schtasks` output is decoded as explicit UTF-8.** A bare `text=True` decoded with
@@ -334,7 +334,7 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   a reported failure.
 - **The stale hidden-column list could freeze the Columns dialog.** `jobs_tab` took the
   persisted list verbatim and re-saved it as is, so an id for a column that no longer exists was
-  never cleared — and once the stale ids reached the column count, the never-hide-everything
+  never cleared. Once the stale ids reached the column count, the never-hide-everything
   guard was permanently true and every toggle was silently ignored. The list is intersected on
   load, and the guard now tells its caller so the checkbox goes back rather than sitting
   unchecked beside a visible column.
@@ -362,13 +362,13 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   `docs/CREDITS.md` now name the same eight-licence set, and `CREDITS.md` lists numpy and the
   optional installs `requirements.txt` names without installing.
 - **The résumé template's upstream MIT notice is back at the top of the `.tex`.**
-  `resume_template.tex` is substantially "Jake's Resume" — the `\resumeItem`,
-  `\resumeSubheading` and `\resumeSubHeadingList` macros come from it — but the header carrying
+  `resume_template.tex` is substantially "Jake's Resume" (the `\resumeItem`,
+  `\resumeSubheading` and `\resumeSubHeadingList` macros come from it), but the header carrying
   the copyright and permission notice had been stripped, leaving the attribution only in
   `docs/CREDITS.md`. MIT asks the notice to travel with the work.
 - **The terminal launch command names the venv Step 2 built.** Step 2 deliberately never
   activates the venv, and then Step 4 offered `python local/app.py`, which after Step 2 is still
-  the global interpreter — so on a machine that has never run the project that command dies on
+  the global interpreter, so on a machine that has never run the project that command dies on
   `import PySide6`, in the one place a reader falls back to when the double-click did not work.
   It now reads `venv\Scripts\python.exe local\open_dashboard.pyw`, the exact command the
   `readme-setup` CI job already proves.
@@ -379,8 +379,8 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   row. The pin file header no longer names the author's own interpreter path.
 - **All five pieces of README media were rebuilt against the UI that ships now.** The four
   stills predated the interface pass and showed a legend whose colour swatches rendered as
-  near-black rectangles. The demo GIF had four tabs held completely static — about twenty of its
-  thirty-eight seconds with nothing moving — and its shared palette was quantized from frame 0
+  near-black rectangles. The demo GIF had four tabs held completely static (about twenty of its
+  thirty-eight seconds with nothing moving), and its shared palette was quantized from frame 0
   alone, so it was spent on High Score's row tints and rendered the neutral panel fill every
   form tab paints as a green. It is now 173 frames over 41.6 s, median-cut over every storyboard
   hold. The social preview card composes from the hero screenshot and carried the stale frame

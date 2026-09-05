@@ -4,7 +4,21 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.10.0] - 2026-09-05
+
+A résumé-engine quality pass, then a full ship audit over the top of it. The headline of the
+audit is a live Bright Data token that had been sitting in a test fixture since 2026-08-27:
+the commit that claimed to scrub it only added a comment. It is out of the tree now, and the
+history and the provider-side rotation are recorded as the two things only a human can do.
+Under that, three spend and injection guards that a bad value walked straight past — a
+negative `--max-keywords` ran 19 of 20 keywords, a negative `SCORE_MAX_PER_RUN` scored 3,999
+of 4,000 jobs, and a `.env` value could carry three line-break characters the guard did not
+know about — plus a job posting that could choose the email typed into a real application, a
+byte-order mark that made the pipeline discard your whole config, and a corrupt `.csv.gz`
+that could stop job discovery permanently in three separate places. The dashboard was
+measured rather than eyeballed: 175 colour pairs against WCAG, and every column at four
+interface scales. Nothing to migrate: every new key defaults to what your install already
+did, and no setting changed meaning.
 
 A legibility pass over the résumé engine. A tailor run that half-worked now says so instead
 of reporting a clean success, the bullet stages are declared as a list rather than written
@@ -60,6 +74,16 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   down, and never streamed to `on_warning`: a note is something the run could not fully
   deliver that still leaves a correct, shippable résumé, so it must not make the batch summary
   call the job degraded.
+- **Check setup says when the tailor is reading the example résumé instead of yours.**
+  `assets.load_master` falls back to the committed `master_experience.example.yaml` when there
+  is no personal one, which is what keeps a fresh clone and CI working — so Check setup was
+  linting Jane Doe's file and reporting it clean, and a brand-new user was told their résumé
+  data was fine while the tailor would have rendered someone else's career. The check now leads
+  with which file is actually in play.
+- **`tests/test_text_encoding_policy.py`.** This repo had been bitten twice by the OS default
+  encoding and once by a byte-order mark, each fixed in place with a comment and no guard. All
+  three are now a static AST-and-bytes scan over `git ls-files`, so the next bare `open()` or
+  `subprocess(text=True)` fails a test instead of a user's clone.
 
 ### Changed
 - **The bullet stages are a declarative pass list.** Each stage that mutates a bullet has to
@@ -100,6 +124,21 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   locked master CSV used to put `C:\Users\<name>\...` on screen, and from there into
   screenshots and bug reports. Log files keep their full paths; this is only for text a user
   reads.
+- **Dependencies pulled forward to current stable, and `pip` upgraded before the install.**
+  `google-genai` 2.20.0 to 2.22.0 in both pin sets and `ruff` 0.16.5 to 0.16.6; those were the
+  only direct pins `pip` reported outdated. `numpy` stays on 2.4.6 (2.5.x needs Python 3.12 and
+  the VM runs 3.11) and `pytest-timeout` stays on 2.4.0 (2.5.0 is still yanked on PyPI). The
+  `pip` upgrade matters on its own: `python -m venv` seeds pip 25.2 on Python 3.14.0 and
+  `pip-audit` returns seven findings against that pip, all in pip itself. The line is in README
+  Step 2, in `setup.ps1 -InstallDeps` and in the `readme-setup` CI job, which the job's own
+  comment requires to stay byte-identical to the README. Neither pin set has an advisory against
+  it: OSV.dev and `pip-audit` agree, zero.
+- `gemini-3.8-flash` joins the Settings model dropdowns. No default moves.
+- **`.gitignore` covers `*.db` rather than the single name `seen.db`.** That name could never
+  match anything: `seen_db.py` has resolved the live database under `%LOCALAPPDATA%` since the
+  first commit. What can land in the tree is the Tracker's Export, which writes a backup of the
+  same personal application history to a path you pick, defaulting to
+  `inployed-tracker-<date>.db`. The extension is the thing worth covering.
 
 ### Removed
 - `layout.plan_leadership_lines()`, which nothing called.
@@ -111,6 +150,12 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   documentation, the example master and the test fixture. Both were documented and neither
   was ever read: per-block bullet counts come from `config.json`'s `resume_layout`, and the
   leadership line budget is a module constant. `tailor.required` is the whole schema.
+- Five more dead abstractions, each proved dead by grepping the whole tree including tests
+  rather than by reading: `compose._CORE_VERBS` (a verbatim duplicate of
+  `assets._FALLBACK_VERBS`), `jobsdata.visible_columns` (a Tk-era helper only its own two tests
+  called), `qt.widgets.content_layout`, the `jd` parameter neither `refine_body` nor
+  `enforce_body_style` referenced, and `open_dashboard._resolve_sources`' error channel, whose
+  four returns all pass `None` so `main()`'s error branch could never fire.
 
 ### Fixed
 - **The prompts were demonstrating the punctuation they ban.** 45 em dashes (and one spaced
@@ -140,6 +185,206 @@ Nothing to migrate either way: every new key defaults to what your install alrea
   mechanism, including the case where the loop cannot reach one page.
 - `README.md` said single-line bullets aim to fill at least 75% of their line. The single-line
   aim is 90%; 75% is the aim for the *last* line of a bullet that wraps.
+- **A real Bright Data API token was in the tree, in a test fixture.** A previous pass
+  identified the UUID in `tests/test_vm_sync.py` as the live token and committed a message
+  saying it had scrubbed all three fixture values — it added a comment and changed nothing, so
+  the value hashed identically before and after and stayed in every commit since 2026-08-27.
+  Replaced with an all-zero v4 UUID; the fixture only feeds `valid_secret_value`, which matches
+  a shape and not a value, so nothing depended on the real one. Rotating the token at Bright
+  Data and purging it from the published history are both human-only and are not done here.
+- **A job posting could choose the email typed into a real application.** `apply.md` is not
+  prose: `apply_playwright.parse_apply_md` reads it line by line, switches section on any
+  `##`/`###` line, and took the *last* value for each key — and `apply_data` built the file by
+  plain concatenation. So a second `## Candidate` block later in the file replaced the real
+  address. There were two ways in, both from data an employer controls: the cover-letter body
+  is written by a model from the job description, and the H1 carried the scraped job title and
+  company with only a `.strip()`, so a newline in either opened a section before the real one.
+  Fixed on both sides — every structured value has its whitespace runs collapsed, the free-text
+  letter body has heading-shaped and key-shaped lines backslash-escaped (markdown renders the
+  escape as a literal `#`, so the letter still reads and pastes correctly), and a repeated
+  section heading is now ignored rather than honoured.
+- **Scraped queue fields are cleaned at the boundary.** `company`, `title` and `apply_url`
+  landed in a queue entry straight off a posting with only `str()`, and the auto-apply
+  orchestrator substitutes all three into the task prompt of a subagent that drives your real
+  signed-in Chrome. `new_entry` now collapses whitespace runs and keeps `apply_url` only when
+  it is http(s), once, on the way in.
+- **`VM_REMOTE_DIR` reached the VM's shell on every `scp`, not just the one that was checked.**
+  An `scp` remote path is not an opaque argument: both OpenSSH `scp` and the `pscp.exe` gcloud
+  drives on Windows transport it by running `scp -t <path>` through the remote login shell,
+  where it is word-split and expanded. The value is typed into Settings and interpolated into
+  four destinations that had no check at all. `valid_remote_dir` now sits in `build_scp_cmd`,
+  the one place all five flows go through. On the same path, `_bypass_argv` did a bare
+  `shutil.which("python")` twenty lines above a comment explaining why that exact lookup must
+  not be cwd-relative on Windows; both lookups now share the guarded helper.
+- **Two spend guards a negative value walked straight past.** `--max-keywords` is spent as
+  `keywords[:n]`, and Python reads a negative slice bound as "all but n" — so
+  `--max-keywords -1`, which is how somebody writes "no limit", kept the guard's announcement
+  and dropped its effect: 19 of 20 keywords, 38 of the 40 billed Bright Data searches a full run
+  fires. The scoring side had the same shape through pandas: `SCORE_MAX_PER_RUN=-1` printed
+  "capping at -1 of 4000 jobs" and scored 3,999 of them, reachable from the VM crontab or a
+  hand-edited `scoring_config.json`. Both now collapse to the fail-closed direction with a line
+  saying what happened; `0` is left alone because it already spends nothing. An explicit
+  `--limit` is also coerced before the run log names the cap, instead of after.
+- **The `.env` line-break guard missed three of the characters that break a line.** Every value
+  becomes one physical `KEY=VALUE` line and both the reader and the writer split with
+  `str.splitlines()`, which breaks on more than CR/LF. The guard's class was C0 plus DEL, so
+  U+0085, U+2028 and U+2029 all passed — and a value of
+  `key1<U+2028>BRIGHT_DATA_API_TOKEN=injected` was written as one quoted line and came back out
+  as two assignments. None of those three is exotic; they ride along in text pasted from a PDF
+  or a web page, which is how an API key gets into that box in the first place. The regression
+  test asserts the refused set against `str.splitlines()` itself over the whole code space, so
+  the class cannot drift away from the reader again.
+- **A byte-order mark made the pipeline throw away your whole config.** `json.loads` rejects a
+  leading BOM, and each of these readers responded by discarding the entire file for built-in
+  defaults with one line in `scraper.log`. Notepad writes a BOM; so did PowerShell 5.1's
+  `Set-Content -Encoding UTF8`. `local/jsonutil.py` has read `utf-8-sig` since that bit the
+  dashboard, but the pipeline half never got the fix — so the two halves disagreed about the
+  same two files, and the scraper ran the built-in keywords while the Settings tab showed
+  yours. Six readers moved to `utf-8-sig`: both configs, `last_run_job_ids.json`,
+  `external_exclude_ids.json`, `company_blocklist.txt` and `resume.md`.
+- **A corrupt `.csv.gz` could stop job discovery for good, in three separate places.** A
+  half-written gzip raises `zlib.error` and a cut-short one raises `EOFError`, and every one of
+  these handlers caught `(OSError, ValueError)`. In `merge_incoming` that meant a raw traceback
+  and exit 1 with nothing quarantined, so the file stayed in `~/incoming` and — under
+  `run_scraper.sh`'s `set -e` — killed every later cron fire before the scrape, silently,
+  forever. In the watcher the exception escaped `main()` outright, so `sync_back_to_vm` never
+  ran and the dashboard never popped. In the dashboard's `load_files` it unwound the whole loop,
+  so one mid-sync Drive master stopped the local scrape files and manual adds loading too. The
+  merge sites now catch `Exception`, because enumerating decompressor error types is a losing
+  game and what all four mean is "this file did not read".
+- **A corrupt job file now names itself instead of reading as "No jobs yet".** Even when a file
+  was skipped, nothing said so, so a user whose 37 MB master was mid-sync was shown the
+  first-run panel and offered to set the app up from scratch. `load_files` now reports its
+  problems: the empty panel names the file and the parser's own reason, and a partial failure
+  reaches the status line.
+- **The degree filter normalized a curly apostrophe only in its comment.**
+  `requires_advanced_degree()` read `.replace("'", "'")` — both arguments U+0027, a no-op — so
+  a posting written with U+2019, which is what a recruiter's web editor produces, never matched
+  "Master's degree" and scored as though it named no degree requirement at all. Two more on the
+  same cron path: `load_scoring_config()` coerced ints with a bare `int(value)` at import scope,
+  so one hand-edited entry raised `ValueError` *after* `scraper.py` had billed Bright Data and
+  before the master upload; and `run_scoring` built its semaphores straight from config, where a
+  zero is never released, so `gather()` blocked forever holding `run_scraper.sh`'s flock while
+  every later cron fire logged "already running".
+- **A bad environment variable killed the tailor at import instead of degrading.** Five
+  constants across `config.py` and `measure.py` were bare `int(os.getenv(...))` at import scope,
+  so `RESUME_TAILOR_PROJECTS_MAX=three` took the whole tailor path down with a raw traceback and
+  made `projects_max()`'s own `try`/`except` unreachable — the module never finished loading.
+  `measure._env_fraction` already documented the opposite rule for the fill fractions; both
+  modules now have an `_env_int` with the same contract, and `keypool.from_env` parses
+  `SCORE_HTTP_TIMEOUT_S` the same way rather than killing the nightly VM run over a typo.
+- **Three more gaps between what the style gate promises and does.** The participial-tail regex
+  required the banned participle to sit directly after the comma, so it missed the textbook
+  impact tail `..., minimizing X and enabling Y`; the pattern's reach is widened without
+  touching its closed verb list, which is what bounds the false-positive risk. The em-dash
+  backstop iterated verbatim bullets, so a user who typed an em dash into a "use my exact
+  bullets" block had it silently rewritten. And `render._experience` read `b.get('title','')`
+  where `assets.blocks()` had written `{'title': None}`, so a master entry with no `title:` line
+  printed the literal word `None` onto the PDF.
+- **Six prompt strings used the contrast framing the prompts forbid**, including two that ride
+  in nearly every prompt. A model copies the sentence shapes it is shown, and a copied one buys
+  an `enforce_style` repair call on a bullet that was already correct. Widening
+  `test_prompt_hygiene.py` from the two banned characters to the whole of `_STYLE_BANS` exposed
+  a hole in the gate's own trace: it resolved a bare name and a call but never an attribute, so
+  `aiwriting.RULES_PROMPT` was never scanned. Modules reached go from 9 to 14.
+- **The interface-size slider re-scales geometry, not just type.** Three pixel values were
+  applied once at construction: each table's column widths, the height the splitter hands the
+  detail card, and the colour-legend swatch. Dragging to 150% grew the type inside geometry that
+  did not move, so the "Score" and "Applicants" headers clipped and the last STRENGTHS line was
+  cut through the middle; a restart fixed it, which is why it survived this long. Widths and
+  splitter sizes are now multiplied from their current values, so a column you dragged wider
+  stays proportionally wider. The legend swatch was never scale-aware at all, and a tint alone
+  measures 1.04–1.09:1 against the panel behind it, so the five High Score swatches were five
+  identical dark squares; it now paints the row's category stripe alongside the tint.
+- **The two places a measured contrast ratio came in under WCAG AA.** Every pair the dashboard
+  paints was computed from `theme.py`'s own values — alpha-composited the way the painters
+  composite it, then run through the relative-luminance formula — rather than eyeballed. 175
+  pairs, two real failures. Dates on a *selected* row: selection deepens the tint and `MUTED`
+  has no headroom left, so the Found / Run / Posted columns on the one row you are looking at
+  measured 3.83:1 on the selected apply green. They paint one tier up while a row is selected:
+  7.62:1 at worst. And input and checkbox borders: an input's fill is the same colour as the
+  ground under it (1.09:1), which makes its 1px outline the only thing saying "you can type
+  here" — exactly the case WCAG 1.4.11 asks 3:1 for. A dedicated border token measures 3.56:1.
+- **A job-table column could be narrower than its own header label.**
+  `QHeaderView::section` carries fixed-pixel padding and a border that do not shrink with the
+  interface scale while the column widths do, and a header section is the one piece of table
+  text Qt clips instead of eliding — centred, so the overrun eats both ends. At 75% the Score
+  column was 38px with 20px of chrome inside it and read "core". Both width paths now take the
+  header's own text width as a floor: twelve findings across three tables at four scales before,
+  zero after, and nothing moves on a column already wide enough.
+- **The deep-score column elided the number its bar is there to label.** The mini-bar reserved
+  exactly the numeral's measured width and not one pixel more, so a pixel of `QRect` rounding
+  tipped it at every scale and the column read "9…", "8…", "7…" while the whole numbers beside
+  them were fine.
+- **Two tabs contradicted themselves on screen.** Auto-apply's caption printed raw queue ids
+  four pixels from chips printing the humanised labels, so one header row read "In progress 1 ·
+  Ready to submit 1" and then "in_progress: 1 · ready_to_submit: 1". And Stats left the spare
+  table width as bare background, so on a maximised window the header band stopped ~430px short
+  of the table's own border.
+- **A rename left one live import behind.** `local/chrome.py` became `chrome_launch.py` and
+  thirteen references were updated; the fourteenth was a function-body import in
+  `resume_tailor/apply.py` wrapped in `except Exception: webbrowser.open(url)`. Nothing imports
+  it at module load, so no test touched it and the fallback swallowed the `ImportError` — "open
+  the posting in Chrome with your configured profile" would have degraded silently to the
+  default browser for everyone on this build, with no error anywhere.
+- **`schtasks` output is decoded as explicit UTF-8.** A bare `text=True` decoded with
+  `locale.getencoding()`, but `schtasks` writes its one user-visible line in the console OEM
+  codepage, which is not the ANSI locale encoding on any non-English Windows: the dashboard
+  showed either mojibake or a `UnicodeDecodeError` that turned a task which registered fine into
+  a reported failure.
+- **The stale hidden-column list could freeze the Columns dialog.** `jobs_tab` took the
+  persisted list verbatim and re-saved it as is, so an id for a column that no longer exists was
+  never cleared — and once the stale ids reached the column count, the never-hide-everything
+  guard was permanently true and every toggle was silently ignored. The list is intersected on
+  load, and the guard now tells its caller so the checkbox goes back rather than sitting
+  unchecked beside a visible column.
+- **The suite read the developer's own config in two more places.** `score_jobs` resolves ten
+  module constants at import scope from the untracked root `scoring_config.json`, so every test
+  reading one was asserting against whatever this machine last picked in the Settings tab; and
+  `resume_tailor/config.py` keeps its own `CONFIG_JSON` binding that the hermetic fixture never
+  patched, so `projects_max()` answered 4 where a fresh clone answers 3. Both are rebound
+  against the sandbox now, and the `SCORE_*` names join the central environment scrub.
+
+### Docs
+- **The README's counted claims are re-derived from the data.** The postings figure counted only
+  the Drive master and missed 1,612 postings collected locally and not yet folded back, and the
+  survival rate conflated two different filters: it is 17,366 collected, 8% reaching a
+  second-stage recommendation and 5% coming back `apply`.
+- **The model-tier vocabulary no longer describes defaults it does not have.** The "pro" tier
+  ships pointed at the same `gemini-3.5-flash` as the standard tier, so only the fast tier is
+  actually cheap; the labels are `fast` / `deep` and the real defaults are stated. Also
+  corrected: the layout budget is measured from glyph widths rather than characters, Stats
+  reports token spend rather than cost, and `settings.py`, `setup_check.py`, `errmsg.py` and
+  `open_dashboard.pyw` joined the project layout.
+- **The licence enumeration is complete.** The README's paragraph claimed every pin is MIT, BSD,
+  Apache-2.0 or PSF except PySide6; `certifi` is MPL-2.0, and the numpy version the VM pin set
+  declares is `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`. Both the README and
+  `docs/CREDITS.md` now name the same eight-licence set, and `CREDITS.md` lists numpy and the
+  optional installs `requirements.txt` names without installing.
+- **The résumé template's upstream MIT notice is back at the top of the `.tex`.**
+  `resume_template.tex` is substantially "Jake's Resume" — the `\resumeItem`,
+  `\resumeSubheading` and `\resumeSubHeadingList` macros come from it — but the header carrying
+  the copyright and permission notice had been stripped, leaving the attribution only in
+  `docs/CREDITS.md`. MIT asks the notice to travel with the work.
+- **The terminal launch command names the venv Step 2 built.** Step 2 deliberately never
+  activates the venv, and then Step 4 offered `python local/app.py`, which after Step 2 is still
+  the global interpreter — so on a machine that has never run the project that command dies on
+  `import PySide6`, in the one place a reader falls back to when the double-click did not work.
+  It now reads `venv\Scripts\python.exe local\open_dashboard.pyw`, the exact command the
+  `readme-setup` CI job already proves.
+- The first screenful now says the project carries 2,593 tests on three CI runners, including a
+  clean-room job that installs from these very setup steps.
+- `docs/ARCHITECTURE.md` gains `local/errmsg.py` and `local/setup_check.py`, the missing
+  `aiwriting.py` row in the résumé-engine module table, and a corrected `master_validate.py`
+  row. The pin file header no longer names the author's own interpreter path.
+- **All five pieces of README media were rebuilt against the UI that ships now.** The four
+  stills predated the interface pass and showed a legend whose colour swatches rendered as
+  near-black rectangles. The demo GIF had four tabs held completely static — about twenty of its
+  thirty-eight seconds with nothing moving — and its shared palette was quantized from frame 0
+  alone, so it was spent on High Score's row tints and rendered the neutral panel fill every
+  form tab paints as a green. It is now 173 frames over 41.6 s, median-cut over every storyboard
+  hold. The social preview card composes from the hero screenshot and carried the stale frame
+  with it. Alt text was rewritten to describe what is actually on screen.
 
 ## [1.9.0] - 2026-08-29
 
@@ -1030,6 +1275,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[1.10.0]: https://github.com/yib7/INployed/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/yib7/INployed/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/yib7/INployed/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/yib7/INployed/compare/v1.7.0...v1.7.1

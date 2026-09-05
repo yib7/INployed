@@ -126,7 +126,8 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
   folder syncs down; the local CLI path above doesn't.)
 
 ### Configure everything from the Settings tab (no file editing)
-Open the dashboard (`python local/app.py`) and click the **Settings** tab: one
+Open the dashboard (double-click `Open INployed Dashboard.cmd`) and click the
+**Settings** tab: one
 schema-driven form that edits every tunable the project has, grouped and explained,
 so a non-technical user can set things up without touching a file. Each section has a
 **collapsible header** with a one-line tagline, so you can fold away the parts you're

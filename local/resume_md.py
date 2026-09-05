@@ -2,7 +2,7 @@
 
 The job scorer (`score_jobs.py`) matches every posting against `resume.md`. When
 the user edits their Resume Data (the master YAML), this regenerates `resume.md`
-so the two stay in sync — **faithfully: select and rephrase, never invent** (the
+so the two stay in sync — **faithfully: select and re-phrase, never invent** (the
 project's résumé rule). Output mirrors the existing `resume.md` section layout.
 
 The Gemini call is **injected** (`llm_call`) so the build and tests never spend a

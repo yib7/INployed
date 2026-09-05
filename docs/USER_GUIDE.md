@@ -361,9 +361,9 @@ fill the structured employment fields), and the active standard answers. It list
 files to upload**; it's built from the tailoring run's own output, so it mirrors the PDF
 exactly with no extra AI call. To apply:
 
-1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card). Tailoring does not open
-   File Explorer by default; flip **Settings → Open output folder after tailoring**
-   on if you want that.
+1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card).
+   Tailoring does not open File Explorer by default; flip **Settings → Open output
+   folder after tailoring** on if you want that.
 2. Click **Apply** on the detail card. The Apply button is **green only once the job has
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
    swaps the bottom detail card for a right-side **Apply panel** with the copyable

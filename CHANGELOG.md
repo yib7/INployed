@@ -70,10 +70,10 @@ Nothing to migrate either way: `tiers` stays the default.
   fractions are now env-overridable. Deliberately no Settings field: the three interact, and
   a fraction a non-technical user can set to 0 is a footgun. Anything unparseable or outside
   0.05-1.0 falls back to the documented default, so a typo cannot silently disable a stage.
-- **`tailor_report.txt` carries a quieter notes section too.** Same line shape as the warnings, one severity
-  down, and never streamed to `on_warning`: a note is something the run could not fully
-  deliver that still leaves a correct, shippable résumé, so it must not make the batch summary
-  call the job degraded.
+- **`tailor_report.txt` carries a quieter notes section too.** Same line shape as the
+  warnings, one severity down, and never streamed to `on_warning`: a note is something
+  the run could not fully deliver that still leaves a correct, shippable résumé, so it
+  must not make the batch summary call the job degraded.
 - **Check setup says when the tailor is reading the example résumé instead of yours.**
   `assets.load_master` falls back to the committed `master_experience.example.yaml` when there
   is no personal one, which is what keeps a fresh clone and CI working, so Check setup was
@@ -267,12 +267,13 @@ Nothing to migrate either way: `tiers` stays the default.
   zero is never released, so `gather()` blocked forever holding `run_scraper.sh`'s flock while
   every later cron fire logged "already running".
 - **A bad environment variable killed the tailor at import instead of degrading.** Five
-  constants across `config.py` and `measure.py` were bare `int(os.getenv(...))` at import scope,
-  so `RESUME_TAILOR_PROJECTS_MAX=three` took the whole tailor path down with a raw traceback and
-  made `projects_max()`'s own `try`/`except` unreachable, because the module never finished loading.
-  `measure._env_fraction` already documented the opposite rule for the fill fractions; both
-  modules now have an `_env_int` with the same contract, and `keypool.from_env` parses
-  `SCORE_HTTP_TIMEOUT_S` the same way rather than killing the nightly VM run over a typo.
+  constants across `config.py` and `measure.py` were bare `int(os.getenv(...))` at import
+  scope, so `RESUME_TAILOR_PROJECTS_MAX=three` took the whole tailor path down with a raw
+  traceback and made `projects_max()`'s own `try`/`except` unreachable, because the module
+  never finished loading. `measure._env_fraction` already documented the opposite rule for
+  the fill fractions; both modules now have an `_env_int` with the same contract, and
+  `keypool.from_env` parses `SCORE_HTTP_TIMEOUT_S` the same way rather than killing the
+  nightly VM run over a typo.
 - **Three more gaps between what the style gate promises and does.** The participial-tail regex
   required the banned participle to sit directly after the comma, so it missed the textbook
   impact tail `..., minimizing X and enabling Y`; the pattern's reach is widened without
@@ -308,10 +309,11 @@ Nothing to migrate either way: `tiers` stays the default.
 - **A job-table column could be narrower than its own header label.**
   `QHeaderView::section` carries fixed-pixel padding and a border that do not shrink with the
   interface scale while the column widths do, and a header section is the one piece of table
-  text Qt clips instead of eliding, and it is centred, so the overrun eats both ends. At 75% the Score
-  column was 38px with 20px of chrome inside it and read "core". Both width paths now take the
-  header's own text width as a floor: twelve findings across three tables at four scales before,
-  zero after, and nothing moves on a column already wide enough.
+  text Qt clips instead of eliding, and it is centred, so the overrun eats both ends. At
+  75% the Score column was 38px with 20px of chrome inside it and read "core". Both
+  width paths now take the header's own text width as a floor: twelve findings across
+  three tables at four scales before, zero after, and nothing moves on a column already
+  wide enough.
 - **The deep-score column elided the number its bar is there to label.** The mini-bar reserved
   exactly the numeral's measured width and not one pixel more, so a pixel of `QRect` rounding
   tipped it at every scale and the column read "9…", "8…", "7…" while the whole numbers beside

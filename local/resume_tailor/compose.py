@@ -1,4 +1,4 @@
-"""The composition stages — all bound by SELECT-AND-REPHRASE, NEVER GENERATE.
+"""The composition stages — all bound by SELECT AND RE-PHRASE, NEVER INVENT.
 
 select()          flash : choose blocks + ordered bullet GROUPS (by atom id) + skill focus
 rephrase()        pro   : one bullet per GROUP, faithfully fusing only that group's atoms

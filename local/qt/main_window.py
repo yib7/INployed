@@ -28,6 +28,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import apply_queue
 import ats_accounts
 import chrome
+import errmsg
 import jobsdata
 import osopen
 import settings
@@ -793,7 +794,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_load_error(self, exc: BaseException) -> None:
         # A load failure must never kill the window; surface it and stay usable.
         self._loading = False
-        self._set_status(f"Could not load jobs: {exc}")
+        self._set_status(f"Could not load jobs: {errmsg.for_user(exc)}")
         if self._reload_pending:
             self.reload_data_async()
 
@@ -1241,7 +1242,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._reload_timer.stop()
         QtWidgets.QMessageBox.warning(
             self, "Background write failed",
-            f"Could not update the job files ({description}): {exc}\n\n"
+            f"Could not update the job files ({description}): {errmsg.for_user(exc)}\n\n"
             "Reloading the dashboard from disk.")
         self.reload_data_async()
 
@@ -1434,7 +1435,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             jobsdata.append_to_blocklist(self.csv_paths, company)
         except OSError as exc:
-            self._set_status(f"Could not block {company}: {exc}")
+            self._set_status(f"Could not block {company}: {errmsg.for_user(exc)}")
             return
         self.reload_data_async()
         self._set_status(f"Blocked {company} — hidden now and skipped on the next job search.")
@@ -1455,7 +1456,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             osopen.open_path(path)
         except OSError as e:
-            self._set_status(f"Could not open {path}: {e}")
+            self._set_status(f"Could not open {Path(path).name}: {errmsg.for_user(e)}")
 
     # ---- run scraper (spend-guarded) -----------------------------------------
 
@@ -1774,7 +1775,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _after_scrape_error(self, exc) -> None:
         self._scraping = False
-        msg = str(exc)
+        msg = errmsg.for_user(exc)
         self._set_status(f"Find new jobs failed — {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.critical(self, "Find new jobs", f"The run failed.\n\n{msg}")
 
@@ -1868,7 +1869,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_manual_add_error(self, exc) -> None:
         self._manual_adding = False
-        msg = str(exc)
+        msg = errmsg.for_user(exc)
         self._set_status(f"Add job failed — {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.warning(self, "Add a job by hand", f"Could not add the job.\n\n{msg}")
 
@@ -2059,7 +2060,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_apply_error(self, exc) -> None:
         self._applying = False
-        msg = str(exc)
+        msg = errmsg.for_user(exc)
         self._set_status(msg.splitlines()[0] if msg else "Apply failed")
         QtWidgets.QMessageBox.information(
             self, "Apply", f"{msg}\n\nUse 'Tailor resume' on this job, then try Apply again.")
@@ -2137,11 +2138,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_tailor.setEnabled(True)  # (same shape as _generate_cover_for's)
             if on_finished is not None:  # park queue-chained "tailoring" entries as
                 on_finished(None, RuntimeError(  # failed — orphans are unclaimable
-                    f"tailor launch failed: {exc}"))
+                    f"tailor launch failed: {errmsg.for_user(exc)}"))
             # Surface in the status bar instead of re-raising into the Qt event
             # loop, where the exception would just be printed and swallowed
             # (audit P2-11).
-            self._set_status(f"Could not start tailoring: {exc}")
+            self._set_status(f"Could not start tailoring: {errmsg.for_user(exc)}")
             return False
         return True
 
@@ -2193,7 +2194,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           "dir": out, "error": None, "warnings": warnings}
             except Exception as exc:  # noqa: BLE001 - capture per-job; report in the summary
                 result = {"id": job.get("job_posting_id"), "label": label,
-                          "dir": None, "error": str(exc), "warnings": warnings}
+                          "dir": None, "error": errmsg.for_user(exc), "warnings": warnings}
             with done_lock:
                 done += 1
             # Queued to the UI thread: the registry records this job NOW, so an
@@ -2289,8 +2290,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_tailor_error(self, exc) -> None:
         self._tailoring = False
         self.btn_tailor.setEnabled(True)
-        QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {exc}")
-        self._set_status(f"Tailor failed: {exc}")
+        QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {errmsg.for_user(exc)}")
+        self._set_status(f"Tailor failed: {errmsg.for_user(exc)}")
 
     # ---- batch auto-apply queueing ---------------------------------------
 
@@ -2304,7 +2305,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._writes.submit(
             fn, on_done=on_done,
             on_error=on_error or (lambda exc: self._set_status(
-                f"Apply-queue write failed: {exc}")))
+                f"Apply-queue write failed: {errmsg.for_user(exc)}")))
 
     def _queue_artifacts(self, folder) -> dict:
         """The artifact paths a queue entry carries for a tailored folder.
@@ -2496,7 +2497,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if exc is not None:
             for jid in pending:
-                park_failed(jid, f"tailor failed: {exc}")
+                park_failed(jid, f"tailor failed: {errmsg.for_user(exc)}")
             return
         by_id = {str(r.get("id") or ""): r for r in (results or [])}
         for jid in pending:
@@ -2565,9 +2566,17 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             stored = ats_accounts.set_master_password(first)
         except Exception as exc:  # noqa: BLE001 - keyring backend failure
+            # The exception CLASS name only, deliberately -- the same rule
+            # ats_accounts applies to its own secret-touching verbs
+            # (_SECRET_VERBS), for the reason it gives there: str(e) out of a
+            # keyring or clipboard backend could carry the password itself. This
+            # dialog is the path the user actually takes, so it is the one that
+            # has to hold the rule; the CLI held it and the GUI did not.
             QtWidgets.QMessageBox.warning(
                 self, "Master ATS password",
-                f"Could not store the password: {exc}")
+                f"Could not store the password ({type(exc).__name__}). Check that "
+                f"the keyring package is installed and the Windows Credential "
+                f"Manager is available.")
             return
         if not stored:
             QtWidgets.QMessageBox.warning(
@@ -2642,8 +2651,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_cover_error(self, exc) -> None:
         self._covering = False
         QtWidgets.QMessageBox.warning(self, "Cover letter",
-                                      f"Cover letter failed: {exc}")
-        self._set_status(f"Cover letter failed: {exc}")
+                                      f"Cover letter failed: {errmsg.for_user(exc)}")
+        self._set_status(f"Cover letter failed: {errmsg.for_user(exc)}")
 
     def _payload_with_master_fallback(self, jid: str) -> dict | None:
         """The job's row payload, rebuilt from the master CSV when the row isn't
@@ -2718,7 +2727,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             result = master_validate.check_setup()
         except Exception as exc:  # noqa: BLE001
-            QtWidgets.QMessageBox.critical(self, "Check setup", f"Could not run checks: {exc}")
+            QtWidgets.QMessageBox.critical(self, "Check setup", f"Could not run checks: {errmsg.for_user(exc)}")
             return
         problems: list[str] = []
         for label, errs in (("Resume data", result.get("master", [])),
@@ -2844,7 +2853,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             dest = self.registry.export_to(Path(path))
         except Exception as e:  # noqa: BLE001 - surface any backup failure to the user
-            self._set_status(f"Export failed: {e}")
+            self._set_status(f"Export failed: {errmsg.for_user(e)}")
             return
         self._set_status(f"Tracker exported → {dest}")
 
@@ -2864,7 +2873,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             counts = self.registry.import_from(Path(path))
         except Exception as e:  # noqa: BLE001 - surface any restore failure to the user
-            self._set_status(f"Import failed: {e}")
+            self._set_status(f"Import failed: {errmsg.for_user(e)}")
             return
         self._refresh_tracker()
         QtWidgets.QMessageBox.information(
@@ -2906,7 +2915,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_prep_error(self, exc) -> None:
         self._prepping = False
-        self._set_status(f"Interview prep FAILED — {exc}")
+        self._set_status(f"Interview prep FAILED — {errmsg.for_user(exc)}")
 
     # ---- stats + calibration -------------------------------------------------
 

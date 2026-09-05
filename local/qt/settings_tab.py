@@ -31,6 +31,7 @@ from typing import Callable
 
 from PySide6 import QtCore, QtWidgets
 
+import errmsg
 import jobsdata
 import settings
 import settings_archive
@@ -1766,7 +1767,7 @@ class SettingsForm(QtWidgets.QWidget):
             # can see and fix where they are; an unwritable config.json is neither,
             # and a status line alone would let them walk away believing they saved.
             self.status.setText("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Settings", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Settings", errmsg.for_user(exc))
             return False
         summary = self._changed_summary(before, values)
         restart = self._restart_notice(before, values)

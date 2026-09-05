@@ -14,6 +14,7 @@ from typing import Callable
 
 from PySide6 import QtCore, QtWidgets
 
+import errmsg
 import jobsdata
 import local_task
 import settings
@@ -339,7 +340,7 @@ class VMPanel(QtWidgets.QWidget):
         try:
             res = self._runner(cmd)
         except Exception as exc:  # noqa: BLE001
-            return False, f"Command failed to launch: {exc}"
+            return False, f"Command failed to launch: {errmsg.for_user(exc)}"
         out = ((getattr(res, "stdout", "") or "") + (getattr(res, "stderr", "") or "")).strip()
         ok = getattr(res, "returncode", 0) == 0
         return ok, ("Done.\n\n" if ok else "Failed.\n\n") + out[:1200]
@@ -459,7 +460,7 @@ class VMPanel(QtWidgets.QWidget):
             # Qt's rich-text sniffer gives up at the first newline, so a
             # one-line message ending in interpolated text is the one shape
             # here that could be rendered as HTML. Measured, not assumed.
-            res, failure = None, f"Could not set the {label}.\n\n{exc}"
+            res, failure = None, f"Could not set the {label}.\n\n{errmsg.for_user(exc)}"
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
             self.secret_btn.setText("Set on VM")

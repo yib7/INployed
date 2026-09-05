@@ -33,6 +33,7 @@ from PySide6 import QtCore, QtWidgets
 
 import apply_queue
 import ats_accounts
+import errmsg
 import osopen
 from qt import theme
 from qt.chrome import ChipBar, Pill
@@ -719,7 +720,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.status_label.setText(msg)
 
     def _write_failed(self, exc: BaseException) -> None:
-        self._set_note(f"Queue write failed: {exc}")
+        self._set_note(f"Queue write failed: {errmsg.for_user(exc)}")
 
     def _requeue(self) -> None:
         jid = self._selected_job_id()
@@ -785,7 +786,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         try:
             osopen.open_path(path)
         except OSError as exc:
-            self._set_note(f"Could not open {path}: {exc}")
+            self._set_note(f"Could not open {Path(path).name}: {errmsg.for_user(exc)}")
 
     def _open_folder(self) -> None:
         self._open_artifact("folder", "job folder")

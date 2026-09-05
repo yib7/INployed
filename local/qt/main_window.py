@@ -12,7 +12,6 @@ the height back when it closes (`_on_description_toggled`).
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -32,6 +31,7 @@ import errmsg
 import jobsdata
 import osopen
 import settings
+import setup_check
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic
 from jobsdata import (
     ALL_COLUMNS,
@@ -2717,75 +2717,26 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- check setup ---------------------------------------------------------
 
     def _check_setup(self) -> None:
-        # One probe at a time. The Bright Data half runs on a worker thread and
-        # can sit on a 15-second timeout, so an impatient double-click would queue
-        # a second thread and pop a second modal behind the first.
+        # One probe at a time. The job-data half runs on a worker thread and can
+        # sit on a 15-second timeout, so an impatient double-click would queue a
+        # second thread and pop a second modal behind the first.
         if getattr(self, "_setup_check_running", False):
             self._set_status("Setup check already running...")
             return
-        from resume_tailor import master_validate
         try:
-            result = master_validate.check_setup()
+            problems = setup_check.local_problems()
         except Exception as exc:  # noqa: BLE001
             QtWidgets.QMessageBox.critical(self, "Check setup", f"Could not run checks: {errmsg.for_user(exc)}")
             return
-        problems: list[str] = []
-        for label, errs in (("Resume data", result.get("master", [])),
-                            ("Apply answers", result.get("answers", []))):
-            problems.extend(f"[{label}] {e}" for e in errs)
-        try:
-            cfg = jobsdata._load_cfg()
-            stored = settings.load()
-            # Match the runtime resolvers' env > file precedence
-            # (config.tailor_provider() / score_jobs.load_scoring_config()): an
-            # exported RESUME_TAILOR_PROVIDER / SCORE_PROVIDER wins at run time, so
-            # Check-setup must honour it too or its warnings won't match what runs.
-            tailor_provider = str(
-                os.environ.get("RESUME_TAILOR_PROVIDER")
-                or cfg.get("tailor_provider") or "gemini").strip().lower()
-            if tailor_provider != "claude":  # gemini engine warnings only apply on gemini
-                auth = cfg.get("gemini_auth", "vertex")
-                project = stored.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get(
-                    "GOOGLE_CLOUD_PROJECT", "")
-                has_key = settings.secret_status().get(
-                    "RESUME_TAILOR_GEMINI_API_KEY", False) or bool(
-                        os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
-                problems.extend(f"[Engine] {w}" for w in
-                                jobsdata._engine_credential_warnings(auth, project, has_key))
-            scoring_provider = str(
-                os.environ.get("SCORE_PROVIDER")
-                or stored.get("provider") or "gemini").strip().lower()
-            cli_found = shutil.which("claude") is not None
-            problems.extend(f"[Engine] {w}" for w in jobsdata._claude_cli_warnings(
-                tailor_provider, scoring_provider, cli_found))
-        except Exception:  # noqa: BLE001
-            pass
         # Everything above is local file reads. The job-data check is a network
         # call, so it goes to a worker thread — a blocking probe here would freeze
         # the window, which is exactly the startup bug this dashboard already had.
         self._set_status("Checking setup...")
         self._setup_check_running = True
         workers.run_async(
-            self, self._bright_data_problems,
+            self, setup_check.job_data_problems,
             on_done=lambda extra: self._show_setup_result(problems + list(extra or [])),
             on_error=lambda _exc: self._show_setup_result(problems))
-
-    @staticmethod
-    def _bright_data_problems() -> list[str]:
-        """Worker-thread half of Check setup: can the job-data account collect?
-
-        Free and unbilled, so the user can test Bright Data without starting a run.
-        Silent whenever it can't import or reach the probe — Check setup must never
-        report a problem it did not actually observe."""
-        try:
-            repo = Path(__file__).resolve().parents[2]
-            for _p in (str(repo / "pipeline"), str(repo / "local")):
-                if _p not in sys.path:
-                    sys.path.insert(0, _p)
-            import scraper
-            return [f"[Job data] {w}" for w in scraper.account_problems()]
-        except Exception:  # noqa: BLE001
-            return []
 
     def _show_setup_result(self, problems: list[str]) -> None:
         # Cleared before the modal, not after: the dialog blocks until dismissed,

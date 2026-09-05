@@ -38,7 +38,16 @@ _BARE_SAFE_RE = re.compile(r"^[A-Za-z0-9_./:@,+=-]+$")
 # and the other C0 controls cannot be represented either. Rejected rather than
 # stripped: silently rewriting a credential produces a key that fails later with no
 # clue why, which is worse than being told now.
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+#
+# The class is exactly what `str.splitlines()` breaks on, and that is more
+# than CR/LF: splitlines ALSO splits U+0085 NEL, U+2028 LINE SEPARATOR and
+# U+2029 PARAGRAPH SEPARATOR, none of which falls inside \x00-\x1f\x7f.
+# Without those three the guard was two thirds of a guard -- a value carrying
+# U+2028 passed the check, was written as one quoted line, and came back out
+# of read() as TWO assignments, which is the exact hole this exists to close.
+# U+2028 and U+0085 are not exotic; they arrive in text pasted from a PDF or
+# a web page.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 
 
 def _parse_value(raw: str) -> str:

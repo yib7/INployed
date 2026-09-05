@@ -203,3 +203,45 @@ def test_update_still_accepts_the_awkward_but_legal_values(tmp_path):
         "QUOTED": "it's fine",
         "POOL": "key1,key2,key3",
     }
+
+
+def test_the_refused_class_is_exactly_what_splitlines_breaks_on(tmp_path):
+    """The guard has to cover every character that splits a line, not just CR/LF.
+
+    `read()` and `update()` both split with `str.splitlines()`, which breaks on
+    more than CR/LF: U+0085 NEL, U+2028 LINE SEPARATOR and U+2029 PARAGRAPH
+    SEPARATOR all end a line too, and none of them is inside the C0 range. The
+    first cut of this guard checked the C0 range only, so a value carrying U+2028
+    passed, was written as one quoted line, and came back out of `read()` as two
+    assignments -- precisely the failure the guard exists to prevent, and U+2028
+    is a character that really does ride along in text pasted from a PDF or a web
+    page. Asserted as an equality against `splitlines` rather than a list of
+    three code points, so the class cannot drift away from the reader again.
+    """
+    splitting, refused = set(), set()
+    for code in range(0x110000):
+        c = chr(code)
+        if len(("x" + c + "y").splitlines()) > 1:
+            splitting.add(c)
+        if envfile._CONTROL_RE.search(c):
+            refused.add(c)
+    assert splitting - refused == set(), "a line-splitting character is not refused"
+    # The class is deliberately WIDER than that: the rest of C0 and DEL are
+    # refused for representability (a NUL in a .env value is not a value), but it
+    # must not reach one character further than that, or an ordinary pasted value
+    # starts getting rejected.
+    c0_and_del = {chr(c) for c in range(0x20)} | {chr(0x7f)}
+    assert refused - splitting <= c0_and_del
+
+
+def test_update_refuses_the_non_c0_line_separators(tmp_path):
+    """The end-to-end version of the property above, on the write path."""
+    import pytest
+
+    p = tmp_path / ".env"
+    p.write_text("FOO=1" + chr(10), encoding="utf-8")
+    for sep in (chr(0x85), chr(0x2028), chr(0x2029)):
+        payload = "key1" + sep + "BRIGHT_DATA_API_TOKEN=injected"
+        with pytest.raises(ValueError):
+            envfile.update(p, {"GEMINI_API_KEYS": payload})
+        assert envfile.read(p) == {"FOO": "1"}, f"{sep!r} left the file changed"

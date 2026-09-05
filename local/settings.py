@@ -133,7 +133,9 @@ class Field:
 ENV_TARGETS = {"env"}
 
 # Same character class envfile._CONTROL_RE refuses on write; see validate().
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# It is everything `str.splitlines()` breaks on -- the C0 controls plus U+0085,
+# U+2028 and U+2029, which sit outside \x00-\x1f and still split a line.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 
 # The field types whose value is a plain string, i.e. the only ones a
 # `Field.pattern` can be matched against. Pinned by

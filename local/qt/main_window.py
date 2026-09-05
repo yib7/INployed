@@ -27,7 +27,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import apply_queue
 import ats_accounts
-import chrome
+import chrome_launch
 import errmsg
 import jobsdata
 import osopen
@@ -1415,7 +1415,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_url(self, jid: str) -> None:
         url = self._url_by_id.get(jid) or self._cell(self._row_for(jid), "url")
         if url:
-            chrome.open_in_chrome(url)
+            chrome_launch.open_in_chrome(url)
 
     def _set_status_for(self, ids: list[str], status: str) -> None:
         for jid in ids:
@@ -2004,7 +2004,7 @@ class MainWindow(QtWidgets.QMainWindow):
         url = ctx.get("apply_url", "")
         if url and open_url:
             try:
-                chrome.open_in_chrome(url)
+                chrome_launch.open_in_chrome(url)
             except Exception:  # noqa: BLE001
                 pass
         return ctx

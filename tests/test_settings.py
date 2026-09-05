@@ -1018,7 +1018,7 @@ RESTART_KEYS = {
     # read live from os.environ — but os.environ is the stale startup snapshot
     "RESUME_TAILOR_GEMINI_API_KEY",     # llm.py, per call
     "GEMINI_API_KEYS",                  # keypool.KeyPool.from_env, per run
-    "LINKEDIN_CHROME_ACCOUNT",          # chrome.CHROME_ACCOUNT, at import
+    "LINKEDIN_CHROME_ACCOUNT",          # chrome_launch.CHROME_ACCOUNT, at import
     # module constants inside a SUBPROCESS that inherits the stale snapshot
     "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_DATASET_ID",
 }

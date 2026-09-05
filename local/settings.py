@@ -111,7 +111,7 @@ class Field:
     # defaults to `override=False`, so a later `load_dotenv()` cannot beat a value
     # that is already set. That closes both routes at once: a consumer freezing
     # the value in a module constant at import (`resume_tailor/config.py`,
-    # `chrome.CHROME_ACCOUNT`, `scraper.API_TOKEN`) and one reading `os.environ`
+    # `chrome_launch.CHROME_ACCOUNT`, `scraper.API_TOKEN`) and one reading `os.environ`
     # live on every call (`keypool.KeyPool.from_env`, `llm.py`) get the same stale
     # snapshot — and so does every SUBPROCESS, which inherits a copy of it and
     # then cannot override it from `.env` either. The six VM keys are the one

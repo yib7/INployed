@@ -272,7 +272,7 @@ def infer_ats(apply_url: str) -> Dict[str, str]:
 # substitutes these three into the subagent brief that drives the user's real
 # signed-in Chrome. A newline in a company name forges a line in that brief; a
 # non-http(s) apply_url is a scheme nothing downstream should ever navigate to.
-# local/chrome.py:102 already refuses a non-http(s) URL at the "Open posting"
+# local/chrome_launch.py:102 already refuses a non-http(s) URL at the "Open posting"
 # button -- this is the same rule at the other entry point, applied on the way
 # IN so a stored entry is clean for every later reader rather than at each one.
 _WS_RUN_RE = re.compile(r"\s+")

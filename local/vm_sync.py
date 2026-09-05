@@ -78,6 +78,23 @@ def valid_secret_value(value: str) -> bool:
     """True if `value` can live in a sourced shell file without interpolating."""
     return bool(_SAFE_SECRET.fullmatch((value or "").strip()))
 
+
+# An scp REMOTE path is not inert. Both OpenSSH's classic scp and pscp.exe (which
+# gcloud drives on Windows) transport it by running `scp -t <path>` through the
+# remote user's login shell, so the path is word-split and expanded there -- it is
+# a shell word, not an opaque argument. VM_REMOTE_DIR is typed into the Settings
+# form, goes to .env, and comes back out into every scp destination this module
+# builds, so it needs the same treatment the secret VALUE gets before it reaches
+# a sourced file. Same shape as _SAFE_SECRET minus the characters a path has no
+# use for; `~` is added because "~" is one of the values the dir is allowed to be.
+_SAFE_REMOTE_DIR = re.compile(r"[A-Za-z0-9._/~-]*")
+
+
+def valid_remote_dir(value: str) -> bool:
+    """True if `value` can be an scp remote path without reaching the VM's shell
+    as anything but a path. Empty is valid -- it means the SSH login's home dir."""
+    return bool(_SAFE_REMOTE_DIR.fullmatch((value or "").strip()))
+
 # VM connection identifiers (all NON-secret), read from the .env via settings,
 # with the fallback each one gets when it is unset. VMTarget.from_mapping reads
 # its defaults from here rather than repeating them, so VM_KEYS cannot drift out
@@ -174,6 +191,15 @@ class VMTarget:
         # fails with "unable to open ~/<file>", silently breaking the push. So
         # "~" / "." / "" all mean "the home dir" and emit a relative dest; only a
         # real directory keeps its prefix.
+        # The remote half of this destination reaches the VM's login shell (see
+        # valid_remote_dir), so it is checked HERE -- the one place every scp
+        # flow goes through -- rather than at the four callers.
+        if not valid_remote_dir(self.remote_dir):
+            raise ValueError(
+                f"VM_REMOTE_DIR is {self.remote_dir!r}, which is not a plain path. "
+                f"An scp remote path is expanded by the VM's shell, so it may only "
+                f"contain letters, digits and . _ - / ~ . Clear it (or set it to "
+                f"'~') to use the VM's home directory.")
         base = self.remote_dir.rstrip("/")
         dest = (f"{self._host()}:{remote_rel}" if base in ("", "~", ".")
                 else f"{self._host()}:{base}/{remote_rel}")
@@ -224,8 +250,14 @@ class VMTarget:
         Refusing beats teaching the script about remote_dir. That value comes from
         the user's .env and would have to be interpolated into shell text here,
         which is a new injection surface for a setting nothing else about this
-        feature needs. Every other VM push keeps remote_dir in argv, where it is
-        data. So: fail early, and name the setting.
+        feature needs. So: fail early, and name the setting.
+
+        This used to add "every other VM push keeps remote_dir in argv, where it
+        is data", and that was wrong. An scp remote path is a shell word on the
+        VM, not an argument -- which is why build_scp_cmd now runs
+        valid_remote_dir on every flow. That sentence is the reason this check
+        was the only one for as long as it was, so it is recorded here rather
+        than quietly deleted.
         """
         if self.remote_dir.rstrip("/") not in ("", "~", "."):
             raise ValueError(
@@ -373,6 +405,27 @@ echo SECRET_SET: {name}
                                   f"{INCOMING_REMOTE_DIR}/{Path(local_path).name}")
 
 
+def _reject_cwd_shadow(name: str, found: str | None) -> str | None:
+    """`found` unless it resolves into the current working directory.
+
+    shutil.which inserts os.curdir at the FRONT of the search path on Windows (it
+    mirrors CreateProcess's own lookup), so a program dropped in the dashboard's
+    working directory beats the real one on PATH. Both lookups on this code path
+    -- gcloud and the interpreter that runs its entrypoint -- receive the
+    generated --command script and the scp of the staged credential file, so
+    neither may be cwd-relative. A bare program name comes from PATH or not at all.
+    """
+    if not found:
+        return found
+    here = os.path.normcase(os.path.abspath(os.curdir))
+    if os.path.normcase(os.path.dirname(os.path.abspath(found))) == here:
+        raise RuntimeError(
+            f"Refusing to run {name!r} from the working directory ({here}): "
+            f"on Windows that shadows the real one on PATH. Delete it, or set "
+            f"VM_GCLOUD_PATH to the full path of your gcloud.")
+    return found
+
+
 def _bypass_argv(resolved: str, rest: list[str]) -> list[str] | None:
     """Given a resolved gcloud `.cmd`/`.bat` wrapper path, return an argv that runs
     gcloud's Python entrypoint (`<sdk>/lib/gcloud.py`) directly.
@@ -387,8 +440,15 @@ def _bypass_argv(resolved: str, rest: list[str]) -> list[str] | None:
     if not gpy.exists():
         return None
     bundled = root / "platform" / "bundledpython" / "python.exe"
+    # `shutil.which` here is subject to exactly the hazard launch_argv refuses for
+    # gcloud itself: on Windows it searches os.curdir FIRST, so a python.exe in
+    # the dashboard's working directory would be handed gcloud's entrypoint plus
+    # the full argv -- the generated --command script and the scp of the staged
+    # credential file. Same lookup, same consequence, so the same check
+    # (_reject_cwd_shadow), rather than a comment claiming gcloud is the only one.
     py = (os.environ.get("CLOUDSDK_PYTHON")
-          or (str(bundled) if bundled.exists() else shutil.which("python") or sys.executable))
+          or (str(bundled) if bundled.exists()
+              else _reject_cwd_shadow("python", shutil.which("python")) or sys.executable))
     return [py, "-S", str(gpy), *rest]
 
 
@@ -403,18 +463,9 @@ def launch_argv(cmd: list[str]) -> list[str]:
         return cmd
     found = shutil.which(cmd[0])
     if found and not os.path.dirname(cmd[0]):
-        # shutil.which inserts os.curdir at the FRONT of the search path on
-        # Windows (it mirrors CreateProcess's own lookup), so a gcloud.exe sitting
-        # in the dashboard's working directory beats the real SDK. That process
-        # would receive the generated --command script and the scp of the staged
-        # credential's file, so this is the one lookup here that must not be
-        # cwd-relative. A bare program name comes from PATH or not at all.
-        here = os.path.normcase(os.path.abspath(os.curdir))
-        if os.path.normcase(os.path.dirname(os.path.abspath(found))) == here:
-            raise RuntimeError(
-                f"Refusing to run {cmd[0]!r} from the working directory ({here}): "
-                f"on Windows that shadows the real one on PATH. Delete it, or set "
-                f"VM_GCLOUD_PATH to the full path of your gcloud.")
+        # An explicit VM_GCLOUD_PATH carries a directory, so it is the user's own
+        # choice and passes through; a BARE name comes from PATH or not at all.
+        _reject_cwd_shadow(cmd[0], found)
     resolved = found or cmd[0]
     if resolved.lower().endswith((".cmd", ".bat")):
         bypass = _bypass_argv(resolved, cmd[1:])

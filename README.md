@@ -2,9 +2,9 @@
 
 > Job discovery & résumé tailoring, end to end.
 
-[![CI](https://github.com/yib7/INployed/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/INployed/actions/workflows/ci.yml)
+[![CI status](https://github.com/yib7/INployed/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/INployed/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.14-blue.svg)
+![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)
 
 A scheduled cloud discovery step feeds a two-stage LLM scorer, which syncs to a
 desktop app that drives a LaTeX résumé engine. 17,366 postings collected as of
@@ -36,9 +36,9 @@ Three pieces do the work:
 
 | Triage: **High Score** | Follow through: **Tracker** |
 |---|---|
-| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill. Under the table, the selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
+| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill; a legend under the table maps the five tints back to those states. The selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
 | Your source of truth: **Resume Data** | Every knob: **Settings** |
-| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. Ten collapsible sections under a search box, from Credentials and Connection & paths through Job discovery, Scoring, Resume, Auto-apply and the cloud VM. Engine is expanded, showing the résumé tailor engine and provider dropdowns, each labelled with the config.json key it writes.](docs/settings.png) |
+| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. A search box and a Show advanced settings toggle sit above ten collapsible sections. Credentials and Connection & paths stay folded; Engine is expanded, showing the tailor engine, provider and per-stage model dropdowns, each tagged with the file it writes to — config.json or .env. Dashboard, Job discovery and Scoring follow below, still folded.](docs/settings.png) |
 
 **High Score** surfaces only unseen postings scoring ≥4, newest discovery day first and
 highest score within the day. Click any column header to re-sort.
@@ -218,11 +218,11 @@ Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USE
 
 ## Demo
 
-The whole loop in 38 seconds: rank a scored run, read one posting's analysis, filter the
+The whole loop in 42 seconds: rank a scored run, read one posting's analysis, filter the
 list live, open the apply sheet the tailor wrote for one job, walk the tracker, then
 look at the data every generated bullet had to come from.
 
-![Animated tour of the INployed dashboard, sixteen scenes. It starts on High Score and changes the selected row three times so the detail card swaps its reason, strengths and gaps; types "engineer" into the search box one letter at a time while the table sheds rows from thirteen to nine, then clears it; opens the Apply panel for the tailored job and scrolls its apply.md through the candidate details, work experience, projects and skills; then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue, per-run Stats, Resume Data, Apply Answers, and Settings with the Engine section expanded.](docs/demo.gif)
+![Animated tour of the INployed dashboard, sixteen scenes. It starts on High Score and changes the selected row four times so the detail card swaps its reason, strengths and gaps; types "engineer" into the search box one letter at a time while the table sheds rows from thirteen to nine, then clears it; opens the Apply panel for the tailored job and scrolls its apply.md through the candidate details, work experience, projects and skills; then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue stepping through its per-status rows, per-run Stats, Resume Data scrolled down into the achievement atoms, Apply Answers, and Settings, where the Engine section is expanded and the page scrolls to the last of the ten sections.](docs/demo.gif)
 
 - **High Score** ranks every discovered posting and color-codes the recommendation.
 - Selecting a job opens its **detail card**: reason, strengths, gaps, tailor and apply.

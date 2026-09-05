@@ -77,10 +77,23 @@ def parse_apply_md(text: str) -> Dict[str, Any]:
     standard: List[Tuple[str, str]] = []
     signature_name = ""
     section = ""
+    seen: set = set()
     for line in str(text or "").splitlines():
         h = _HEADING_RE.match(line)
         if h:
             section = h.group("name").strip().lower()
+            # A REPEATED section heading is ignored, not honoured. apply_data
+            # writes each section exactly once, so a second `## Candidate` can
+            # only come from something that got INTO the file -- and this parser
+            # used to let the later copy overwrite the earlier one, which meant a
+            # forged block decided the email address typed into a real
+            # application. apply_data._defuse_structure escapes that shape out of
+            # the free-text sections on the writing side; this is the same rule
+            # on the reading side, which is also where a hand-edited file arrives.
+            if section in seen:
+                section = ""
+                continue
+            seen.add(section)
             continue
         m = _KV_RE.match(line)
         if not m:

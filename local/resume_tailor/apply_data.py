@@ -98,9 +98,23 @@ def parse_resume_bullets(md_text: str) -> List[str]:
     return bullets
 
 
+# One `- **label:** value` line is ONE line, and apply_playwright.parse_apply_md
+# reads this file line by line to decide what gets typed into a real application
+# form. So every value that lands in a structured line has its whitespace runs
+# collapsed to single spaces first. Without that, a value carrying a newline --
+# a scraped job title, a master-YAML field pasted out of a web page -- ends the
+# line early and everything after it is read as fresh document structure.
+_WS_RUN_RE = re.compile(r"\s+")
+
+
+def _one_line(value: Any) -> str:
+    """`value` as a single line: whitespace runs (newlines included) -> one space."""
+    return _WS_RUN_RE.sub(" ", "" if value is None else str(value)).strip()
+
+
 def _kv(label: str, value: Any, *, always: bool = False) -> str:
     """A `- **label:** value` line, or "" when value is empty (unless always)."""
-    text = "" if value is None else str(value).strip()
+    text = _one_line(value)
     if not text and not always:
         return ""
     return f"- **{label}:** {text}\n"
@@ -291,6 +305,32 @@ def _resume_lines(master: Dict[str, Any], sel: Optional[Dict[str, Any]],
     return body
 
 
+# A line in the letter body that LOOKS like document structure IS document
+# structure to parse_apply_md, which switches sections on any `##`/`###` line and
+# reads `- **Label:** value` lines into the dict a form fill types from. The
+# letter body is the one part of apply.md a model writes from a job description
+# an employer controls, so a posting that talks the model into emitting a
+# `## Candidate` block used to get a second, later Candidate section -- and the
+# parser took the LAST value for each key, so the email address typed into a real
+# application became the one the posting supplied. Neither shape is legitimate
+# letter prose, so both are backslash-escaped: markdown renders the escape as a
+# literal `#` or `-`, the letter still reads and pastes correctly, and neither
+# regex matches any more.
+_MD_HEADING_LINE_RE = re.compile(r"^(\s*)(#{1,6}\s)")
+_MD_KV_LINE_RE = re.compile(r"^(\s*)(-\s+\*\*)")
+
+
+def _defuse_structure(text: str) -> str:
+    """Escape lines of free text that parse_apply_md would otherwise read as
+    document structure. Line count and wording are unchanged."""
+    out = []
+    for line in text.split("\n"):
+        line = _MD_HEADING_LINE_RE.sub(lambda m: m.group(1) + "\\" + m.group(2), line)
+        line = _MD_KV_LINE_RE.sub(lambda m: m.group(1) + "\\" + m.group(2), line)
+        out.append(line)
+    return "\n".join(out)
+
+
 def _cover_letter_section(cover_body: str) -> str:
     """The `## Cover letter` block: heading, blank line, then the paste-ready
     letter (coverletter.cover_letter_text's output — header and sign-off included,
@@ -302,7 +342,7 @@ def _cover_letter_section(cover_body: str) -> str:
     own convention.
     """
     text = (cover_body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    return "## Cover letter\n\n" + text + "\n"
+    return "## Cover letter\n\n" + _defuse_structure(text) + "\n"
 
 
 def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
@@ -320,7 +360,7 @@ def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
             shown = "Yes" if raw.lower() in {"true", "yes", "1"} else "No"
         else:
             shown = raw
-        out.append(f"- **{e.get('question', eid)}** {shown}\n")
+        out.append(f"- **{_one_line(e.get('question', eid))}** {_one_line(shown)}\n")
     if len(out) == 1:
         out.append("- (none recorded — add them in the Apply Answers tab)\n")
     return "".join(out)
@@ -337,8 +377,11 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     education = master.get("education", []) or []
     flat = apply_answers.as_standard_answers(answers)
 
-    title = job.get("job_title", "") or "this role"
-    company = job.get("company_name", "") or "the company"
+    # Collapsed to one line each: both are scraped from the posting, and a
+    # newline in either would end the H1 and let the remainder of the value open
+    # a section of its own BEFORE the real `## Candidate` block.
+    title = _one_line(job.get("job_title", "")) or "this role"
+    company = _one_line(job.get("company_name", "")) or "the company"
 
     parts: List[str] = []
     parts.append(f"# Apply sheet — {title} @ {company}\n")

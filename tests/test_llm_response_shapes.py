@@ -3,9 +3,9 @@
 Gemini occasionally roots a json_out answer at an ARRAY: either the requested
 object wrapped in a one-element array ([{...}]) or the bare array that belonged
 under the wrapper key ({"bullets": [...]} returned as [{"gkey": ...}, ...]).
-compose used to call .get() straight on that root, so ONE bad-shape response
-killed the whole tailor job with "'list' object has no attribute 'get'" — even
-in stages documented as advisory/never-fatal (observed: 1 of 7 concurrent jobs).
+Calling .get() straight on that root kills the whole tailor job on ONE bad-shape
+response, with "'list' object has no attribute 'get'", even in stages documented
+as advisory/never-fatal (observed: 1 of 7 concurrent jobs).
 
 llm.as_dict is the single normalizer: both array shapes recover losslessly and
 any other root coerces to {}, so every stage degrades to its no-result path.
@@ -47,7 +47,7 @@ def test_as_dict_garbage_roots_become_empty(garbage):
     assert llm.as_dict(garbage, "bullets") == {}
 
 
-# ── select: the load-bearing first stage ──────────────────────────────────────
+# ── select: the first stage everything after it builds on ─────────────────────
 def test_select_survives_array_wrapped_selection(monkeypatch):
     wrapped = [{"experience": [], "projects": [], "leadership": [],
                 "skill_focus": "general", "skills": {}, "rationale": ""}]

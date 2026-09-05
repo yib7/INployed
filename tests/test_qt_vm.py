@@ -364,7 +364,7 @@ def test_a_gcloud_timeout_does_not_dump_the_whole_script_into_the_dialog(qtbot):
     """subprocess.TimeoutExpired renders its whole argv in str(), which for the
     installer is the entire generated bash script plus the staged file's path.
     No credential (the value is never in argv), but a wall of internal detail
-    where one actionable line belongs."""
+    where one line naming the fix belongs."""
     import subprocess
     panel = _secret_panel(qtbot)
     _choose(panel, "BRIGHT_DATA_API_TOKEN")
@@ -420,8 +420,8 @@ def test_a_leftover_staging_dir_is_named_in_the_dialog(qtbot, monkeypatch):
 
 
 def test_crontab_preview_fits_four_lines_at_every_scale(qtbot):
-    """It used to be a flat 90px, measured at 100%, and swallowed the END marker
-    at 125% and the line above it at 150% — the preview clipping the preview."""
+    """A flat 90px measured at 100% swallows the END marker at 125% and the line
+    above it at 150%, leaving the preview clipping the preview."""
     from PySide6 import QtWidgets
     from qt import theme
     app = QtWidgets.QApplication.instance()

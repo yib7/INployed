@@ -894,7 +894,7 @@ def test_enforce_one_page_resolves_keep_projects_from_config(tmp_path, monkeypat
 def test_enforce_one_page_records_the_page_count_on_the_result(tmp_path, monkeypatch):
     """The page count enforce_one_page measures every iteration now travels OUT on
     CompileResult.pages instead of being thrown away. Without it a caller checking only
-    `ok` cannot tell a genuine one-pager from the best-effort return below."""
+    `ok` cannot tell a one-pager from the best-effort return below."""
     from resume_tailor import compile as rt_compile
     monkeypatch.setattr(rt_compile.render, "render", lambda *a, **k: "TEX")
     monkeypatch.setattr(rt_compile, "compile_tex",

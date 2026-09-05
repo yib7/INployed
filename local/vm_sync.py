@@ -49,10 +49,10 @@ INCOMING_REMOTE_DIR = "incoming"
 
 # --- managed VM credentials -------------------------------------------------
 # The VM's cron runs with a bare environment, so run_scraper.sh has to export the
-# API credentials itself. They used to be pasted inline in that script, which made
-# rotating a dead token an ssh-and-sed chore. These helpers move them into a
-# chmod-600 ~/scraper_secrets.env that the script sources, so a rotation is a
-# dashboard action instead.
+# API credentials itself. These helpers keep them in a chmod-600
+# ~/scraper_secrets.env that the script sources, so rotating a dead token is a
+# dashboard action rather than an ssh-and-sed chore against a value pasted inline
+# in the script.
 SECRETS_REMOTE_FILE = "scraper_secrets.env"
 # Short-lived upload slot for one credential; the install script deletes it.
 SECRET_STAGE_REMOTE_FILE = ".inployed_secret_in"
@@ -118,7 +118,7 @@ def merge_crontab(existing: str, managed_block: str) -> str:
     schedule never stacks duplicate blocks) and appends `managed_block`. Every
     line OUTSIDE the markers is preserved verbatim — notably the user-added
     HEALTHCHECKS_URL= and GOOGLE_CLOUD_PROJECT= env lines run_scraper.sh reads,
-    which a whole-crontab replace used to wipe on every schedule push.
+    which a whole-crontab replace wipes on every schedule push.
 
     Pure text, so the round-trip is unit-testable without a live VM.
     `install_crontab_cmd` runs the equivalent (sed strip + append) on the VM."""
@@ -302,9 +302,9 @@ class VMTarget:
         run_scraper.sh source that file (once, via a marker block inserted right
         after the shebang so it runs before anything needs the value), and
         replaces any older inline assignment further down with a comment. That
-        last step is load-bearing: an inline export sits AFTER the source line and
-        would otherwise win, leaving the dead credential in force and making the
-        fix look like it silently did nothing.
+        last step is what makes the rest hold: an inline export sits AFTER the
+        source line and would otherwise win, leaving the dead credential in force
+        and making the fix look like it silently did nothing.
 
         The replacement takes the WHOLE line, retired value included, rather than
         commenting the assignment out in place. The point of this feature is to get
@@ -314,12 +314,12 @@ class VMTarget:
         is not lost: the first install copies the untouched script to a mode-600
         run_scraper.sh.inployed.bak, and every revert path restores from it.
 
-        It then PROVES the result instead of announcing it. `echo SECRET_SET`
-        used to be unconditional, so two shapes reported success while changing
-        nothing the cron run would see: a missing run_scraper.sh (the whole edit
-        block was skipped) and an indented `  export NAME=` (the old sed anchored
-        at column 0, so the dead value still won at source time). Both now fail
-        with a named code. The check is textual on purpose — verifying by
+        It then PROVES the result instead of announcing it. An unconditional
+        `echo SECRET_SET` reports success on two shapes that change nothing the
+        cron run would see: a missing run_scraper.sh (the whole edit block is
+        skipped) and an indented `  export NAME=` (a sed anchored at column 0
+        leaves the dead value winning at source time). Both fail with a named
+        code instead. The check is textual on purpose — verifying by
         SOURCING run_scraper.sh would execute it, and that script starts a billed
         scrape.
 
@@ -551,10 +551,11 @@ def set_vm_secret(target: VMTarget, name: str, value: str):
     configured. Raises ValueError for an unmanaged name, a non-home VM_REMOTE_DIR,
     or a value that couldn't live safely in a sourced shell file.
 
-    EVERY rejection happens before the upload. The name check used to live in
-    set_secret_cmd, which runs only AFTER the scp has already put the plaintext
-    value on the VM, so a rejected name left the credential sitting there with no
-    EXIT trap ever armed to remove it. Same for the remote-dir check.
+    EVERY rejection happens before the upload. The name check sits here rather
+    than in set_secret_cmd, which runs only AFTER the scp has already put the
+    plaintext value on the VM: a rejected name there leaves the credential sitting
+    on the VM with no EXIT trap ever armed to remove it. Same for the remote-dir
+    check.
 
     NO failure path leaves the staged credential on the VM. The EXIT trap covers
     only the case where the remote script actually ran, so this side clears it

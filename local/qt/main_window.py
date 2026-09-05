@@ -292,7 +292,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """What the empty panel says when every source that exists failed to parse.
 
         Names the file and the parser's own reason, because "check your Drive" is
-        not actionable without knowing WHICH file is broken. Kept a plain string
+        no use without knowing WHICH file is broken. Kept a plain string
         so the wording is testable without building a window."""
         problems = tuple(getattr(self, "_load_problems", ()) or ())
         if not problems:

@@ -54,11 +54,11 @@ def test_model_defaults_are_upgraded():
     assert config.MODEL_PRO == "gemini-3.5-flash"
 
 
-# P2-13: RESUME_TAILOR_MODEL_* used to be read only at import (module-level
-# os.getenv), so a Settings-written .env change was invisible to a running
-# dashboard until restart. model_for() now resolves the env fresh on every
-# call, like gemini_auth() already does -- so a mid-process env change is
-# picked up immediately, with no code change/ripple into llm.py or Settings.
+# P2-13: read at import (a module-level os.getenv), RESUME_TAILOR_MODEL_* would
+# make a Settings-written .env change invisible to a running dashboard until
+# restart. model_for() resolves the env fresh on every call, the way gemini_auth()
+# does, so a mid-process env change is picked up immediately with no ripple into
+# llm.py or Settings.
 def test_model_for_flash_lite_picks_up_env_change_live(monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-9.9-custom")
     assert config.model_for(config.TIER_FLASH_LITE) == "gemini-9.9-custom"

@@ -962,7 +962,7 @@ def test_advanced_set_excludes_country_pdflatex_and_max_scored():
 
     `max_scored_per_run` is the only ceiling on an LLM bill, so it must stay
     where someone worried about spend can find it. (`rescore_cap` reads like its
-    twin but is retry-of-failures plumbing — genuinely advanced, and in the set
+    twin but is retry-of-failures plumbing — advanced, and in the set
     above.)
 
     This test exists to stop a future tidy-up pass from folding them in.

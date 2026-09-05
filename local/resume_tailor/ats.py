@@ -4,7 +4,7 @@ Deterministic (no LLM call): the keyword pool is the candidate's own skill
 taxonomy from master_experience.yaml plus a built-in lexicon of common
 ATS-screened tech/analytics terms, plus repeated acronyms found in the JD.
 The report flags JD terms missing from the tailored PDF so the user can decide
-whether a missing term is genuinely true of them (select-and-rephrase rule:
+whether a missing term is true of them (select-and-rephrase rule:
 never add a skill just because the JD wants it).
 """
 from __future__ import annotations
@@ -139,7 +139,7 @@ def extract_keywords(jd_text: str, top_n: int = 30) -> List[str]:
     """The JD's top keywords: lexicon hits ranked by frequency, then repeated acronyms
     the lexicon missed. Alias-aware: a concept and its JD synonyms count as ONE keyword
     (frequencies summed) and surface in the JD's own spelling (the most frequent spelling
-    actually present), so a synonym the candidate genuinely owns is matched, not missed,
+    actually present), so a synonym the candidate owns is matched, not missed,
     and never double-listed against its canonical."""
     idx = alias_index()
     # Spellings to score: candidate terms + builtin lexicon + every anchored alias spelling,

@@ -460,7 +460,7 @@ def test_the_remote_secret_script_actually_works_end_to_end(tmp_path):
 
 
 def test_an_indented_inline_export_is_neutralised_not_left_to_win(tmp_path):
-    """The sed used to be anchored at column 0, so `  export NAME=old` survived.
+    """A sed anchored at column 0 leaves `  export NAME=old` alive.
 
     That is the worst outcome this feature has: the script exits 0, the panel says
     "set on the VM", and the cron run keeps using the dead credential, because the
@@ -552,9 +552,9 @@ def test_a_non_home_remote_dir_is_refused_before_anything_is_uploaded(tmp_path):
 
 
 def test_an_unmanaged_name_is_refused_before_the_value_is_uploaded(monkeypatch):
-    """The name check used to live in set_secret_cmd, which runs only AFTER the
-    scp: a rejected name still put the plaintext credential on the VM, with no
-    EXIT trap ever armed to remove it."""
+    """set_secret_cmd runs only AFTER the scp, so a name check there would let a
+    rejected name put the plaintext credential on the VM anyway, with no EXIT trap
+    ever armed to remove it. The check belongs before the upload."""
     import pytest
     calls = []
     monkeypatch.setattr(vm_sync, "run_cmd", lambda cmd: calls.append(cmd) or

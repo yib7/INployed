@@ -255,7 +255,7 @@ def lead_overview_enabled() -> bool:
 def methods_line_enabled() -> bool:
     """Whether the résumé renders a 'Methods' concepts line (compose.methods_line): a 5th
     technical-skills line that surfaces the JD's concept buzzwords ('A/B Testing', 'ETL',
-    'data wrangling') the candidate genuinely owns — printed in the JD's own spelling via
+    'data wrangling') the candidate owns — printed in the JD's own spelling via
     the anchored skill_aliases layer (Tier 1) then padded with the model's role-relevant
     concept ranking (Tier 2). It only draws from concepts_and_methodologies the user
     declared, never invents. Defaults ON. Precedence: RESUME_TAILOR_METHODS_LINE env >

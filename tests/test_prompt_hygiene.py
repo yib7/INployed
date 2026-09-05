@@ -101,7 +101,7 @@ PROMPT_KEYWORDS = ("system", "user")      # call(system=..., user=...)
 EXTRA_PROMPT_ROOTS: Tuple[Tuple[str, str], ...] = (("chat.py", "build_context"),)
 
 # Calls whose string arguments are patterns, not prose. ``style_violations()`` is
-# genuinely reachable from a prompt (its RESULT, the violation names, rides in the
+# reachable from a prompt (its RESULT, the violation names, rides in the
 # enforce_style payload), and following it lands in ``_STYLE_BANS`` -- whose regex
 # source contains a literal em dash that no model ever sees. Stop at the re call.
 OPAQUE_CALLS: Dict[str, Set[str]] = {

@@ -400,7 +400,7 @@ def _qss() -> str:
     QToolButton[resetField="true"] {{ color: {MUTED}; border: 0; padding: 0 4px;
         background: transparent; }}
     QToolButton[resetField="true"]:hover {{ color: {ACCENT}; }}
-    /* `background: transparent` is load-bearing: a section header is a
+    /* `background: transparent` is required here: a section header is a
        QToolButton inside a PANEL card, and the global `QWidget {{ background:
        WINDOW }}` rule otherwise painted a WINDOW-dark slab behind every Settings
        section title. QToolButton is not a QLabel/QCheckBox/QSlider, so the

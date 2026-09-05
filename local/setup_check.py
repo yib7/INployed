@@ -15,9 +15,9 @@ Two halves, split by cost rather than by topic:
   must never report a problem it did not actually observe.
 
 The two `*_warnings` helpers are pure (all inputs passed in, no I/O) so they can
-be unit-tested exhaustively. They used to live in `local/jobsdata.py` as private
-functions that `main_window` reached across the module boundary to call; they are
-setup-check logic rather than job-data logic, so they live here now, public.
+be unit-tested exhaustively. They are public here rather than private in
+`local/jobsdata.py`, where `main_window` had to reach across a module boundary to
+call them: this is setup-check logic, not job-data logic.
 """
 from __future__ import annotations
 

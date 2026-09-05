@@ -112,9 +112,9 @@ def main(argv=None) -> int:
                   dry_run=a.dry_run)
     except (OSError, ValueError, KeyError, AttributeError, TypeError,
             pd.errors.ParserError) as e:
-        # A shape surprise in the master should print one actionable line, not a
-        # traceback: run_scraper.sh swallows the exit code, so a traceback here
-        # means the prune silently stops running and nobody notices.
+        # A shape surprise in the master should print one line naming the fix,
+        # not a traceback: run_scraper.sh swallows the exit code, so a traceback
+        # here means the prune silently stops running and nobody notices.
         print(f"prune_master: cannot process {a.master}: "
               f"{type(e).__name__}: {e}", file=sys.stderr)
         return 1

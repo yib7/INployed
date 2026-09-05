@@ -245,7 +245,7 @@ class SeenRegistry:
         # UTC, aware — like every other timestamp this module writes. status_ts
         # exists so import_from can break a same-day tie across machines, and it
         # compares LEXICOGRAPHICALLY: a naive local wall-clock stamp let a 09:00
-        # change in one zone beat a genuinely later 10:00 change in another, and
+        # change in one zone beat a later 10:00 change in another, and
         # lost an hour a year to DST fall-back. A legacy naive row still sorts
         # sanely against a UTC one — the "+00:00" suffix makes the aware form
         # sort later at equal clock time, which is the safe direction.

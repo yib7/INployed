@@ -1,7 +1,7 @@
 """local/errmsg.py — exception text for a message a user will SEE.
 
-The dashboard shows exception text because "something went wrong" is not
-actionable. Python puts the offending path into an OSError's own message, so the
+The dashboard shows exception text because "something went wrong" does not tell
+anyone what to do next. Python puts the offending path into an OSError's own message, so the
 empty-state panel carefully named the file as `Path(p).name` and then printed
 `[Errno 13] Permission denied: 'C:\\\\Users\\\\<name>\\\\...'` right after it.
 That travels into screenshots and bug reports, and the home directory names the

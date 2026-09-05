@@ -114,7 +114,7 @@ def line_count(text: str, capacity: int | None = None) -> int:
 # The rephrase prompt has to state a bullet's length as a CHARACTER cap (the model cannot
 # measure glyph widths), so we convert the width budget above into characters here.
 #
-# Two things make that conversion non-obvious, and both are load-bearing:
+# Two things make that conversion non-obvious, and both move the number:
 #
 #  1. Characters are not all the same width, so the cap has to assume the WIDEST realistic
 #     prose, not the average. Measured over a set of representative bullets — binary-search
@@ -173,7 +173,7 @@ def _env_fraction(name: str, default: float, lo: float = 0.05, hi: float = 1.0) 
 #     bullet's last line for >=75%. Unchanged — we still want lines to read full.
 #   * the underfull TRIGGER (UNDERFULL_FILL) is how empty a line must be before we RESCUE it by
 #     folding in a spare same-block atom (fill_floor_width -> is_underfull -> compose.fill_underfull).
-#     Set low (50%) so only a genuinely sparse line is grown; some white space above it is fine and
+#     Set low (50%) so only a sparse line is grown; some white space above it is fine and
 #     kept for readability.
 # All three are env-overridable (power users only — deliberately NOT Settings GUI fields, same
 # call as RESUME_TAILOR_TIMEOUTS: a fraction a non-technical user can set to 0 is a footgun,

@@ -124,8 +124,8 @@ def test_hiding_title_falls_back_to_stretching_the_last_section(qtbot):
 
 def test_tracker_resume_column_is_wide_enough_for_its_label():
     widths = dict(TRACKER_COLUMNS)
-    # It used to be 60px and only looked right because it was the stretched
-    # last section; with Title stretching instead it must stand on its own.
+    # At 60px this column only looks right while it is the stretched last
+    # section; with Title stretching instead it has to stand on its own.
     assert widths["resume"] >= 80
 
 

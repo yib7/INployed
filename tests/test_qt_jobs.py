@@ -278,10 +278,10 @@ def test_refused_hide_reports_false_and_resyncs_the_checkbox(qtbot):
 
 
 def test_stale_persisted_column_ids_do_not_freeze_the_dialog(qtbot):
-    """A hidden-column id for a column that no longer exists used to be kept
-    verbatim AND re-saved, so once the stale ids outnumbered the real columns the
-    len(target) >= len(col_ids) guard was permanently true and every toggle in the
-    Columns dialog was silently ignored."""
+    """Keeping a hidden-column id for a column that no longer exists, and
+    re-saving it, makes the len(target) >= len(col_ids) guard permanently true
+    once the stale ids outnumber the real columns, and every toggle in the Columns
+    dialog is then silently ignored. The list is intersected instead."""
     stale = {"all": ["gone_a", "gone_b", "gone_c", "gone_d", "gone_e", "gone_f", "url"]}
     tab = JobsTab("all", COLS, hidden_columns=stale)
     qtbot.addWidget(tab)

@@ -310,9 +310,9 @@ def _resume_lines(master: Dict[str, Any], sel: Optional[Dict[str, Any]],
 # reads `- **Label:** value` lines into the dict a form fill types from. The
 # letter body is the one part of apply.md a model writes from a job description
 # an employer controls, so a posting that talks the model into emitting a
-# `## Candidate` block used to get a second, later Candidate section -- and the
-# parser took the LAST value for each key, so the email address typed into a real
-# application became the one the posting supplied. Neither shape is legitimate
+# `## Candidate` block opens a second, later Candidate section, and the parser
+# reads the LAST value for each key, so the email address typed into a real
+# application would be the one the posting supplied. Neither shape is legitimate
 # letter prose, so both are backslash-escaped: markdown renders the escape as a
 # literal `#` or `-`, the letter still reads and pastes correctly, and neither
 # regex matches any more.

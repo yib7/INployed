@@ -225,7 +225,7 @@ def test_update_master_scores_leaves_master_untouched_on_replace_failure(tmp_pat
     assert master.read_bytes() == before            # untouched: os.replace never landed
 
 
-# P2-6: a corrupt-but-present master must raise an actionable OSError (fix/restore),
+# P2-6: a corrupt-but-present master must raise an OSError naming the fix (fix/restore),
 # not a raw pandas ParserError/UnicodeDecodeError out of save_output -> main after
 # the scored gz is already written. Mirrors scraper.append_to_master's guard.
 
@@ -238,7 +238,7 @@ def test_update_master_scores_unreadable_master_raises_actionable_oserror(tmp_pa
     with pytest.raises(OSError) as exc:
         sj.update_master_scores(scored)
 
-    # An actionable recovery message, NOT a raw pandas parse traceback.
+    # A recovery message that names the fix, NOT a raw pandas parse traceback.
     assert not isinstance(exc.value, pd.errors.ParserError)
     msg = str(exc.value)
     assert "unreadable" in msg
@@ -251,7 +251,7 @@ def test_update_master_scores_unreadable_master_raises_actionable_oserror(tmp_pa
 def test_update_master_scores_corrupt_row_midstream_raises_actionable_oserror(tmp_path, monkeypatch):
     # Header parses fine (nrows=0 read passes) but a row deep in the stream has
     # the wrong field count -- the ParserError only surfaces during the chunked
-    # read loop, which must still be converted to the actionable OSError.
+    # read loop, which must still be converted to that same OSError.
     master = tmp_path / "linkedin_jobs_master.csv"
     master.write_text("job_posting_id,job_title\n1,A\n2,B,EXTRA,FIELDS\n", encoding="utf-8")
     monkeypatch.setattr(sj, "MASTER_CSV", master)

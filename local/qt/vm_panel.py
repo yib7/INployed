@@ -31,10 +31,10 @@ MAX_TIMES = vm_schedule.MAX_TIMES_PER_DAY
 class _CronPreview(QtWidgets.QPlainTextEdit):
     """The crontab preview box, four lines tall at whatever the live scale is.
 
-    It used to be `setFixedHeight(90)`, measured at 100%. Everything inside it
-    scales with the interface size, so at 125% the box swallowed the last line
-    and at 150% it cut `# INPLOYED-SCHEDULE-END` and half the line above it —
-    the preview clipping the thing it exists to preview. `set_scale` re-fonts
+    Everything inside it scales with the interface size, so a height fixed at
+    100% (`setFixedHeight(90)`) swallows the last line at 125% and cuts
+    `# INPLOYED-SCHEDULE-END` plus half the line above it at 150%, leaving the
+    preview clipping the thing it exists to preview. `set_scale` re-fonts
     every live widget, so re-deriving the height on FontChange keeps it right
     without the panel having to know a rescale happened.
     """

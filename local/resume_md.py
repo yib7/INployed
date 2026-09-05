@@ -179,7 +179,7 @@ def generate_resume_md(
         raise ValueError("The model returned no resume text.")
     # De-fence first, then guarantee the concepts pool survived (append any item the model
     # dropped) — so the scorer never under-scores a posting that screens for a concept the
-    # candidate genuinely owns.
+    # candidate owns.
     return _ensure_concepts(_clean(out), _concepts_pool(yaml_text))
 
 

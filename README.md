@@ -286,7 +286,7 @@ flowchart LR
     JD["job description"] --> S
     S --> R["rephrase (deep tier)<br/>one bullet per group"]
     R --> V{"verify.py<br/>every distinctive token<br/>traces to an atom?"}
-    V -->|yes| LO["layout<br/>fit exact line budgets"]
+    V -->|yes| LO["layout<br/>fit measured line budgets"]
     V -->|no| RV["revert to last grounded<br/>text, else drop"]
     RV --> LO
     LO --> C["compile LaTeX<br/>enforce one page"]
@@ -394,8 +394,8 @@ one from PyPI under its own license when you run Step 2.
 Across the tree `pip` actually installs, direct pins and transitive ones together, the
 licenses are MIT, BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi,
 pulled in by requests and httpx; the Zlib, CC0-1.0 and 0BSD arms come from numpy's
-composite expression, under pandas). All of those permit an MIT release. The one copyleft dependency is
-**PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercial from
+composite expression, under pandas). All of those permit an MIT release. The one copyleft
+dependency is **PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercial from
 The Qt Company. The dashboard imports PySide6 as an ordinary Python module and bundles no
 Qt binaries, so LGPLv3's relink condition is met by construction: you have the full source
 and can swap the PySide6 version with one `pip install`. `docs/CREDITS.md` lists the same

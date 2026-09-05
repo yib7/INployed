@@ -251,6 +251,24 @@ def _positive_int(value, default: int) -> int:
     return n if n >= 1 else default
 
 
+def _keyword_cap(value: int) -> int:
+    """`max_keywords` as a slice length, with a negative collapsed to 1.
+
+    build_inputs spends this as `keywords[:n]`, and Python reads a negative slice
+    bound as "all but n" -- `keywords[:-1]` is every keyword except the last. So
+    --max-keywords -1, the obvious way to write "no limit", would announce a cap
+    and then fire all-but-one search: a spend guard that names itself and lifts
+    itself, which is the one failure mode a spend guard must not have. 1 is the
+    tightest real cap, so it is the fail-closed direction. 0 is left alone --
+    `keywords[:0]` is empty and already spends nothing.
+    """
+    if value < 0:
+        print(f"  WARNING: --max-keywords={value} is negative, which would use "
+              "every keyword BUT the last instead of capping; using 1")
+        return 1
+    return value
+
+
 def load_search_config() -> dict:
     """Effective search config: file values where present, built-in constants else.
 
@@ -722,7 +740,8 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
     doesn't thread it through.
     """
     cfg = load_search_config()
-    keywords = cfg["keywords"] if max_keywords is None else cfg["keywords"][:max_keywords]
+    keywords = (cfg["keywords"] if max_keywords is None
+                else cfg["keywords"][:_keyword_cap(max_keywords)])
     remote_types = cfg["remote_types"]
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
@@ -999,6 +1018,16 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     # (which itself falls back to LIMIT_PER_INPUT) drives the per-input cap.
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
+    else:
+        # trigger() coerces this again before it reaches the billed URL, but ONLY
+        # there -- so an explicit --limit=0 or --limit=-5 printed one number and
+        # billed against another, and the run log named a cap that was never in
+        # force. Coerce once, here, and say so.
+        capped = _positive_int(limit_per_input, cfg["limit_per_input"])
+        if capped != limit_per_input:
+            print(f"  WARNING: --limit={limit_per_input} is not a positive count; "
+                  f"using {capped}. A bad value never lifts a spend guard.")
+        limit_per_input = capped
 
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         if snapshot_id is None:
@@ -1012,8 +1041,10 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
             inputs = build_inputs(exclude_ids, max_keywords=max_keywords,
                                   limit_per_input=limit_per_input)
             payload = {"input": inputs}
-            n_keywords = len(cfg["keywords"])
-            kw_used = n_keywords if max_keywords is None else min(max_keywords, n_keywords)
+            # Derived from `inputs`, not from the raw flag: build_inputs coerces
+            # the flag, and a run log naming a cap the run did not apply is worse
+            # than no line at all.
+            kw_used = len(inputs) // max(len(cfg["remote_types"]), 1)
             print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
                   f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
             snapshot_id = await trigger(session, payload, limit_per_input=limit_per_input)

@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import warnings
@@ -266,6 +267,28 @@ def infer_ats(apply_url: str) -> Dict[str, str]:
     return {"domain": netloc, "system": system}
 
 
+# `company`, `title` and `apply_url` come straight off a scraped posting, and a
+# queue entry is not just data the dashboard shows: the auto-apply orchestrator
+# substitutes these three into the subagent brief that drives the user's real
+# signed-in Chrome. A newline in a company name forges a line in that brief; a
+# non-http(s) apply_url is a scheme nothing downstream should ever navigate to.
+# local/chrome.py:102 already refuses a non-http(s) URL at the "Open posting"
+# button -- this is the same rule at the other entry point, applied on the way
+# IN so a stored entry is clean for every later reader rather than at each one.
+_WS_RUN_RE = re.compile(r"\s+")
+
+
+def _one_line(value) -> str:
+    """A scraped display field as a single line (whitespace runs -> one space)."""
+    return _WS_RUN_RE.sub(" ", str(value or "")).strip()
+
+
+def _safe_url(value) -> str:
+    """An http(s) URL, or "" — the queue never stores a scheme it must not open."""
+    url = _one_line(value)
+    return url if url.lower().startswith(("http://", "https://")) else ""
+
+
 def new_entry(job_posting_id: str, *, company: str = "", title: str = "",
               apply_url: str = "", is_easy_apply: bool = False,
               batch_id: str = "", status: str = "queued") -> Dict[str, Any]:
@@ -275,12 +298,13 @@ def new_entry(job_posting_id: str, *, company: str = "", title: str = "",
     if status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}, not {status!r}")
     now = _now()
+    apply_url = _safe_url(apply_url)
     ats = infer_ats(apply_url)
     return {
         "job_posting_id": str(job_posting_id),
-        "company": str(company or ""),
-        "title": str(title or ""),
-        "apply_url": str(apply_url or ""),
+        "company": _one_line(company),
+        "title": _one_line(title),
+        "apply_url": apply_url,
         "is_easy_apply": bool(is_easy_apply),
         "batch_id": str(batch_id or ""),
         "status": status,

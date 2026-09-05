@@ -15,6 +15,10 @@ The résumé engine's rule is **select and re-phrase, never invent**. Every
 résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
 (no LLM) drops any bullet that doesn't.
 
+2,593 tests cover the pipeline, the Qt UI and the résumé engine, and run on every
+push against Windows and Linux plus a clean-room job that installs from this
+README's own setup steps.
+
 Three pieces do the work:
 
 1. **Job discovery** (`pipeline/scraper.py`): collects postings from the job-data provider

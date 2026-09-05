@@ -1204,3 +1204,17 @@ def test_validate_leaves_json_backed_fields_and_ordinary_values_alone(tmp_path):
         "GEMINI_API_KEYS": "key1,key2,key3",
         "RESUME_TAILOR_CANDIDATE": "Jane_Doe",
     }) == {}
+
+
+def test_validate_rejects_the_non_c0_line_separators_too(tmp_path):
+    """settings.validate and envfile.update must refuse the same class.
+
+    U+0085, U+2028 and U+2029 all split a line for `str.splitlines()` while
+    sitting outside the C0 range, so a class of `\x00-\x1f` alone let them
+    through to the one-line .env writer. Compared as patterns as well, because
+    two copies of a character class drift.
+    """
+    assert settings._CONTROL_RE.pattern == settings.envfile._CONTROL_RE.pattern
+    for sep in (chr(0x85), chr(0x2028), chr(0x2029)):
+        errs = settings.validate({"GEMINI_API_KEYS": "key1" + sep + "key2"})
+        assert "GEMINI_API_KEYS" in errs, f"{sep!r} accepted"

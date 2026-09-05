@@ -122,12 +122,13 @@ nothing is overwritten without `-Force`.
 **Double-click `Open INployed Dashboard.cmd`** in the project folder. That is the single
 entry point, and the only thing you need for every later launch. (Right-click it →
 *Send to* → *Desktop (create shortcut)* for a desktop icon. From a terminal it is
-`python local/app.py`.)
+`venv\Scripts\python.exe local\open_dashboard.pyw` — the same interpreter and the same
+script the launcher runs, since Step 2's venv is never activated.)
 
 With no keys and no jobs yet, the window opens to a **get-started panel** rather than a
 blank table, so you can confirm the install worked before configuring anything.
 
-### Step 5: Set your keys in the Settings tab
+### Step 5 (skip to just look around): Set your keys in the Settings tab
 In the running dashboard, open the **Settings** tab and fill in the **Credentials**
 section. One form covers every key, path, and option the project has; nothing needs to be
 edited by hand. See
@@ -141,13 +142,13 @@ You need an account for each feature you want:
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
 | Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the gcloud CLI from Step 7, signed in |
 
-*(Skip if you only want to look around: the dashboard, tracker, and editors all run
-without keys. The tailor stops with a plain "no key configured" message instead.
+*(Nothing breaks without keys: the dashboard, tracker, and editors all run, and the
+tailor stops with a plain "no key configured" message instead.
 The VM row is optional even with keys: **Find new jobs** runs the same discovery
 on your PC, and the VM controls stay hidden until you switch on **Enable VM
 features** in Settings.)*
 
-### Step 6: Enter your experience in the Resume Data tab
+### Step 6 (skip until you tailor): Enter your experience in the Resume Data tab
 Your experience lives in **`resume_tailor_files/master_experience.yaml`**, the single
 source of truth the pipeline **selects** from per job (it never fabricates). Use the
 dashboard's **Resume Data** tab to add / edit / delete entries and achievements, with

@@ -99,6 +99,19 @@ def _scroll(widget, steps: int) -> None:
     bar.setValue(bar.value() + steps * max(1, bar.singleStep()))
 
 
+def _scroll_frac(widget, frac: float) -> None:
+    """Drive a scroll bar to `frac` of its own range.
+
+    Fixed step counts are how a scroll beat goes dead: `scripts/build_demo_media`
+    quantizes to a shared palette and Pillow then MERGES two identical frames into
+    one long hold, so a step past the bottom silently turns a beat into a pause.
+    A fraction of the live range always moves while the range is non-zero.
+    """
+    bar = widget.verticalScrollBar()
+    lo, hi = bar.minimum(), bar.maximum()
+    bar.setValue(round(lo + frac * (hi - lo)))
+
+
 TYPED_QUERY = "engineer"
 
 
@@ -114,55 +127,72 @@ def scenes(win):
     tailored = win._demo_tailored_folder   # planted by render_scenes, see below
     typing = "Search filters the ranked list live, without a re-run"
     tailor = "Tailor writes the resume, cover letter and apply sheet for THIS job"
+    rows = "Every row carries the model's reason, strengths and gaps"
+    sheet = "apply.md - one self-contained sheet, every bullet traced to your data"
+    atoms = "Resume Data - the atoms every generated bullet must trace back to"
+    queue = "Auto-apply queue - batch tailoring that stops short of submitting"
+    runs = "Stats - per-run counts, token spend and rescore outcomes"
+    every = "All Jobs - every posting collected, scored or not"
+    statuses = "Statuses run applied through interviewing, offer and rejected"
+    answers = "Apply Answers - reusable responses for application forms"
+    knobs = "Settings - keys, paths, schedule and engine options, no file editing"
     return [
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 0),
-         "High Score - what a scored run leaves you to actually look at", 5.0),
-        ("High Score (Unseen)", lambda: _pick(win.high_tab, 1),
-         "Every row carries the model's reason, strengths and gaps", 2.2),
-        ("High Score (Unseen)", lambda: _pick(win.high_tab, 2),
-         "Every row carries the model's reason, strengths and gaps", 2.2),
+         "High Score - what a scored run leaves you to actually look at", 4.0),
+        ("High Score (Unseen)", lambda: _pick(win.high_tab, 1), rows, 2.0),
+        ("High Score (Unseen)", lambda: _pick(win.high_tab, 2), rows, 2.0),
+        ("High Score (Unseen)", lambda: _pick(win.high_tab, 3), rows, 2.0),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 7),
-         "Colour tracks tailoring state: tailored, failed, untouched", 3.0),
+         "Colour tracks tailoring state: tailored, failed, untouched", 2.6),
         # Typed one character at a time so the table visibly sheds rows.
         *[("High Score (Unseen)",
            (lambda n=n: _search(win, TYPED_QUERY[:n])), typing, 0.34)
           for n in range(1, len(TYPED_QUERY) + 1)],
-        ("High Score (Unseen)", lambda: None, typing, 2.6),
+        ("High Score (Unseen)", lambda: None, typing, 2.0),
         ("High Score (Unseen)", lambda: (_search(win, ""), _pick(win.high_tab, 7)),
-         "Clearing it restores the ranked list", 3.0),
+         "Clearing it restores the ranked list", 2.4),
         # The journey's middle: tailor the selected job, then read what it wrote.
         ("High Score (Unseen)", lambda: uis._show_apply_panel(win, tailored),
-         tailor, 5.0),
-        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
-         "apply.md - one self-contained sheet, every bullet traced to your data", 2.4),
-        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
-         "apply.md - one self-contained sheet, every bullet traced to your data", 2.4),
-        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
-         "apply.md - one self-contained sheet, every bullet traced to your data", 2.4),
-        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 6),
-         "The browser agent fills a form from this, and stops before Submit", 3.6),
+         tailor, 4.2),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5), sheet, 1.6),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5), sheet, 1.6),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5), sheet, 1.6),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5), sheet, 1.6),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5), sheet, 1.6),
+        ("High Score (Unseen)", lambda: _scroll(win.apply_panel._sheet, 5),
+         "The browser agent fills a form from this, and stops before Submit", 3.0),
         ("All Jobs", lambda: (win._close_apply_panel(), _pick(win.all_tab, 0)),
-         "All Jobs - every posting collected, scored or not", 4.5),
+         every, 3.0),
+        ("All Jobs", lambda: _pick(win.all_tab, 4), every, 1.8),
+        ("All Jobs", lambda: _pick(win.all_tab, 9), every, 2.2),
         ("Tracker", lambda: _pick(win.tracker_tab, 0),
-         "Tracker - application status, with follow-ups flagged when due", 5.5),
-        ("Tracker", lambda: _pick(win.tracker_tab, 2),
-         "Statuses run applied through interviewing, offer and rejected", 2.4),
-        ("Tracker", lambda: _pick(win.tracker_tab, 3),
-         "Statuses run applied through interviewing, offer and rejected", 3.4),
-        ("Auto-apply", lambda: None,
-         "Auto-apply queue - batch tailoring that stops short of submitting", 5.0),
-        ("Stats", lambda: None,
-         "Stats - per-run counts, token spend and rescore outcomes", 5.0),
-        ("Resume Data", lambda: None,
-         "Resume Data - the atoms every generated bullet must trace back to", 5.0),
-        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 8),
-         "Resume Data - the atoms every generated bullet must trace back to", 2.4),
-        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 8),
-         "Resume Data - the atoms every generated bullet must trace back to", 3.0),
-        ("Apply Answers", lambda: None,
-         "Apply Answers - reusable responses for application forms", 4.5),
-        ("Settings", lambda: None,
-         "Settings - keys, paths, schedule and engine options, no file editing", 5.5),
+         "Tracker - application status, with follow-ups flagged when due", 4.2),
+        ("Tracker", lambda: _pick(win.tracker_tab, 2), statuses, 1.8),
+        ("Tracker", lambda: _pick(win.tracker_tab, 3), statuses, 1.8),
+        ("Tracker", lambda: _pick(win.tracker_tab, 4), statuses, 2.4),
+        ("Auto-apply", lambda: None, queue, 3.0),
+        ("Auto-apply", lambda: _pick(win.apply_queue_panel, 3), queue, 1.8),
+        ("Auto-apply", lambda: _pick(win.apply_queue_panel, 4), queue, 1.8),
+        ("Auto-apply", lambda: _pick(win.apply_queue_panel, 6), queue, 2.2),
+        ("Stats", lambda: None, runs, 3.4),
+        ("Stats", lambda: _pick(win.stats_tab, 3), runs, 1.8),
+        ("Stats", lambda: _pick(win.stats_tab, 6), runs, 2.2),
+        ("Resume Data", lambda: None, atoms, 3.4),
+        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 6), atoms, 1.6),
+        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 6), atoms, 1.6),
+        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 6), atoms, 1.6),
+        ("Resume Data", lambda: _scroll(win.resume_data_tab.scroll, 6), atoms, 2.2),
+        # Apply Answers gets ONE hold: its sixteen rows fit the window, so a
+        # scroll beat there produced a byte-identical frame and Pillow folded it
+        # into the hold before it -- a pause dressed up as motion.
+        ("Apply Answers", lambda: None, answers, 3.4),
+        # Scrolling Settings is what shows that the ten sections are all there;
+        # Credentials and Connection & paths stay FOLDED throughout (only Engine
+        # is expanded), so no secret field is ever on screen.
+        ("Settings", lambda: None, knobs, 3.2),
+        ("Settings", lambda: _scroll_frac(win.settings_tab._scroll, 1 / 3), knobs, 1.6),
+        ("Settings", lambda: _scroll_frac(win.settings_tab._scroll, 2 / 3), knobs, 1.6),
+        ("Settings", lambda: _scroll_frac(win.settings_tab._scroll, 1.0), knobs, 2.8),
     ]
 
 

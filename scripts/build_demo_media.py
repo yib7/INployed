@@ -99,6 +99,25 @@ def build_stills(prefix: str) -> list[tuple[Path, int]]:
     return written
 
 
+def _palette(holds: list[Image.Image]) -> Image.Image:
+    """An adaptive palette covering every scene, not just the opening one.
+
+    Built from the STORYBOARD holds only. The crossfade frames are blends that
+    exist for a twelfth of a second each, and letting them into the sample
+    spends the table on colours no screen is actually painted in.
+
+    MEDIANCUT, not MAXCOVERAGE: this UI is large flat fills, and median-cut
+    splits by population, so the panel fill and the page ground land on exact
+    entries. MAXCOVERAGE spreads entries evenly through the colour cube instead
+    and left both off by 5-11 per channel.
+    """
+    tw, th = holds[0].width // 4, holds[0].height // 4
+    montage = Image.new("RGB", (tw, th * len(holds)))
+    for i, f in enumerate(holds):
+        montage.paste(f.resize((tw, th), Image.Resampling.NEAREST), (0, i * th))
+    return montage.quantize(colors=GIF_COLORS, method=Image.Quantize.MEDIANCUT)
+
+
 def build_gif() -> Path:
     """Render the walkthrough storyboard live and write it as a looping GIF."""
     sys.path.insert(0, str(REPO / "scripts"))
@@ -122,9 +141,14 @@ def build_gif() -> Path:
             frames.append(Image.blend(hold, holds[nxt_i], k / (FADE_FRAMES + 1)))
             durations.append(FADE_MS)
 
-    # One shared adaptive palette: the theme is flat and dark, so 128 colours
-    # cost nothing visually and let every frame reuse the same table.
-    palette = frames[0].quantize(colors=GIF_COLORS, method=Image.Quantize.MAXCOVERAGE)
+    # One shared adaptive palette, sampled from the WHOLE tour rather than from
+    # frame 0. Deriving it from the first frame alone spends the table on the
+    # High Score tab's green/red row tints, and the neutral panel fill every
+    # form-shaped tab is painted in (#161b22) then resolves to the nearest
+    # entry, which is a green: the Settings frame came back visibly tinted
+    # (22,27,34 -> 26,43,38). The montage is nearest-neighbour downscaled so it
+    # carries the frames' exact colours, not interpolated ones.
+    palette = _palette(holds)
     quantized = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
 
     gif = DOCS / "demo.gif"

@@ -38,7 +38,8 @@ This project stands on a lot of other people's work.
 pandas · google-genai · aiohttp · PyYAML · ruamel.yaml · pypdf · markdownify ·
 python-dotenv · tzdata · requests · Send2Trash · keyring · PySide6 (Qt) · pytest ·
 pytest-qt · pytest-timeout · ruff · and the Python standard library (asyncio, sqlite3,
-argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy** (BSD-3).
+argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy**, whose own
+declared expression is `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`.
 
 Four more are optional and installed only if you want the feature they serve, so
 `requirements.txt` lists them without installing them: **playwright** (Apache-2.0), the

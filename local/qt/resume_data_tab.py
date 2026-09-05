@@ -17,6 +17,7 @@ from typing import Callable
 import yaml
 from PySide6 import QtCore, QtWidgets
 
+import errmsg
 import jobsdata
 import resume_md
 import settings
@@ -679,7 +680,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
                 master_edit.update_atom(aid, fields, self.master_path)
         except (ValueError, OSError) as exc:
             self._set_status("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Résumé data", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Résumé data", errmsg.for_user(exc))
             return False
 
         # Per-block "don't tailor" bullets live in config.json (separate from the
@@ -724,7 +725,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         try:
             master_edit.delete_entry(section, idx, self.master_path)
         except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Delete entry", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Delete entry", errmsg.for_user(exc))
             return
         self.reload()
         self._set_status(f"Deleted '{name}'.")
@@ -737,7 +738,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         try:
             master_edit.delete_atom(atom_id, self.master_path)
         except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Delete achievement", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Delete achievement", errmsg.for_user(exc))
             return
         self.reload()
         self._set_status("Deleted an achievement.")
@@ -773,7 +774,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             master_edit.add_atom(section, idx, {"what": what, "angles": angles, "impact": impact},
                                  self.master_path)
         except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Add achievement", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Add achievement", errmsg.for_user(exc))
             return
         self.reload()
         self._set_status("Added an achievement.")
@@ -809,7 +810,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         try:
             master_edit.append_entry(section, data, self.master_path)
         except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Add entry", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Add entry", errmsg.for_user(exc))
             return
         self.reload()
         self._set_status(f"Added a {section} entry.")
@@ -846,7 +847,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
     def _gen_failed(self, exc) -> None:
         self._set_status("resume.md generation failed.")
-        QtWidgets.QMessageBox.critical(self, "Generate resume.md", f"Generation failed:\n\n{exc}")
+        QtWidgets.QMessageBox.critical(self, "Generate resume.md", f"Generation failed:\n\n{errmsg.for_user(exc)}")
 
     def _preview(self, md: str) -> None:
         self._set_status("resume.md generated — review it before it's saved.")
@@ -876,7 +877,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         try:
             resume_md.write_resume_md(text)
         except OSError as exc:
-            QtWidgets.QMessageBox.critical(self, "resume.md", f"Could not write resume.md:\n\n{exc}")
+            QtWidgets.QMessageBox.critical(self, "resume.md", f"Could not write resume.md:\n\n{errmsg.for_user(exc)}")
             return
         self._set_status("resume.md updated (old version saved to resume.md.bak).")
         self._refresh_stale_banner()  # now back in sync -> hide the warning
@@ -924,4 +925,4 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def _push_md_launch_error(self, exc) -> None:
         self._set_status("resume.md push failed.")
         QtWidgets.QMessageBox.critical(
-            self, "Push resume.md", f"Push failed to launch:\n\n{exc}")
+            self, "Push resume.md", f"Push failed to launch:\n\n{errmsg.for_user(exc)}")

@@ -23,6 +23,7 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+import errmsg  # noqa: E402  (needs HERE on sys.path; user-facing message rendering)
 
 from jsonutil import (  # noqa: E402  (needs HERE on sys.path)
     read_json_dict, replace_with_retry, update_json_locked,
@@ -248,7 +249,15 @@ def load_files(paths: list[Path], *,
             # meant the local scrape files did not load either. The entire point
             # of this loop is that one unreadable source costs only that source.
             if problems is not None:
-                problems.append((p, f"{type(exc).__name__}: {exc}"))
+                # errmsg.for_user, not str(exc): the caller renders this beside
+                # `Path(p).name` in the dashboard's empty panel, and an OSError
+                # carries the offending path in its OWN message -- so the panel
+                # carefully said "master.csv.gz" and then printed
+                # "[Errno 13] Permission denied: 'C:\\Users\\<name>\\...'" right
+                # after it. A locked master (Excel has it open, an AV scanner is
+                # mid-scan) is the ordinary way to see this, and the string ends
+                # up in screenshots and bug reports.
+                problems.append((p, errmsg.for_user(exc, with_type=True)))
             continue
         if "job_posting_id" not in df.columns:
             if problems is not None:

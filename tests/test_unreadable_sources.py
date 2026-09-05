@@ -156,3 +156,21 @@ def test_a_bare_tuple_from_an_older_caller_still_applies(win):
     """_apply_frames documents that it accepts (df, id_to_path); keep that true."""
     win._apply_frames((pd.DataFrame(), {}))
     assert win._load_problems == ()
+
+
+def test_the_reason_never_carries_an_absolute_path(win, tmp_path):
+    """The panel names the file as Path(p).name and then prints the parser's own
+    reason. An OSError carries the offending path INSIDE that reason, so the
+    careful basename was followed by the full one -- a locked master (Excel has
+    it open, an AV scanner is mid-scan) is the ordinary way to see it, and the
+    string goes into screenshots and bug reports."""
+    bad = tmp_path / "linkedin_jobs_master.csv.gz"
+    bad.write_bytes(b"not a gzip file at all")
+    problems = []
+    jobsdata.load_files([bad], problems=problems)
+    assert len(problems) == 1
+    win._load_problems = tuple(problems)
+    msg = win.unreadable_sources_message()
+    assert "linkedin_jobs_master.csv.gz" in msg          # still names the file
+    assert str(tmp_path) not in msg                      # but not where it lives
+    assert str(tmp_path.parent) not in msg

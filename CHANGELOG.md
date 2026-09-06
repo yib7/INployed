@@ -4,13 +4,10 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.10.0] - 2026-09-05
+## [1.10.0] - 2026-09-06
 
 A résumé-engine quality pass, then a full ship audit over the top of it. The headline of the
-audit is a live Bright Data token that had been sitting in a test fixture since 2026-08-27:
-the commit that claimed to scrub it only added a comment. It is out of the tree now, and the
-history and the provider-side rotation are recorded as the two things only a human can do.
-Under that, three spend and injection guards that a bad value walked straight past (a
+audit is three spend and injection guards that a bad value walked straight past (a
 negative `--max-keywords` ran 19 of 20 keywords, a negative `SCORE_MAX_PER_RUN` scored 3,999
 of 4,000 jobs, and a `.env` value could carry three line-break characters the guard did not
 know about), plus a job posting that could choose the email typed into a real application, a
@@ -185,13 +182,11 @@ Nothing to migrate either way: `tiers` stays the default.
   mechanism, including the case where the loop cannot reach one page.
 - `README.md` said single-line bullets aim to fill at least 75% of their line. The single-line
   aim is 90%; 75% is the aim for the *last* line of a bullet that wraps.
-- **A real Bright Data API token was in the tree, in a test fixture.** A previous pass
-  identified the UUID in `tests/test_vm_sync.py` as the live token and committed a message
-  saying it had scrubbed all three fixture values. It added a comment and changed nothing, so
-  the value hashed identically before and after and stayed in every commit since 2026-08-27.
-  Replaced with an all-zero v4 UUID; the fixture only feeds `valid_secret_value`, which matches
-  a shape and not a value, so nothing depended on the real one. Rotating the token at Bright
-  Data and purging it from the published history are both human-only and are not done here.
+- **The fixture UUID in `tests/test_vm_sync.py` is now all-zero rather than all-one.** Cosmetic:
+  both are placeholders. This audit initially reported the old value as a live Bright Data token
+  and it was not — the finding was retracted before release. No credential has ever been
+  committed to this repository; the only two UUIDs in its entire history are the `11111111-…`
+  placeholder and the `00000000-…` that replaced it. Nothing to rotate, nothing to purge.
 - **A job posting could choose the email typed into a real application.** `apply.md` is not
   prose: `apply_playwright.parse_apply_md` reads it line by line, switches section on any
   `##`/`###` line, and took the *last* value for each key, while `apply_data` built the file by

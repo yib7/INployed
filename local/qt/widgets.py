@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from qt import theme
 
@@ -75,9 +75,6 @@ class CollapsibleSection(QtWidgets.QFrame):
 
         self.set_collapsed(collapsed)
 
-    def content_layout(self) -> QtWidgets.QVBoxLayout:
-        return self._body_layout
-
     def add_widget(self, w: QtWidgets.QWidget) -> None:
         self._body_layout.addWidget(w)
 
@@ -96,7 +93,7 @@ class CollapsibleSection(QtWidgets.QFrame):
         `changed` property) so it stops reading as background text.
 
         `hint` becomes the tooltip. The caller uses it to say so when some of what
-        it counted is not merely folded but genuinely off screen — expanding the
+        it counted is not merely folded but off screen entirely — expanding the
         section would then show fewer marks than the number promises, and a count
         the user can audit and find wrong is worse than no count.
         """
@@ -178,6 +175,58 @@ class ElidedLabel(QtWidgets.QLabel):
             super().setText(elided)
 
 
+class _LegendSwatch(QtWidgets.QWidget):
+    """One legend swatch, painted as a miniature of the row it stands for.
+
+    A row is a tint fill plus the delegate's 3px saturated category stripe down
+    its leading edge. The tint alone measures 1.04-1.09:1 against the panel
+    behind it, which makes the five High Score swatches five identical dark
+    squares unless you put your face against the screen, so a key painted that
+    way teaches nothing about the colour code it exists for. Drawing the stripe
+    too is both legible and honest: it is exactly what the row shows.
+
+    Sized off `theme._current_scale` rather than a fixed 13px, and a plain
+    QWidget rather than a QLabel so its minimum height is its own box and not
+    the font's line height (at 100% the QLabel wanted 19px for a 13px square).
+    """
+
+    BASE = 13          # px at 100%
+
+    def __init__(self, tint_hex: str, parent=None) -> None:
+        super().__init__(parent)
+        self._tint = tint_hex
+        self._stripe = theme.stripe_for_tint(tint_hex)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.rescale()
+
+    def rescale(self) -> None:
+        side = round(self.BASE * theme._current_scale)
+        self.setFixedSize(side, side)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        # set_scale pushes a new font onto every live widget; that font change is
+        # the one signal a scale change reliably delivers here.
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.FontChange:
+            self.rescale()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 (Qt naming)
+        s = theme._current_scale
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        r = 3 * s
+        p.setPen(QtGui.QPen(theme.qcolor(theme.BORDER), 1))
+        p.setBrush(theme.qcolor(self._tint))
+        p.drawRoundedRect(rect, r, r)
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(theme.qcolor(self._stripe))
+        p.drawRect(QtCore.QRectF(rect.left(), rect.top() + 1,
+                                 max(2.0, 3 * s), rect.height() - 1))
+        p.end()
+
+
 class ColorLegend(QtWidgets.QWidget):
     """A thin horizontal key: a small color swatch + muted label per `(color, text)`.
 
@@ -190,20 +239,24 @@ class ColorLegend(QtWidgets.QWidget):
         super().__init__(parent)
         self.items = list(items)
         self._labels: list[str] = []
+        self._swatches: list[_LegendSwatch] = []
         h = QtWidgets.QHBoxLayout(self)
         h.setContentsMargins(2, 2, 2, 2)
         h.setSpacing(14)
         for color, text in self.items:
-            swatch = QtWidgets.QLabel()
-            swatch.setFixedSize(13, 13)
-            swatch.setStyleSheet(
-                f"background: {color}; border: 1px solid {theme.BORDER}; border-radius: 3px;")
+            swatch = _LegendSwatch(color)
+            self._swatches.append(swatch)
             label = QtWidgets.QLabel(text)
             label.setProperty("muted", True)
             self._labels.append(text)
             h.addWidget(swatch)
             h.addWidget(label)
         h.addStretch(1)
+
+    def rescale(self) -> None:
+        """Re-size the swatches to the live interface scale."""
+        for swatch in self._swatches:
+            swatch.rescale()
 
     def labels(self) -> list[str]:
         return list(self._labels)

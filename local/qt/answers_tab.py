@@ -13,6 +13,7 @@ from typing import Callable
 
 from PySide6 import QtWidgets
 
+import errmsg
 from resume_tailor import apply_answers
 
 
@@ -162,7 +163,7 @@ class AnswersEditor(QtWidgets.QWidget):
             apply_answers.save(answers, self.store_path)
         except (ValueError, OSError) as exc:
             self.status.setText("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Apply answers", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Apply answers", errmsg.for_user(exc))
             return False
         self.reload()
         self.status.setText("Saved.")

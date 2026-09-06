@@ -49,6 +49,37 @@ def test_max_keywords_larger_than_list_is_safe():
     assert len(inputs) == len(scraper.KEYWORDS) * len(scraper.REMOTE_TYPES)
 
 
+def test_negative_max_keywords_does_not_lift_the_guard(capsys):
+    """A negative cap must not become "all but N" -- the guard would name a cap
+    and then run almost every search.
+
+    `build_inputs` spends max_keywords as `keywords[:n]`, and a negative slice
+    bound in Python means "all but n": with 12 keywords, `[:-1]` is 11 of them.
+    So --max-keywords -1, the obvious way somebody writes "no limit", used to
+    fire 11/12 of a full billed fan-out while the run log announced a cap. The
+    premise is asserted first so this test still fails loudly if the slice is
+    ever swapped for something with different semantics.
+    """
+    assert len(scraper.KEYWORDS[:-1]) == len(scraper.KEYWORDS) - 1  # the premise
+    inputs = scraper.build_inputs([], max_keywords=-1)
+    assert len({i["keyword"] for i in inputs}) == 1
+    assert len(inputs) == len(scraper.REMOTE_TYPES)
+    assert "negative" in capsys.readouterr().out
+
+
+def test_zero_max_keywords_still_spends_nothing(capsys):
+    """0 is left alone: `keywords[:0]` is empty, which already fails closed.
+    Collapsing it to 1 would make the guard spend where it currently does not."""
+    assert scraper.build_inputs([], max_keywords=0) == []
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_positive_max_keywords_is_untouched(capsys):
+    inputs = scraper.build_inputs([], max_keywords=3)
+    assert len({i["keyword"] for i in inputs}) == 3
+    assert "WARNING" not in capsys.readouterr().out
+
+
 def test_exclude_ids_threaded_into_each_input():
     inputs = scraper.build_inputs(["123", "456"], max_keywords=1)
     assert all(i["jobs_to_not_include"] == ["123", "456"] for i in inputs)

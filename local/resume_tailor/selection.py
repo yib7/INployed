@@ -141,7 +141,7 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
     _check_required_blocks()
     system = (
         "You are tailoring a one-page resume for an early-career data/SWE candidate. "
-        "This step is PURE SELECTION — you write no prose. Choose which experiences, "
+        "This step is PURE SELECTION: you write no prose. Choose which experiences, "
         "projects, and leadership entries best match the job, and group their atoms (by "
         "id) into bullet GROUPS. Each group is 1-3 atom ids fused into ONE bullet; group "
         "atoms only when they describe the SAME achievement and read naturally as a single "
@@ -154,7 +154,7 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         "~10 Libraries; if a pool has fewer than that, just return all of it. Lead with every "
         "skill the JD explicitly mentions or strongly implies, then the strongest complementary "
         "skills a candidate in this role would have (adjacent languages, transferable tools). "
-        "Do NOT pad with weak/unrelated filler just to reach the count — a few sharp, relevant "
+        "Do NOT pad with weak/unrelated filler just to reach the count. A few sharp, relevant "
         "skills beat a long list. Preserve any '(conceptual)' / '(from scratch)' qualifiers "
         "verbatim. You MAY merge closely-related API entries into one compact token (e.g. "
         "'Gemini/OpenAI/Claude API'). ALSO rank the candidate's concepts/methodologies (the "
@@ -180,23 +180,23 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
     user = f"""ATOM CATALOG (choose atom ids from here only; an atom belongs to the block it is listed under):
 {_catalog()}
 
-SKILL POOLS (for the "skills" output only — pick each line's items only from its pool, ranked most-relevant-first; aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool — JD matches first, then complementary skills; don't pad to hit the count):
+SKILL POOLS (for the "skills" output only). Pick each line's items only from its pool, ranked most-relevant-first; aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool. JD matches first, then complementary skills; don't pad to hit the count:
 Languages: {json.dumps(pools["Languages"], ensure_ascii=False)}
 Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
 Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
 Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
-METHODS POOL (for the "methods" output only — the candidate's concepts/methodologies; RANK by relevance to THIS job, most-relevant FIRST, and return ~8-10. SELECTION ONLY: copy items VERBATIM from this pool, never invent. These become the résumé's concepts line; lead with the concepts this role centers on (e.g. data analysis, ETL, A/B testing, modeling)):
+METHODS POOL (for the "methods" output only, the candidate's concepts/methodologies; RANK by relevance to THIS job, most-relevant FIRST, and return ~8-10. SELECTION ONLY: copy items VERBATIM from this pool, never invent. These become the résumé's concepts line; lead with the concepts this role centers on (e.g. data analysis, ETL, A/B testing, modeling)):
 {json.dumps(methods_pool, ensure_ascii=False)}
 
-Selection guidance — the resume template has FIXED sections; fill them to one full page (~14-18 bullets):
+Selection guidance. The resume template has FIXED sections; fill them to one full page (~14-18 bullets):
 - Work Experience (use the block names exactly as listed in the catalog above):
 {exp_guidance}
 - Projects: include ALL available projects, ORDERED STRONGEST-FIRST for THIS job; for each project produce the target number of bullet group(s) shown below (densest / most JD-relevant atoms first):
 {proj_guidance}
 - Leadership: ALWAYS include EVERY leadership entry. {lead_guidance}
-- Line density rule: every bullet must fill at least 70% of its printed line. Never write a bullet so short it leaves more than ~30% of the line blank — fuse atoms or pick denser content instead.
-- Within a PROJECT, LEAD with the bullet that introduces what the project IS (its overview / "what is this at a glance"), THEN order the remaining bullets by relevance to THIS job — a reader should know what a project is before the detail bullets. Within experience/leadership, order by relevance.
+- Line density rule: every bullet must fill at least 70% of its printed line. Never write a bullet so short it leaves more than ~30% of the line blank; fuse atoms or pick denser content instead.
+- Within a PROJECT, LEAD with the bullet that introduces what the project IS (its overview / "what is this at a glance"), THEN order the remaining bullets by relevance to THIS job: a reader should know what a project is before the detail bullets. Within experience/leadership, order by relevance.
 
 Return ONLY JSON (use the real block names + atom ids from the catalog; groups is a list of lists of atom ids):
 {{
@@ -211,7 +211,7 @@ Return ONLY JSON (use the real block names + atom ids from the catalog; groups i
   "rationale": "1-2 sentences (incl. why projects are ordered as they are)"
 }}
 
-Now select for THIS job — bias toward the most JD-relevant evidence, most relevant first:
+Now select for THIS job, biasing toward the most JD-relevant evidence, most relevant first:
 JOB: {job_title} at {company}
 
 {fence_jd(jd, 7000, "relevance ranking and selection")}"""

@@ -29,11 +29,12 @@ class CompileResult:
 
     `pages` is the PDF's real page count, filled in by enforce_one_page (0 =
     never measured, i.e. a compile that failed before a PDF existed). It exists
-    because the count used to be computed on every enforcement pass and then
-    thrown away: when overflow originated outside projects, _drop_weakest_group
-    ran out of bullets to sacrifice, enforce_one_page returned ok=True on a
-    TWO-page PDF, and run.tailor() — which checks only `ok` — shipped it as a
-    clean success. Carrying the number out is what lets the caller notice.
+    because `ok` on its own cannot tell a one-page compile from a best-effort
+    one: when overflow originates outside projects, _drop_weakest_group runs out
+    of bullets to sacrifice and enforce_one_page returns ok=True on a TWO-page
+    PDF, which run.tailor(), checking only `ok`, would ship as a clean success.
+    Carrying out the count the pass already measures is what lets the caller
+    notice.
 
     Additive with a default on purpose: the 3-tuple return shape and every
     monkeypatched `fake_enforce` in the suite keep working untouched.

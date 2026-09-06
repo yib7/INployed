@@ -7,7 +7,9 @@ This project stands on a lot of other people's work.
   from the widely-used **"Jake's Resume"** template by Jake Gutierrez
   (https://github.com/jakegut/resume), MIT-licensed. The `\resumeItem`,
   `\resumeSubheading`, and section macros come from that template; the generation
-  pipeline fills them from `master_experience.yaml`.
+  pipeline fills them from `master_experience.yaml`. The MIT permission notice
+  travels with the file itself, in the comment header at the top of
+  `resume_template.tex`.
 
 ## Avoid-AI-writing rules
 - The optional cover-letter style pass in `local/resume_tailor/aiwriting.py`
@@ -36,11 +38,23 @@ This project stands on a lot of other people's work.
 pandas · google-genai · aiohttp · PyYAML · ruamel.yaml · pypdf · markdownify ·
 python-dotenv · tzdata · requests · Send2Trash · keyring · PySide6 (Qt) · pytest ·
 pytest-qt · pytest-timeout · ruff · and the Python standard library (asyncio, sqlite3,
-argparse).
+argparse). The VM pin set (`scripts/requirements-vm.txt`) adds **numpy**, whose own
+declared expression is `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`.
+
+Three more are optional and installed only if you want the feature they serve, so
+`requirements.txt` names them in a comment without installing them: **playwright**
+(Apache-2.0), the advanced auto-apply driver; and, for maintainers regenerating art and
+README media, **Pillow** (MIT-CMU) plus **imageio-ffmpeg** (BSD-2). A fourth license
+arrives without a pin: imageio-ffmpeg downloads its own **FFmpeg** binary
+(LGPL-2.1-or-later) at first use, so no requirements file can name it. No FFmpeg binary,
+and nothing else from that list, is committed here.
 
 None of these are redistributed with this project; `pip` installs each from PyPI under
 its own license. Across the full pinned dependency tree the licenses are MIT, BSD-2/3,
-Apache-2.0, PSF and MPL-2.0 (certifi), all of which the MIT release license permits.
+0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi) — the Zlib, CC0-1.0 and 0BSD
+arms coming from numpy's composite `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`,
+pulled in under pandas. All of them are permissive, and the MIT release license permits
+every one.
 The one copyleft dependency is **PySide6** (with PySide6-Essentials, PySide6-Addons and
 shiboken6), licensed LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercially from
 The Qt Company. See the License section of the README for why a source-only distribution

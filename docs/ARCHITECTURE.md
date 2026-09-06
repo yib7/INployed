@@ -42,9 +42,9 @@ appends to a cumulative master CSV. Four cost-aware details:
   actually resurface. Below `MIN_EXCLUDE_IDS` (50) the run warns and proceeds, because a
   rejected collection costs more than some re-collected rows.
 - **A rejected collection is a failure, not a quiet empty run.** When Bright Data refuses
-  every input the snapshot still reports `status="ready"` with `records=0`, which used to
-  read as "no new jobs" and exit 0, so the VM cron logged clean successes for weeks while
-  collecting nothing. `_assert_collected_something()` keys on the error *codes*: an
+  every input the snapshot still reports `status="ready"` with `records=0`. Read naively that
+  looks like "no new jobs" and exits 0, which is how the VM cron logged clean successes for
+  weeks while collecting nothing. `_assert_collected_something()` keys on the error *codes*: an
   input-rejection code raises whether or not rows came back, while zero rows alongside the
   ordinary `dead_page` / `page_too_big` noise is only a warning (that is the healthy steady
   state once the exclude set is working).
@@ -69,7 +69,8 @@ PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
 application tracker (`local/seen_db.py`) with follow-up nudges, a stats tab, the
 Settings/Resume Data/Apply Answers editors, and the **Tailor résumé** button. The
 job tables are `QTableView` + `QSortFilterProxyModel` (virtualized, smooth). Pure
-data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome.py`).
+data/config logic is toolkit-agnostic (`local/jobsdata.py`, `local/chrome_launch.py`,
+`local/setup_check.py`, `local/errmsg.py`).
 Heavy operations (scrape, tailor, prep-sheet, resume.md) run on Qt worker threads
 (`local/qt/workers.py`) and marshal results back via signals, so the window never
 freezes. Tailoring a multi-job selection fans the jobs out **concurrently** on a
@@ -99,6 +100,24 @@ arrived. Its summary also flags a master run older than the `stale_after_hours` 
 dashboard share one concurrent-instance guard, `local/locks.py:SingleInstance` (an OS-level
 msvcrt/fcntl file lock): the dashboard uses it to no-op a relaunch over a live window, the watcher
 to skip a trigger while a previous fire is still working.
+
+Two of those toolkit-agnostic modules carry policy the Qt layer would otherwise re-implement
+per call site. **`local/setup_check.py`** answers "what is missing or misconfigured" as plain
+problem strings for the **Check setup** button, split by *cost* rather than by topic:
+`local_problems()` is file and environment reads (it runs `resume_tailor/master_validate.py`'s
+`check_setup()` over the master and the answer store, then adds the engine-credential checks)
+and is safe inline, while `job_data_problems()` makes one unbilled network probe of the job-data
+account and therefore belongs on a worker thread. `MainWindow` owns only the presentation: which
+half runs where, and which dialog it lands in. Its two `*_warnings` helpers take every input as
+an argument and do no I/O, so the whole matrix is unit-tested with no `QApplication`
+(`tests/test_setup_check.py`). **`local/errmsg.py`** is the single renderer for exception text a
+*user* will see: `for_user` keeps the exception class and its message and reduces every absolute
+path inside it to a bare file name. `PermissionError: [Errno 13] Permission denied:
+'C:\Users\<name>\My Drive\linkedin_jobs_master.csv.gz'` is what an antivirus scanner or an
+open Excel window produces, and that string names the person, often their employer, and travels
+straight into a screenshot or a bug report. The caller already knows which file it was working
+on and says so itself. It is deliberately **not** a log scrubber: `watcher.log` and `scraper.log`
+keep their full paths, because a log on the user's own disk is exactly where a path belongs.
 
 **Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
 jobs" run or manual add writes its new full master rows to `<repo>/outbox/local_rows_*.csv.gz`
@@ -155,13 +174,14 @@ config and the exclude-id file, drains the outbox, and reads `VMTarget` out of t
 Two parts of it are easy to get wrong:
 
 - **Managed credentials:** cron runs with a bare environment, so `run_scraper.sh` has to export
-  `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They used to be pasted inline in that
-  script, which made rotating a dead token an ssh-and-sed chore. They now live in a chmod-600
+  `BRIGHT_DATA_API_TOKEN` and `GEMINI_API_KEYS` itself. They live in a chmod-600
   `~/scraper_secrets.env` that the script sources on line 3, and the VM panel's **Credentials**
-  section writes them (`vm_sync.set_vm_secret`). Only the names in `MANAGED_SECRETS` are
-  accepted, and a value has to match `_SAFE_SECRET` (`valid_secret_value`), because the file is
-  *sourced* by bash: a value carrying `$`, a backtick, a quote or whitespace would be
-  interpolated or word-split at source time, and every credential this pipeline actually uses
+  section writes them (`vm_sync.set_vm_secret`), so rotating a dead token is a form
+  field rather than an ssh-and-sed chore against a value pasted inline in the script.
+  Only the names in `MANAGED_SECRETS` are accepted, and a value has to match
+  `_SAFE_SECRET` (`valid_secret_value`), because the file is *sourced* by bash: a value
+  carrying `$`, a backtick, a quote or whitespace would be interpolated or word-split at
+  source time, and every credential this pipeline actually uses
   fits the safe set, so it validates and rejects rather than trying to escape. Both checks run
   **before** the upload, and no failure path leaves a staged credential on the VM: the remote
   installer's `EXIT` trap covers the case where the script ran, and this side clears the staging
@@ -170,7 +190,7 @@ Two parts of it are easy to get wrong:
   notices the rare survivor, since the dashboard runs under `pythonw` with no console to print to.
 - **Crontab merges rather than replaces.** `merge_crontab()` strips any prior managed block and
   appends the new one, keeping every line outside the markers verbatim. A whole-crontab replace
-  used to wipe the user-added `HEALTHCHECKS_URL=` and `GOOGLE_CLOUD_PROJECT=` lines that
+  wipes the user-added `HEALTHCHECKS_URL=` and `GOOGLE_CLOUD_PROJECT=` lines that
   `run_scraper.sh` reads. It is pure text, so the round-trip is unit-testable with no live VM.
 
 A few **durability/visibility** affordances: the Tracker tab can **Export / Import** the whole
@@ -241,7 +261,7 @@ comes from `jobsdata.job_detail_fields`, which prefers `job_description_formatte
 `job_description` → `job_summary` (first one over 40 characters, the same order the résumé tailor
 uses) and passes the markup through `jobsdata.html_to_text`: non-content elements (`script`,
 `style`, `button`, `icon`, `svg`, `nav`, `header`, `footer`, `noscript`, `form`, `select`) are
-dropped **with their text** first, so LinkedIn's "Show more"/"Show less" chrome no longer reaches
+dropped **with their text** first, so LinkedIn's "Show more"/"Show less" chrome does not reach
 the card (each pattern spans an opener to its own closer; a self-closing or unclosed opener falls
 through to the plain tag strip, which leaks a word of chrome rather than swallowing the prose after
 it); then block tags become line breaks, `<li>` a `• ` bullet, bullets within one list stay on
@@ -272,26 +292,27 @@ bullet must be traceable to a fact ("atom") the user wrote in
 
 | Module | Role |
 |--------|------|
-| `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. |
+| `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. `model_for` / `claude_model_for` resolve a tier live; `model_mode()` / `claude_model_mode()` can collapse all three tiers onto one id (see "One model, or one per stage"). |
 | `llm.py` | The single LLM transport: Gemini (`call()` → `_call_gemini`) or the local Claude Code CLI when the provider is 'claude' (dispatch in `call()`; `claude -p` subprocess, same rate-limit budget). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
-| `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config) and the LaTeX preamble. |
+| `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config), the LaTeX preamble, and the style exemplar — `example_text()` is a three-arm resolver, curated file → sample PDF → `""` (see "The style exemplar"). |
 | `common.py` | The three primitives the composition modules share: the `_PRINCIPLE` prompt clause, `fence_jd` (wraps an untrusted JD as data), and `_gkey`. |
 | `selection.py` | Stage 1. `select` asks the model which atoms to use and how to group them, then makes the answer safe deterministically: `_normalize_selection` drops ids the model invented, `_ensure_required_blocks` forces the yaml's `tailor.required` blocks to render, `_order_fixed_blocks` restores template order, and `_enforce_fixed_counts` / `_cap_projects` / `_resize_to_count` pin each block to its configured bullet count. Also owns `bullet_line_targets`. |
 | `compose.py` | The bullet stages: `block_briefs` (one cohesion brief per block), `rephrase`, `lead_with_overview`, `dedupe_leading_verbs` / `reverb` (no opener reused across the page), `fill_underfull`, and `enforce_style`. |
 | `skills.py` | The four technical-skills lines and the optional 5th "Methods" concepts line. `compress_skills` ranks each category's pool against the JD; the anchoring layer (`_anchored`, `_base_anchors`, `_merged_members`, `_complete_to_count`, `_cap_items`) is what stops a skill the user does not own from reaching the page. `methods_line` prints concepts from the master's `concepts_and_methodologies` pool that the JD actually references, in the JD's own spelling on an alias hit. |
 | `layout.py` | The count spec: best-N items per skill line (`skill_targets`, env-overridable) and the leadership per-entry line budget. Printed-line *widths* are `measure.py`'s job. |
-| `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. |
+| `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. `char_budget` converts that width budget back into the character ceiling the prompt has to state; `FULL_LINE_FILL` / `LAST_LINE_FILL` / `UNDERFULL_FILL` are the fill fractions (see "The length budget"). |
 | `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. |
 | `compile.py` | Runs `pdflatex` and enforces one page (drop-weakest-project-bullet loop). `CompileResult.pages` carries the final page count, so a run that could not fit one page is recorded rather than silently accepted. |
 | `latexutil.py` | Escaping, emphasis stripping, date formatting, unicode-math → LaTeX. |
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
+| `aiwriting.py` | An optional extra AI-writing gate for the cover-letter body, **off by default**: a bounded, letter-relevant extract of the MIT-licensed *avoid-ai-writing* skill (attribution in its docstring and `docs/CREDITS.md`), split the same two ways the résumé style gate is. `RULES_PROMPT` is the judgment half, appended to the generation, refine and repair prompts; `EXTRA_BANS` / `violations()` is the deterministic half. A phrase earns a ban only when it is always slop, because a false positive buys a repair call that can damage correct text. |
 | `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity + the JD fenced as untrusted data + the folder's `apply.md`, or a bounded master-file digest when the job was never tailored) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants, because the whole payload is re-sent (and re-billed) each turn. No style or grounding gate runs on an answer; the grounding rule is carried by the system prompt. |
 | `verify.py` | The grounding gate. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
-| `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` backs the dashboard's "Check setup" button. |
+| `master_validate.py` | Lints the master + answer store (pure functions over parsed data); `check_setup()` is the local half of the dashboard's "Check setup" button, reached through `local/setup_check.py`. |
 | `apply_answers.py` | The reusable screening-answer bank (git-ignored `apply_answers.json`): seeds from `apply_config.DEFAULTS`, migrates legacy overrides, and feeds the standard answers into `apply.md`. |
 | `run.py` | Orchestrates the full pipeline and exposes the CLI. Artifact generation (cover letter / ATS / prep) and tone are config-driven and default-preserving. The bullet stages run as a declarative pass list; see "The bullet pass pipeline" and "Run reporting" below. |
 | `apply.py`, `apply_config.py` | Apply automation: resolve a tailored job's folder (by the `apply.md` meta marker), build the apply context, open the posting (never submits); `standard_answers` defaults (work auth, sponsorship, EEO, structured address). |
@@ -309,31 +330,148 @@ Every stage after `rephrase` mutates the same `bullets` dict, and every one of t
 introduce an ungrounded token. The rule is that a mutation is always followed by a
 re-check against the atoms, reverting to the last grounded text when there is one.
 
-That rule used to be written out by hand at each stage, which meant it could be forgotten.
-It is now structural. `run.py` declares a `Pass` (name, the callable, an `enabled`
-predicate, `retrim`, `verify`) and `_run_bullet_passes` does the snapshot, runs the pass,
-re-trims when asked, and re-verifies against the snapshot. `_BULLET_PASSES` reads as the
-sequence itself: verb dedupe, verbatim merge and trim, underfull fill, style gate.
-`verify.enforce_grounded` has exactly one call site, `_gate`.
+The rule is structural rather than repeated by hand at each stage, so no stage can
+forget it. `run.py` declares a `Pass` (name, the callable, an `enabled` predicate,
+`retrim`, `verify`, `recheck_fill`) and `_run_bullet_passes` does the snapshot,
+runs the pass, re-trims when asked, re-verifies against the snapshot, and re-measures when
+asked. `_BULLET_PASSES` reads as the sequence itself: verb dedupe, verbatim merge and trim,
+underfull fill, style gate. `verify.enforce_grounded` has exactly one call site, `_gate`.
+
+`retrim=True` on both passes that can LENGTHEN a bullet (underfull fill, style gate). Both
+ask a model for new text under a stated length limit, and neither answer is length-checked,
+so without the re-trim an over-long reply prints: nothing downstream re-trims text, and
+`compile.enforce_one_page` only drops whole bullets. The re-trim is safe to run after the
+style gate because `_word_trim` only ever returns a word-boundary prefix, and no pattern in
+`compose._STYLE_BANS` is end-anchored, so a trim can never manufacture a banned phrase.
+
+`recheck_fill=True` on the underfull fill, because that pass's own re-trim can undo it. The
+sequence is measure-underfull → ask the model to lengthen → trim back, and `_fit_to_lines`
+returns the longest prefix that fits the line target — when the folded-in material is one
+wide token, that prefix is the original text. `_note_still_underfull` re-measures the
+bullets the pass actually CHANGED (a committed fill re-keys the bullet onto its borrowed
+atom) and records the ones that are still short. It never re-calls the model: a second
+billed call per bullet to recover a part-empty last line is not worth it, and a bullet the
+fill skipped for want of a spare atom is a documented no-op, not a finding.
 
 `rephrase` and its first gate stay outside the list. That gate runs with no fallback,
 because there is no earlier grounded text to revert to yet.
 
+### The length budget
+Every bullet has a printed-line target, and two mechanisms have to agree on what that target
+means: the rephrase prompt has to ASK for a length, and the deterministic trim has to ENFORCE
+one. The prompt can only speak in characters — the model cannot measure glyph widths — so
+`measure.char_budget` converts the width budget into a character ceiling.
+
+That conversion is deliberately not `target_lines * <chars per line>`. Greedy word wrap loses
+part of a line at every break: the word that will not fit is pushed down whole, leaving the
+line before it short, so capacity is **sublinear** in the line count. A flat multiply is
+therefore wrong in principle rather than mistuned. Measured with `measure.line_count` over
+representative bullets, the old flat 130 stated 130 / 260 / 390 characters for 1 / 2 / 3
+lines where the real minima are 127 / 250 / 377 — the model was invited past the line, the
+bullet wrapped, and the trim had to cut it back, which is the root cause of the ragged
+bullets this mechanism replaced. `char_budget` returns 126 / 245 / 364, at or just under the
+measured minimum, because a ceiling a few characters short costs a few characters while a
+ceiling over the line costs a trim. Both of its constants (`_BUDGET_CHAR_WIDTH`, the
+conservative advance width of one character of prose; `_WRAP_WASTE`, the share of a line lost
+per break) are measured and scale with `BODY_LINE_CAPACITY`, so the ceiling follows if the
+template is recalibrated. `config.MAX_LINE_CHARS` is gone with the flat multiply that read
+it: a "bullet wrap width" nothing wraps by is a stale meaning waiting to mislead.
+
+The fill fractions are the other half, and they are two distinct ideas kept decoupled.
+`FULL_LINE_FILL` (0.90) and `LAST_LINE_FILL` (0.75) are the **aim** — what the prompt asks
+for, and what `_length_hint`'s floor is computed from. `UNDERFULL_FILL` (0.50) is the
+**rescue trigger**, which decides which bullets `fill_underfull` rewrites; it sits far lower
+because some white space above a bullet is fine and only a sparse line is worth a
+billed call. The prompt formats its two percentages from those constants instead of spelling
+them out, because a prompt carrying its own copy of a number drifts silently the moment the
+constant is retuned. All three are env-overridable (`RESUME_TAILOR_FULL_LINE_FILL`,
+`_LAST_LINE_FILL`, `_UNDERFULL_FILL`) and deliberately have no Settings field, the same call
+as `RESUME_TAILOR_TIMEOUTS`: a fraction a non-technical user can set to 0 is a footgun, and
+the three interact. `_env_fraction` falls back to the documented default for anything
+unparseable or outside 0.05-1.0, so a typo in a `.env` degrades to today's behaviour rather
+than disabling a stage — a 0 would mean every bullet is already full enough, a 2.0 that none
+ever is.
+
+Enforcement is `_word_trim`, which prefers to cut at a clause boundary (comma or semicolon)
+over cutting mid-phrase — but only when that boundary sits at `_CLAUSE_CUT_FLOOR` (0.85) or
+more of the budget. The floor was 0.6, which let the rightmost qualifying separator sit at
+62% of budget and discard 38% of a bullet that fitted. A clause cut is for ending cleanly,
+not for shortening; below the floor the word cut takes over, shedding one or two words with
+`_strip_dangling` protecting the grammar.
+
+### The style exemplar
+The rephrase prompt carries a sample of the user's own bullets so the model can match a voice
+rather than invent one. `example_text()` resolves that sample from three arms in order: the
+curated `resume_tailor_files/style_exemplar.txt` (`config.STYLE_EXEMPLAR_TXT`, one bullet per
+line, blank lines and `#` comments ignored), else an extract from the user's older résumé PDF,
+else `""`. A file holding nothing but comments falls through to the PDF rather than sending
+the model an empty exemplar, and a fresh clone runs with neither file present, both being
+git-ignored personal content. The `lru_cache` and the swallow-everything posture are
+deliberate: the exemplar is a nice-to-have, and no tailoring run may die because a personal
+file is absent or malformed.
+
+The curated arm sits first because the PDF is a whole page, not a bullet list, and the
+measurements say how badly that reads as an exemplar. A flat 1200-character slice of it spends
+its first 472 characters on name, contact, education and honors; delivers 3 complete bullets
+out of 14 plus a fourth cut mid-word at "Proc"; glues the next section's heading onto several
+bullets ("Projects CodeCaster"); and demonstrates a participial impact tail that the same
+prompt's `BANNED_PHRASING` forbids. The package makes the same call for a different consumer:
+`assets._FALLBACK_VERBS` records the raw PDF dump as weak signal and expensive for the verb
+palette.
+
+`compose.EXEMPLAR_CHAR_CAP` (1200) bounds the PDF fallback and guards against a user pasting a
+whole résumé into the `.txt` and inflating every rephrase call; against a curated file it never
+bites. `_exemplar_for_prompt` cuts on a **line** boundary, taking whole lines while they fit.
+A character cut ends the exemplar at "• Proc", so the prompt that calls a bullet ending
+mid-clause a failure would itself be showing the model one: a whole bullet dropped is a cost,
+a fragment taught as an example is a defect.
+
 ### Run reporting
 A tailor run can succeed and still have gone partly wrong: the ATS report can fail, the
 cover letter can fail to compile, the grounding gate can drop a bullet, and the one-page
-loop can run out of project bullets to drop and ship two pages. All of that used to go to
-the dashboard's status line and vanish.
+loop can run out of project bullets to drop and ship two pages. None of that is fatal, which
+is exactly why a status line that only says "done" hides all of it.
 
-`tailor()` now collects those as warnings and writes `tailor_report.txt` into the output
+`tailor()` collects those as warnings and writes `tailor_report.txt` into the output
 folder on every run: which passes ran, every bullet the gate reverted or dropped and the
 token that caused it, the final page count, and each advisory failure. Callers can also
 pass `on_warning` to receive them live; the dashboard does this and reports degraded runs
-in the batch summary, so a two-page résumé is no longer indistinguishable from a clean
-one. A degraded run is still a success that produced a PDF. It is just no longer silent.
+in the batch summary, so a two-page résumé reads differently from a clean one. A degraded
+run is still a success that produced a PDF. It is just not a silent one.
+
+The report has a second, quieter section: **notes**. Same `<kind>: <message>` line shape,
+one severity down, and deliberately NOT streamed to `on_warning` — a note is something the
+run could not fully deliver that still leaves a correct, shippable résumé, so it must not
+make the batch summary call the job degraded. The one note kind today is `underfull`: a
+bullet the fill pass grew and the re-trim took straight back. With the user's two-line
+layout that is a part-empty last line, a cosmetic blemish; putting it on the degraded
+channel would make "finished with warnings" mean nothing.
+
+### One model, or one per stage
+`model_for(tier)` maps flash-lite / flash / pro onto three env vars, and `claude_model_for`
+does the same for the Claude CLI provider. That split is a cost-tuning knob — a cheap model
+to choose bullets, a stronger one to write them — and a leaky abstraction for anyone who just
+wants one model everywhere: saying so meant setting three vars consistently, per provider,
+and first learning what "pro" buys.
+
+`RESUME_TAILOR_MODEL_MODE` / `RESUME_TAILOR_CLAUDE_MODEL_MODE` choose between `tiers` — the
+default, and byte-for-byte what every install did before the switch existed — and `simple`,
+where every tier resolves to `RESUME_TAILOR_MODEL_ALL` / `RESUME_TAILOR_CLAUDE_MODEL_ALL`.
+Both are read live from `os.environ` like the tier vars, and normalised (strip + lower) the
+way `tailor_provider()` normalises its own.
+
+Neither resolver can return `""`. An unrecognised mode string, and `simple` mode with a blank
+or unset "all" id, both fall through to the tier map. That is the deliberate failure mode: an
+empty model id reaching the API is an opaque error two layers away from the setting that
+caused it, while quietly doing what the install already did is safe and recoverable.
+
+The two providers carry their **own** mode rather than sharing one, so a Claude user's choice
+cannot silently re-point the Gemini side, and the two can differ — one model everywhere on
+Claude, the tuned tier split on Gemini — without a third "which provider does this apply to?"
+question to answer.
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) of 60 `Field` rows describing every
+`settings.py` is one schema (`SETTINGS_SCHEMA`) of 64 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
 **Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
 `SECTION_ORDER` is Credentials / Connection & paths / Engine / Dashboard / Scraper / Scoring /
@@ -357,8 +495,18 @@ is the guard). The fourth is the exception that proves the rule.
 | --- | --- |
 | `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises rather than degrading to "hidden". |
 | `advanced` (18 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` rather than overriding it; `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
-| `restart` (16 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
+| `restart` (20 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
 | `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
+
+The six per-stage model rows are where that transitivity earns its keep. A `Field` carries
+exactly one `show_if`, so they cannot say both "provider is gemini" and "mode is tiers".
+They gate on their provider's mode row, which gates on `tailor_provider`, and `is_visible`
+walks the chain — so a tier row is hidden by *either* the wrong provider or `simple` mode,
+with no new attribute. The two mode rows are bounded `choice` rather than `editable_choice`,
+because a value outside the pair is not a custom model id but a typo the runtime would read
+as `tiers`; and they are deliberately **not** `advanced`, because the setting exists for the
+user who never ticks the disclosure, and folding it there would hide it from its only
+audience.
 
 The tab composes three **view folds** (a collapsed section, the advanced disclosure, an
 active search) against those two **configuration gates** (`show_if`, and the VM section's
@@ -418,6 +566,10 @@ flowchart LR
 - `tests/test_min_required_years.py`: the years pre-filter regex.
 - `tests/test_tailor_config.py`: config-driven layout + yaml-sourced rendering.
 - `tests/test_bullet_length.py`: fill floors + unicode-math conversion.
+- `tests/test_prompt_hygiene.py`: AST-lints the prompt string literals in
+  `local/resume_tailor/`. The prompts ban em dashes, and a prompt that contains one is
+  teaching the model the punctuation it is forbidding — which costs a billed `enforce_style`
+  repair on every copy. Write a prompt with an em dash and this fails.
 - `tests/test_master_gaps.py`: JD-gap detection, comment-preserving write, diff.
 - `tests/test_seen_reconcile.py`, `tests/test_download_race.py`: registry + scraper edge cases.
 - `tests/smoke_qt.py`: Qt dashboard smoke (run directly with `QT_QPA_PLATFORM=offscreen`, not under pytest).

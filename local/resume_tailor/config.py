@@ -1,7 +1,9 @@
 """Paths, model tiers, and Vertex settings for the resume tailor.
 
 Everything is env-overridable so the flash-lite / flash / pro split can be
-re-tuned against the $300 credit without code changes.
+re-tuned against the $300 credit without code changes — or dropped entirely:
+RESUME_TAILOR_MODEL_MODE=simple points every stage at one model id (see
+MODEL_MODE_TIERS, and RESUME_TAILOR_CLAUDE_MODEL_MODE for the Claude side).
 """
 from __future__ import annotations
 
@@ -25,7 +27,18 @@ ASSETS_DIR = SCRAPE_DIR / "resume_tailor_files"
 
 MASTER_YAML = ASSETS_DIR / "master_experience.yaml"
 TEMPLATE_TEX = ASSETS_DIR / "resume_template.tex"
-# Style exemplar fed (bounded) into the rephrase prompt — the one-page look the user likes.
+# Style exemplar fed (bounded) into the rephrase prompt — the voice, length and density
+# the user's own bullets have. assets.example_text() resolves the two in this order:
+#
+#   1. style_exemplar.txt — a CURATED file the user writes: one bullet per line, blank
+#      lines and `#` comments ignored. Preferred, because it is already the shape the
+#      prompt wants (no name/contact/education header eating the budget, no glued-on
+#      section headings or column collisions from PDF extraction).
+#   2. resume_sample.pdf — the older hand-written résumé, text-extracted. The original
+#      source; kept so an install that never writes the .txt behaves exactly as before.
+#
+# Both are personal and git-ignored; a fresh clone has neither and the exemplar is empty.
+STYLE_EXEMPLAR_TXT = ASSETS_DIR / "style_exemplar.txt"
 EXAMPLE_PDF = ASSETS_DIR / "resume_sample.pdf"
 # Curated, categorized résumé action verbs the rephrase pass draws openers from (one per
 # bullet, never reused). Universal (not personal), so it is tracked; built-in fallback if absent.
@@ -67,6 +80,66 @@ _TIER_ENV = {
     TIER_PRO: ("RESUME_TAILOR_MODEL_PRO", MODEL_PRO),
 }
 
+# ── One model for every step (the 'simple' mode) ──────────────────────────────
+# The tier split (flash_lite / flash / pro) is a cost-tuning knob, and a leaky
+# abstraction for someone who just wants ONE model everywhere: today that takes
+# setting three env vars consistently, per provider. `simple` mode collapses all
+# three tiers onto a single id.
+#
+#   RESUME_TAILOR_MODEL_MODE        = tiers (default) | simple   -> model_for()
+#   RESUME_TAILOR_CLAUDE_MODEL_MODE = tiers (default) | simple   -> claude_model_for()
+#   RESUME_TAILOR_MODEL_ALL / RESUME_TAILOR_CLAUDE_MODEL_ALL     the single id
+#
+# `tiers` is the default so an existing install keeps resolving exactly the model
+# it resolved before this switch existed. The two providers carry their OWN mode
+# so a Claude user's choice cannot silently re-point the Gemini side (and the
+# Settings tab only ever shows the one matching the active provider).
+MODEL_MODE_TIERS = "tiers"
+MODEL_MODE_SIMPLE = "simple"
+MODEL_MODES = (MODEL_MODE_TIERS, MODEL_MODE_SIMPLE)
+
+MODEL_MODE_ENV = "RESUME_TAILOR_MODEL_MODE"
+MODEL_ALL_ENV = "RESUME_TAILOR_MODEL_ALL"
+CLAUDE_MODEL_MODE_ENV = "RESUME_TAILOR_CLAUDE_MODEL_MODE"
+CLAUDE_MODEL_ALL_ENV = "RESUME_TAILOR_CLAUDE_MODEL_ALL"
+
+
+def _model_mode(env: str) -> str:
+    """Normalised value of a model-mode env var: 'simple' or 'tiers'.
+
+    Read live from os.environ, like model_for() reads the tier vars. Normalised
+    (strip + lower) the way tailor_provider() / projects_mode() normalise theirs;
+    anything ELSE — a typo, a blank, an unset var — reads as 'tiers', so a bad
+    value keeps today's per-stage behaviour instead of routing every step through
+    a mode the user never asked for."""
+    val = os.getenv(env, "")
+    val = val.strip().lower() if isinstance(val, str) else ""
+    return MODEL_MODE_SIMPLE if val == MODEL_MODE_SIMPLE else MODEL_MODE_TIERS
+
+
+def model_mode() -> str:
+    """Gemini model mode: 'tiers' (default) or 'simple'. See _model_mode."""
+    return _model_mode(MODEL_MODE_ENV)
+
+
+def claude_model_mode() -> str:
+    """Claude model mode: 'tiers' (default) or 'simple'. See _model_mode."""
+    return _model_mode(CLAUDE_MODEL_MODE_ENV)
+
+
+def _one_model(mode_env: str, all_env: str) -> str:
+    """The single model id every tier resolves to, or '' to let the tier map decide.
+
+    '' is returned both in 'tiers' mode and when 'simple' mode has no id to use —
+    an unset or blank/whitespace "all" var. Falling back to the tier map there is
+    deliberate: a blank model id reaching the API is an opaque runtime error two
+    layers away from the setting that caused it, while quietly doing what the
+    install already did is the safe failure."""
+    if _model_mode(mode_env) != MODEL_MODE_SIMPLE:
+        return ""
+    val = os.getenv(all_env, "")
+    return val.strip() if isinstance(val, str) else ""
+
 
 def _config_json() -> dict:
     """local/config.json (shared with the dashboard), {} when unreadable."""
@@ -79,14 +152,36 @@ def _config_json() -> dict:
 # ── Resume layout (per-bullet line targets for the constant blocks) ───────────
 # Editable from the dashboard; persisted in local/config.json under "resume_layout"
 # as {block_name: {"line_targets": [int, ...]}}. The list length is the bullet
-# count for that block; each int is that bullet's printed-line target, which drives
-# the soft length hint in rephrase and the deterministic trim cap (lines * MAX_LINE_CHARS).
-MAX_LINE_CHARS = int(os.getenv("RESUME_TAILOR_MAX_LINE_CHARS", "130"))
+# count for that block; each int is that bullet's printed-line target. Both consumers of
+# that target are WIDTH-aware and live in measure.py — the prompt's soft length hint
+# (measure.char_budget, via compose._length_hint) and the deterministic trim
+# (measure.line_count, via run._fit_to_lines) — so there is no flat chars-per-line
+# constant here any more; the old MAX_LINE_CHARS was the last thing reading one.
 DEFAULT_LINE_TARGETS = [2, 2, 2]
-PROJECTS_MAX = int(os.getenv("RESUME_TAILOR_PROJECTS_MAX", "3"))  # built-in default / fallback
+
+
+def _env_int(name: str, default: int, lo: int = 1) -> int:
+    """A positive int from the environment, falling back to `default` for anything else.
+
+    These three run at IMPORT scope, so a bare `int(os.getenv(...))` turned a typo in a
+    .env (`RESUME_TAILOR_PROJECTS_MAX=three`) into a ValueError raised while importing
+    this module — taking down the dashboard's whole tailor path with a raw traceback,
+    and making `projects_max()`'s careful try/except below unreachable. Mirrors
+    `measure._env_int` and `measure._env_fraction`."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        val = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return val if val >= lo else default
+
+
+PROJECTS_MAX = _env_int("RESUME_TAILOR_PROJECTS_MAX", 3)  # built-in default / fallback
 PROJECTS_MAX_LIMIT = 6  # hard ceiling for the configurable cap: the resume is one page.
-PROJECT_BULLETS_MAX = int(os.getenv("RESUME_TAILOR_PROJECT_BULLETS_MAX", "2"))
-PROJECT_BULLET_LINES = int(os.getenv("RESUME_TAILOR_PROJECT_BULLET_LINES", "2"))
+PROJECT_BULLETS_MAX = _env_int("RESUME_TAILOR_PROJECT_BULLETS_MAX", 2)
+PROJECT_BULLET_LINES = _env_int("RESUME_TAILOR_PROJECT_BULLET_LINES", 2)
 
 
 def _clamp_projects(n: int) -> int:
@@ -160,7 +255,7 @@ def lead_overview_enabled() -> bool:
 def methods_line_enabled() -> bool:
     """Whether the résumé renders a 'Methods' concepts line (compose.methods_line): a 5th
     technical-skills line that surfaces the JD's concept buzzwords ('A/B Testing', 'ETL',
-    'data wrangling') the candidate genuinely owns — printed in the JD's own spelling via
+    'data wrangling') the candidate owns — printed in the JD's own spelling via
     the anchored skill_aliases layer (Tier 1) then padded with the model's role-relevant
     concept ranking (Tier 2). It only draws from concepts_and_methodologies the user
     declared, never invents. Defaults ON. Precedence: RESUME_TAILOR_METHODS_LINE env >
@@ -360,8 +455,15 @@ _CLAUDE_TIER_ENV = {
 
 
 def claude_model_for(tier: str) -> str:
-    """Concrete Claude model for a tier, resolved live like model_for()
-    (config.py:330). Unknown tier falls back to the flash (sonnet) model."""
+    """Concrete Claude model for a tier, resolved live like model_for().
+
+    RESUME_TAILOR_CLAUDE_MODEL_MODE='simple' collapses all three tiers onto
+    RESUME_TAILOR_CLAUDE_MODEL_ALL; 'tiers' (the default) and a blank "all" value
+    both fall through to the per-tier map. Unknown tier falls back to the flash
+    (sonnet) model."""
+    one = _one_model(CLAUDE_MODEL_MODE_ENV, CLAUDE_MODEL_ALL_ENV)
+    if one:
+        return one
     env, default = _CLAUDE_TIER_ENV.get(tier, (None, CLAUDE_MODEL_FLASH))
     return os.getenv(env, default) if env else default
 
@@ -398,7 +500,15 @@ def model_for(tier: str) -> str:
     The new value is only visible to a process that re-reads env after the
     write -- e.g. the dashboard restarting, or the var being set directly in
     the environment (not just the .env file) before the process starts. An
-    unrecognized tier falls back to the flash model."""
+    unrecognized tier falls back to the flash model.
+
+    RESUME_TAILOR_MODEL_MODE='simple' short-circuits the tier map entirely and
+    returns RESUME_TAILOR_MODEL_ALL for EVERY tier -- one model for every step.
+    'tiers' (the default) keeps the per-stage split, and so does 'simple' with a
+    blank/unset "all" id: this never returns ''."""
+    one = _one_model(MODEL_MODE_ENV, MODEL_ALL_ENV)
+    if one:
+        return one
     env, default = _TIER_ENV.get(tier, (None, MODEL_FLASH))
     return os.getenv(env, default) if env else default
 

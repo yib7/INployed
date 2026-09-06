@@ -69,6 +69,17 @@ def test_requires_clearance(text, expected):
         ("Bachelor's degree required.", False),        # not an advanced degree
         ("Graduate from a 4-year program.", False),    # 'graduate' != 'graduate degree'
         ("Master's degree is a plus; we value hands-on experience.", False),
+        # --- curly apostrophe: what a posting pasted from a web editor uses --
+        # The normalize step here was a no-op for a whole release -- it read
+        # `.replace("'", "'")`, both sides U+0027, under a comment claiming it
+        # normalized the curly form. So a posting written with U+2019 never
+        # matched, and every one of them scored as if it named no degree at all.
+        # These four pin the character itself, because retyping the line in an
+        # editor that helpfully straightens quotes is exactly how it broke.
+        ("Master’s degree is required for this role.", True),
+        ("Minimum: Master’s degree in statistics.", True),
+        ("Master’s degree preferred but not required.", False),
+        ("Bachelor’s or Master’s in CS.", False),
         # --- non-string input ----------------------------------------------
         (None, False),
         (float("nan"), False),

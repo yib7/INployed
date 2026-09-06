@@ -53,6 +53,27 @@ def test_high_score_probe_missing_columns_is_false(tmp_path):
     assert watcher.has_unseen_high_score(p, 5) is False
 
 
+def test_high_score_probe_survives_a_half_synced_master(tmp_path, caplog):
+    """A corrupt deflate stream raises zlib.error, which is not OSError/ValueError.
+
+    This probe reads a .csv.gz that Google Drive may be part-way through
+    delivering, and its caller in watcher.main sits inside a try whose only
+    clause is `finally` — so the exception escaped main() entirely. The
+    scheduled watcher died with a traceback into its own log, sync_back_to_vm
+    never ran, and the dashboard never popped, for as long as the bad file sat
+    there. "Cannot tell" has to mean "no reason to pop", not "crash".
+    """
+    p = tmp_path / "master.csv.gz"
+    p.write_bytes(bytes([0x1F, 0x8B, 0x08, 0x00]) + b" corrupt deflate payload")
+    assert watcher.has_unseen_high_score(p, 4) is False
+
+
+def test_high_score_probe_survives_a_file_that_is_not_gzip_at_all(tmp_path):
+    p = tmp_path / "master.csv.gz"
+    p.write_bytes(b"plain text, no gzip magic")
+    assert watcher.has_unseen_high_score(p, 4) is False
+
+
 # ── csv_io.reconcile_file (P2-21) ────────────────────────────────────────────
 
 class _Reg:
@@ -270,8 +291,8 @@ def test_reconcile_is_seen_tolerates_a_frame_without_the_column():
 
 def test_reconcile_persists_blank_normalization(tmp_path, monkeypatch):
     """The pass also rewrites literal ""/"nan"/"None" in is_seen to "no". That
-    edit used to be built into the temp file and then discarded whenever the
-    seen-flag counter was the only thing gating the replace. It matters on disk
+    edit is built into the temp file, so gating the replace on the seen-flag
+    counter alone would write it and then throw it away. It matters on disk
     because prune_master.py and merge_incoming.py read the master with plain
     pd.read_csv and would see the literal "nan"."""
     monkeypatch.setattr(csv_io, "_RECONCILE_CHUNK", 2)

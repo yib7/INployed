@@ -177,3 +177,75 @@ def test_apply_auth_env_sets_var(qtbot, monkeypatch):
     monkeypatch.setenv("RESUME_TAILOR_GEMINI_AUTH", "")
     w._apply_auth_env()
     assert os.environ["RESUME_TAILOR_GEMINI_AUTH"] == "api_key"
+
+
+# ---- 3.13: the degenerate run_stats frames the Stats tab actually receives ----
+#
+# run_stats.csv is written by the VM, column-union-concatenated by merge_incoming
+# and then synced through Drive, so the frame that reaches this tab is not always
+# the tidy one the happy-path tests build. Every shape below has a documented
+# cause in this repo: the header self-heal in score_jobs.append_run_stats drops
+# and re-adds columns, that concat upcasts int64 to float64 so an integer counter
+# arrives spelled "1.0", keep_default_na=False turns a missing cell into "", and
+# _load_frames deliberately hands over None when the file failed to parse.
+
+
+def test_stats_tab_survives_a_none_frame(qtbot):
+    w = _win(qtbot)
+    w._stats_df = None
+    w._refresh_stats()
+    assert "not synced yet" in w.stats_tab.summary.text()
+    assert "never" in w.stats_tab.badge.text()
+
+
+def test_stats_tab_survives_an_empty_frame(qtbot):
+    w = _win(qtbot)
+    w._stats_df = pd.DataFrame()
+    w._refresh_stats()
+    assert "not synced yet" in w.stats_tab.summary.text()
+
+
+def test_stats_summary_tolerates_string_typed_numbers_and_blanks(qtbot):
+    """"1.0" and "" are what the column-union concat + keep_default_na=False emit."""
+    w = _win(qtbot)
+    w._stats_df = pd.DataFrame([
+        {"timestamp": "2026-09-01T10:00:00", "rows_in": "12.0",
+         "llm_scored": "9.0", "prompt_tokens": "1000", "output_tokens": ""},
+        {"timestamp": "2026-09-02T10:00:00", "rows_in": "",
+         "llm_scored": "3", "prompt_tokens": "not a number", "output_tokens": "500"},
+    ])
+    w._refresh_stats()
+    text = w.stats_tab.summary.text()
+    assert "2 run(s) logged" in text
+    assert "7-run avg" in text          # the averages computed rather than raising
+
+
+def test_stats_summary_tolerates_missing_columns(qtbot):
+    """The header self-heal can produce a frame with no token columns at all."""
+    w = _win(qtbot)
+    w._stats_df = pd.DataFrame([{"timestamp": "2026-09-01T10:00:00"}])
+    w._refresh_stats()
+    assert "1 run(s) logged" in w.stats_tab.summary.text()
+    assert "0 tokens/run" in w.stats_tab.summary.text()
+
+
+def test_a_malformed_timestamp_reads_as_never_not_as_a_crash(qtbot):
+    w = _win(qtbot)
+    w._stats_df = pd.DataFrame([{"timestamp": "yesterday-ish", "rows_in": 1}])
+    w._refresh_stats()
+    assert "never" in w.stats_tab.badge.text()
+    assert "Stale" in w.stats_tab.badge.text()
+
+
+def test_calibration_counts_a_tracked_job_that_is_no_longer_in_the_master(qtbot):
+    """A job deleted (or aged out of the master) still has a status row.
+
+    The row is the user's own label and outlives the posting, so the calibration
+    line must place it somewhere rather than fail looking the job up.
+    """
+    w = _win(qtbot, status_rows=[{"job_posting_id": "gone-1", "status": "applied"}])
+    w.df = pd.DataFrame()
+    w._row_by_id = {}
+    text = w._calibration_text()
+    assert "1 labeled application(s)" in text
+    assert "unscored: 1" in text

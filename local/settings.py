@@ -111,7 +111,7 @@ class Field:
     # defaults to `override=False`, so a later `load_dotenv()` cannot beat a value
     # that is already set. That closes both routes at once: a consumer freezing
     # the value in a module constant at import (`resume_tailor/config.py`,
-    # `chrome.CHROME_ACCOUNT`, `scraper.API_TOKEN`) and one reading `os.environ`
+    # `chrome_launch.CHROME_ACCOUNT`, `scraper.API_TOKEN`) and one reading `os.environ`
     # live on every call (`keypool.KeyPool.from_env`, `llm.py`) get the same stale
     # snapshot — and so does every SUBPROCESS, which inherits a copy of it and
     # then cannot override it from `.env` either. The six VM keys are the one
@@ -132,6 +132,11 @@ class Field:
 # the literal environment-variable name, so values round-trip straight to .env.
 ENV_TARGETS = {"env"}
 
+# Same character class envfile._CONTROL_RE refuses on write; see validate().
+# It is everything `str.splitlines()` breaks on -- the C0 controls plus U+0085,
+# U+2028 and U+2029, which sit outside \x00-\x1f and still split a line.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
+
 # The field types whose value is a plain string, i.e. the only ones a
 # `Field.pattern` can be matched against. Pinned by
 # test_a_pattern_is_only_declared_on_a_text_field so a pattern on, say, a list
@@ -145,30 +150,66 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # GA gemini-3.1-pro (and gemini-3.5-pro doesn't resolve on Vertex projects), so
 # the preview id is the only pro-tier option. It is never a default — only an
 # opt-in "max quality" choice. Re-verified against Google's deprecation table on
-# 2026-08-27: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
-# Every other id here is on Google's Stable list. The only shutdown date in the
-# set is gemini-3.1-flash-lite's, 2027-05-07, and that is the earliest possible
-# retirement date rather than a scheduled one.
+# 2026-09-04: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
+# Every other id here is on Google's Stable list.
 #
-# The newer flash ids (3.7-flash, 3.6-flash, 3.5-flash-lite) are offered as
-# opt-in choices, and the defaults deliberately stay on the flash-lite/flash pair
-# the VM scores with. Price alone would argue for moving the stage-2 default off
-# 3.5-flash, since 3.6/3.7-flash list at $0.75/$3.75 per 1M against 3.5-flash's
-# $1.50/$9.00. Two reasons it stays anyway: scoring normally runs on the free-tier
-# key pool rather than paid credit, so list price is not what this pipeline pays;
-# and a 2026-06-11 downgrade of exactly these two defaults was reversed eight days
-# later on quality grounds. Changing the pair is a re-tune with a scoring run
-# behind it, not a version bump. keypool.LIMITS has free-tier rpm/rpd only for the
-# two defaults; every other id here falls to keypool.DEFAULT_LIMITS on purpose.
+# gemini-3.1-flash-lite is the one id in this tuple carrying a shutdown date, and
+# as of the 2026-09-04 re-check that row also names a REPLACEMENT: Google's
+# lifecycle table now reads `gemini-3.1-flash-lite | May 7, 2026 | May 7, 2027 |
+# gemini-3.5-flash-lite`. Every other 3.x flash id has no shutdown date and no
+# replacement. The date is still the earliest possible retirement rather than a
+# scheduled one, and the model is still on the Stable list, so nothing breaks
+# today -- but it is the stage-1 scoring default and the tailor's flash-lite tier,
+# so the migration is real and dated. It is NOT done here because it needs two
+# things this repo cannot get from documentation: gemini-3.5-flash-lite's
+# free-tier rpm/rpd (Google's rate-limits page stopped publishing per-model
+# numbers and points at each account's AI Studio dashboard), without which the
+# pool would fall back to keypool.DEFAULT_LIMITS and gate 5x tighter than the
+# 15/500 it gates gemini-3.1-flash-lite at; and a scoring run to confirm the
+# swap is not a quality regression. Tracked in .autopilot/BACKLOG.md.
+#
+# The newer flash ids (3.8-flash, 3.7-flash, 3.6-flash, 3.5-flash-lite) are
+# offered as opt-in choices, and the defaults deliberately stay on the
+# flash-lite/flash pair the VM scores with. Price alone would argue for moving the
+# stage-2 default off 3.5-flash, since 3.6/3.7/3.8-flash list at $0.75/$3.75 per
+# 1M through 2026-12-31 against 3.5-flash's $1.50/$9.00. Two reasons it stays
+# anyway: scoring normally runs on the free-tier key pool rather than paid credit,
+# so list price is not what this pipeline pays; and a 2026-06-11 downgrade of
+# exactly these two defaults was reversed eight days later on quality grounds.
+# Changing the pair is a re-tune with a scoring run behind it, not a version bump.
+# keypool.LIMITS has free-tier rpm/rpd only for the two defaults; every other id
+# here falls to keypool.DEFAULT_LIMITS on purpose.
 GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash",
-                 "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview")
+                 "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash",
+                 "gemini-3.1-pro-preview")
 
 # Claude model ids offered in the Claude model dropdowns (also editable_choice).
-# These are passed to the Claude Code CLI, not to the Anthropic API directly.
-# All three re-checked against the current model catalogue on 2026-08-27: active,
-# none deprecated or retired. The tier map (haiku fast, sonnet standard, opus
-# deep) still matches what each tier is for.
+# These are passed to the Claude Code CLI, not to the Anthropic API directly, so
+# the API-side deprecation of temperature/top_p/top_k on Opus 4.7 and later does
+# not reach this project: llm._call_claude accepts those arguments for signature
+# parity with _call_gemini and drops them, because print-mode exposes neither.
+# All three re-checked against Anthropic's model-deprecation table on 2026-09-04:
+# state Active, none deprecated, none retired. The tier map (haiku fast, sonnet
+# standard, opus deep) still matches what each tier is for. The nearest horizon in
+# the whole model set, Gemini included, is claude-haiku-4-5-20251001's tentative
+# retirement "not sooner than October 15, 2026"; Anthropic gives at least 60 days'
+# notice and there is no newer haiku to move to, so the id stays and this comment
+# is the reminder to re-check it.
 CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
+
+# How the résumé tailor picks a model for each stage, per provider. The strings
+# are the ones `local/resume_tailor/config.py` compares against
+# (config.MODEL_MODE_TIERS / MODEL_MODE_SIMPLE) — the coupling that makes the
+# dropdown mean anything — and this is a plain `choice`, not `editable_choice`,
+# because a value outside the pair is not a custom model id, it is a typo the
+# runtime would silently read as 'tiers'.
+#
+# Index 0 is 'tiers' because it is the DEFAULT twice over: `settings_tab._set_combo`
+# falls back to `choices[0]` for an unrecognised stored value, and 'tiers' is the
+# mode that reproduces what every install did before this setting existed.
+MODEL_MODE_TIERS = "tiers"
+MODEL_MODE_SIMPLE = "simple"
+MODEL_MODES = (MODEL_MODE_TIERS, MODEL_MODE_SIMPLE)
 
 # Settings-snapshot retention: the choices of the archive_mode setting, which
 # replaced a four-key retention DSL (archive_enabled + archive_prune_mode +
@@ -490,31 +531,68 @@ SETTINGS_SCHEMA: list[Field] = [
     # --- Resume tailor models: which Gemini model each tailoring stage uses, ----
     # written to .env (read by local/resume_tailor/config.py as RESUME_TAILOR_MODEL_*).
     # Editable dropdowns: pick a 3.x model or type a custom id.
+    #
+    # The MODE field is the gate for the rest, per provider, and the gate CHAIN is
+    # what makes that work: a Field has exactly one `show_if`, so the tier rows
+    # cannot carry both "provider is gemini" and "mode is tiers". They gate on the
+    # mode field, which gates on the provider — `is_visible` walks the chain, so a
+    # tier row is hidden by EITHER the wrong provider or `simple` mode.
+    #
+    # Two mode fields rather than one shared: the user only ever sees the one their
+    # provider uses, and the two sides can differ (one model everywhere on Claude,
+    # the tuned tier split on Gemini) without a third "which provider does this
+    # apply to?" question. `config.py` reads them as two independent env vars.
+    Field("RESUME_TAILOR_MODEL_MODE", "Tailor models — simple or per stage",
+          "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
+          show_if=("tailor_provider", ("gemini",)), restart=True,
+          help="'simple' uses ONE model for every step of tailoring — the one named in "
+               "'Tailor model — one for every step'. 'tiers' uses a different model per "
+               "stage (the three per-stage pickers, under 'Show advanced settings'): a cheap "
+               "one to choose bullets, a stronger one to write them. 'tiers' is the default."),
+    Field("RESUME_TAILOR_MODEL_ALL", "Tailor model — one for every step",
+          "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("simple",)), restart=True,
+          help="The single model every tailoring stage uses while 'Tailor models — simple or "
+               "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
+               "tailoring quietly falls back to the three per-stage models."),
     Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model — fast (selection)",
           "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Cheapest model — the bullet-selection / quick stages of tailoring."),
     Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model — standard (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Default model — re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
-          show_if=("tailor_provider", ("gemini",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Deliberately defaults to the same model as 'Tailor model — standard "
                "(writing)' to keep costs down — set it to gemini-3.1-pro-preview yourself "
                "for the strongest writing (slower / pricier)."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_MODE", "Claude models — simple or per stage",
+          "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
+          show_if=("tailor_provider", ("claude",)), restart=True,
+          help="Claude provider only. 'simple' uses ONE model for every step of tailoring — "
+               "the one named in 'Claude model — one for every step'. 'tiers' uses a different "
+               "model per stage (the three per-stage pickers, under 'Show advanced settings'): "
+               "haiku to choose bullets, sonnet or opus to write them."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_ALL", "Claude model — one for every step",
+          "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("simple",)), restart=True,
+          help="The single model every tailoring stage uses while 'Claude models — simple or "
+               "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
+               "tailoring quietly falls back to the three per-stage models."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: cheapest tier (bullet selection / quick stages)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model — standard (writing)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: re-phrasing bullets and the cover letter."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
           "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
-          show_if=("tailor_provider", ("claude",)), advanced=True, restart=True,
+          show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: highest-quality tier (rephrase / cover letter)."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
@@ -793,6 +871,16 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
             continue
         if not _coerce_ok(f, value):
             errors[key] = f"Expected {f.type}, got {type(value).__name__}."
+            continue
+        # An .env value is one physical KEY=VALUE line and envfile.read parses line
+        # by line, so a newline does not round-trip: it writes a second line the
+        # reader takes for a whole new assignment. envfile.update refuses it too,
+        # but that raise happens mid-save with some targets already written, and it
+        # is one message rather than a mark against the offending field. Catch it
+        # here so the form says which box is wrong before anything is written.
+        if f.target in ENV_TARGETS and isinstance(value, str) and _CONTROL_RE.search(value):
+            errors[key] = ("No line breaks — this is stored as a single line in "
+                           ".env. (Several keys go on one line, comma-separated.)")
             continue
         if f.type == "int":
             if f.min is not None and value < f.min:

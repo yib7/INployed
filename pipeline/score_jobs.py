@@ -96,6 +96,49 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
 }
 
 
+def _config_int(value, default: int, key: str) -> int:
+    """Coerce a scoring-config value to an int, falling back to `default`.
+
+    load_scoring_config() runs at IMPORT scope (see _SCORING below), so a bare
+    int(value) turns one bad entry -- a hand-edited scoring_config.json, or a
+    SCORE_* export -- into a ValueError raised while importing this module. On
+    the VM that lands at run_scraper.sh's `python score_jobs.py` under `set -e`,
+    AFTER scraper.py has already billed Bright Data, and the master upload that
+    follows never runs. scraper._positive_int exists for exactly this reason on
+    the search-config side; the asymmetry was the bug.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        print(f"scoring config: {key}={value!r} is not a number; using {default}")
+        return default
+
+
+# The two spend guards are the only config values whose SIGN changes their meaning,
+# because both are spent as a pandas row slice and pandas reads a negative count as
+# "all but N": `head(-1)` returns every row but the last, `tail(-200)` every row but
+# the first 200. So `SCORE_MAX_PER_RUN=-1` -- the obvious way to write "no cap" --
+# takes the `len(to_score) > MAX_SCORED_PER_RUN` branch, prints "Spend guard:
+# capping at -1 of 4000 jobs", and then scores 3999 of them. The guard announces
+# itself and lifts itself, which is the one failure mode a spend guard must not
+# have. Reachable from `SCORE_MAX_PER_RUN` in the VM crontab or a hand-edited
+# scoring_config.json; the dashboard's own min=1 is a form control, not the
+# enforcement point, and score_jobs.py is what actually spends the money.
+#
+# Zero is deliberately left alone: `head(0)`/`tail(0)` are empty, so "score nothing"
+# already means what it says and fails closed.
+_SPEND_CAP_KEYS = ("max_scored_per_run", "rescore_cap")
+
+
+def _spend_cap(value: int, default: int, key: str) -> int:
+    """A spend guard's value, with a negative collapsed to the built-in default."""
+    if value < 0:
+        print(f"scoring config: {key}={value} is negative, which would DISABLE the "
+              f"spend guard rather than lift it; using {default}")
+        return default
+    return value
+
+
 def _as_bool(v) -> bool:
     if isinstance(v, bool):
         return v
@@ -112,7 +155,16 @@ def load_scoring_config() -> dict:
     raw: dict = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+# utf-8-sig, not utf-8: json.loads rejects a leading BOM outright, and the
+        # handler below then discards the WHOLE file and falls back to built-ins
+        # with only a line in scraper.log to show for it. Notepad writes a BOM,
+        # PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM, and this is a
+        # file users hand-edit and the dashboard pushes here. local/jsonutil.py's
+        # read_json_dict already reads the same file BOM-tolerantly, so without
+        # this the two halves disagree about one file: the dashboard honours it,
+        # the VM silently ignores it. utf-8-sig is a superset -- it strips a BOM
+        # when there is one and decodes plain UTF-8 identically when there isn't.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict):
                 raw = data
         except (OSError, ValueError) as e:
@@ -127,7 +179,9 @@ def load_scoring_config() -> dict:
         else:
             value = default
         if kind == "int":
-            cfg[key] = int(value)
+            cfg[key] = _config_int(value, default, key)
+            if key in _SPEND_CAP_KEYS:
+                cfg[key] = _spend_cap(cfg[key], default, key)
         elif kind == "bool":
             cfg[key] = _as_bool(value)
         else:
@@ -262,7 +316,7 @@ NONREQ_CTX = ("founded", "founding", " ago", "of service", "sabbatical",
 MIN_FILTER_YEARS = _SCORING["min_filter_years"]
 
 # --- security-clearance requirement -------------------------------------------
-# A new grad provably cannot hold an active US clearance, so any genuine
+# A new grad provably cannot hold an active US clearance, so a real
 # clearance requirement is a hard drop. The negation guard keeps "no clearance
 # required" / "clearance is not required" postings (precision bias: keep on doubt).
 # Note: a bare mention of a clearance LEVEL ("Secret clearance shop", "team holds
@@ -507,7 +561,7 @@ def is_junk_desc(text: Any) -> bool:
     return any(p.search(text) for p in JUNK_DESC_PATTERNS)
 
 def requires_clearance(text: Any) -> bool:
-    """True when the JD genuinely requires a US security clearance / polygraph.
+    """True when the JD requires a US security clearance / polygraph.
 
     Suppressed by an explicit negation ("no clearance required") so such postings
     survive (precision bias favors keeping a job on doubt).
@@ -528,7 +582,7 @@ def requires_advanced_degree(text: Any) -> bool:
     """
     if not isinstance(text, str):
         return False
-    low = text.lower().replace("'", "'")  # normalize curly apostrophe
+    low = text.lower().replace("’", "'")  # normalize curly apostrophe
     for m in _DEGREE_TOKEN.finditer(low):
         lo = max(0, m.start() - 60)
         hi = min(len(low), m.end() + 60)
@@ -712,7 +766,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
     s = s.drop_duplicates(subset=["job_posting_id"], keep="last").set_index("job_posting_id")
 
     # Validate readability up front so a corrupt-but-present master raises a
-    # loud, actionable error (never a raw pandas ParserError out of save_output
+    # loud error naming the fix (never a raw pandas ParserError out of save_output
     # -> main after the scored gz is already written). Same guard/message idiom
     # as scraper.append_to_master and merge_incoming's master probe.
     def _unreadable(e):
@@ -736,7 +790,7 @@ def update_master_scores(scored: pd.DataFrame) -> None:
         # Lazily stream one chunk at a time (memory bounded). A row deep in the
         # stream with the wrong field count only trips the parser here (the
         # nrows=0 header read above passes), so convert those parse errors on the
-        # READ (next(reader)) to the same actionable OSError. Write-side errors
+        # READ (next(reader)) to the same fix-or-restore OSError. Write-side errors
         # (to_csv/os.replace OSError, update TypeError) are raised in the loop
         # body, are NOT parse errors, and still propagate unrelabelled.
         # dtype=object + keep_default_na=False (audit P2-26): the master must
@@ -858,7 +912,10 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
         df["recommendation"] = ""
         return df
 
-    sem1 = asyncio.Semaphore(STAGE1_CONCURRENCY)
+    # max(1, ...): a Semaphore(0) is never released, so asyncio.gather below would
+    # block forever -- and on the VM that holds run_scraper.sh's flock for good, so
+    # every later cron fire logs "already running" and job discovery stops silently.
+    sem1 = asyncio.Semaphore(max(1, STAGE1_CONCURRENCY))
     print(f"Stage 1: scoring {len(to_score)} jobs with {STAGE1_MODEL}")
     s1_tasks = [
         score_stage1(pool, sem1, resume, r.job_posting_id, r.job_description_md)
@@ -874,7 +931,7 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
     print(f"Stage 2: {len(s2_ids)} jobs at threshold >= {STAGE2_THRESHOLD}")
 
     if s2_ids:
-        sem2 = asyncio.Semaphore(STAGE2_CONCURRENCY)
+        sem2 = asyncio.Semaphore(max(1, STAGE2_CONCURRENCY))   # see sem1 on max(1, ...)
         # Dispatch highest Stage-1 score first so the scarce free flash budget
         # goes to the best-fit jobs; the overflow tail spills to Vertex.
         rank = {jid: i for i, jid in enumerate(s2_ids)}
@@ -941,7 +998,7 @@ async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
     """Retry failed/missing master rows. Returns (attempted, newly_scored)."""
     if not MASTER_CSV.exists():
         return 0, 0
-    # A malformed master must produce the same actionable message the fold path
+    # A malformed master must produce the same fix-or-restore message the fold path
     # gives, not a raw pandas ParserError traceback out of a cron run (audit C6-6).
     def _unreadable(e):
         return OSError(
@@ -1002,7 +1059,9 @@ def load_resume() -> str:
     """Read resume.md, or exit with a friendly message instead of a raw traceback."""
     if not RESUME_PATH.exists():
         sys.exit("resume.md not found - generate it from the dashboard's Resume Data tab")
-    return RESUME_PATH.read_text(encoding="utf-8")
+    # utf-8-sig: a BOM would otherwise ride into the scoring prompt as a stray
+    # character on the resume's first heading.
+    return RESUME_PATH.read_text(encoding="utf-8-sig")
 
 
 async def main() -> None:

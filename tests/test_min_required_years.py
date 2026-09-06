@@ -1,7 +1,7 @@
 """Regression tests for the experience-years filter in score_jobs.py.
 
-min_required_years() is load-bearing and regex-driven: it decides which jobs
-get scrapped before any LLM sees them. The semantics it must keep (see the
+min_required_years() is regex-driven and decides which jobs get scrapped before
+any LLM sees them. The semantics it must keep (see the
 function docstring in score_jobs.py):
 
   * a RANGE ("1-3 years", "1 to 3 years") or open-ended "N+ years" is a

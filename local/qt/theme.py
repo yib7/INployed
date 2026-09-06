@@ -44,6 +44,15 @@ SURFACE = PANEL
 BORDER = "#30363d"         # hairline
 BORDER_SOFT = "#21262d"    # dividers inside cards
 BORDER_STRONG = "#3f4a5a"  # hovered controls
+# Input wells and checkbox indicators only. Every OTHER hairline separates two
+# surfaces that already differ (a PANEL card on WINDOW, a table on its tab), so
+# the border is decoration and 1.55:1 is fine. An input is the one component
+# whose fill is the SAME WINDOW as the ground it sits on -- 1.09:1 -- so its
+# 1px outline is the only thing that says "you can type here", and WCAG 1.4.11
+# wants 3:1 for exactly that case. #636c78 measures 3.56:1 on WINDOW and 3.25:1
+# on PANEL (the Settings cards), and still sits dimmer than the MUTED label text
+# beside it, so the field reads as a field without shouting.
+BORDER_INPUT = "#636c78"
 
 # --- text tiers ----------------------------------------------------------------
 TEXT = "#e6edf3"           # primary
@@ -197,6 +206,22 @@ def row_color(name: str) -> QtGui.QColor:
     return QtGui.QColor(_ROW_TINTS.get(name, ""))
 
 
+# Row tint -> the saturated family colour the delegate paints the row's 3px
+# category stripe with. A tint alone measures ~1.05:1 against PANEL, which is
+# exactly right behind a whole row of text and useless in a 13px legend swatch;
+# the stripe is what makes the category readable at that size. Two tints are
+# shared by two tags each (has_resume/applied, tailor_failed/rejected) and both
+# members of each pair belong to the same family, so the mapping is unambiguous.
+_TINT_STRIPES = {_tint(name): SEMANTICS[name]["base"] for name in SEMANTICS}
+_TINT_STRIPES.update({_tint(name, True): SEMANTICS[name]["base"] for name in SEMANTICS})
+
+
+def stripe_for_tint(tint_hex: str) -> str:
+    """The category-stripe colour for a row tint hex, or the tint itself if it
+    isn't one of ours."""
+    return _TINT_STRIPES.get(str(tint_hex).lower(), tint_hex)
+
+
 def _dark_palette() -> QtGui.QPalette:
     p = QtGui.QPalette()
     C = QtGui.QColor
@@ -311,7 +336,7 @@ def _qss() -> str:
 
     /* Inputs — wells sit on the deepest surface; focus = 1px accent, no glow. */
     QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit, QDateEdit {{
-        background: {WINDOW}; color: {TEXT}; border: 1px solid {BORDER};
+        background: {WINDOW}; color: {TEXT}; border: 1px solid {BORDER_INPUT};
         border-radius: {RADII["control"]}px; padding: 6px 8px;
         selection-background-color: {SEL}; selection-color: {SEL_TEXT}; }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
@@ -351,7 +376,7 @@ def _qss() -> str:
     QTableCornerButton::section {{ background: {RAISED}; border: 0; }}
 
     QCheckBox {{ spacing: 7px; }}
-    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER};
+    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {BORDER_INPUT};
         border-radius: {RADII["checkbox"]}px; background: {WINDOW}; }}
     QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
 
@@ -375,7 +400,7 @@ def _qss() -> str:
     QToolButton[resetField="true"] {{ color: {MUTED}; border: 0; padding: 0 4px;
         background: transparent; }}
     QToolButton[resetField="true"]:hover {{ color: {ACCENT}; }}
-    /* `background: transparent` is load-bearing: a section header is a
+    /* `background: transparent` is required here: a section header is a
        QToolButton inside a PANEL card, and the global `QWidget {{ background:
        WINDOW }}` rule otherwise painted a WINDOW-dark slab behind every Settings
        section title. QToolButton is not a QLabel/QCheckBox/QSlider, so the

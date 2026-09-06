@@ -186,17 +186,25 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         rect = option.rect.adjusted(round(_PAD * s), 0, -round(_PAD * s), 0)
         font = option.font
 
+        # Selection deepens the row tint (sel_a, up to 0.22), and MUTED ink is
+        # the tier with no headroom left: #8b949e measures 3.83-4.41:1 on the
+        # selected apply / consider / follow-up tints, i.e. the Found, Run and
+        # Posted dates on the row the user is actually looking at were the only
+        # text in the app under 4.5:1. One tier up clears it everywhere (7.62:1
+        # at worst, on the selected apply green).
+        muted = theme.TEXT_SECONDARY if selected else theme.MUTED
+
         if cid == "score":
-            self._paint_score_badge(painter, rect, text, font, s)
+            self._paint_score_badge(painter, rect, text, font, s, muted)
         elif cid == "deep_score":
-            self._paint_deep_bar(painter, rect, text, font, s, family)
+            self._paint_deep_bar(painter, rect, text, font, s, family, muted)
         elif cid == "recommendation":
             self._paint_reco_pill(painter, rect, text, font, s,
-                                  str(index.data(TAG_ROLE) or ""))
+                                  str(index.data(TAG_ROLE) or ""), muted)
         elif cid == "status":
             self._paint_status_pill(painter, rect, text, font, s)
         elif cid == "follow_up":
-            self._paint_follow_up(painter, rect, text, font)
+            self._paint_follow_up(painter, rect, text, font, muted)
         elif cid == "url":
             if text.strip():
                 self._draw_text(painter, rect, "Open ↗", font,
@@ -207,7 +215,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
                             align=QtCore.Qt.AlignmentFlag.AlignRight)
         elif cid in _DATE_COLS:
             self._draw_text(painter, rect, text, self._font(font, "mono"),
-                            self._color(theme.MUTED))
+                            self._color(muted))
         elif cid in ("company_name", "company"):
             self._draw_text(painter, rect, text, font,
                             self._color(theme.TEXT_SECONDARY))
@@ -227,12 +235,12 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         elided = fm.elidedText(text, QtCore.Qt.TextElideMode.ElideRight, rect.width())
         painter.drawText(rect, align | QtCore.Qt.AlignmentFlag.AlignVCenter, elided)
 
-    def _paint_score_badge(self, painter, rect, text, font, s):
+    def _paint_score_badge(self, painter, rect, text, font, s, muted=theme.MUTED):
         try:
             score = int(float(text))
         except (TypeError, ValueError):
             self._draw_text(painter, rect, text, self._font(font, "mono"),
-                            self._color(theme.MUTED))
+                            self._color(muted))
             return
         badge = theme.SCORE_BADGES.get(score)
         if badge is None:
@@ -251,20 +259,29 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         painter.setFont(self._font(font, "mono_bold"))
         painter.drawText(box, QtCore.Qt.AlignmentFlag.AlignCenter, str(score))
 
-    def _paint_deep_bar(self, painter, rect, text, font, s, family):
+    def _paint_deep_bar(self, painter, rect, text, font, s, family,
+                        muted=theme.MUTED):
         try:
             value = float(text)
         except (TypeError, ValueError):
             self._draw_text(painter, rect, "—", self._font(font, "mono"),
-                            self._color(theme.MUTED))
+                            self._color(muted))
             return
         label = f"{value:g}"
         mono = self._font(font, "mono")
         num_w = QtGui.QFontMetrics(mono).horizontalAdvance(label)
         gap = round(6 * s)
         # The bar yields to the numeral in a narrow column (Deep is ~70px):
-        # the value must never be clipped away by the track.
-        bw = max(round(16 * s), min(round(56 * s), rect.width() - num_w - gap))
+        # the value must never be clipped away by the track. It reserved EXACTLY
+        # num_w and no more, so the numeral sat at the elide threshold at every
+        # scale (measured room == num_w at 75/100/125/150%) and one pixel of
+        # QRect rounding tipped it: the Deep column read "9…", "8…", "7…" while
+        # the whole numbers beside them were fine. Reserve a few pixels of slack,
+        # and clamp so the 16px bar floor can never re-take them.
+        slack = round(3 * s)
+        bw = max(round(16 * s),
+                 min(round(56 * s), rect.width() - num_w - gap - slack))
+        bw = min(bw, max(0, rect.width() - num_w - gap - slack))
         bh = max(2, round(6 * s))
         r = 3 * s
         track = QtCore.QRectF(rect.left(), rect.center().y() - bh / 2 + 1, bw, bh)
@@ -301,7 +318,8 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         painter.drawText(box, QtCore.Qt.AlignmentFlag.AlignCenter, elided)
         return box
 
-    def _paint_reco_pill(self, painter, rect, text, font, s, tag):
+    def _paint_reco_pill(self, painter, rect, text, font, s, tag,
+                         muted=theme.MUTED):
         # Row tag overrides the reco: Tailored / Tailor failed pills.
         override = _TAG_PILLS.get(tag)
         if override is not None:
@@ -309,7 +327,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         else:
             reco = text.strip().lower()
             if reco not in _RECO_LABELS:
-                self._draw_text(painter, rect, text, font, self._color(theme.MUTED))
+                self._draw_text(painter, rect, text, font, self._color(muted))
                 return
             label, sem = _RECO_LABELS[reco], _RECO_FAMILY[reco]
         self._paint_pill(painter, rect, label, font, s, theme.SEMANTICS[sem])
@@ -336,7 +354,7 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         self._paint_pill(painter, rect, status.capitalize(), font, s,
                          theme.SEMANTICS[sem])
 
-    def _paint_follow_up(self, painter, rect, text, font):
+    def _paint_follow_up(self, painter, rect, text, font, muted=theme.MUTED):
         state = text.strip()
         if state.upper() == "DUE":
             fam = theme.SEMANTICS["followup"]
@@ -346,4 +364,4 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
             fam = theme.SEMANTICS["followup_sent"]
             self._draw_text(painter, rect, "Sent", font, self._color(fam["pill_fg"]))
         else:
-            self._draw_text(painter, rect, "—", font, self._color(theme.MUTED))
+            self._draw_text(painter, rect, "—", font, self._color(muted))

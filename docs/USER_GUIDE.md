@@ -126,14 +126,15 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
   folder syncs down; the local CLI path above doesn't.)
 
 ### Configure everything from the Settings tab (no file editing)
-Open the dashboard (`python local/app.py`) and click the **Settings** tab: one
+Open the dashboard (double-click `Open INployed Dashboard.cmd`) and click the
+**Settings** tab: one
 schema-driven form that edits every tunable the project has, grouped and explained,
 so a non-technical user can set things up without touching a file. Each section has a
 **collapsible header** with a one-line tagline, so you can fold away the parts you're
 not editing (the tagline still tells you what each collapsed section is for) and tackle
 one group at a time.
 
-**Finding one setting among sixty.** Three things at the top of the tab, in this order:
+**Finding one setting among sixty-odd.** Three things at the top of the tab, in this order:
 
 - **The search box:** type a word and the tab filters to the rows that mention it. It
   matches the setting's name, its explanation, its config key **and the chips on the
@@ -180,10 +181,11 @@ The sections:
   keywords, remote types, spend caps, artifact toggles, and more. **Drop Easy Apply jobs
   before scoring** (off by default) discards LinkedIn Easy-Apply postings before they cost
   a scoring call, for anyone who only wants postings with a real application form.
-- **Models:** the scorer's two stages **and** all three résumé-tailor stages
-  (fast / standard / deep) are **editable dropdowns**: the recent Gemini 3.x ids by
-  default, plus the Claude tier ids used when a provider is set to `claude`. Pick one or
-  type a custom id.
+- **Models:** the scorer's two stages **and** the résumé tailor's are **editable
+  dropdowns**: the recent Gemini 3.x ids by default, plus the Claude tier ids used when a
+  provider is set to `claude`. Pick one or type a custom id. The tailor asks one question
+  before the rest — **simple or per stage** — described under *One model for every step*
+  below.
 - **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
   inbox the apply agent opens for verification emails; plus a snapshot of your
   settings on every Save, restorable from **Restore from archive…**. **Settings
@@ -219,9 +221,37 @@ the VM keeps running unchanged.
 > **Claude backend (optional).** The résumé tailor and the local job scorer can each run
 > on your Claude Code CLI subscription instead of Gemini. Set **Resume tailor provider** or
 > **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
-> headless CLI with your subscription auth (no API key) and prompt caching; the tailor tiers
-> map fast → `claude-haiku-4-5`, standard → `claude-sonnet-5`, deep → `claude-opus-5`. The
-> cloud VM always scores with Gemini, regardless of this setting.
+> headless CLI with your subscription auth (no API key) and prompt caching; left on `tiers`
+> (the default), the tailor stages map fast → `claude-haiku-4-5`, standard →
+> `claude-sonnet-5`, deep → `claude-opus-5`. The cloud VM always scores with Gemini,
+> regardless of this setting.
+
+#### One model for every step, or one per stage
+Settings → Engine, **Tailor models — simple or per stage** (and, on the Claude provider,
+**Claude models — simple or per stage**). Tailoring runs in stages, and by default each one
+gets its own model: a cheap model to pick which of your experiences to use, a stronger one to
+write the bullets. That saves money, but it means three dropdowns and three decisions before
+you have a working setup.
+
+Switch the row to **simple** and there is one: **Tailor model — one for every step** — pick a
+listed id or type your own, and every stage uses it. The three per-stage pickers (which live
+under *Show advanced settings*) disappear while simple is on, and reappear with your choices
+intact if you switch back — nothing you typed is lost either way. Leave it on **tiers**, the
+default, and nothing about your setup changes.
+
+Two details worth knowing:
+
+- The setting is **per provider**. Gemini and Claude each have their own pair of rows, and
+  you only ever see the pair for the provider you're using, so the two can differ: one model
+  everywhere on Claude, the tuned per-stage split on Gemini.
+- If you switch to simple and leave the model box **blank**, tailoring quietly goes back to
+  the three per-stage models rather than failing. A blank is treated as "no preference", not
+  as an instruction.
+
+Like nearly everything saved to `.env`, this one is tagged **`restart`**: Save writes it
+immediately, but the dashboard picked up its model settings when it launched, so **close and
+reopen the dashboard** before the change affects a tailoring run. Save names the rows that
+need it.
 
 #### What "Strip AI writing patterns from the cover letter" catches
 Settings → Résumé, off by default. It adds a second, stricter style pass to the **cover
@@ -236,8 +266,8 @@ Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`)
 
 The rules ride in the writing prompt, and the worst offenders are also caught afterwards by
 a deterministic checker that buys exactly one rewrite. It is off by default because it is a
-taste call, and turning it off leaves the letter exactly as it was before the setting
-existed. The grounding gate still runs last either way, so a restyled sentence that
+taste call: with it off, the cover letter goes through the ordinary style pass and
+nothing else. The grounding gate still runs last either way, so a restyled sentence that
 introduces an unsupported fact is still rejected.
 
 ### What leaves your machine
@@ -307,8 +337,9 @@ The scorer matches every job against `resume.md`. When you edit your **Resume Da
 **Resume Data** tab shows an **amber warning banner** whenever `resume.md` is older than
 your data (so the scorer isn't quietly matching against a stale résumé), with a one-click
 **Regenerate resume.md**. To regenerate: on the
-**Resume Data** tab, pick a model (`gemini-3.5-flash` by default, or 3.1 flash-lite /
-3.1 pro) and click **Generate from my data**. It uses Gemini to rebuild `resume.md`
+**Resume Data** tab, pick a model (`gemini-3.5-flash` by default; the dropdown lists every
+3.x flash and pro id the Settings tab offers, and you can type your own) and click
+**Generate from my data**. It uses Gemini to rebuild `resume.md`
 **faithfully, selecting and rephrasing your data, never inventing.** You **review (and
 can edit) the result before it's saved**; saving backs up the old file to `resume.md.bak`.
 If VM features are on, it then offers to push the new `resume.md` to the VM, and a
@@ -330,9 +361,9 @@ fill the structured employment fields), and the active standard answers. It list
 files to upload**; it's built from the tailoring run's own output, so it mirrors the PDF
 exactly with no extra AI call. To apply:
 
-1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card). Tailoring no longer pops
-   open File Explorer by default; flip **Settings → Open output folder after tailoring**
-   on if you want that.
+1. Tailor the résumé for the job (the **Tailor résumé** button on the detail card).
+   Tailoring does not open File Explorer by default; flip **Settings → Open output
+   folder after tailoring** on if you want that.
 2. Click **Apply** on the detail card. The Apply button is **green only once the job has
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
    swaps the bottom detail card for a right-side **Apply panel** with the copyable

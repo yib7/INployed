@@ -10,7 +10,7 @@ so the widget is decoupled and testable without the full app.
 from __future__ import annotations
 
 import pandas as pd
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import jobsdata
 from jobsdata import COLUMN_LABELS, LABEL_TO_COLUMN
@@ -52,7 +52,12 @@ class JobsTab(QtWidgets.QWidget):
         # "Ask AI about this job": a chat scoped to ONE job, so it appears only on a
         # single-row selection. None (the default) means unwired — no menu item.
         self._on_ask_ai = on_ask_ai
-        self._hidden: set[str] = set((hidden_columns or {}).get(table_key, []))
+        # Intersected with col_ids, not taken verbatim: a persisted id for a column
+        # that no longer exists would never be cleared (line 432 re-saves the set as
+        # is), and once len(_hidden) >= len(col_ids) the guard in set_column_hidden is
+        # permanently true -- the Columns dialog goes silently inert.
+        _saved = (hidden_columns or {}).get(table_key, [])
+        self._hidden: set[str] = {c for c in _saved if c in self.col_ids}
         self._save_hidden = save_hidden or (lambda key, hidden: None)
         self._base = pd.DataFrame()
         self._resume_ids = frozenset()
@@ -244,6 +249,30 @@ class JobsTab(QtWidgets.QWidget):
         n = self._active_filter_count()
         self._filters_btn.setText(f"Filters ({n})" if n else "Filters")
 
+    # QSS `QHeaderView::section { padding: 7px 9px; border-right: 1px }`. Those
+    # are fixed pixels: they do NOT shrink with the interface scale, while the
+    # column widths do, so a narrow column loses its header text faster than the
+    # type shrinks. This is that padding, plus the border and a pixel of slack.
+    _HEADER_CHROME_PX = 9 + 9 + 1 + 1
+
+    def _header_floor(self, index: int) -> int:
+        """The narrowest `index` can be and still paint its whole header label.
+
+        A header section is the one piece of table text Qt CLIPS instead of
+        eliding, and it centres what it clips, so an overrun eats both ends:
+        "Score" rendered as "core" in a 38px column at 75%. Applied as a floor
+        only -- a column already wide enough is left exactly as it is.
+        """
+        model = self.table.model()
+        if model is None:
+            return 0
+        label = model.headerData(index, QtCore.Qt.Orientation.Horizontal)
+        if not label:
+            return 0
+        header = self.table.horizontalHeader()
+        return (QtGui.QFontMetrics(header.font()).horizontalAdvance(str(label))
+                + self._HEADER_CHROME_PX)
+
     def _set_column_widths(self, widths: list[int]) -> None:
         """Initial widths, scaled by the live interface scale.
 
@@ -254,7 +283,34 @@ class JobsTab(QtWidgets.QWidget):
         this only sets where they start."""
         scale = theme._current_scale
         for i, w in enumerate(widths):
-            self.table.setColumnWidth(i, round(w * scale))
+            self.table.setColumnWidth(i, max(round(w * scale),
+                                             self._header_floor(i)))
+
+    def rescale_columns(self, factor: float) -> None:
+        """Re-scale the live column widths by `factor` after an interface-scale
+        change, then re-decide the Title stretch.
+
+        `_set_column_widths` only runs at construction, so before this existed a
+        user who dragged the interface-size slider got bigger type inside columns
+        still sized for the old scale: at 150% the High Score header read "cor"
+        and "licants" (a header section is the one piece of table text Qt clips
+        instead of eliding) and the Found column showed "2026-0…". Multiplying
+        the CURRENT widths rather than re-applying the defaults is what keeps a
+        column the user dragged wider proportionally wider afterwards.
+        """
+        if factor <= 0 or abs(factor - 1.0) < 1e-9:
+            return
+        hh = self.table.horizontalHeader()
+        interactive = QtWidgets.QHeaderView.ResizeMode.Interactive
+        for i in range(len(self.col_ids)):
+            if hh.sectionResizeMode(i) != interactive:
+                hh.setSectionResizeMode(i, interactive)
+        for i in range(len(self.col_ids)):
+            self.table.setColumnWidth(i, max(1, round(hh.sectionSize(i) * factor),
+                                             self._header_floor(i)))
+        self._update_stretch()
+        if self._legend is not None:
+            self._legend.rescale()
 
     def _update_stretch(self) -> None:
         """Spend the table's spare width on Title, not on the trailing Link
@@ -420,17 +476,32 @@ class JobsTab(QtWidgets.QWidget):
             self.table.setColumnHidden(i, cid in self._hidden)
         self._update_stretch()
 
-    def set_column_hidden(self, cid: str, hidden: bool) -> None:
-        """Hide/show one column; never lets every column be hidden (blank table)."""
+    def set_column_hidden(self, cid: str, hidden: bool) -> bool:
+        """Hide/show one column; never lets every column be hidden (blank table).
+
+        Returns False when the request was refused, so a caller driving this from a
+        checkbox can put the checkbox back: silently ignoring the toggle used to
+        leave an unchecked box beside a still-visible column."""
         target = set(self._hidden)
         target.discard(cid)
         if hidden:
             target.add(cid)
         if len(target) >= len(self.col_ids):
-            return
+            return False
         self._hidden = target
         self._save_hidden(self.table_key, sorted(self._hidden))
         self._apply_column_visibility()
+        return True
+
+    def _on_column_toggled(self, box, cid: str, checked: bool) -> None:
+        """Apply the checkbox, and undo it in the UI when the tab refuses.
+
+        blockSignals around the reset so putting the box back does not re-enter
+        this slot and toggle it a second time."""
+        if not self.set_column_hidden(cid, not checked):
+            box.blockSignals(True)
+            box.setChecked(not checked)
+            box.blockSignals(False)
 
     def _choose_columns(self) -> None:
         dlg = QtWidgets.QDialog(self)
@@ -440,7 +511,8 @@ class JobsTab(QtWidgets.QWidget):
         for cid in self.col_ids:
             cb = QtWidgets.QCheckBox(COLUMN_LABELS.get(cid, cid))
             cb.setChecked(cid not in self._hidden)
-            cb.toggled.connect(lambda checked, c=cid: self.set_column_hidden(c, not checked))
+            cb.toggled.connect(
+                lambda checked, c=cid, box=cb: self._on_column_toggled(box, c, checked))
             v.addWidget(cb)
         close = QtWidgets.QPushButton("Close")
         close.setProperty("accent", True)

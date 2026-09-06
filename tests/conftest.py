@@ -76,6 +76,32 @@ for _leaked in (
     "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
     "RESUME_TAILOR_OUTPUT", "RESUME_TAILOR_CANDIDATE", "RESUME_TAILOR_GEMINI_AUTH",
     "RESUME_TAILOR_PROVIDER", "LINKEDIN_EXTRA_MASTER", "APPLY_QUEUE_PATH",
+    # Import-time layout constants (measure.py): a developer override would otherwise
+    # decide the golden and the fill-fraction defaults the suite asserts.
+    "RESUME_TAILOR_FULL_LINE_FILL", "RESUME_TAILOR_LAST_LINE_FILL",
+    "RESUME_TAILOR_UNDERFULL_FILL", "RESUME_TAILOR_BODY_LINE_CAPACITY",
+    "RESUME_TAILOR_SKILL_LINE_CAPACITY",
+    # config.py's import-time layout constants, for exactly the same reason. These
+    # were handled ad hoc instead: tests/test_resume_layout.py carries twelve
+    # `monkeypatch.delenv("RESUME_TAILOR_PROJECTS_MAX")` lines and the golden pins
+    # all three by attribute. Scrub them once here so a shell export cannot decide
+    # what any other test sees.
+    "RESUME_TAILOR_PROJECTS_MAX", "RESUME_TAILOR_PROJECT_BULLETS_MAX",
+    "RESUME_TAILOR_PROJECT_BULLET_LINES",
+    # The simple/tiers model switch and its one-model ids. Read LIVE from
+    # os.environ by config.model_for / claude_model_for, so a shell export (the
+    # author's own .env is about to say `simple`) would re-point every tier in the
+    # suite and quietly turn the "the default is tiers" tests into a report on the
+    # developer's shell. Same reason RESUME_TAILOR_PROVIDER is on this list.
+    "RESUME_TAILOR_MODEL_MODE", "RESUME_TAILOR_MODEL_ALL",
+    "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
+    # score_jobs' scoring config: env beats the file, and these decide the
+    # module constants frozen at import (see _hermetic_repo_data).
+    "SCORE_PROVIDER", "SCORE_STAGE1_MODEL", "SCORE_STAGE2_MODEL",
+    "SCORE_STAGE1_MODEL_CLAUDE", "SCORE_STAGE2_MODEL_CLAUDE",
+    "SCORE_STAGE1_CONCURRENCY", "SCORE_STAGE2_CONCURRENCY",
+    "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
+    "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY", "SCORE_HTTP_TIMEOUT_S",
 ):
     os.environ.pop(_leaked, None)
 
@@ -269,6 +295,7 @@ def _hermetic_repo_data(tmp_path_factory):
     import settings
     import watcher
     from resume_tailor import apply_answers, apply_config
+    from resume_tailor import config as rt_config
 
     d = tmp_path_factory.mktemp("hermetic_repo")
     with pytest.MonkeyPatch.context() as mp:
@@ -284,6 +311,12 @@ def _hermetic_repo_data(tmp_path_factory):
                    if targets is None else targets)
         mp.setattr(apply_answers, "STORE_PATH", d / "apply_answers.json")
         mp.setattr(apply_config, "APPLY_CONFIG", d / "apply_config.json")
+        # resume_tailor.config keeps its OWN binding to local/config.json, so the
+        # jobsdata.HERE redirect above never covered it: config._config_json() read
+        # the author's real file. Caught in 3A by asking projects_max() for a
+        # default and getting 4 -- the value in the author's config.json, where a
+        # fresh clone has no file at all and answers 3.
+        mp.setattr(rt_config, "CONFIG_JSON", d / "config.json")
         mp.setattr(scraper, "OUTPUT_DIR", d)
         mp.setattr(scraper, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(scraper, "PREVIOUS_IDS_FILE", d / "last_run_job_ids.json")
@@ -293,6 +326,31 @@ def _hermetic_repo_data(tmp_path_factory):
         mp.setattr(score_jobs, "MASTER_CSV", d / "linkedin_jobs_master.csv")
         mp.setattr(score_jobs, "RESUME_PATH", d / "resume.md")
         mp.setattr(score_jobs, "RUN_STATS_CSV", d / "run_stats.csv")
+        # score_jobs runs `_SCORING = load_scoring_config()` at IMPORT scope, long
+        # before this function-scoped fixture can move OUTPUT_DIR -- so the module
+        # constants below were frozen from the author's gitignored
+        # scoring_config.json and stayed that way for the whole session. Measured:
+        # STAGE1_MODEL came back as the author's configured id, not the built-in
+        # default, and tests/test_scoring_config.py's
+        # `test_absent_file_uses_builtin_defaults` passed only because that file
+        # happened to carry the same MIN_FILTER_YEARS and STAGE2_THRESHOLD.
+        # Re-resolve against the sandbox and rebind, so every test sees the
+        # documented defaults. A test wanting other values writes its own file and
+        # calls load_scoring_config() itself.
+        _scoring = score_jobs.load_scoring_config()
+        _provider, _s1, _s2 = score_jobs._active_scoring(_scoring)
+        mp.setattr(score_jobs, "_SCORING", _scoring)
+        mp.setattr(score_jobs, "SCORING_PROVIDER", _provider)
+        mp.setattr(score_jobs, "STAGE1_MODEL", _s1)
+        mp.setattr(score_jobs, "STAGE2_MODEL", _s2)
+        for _attr, _key in (("STAGE1_CONCURRENCY", "stage1_concurrency"),
+                            ("STAGE2_CONCURRENCY", "stage2_concurrency"),
+                            ("STAGE2_THRESHOLD", "stage2_threshold"),
+                            ("MAX_SCORED_PER_RUN", "max_scored_per_run"),
+                            ("RESCORE_CAP", "rescore_cap"),
+                            ("MIN_FILTER_YEARS", "min_filter_years"),
+                            ("DROP_EASY_APPLY", "drop_easy_apply")):
+            mp.setattr(score_jobs, _attr, _scoring[_key])
         yield
 
 

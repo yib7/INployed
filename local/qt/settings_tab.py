@@ -31,6 +31,7 @@ from typing import Callable
 
 from PySide6 import QtCore, QtWidgets
 
+import errmsg
 import jobsdata
 import settings
 import settings_archive
@@ -323,7 +324,7 @@ class SettingsForm(QtWidgets.QWidget):
         self._body.addStretch(1)
         # Last, because it writes to the Save button `_add_buttons` just made. Not
         # a no-op on a fresh form either: a stored int the widget had to CLAMP is
-        # genuinely dirty — the form is holding 5000 where the file says 99999, and
+        # dirty — the form is holding 5000 where the file says 99999, and
         # the next Save writes it — so the marker opens alongside P5's note saying
         # so, rather than the two disagreeing.
         self._refresh_dirty()
@@ -336,7 +337,7 @@ class SettingsForm(QtWidgets.QWidget):
         This is what legitimises the two folds below it. Hiding a setting behind
         a disclosure toggle or a collapsed section is only defensible while the
         setting stays FINDABLE; without a search an advanced or folded-away row is
-        genuinely lost, and the user's only recourse is to scroll ~130 rows
+        lost, and the user's only recourse is to scroll ~130 rows
         looking for a word they already know.
         """
         box = QtWidgets.QLineEdit()
@@ -911,7 +912,7 @@ class SettingsForm(QtWidgets.QWidget):
 
         The note lives INSIDE the field's cell rather than in a form row of its
         own, and it is built here — empty and hidden — for every field, never
-        added on demand. Two reasons, both load-bearing:
+        added on demand. Two reasons, neither cosmetic:
 
         * `self._rows` holds POSITIONAL QFormLayout indices captured at build, so
           an `insertRow` would silently re-point every stored index below it (see
@@ -1190,7 +1191,7 @@ class SettingsForm(QtWidgets.QWidget):
         Clearing on CHANGE rather than on the next Save is what keeps a red box
         from following someone around after they have already fixed it — and, for
         a clamp note, the moment they type the widget IS the value, so a note
-        about what used to be on disk is stale.
+        about the value that was on disk is stale.
 
         Reads `self._widgets[f.key]`, i.e. the REGISTERED control, NOT whatever
         `_make_widget` returned: for the four composite cells those differ, and
@@ -1224,7 +1225,7 @@ class SettingsForm(QtWidgets.QWidget):
         control to match.
 
         ONE note per field, last writer wins: an error supersedes a clamp warning
-        rather than stacking, because the two cannot both be actionable at once
+        rather than stacking, because the two cannot both be true at once
         (a spin box the form clamped on the way in cannot then be out of range).
         A field with no note label — `vm_enabled`, the VM section's master
         checkbox, which is added straight to the section body rather than through
@@ -1359,7 +1360,7 @@ class SettingsForm(QtWidgets.QWidget):
         those instead.
 
         READS THE WIDGETS (`_gate_values`), never `settings.load()`, and that is
-        load-bearing rather than incidental. `settings.is_visible` compares gate
+        deliberate rather than incidental. `settings.is_visible` compares gate
         values EXACTLY while `_set_combo` coerces an unrecognised stored value to
         `choices[0]` before the form ever sees it, so a hand-edited
         `"provider": "openai"` makes `visible_keys(load())` hide all twelve gated
@@ -1766,7 +1767,7 @@ class SettingsForm(QtWidgets.QWidget):
             # can see and fix where they are; an unwritable config.json is neither,
             # and a status line alone would let them walk away believing they saved.
             self.status.setText("Save failed.")
-            QtWidgets.QMessageBox.critical(self, "Settings", str(exc))
+            QtWidgets.QMessageBox.critical(self, "Settings", errmsg.for_user(exc))
             return False
         summary = self._changed_summary(before, values)
         restart = self._restart_notice(before, values)

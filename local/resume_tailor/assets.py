@@ -4,12 +4,15 @@
                              the optional `tailor:` layout config
 - resume_template.tex     -> the LaTeX preamble (candidate-independent), reused
                              verbatim; header/Education/body are rendered from the yaml
-- example resume PDF      -> extracted text, used as a style exemplar in prompts
+- style_exemplar.txt      -> the curated one-bullet-per-line voice sample used in
+                             prompts; falls back to the example resume PDF's
+                             extracted text, then to "" (see example_text)
 """
 from __future__ import annotations
 
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
@@ -24,16 +27,34 @@ from . import config
 _PREAMBLE_MARKER = "\\begin{document}"
 
 
-@lru_cache(maxsize=1)
-def load_master() -> Dict[str, Any]:
+def master_source() -> Path:
+    """The file `load_master` will actually read.
+
+    Exists so a caller can tell the user's own master apart from the committed
+    example, which `load_master` silently falls back to. That fallback is what
+    keeps a fresh clone and CI working, but it also means a brand-new user gets
+    a résumé built entirely from demo data with nothing saying so — and the whole
+    contract of this engine is that every bullet traces to a fact the USER wrote.
+    """
     path = config.MASTER_YAML
     if not path.exists():
-        # No personal master configured yet (e.g. a fresh clone before setup.ps1,
-        # or CI): fall back to the committed example so the engine and the test
-        # suite work with demo data instead of crashing on a missing file.
         example = path.with_name("master_experience.example.yaml")
         if example.exists():
-            path = example
+            return example
+    return path
+
+
+def using_example_master() -> bool:
+    """True when no personal master exists and the committed example is standing in."""
+    return master_source() != config.MASTER_YAML
+
+
+@lru_cache(maxsize=1)
+def load_master() -> Dict[str, Any]:
+    # No personal master configured yet (e.g. a fresh clone before setup.ps1, or
+    # CI): master_source falls back to the committed example so the engine and
+    # the test suite work with demo data instead of crashing on a missing file.
+    path = master_source()
     try:
         with path.open(encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
@@ -200,8 +221,41 @@ def _pdf_text(path) -> str:
     return "\n".join((pg.extract_text() or "") for pg in reader.pages).strip()
 
 
+def _exemplar_lines(path) -> str:
+    """The curated style exemplar as bullet lines: one bullet per line, `#` comment
+    lines and blanks dropped, every line stripped of trailing whitespace.
+
+    Returns "" for a file that is missing, unreadable, or holds nothing but comments —
+    the caller then falls back to the PDF rather than sending the model an empty (or
+    comment-only) exemplar."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    kept = [line.strip() for line in text.splitlines()]
+    return "\n".join(ln for ln in kept if ln and not ln.startswith("#"))
+
+
 @lru_cache(maxsize=1)
 def example_text() -> str:
+    """The style exemplar injected (bounded) into the rephrase prompt, resolved in
+    priority order: the curated style_exemplar.txt, else the sample PDF's extracted
+    text, else "".
+
+    The PDF arm is the original source and stays so an existing install that never
+    writes the .txt behaves exactly as before; the curated arm exists because that
+    extract is a whole résumé page — name/contact/education before the first bullet,
+    next-section headings glued onto bullet tails, column collisions — of which the
+    prompt could only afford the first slice. See config.STYLE_EXEMPLAR_TXT.
+
+    Swallows everything on purpose: the exemplar is a nice-to-have, and no tailoring
+    run may die because a personal file is absent or malformed."""
+    try:
+        curated = _exemplar_lines(config.STYLE_EXEMPLAR_TXT)
+    except Exception:  # noqa: BLE001 - e.g. a non-UTF-8 file; fall through to the PDF
+        curated = ""
+    if curated:
+        return curated
     try:
         return _pdf_text(config.EXAMPLE_PDF)
     except Exception:
@@ -211,6 +265,12 @@ def example_text() -> str:
 # A built-in palette used only when active_words.md is missing/unparseable (fresh clone,
 # CI, or a user who deleted it) — keeps the engine working with a sane verb set. The real
 # source is the curated, categorized resume_tailor_files/active_words.md.
+#
+# Curated rather than extracted, and that was a measured decision: the openers used to
+# come from the 6KB raw résumé-PDF dump (jumbled multi-column OCR — weak signal AND
+# expensive) and the model only needs a clean set of verbs, so this is both cheaper and
+# better. `compose._CORE_VERBS` used to record that here; it was a dead duplicate of this
+# list and was deleted, so the note lives with the list it describes.
 _FALLBACK_VERBS: Dict[str, List[str]] = {
     "Technical Skills": [
         "Built", "Designed", "Engineered", "Developed", "Implemented", "Architected",

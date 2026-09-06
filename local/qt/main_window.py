@@ -12,7 +12,6 @@ the height back when it closes (`_on_description_toggled`).
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -27,10 +26,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import apply_queue
 import ats_accounts
-import chrome
+import chrome_launch
+import errmsg
 import jobsdata
 import osopen
 import settings
+import setup_check
 from csv_io import read_csv_gz, reconcile_is_seen, write_csv_gz_atomic
 from jobsdata import (
     ALL_COLUMNS,
@@ -80,7 +81,12 @@ PREVIEW_TABS = {"High Score (Unseen)", "All Jobs", "Tracker"}
 # The off-thread reload payload: the merged job frame + resume-path map, plus the
 # run_stats frame and staleness threshold read alongside them so no UI-thread
 # repaint ever touches the Drive-synced stats file (audit P1-5).
-LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours")
+# `problems` carries the (path, reason) pairs for sources that exist but could
+# not be read, so the empty state can say "this file is unreadable" instead of
+# "no jobs yet". Defaulted so the four-field construction older tests use, and
+# the bare (df, id_to_path) tuple _apply_frames also accepts, both still work.
+LoadedFrames = namedtuple("LoadedFrames", "df id_to_path stats stale_hours problems",
+                          defaults=((),))
 
 # How long a cached resume-folder disk probe stays valid (audit P2-24: resume
 # folders can live under the Drive root, so per-selection stats must not hit the
@@ -239,22 +245,32 @@ class MainWindow(QtWidgets.QMainWindow):
             save_hidden=self._save_hidden,
         )
 
+    # The two states the empty panel can be in. "Nothing yet" is the first run;
+    # "unreadable" is a source file that exists and could not be parsed, which
+    # used to render identically to the first run and so told a user with a
+    # half-synced 37 MB master that they had no jobs.
+    EMPTY_FIRST_RUN = ("No jobs yet",
+                       "Three steps: set your keys and folders in Settings, fetch "
+                       "and score new jobs, then add your résumé data so jobs get "
+                       "matched to you.")
+    EMPTY_UNREADABLE_TITLE = "Your job file could not be read"
+
     def _build_empty_hint(self) -> QtWidgets.QWidget:
         """First-run hint shown on the High Score tab when no jobs are loaded yet."""
         w = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(w)
         v.addStretch(1)
-        title = QtWidgets.QLabel("No jobs yet")
+        title = QtWidgets.QLabel(self.EMPTY_FIRST_RUN[0])
         title.setProperty("heading", True)
         title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
-        msg = QtWidgets.QLabel(
-            "Three steps: set your keys and folders in Settings, fetch and score "
-            "new jobs, then add your résumé data so jobs get matched to you.")
+        msg = QtWidgets.QLabel(self.EMPTY_FIRST_RUN[1])
         msg.setWordWrap(True)
         msg.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         msg.setProperty("muted", True)
         v.addWidget(msg)
+        self._empty_title, self._empty_msg = title, msg
+        self._refresh_empty_hint()
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)
         b_settings = QtWidgets.QPushButton("Open Settings")
@@ -271,6 +287,39 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addLayout(row)
         v.addStretch(1)
         return w
+
+    def unreadable_sources_message(self) -> str:
+        """What the empty panel says when every source that exists failed to parse.
+
+        Names the file and the parser's own reason, because "check your Drive" is
+        no use without knowing WHICH file is broken. Kept a plain string
+        so the wording is testable without building a window."""
+        problems = tuple(getattr(self, "_load_problems", ()) or ())
+        if not problems:
+            return ""
+        lines = [f"{Path(p).name} ({reason})" for p, reason in problems[:3]]
+        if len(problems) > 3:
+            lines.append(f"and {len(problems) - 3} more")
+        return (
+            f"{len(problems)} job file(s) exist but could not be read, so nothing "
+            "is showing. This is usually a sync that has not finished or a file "
+            "that was cut short, not lost data. Wait for Google Drive to finish, "
+            "then press Refresh; if it persists, delete the file below and let the "
+            "next run re-sync it.\n\n" + "\n".join(lines))
+
+    def _refresh_empty_hint(self) -> None:
+        """Swap the empty panel between its first-run and its unreadable wording."""
+        title = getattr(self, "_empty_title", None)
+        msg = getattr(self, "_empty_msg", None)
+        if title is None or msg is None:
+            return
+        problem_text = self.unreadable_sources_message()
+        if problem_text:
+            title.setText(self.EMPTY_UNREADABLE_TITLE)
+            msg.setText(problem_text)
+        else:
+            title.setText(self.EMPTY_FIRST_RUN[0])
+            msg.setText(self.EMPTY_FIRST_RUN[1])
 
     def _show_tab(self, title: str) -> None:
         page = self._tab_widgets.get(title)
@@ -337,8 +386,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Clamp to [theme.MIN_SCALE, theme.MAX_SCALE] (75..150%), re-scale the
         live UI (font only — fast), sync the bar, and persist via jobsdata."""
         pct = max(75, min(150, int(pct)))
+        previous = self._ui_scale_pct
         self._ui_scale_pct = pct
         theme.set_scale(QtWidgets.QApplication.instance(), pct / 100.0)
+        self._rescale_geometry(pct / previous if previous else 1.0)
         if hasattr(self, "_scale_slider"):
             self._scale_slider.blockSignals(True)
             self._scale_slider.setValue(pct)
@@ -359,6 +410,44 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._restart_requested = True
         self.close()
+
+    def _rescale_geometry(self, factor: float) -> None:
+        """Re-scale the pixel geometry that was sized off the interface scale.
+
+        `theme.set_scale` re-scales what rides on the font — type, row heights,
+        every painted metric — but three things are pixel values applied ONCE,
+        at construction, from the scale that was current then: each table's
+        column widths, and the height this window's vertical splitter hands the
+        detail card. Both were already scale-aware at startup (see
+        `JobsTab._set_column_widths` and the `setSizes` below `self.splitter`),
+        so the bug only appeared on the LIVE path — drag the interface-size
+        slider and the type grows inside geometry that doesn't: at 150% the High
+        Score header clipped to "cor" / "licants" and the detail card kept its
+        100% height, which cut the last STRENGTHS line through the middle. A
+        restart then fixed it, which is why it survived this long.
+
+        Multiplicative, so a column the user dragged wider stays proportionally
+        wider. Best-effort: a geometry hiccup must never break the scale change
+        itself, which has already been applied by the time this runs.
+        """
+        if factor <= 0 or abs(factor - 1.0) < 1e-9:
+            return
+        for tab in (self.high_tab, self.all_tab, self.tracker_tab):
+            try:
+                tab.rescale_columns(factor)
+            except Exception:  # noqa: BLE001 - cosmetic; never break rescaling
+                pass
+        panel = getattr(self, "apply_queue_panel", None)
+        if panel is not None:
+            try:
+                panel.rescale_columns(factor)
+            except Exception:  # noqa: BLE001
+                pass
+        sizes = self.splitter.sizes()
+        if len(sizes) == 2 and sizes[1] > 0:
+            total = sizes[0] + sizes[1]
+            detail = min(round(sizes[1] * factor), max(0, total - 120))
+            self.splitter.setSizes([total - detail, detail])
 
     def _setup_zoom_shortcuts(self) -> None:
         """Ctrl++ / Ctrl+- step the interface size by 10%; Ctrl+0 resets to 100%.
@@ -631,7 +720,8 @@ class MainWindow(QtWidgets.QMainWindow):
         the staleness threshold (audit P1-5 — previously a synchronous Drive read
         on every UI-thread repaint). Touches neither Qt nor the SQLite registry
         (both thread-affine) — those wait for _apply_frames."""
-        df, id_to_path = load_files(self.csv_paths)
+        problems: list[tuple[Path, str]] = []
+        df, id_to_path = load_files(self.csv_paths, problems=problems)
         df = drop_blocklisted(df, load_local_blocklist(self.csv_paths))
         stats_df = None
         root = gdrive_root_dir(self.csv_paths)
@@ -642,7 +732,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except (OSError, ValueError, pd.errors.ParserError):
                 stats_df = None
         stale_hours = int(settings.load().get("stale_after_hours", 36) or 36)
-        return LoadedFrames(df, id_to_path, stats_df, stale_hours)
+        return LoadedFrames(df, id_to_path, stats_df, stale_hours, tuple(problems))
 
     def _apply_frames(self, loaded) -> None:
         """The UI-thread half of a reload: overlay the seen registry, install the
@@ -651,8 +741,11 @@ class MainWindow(QtWidgets.QMainWindow):
             df, id_to_path = loaded.df, loaded.id_to_path
             self._stats_df = loaded.stats
             self._stale_hours = loaded.stale_hours
+            self._load_problems = tuple(loaded.problems or ())
         else:  # bare (df, id_to_path) — older callers/tests
             df, id_to_path = loaded
+            self._load_problems = ()
+        self._refresh_empty_hint()
         self._disk_cache = {}   # resume-folder stats may be stale (audit P2-24)
         self.id_to_path = id_to_path
         if not df.empty:
@@ -669,6 +762,11 @@ class MainWindow(QtWidgets.QMainWindow):
         parts = [f"{total:,} jobs", f"{len(self.df_high)} unseen ≥ {self.min_score}"]
         if self._last_run_label:
             parts.append(f"last discovery run {self._last_run_label}")
+        # A partial failure never reaches the empty panel (the frame is not
+        # empty), so the status bar is the only place it can be said at all.
+        n_bad = len(getattr(self, "_load_problems", ()) or ())
+        if n_bad:
+            parts.append(f"{n_bad} source file(s) unreadable")
         return " · ".join(parts)
 
     def _update_identity_counts(self) -> None:
@@ -736,7 +834,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_load_error(self, exc: BaseException) -> None:
         # A load failure must never kill the window; surface it and stay usable.
         self._loading = False
-        self._set_status(f"Could not load jobs: {exc}")
+        self._set_status(f"Could not load jobs: {errmsg.for_user(exc)}")
         if self._reload_pending:
             self.reload_data_async()
 
@@ -1184,7 +1282,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._reload_timer.stop()
         QtWidgets.QMessageBox.warning(
             self, "Background write failed",
-            f"Could not update the job files ({description}): {exc}\n\n"
+            f"Could not update the job files ({description}): {errmsg.for_user(exc)}\n\n"
             "Reloading the dashboard from disk.")
         self.reload_data_async()
 
@@ -1357,7 +1455,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_url(self, jid: str) -> None:
         url = self._url_by_id.get(jid) or self._cell(self._row_for(jid), "url")
         if url:
-            chrome.open_in_chrome(url)
+            chrome_launch.open_in_chrome(url)
 
     def _set_status_for(self, ids: list[str], status: str) -> None:
         for jid in ids:
@@ -1377,7 +1475,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             jobsdata.append_to_blocklist(self.csv_paths, company)
         except OSError as exc:
-            self._set_status(f"Could not block {company}: {exc}")
+            self._set_status(f"Could not block {company}: {errmsg.for_user(exc)}")
             return
         self.reload_data_async()
         self._set_status(f"Blocked {company} — hidden now and skipped on the next job search.")
@@ -1398,7 +1496,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             osopen.open_path(path)
         except OSError as e:
-            self._set_status(f"Could not open {path}: {e}")
+            self._set_status(f"Could not open {Path(path).name}: {errmsg.for_user(e)}")
 
     # ---- run scraper (spend-guarded) -----------------------------------------
 
@@ -1717,7 +1815,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _after_scrape_error(self, exc) -> None:
         self._scraping = False
-        msg = str(exc)
+        msg = errmsg.for_user(exc)
         self._set_status(f"Find new jobs failed — {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.critical(self, "Find new jobs", f"The run failed.\n\n{msg}")
 
@@ -1811,7 +1909,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_manual_add_error(self, exc) -> None:
         self._manual_adding = False
-        msg = str(exc)
+        msg = errmsg.for_user(exc)
         self._set_status(f"Add job failed — {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.warning(self, "Add a job by hand", f"Could not add the job.\n\n{msg}")
 
@@ -1946,7 +2044,7 @@ class MainWindow(QtWidgets.QMainWindow):
         url = ctx.get("apply_url", "")
         if url and open_url:
             try:
-                chrome.open_in_chrome(url)
+                chrome_launch.open_in_chrome(url)
             except Exception:  # noqa: BLE001
                 pass
         return ctx
@@ -2002,7 +2100,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_apply_error(self, exc) -> None:
         self._applying = False
-        msg = str(exc)
+        msg = errmsg.for_user(exc)
         self._set_status(msg.splitlines()[0] if msg else "Apply failed")
         QtWidgets.QMessageBox.information(
             self, "Apply", f"{msg}\n\nUse 'Tailor resume' on this job, then try Apply again.")
@@ -2080,11 +2178,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_tailor.setEnabled(True)  # (same shape as _generate_cover_for's)
             if on_finished is not None:  # park queue-chained "tailoring" entries as
                 on_finished(None, RuntimeError(  # failed — orphans are unclaimable
-                    f"tailor launch failed: {exc}"))
+                    f"tailor launch failed: {errmsg.for_user(exc)}"))
             # Surface in the status bar instead of re-raising into the Qt event
             # loop, where the exception would just be printed and swallowed
             # (audit P2-11).
-            self._set_status(f"Could not start tailoring: {exc}")
+            self._set_status(f"Could not start tailoring: {errmsg.for_user(exc)}")
             return False
         return True
 
@@ -2136,7 +2234,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           "dir": out, "error": None, "warnings": warnings}
             except Exception as exc:  # noqa: BLE001 - capture per-job; report in the summary
                 result = {"id": job.get("job_posting_id"), "label": label,
-                          "dir": None, "error": str(exc), "warnings": warnings}
+                          "dir": None, "error": errmsg.for_user(exc), "warnings": warnings}
             with done_lock:
                 done += 1
             # Queued to the UI thread: the registry records this job NOW, so an
@@ -2232,8 +2330,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_tailor_error(self, exc) -> None:
         self._tailoring = False
         self.btn_tailor.setEnabled(True)
-        QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {exc}")
-        self._set_status(f"Tailor failed: {exc}")
+        QtWidgets.QMessageBox.warning(self, "Tailor resume", f"Tailoring failed: {errmsg.for_user(exc)}")
+        self._set_status(f"Tailor failed: {errmsg.for_user(exc)}")
 
     # ---- batch auto-apply queueing ---------------------------------------
 
@@ -2247,7 +2345,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._writes.submit(
             fn, on_done=on_done,
             on_error=on_error or (lambda exc: self._set_status(
-                f"Apply-queue write failed: {exc}")))
+                f"Apply-queue write failed: {errmsg.for_user(exc)}")))
 
     def _queue_artifacts(self, folder) -> dict:
         """The artifact paths a queue entry carries for a tailored folder.
@@ -2439,7 +2537,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if exc is not None:
             for jid in pending:
-                park_failed(jid, f"tailor failed: {exc}")
+                park_failed(jid, f"tailor failed: {errmsg.for_user(exc)}")
             return
         by_id = {str(r.get("id") or ""): r for r in (results or [])}
         for jid in pending:
@@ -2508,9 +2606,17 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             stored = ats_accounts.set_master_password(first)
         except Exception as exc:  # noqa: BLE001 - keyring backend failure
+            # The exception CLASS name only, deliberately -- the same rule
+            # ats_accounts applies to its own secret-touching verbs
+            # (_SECRET_VERBS), for the reason it gives there: str(e) out of a
+            # keyring or clipboard backend could carry the password itself. This
+            # dialog is the path the user actually takes, so it is the one that
+            # has to hold the rule; the CLI held it and the GUI did not.
             QtWidgets.QMessageBox.warning(
                 self, "Master ATS password",
-                f"Could not store the password: {exc}")
+                f"Could not store the password ({type(exc).__name__}). Check that "
+                f"the keyring package is installed and the Windows Credential "
+                f"Manager is available.")
             return
         if not stored:
             QtWidgets.QMessageBox.warning(
@@ -2585,8 +2691,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_cover_error(self, exc) -> None:
         self._covering = False
         QtWidgets.QMessageBox.warning(self, "Cover letter",
-                                      f"Cover letter failed: {exc}")
-        self._set_status(f"Cover letter failed: {exc}")
+                                      f"Cover letter failed: {errmsg.for_user(exc)}")
+        self._set_status(f"Cover letter failed: {errmsg.for_user(exc)}")
 
     def _payload_with_master_fallback(self, jid: str) -> dict | None:
         """The job's row payload, rebuilt from the master CSV when the row isn't
@@ -2651,75 +2757,26 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- check setup ---------------------------------------------------------
 
     def _check_setup(self) -> None:
-        # One probe at a time. The Bright Data half runs on a worker thread and
-        # can sit on a 15-second timeout, so an impatient double-click would queue
-        # a second thread and pop a second modal behind the first.
+        # One probe at a time. The job-data half runs on a worker thread and can
+        # sit on a 15-second timeout, so an impatient double-click would queue a
+        # second thread and pop a second modal behind the first.
         if getattr(self, "_setup_check_running", False):
             self._set_status("Setup check already running...")
             return
-        from resume_tailor import master_validate
         try:
-            result = master_validate.check_setup()
+            problems = setup_check.local_problems()
         except Exception as exc:  # noqa: BLE001
-            QtWidgets.QMessageBox.critical(self, "Check setup", f"Could not run checks: {exc}")
+            QtWidgets.QMessageBox.critical(self, "Check setup", f"Could not run checks: {errmsg.for_user(exc)}")
             return
-        problems: list[str] = []
-        for label, errs in (("Resume data", result.get("master", [])),
-                            ("Apply answers", result.get("answers", []))):
-            problems.extend(f"[{label}] {e}" for e in errs)
-        try:
-            cfg = jobsdata._load_cfg()
-            stored = settings.load()
-            # Match the runtime resolvers' env > file precedence
-            # (config.tailor_provider() / score_jobs.load_scoring_config()): an
-            # exported RESUME_TAILOR_PROVIDER / SCORE_PROVIDER wins at run time, so
-            # Check-setup must honour it too or its warnings won't match what runs.
-            tailor_provider = str(
-                os.environ.get("RESUME_TAILOR_PROVIDER")
-                or cfg.get("tailor_provider") or "gemini").strip().lower()
-            if tailor_provider != "claude":  # gemini engine warnings only apply on gemini
-                auth = cfg.get("gemini_auth", "vertex")
-                project = stored.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get(
-                    "GOOGLE_CLOUD_PROJECT", "")
-                has_key = settings.secret_status().get(
-                    "RESUME_TAILOR_GEMINI_API_KEY", False) or bool(
-                        os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
-                problems.extend(f"[Engine] {w}" for w in
-                                jobsdata._engine_credential_warnings(auth, project, has_key))
-            scoring_provider = str(
-                os.environ.get("SCORE_PROVIDER")
-                or stored.get("provider") or "gemini").strip().lower()
-            cli_found = shutil.which("claude") is not None
-            problems.extend(f"[Engine] {w}" for w in jobsdata._claude_cli_warnings(
-                tailor_provider, scoring_provider, cli_found))
-        except Exception:  # noqa: BLE001
-            pass
         # Everything above is local file reads. The job-data check is a network
         # call, so it goes to a worker thread — a blocking probe here would freeze
         # the window, which is exactly the startup bug this dashboard already had.
         self._set_status("Checking setup...")
         self._setup_check_running = True
         workers.run_async(
-            self, self._bright_data_problems,
+            self, setup_check.job_data_problems,
             on_done=lambda extra: self._show_setup_result(problems + list(extra or [])),
             on_error=lambda _exc: self._show_setup_result(problems))
-
-    @staticmethod
-    def _bright_data_problems() -> list[str]:
-        """Worker-thread half of Check setup: can the job-data account collect?
-
-        Free and unbilled, so the user can test Bright Data without starting a run.
-        Silent whenever it can't import or reach the probe — Check setup must never
-        report a problem it did not actually observe."""
-        try:
-            repo = Path(__file__).resolve().parents[2]
-            for _p in (str(repo / "pipeline"), str(repo / "local")):
-                if _p not in sys.path:
-                    sys.path.insert(0, _p)
-            import scraper
-            return [f"[Job data] {w}" for w in scraper.account_problems()]
-        except Exception:  # noqa: BLE001
-            return []
 
     def _show_setup_result(self, problems: list[str]) -> None:
         # Cleared before the modal, not after: the dialog blocks until dismissed,
@@ -2787,7 +2844,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             dest = self.registry.export_to(Path(path))
         except Exception as e:  # noqa: BLE001 - surface any backup failure to the user
-            self._set_status(f"Export failed: {e}")
+            self._set_status(f"Export failed: {errmsg.for_user(e)}")
             return
         self._set_status(f"Tracker exported → {dest}")
 
@@ -2807,7 +2864,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             counts = self.registry.import_from(Path(path))
         except Exception as e:  # noqa: BLE001 - surface any restore failure to the user
-            self._set_status(f"Import failed: {e}")
+            self._set_status(f"Import failed: {errmsg.for_user(e)}")
             return
         self._refresh_tracker()
         QtWidgets.QMessageBox.information(
@@ -2849,7 +2906,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_prep_error(self, exc) -> None:
         self._prepping = False
-        self._set_status(f"Interview prep FAILED — {exc}")
+        self._set_status(f"Interview prep FAILED — {errmsg.for_user(exc)}")
 
     # ---- stats + calibration -------------------------------------------------
 

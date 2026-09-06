@@ -756,26 +756,37 @@ def test_prune_deletes_nothing_for_keep_everything_or_off(tmp_path):
 
 # --- show_if: a field is on screen only when it can actually do something ------
 
-# The twelve gates, spelled out so the schema can't drift without a failure here.
+# The sixteen gates, spelled out so the schema can't drift without a failure here.
+#
+# The six tailor-model tier rows do NOT gate on `tailor_provider` directly, even
+# though the provider is exactly what should hide them: a Field has one `show_if`,
+# and they need a second condition (the simple/tiers mode). They gate on their
+# provider's MODE field, which gates on `tailor_provider` — `is_visible` walks the
+# chain, so the wrong provider still hides them, transitively.
 SHOW_IF_GATES = {
     "stage1_model": ("provider", ("gemini",)),
     "stage2_model": ("provider", ("gemini",)),
     "stage1_model_claude": ("provider", ("claude",)),
     "stage2_model_claude": ("provider", ("claude",)),
-    "RESUME_TAILOR_MODEL_FLASH_LITE": ("tailor_provider", ("gemini",)),
-    "RESUME_TAILOR_MODEL_FLASH": ("tailor_provider", ("gemini",)),
-    "RESUME_TAILOR_MODEL_PRO": ("tailor_provider", ("gemini",)),
-    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": ("tailor_provider", ("claude",)),
-    "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("tailor_provider", ("claude",)),
-    "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("tailor_provider", ("claude",)),
+    "RESUME_TAILOR_MODEL_MODE": ("tailor_provider", ("gemini",)),
+    "RESUME_TAILOR_MODEL_ALL": ("RESUME_TAILOR_MODEL_MODE", ("simple",)),
+    "RESUME_TAILOR_MODEL_FLASH_LITE": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_MODEL_FLASH": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_MODEL_PRO": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_MODE": ("tailor_provider", ("claude",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_ALL": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("simple",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_FLASH": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
+    "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "gemini_auth": ("tailor_provider", ("gemini",)),
     "RESUME_TAILOR_GEMINI_API_KEY": ("gemini_auth", ("api_key",)),
 }
 
 
-def test_the_twelve_gates_are_declared_on_the_schema():
+def test_the_sixteen_gates_are_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
+    assert len(SHOW_IF_GATES) == 16
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():
@@ -869,17 +880,22 @@ def test_is_visible_falls_back_to_the_gates_default_when_it_is_absent():
     assert settings.is_visible(by_key["min_score"], {}) is True           # ungated
 
 
-def test_visible_keys_at_the_shipped_defaults_hides_the_six_inapplicable_fields(tmp_path):
+def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields(tmp_path):
     """The audit's headline finding, pinned. At the shipped defaults
-    (provider=gemini, tailor_provider=gemini, gemini_auth=vertex) these six
-    describe machinery that cannot run — two Claude scorer pickers, three Claude
-    tailor pickers, and the Gemini API key that only 'api_key' billing reads."""
+    (provider=gemini, tailor_provider=gemini, gemini_auth=vertex,
+    RESUME_TAILOR_MODEL_MODE=tiers) these nine describe machinery that cannot run
+    — two Claude scorer pickers, the Claude tailor block (its mode field, its
+    one-model box and three tier pickers, the last four hidden TRANSITIVELY
+    through the mode field), the Gemini one-model box that only 'simple' mode
+    reads, and the Gemini API key that only 'api_key' billing reads."""
     values = settings.load(_targets(tmp_path))
     hidden = {f.key for f in settings.SETTINGS_SCHEMA} - set(settings.visible_keys(values))
     assert hidden == {
         "stage1_model_claude", "stage2_model_claude",
+        "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
         "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
-        "RESUME_TAILOR_CLAUDE_MODEL_PRO", "RESUME_TAILOR_GEMINI_API_KEY",
+        "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+        "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_GEMINI_API_KEY",
     }
 
 
@@ -946,7 +962,7 @@ def test_advanced_set_excludes_country_pdflatex_and_max_scored():
 
     `max_scored_per_run` is the only ceiling on an LLM bill, so it must stay
     where someone worried about spend can find it. (`rescore_cap` reads like its
-    twin but is retry-of-failures plumbing — genuinely advanced, and in the set
+    twin but is retry-of-failures plumbing — advanced, and in the set
     above.)
 
     This test exists to stop a future tidy-up pass from folding them in.
@@ -993,10 +1009,16 @@ RESTART_KEYS = {
     "RESUME_TAILOR_MODEL_FLASH_LITE", "RESUME_TAILOR_MODEL_FLASH", "RESUME_TAILOR_MODEL_PRO",
     "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
     "RESUME_TAILOR_CLAUDE_MODEL_PRO",
+    # the simple/tiers switch and its one-model id. Read live from os.environ by
+    # config._model_mode / _one_model — which puts them in the same bucket as the
+    # API key row under it, not the frozen-constant bucket above: live off a
+    # snapshot that a .env write does not reach.
+    "RESUME_TAILOR_MODEL_MODE", "RESUME_TAILOR_MODEL_ALL",
+    "RESUME_TAILOR_CLAUDE_MODEL_MODE", "RESUME_TAILOR_CLAUDE_MODEL_ALL",
     # read live from os.environ — but os.environ is the stale startup snapshot
     "RESUME_TAILOR_GEMINI_API_KEY",     # llm.py, per call
     "GEMINI_API_KEYS",                  # keypool.KeyPool.from_env, per run
-    "LINKEDIN_CHROME_ACCOUNT",          # chrome.CHROME_ACCOUNT, at import
+    "LINKEDIN_CHROME_ACCOUNT",          # chrome_launch.CHROME_ACCOUNT, at import
     # module constants inside a SUBPROCESS that inherits the stale snapshot
     "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_DATASET_ID",
 }
@@ -1005,7 +1027,7 @@ RESTART_KEYS = {
 def test_the_restart_set_is_declared_on_the_schema():
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.restart}
     assert declared == RESTART_KEYS
-    assert len(RESTART_KEYS) == 16
+    assert len(RESTART_KEYS) == 20
 
 
 def test_every_env_field_needs_a_restart_except_the_six_the_vm_tab_re_reads():
@@ -1145,3 +1167,54 @@ def test_no_help_string_points_at_a_row_by_position():
 
     offenders = {f.key for f in settings.SETTINGS_SCHEMA if positional.search(f.help)}
     assert offenders == set(), "name the setting instead of its position"
+
+
+def test_validate_rejects_a_line_break_in_an_env_field(tmp_path):
+    """A .env value is one physical line, so a newline cannot round-trip.
+
+    envfile.update refuses it too, but that raise fires mid-save with earlier
+    targets already written and carries no field name. Catching it in validate()
+    keeps the refusal atomic and points at the box that is wrong.
+    """
+    errs = settings.validate({"GEMINI_API_KEYS": "key1\nkey2"})
+    assert "GEMINI_API_KEYS" in errs
+    assert "line break" in errs["GEMINI_API_KEYS"].lower()
+
+
+def test_validate_rejects_control_characters_across_the_env_field_types(tmp_path):
+    """Every .env-backed field is string-shaped, and all of them go through the
+    same one-line writer, so the check cannot be scoped to the secret boxes."""
+    for key, bad in (("BRIGHT_DATA_API_TOKEN", "tok\rEVIL=1"),   # str
+                     ("PDFLATEX_PATH", "C:\\tex\\pdflatex.exe\n"),  # path
+                     ("RESUME_TAILOR_MODEL_FLASH", "gemini\x00-flash")):  # editable_choice
+        errs = settings.validate({key: bad})
+        assert key in errs, key
+
+
+def test_validate_leaves_json_backed_fields_and_ordinary_values_alone(tmp_path):
+    """The rule belongs to the .env writer, not to every setting.
+
+    A config.json value is JSON-encoded, where a newline is representable, and
+    the awkward-but-legal .env values (Windows paths, apostrophes, comma-joined
+    key pools) must keep passing.
+    """
+    assert settings.validate({"cover_letter_tone": "warm\nand direct"}) == {}
+    assert settings.validate({
+        "PDFLATEX_PATH": r"C:\Program Files\MiKTeX\pdflatex.exe",
+        "GEMINI_API_KEYS": "key1,key2,key3",
+        "RESUME_TAILOR_CANDIDATE": "Jane_Doe",
+    }) == {}
+
+
+def test_validate_rejects_the_non_c0_line_separators_too(tmp_path):
+    """settings.validate and envfile.update must refuse the same class.
+
+    U+0085, U+2028 and U+2029 all split a line for `str.splitlines()` while
+    sitting outside the C0 range, so a class of `\x00-\x1f` alone let them
+    through to the one-line .env writer. Compared as patterns as well, because
+    two copies of a character class drift.
+    """
+    assert settings._CONTROL_RE.pattern == settings.envfile._CONTROL_RE.pattern
+    for sep in (chr(0x85), chr(0x2028), chr(0x2029)):
+        errs = settings.validate({"GEMINI_API_KEYS": "key1" + sep + "key2"})
+        assert "GEMINI_API_KEYS" in errs, f"{sep!r} accepted"

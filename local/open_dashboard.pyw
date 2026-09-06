@@ -20,12 +20,18 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 
-def _resolve_sources() -> tuple[list[Path], str | None]:
-    """(csv paths to open, error message or None). Reuses the watcher's config
-    + Drive auto-detection so both entry points agree on where the data lives.
+def _resolve_sources() -> list[Path]:
+    """The csv paths to open. Reuses the watcher's config + Drive auto-detection
+    so both entry points agree on where the data lives.
 
-    Note: app.main owns the local-runs fold now, so _resolve_sources returns
-    Drive-only sources (or empty if no Drive folder is found)."""
+    Note: app.main owns the local-runs fold now, so this returns Drive-only
+    sources (or empty if no Drive folder is found).
+
+    It returns no error channel, because there is no longer any resolution
+    failure worth refusing to launch over: every arm below opens the window and
+    lets the dashboard explain itself. A first run must show a window, never an
+    error popup. Real failures (a bad import, a Qt crash) still surface through
+    the __main__ handler, which logs and pops a message box."""
     from watcher import (  # imported lazily so a bad import still hits the logger
         detect_gdrive_root,
         latest_for_ui,
@@ -40,18 +46,18 @@ def _resolve_sources() -> tuple[list[Path], str | None]:
         # Open the dashboard anyway: app.main folds in any local scrape/manual files,
         # and with no data at all the High Score tab shows its get-started panel —
         # a first run must open a window, never an error popup.
-        return [], None
+        return []
     root = Path(root)
     master = root / "linkedin_jobs_master.csv.gz"
     if master.exists():
-        return [master], None
+        return [master]
     # Master hasn't synced yet — fall back to the latest per-run files.
     fallback = latest_for_ui(list_target_files(root))
     if fallback:
-        return fallback, None
+        return fallback
     # Folder exists but nothing has synced — open the master path anyway so the
     # window appears (Refresh will pick the file up once Drive delivers it).
-    return [master], None
+    return [master]
 
 
 def _log_error(exc: BaseException) -> None:
@@ -80,10 +86,7 @@ def _warn(message: str) -> None:
 
 
 def main() -> int:
-    sources, err = _resolve_sources()
-    if err:
-        _warn(err)
-        return 1
+    sources = _resolve_sources()
     # Run the dashboard in-process: this launcher process *becomes* the UI, so
     # closing the window cleanly ends it. app.main() owns the single-instance lock.
     import app

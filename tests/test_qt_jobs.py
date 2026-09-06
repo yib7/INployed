@@ -257,6 +257,39 @@ def test_tab_never_hides_every_column(qtbot):
     assert any(not tab.table.isColumnHidden(i) for i in range(len(tab.col_ids)))
 
 
+def test_refused_hide_reports_false_and_resyncs_the_checkbox(qtbot):
+    """The guard above is only half the behaviour: the dialog drives it from a
+    checkbox, and a silently-ignored toggle left an UNCHECKED box beside a column
+    that is still on screen. The refusal now comes back as False and the slot puts
+    the box back."""
+    tab = JobsTab("all", COLS)
+    qtbot.addWidget(tab)
+    last = tab.col_ids[-1]
+    for c in tab.col_ids[:-1]:
+        assert tab.set_column_hidden(c, True) is True
+    assert tab.set_column_hidden(last, True) is False       # would blank the table
+
+    box = QtWidgets.QCheckBox()
+    box.setChecked(True)                                    # "shown"
+    box.toggled.connect(lambda checked: tab._on_column_toggled(box, last, checked))
+    box.setChecked(False)                                   # user tries to hide it
+    assert box.isChecked() is True                          # put back, not left desynced
+    assert not tab.table.isColumnHidden(tab.col_ids.index(last))
+
+
+def test_stale_persisted_column_ids_do_not_freeze_the_dialog(qtbot):
+    """Keeping a hidden-column id for a column that no longer exists, and
+    re-saving it, makes the len(target) >= len(col_ids) guard permanently true
+    once the stale ids outnumber the real columns, and every toggle in the Columns
+    dialog is then silently ignored. The list is intersected instead."""
+    stale = {"all": ["gone_a", "gone_b", "gone_c", "gone_d", "gone_e", "gone_f", "url"]}
+    tab = JobsTab("all", COLS, hidden_columns=stale)
+    qtbot.addWidget(tab)
+    assert tab._hidden == {"url"}                           # stale ids dropped on load
+    assert tab.set_column_hidden("score", True) is True     # the dialog still works
+    assert tab.table.isColumnHidden(tab.col_ids.index("score"))
+
+
 def test_empty_widget_toggles_with_data(qtbot):
     tab = JobsTab("high", COLS)
     qtbot.addWidget(tab)

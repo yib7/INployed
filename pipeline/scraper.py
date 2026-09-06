@@ -123,8 +123,8 @@ DEFAULT_EXCLUDE_WINDOW_DAYS = 90
 # burns the trigger.
 MAX_EXCLUDE_PAYLOAD_BYTES = 4_200_000   # = 2,000 ids x 14 bytes x 150 children
 # The width that budget was derived from: '"4444097977", ', the shape a 10-digit
-# posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids no
-# longer USES this -- it measures the ids actually in hand, so an 11-digit id can
+# posting id takes once aiohttp's json.dumps has written it. cap_exclude_ids does
+# not USE this -- it measures the ids actually in hand, so an 11-digit id can
 # never quietly overflow the budget -- but the number is what MAX_EXCLUDE_PAYLOAD
 # _BYTES above was computed from, so it stays as the record of that arithmetic.
 BYTES_PER_EXCLUDE_ID = 14
@@ -157,7 +157,7 @@ def load_blocklist() -> tuple[str, ...]:
     have = {b.lower() for b in merged}
     if BLOCKLIST_FILE.exists():
         try:
-            for line in BLOCKLIST_FILE.read_text(encoding="utf-8").splitlines():
+            for line in BLOCKLIST_FILE.read_text(encoding="utf-8-sig").splitlines():
                 name = line.strip()
                 if name and not name.startswith("#") and name.lower() not in have:
                     merged.append(name)
@@ -251,6 +251,24 @@ def _positive_int(value, default: int) -> int:
     return n if n >= 1 else default
 
 
+def _keyword_cap(value: int) -> int:
+    """`max_keywords` as a slice length, with a negative collapsed to 1.
+
+    build_inputs spends this as `keywords[:n]`, and Python reads a negative slice
+    bound as "all but n" -- `keywords[:-1]` is every keyword except the last. So
+    --max-keywords -1, the obvious way to write "no limit", would announce a cap
+    and then fire all-but-one search: a spend guard that names itself and lifts
+    itself, which is the one failure mode a spend guard must not have. 1 is the
+    tightest real cap, so it is the fail-closed direction. 0 is left alone --
+    `keywords[:0]` is empty and already spends nothing.
+    """
+    if value < 0:
+        print(f"  WARNING: --max-keywords={value} is negative, which would use "
+              "every keyword BUT the last instead of capping; using 1")
+        return 1
+    return value
+
+
 def load_search_config() -> dict:
     """Effective search config: file values where present, built-in constants else.
 
@@ -262,7 +280,16 @@ def load_search_config() -> dict:
     raw: dict = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+# utf-8-sig, not utf-8: json.loads rejects a leading BOM outright, and the
+        # handler below then discards the WHOLE file and falls back to built-ins
+        # with only a line in scraper.log to show for it. Notepad writes a BOM,
+        # PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM, and this is a
+        # file users hand-edit and the dashboard pushes here. local/jsonutil.py's
+        # read_json_dict already reads the same file BOM-tolerantly, so without
+        # this the two halves disagree about one file: the dashboard honours it,
+        # the VM silently ignores it. utf-8-sig is a superset -- it strips a BOM
+        # when there is one and decodes plain UTF-8 identically when there isn't.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict):
                 raw = data
         except (OSError, ValueError) as e:
@@ -289,7 +316,7 @@ def load_previous_ids() -> list[str]:
     if not PREVIOUS_IDS_FILE.exists():
         return []
     try:
-        with open(PREVIOUS_IDS_FILE, "r", encoding="utf-8") as f:
+        with open(PREVIOUS_IDS_FILE, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
         print(f"Could not read {PREVIOUS_IDS_FILE.name} ({e}); ignoring last-run ids")
@@ -426,7 +453,7 @@ def load_external_exclude_ids() -> list[str]:
     if not EXTERNAL_EXCLUDE_FILE.exists():
         return []
     try:
-        with open(EXTERNAL_EXCLUDE_FILE, "r", encoding="utf-8") as f:
+        with open(EXTERNAL_EXCLUDE_FILE, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
         return [str(x) for x in data] if isinstance(data, list) else []
     except (OSError, ValueError) as e:
@@ -668,10 +695,10 @@ def cap_exclude_ids(exclude_ids: list[str], limit_per_input: int) -> list[str]:
     time_range="Past 24 hours" search those are the only ids that can resurface,
     so trimming the head instead would keep precisely the ids that cannot recur.
 
-    The per-id width is MEASURED off the ids in hand, not assumed. It used to be
-    the BYTES_PER_EXCLUDE_ID constant, which bakes in today's 10-digit LinkedIn
-    posting id; ids are at 4.4e9 now, and the first 11-digit id would silently
-    push the real payload past the cap with nothing noticing.
+    The per-id width is MEASURED off the ids in hand, not assumed: the
+    BYTES_PER_EXCLUDE_ID constant bakes in a 10-digit LinkedIn posting id, ids are
+    at 4.4e9 now, and the first 11-digit id would silently push the real payload
+    past the cap with nothing noticing.
     """
     limit = _positive_int(limit_per_input, LIMIT_PER_INPUT)
     if not exclude_ids:
@@ -713,7 +740,8 @@ def build_inputs(exclude_ids: list[str], max_keywords: int | None = None,
     doesn't thread it through.
     """
     cfg = load_search_config()
-    keywords = cfg["keywords"] if max_keywords is None else cfg["keywords"][:max_keywords]
+    keywords = (cfg["keywords"] if max_keywords is None
+                else cfg["keywords"][:_keyword_cap(max_keywords)])
     remote_types = cfg["remote_types"]
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
@@ -889,7 +917,7 @@ def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
     if not records and errors:
         print(f"  WARNING: collection {snapshot_id} returned 0 rows with {errors} "
               f"error(s): {codes}. No input was rejected, so this is most likely a "
-              f"genuinely quiet 24 hours -- but check scraper.log if it repeats.")
+              f"quiet 24 hours -- but check scraper.log if it repeats.")
 
 
 async def wait_until_ready(session: aiohttp.ClientSession, snapshot_id: str) -> None:
@@ -990,6 +1018,16 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     # (which itself falls back to LIMIT_PER_INPUT) drives the per-input cap.
     if limit_per_input is None:
         limit_per_input = cfg["limit_per_input"]
+    else:
+        # trigger() coerces this again before it reaches the billed URL, but ONLY
+        # there -- so an explicit --limit=0 or --limit=-5 printed one number and
+        # billed against another, and the run log named a cap that was never in
+        # force. Coerce once, here, and say so.
+        capped = _positive_int(limit_per_input, cfg["limit_per_input"])
+        if capped != limit_per_input:
+            print(f"  WARNING: --limit={limit_per_input} is not a positive count; "
+                  f"using {capped}. A bad value never lifts a spend guard.")
+        limit_per_input = capped
 
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         if snapshot_id is None:
@@ -1003,8 +1041,10 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
             inputs = build_inputs(exclude_ids, max_keywords=max_keywords,
                                   limit_per_input=limit_per_input)
             payload = {"input": inputs}
-            n_keywords = len(cfg["keywords"])
-            kw_used = n_keywords if max_keywords is None else min(max_keywords, n_keywords)
+            # Derived from `inputs`, not from the raw flag: build_inputs coerces
+            # the flag, and a run log naming a cap the run did not apply is worse
+            # than no line at all.
+            kw_used = len(inputs) // max(len(cfg["remote_types"]), 1)
             print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
                   f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
             snapshot_id = await trigger(session, payload, limit_per_input=limit_per_input)

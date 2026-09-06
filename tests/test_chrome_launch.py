@@ -1,4 +1,4 @@
-"""Chrome profile resolution for opening job/resume links (local/chrome.py).
+"""Chrome profile resolution for opening job/resume links (local/chrome_launch.py).
 
 The configured account's Default profile IS you@example.com. An EMPTY account must NOT
 match a blank-user_name profile (e.g. a signed-out 'Work' profile) -- it must
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
-import chrome  # noqa: E402
+import chrome_launch  # noqa: E402
 
 _STATE = {
     "profile": {
@@ -31,17 +31,17 @@ def _write_state(tmp_path, state, monkeypatch):
 
 def test_matches_user_name(tmp_path, monkeypatch):
     _write_state(tmp_path, _STATE, monkeypatch)
-    assert chrome._chrome_profile_dir("you@example.com") == "Default"
+    assert chrome_launch._chrome_profile_dir("you@example.com") == "Default"
 
 
 def test_empty_account_returns_default_not_blank_profile(tmp_path, monkeypatch):
     _write_state(tmp_path, _STATE, monkeypatch)
-    assert chrome._chrome_profile_dir("") == "Default"
+    assert chrome_launch._chrome_profile_dir("") == "Default"
 
 
 def test_no_match_falls_back_to_default(tmp_path, monkeypatch):
     _write_state(tmp_path, _STATE, monkeypatch)
-    assert chrome._chrome_profile_dir("nobody@example.com") == "Default"
+    assert chrome_launch._chrome_profile_dir("nobody@example.com") == "Default"
 
 
 def test_silent_fallbacks_are_logged_not_printed(tmp_path, monkeypatch, caplog, capsys):
@@ -51,8 +51,8 @@ def test_silent_fallbacks_are_logged_not_printed(tmp_path, monkeypatch, caplog, 
 
     _write_state(tmp_path, _STATE, monkeypatch)
     with caplog.at_level(logging.WARNING):
-        chrome._chrome_profile_dir("nobody@example.com")
-        chrome.open_in_chrome("javascript:alert(1)")
+        chrome_launch._chrome_profile_dir("nobody@example.com")
+        chrome_launch.open_in_chrome("javascript:alert(1)")
     msgs = " | ".join(r.getMessage() for r in caplog.records)
     assert "nobody@example.com" in msgs
     assert "javascript:alert(1)" in msgs
@@ -69,7 +69,7 @@ def test_local_part_fallback(tmp_path, monkeypatch):
         }
     }
     _write_state(tmp_path, state, monkeypatch)
-    assert chrome._chrome_profile_dir("you@example.com") == "Profile 9"
+    assert chrome_launch._chrome_profile_dir("you@example.com") == "Profile 9"
 
 
 # --- open_in_chrome guards scraped URLs before launching the browser ----------
@@ -78,19 +78,19 @@ def test_open_in_chrome_refuses_non_http_url(monkeypatch):
     # A '-'-leading or non-http value (e.g. arg-injection / file: / javascript:)
     # must never reach Chrome's argv or the default browser.
     calls = []
-    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *a, **k: calls.append(("popen", a)))
-    monkeypatch.setattr(chrome.webbrowser, "open", lambda *a, **k: calls.append(("web", a)))
+    monkeypatch.setattr(chrome_launch.subprocess, "Popen", lambda *a, **k: calls.append(("popen", a)))
+    monkeypatch.setattr(chrome_launch.webbrowser, "open", lambda *a, **k: calls.append(("web", a)))
     for bad in ("--gpu-launcher=calc.exe", "file:///etc/passwd", "javascript:alert(1)", ""):
-        chrome.open_in_chrome(bad)
+        chrome_launch.open_in_chrome(bad)
     assert calls == []  # nothing launched for any unsafe input
 
 
 def test_open_in_chrome_passes_http_url_after_options_terminator(monkeypatch):
     seen = {}
-    monkeypatch.setattr(chrome, "_chrome_launcher", lambda: ("chrome.exe", "Default"))
-    monkeypatch.setattr(chrome.subprocess, "Popen",
+    monkeypatch.setattr(chrome_launch, "_chrome_launcher", lambda: ("chrome.exe", "Default"))
+    monkeypatch.setattr(chrome_launch.subprocess, "Popen",
                         lambda args, *a, **k: seen.setdefault("args", args))
-    chrome.open_in_chrome("https://www.linkedin.com/jobs/view/123")
+    chrome_launch.open_in_chrome("https://www.linkedin.com/jobs/view/123")
     # the URL is separated from switches by a bare '--' so it can't be read as a flag
     assert "--" in seen["args"]
     assert seen["args"].index("--") < seen["args"].index("https://www.linkedin.com/jobs/view/123")

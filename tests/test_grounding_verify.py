@@ -173,9 +173,9 @@ def test_generate_body_raises_when_repair_cannot_ground(monkeypatch):
     monkeypatch.setattr(coverletter.assets, "load_master",
                         lambda: {"basics": {"name": "Al Doe"}})
     monkeypatch.setattr(coverletter, "refine_body",
-                        lambda jd, t, c, body, b, tone="professional": body)
+                        lambda t, c, body, b, tone="professional": body)
     monkeypatch.setattr(coverletter, "enforce_body_style",
-                        lambda jd, t, c, body, b, tone="professional": body)
+                        lambda t, c, body, b, tone="professional": body)
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "I earned my PhD at Stanford working on Kubernetes.")
     import pytest
@@ -253,8 +253,8 @@ def test_acronym_is_not_grounded_by_an_unrelated_longer_word(monkeypatch):
 
 def test_abbreviation_does_not_open_an_unchecked_first_slot(monkeypatch):
     """P2-4: _SENTENCE_SPLIT breaks on any `.` + whitespace, so "U.S." spawns a
-    segment whose index 0 is not the generated action verb. That slot used to be
-    skipped unconditionally and the fabricated credential shipped."""
+    segment whose index 0 is not the generated action verb. Skipping that slot
+    unconditionally ships the fabricated credential."""
     monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
         "a1": {"what": "Built ingestion for the lab", "_block": "Globex"}})
     src = verify.group_source_text(["a1"], extra="Globex")

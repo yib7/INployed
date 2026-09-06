@@ -1,4 +1,4 @@
-"""The composition stages — all bound by SELECT-AND-REPHRASE, NEVER GENERATE.
+"""The composition stages — all bound by SELECT AND RE-PHRASE, NEVER INVENT.
 
 select()          flash : choose blocks + ordered bullet GROUPS (by atom id) + skill focus
 rephrase()        pro   : one bullet per GROUP, faithfully fusing only that group's atoms
@@ -59,6 +59,11 @@ log = logging.getLogger(__name__)
 # only the always-slop subset; the context-sensitive tells (scalable/dynamic/smart,
 # 'drove X', significant, multiple, end-to-end, grandiosity) live only in this
 # prompt text, where model judgment can spare the legitimate technical uses.
+#
+# Every prompt in this package is itself free of the characters listed here (em
+# dashes, spaced double hyphens): a model copies the punctuation it is shown, and
+# a copied em dash costs an enforce_style repair call on a bullet that was already
+# correct. tests/test_prompt_hygiene.py holds that line.
 BANNED_PHRASING = (
     "em dashes; contrast framing ('not X, but Y', 'X, not Y', 'not just', "
     "'rather than', 'instead of'); participial tails (', enabling/ensuring/"
@@ -75,18 +80,35 @@ BANNED_PHRASING = (
     "numbers over adjectives."
 )
 
-# A curated palette of strong, role-relevant action verbs. Replaces the 6KB raw
-# PDF dump (jumbled multi-column OCR — weak signal AND expensive): the model only
-# needs a clean set of openers, so this is both cheaper and higher-quality.
-_CORE_VERBS = (
-    "Built, Designed, Engineered, Developed, Implemented, Architected, Automated, "
-    "Optimized, Accelerated, Reduced, Improved, Increased, Streamlined, Scaled, "
-    "Refactored, Deployed, Integrated, Migrated, Launched, Shipped, Analyzed, "
-    "Modeled, Forecasted, Quantified, Evaluated, Validated, Diagnosed, Researched, "
-    "Led, Directed, Coordinated, Mentored, Spearheaded, Drove, Owned, Delivered, "
-    "Resolved, Standardized, Consolidated, Boosted, Generated, Produced, Trained, "
-    "Benchmarked, Prototyped, Instrumented"
-)
+# How much style exemplar the rephrase prompt carries. Against the curated
+# style_exemplar.txt (a handful of bullets, well under 1k chars) this never bites: with a
+# curated source the cap is no longer rationing a noisy 3.5KB page dump, it is a guard
+# against a user pasting an entire résumé — or against the PDF fallback, which still is
+# that page dump — inflating every rephrase call.
+#
+# The cut is on a LINE boundary, never mid-word. A flat `[:1200]` slice of the PDF extract
+# ended the exemplar at "• Proc", so the same prompt that calls a bullet ending mid-clause
+# "a failure" was showing the model one; a whole bullet dropped is a cost, a fragment
+# taught as an example is a defect.
+EXEMPLAR_CHAR_CAP = 1200
+
+
+def _exemplar_for_prompt(text: str, cap: int = EXEMPLAR_CHAR_CAP) -> str:
+    """`text` bounded to `cap` characters, keeping whole lines: lines are taken in order
+    while they fit and the first that would overflow ends the exemplar. A single opening
+    line longer than `cap` is hard-cut (one over-long line is not a bullet list, and
+    something has to give)."""
+    text = text.strip()
+    if len(text) <= cap:
+        return text
+    kept: List[str] = []
+    used = 0
+    for line in text.splitlines():
+        used += len(line) + (1 if kept else 0)      # +1 for the joining newline
+        if used > cap:
+            break
+        kept.append(line)
+    return "\n".join(kept) if kept else text[:cap]
 
 
 def _render_verb_palette(verbs: Dict[str, List[str]]) -> str:
@@ -172,16 +194,21 @@ def group_map(sel: Dict[str, Any]) -> Dict[str, List[str]]:
 
 # ── Stage 2: rephrase ────────────────────────────────────────────────────────
 def _length_hint(target_lines: int) -> str:
-    """A soft floor + hard ceiling for one bullet. The ceiling is the trim cap
-    (target_lines * MAX_LINE_CHARS); the floor keeps the bullet from sitting
-    stubby — a single-line bullet should fill >=90% of its line, and a wrapping
-    bullet's last line should fill >=75% (so floor = ((n-1)+0.75)*cap_per_line)."""
-    per_line = config.MAX_LINE_CHARS
-    cap = target_lines * per_line
+    """A soft floor + hard ceiling for one bullet, both in characters (the model cannot
+    measure glyph widths, so the printed-line budget has to be stated as a char count).
+
+    The ceiling is `measure.char_budget`: the real, MEASURED capacity of that many printed
+    lines. It is deliberately NOT `target_lines * <chars per line>` — greedy word wrap loses
+    part of a line at every break, so capacity is sublinear in the line count and the flat
+    multiply invited the model to write past what fits (see measure.char_budget). The floor
+    keeps the bullet from sitting stubby: a single-line bullet fills FULL_LINE_FILL of its
+    budget, a wrapping bullet fills all but its last line and LAST_LINE_FILL of that one."""
+    cap = measure.char_budget(target_lines)
     if target_lines <= 1:
-        floor = ceil(measure.FULL_LINE_FILL * per_line)
+        floor = ceil(measure.FULL_LINE_FILL * cap)
     else:
-        floor = ceil(((target_lines - 1) + measure.LAST_LINE_FILL) * per_line)
+        share = ((target_lines - 1) + measure.LAST_LINE_FILL) / target_lines
+        floor = ceil(share * cap)
     unit = "line" if target_lines == 1 else "lines"
     return (f"about {target_lines} {unit} ({floor}-{cap} characters; aim to fill "
             f"the line(s), never exceed {cap})")
@@ -258,9 +285,9 @@ def lead_with_overview(jd: str, job_title: str, sel: Dict[str, Any]) -> None:
     picks: Dict[str, int] = {}
     system = (
         "You order resume bullets for narrative flow. For each project you are given its "
-        "selected bullets, numbered. Pick the ONE bullet that best introduces the project — "
+        "selected bullets, numbered. Pick the ONE bullet that best introduces the project: "
         "the high-level overview a reader needs ('what is this project at a glance') BEFORE the "
-        "detail bullets make sense — and return its number. This is PURE ORDERING: you write no "
+        "detail bullets make sense. Return its number. This is PURE ORDERING: you write no "
         "prose, you invent nothing, you only choose which EXISTING bullet should lead.\n" + _PRINCIPLE
     )
     user = f"""TARGET JOB: {job_title}
@@ -315,9 +342,9 @@ def block_briefs(jd: str, job_title: str, sel: Dict[str, Any]) -> Dict[str, str]
     system = (
         "You frame resume blocks for cohesion. For each block (one job, project, or "
         "leadership entry), write a 1-2 sentence BRIEF describing how its bullets should "
-        "read together: the shared theme, the logical order, and — if the block's purpose "
-        "is not obvious from the atoms — the high-level context the FIRST bullet should "
-        "establish (e.g. what a project is at a glance). Derive the brief ONLY from the "
+        "read together: the shared theme, the logical order, and the high-level context the "
+        "FIRST bullet should establish when the block's purpose is not obvious from the "
+        "atoms (e.g. what a project is at a glance). Derive the brief ONLY from the "
         "given atoms; never introduce a fact, tool, metric, or claim not present in them. "
         "The brief guides phrasing only; it is not itself a bullet."
     )
@@ -371,43 +398,48 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
             block_entry["brief"] = briefs[name]
         payload.append(block_entry)
     verbs = _render_verb_palette(assets.active_verbs())
-    example = assets.example_text()[:1200]
+    example = _exemplar_for_prompt(assets.example_text())
     system = (
         "You write resume bullets by faithfully RE-PHRASING fact-atoms for a specific job. "
         "Each group is one bullet: if it has multiple atoms, FUSE them into a single dense "
-        "line that states only what those atoms say. You are a translator turning structured "
-        "facts into one polished line, not a writer inventing content.\n" + _PRINCIPLE + "\n"
+        "line that states only what those atoms say. You are a translator: turn structured "
+        "facts into one polished line and invent nothing.\n" + _PRINCIPLE + "\n"
         "COHESION: the bullets are grouped BY BLOCK (one job / project / leadership entry). "
-        "Within a block, make the bullets read as ONE coherent story — shared framing and "
+        "Within a block, make the bullets read as ONE coherent story: shared framing and "
         "tense, no two bullets making the same point, ordered so they build logically. When "
         "a block carries a 'brief', follow its framing/ordering; if the brief says the block's "
         "purpose isn't obvious, let the FIRST bullet establish that context using ONLY grounded "
-        "atom facts. NEVER move a fact from one group's atoms into another bullet — each bullet "
+        "atom facts. NEVER move a fact from one group's atoms into another bullet. Each bullet "
         "still re-phrases ONLY its own group's atoms.\n"
-        "REDUNDANCY (across the WHOLE resume, not just within a block): a distinctive number "
-        "or metric appears ONCE — when two groups' atoms cite the same figure (an accuracy "
+        "REDUNDANCY (across the WHOLE resume, block boundaries included): a distinctive number "
+        "or metric appears ONCE. When two groups' atoms cite the same figure (an accuracy "
         "percentage, a corpus size), state it in the bullet where it lands hardest and let the "
         "other bullet carry its remaining facts. Vary the nouns: a pet word like 'pipeline' "
-        "repeated across many bullets reads templated — after two uses, say what the thing "
+        "repeated across many bullets reads templated; after two uses, say what the thing "
         "concretely is instead. Don't end several bullets the same way (e.g. test counts); "
         "fold at most one or two test-coverage claims into the page.\n"
         "STYLE: past tense, no first-person pronouns, no markdown, no LaTeX, NO bold or "
         "italics. One sentence (a fused group may run to ~2 clauses). Each bullet MUST be a "
         "COMPLETE sentence that ends naturally WITHIN its own character budget (the "
-        "'length_target' given below) — never write a longer sentence assuming it will be "
+        "'length_target' given below). Never write a longer sentence assuming it will be "
         "trimmed; a truncated bullet ending mid-clause is a failure. "
         "BANNED PHRASING (a bullet using any of these is wrong): " + BANNED_PHRASING + "\n"
         "Front-load the result/impact that matters for THIS job. Open every bullet with a "
         "strong action verb chosen from the categorized list below, picking a "
         "category-appropriate verb that matches the atom's real ownership. Every bullet's "
-        "opening verb MUST be DISTINCT — never reuse a leading verb anywhere on the resume "
+        "opening verb MUST be DISTINCT: never reuse a leading verb anywhere on the resume "
         "(the list is large; there is always an unused, fitting choice). Numbers exactly "
         "as written. Write 'greater than or equal to' style comparisons with the symbols "
         ">= and <= (they are converted to proper math notation later).\n"
-        "SPACE: a bullet that fits on ONE printed line should fill at least ~90% of it — "
-        "never leave a stubby half-empty line (fold in more grounded detail from the atoms "
+        # The two percentages are FORMATTED from measure's constants, never written out as
+        # literals: they are the same numbers _length_hint's floor is computed from, and a
+        # prompt that states its own copy drifts silently the moment a constant is retuned.
+        f"SPACE: a bullet that fits on ONE printed line should fill at least "
+        f"~{measure.FULL_LINE_FILL:.0%} of it. "
+        "Never leave a stubby half-empty line (fold in more grounded detail from the atoms "
         "or fuse, but NEVER invent facts to pad). A bullet that wraps to multiple lines may "
-        "let its last line run shorter, but it should still be at least ~75% full."
+        f"let its last line run shorter, but it should still be at least "
+        f"~{measure.LAST_LINE_FILL:.0%} full."
     )
     user = f"""TARGET JOB: {job_title}
 
@@ -415,10 +447,10 @@ def rephrase(jd: str, job_title: str, sel: Dict[str, Any],
 
 ACTION VERBS (open each bullet with one of these, grouped by category; pick a
 category-appropriate verb matching the atom's real ownership, and use each leading verb at
-most ONCE across the whole resume — no two bullets may start with the same verb):
+most ONCE across the whole resume, so no two bullets start with the same verb):
 {verbs}
 
-STYLE EXEMPLAR (match this voice, length and density — NEVER copy its facts):
+STYLE EXEMPLAR (match this voice, length and density; NEVER copy its facts):
 {example}
 
 BLOCKS (write exactly ONE bullet per gkey, re-phrasing ONLY that group's atoms; make
@@ -426,7 +458,7 @@ each block's bullets cohere per its 'brief' when present):
 {json.dumps(payload, ensure_ascii=False, indent=1)}
 
 LENGTH (hard ceiling): each bullet's "length_target" gives a character cap. Write a
-COMPLETE sentence that fits within that cap and ends naturally — a 2-line target
+COMPLETE sentence that fits within that cap and ends naturally. A 2-line target
 wants a dense, fully-developed line; a 1-line target wants one tight, self-contained
 line. Do NOT exceed the cap and do NOT end mid-clause expecting truncation. Never
 invent facts to pad and never drop a number to shorten.
@@ -560,7 +592,7 @@ def fill_underfull(jd: str, job_title: str, sel: Dict[str, Any],
     Implemented as group-augmentation: a committed fill appends the borrowed id to that group in
     `sel` and re-keys `bullets[old_gk] -> bullets[new_gk]`, so render / bullet_line_targets /
     one-page drop / fact-trace all key off the same atom ids and the borrowed atom becomes
-    genuinely "used". Mutates `sel` and `bullets`; returns `bullets`. Best-effort: any failure
+    "used" for real. Mutates `sel` and `bullets`; returns `bullets`. Best-effort: any failure
     leaves `bullets` unchanged (advisory, never fatal -- like block_briefs / shrink)."""
     targets = bullet_line_targets(sel)
     used: set[str] = {
@@ -607,7 +639,7 @@ def fill_underfull(jd: str, job_title: str, sel: Dict[str, Any],
         "and fold in ONE concrete detail drawn ONLY from the newly-added atom so the line fills "
         "toward its 'length_target'. You MAY slightly overshoot the target (it is trimmed back "
         "deterministically). If nothing in the extra atom fits naturally, return the bullet "
-        "UNCHANGED -- never pad with filler.\n" + _PRINCIPLE
+        "UNCHANGED; never pad with filler.\n" + _PRINCIPLE
     )
     user = f"""TARGET JOB: {job_title}
 
@@ -665,9 +697,17 @@ _STYLE_BANS: Tuple[Tuple[str, re.Pattern], ...] = (
     ("em dash", re.compile(r"—|\s--\s")),
     ("contrast framing",
      re.compile(r",\s*not\s|\bnot just\b|\brather than\b|\binstead of\b", re.I)),
+    # The banned participle need not sit right after the comma: the textbook
+    # impact tail is "..., minimizing X and enabling Y", where the listed verb is
+    # five words downstream. Allow up to six intervening lowercase words. This
+    # widens the pattern's REACH, not its verb list -- it still fires only when
+    # one of the nine listed participles is present, so the false-positive
+    # argument above is unchanged. `[a-z]+\s+` cannot cross a period or a comma,
+    # so the tail stays inside one clause (a comma just restarts the match).
     ("participial tail",
-     re.compile(r",\s*(?:enabling|ensuring|allowing|driving|resulting in|empowering"
-                r"|showcasing|highlighting|demonstrating)\b", re.I)),
+     re.compile(r",\s*(?:[a-z]+\s+){0,6}?(?:enabling|ensuring|allowing|driving"
+                r"|resulting in|empowering|showcasing|highlighting|demonstrating)\b",
+                re.I)),
     ("buzzword verb",
      re.compile(r"\b(?:leverag|utiliz|spearhead|harness|empower|streamlin"
                 r"|supercharg|turbocharg|revolutioniz|democratiz)\w*", re.I)),
@@ -742,8 +782,14 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<repaired bullet>"}
                     and len(style_violations(text)) < len(style_violations(offenders[gk]))):
                 bullets[gk] = text
                 changed += 1
-    # Unconditional backstop: an em dash must never reach the page.
+    # Backstop: a MODEL-written em dash must never reach the page. Verbatim
+    # bullets are exempt, like everywhere else in the pipeline (the offenders dict
+    # above, dedupe_leading_verbs, _trim_to_caps, fill_underfull): that text is the
+    # user's own, opted into by "use my exact bullets", and an em dash they typed
+    # themselves is not an AI tell to repair.
     for gk, text in bullets.items():
+        if is_verbatim_gkey(gk):
+            continue
         fixed = _strip_em_dashes(text)
         if fixed != text:
             bullets[gk] = fixed

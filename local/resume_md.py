@@ -2,7 +2,7 @@
 
 The job scorer (`score_jobs.py`) matches every posting against `resume.md`. When
 the user edits their Resume Data (the master YAML), this regenerates `resume.md`
-so the two stay in sync — **faithfully: select and rephrase, never invent** (the
+so the two stay in sync — **faithfully: select and re-phrase, never invent** (the
 project's résumé rule). Output mirrors the existing `resume.md` section layout.
 
 The Gemini call is **injected** (`llm_call`) so the build and tests never spend a
@@ -179,7 +179,7 @@ def generate_resume_md(
         raise ValueError("The model returned no resume text.")
     # De-fence first, then guarantee the concepts pool survived (append any item the model
     # dropped) — so the scorer never under-scores a posting that screens for a concept the
-    # candidate genuinely owns.
+    # candidate owns.
     return _ensure_concepts(_clean(out), _concepts_pool(yaml_text))
 
 

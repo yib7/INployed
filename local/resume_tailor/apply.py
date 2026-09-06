@@ -160,7 +160,7 @@ def _open_url(url: str) -> None:
     if not url:
         return
     try:
-        from chrome import open_in_chrome  # type: ignore
+        from chrome_launch import open_in_chrome  # type: ignore
         open_in_chrome(url)
     except Exception:
         webbrowser.open(url)

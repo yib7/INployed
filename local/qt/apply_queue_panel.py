@@ -33,6 +33,7 @@ from PySide6 import QtCore, QtWidgets
 
 import apply_queue
 import ats_accounts
+import errmsg
 import osopen
 from qt import theme
 from qt.chrome import ChipBar, Pill
@@ -519,6 +520,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                 i, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.table.itemSelectionChanged.connect(self._update_details)
         v.addWidget(self.table, 1)
+        self._auto_width_columns = (COLUMN_IDS.index("attempts"),
+                                    COLUMN_IDS.index("missing"))
 
         # Structured details panel. It keeps a `toPlainText()` mirror of the composed
         # text because the tests assert against that flattened form.
@@ -669,13 +672,32 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         if reselect is not None:
             table.selectRow(reselect)
 
+    def rescale_columns(self, factor: float) -> None:
+        """Re-scale the live column widths by `factor` after an interface-scale
+        change (the widths above are only applied at construction). The two
+        ResizeToContents columns measure themselves and are left alone."""
+        if factor <= 0 or abs(factor - 1.0) < 1e-9:
+            return
+        hh = self.table.horizontalHeader()
+        for i in range(self.table.columnCount()):
+            if i in self._auto_width_columns:
+                continue
+            self.table.setColumnWidth(i, max(1, round(hh.sectionSize(i) * factor)))
+
     def _update_counts(self) -> None:
         counts = {s: 0 for s in apply_queue.STATUSES}
         for e in self._jobs:
             s = e.get("status")
             if s in counts:
                 counts[s] += 1
-        parts = [f"{s}: {n}" for s, n in counts.items() if n]
+        # The same words the chips beside this caption use, not the raw status
+        # ids: one row read "In progress 1 · Ready to submit 1 · Needs review 1"
+        # on the chips and "in_progress: 1 · ready_to_submit: 1 · needs_human: 1"
+        # in the caption immediately to their right — two vocabularies for one
+        # set of states, with the machine's spelling the more prominent of the
+        # two. Lower-cased because this is a caption, not a set of labels.
+        parts = [f"{STATUS_LABELS.get(s, s.replace('_', ' ')).lower()}: {n}"
+                 for s, n in counts.items() if n]
         parts.append(f"total: {len(self._jobs)}")
         self.counts_label.setText(" · ".join(parts))
         self.status_chips.set_counts(counts)
@@ -719,7 +741,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.status_label.setText(msg)
 
     def _write_failed(self, exc: BaseException) -> None:
-        self._set_note(f"Queue write failed: {exc}")
+        self._set_note(f"Queue write failed: {errmsg.for_user(exc)}")
 
     def _requeue(self) -> None:
         jid = self._selected_job_id()
@@ -785,7 +807,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         try:
             osopen.open_path(path)
         except OSError as exc:
-            self._set_note(f"Could not open {path}: {exc}")
+            self._set_note(f"Could not open {Path(path).name}: {errmsg.for_user(exc)}")
 
     def _open_folder(self) -> None:
         self._open_artifact("folder", "job folder")

@@ -23,6 +23,7 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+import errmsg  # noqa: E402  (needs HERE on sys.path; user-facing message rendering)
 
 from jsonutil import (  # noqa: E402  (needs HERE on sys.path)
     read_json_dict, replace_with_retry, update_json_locked,
@@ -217,8 +218,20 @@ def add_extracted_date(df: pd.DataFrame,
     return df
 
 
-def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
-    """Load and concatenate CSVs; return (df, id_to_source_path)."""
+def load_files(paths: list[Path], *,
+               problems: list[tuple[Path, str]] | None = None,
+               ) -> tuple[pd.DataFrame, dict[str, Path]]:
+    """Load and concatenate CSVs; return (df, id_to_source_path).
+
+    Skipping a source must never stop the others loading, so a bad file is
+    dropped rather than raised. But a silent drop is its own failure: a master
+    that Drive delivered half-synced, or a truncated .gz, produced an empty frame
+    indistinguishable from a fresh install, and the dashboard told a user with
+    15,700 collected jobs "No jobs yet" and offered to set them up from scratch.
+    Pass `problems` to collect `(path, reason)` for every source that EXISTS and
+    was skipped anyway, so the caller can say which file and why. A path that is
+    simply absent is not a problem — that is the normal first-run state.
+    """
     frames: list[pd.DataFrame] = []
     id_to_path: dict[str, Path] = {}
     for p in paths:
@@ -226,9 +239,29 @@ def load_files(paths: list[Path]) -> tuple[pd.DataFrame, dict[str, Path]]:
             continue
         try:
             df = read_csv_gz(p)
-        except (OSError, ValueError):
+        except Exception as exc:  # noqa: BLE001 - see below; one bad file, not all of them
+            # Deliberately broad. `(OSError, ValueError)` misses the two
+            # commonest ways a synced .csv.gz breaks: a half-written gzip raises
+            # `zlib.error` and a cut-short one raises `EOFError`, and NEITHER is
+            # an OSError or a ValueError. A narrower clause lets the exception
+            # escape the per-file skip, unwind the whole loop, and take every
+            # other source down with it, so one truncated Drive master would stop
+            # the local scrape files loading too. The entire point of this loop is
+            # that one unreadable source costs only that source.
+            if problems is not None:
+                # errmsg.for_user, not str(exc): the caller renders this beside
+                # `Path(p).name` in the dashboard's empty panel, and an OSError
+                # carries the offending path in its OWN message -- so the panel
+                # carefully said "master.csv.gz" and then printed
+                # "[Errno 13] Permission denied: 'C:\\Users\\<name>\\...'" right
+                # after it. A locked master (Excel has it open, an AV scanner is
+                # mid-scan) is the ordinary way to see this, and the string ends
+                # up in screenshots and bug reports.
+                problems.append((p, errmsg.for_user(exc, with_type=True)))
             continue
         if "job_posting_id" not in df.columns:
+            if problems is not None:
+                problems.append((p, "no job_posting_id column"))
             continue
         df["job_posting_id"] = df["job_posting_id"].astype(str)
         df["_source"] = str(p)
@@ -620,38 +653,6 @@ def _save_cfg(updates: dict) -> None:
         pass
 
 
-def _engine_credential_warnings(auth: str, project: str, has_api_key: bool) -> list[str]:
-    """Warn when the chosen résumé-tailor engine is missing the credential it needs.
-
-    'api_key' needs a Gemini API key; 'vertex' needs a Google Cloud project. Pure
-    (no I/O) so it can be unit-tested; returns [] when the engine has what it needs.
-    """
-    if auth == "api_key" and not has_api_key:
-        return ["Resume tailor engine is 'api_key' but no Gemini API key is saved "
-                "(Settings -> Credentials -> Gemini API key (resume tailor))."]
-    if auth == "vertex" and not str(project).strip():
-        return ["Resume tailor engine is 'vertex' but no Google Cloud project is set "
-                "(Settings -> Connection & paths -> Google Cloud project ID)."]
-    return []
-
-
-def _claude_cli_warnings(tailor_provider: str, scoring_provider: str,
-                          cli_found: bool) -> list[str]:
-    """Warn when a provider is 'claude' but the CLI isn't installed. Pure (caller
-    passes shutil.which('claude') is not None) so it unit-tests like
-    _engine_credential_warnings."""
-    if cli_found:
-        return []
-    out = []
-    if tailor_provider == "claude":
-        out.append("Resume tailor provider is 'claude' but the `claude` CLI is not "
-                    "on PATH. Install Claude Code and run `claude` once to log in.")
-    if scoring_provider == "claude":
-        out.append("Scoring provider is 'claude' but the `claude` CLI is not on "
-                    "PATH -- local scoring will fall back to Gemini.")
-    return out
-
-
 def load_min_score(default: int = 4) -> int:
     try:
         return int(_load_cfg().get("min_score", default))
@@ -685,14 +686,6 @@ def live_resume_ids(resume_paths) -> set[str]:
         except OSError:
             pass
     return live
-
-
-def visible_columns(all_cols: list[str], hidden) -> list[str]:
-    """Display order with `hidden` column ids removed. Never empty — if every
-    column is hidden it falls back to showing all (a blank table is never useful)."""
-    hidden = set(hidden)
-    vis = [c for c in all_cols if c not in hidden]
-    return vis or list(all_cols)
 
 
 def load_hidden_columns() -> dict[str, list[str]]:
@@ -1061,7 +1054,7 @@ _BULLET_GAP_RE = re.compile(r"^(• .*)\n\n+(?=• )", re.M)
 # An `<li>` whose content is wrapped in a block tag (`<li><p>text</p></li>`)
 # breaks the line right after the marker, orphaning it from its OWN text — 41
 # of the 59 stray markers in the master. Rejoin those; only then is a marker
-# with nothing after it genuinely an EMPTY `<li>`, which drops out entirely.
+# with nothing after it an EMPTY `<li>`, which drops out entirely.
 # The gap is the tell: a block tag between the marker and the next text emits a
 # second newline, so an ADJACENT line is the item's own content, and only a
 # non-bullet one (`(?=[^\s•])`) is text rather than the next marker.

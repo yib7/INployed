@@ -1,9 +1,9 @@
 # Scraper VM venv (~/venv on the GCP VM, Python 3.11.2 / Debian).
 # Snapshot of the working install on 2026-06-12 (read via pip freeze over SSH);
-# pins re-checked against PyPI stable on 2026-08-27. NOTE: numpy must stay on the
+# pins re-checked against PyPI stable on 2026-09-04. NOTE: numpy must stay on the
 # 2.4.x line: numpy 2.5+ declares Requires-Python >=3.12 and this VM runs 3.11.2;
-# 2.4.6 is the newest release on that line (re-verified 2026-08-27 -- the line is
-# still 2.4.0 through 2.4.6, and 2.5.2 still declares >=3.12).
+# 2.4.6 is the newest release on that line (re-verified 2026-09-04 -- the line is
+# still 2.4.0 through 2.4.6, and 2.5.0/2.5.1/2.5.2 all still declare >=3.12).
 #
 # Rebuild from scratch:
 #   python3 -m venv ~/venv
@@ -12,7 +12,7 @@
 # rclone is a system binary on the VM (not pip) — config in ~/.config/rclone/.
 
 aiohttp==3.14.3
-google-genai==2.20.0
+google-genai==2.22.0
 markdownify==1.2.3
 pandas==3.0.5
 numpy==2.4.6

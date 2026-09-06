@@ -2,17 +2,22 @@
 
 > Job discovery & résumé tailoring, end to end.
 
-[![CI](https://github.com/yib7/INployed/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/INployed/actions/workflows/ci.yml)
+[![CI status](https://github.com/yib7/INployed/actions/workflows/ci.yml/badge.svg)](https://github.com/yib7/INployed/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.14-blue.svg)
+![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)
 
 A scheduled cloud discovery step feeds a two-stage LLM scorer, which syncs to a
-desktop app that drives a LaTeX résumé engine. 15,754 postings collected to date,
-about 5% of them survive to a recommendation, so that is all you read.
+desktop app that drives a LaTeX résumé engine. 17,366 postings collected as of
+September 2026; 8% of them earn a second-stage recommendation and 5% come back
+*apply*, so that is all you read.
 
 The résumé engine's rule is **select and re-phrase, never invent**. Every
 résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
 (no LLM) drops any bullet that doesn't.
+
+2,593 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
+push against Windows and Linux, plus a clean-room job that installs from this
+README's own setup steps.
 
 Three pieces do the work:
 
@@ -31,9 +36,9 @@ Three pieces do the work:
 
 | Triage: **High Score** | Follow through: **Tracker** |
 |---|---|
-| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill. Under the table, the selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
+| ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill; a legend under the table maps the five tints back to those states. The selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
 | Your source of truth: **Resume Data** | Every knob: **Settings** |
-| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. Ten collapsible sections under a search box, from Credentials and Connection & paths through Job discovery, Scoring, Resume, Auto-apply and the cloud VM. Engine is expanded, showing the résumé tailor engine and provider dropdowns, each labelled with the config.json key it writes.](docs/settings.png) |
+| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. A search box and a Show advanced settings toggle sit above ten collapsible sections. Credentials and Connection & paths stay folded; Engine is expanded, showing the tailor engine, provider and per-stage model dropdowns, each tagged with the file it writes to — config.json or .env. Dashboard, Job discovery and Scoring follow below, still folded.](docs/settings.png) |
 
 **High Score** surfaces only unseen postings scoring ≥4, newest discovery day first and
 highest score within the day. Click any column header to re-sort.
@@ -98,11 +103,16 @@ cd INployed
 ### Step 2: Install the dependencies into a project venv
 ```powershell
 python -m venv venv
+venv\Scripts\python.exe -m pip install --upgrade pip
 venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests. Calling
 the venv's `python.exe` by path means you never have to activate it, which Windows' default
-execution policy blocks. The launcher in Step 4 finds this `venv` on its own.
+execution policy blocks. The launcher in Step 4 finds this `venv` on its own. The pip upgrade
+comes first because `python -m venv` seeds whatever pip shipped with your interpreter (25.2 on
+Python 3.14.0), and six advisories against pip 25.2 are fixed by 26.2, among them path
+traversal in entry-point names, a symlink escape in its fallback tar extractor, and a
+doubly-encoded index URL it resolved wrong.
 
 ### Step 3: Create your local config files
 ```powershell
@@ -117,12 +127,13 @@ nothing is overwritten without `-Force`.
 **Double-click `Open INployed Dashboard.cmd`** in the project folder. That is the single
 entry point, and the only thing you need for every later launch. (Right-click it →
 *Send to* → *Desktop (create shortcut)* for a desktop icon. From a terminal it is
-`python local/app.py`.)
+`venv\Scripts\python.exe local\open_dashboard.pyw` — the same interpreter and the same
+script the launcher runs, since Step 2's venv is never activated.)
 
 With no keys and no jobs yet, the window opens to a **get-started panel** rather than a
 blank table, so you can confirm the install worked before configuring anything.
 
-### Step 5: Set your keys in the Settings tab
+### Step 5 (skip to just look around): Set your keys in the Settings tab
 In the running dashboard, open the **Settings** tab and fill in the **Credentials**
 section. One form covers every key, path, and option the project has; nothing needs to be
 edited by hand. See
@@ -136,13 +147,13 @@ You need an account for each feature you want:
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
 | Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the gcloud CLI from Step 7, signed in |
 
-*(Skip if you only want to look around: the dashboard, tracker, and editors all run
-without keys. The tailor stops with a plain "no key configured" message instead.
+*(Nothing breaks without keys: the dashboard, tracker, and editors all run, and the
+tailor stops with a plain "no key configured" message instead.
 The VM row is optional even with keys: **Find new jobs** runs the same discovery
 on your PC, and the VM controls stay hidden until you switch on **Enable VM
 features** in Settings.)*
 
-### Step 6: Enter your experience in the Resume Data tab
+### Step 6 (skip until you tailor): Enter your experience in the Resume Data tab
 Your experience lives in **`resume_tailor_files/master_experience.yaml`**, the single
 source of truth the pipeline **selects** from per job (it never fabricates). Use the
 dashboard's **Resume Data** tab to add / edit / delete entries and achievements, with
@@ -198,8 +209,8 @@ discovery VM.
   project has (no file editing), including the schedule, pause, config pushes, and API-key
   rotation for the cloud discovery VM. A rotated key lands in a mode-600
   `~/scraper_secrets.env` that the cron script sources; the value rides an `scp` rather
-  than an argv, so it never reaches a gcloud log. Stats reports per-run cost and volume,
-  with a staleness badge when a cron run goes missing.
+  than an argv, so it never reaches a gcloud log. Stats reports per-run volume, token
+  spend and rescore outcomes, with a staleness badge when a cron run goes missing.
 
 Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
@@ -207,11 +218,11 @@ Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USE
 
 ## Demo
 
-The whole loop in 38 seconds: rank a scored run, read one posting's analysis, filter the
+The whole loop in 42 seconds: rank a scored run, read one posting's analysis, filter the
 list live, open the apply sheet the tailor wrote for one job, walk the tracker, then
 look at the data every generated bullet had to come from.
 
-![Animated tour of the INployed dashboard, sixteen scenes. It starts on High Score and changes the selected row three times so the detail card swaps its reason, strengths and gaps; types "engineer" into the search box one letter at a time while the table sheds rows from thirteen to nine, then clears it; opens the Apply panel for the tailored job and scrolls its apply.md through the candidate details, work experience, projects and skills; then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue, per-run Stats, Resume Data, Apply Answers, and Settings with the Engine section expanded.](docs/demo.gif)
+![Animated tour of the INployed dashboard, sixteen scenes. It starts on High Score and changes the selected row four times so the detail card swaps its reason, strengths and gaps; types "engineer" into the search box one letter at a time while the table sheds rows from thirteen to nine, then clears it; opens the Apply panel for the tailored job and scrolls its apply.md through the candidate details, work experience, projects and skills; then walks All Jobs, the Tracker with a follow-up flagged due, the Auto-apply queue stepping through its per-status rows, per-run Stats, Resume Data scrolled down into the achievement atoms, Apply Answers, and Settings, where the Engine section is expanded and the page scrolls to the last of the ten sections.](docs/demo.gif)
 
 - **High Score** ranks every discovered posting and color-codes the recommendation.
 - Selecting a job opens its **detail card**: reason, strengths, gaps, tailor and apply.
@@ -242,7 +253,7 @@ look at the data every generated bullet had to come from.
   publish its request-size limit, so the 2,000-id exclude cap is a number measured against
   the live API, and a change on their side can move it.
 - **Not an auto-submitter, and not a résumé writer:** the apply flow parks at review, and
-  the tailor can only select and rephrase facts you wrote yourself. It will never fill a thin
+  the tailor can only select and re-phrase facts you wrote yourself. It will never fill a thin
   experience file with impressive-sounding text.
 - **The grounding gate has a blind spot:** it traces distinctive tokens (numbers, proper
   nouns, tool names). A rephrasing that overstates using only ordinary words gives it
@@ -257,28 +268,40 @@ look at the data every generated bullet had to come from.
 The composition pipeline (in `local/resume_tailor/`) is built around one rule,
 **select and re-phrase, never invent**:
 
-1. **select** (flash): pick the best experiences/projects and group their atoms.
+1. **select** (fast tier): pick the best experiences/projects and group their atoms.
    Selection can only choose from your atoms, so every bullet is grounded by
    construction.
-2. **rephrase** (pro): write one bullet per group, fusing only that group's facts.
-3. **layout**: bullets are driven to exact printed-line budgets so the résumé
-   fills one page cleanly (single-line bullets ≥75% full, no stubby lines).
+2. **rephrase** (deep tier): write one bullet per group, fusing only that group's facts.
+3. **layout**: bullets are driven to measured printed-line budgets so the résumé
+   fills one page cleanly. Line length is modelled from real Times glyph widths
+   calibrated against the compiled PDF, not a flat character count, so the budget
+   holds for a wide-word bullet too (a single-line bullet aims to fill ≥90% of its
+   line, a wrapping bullet's last line ≥75%; below 50% the engine folds in a spare
+   fact from the same entry rather than shipping a stub).
 4. **compile**: render LaTeX and enforce one page.
 
 ```mermaid
 flowchart LR
-    Y[("master_experience.yaml<br/>your atoms")] --> S["select (flash)<br/>choose + group atoms"]
+    Y[("master_experience.yaml<br/>your atoms")] --> S["select (fast tier)<br/>choose + group atoms"]
     JD["job description"] --> S
-    S --> R["rephrase (pro)<br/>one bullet per group"]
+    S --> R["rephrase (deep tier)<br/>one bullet per group"]
     R --> V{"verify.py<br/>every distinctive token<br/>traces to an atom?"}
-    V -->|yes| LO["layout<br/>fit exact line budgets"]
+    V -->|yes| LO["layout<br/>fit measured line budgets"]
     V -->|no| RV["revert to last grounded<br/>text, else drop"]
     RV --> LO
     LO --> C["compile LaTeX<br/>enforce one page"]
     C --> P["tailored PDF"]
 ```
 
-**A grounding gate enforces it** (`local/resume_tailor/verify.py`), deterministically.
+Three model tiers back those stages — fast, standard, deep. Out of the box only the
+fast tier drops to a cheaper model (`gemini-3.1-flash-lite`); standard and deep both
+sit on `gemini-3.5-flash`, so the default costs what a mid-tier model costs and you
+raise the deep tier yourself when you want stronger writing. One setting
+(Settings → Engine, *Tailor models — simple or per stage*) points every stage at a
+single model instead; see [the user guide](docs/USER_GUIDE.md). The same three tiers
+map onto Claude models when the tailor provider is set to `claude`.
+
+**A deterministic grounding gate enforces it** (`local/resume_tailor/verify.py`).
 
 A job description is untrusted internet text riding inside the generation prompt, so
 the prompt alone is not a guarantee. After generation, with no LLM involved, every
@@ -305,8 +328,9 @@ works for anyone's résumé.
 ---
 
 ## Tech stack
-Python 3.14 · Gemini (Vertex AI) · Bright Data · pandas · SQLite · LaTeX (MiKTeX) ·
-PySide6/Qt · Google Drive · cron · pytest · ruff.
+Python 3.14 · Gemini (Vertex AI) · Claude Code CLI *(optional second provider)* ·
+Bright Data · pandas · SQLite · LaTeX (MiKTeX) · PySide6/Qt · Google Drive ·
+GCP Compute Engine + cron · pytest · ruff.
 
 ## Tests
 ```bash
@@ -342,9 +366,13 @@ scripts/build_demo_media.py stamps the four README stills + renders docs/demo.gi
 scripts/build_social_preview.py composes docs/social-preview.png (GitHub's 1280x640 card)
 scripts/build_walkthrough.py  records the captioned MP4 tour of the dashboard (synthetic data)
 local/app.py            PySide6/Qt dashboard entry point (triage / tracker / stats + editors)
+local/open_dashboard.pyw  the launcher's target: resolves the synced master, then opens app.py, no console
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
-local/chrome.py         open job/resume links in the configured Chrome profile
+local/settings.py       the one schema behind the Settings tab: 64 fields, where each is stored
+local/setup_check.py    what's missing or misconfigured, in plain sentences (the Check setup button)
+local/errmsg.py         the single renderer for user-facing exception text (no home paths, no secrets)
+local/chrome_launch.py  open job/resume links in the configured Chrome profile
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
 local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores
@@ -352,7 +380,7 @@ local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + 
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test
 docs/                   USER_GUIDE (every feature), ARCHITECTURE (code tour), CREDITS
-                        (attribution), plus the README's media
+                        (attribution), the README's media, and the GitHub social card
 ```
 
 ## License
@@ -363,11 +391,15 @@ see [docs/CREDITS.md](docs/CREDITS.md) for full attribution.
 No dependency is redistributed here. The repo is source only, and `pip` fetches each
 one from PyPI under its own license when you run Step 2.
 
-Every pin is MIT, BSD, Apache-2.0 or PSF except **PySide6/Qt**, which is LGPLv3 (or
-GPL, or a commercial Qt license). The dashboard imports PySide6 as an ordinary Python
-module and bundles no Qt binaries, so LGPLv3's relink condition is met by
-construction: you have the full source and can swap the PySide6 version with one
-`pip install`.
+Across the tree `pip` actually installs, direct pins and transitive ones together, the
+licenses are MIT, BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi,
+pulled in by requests and httpx; the Zlib, CC0-1.0 and 0BSD arms come from numpy's
+composite expression, under pandas). All of those permit an MIT release. The one copyleft
+dependency is **PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercial from
+The Qt Company. The dashboard imports PySide6 as an ordinary Python module and bundles no
+Qt binaries, so LGPLv3's relink condition is met by construction: you have the full source
+and can swap the PySide6 version with one `pip install`. `docs/CREDITS.md` lists the same
+set per library.
 
 Freezing this into a single-file executable is a different case, and those
 obligations would be yours.

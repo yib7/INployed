@@ -5,7 +5,7 @@ The flow (PLAN stage 5 — "smarter master_experience"):
 
   1. find_gap_keywords()  — deterministic: JD keywords NOT already in your skill
      pool. These are candidates you might own but never wrote down.
-  2. screen_candidates()  — flash-lite: keep only genuine, NON-IDENTIFYING,
+  2. screen_candidates()  — flash-lite: keep only NON-IDENTIFYING,
      resume-worthy skills (drops company names, locations, generic filler).
   3. place_skills()       — flash-lite: map each kept skill to the best-fit
      existing skills bucket (falls back to a sensible default bucket).
@@ -70,7 +70,7 @@ def find_gap_keywords(jd_text: str, master: Optional[dict] = None) -> List[str]:
 
 # ── Step 2: flash-lite screen (keep only real, non-identifying skills) ────────
 def screen_candidates(candidates: List[str]) -> List[str]:
-    """Keep only items that are genuine, resume-worthy, NON-IDENTIFYING skills/tools/
+    """Keep only items that are resume-worthy and NON-IDENTIFYING: skills/tools/
     methods — dropping company names, locations, person names, and generic filler.
     Conservative: on any model error, return [] (suggest nothing rather than junk)."""
     if not candidates:
@@ -250,7 +250,7 @@ def apply_to_file(placements: Dict[str, List[str]], path: Optional[Path] = None,
 # ── confirm-then-apply gate ───────────────────────────────────────────────────
 def _confirm_placements(placements: Dict[str, List[str]], *, assume_yes: bool,
                         prompt=input) -> Dict[str, List[str]]:
-    """Filter `placements` to only the skills the user confirms they truly have.
+    """Filter `placements` to only the skills the user confirms they have.
 
     The gap flow's promise is confirm-THEN-apply: `screen_candidates` keeps
     *plausible* skills, not *owned* ones, so folding them all in unchecked would

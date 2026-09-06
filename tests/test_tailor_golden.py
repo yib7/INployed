@@ -1,26 +1,37 @@
-"""Golden-output oracle for the cycle-9 résumé-tailor legibility refactor.
+"""Golden-output oracle for the résumé-tailor engine.
 
-This file exists for one reason: the cycle-9 pass over ``local/resume_tailor/``
-(design spec: ``docs/superpowers/specs/2026-09-01-tailor-legibility-design.md``)
-moves code without changing what the engine produces. SP2 turns ``run.tailor()``'s
-hand-written stage sequence into a declarative pass pipeline, SP4 splits
-``compose.py`` into ``selection.py`` + ``skills.py``, and SP5 deletes the parts of
-the tree that were documented but never real. **All three are required to leave the
-output byte-identical**, and "byte-identical" is not something a reviewer can eyeball
-across a 1,571-line module move. So it is pinned here instead.
+The file was born in cycle 9 (design spec:
+``docs/superpowers/specs/2026-09-01-tailor-legibility-design.md``), a pass over
+``local/resume_tailor/`` that moved code without changing what the engine produces:
+SP2 turned ``run.tailor()``'s hand-written stage sequence into a declarative pass
+pipeline, SP4 split ``compose.py`` into ``selection.py`` + ``skills.py``, SP5 deleted
+the parts of the tree that were documented but never real. All three had to leave the
+output byte-identical, and "byte-identical" is not something a reviewer can eyeball
+across a 1,571-line module move. So it was pinned here instead.
 
 The test drives the whole bullet pipeline in the exact order ``run.tailor()`` runs it —
 ``select`` -> ``inject_verbatim`` -> ``lead_with_overview`` -> ``block_briefs`` ->
 ``rephrase`` -> grounding gate -> ``dedupe_leading_verbs`` -> gate -> verbatim merge ->
-``_trim_to_caps`` -> ``fill_underfull`` -> retrim -> gate -> ``enforce_style`` -> gate ->
-``compress_skills`` -> ``methods_line`` -> ``render.render`` — and asserts the EXACT final
+``_trim_to_caps`` -> ``fill_underfull`` -> retrim -> gate -> ``enforce_style`` -> retrim ->
+gate -> ``compress_skills`` -> ``methods_line`` -> ``render.render`` — and asserts the EXACT final
 ``bullets`` dict and the EXACT rendered ``.tex``. The expected values below are literals:
 they were produced by running this pipeline once and pasting what came out, so the test
 compares the engine against a frozen recording rather than against itself.
 
-**It must pass unchanged after SP2, SP4 and SP5.** A diff here is either a real behaviour
-change (fix it) or a deliberate one (then the whole premise of the cycle is void and the
-plan needs revisiting). Do not "update the golden" to make a refactor land.
+**The contract changed at cycle 10.** Cycle 9 was a pure refactor, so any diff here was
+a bug and the rule was "do not update the golden to make a refactor land". Cycle 10
+deliberately changes what the engine writes — prompt wording, selection, style repair —
+so the golden is now a change **detector**, not a change **preventer**. What it detects
+is an output change nobody meant to make. The rules:
+
+* A phase that does NOT intend to change output leaves this file untouched. A diff there
+  is still a real regression: find it, don't re-pin it.
+* A phase that DOES change output re-pins the literals below **and records the exact
+  before/after diff in that phase's entry in ``.autopilot/PLAN.md``**, so the change is
+  reviewable as text rather than as a wall of new expected values.
+* **A re-pin with no recorded diff is a failed checkpoint**, not a passing test. Pasting
+  fresh output into the literals is exactly how a regression ships disguised as a
+  refactor, and the recorded diff is the only thing standing in the way.
 
 Four tests, each catching a different kind of drift:
 
@@ -50,11 +61,11 @@ Hermetic by construction, and it must stay that way:
   ``selection.py``. Patching by sweep means this file survives that move untouched, which
   is the point. Any stage that reaches the stub with an unrecognised prompt raises
   instead of falling through to the network.
-* **No user data.** A synthetic master (``_MASTER``) replaces the real
+* **No user data reaches this file.** A synthetic master (``_MASTER``) replaces the real
   ``resume_tailor_files/master_experience.yaml``, which is gitignored personal data and
   absent on a fresh clone.
-* **No pdflatex.** The pipeline stops at ``render.render()``; nothing compiles.
-* **No unpinned config.** Every toggle the pipeline reads is pinned in ``pinned_engine``
+* **No pdflatex ever runs.** The pipeline stops at ``render.render()``; nothing compiles.
+* **No config is left unpinned.** Every toggle the pipeline reads is pinned in ``pinned_engine``
   — the ``config.json`` map, the env-var overrides, the import-time constants, and the
   glyph-width capacities. A default flipped in ``config.py`` must fail its own test, not
   quietly rewrite this golden.
@@ -406,13 +417,19 @@ def pinned_engine(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     # Import-time constants: env can no longer reach them, so pin the attributes.
-    monkeypatch.setattr(config, "MAX_LINE_CHARS", 130)
+    # (config.MAX_LINE_CHARS was pinned here until SP3 retired it — the length budget is
+    # derived from measure.BODY_LINE_CAPACITY below, which is pinned instead.)
     monkeypatch.setattr(config, "DEFAULT_LINE_TARGETS", [2, 2, 2])
     monkeypatch.setattr(config, "PROJECTS_MAX", 3)
     monkeypatch.setattr(config, "PROJECT_BULLETS_MAX", 2)
     monkeypatch.setattr(config, "PROJECT_BULLET_LINES", 2)
     monkeypatch.setattr(measure, "BODY_LINE_CAPACITY", 53464)
     monkeypatch.setattr(measure, "SKILL_LINE_CAPACITY", 53464)
+    # SP3 made the fill fractions env-overridable at import time. UNDERFULL_FILL decides which
+    # bullets fill_underfull rewrites, so an exported override would otherwise pick the golden.
+    monkeypatch.setattr(measure, "FULL_LINE_FILL", 0.90)
+    monkeypatch.setattr(measure, "LAST_LINE_FILL", 0.75)
+    monkeypatch.setattr(measure, "UNDERFULL_FILL", 0.50)
     monkeypatch.setattr(layout, "LEADERSHIP_ENTRY_LINES", 2)
 
     # Prompt-only assets that would otherwise read files absent from a fresh clone
@@ -467,6 +484,7 @@ def _run_bullet_pipeline():
 
     grounded_snap = dict(bullets)
     compose.enforce_style(jd, job_title, sel, bullets)
+    rt_run._trim_to_caps(sel, bullets)     # SP2: the style repair may lengthen a bullet
     verify.enforce_grounded(sel, bullets, fallback=grounded_snap)
 
     skill_lines = compose.compress_skills(jd, job_title, sel)
@@ -493,10 +511,15 @@ _GOLDEN_STAGES = [
 ]
 
 _GOLDEN_BULLETS = {
+    # SP2 re-pin (clause-cut floor 0.6 -> 0.85). Was "...new raw event volume": the only
+    # comma in the over-budget prefix sat at char 204 of a 254-char 2-line budget (80%),
+    # which cleared the old 60% floor, so the clause cut fired and threw away 50 chars
+    # that FIT. It now falls through to the word cut, which keeps 232 of the 254 and lands
+    # on "...the runbook" (_strip_dangling sheds the trailing "that ..." fragment).
     "gx_etl":
         "Rebuilt the nightly ETL pipeline in Python against PostgreSQL and cut batch runtime 42%, "
         "keeping the ingestion service green across the whole summer while the warehouse kept taking on "
-        "new raw event volume",
+        "new raw event volume, and wrote the runbook",
     "gx_dbt":
         "Consolidated 12 dbt marts that replaced hand-written SQL extracts.",
     "th_model":
@@ -552,7 +575,7 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \resumeSubheadingOneLine
 {Data Engineering Intern}{Globex Analytics}{Austin, TX}{June 2024 -- August 2024}
 \resumeItemListStart
-\resumeItem{Rebuilt the nightly ETL pipeline in Python against PostgreSQL and cut batch runtime 42\%, keeping the ingestion service green across the whole summer while the warehouse kept taking on new raw event volume.}
+\resumeItem{Rebuilt the nightly ETL pipeline in Python against PostgreSQL and cut batch runtime 42\%, keeping the ingestion service green across the whole summer while the warehouse kept taking on new raw event volume, and wrote the runbook.}
 \resumeItem{Consolidated 12 dbt marts that replaced hand-written SQL extracts.}
 \resumeItemListEnd
 

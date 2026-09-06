@@ -236,9 +236,17 @@ def has_unseen_high_score(path: Path, min_score: int) -> bool:
             if bool(((score >= min_score) & (seen == "no")).any()):
                 return True
         return False
-    except (OSError, ValueError) as e:
-        # ValueError also covers a master missing either usecols column, which
-        # the old code answered False for.
+    except Exception as e:  # noqa: BLE001 - "cannot tell" must degrade, not crash
+        # ValueError covers a master missing either usecols column, which the old
+        # code answered False for. Deliberately broader than that: this reads a
+        # .csv.gz that Google Drive may be halfway through delivering, and a
+        # corrupt deflate stream raises `zlib.error`, which is neither an OSError
+        # nor a ValueError. The caller (line ~437) sits inside a try whose only
+        # clause is `finally`, so that escaped all the way out of main() — the
+        # scheduled watcher died with a traceback into its own log, sync_back
+        # never ran, and the dashboard never popped, for as long as the bad file
+        # sat there. Answering False just means "no reason to pop this round";
+        # the next fire retries once the mtime settles.
         log.warning("Could not read %s: %s", path, e)
         return False
 

@@ -28,6 +28,12 @@ BULLETS = {"a1": "Shipped the viewer with 178 tests",
 # code that shipped before this toggle existed. The shared tail is referenced
 # (not copied) so an intentional edit to compose.BANNED_PHRASING -- which the
 # résumé arm shares -- doesn't fail here with a misleading message.
+#
+# What these two pins protect is the DELTA (the rules block is appended and
+# nothing else moves), not the wording of the head itself. A deliberate reword of
+# the cover-letter prompt re-pins the head here; a head that drifts without anyone
+# meaning to is the failure this catches. Cycle 10 re-pinned two em dashes out
+# (see tests/test_prompt_hygiene.py for why a prompt may not use them).
 _TODAYS_GENERATE_HEAD = (
     'Write a concise, genuine cover-letter body (3 short paragraphs) for an '
     'early-career candidate. Use ONLY facts present in the provided resume bullets and '
@@ -35,7 +41,7 @@ _TODAYS_GENERATE_HEAD = (
     'salutation and no sign-off (the template adds them). Plain text, paragraphs '
     'separated by a blank line. Warm but professional; write like a person, in plain '
     'declarative sentences, no clichés. Show genuine but MEASURED interest: never gush '
-    'or over-sell — no exclamation-point excitement, no '
+    'or over-sell: no exclamation-point excitement, no '
     "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
     'over-eager tone reads as AI-written. Use a confident, professional tone. Use the '
     'correct tense for education, based on the EDUCATION line: if the candidate has '
@@ -49,12 +55,12 @@ _TODAYS_GENERATE_HEAD = (
 
 _TODAYS_REFINE_HEAD = (
     'You are an editor doing a final polish pass on a cover-letter body. Improve '
-    'cohesion and flow so it reads as one connected argument, not stitched-together '
-    'sentences. Stay grounded: use ONLY facts already in the draft and the resume '
+    'cohesion and flow so the sentences build ONE connected argument. '
+    'Stay grounded: use ONLY facts already in the draft and the resume '
     "bullets below; never add a company, number, skill, or claim that isn't supported, "
     'and cut anything the draft invented. Keep the meaning and roughly the same length; '
     'no salutation and no sign-off. Show genuine but MEASURED interest: do NOT be '
-    'over-the-top or gushing — no exclamation-point enthusiasm, no '
+    'over-the-top or gushing. No exclamation-point enthusiasm, no '
     "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
     'over-eager tone reads as AI-written. Use a confident, professional tone.\nBANNED '
     'PHRASING (do not introduce any of these): '
@@ -280,7 +286,7 @@ def _capture_refine_system(monkeypatch):
         return "I shipped the viewer with 178 tests."
 
     monkeypatch.setattr(compose, "call", fake_call)
-    coverletter.refine_body("jd", "Engineer", "Acme", "A draft body.", BULLETS)
+    coverletter.refine_body("Engineer", "Acme", "A draft body.", BULLETS)
     return seen["system"]
 
 
@@ -305,7 +311,7 @@ def test_gate_ignores_aiwriting_patterns_when_off(monkeypatch, toggle):
     toggle(False)
     calls = []
     monkeypatch.setattr(compose, "call", lambda *a, **k: calls.append(1) or "")
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert out == _AIWRITING_ONLY
     assert calls == []  # clean under compose's bans alone -> no LLM call at all
 
@@ -314,7 +320,7 @@ def test_gate_repairs_aiwriting_patterns_when_on(monkeypatch, toggle):
     toggle(True)
     repaired = "I read your compiler work closely.\n\nI shipped the viewer with 178 tests."
     monkeypatch.setattr(compose, "call", lambda *a, **k: repaired)
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert out == repaired
 
 
@@ -324,7 +330,7 @@ def test_gate_rejects_a_repair_that_does_not_strictly_improve(monkeypatch, toggl
     # The "repair" swaps one tier-1 word for another: same violation count -> reject.
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "In conclusion, this is a pivotal role for me.")
-    out = coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    out = coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert out == _AIWRITING_ONLY
 
 
@@ -337,7 +343,7 @@ def test_gate_repair_prompt_carries_the_rules_when_on(monkeypatch, toggle):
         return "I read your compiler work.\n\nI shipped the viewer with 178 tests."
 
     monkeypatch.setattr(compose, "call", fake_call)
-    coverletter.enforce_body_style("jd", "Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
+    coverletter.enforce_body_style("Engineer", "Acme", _AIWRITING_ONLY, BULLETS)
     assert aiwriting.RULES_PROMPT in seen["system"]
     assert "tier-1 vocabulary" in seen["user"]  # the named violations reach the repair
 
@@ -347,7 +353,7 @@ def test_grounding_gate_still_runs_last_with_the_toggle_on(monkeypatch, toggle):
     toggle(True)
     _fake_master(monkeypatch)
     monkeypatch.setattr(coverletter, "refine_body",
-                        lambda jd, jt, co, body, bullets, **k: body)
+                        lambda jt, co, body, bullets, **k: body)
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "I led the Zorblatt migration for 12 teams.")
     with pytest.raises(coverletter.LLMError, match="ungrounded"):

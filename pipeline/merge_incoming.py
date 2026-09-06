@@ -12,7 +12,6 @@ Deployed standalone beside scraper.py on the VM — stdlib + pandas only, no loc
 from __future__ import annotations
 
 import argparse
-import gzip
 import os
 import shutil
 import sys
@@ -35,10 +34,21 @@ RUN_STATS_CSV = HOME / "run_stats.csv"
 STATS_KEY = ["timestamp", "input_csv"]
 CHUNK = 2000  # Chunked streaming row count for the master-wins merge (memory bounded)
 
-# Per-file parse/read failures that must quarantine-and-continue rather than
-# raise. NOT included: unreadable *master*, which is the one case that must
-# abort the whole run (handled separately, outside this tuple).
-_BAD_FILE_ERRORS = (OSError, ValueError, pd.errors.ParserError, EOFError, gzip.BadGzipFile)
+# Per-file parse/read failures that must be HANDLED rather than raised: the row
+# and stats readers quarantine-and-continue, and the master reader prints its own
+# CRITICAL line before aborting. Deliberately `Exception`, not a list of types.
+#
+# It was a list -- (OSError, ValueError, pd.errors.ParserError, EOFError,
+# gzip.BadGzipFile) -- and a `.csv.gz` whose deflate stream is CORRUPT rather
+# than merely truncated raises `zlib.error`, which is none of them. Proved by
+# feeding one to a sandbox copy: raw traceback, exit 1, nothing quarantined, so
+# the file stays in ~/incoming and every later cron fire dies the same way. Under
+# run_scraper.sh's `set -e` that stops the whole run before the scrape, which is
+# the exact opposite of this module's contract ("Per-file problems quarantine to
+# ~/incoming/bad/ and NEVER fail the cron run"). Enumerating decompressor error
+# types is a losing game; the reason each site catches is "this file did not
+# read", whatever the library chose to raise.
+_BAD_FILE_ERRORS = Exception
 
 
 def _atomic_to_csv(df: pd.DataFrame, path: Path, **kwargs) -> None:
@@ -117,7 +127,13 @@ def merge_stats(existing_df: pd.DataFrame | None, incoming_df: pd.DataFrame) -> 
     never collide with anything, present or future, and would just
     accumulate as junk).
     """
+    # Both NA and blank: the readers below use dtype=str, keep_default_na=False,
+    # so a missing key arrives as "" rather than NaN and dropna alone would let it
+    # through un-keyed.
     incoming_df = incoming_df.dropna(subset=STATS_KEY)
+    for col in STATS_KEY:
+        if col in incoming_df.columns:
+            incoming_df = incoming_df[incoming_df[col].astype(str).str.strip() != ""]
     if existing_df is None:
         combined = incoming_df.copy()
     else:
@@ -161,7 +177,13 @@ def _process_stats_files(paths: list[Path], bad_dir: Path) -> tuple[list[pd.Data
     good_paths: list[Path] = []
     for path in paths:
         try:
-            df = pd.read_csv(path)
+            # Same dtype=str, keep_default_na=False contract as the rows reader
+            # above, and for the same reason. merge_stats column-union-concats
+            # frames of DIFFERENT width -- exactly what score_jobs'
+            # append_run_stats header self-heal produces -- and with inferred
+            # dtypes that concat upcasts int64 to float64, so an integer counter
+            # comes back out of run_stats.csv written as "1.0".
+            df = pd.read_csv(path, dtype=str, keep_default_na=False)
         except _BAD_FILE_ERRORS as e:
             _quarantine(path, bad_dir, f"unreadable: {e}")
             continue
@@ -212,7 +234,7 @@ def main(
                 # Cheap probe: usecols=["job_posting_id"] parses every row but
                 # materializes only that one column, so this never holds the
                 # full 92 MB master in memory. It doubles as the readability
-                # check (a genuinely corrupt master must still raise here,
+                # check (a corrupt master must still raise here,
                 # same contract as the old full pd.read_csv did) and gives us
                 # existing_ids + before_len for free before the chunked stream
                 # below even starts.
@@ -314,7 +336,7 @@ def main(
             existing_df = None
             if stats_csv.exists():
                 try:
-                    existing_df = pd.read_csv(stats_csv)
+                    existing_df = pd.read_csv(stats_csv, dtype=str, keep_default_na=False)
                 except _BAD_FILE_ERRORS as e:
                     _say(
                         f"WARNING: {stats_csv.name} exists but is unreadable ({e}); "

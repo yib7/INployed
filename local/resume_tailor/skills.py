@@ -274,7 +274,7 @@ def _complete_to_count(items: str, pool: List[str], target: int, jd: str = "") -
     JD-relevant ones first (`_completion_order`), then the user's pool order -- until the
     line has min(target, len(pool)) items, refilling any slot a dropped hallucination
     freed; then cap the count at `target`. No char floor -- the printed-line cap (applied
-    later) is the only size limit, so a genuinely short list is never padded to fill the
+    later) is the only size limit, so a short list is never padded to fill the
     line."""
     pool_norms = {ats._norm_skill(c) for c in pool}
     pool_norms.discard("")
@@ -348,12 +348,12 @@ def compress_skills(jd: str, job_title: str, sel: Dict[str, Any]) -> List[Dict[s
     system = (
         "Select the candidate's technical skills into EXACTLY FOUR fixed lines: "
         "'Languages', 'Frameworks', 'Developer Tools', 'Libraries'. "
-        "Selection only — only include skills present in that line's pool. "
+        "Selection only: only include skills present in that line's pool. "
         "RANK each line's pool by relevance to THIS job and return the BEST few, most-relevant "
         "FIRST: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of "
         "a smaller pool. Lead with every skill the JD explicitly mentions or strongly implies, "
         "then the strongest complementary skills (adjacent languages, transferable tools). Do "
-        "NOT pad with weak/unrelated filler to reach the count — a few sharp skills beat a long "
+        "NOT pad with weak/unrelated filler to reach the count. A few sharp skills beat a long "
         "list. You MAY merge closely-related API entries into one compact token (e.g. "
         "'Gemini/OpenAI/Claude API'). Preserve confidence qualifiers like '(conceptual)' / "
         "'(from scratch)' verbatim."
@@ -369,8 +369,8 @@ Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
 Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
 Rules:
-- Return each line ranked most-relevant-first: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries — or all of a smaller pool. JD-matching skills first, then adjacent/complementary skills that add signal.
-- Don't pad to hit the count with obscure or unrelated items — a few sharp, relevant skills beat a long list. Lead with the items this JOB cares about most.
+- Return each line ranked most-relevant-first: aim ~7 Languages, ~7 Frameworks, ~10 Developer Tools, ~10 Libraries, or all of a smaller pool. JD-matching skills first, then adjacent/complementary skills that add signal.
+- Don't pad to hit the count with obscure or unrelated items; a few sharp, relevant skills beat a long list. Lead with the items this JOB cares about most.
 
 Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Developer Tools": "...", "Libraries": "..."}}"""
     try:
@@ -382,7 +382,7 @@ Return ONLY JSON: {{"Languages": "Python, SQL, R", "Frameworks": "...", "Develop
 
 # ── Methods line (optional 5th concepts line) ────────────────────────────────
 def methods_line(jd: str, sel: Dict[str, Any]) -> Optional[Dict[str, str]]:
-    """Build the optional 'Methods' concepts line: the buzzwords the candidate genuinely
+    """Build the optional 'Methods' concepts line: the buzzwords the candidate
     owns, surfaced so an ATS/reader sees them. Two tiers, anchored to the concepts pool —
     never invents, never empty:
 

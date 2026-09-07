@@ -4,6 +4,45 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+One feature: the résumé bullets get an AI-writing cleanup pass that reads a whole entry at a
+time. It is on by default and it costs one model call per résumé entry per tailor run, so the
+setting that turns it off is named below. Your page layout is unaffected by design, and the
+test suite proves the guarantee behind that over a whole generated résumé.
+
+### Added
+- **An AI-writing sweep over the résumé bullets, one entry at a time.** The style gate that has
+  always run reads one bullet on its own, so it cannot see the tells that only exist across an
+  entry: one sentence shape reused down the list, every bullet the same length, a three-part
+  series in each line, one noun cycling through all of them. The avoid-ai-writing skill this
+  pipeline vendors is explicit that structural regularity outranks vocabulary as a signal, and
+  a per-bullet gate is blind to every bit of it. Each Experience, Projects and Leadership entry
+  now goes to the model as a whole, carrying its bullets and the specific findings a set of
+  deterministic detectors measured, so the model is asked to repair named defects and nothing
+  else. A free rewrite is how a grounded bullet drifts off the facts you wrote.
+
+  **It is on by default, and it costs one model call per résumé entry on every tailor run**,
+  plus a second call for an entry whose rewrite came back too long. Settings → Resume → "Strip
+  AI writing patterns from the résumé bullets" turns it off, as do
+  `RESUME_TAILOR_AIWRITING_SWEEP=0` and `resume_aiwriting_sweep` in `config.json`. The free
+  per-bullet style gate keeps running either way.
+
+  **Your layout does not move.** A rewrite is kept only when it renders inside the same
+  printed-line budget the trim already enforces, so an entry's printed line count can fall and
+  can never rise, and the one-page fit cannot be spent by this stage. A bullet that comes back
+  too long is asked once for a shorter version and then keeps its original text. Nothing is
+  trimmed here: cutting freshly written text at a clause boundary is where mid-sentence bullets
+  come from. A rewrite is refused the same way when it drops a number or a proper name, changes
+  the opening verb, or trips the deterministic style gate, and the bullet it would have
+  replaced was already grounded, clean and fitting. Bullets you marked verbatim are never sent.
+- **`tailor_report.txt` says what the sweep did.** How many bullets it rewrote, which entries
+  needed the second call, every rewrite it refused with the measurement that refused it, and
+  the polish it left in place on purpose (the pass repairs the P0 and P1 tells the vendored
+  skill names and reports the P2 ones, which is what those report lines say). None of those
+  lines marks a run degraded. The one warning is an entry
+  whose call failed, whose bullets then ship exactly as the style gate left them.
+
 ## [1.10.0] - 2026-09-06
 
 A résumé-engine quality pass, then a full ship audit over the top of it. The headline of the

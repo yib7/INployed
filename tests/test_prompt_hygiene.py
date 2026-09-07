@@ -390,9 +390,12 @@ def test_the_trace_still_reaches_every_prompt_module():
     the modules whose prompts must stay in view."""
     index = _Index(PKG)
     reached = {mod for mod, _ in _reachable_constants(index)}
+    # `sweep.py` names both of its system prompts at the `call` site rather than
+    # passing them through one shared helper, precisely so this trace can see them;
+    # `itemcheck.py` is deliberately absent, holding no prompt and no `call` at all.
     expected = {"aiwriting.py", "chat.py", "common.py", "compose.py", "coverletter.py",
                 "master_gaps.py", "prep.py", "research.py", "selection.py",
-                "skills.py"}
+                "skills.py", "sweep.py"}
     assert expected <= reached, (
         "the prompt trace no longer reaches: " + ", ".join(sorted(expected - reached))
         + " -- llm.call was probably renamed or wrapped; update LLM_ENTRY.")

@@ -12,16 +12,26 @@ This project stands on a lot of other people's work.
   `resume_template.tex`.
 
 ## Avoid-AI-writing rules
-- The optional cover-letter style pass in `local/resume_tailor/aiwriting.py`
-  (Settings → Resume → "Strip AI writing patterns from the cover letter", off by
-  default) vendors a bounded extract of the **avoid-ai-writing** skill, version
-  3.18.0, by **Conor Bronsdon**, MIT-licensed, read from the local Claude skill
-  at `~/.claude/skills/avoid-ai-writing/SKILL.md`. The prompt rules and the
-  deterministic ban list are a letter-relevant subset of that skill's pattern
-  catalogue, re-shaped to match this pipeline's existing style gate; the skill
-  itself is not bundled. Its tiered vocabulary table, which the ban list draws
-  from, is in turn credited upstream to the vocabulary research in
-  https://github.com/brandonwise/humanizer.
+- `local/resume_tailor/aiwriting.py` vendors a bounded extract of the
+  **avoid-ai-writing** skill, version 3.18.0, by **Conor Bronsdon**,
+  MIT-licensed, read from the local Claude skill at
+  `~/.claude/skills/avoid-ai-writing/SKILL.md`. Two features use it, through one
+  arm each, and the skill itself is not bundled.
+- The optional cover-letter style pass (Settings → Resume → "Strip AI writing
+  patterns from the cover letter", off by default) uses the letter arm: the
+  prompt rules and the deterministic ban list, as a letter-relevant subset of
+  that skill's pattern catalogue.
+- The résumé bullet sweep (Settings → Resume → "Strip AI writing patterns from
+  the résumé bullets", on by default) uses the résumé arm. A bullet is a
+  subjectless fragment and matches none of the skill's six context profiles, so
+  the arm adds a seventh tolerance profile for that register, with the skill's
+  P0 and P1 rules restated for bullets and its structural rows delegated to the
+  item-level detectors in `local/resume_tailor/itemcheck.py` (uniform paragraph
+  length read as uniform bullet length, tier-3 phrase clustering as noun and
+  synonym cycling, bare noun-phrase lists as a bullet with no finite verb).
+- Both arms are re-shaped to match this pipeline's existing style gate. The
+  tiered vocabulary table they draw the ban list from is in turn credited
+  upstream to the vocabulary research in https://github.com/brandonwise/humanizer.
 
 ## Word lists
 - `resume_tailor_files/active_words.md` (the composer's verb palette) was compiled

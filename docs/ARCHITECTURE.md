@@ -307,7 +307,9 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
-| `aiwriting.py` | An optional extra AI-writing gate for the cover-letter body, **off by default**: a bounded, letter-relevant extract of the MIT-licensed *avoid-ai-writing* skill (attribution in its docstring and `docs/CREDITS.md`), split the same two ways the résumé style gate is. `RULES_PROMPT` is the judgment half, appended to the generation, refine and repair prompts; `EXTRA_BANS` / `violations()` is the deterministic half. A phrase earns a ban only when it is always slop, because a false positive buys a repair call that can damage correct text. |
+| `aiwriting.py` | The vendored extract of the MIT-licensed *avoid-ai-writing* skill (v3.18.0, Conor Bronsdon; attribution in its docstring and `docs/CREDITS.md`), in two arms that share one copy of the vocabulary so the two cannot drift. The **cover-letter arm** (`RULES_PROMPT` / `EXTRA_BANS` / `violations()`) is **off by default** and gates the letter body. The **résumé arm** (`RESUME_PROFILE` / `RESUME_RULES_PROMPT` / `RESUME_EXTRA_BANS` / `resume_violations()`) serves the item sweep below. A bullet is a subjectless fragment that opens on a past-tense verb, which matches none of the skill's six context profiles, so `RESUME_PROFILE` is a seventh column of its tolerance matrix: it switches off the rules that fire on correct résumé grammar (subjectless fragments, missing first person, copula avoidance) and tightens the ones a résumé really does fail (promotional language, significance inflation, hedging), with a written reason on every deviation. Both arms split the same two ways the résumé style gate does: prompt text for the calls that need judgment, regexes for what is always slop. A phrase earns a regex only when it is always slop, because a false positive buys a repair call that can damage correct text. |
+| `itemcheck.py` | The item-level detectors: the AI-writing tells that exist only *across* one entry's bullets, which `compose.enforce_style` is structurally blind to because it reads one bullet at a time. `shape_repetition` (one sentence skeleton reused down the list), `length_uniformity` (every bullet the same length), `rule_of_three`, `noun_cycling` and `bare_noun_bullet`, each returning findings with their offending spans and a P1/P2 tier. Stdlib only, and that is a hard requirement: `config.py` loads the `.env` at import scope, so a module that depends on nothing but `re` and `statistics` can be exercised standalone. Every threshold is calibrated against 57 résumés this pipeline generated, because a correct item already has each property these detectors measure to some degree, and a threshold picked by intuition fires on text that was already right. |
+| `sweep.py` | The item-level AI-writing sweep: one model call per Experience / Projects / Leadership entry, sending the entry and all of its bullets together along with `itemcheck`'s P1 findings, so the repair is targeted; a free rewrite is how a grounded bullet drifts off its atoms. A rewrite is committed only when all five acceptance conditions hold against the text it replaces: non-empty, renders within the same per-bullet printed-line budget `run._trim_to_caps` enforces, adds no deterministic style violation, keeps its opening verb, and drops no number or proper name the original carried. Anything else keeps the original, which was already grounded, clean and fitting. Bullets refused for length buy one bounded re-ask that names each one's exact character overage, and then it stops: never a third call, and nothing here is ever trimmed. On by default, and it costs one call per entry per run. |
 | `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity + the JD fenced as untrusted data + the folder's `apply.md`, or a bounded master-file digest when the job was never tailored) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants, because the whole payload is re-sent (and re-billed) each turn. No style or grounding gate runs on an answer; the grounding rule is carried by the system prompt. |
 | `verify.py` | The grounding gate. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected rather than printed. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
@@ -335,7 +337,8 @@ forget it. `run.py` declares a `Pass` (name, the callable, an `enabled` predicat
 `retrim`, `verify`, `recheck_fill`) and `_run_bullet_passes` does the snapshot,
 runs the pass, re-trims when asked, re-verifies against the snapshot, and re-measures when
 asked. `_BULLET_PASSES` reads as the sequence itself: verb dedupe, verbatim merge and trim,
-underfull fill, style gate. `verify.enforce_grounded` has exactly one call site, `_gate`.
+underfull fill, style gate, AI-writing sweep. `verify.enforce_grounded` has exactly one call
+site, `_gate`.
 
 `retrim=True` on both passes that can LENGTHEN a bullet (underfull fill, style gate). Both
 ask a model for new text under a stated length limit, and neither answer is length-checked,
@@ -343,6 +346,16 @@ so without the re-trim an over-long reply prints: nothing downstream re-trims te
 `compile.enforce_one_page` only drops whole bullets. The re-trim is safe to run after the
 style gate because `_word_trim` only ever returns a word-boundary prefix, and no pattern in
 `compose._STYLE_BANS` is end-anchored, so a trim can never manufacture a banned phrase.
+
+The AI-writing sweep carries `retrim=True` as well, where it is a backstop that should never
+do anything. The sweep length-checks its own answers and refuses any rewrite that renders
+past the bullet's budget, so every committed bullet already fits. A trim that fires there is
+the report that the acceptance check has a hole, and it would quietly turn a rewrite that
+should have been rejected into a mid-sentence bullet. `tests/test_sweep_layout_invariant.py`
+holds that line: it drives the pass over the golden fixture with a model that answers with
+text far past the budget, text one character past it, and text that overflows on the re-ask
+too, then asserts that every bullet still fits, that no item's total printed line count grew,
+and that the trim cut nothing. That is what makes the sweep safe for a one-page résumé.
 
 `recheck_fill=True` on the underfull fill, because that pass's own re-trim can undo it. The
 sequence is measure-underfull → ask the model to lengthen → trim back, and `_fit_to_lines`
@@ -352,6 +365,12 @@ bullets the pass actually CHANGED (a committed fill re-keys the bullet onto its 
 atom) and records the ones that are still short. It never re-calls the model: a second
 billed call per bullet to recover a part-empty last line is not worth it, and a bullet the
 fill skipped for want of a spare atom is a documented no-op, not a finding.
+
+The AI-writing sweep runs LAST, for two reasons that pull the same way. The style gate is
+free and mechanical, so running it first means the judgment pass reads text the banned
+phrasing is already out of and spends its one call per item on the structural tells only it
+can see. And the sweep's own line count is non-increasing, so a stage placed after it could
+re-lengthen a bullet and take that guarantee away. There is nothing after it.
 
 `rephrase` and its first gate stay outside the list. That gate runs with no fallback,
 because there is no earlier grounded text to revert to yet.

@@ -255,8 +255,8 @@ need it.
 
 #### What "Strip AI writing patterns from the cover letter" catches
 Settings → Résumé, off by default. It adds a second, stricter style pass to the **cover
-letter only** (résumé bullets are unaffected), applying a letter-relevant subset of Conor
-Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`):
+letter only** (the bullets have their own pass, below), applying a letter-relevant subset of
+Conor Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`):
 
 - the overused AI vocabulary: *delve*, *pivotal*, *impactful*, *learnings*, *in order to*
 - *"it's not X, it's Y"* contrast framing
@@ -269,6 +269,33 @@ a deterministic checker that buys exactly one rewrite. It is off by default beca
 taste call: with it off, the cover letter goes through the ordinary style pass and
 nothing else. The grounding gate still runs last either way, so a restyled sentence that
 introduces an unsupported fact is still rejected.
+
+#### What "Strip AI writing patterns from the résumé bullets" catches
+Settings → Résumé, **on by default**, and it **costs one model call per résumé entry on every
+tailor run** (a second call for an entry whose rewrite came back too long). Turn it off to
+stop paying for it; the free per-bullet style pass keeps running either way.
+
+The always-on style pass reads one bullet at a time, so the tells it cannot see are the ones
+that live across a whole entry:
+
+- the same sentence shape reused down the list
+- every bullet the same length
+- a three-part series in each line
+- one noun, or a ring of near-synonyms, cycling through all of them
+- a bullet with no verb in it at all
+
+So each Experience, Projects and Leadership entry goes to the model as a whole, with its
+bullets and a list of what a set of deterministic checks measured in them, and the model is
+asked to fix those and leave everything else alone.
+
+**Your layout does not move**, which is the reason this is safe to leave on. A rewrite is kept
+only if it prints within the same line budget your bullets are already trimmed to, so an
+entry's printed height can go down and never up, and your résumé cannot be pushed onto a
+second page by it. A rewrite that comes back too long is asked once more for a shorter version
+and then dropped in favour of your original text; the same happens to one that loses a number
+or a name, changes the opening verb, or trips the ordinary style pass. Bullets you marked
+verbatim are never sent. `tailor_report.txt` in the output folder lists what was rewritten,
+what was refused and why, and the lower-priority polish the pass reported and left alone.
 
 ### What leaves your machine
 There is no analytics, no crash reporting, and no phone-home. The only outbound

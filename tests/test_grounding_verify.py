@@ -270,6 +270,47 @@ def test_acronym_is_not_grounded_by_an_unrelated_longer_word(monkeypatch):
     assert verify.unseen_tokens("Shipped Java tooling", src) == []
 
 
+def test_a_plural_acronym_is_grounded_by_its_singular(monkeypatch):
+    """Real miss on an Emonics run: the atom wrote "the API", the bullet wrote
+    "APIs", and the whole bullet was dropped. Matching searches the TOKEN inside
+    the SOURCE, so a singular is grounded by a plural but never the reverse; the
+    written-plural `s` is stripped so the two directions agree."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
+        "a1": {"what": "cached repeated calls so the same prompt does not re-bill "
+                       "the API, across Gemini and OpenAI",
+               "_block": "Globex"}})
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens("Routed calls across three provider APIs", src) == []
+    # ...and the direction that already worked still does
+    assert verify.unseen_tokens("Routed calls through the API", src) == []
+    # a plural whose singular is nowhere in the atoms is still caught
+    assert verify.unseen_tokens("Shipped the SDKs", src) == ["SDKs"]
+
+
+def test_plural_stripping_does_not_ground_an_acronym_ending_in_s(monkeypatch):
+    """The two guards on that fix, one case each, because they catch different
+    tokens and a single example would leave one of them unpinned.
+
+    The CASE guard carries "HTTPS" and "CORS": both have a stem long enough to
+    pass the length test, so only the capital S marks them as acronyms rather than
+    plurals. Stripping it would ground "HTTPS" on an atom's plain "HTTP" (a
+    different claim — that one says TLS) and "CORS" on an ordinary "correctness",
+    which is the MIT/"committed" failure `_word_grounded` exists to stop.
+
+    The LENGTH guard carries "AWS" and "IDs", whose stems are two letters: "aw"
+    would trace to "aware" and "id" to "identical".
+    """
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
+        "a1": {"what": "served the app over HTTP, was aware of identical rows, and "
+                       "verified correctness of the parser",
+               "_block": "Globex"}})
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens("Hardened the endpoint with HTTPS", src) == ["HTTPS"]
+    assert verify.unseen_tokens("Configured the CORS policy", src) == ["CORS"]
+    assert verify.unseen_tokens("Deployed the pipeline on AWS", src) == ["AWS"]
+    assert verify.unseen_tokens("Deduplicated the record IDs", src) == ["IDs"]
+
+
 def test_abbreviation_does_not_open_an_unchecked_first_slot(monkeypatch):
     """P2-4: _SENTENCE_SPLIT breaks on any `.` + whitespace, so "U.S." spawns a
     segment whose index 0 is not the generated action verb. Skipping that slot

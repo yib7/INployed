@@ -19,8 +19,10 @@ verb) are never traced, matching is case-insensitive substring for words but the
 match must align to a word boundary on at least one side (so "SQL" is grounded by
 "PostgreSQL" and "Java" by "JavaScript", while "MIT" is NOT grounded by
 "committed"; claiming "PostgreSQL" over a bare "SQL" atom is also not grounded),
-and numbers must match on their own digit boundaries ("40" is NOT grounded by
-"40,000" — a different figure is a different claim).
+a written plural is grounded by its own singular ("APIs" by an atom's "API",
+which the substring direction alone would miss), and numbers must match on
+their own digit boundaries ("40" is NOT grounded by "40,000" — a different
+figure is a different claim).
 
 What this gate does NOT catch (audit C6-11 — stated so nobody reads it as
 airtight):
@@ -114,6 +116,35 @@ def _word_grounded(tok: str, norm_src: str) -> bool:
     )
 
 
+_PLURAL_MIN_STEM = 3
+
+
+def _singular_stem(tok: str) -> Optional[str]:
+    """The lowercased singular of a WRITTEN plural ("APIs" -> "api"), else None.
+
+    `_word_grounded` searches the token inside the source, so the two inflections
+    disagree: "API" is grounded by an atom's "APIs" (it is a prefix of it), while
+    "APIs" is NOT grounded by an atom's "API". A real run lost a whole bullet to
+    that asymmetry. Stripping the plural marker makes a plural behave exactly as
+    its own singular already does; it inherits that tolerance, it does not widen
+    it, and the reverse direction was never in question.
+
+    Two guards keep the strip from opening a hole. The trailing `s` must be
+    LOWERCASE (`str.endswith` is case-sensitive), because a capital one belongs to
+    the acronym: "HTTPS" would otherwise be grounded by a plain "HTTP", which is a
+    different claim, and "CORS" by an ordinary "correctness". And the stem must
+    stay long enough to be distinctive, since "AWS" -> "aw" traces to "aware" and
+    "IDs" -> "id" to "identical" — the MIT/"committed" failure `_word_grounded`'s
+    boundary rule exists to close. Only the plain `s` plural is handled; "es" and
+    irregular forms are left alone rather than guessed at, because a wrong stem is
+    a grounding hole while a missed one is only a warning.
+    """
+    if not tok.endswith("s") or tok.endswith("ss"):
+        return None
+    stem = tok[:-1]
+    return stem.lower() if len(stem) >= _PLURAL_MIN_STEM else None
+
+
 def _distinctive_word(tok: str) -> bool:
     """A token worth tracing: capitalized or inner-uppercase (PySide6, SQL) and
     at least two characters. Everything lowercase is ordinary prose."""
@@ -159,6 +190,9 @@ def unseen_tokens(text: str, source: str,
                 continue
             low = tok.lower()
             if low in allowed or _word_grounded(low, norm_src):
+                continue
+            stem = _singular_stem(tok)
+            if stem and _word_grounded(stem, norm_src):
                 continue
             if tok not in bad:
                 bad.append(tok)

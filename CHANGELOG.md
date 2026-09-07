@@ -62,6 +62,15 @@ test suite proves the guarantee behind that over a whole generated résumé.
   a clean run never pays for it. `RESUME_TAILOR_REGROUND=0` and `reground` in
   `config.json` turn it off. `tailor_report.txt` names the bullets it recovered, and says
   so when the re-ask came back empty.
+- **A plural no longer counts as a word you never wrote.** The grounding check looks for a
+  bullet's distinctive words inside your own atoms, and it matched in one direction only: an
+  atom that wrote "APIs" grounded a bullet saying "API", but an atom that wrote "API" did not
+  ground a bullet saying "APIs". A real run lost a project's LLM-orchestration bullet to that
+  asymmetry, on a page where it was the most relevant line on offer. A written plural is now
+  grounded by its own singular. The strip stays narrow on purpose: the trailing `s` has to be
+  lowercase, so "HTTPS" is still not grounded by a plain "HTTP" and "CORS" not by an ordinary
+  "correctness", and two-letter stems are refused, so "AWS" cannot trace to "aware". Only the
+  plain `s` plural is handled, and an irregular one falls through to the re-ask above.
 - **Each bullet's own phrasing hits reach the AI-writing sweep.** The lexical half of the
   sweep (hedging, promotional language, inflated significance, vague attribution,
   formulaic openings) was only ever consulted to refuse a rewrite that introduced a new

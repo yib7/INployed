@@ -347,6 +347,25 @@ def aiwriting_sweep_enabled() -> bool:
     return _config_json().get("resume_aiwriting_sweep", True) is not False
 
 
+def sweep_p2_enabled() -> bool:
+    """Whether the AI-writing sweep also REPAIRS its P2 findings, or only reports them.
+
+    P2 is `length_uniformity` and `rule_of_three`. Both are real tells and both are
+    measured honestly, but neither implies the repair is an improvement: a rule-of-three
+    hit is often an enumeration of things that genuinely come in threes (three providers,
+    the three statistical variable types), and asking a model to break one up gives it a
+    choice between dropping a real item and padding. That is why the default is OFF and
+    the findings are reported instead. Turn it on to let the model rewrite for them too;
+    it costs nothing extra, since the P2 findings ride in the call the item already makes.
+    Precedence: RESUME_TAILOR_SWEEP_P2 env > config.json 'resume_sweep_p2' > False."""
+    env = os.getenv("RESUME_TAILOR_SWEEP_P2")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    # bool() rather than `is not False`: this one defaults OFF, so a missing key and a
+    # false key mean the same thing, as in avoid_ai_writing_enabled().
+    return bool(_config_json().get("resume_sweep_p2", False))
+
+
 def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.

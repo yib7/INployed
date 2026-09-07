@@ -258,6 +258,50 @@ def test_a_disabled_sweep_makes_zero_calls_and_touches_no_bullet(engine, monkeyp
     assert report.stages == [] and report.notes == [] and report.entries == []
 
 
+# ── the P2 repair toggle ─────────────────────────────────────────────────────
+class _BodyRecorder(Recorder):
+    """`Recorder` plus the user bodies, so a test can ask what actually reached the
+    model rather than only how many calls were made."""
+
+    def __init__(self, answer=None):
+        super().__init__(answer=answer)
+        self.users = []
+
+    def __call__(self, system, user, tier, **kw):
+        self.users.append(user)
+        return super().__call__(system, user, tier, **kw)
+
+
+def test_p2_is_reported_and_not_sent_while_the_toggle_is_off(engine, monkeypatch):
+    """The default. `BULLETS` carries exactly one finding and it is P2, so with the
+    toggle off the payload must name no finding at all and the result must carry it."""
+    monkeypatch.delenv("RESUME_TAILOR_SWEEP_P2", raising=False)
+    rec = _BodyRecorder(answer=_answer(**BULLETS))
+    monkeypatch.setattr(sweep, "call", rec)
+
+    bullets = dict(BULLETS)
+    result = sweep.sweep_items("jd", "Data Engineer", _sel(), bullets)
+
+    assert "rule_of_three" not in rec.users[0]
+    assert [f.detector for f in result.unfixed_p2] == ["rule_of_three"]
+
+
+def test_the_toggle_sends_p2_to_the_model_and_stops_reporting_it(engine, monkeypatch):
+    """With the toggle on the same finding becomes a repair instruction, so it has to
+    appear in the payload; and `unfixed_p2` holds the tiers that were NOT repaired, so
+    it must stop carrying a tier the model was just asked to fix. Asserting both ends
+    is what keeps this from passing on a toggle that only changed the report."""
+    monkeypatch.setenv("RESUME_TAILOR_SWEEP_P2", "1")
+    rec = _BodyRecorder(answer=_answer(**BULLETS))
+    monkeypatch.setattr(sweep, "call", rec)
+
+    bullets = dict(BULLETS)
+    result = sweep.sweep_items("jd", "Data Engineer", _sel(), bullets)
+
+    assert "rule_of_three" in rec.users[0]
+    assert result.unfixed_p2 == ()
+
+
 # ── the report ───────────────────────────────────────────────────────────────
 @pytest.fixture()
 def swept(engine, monkeypatch):

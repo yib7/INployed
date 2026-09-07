@@ -23,11 +23,19 @@ cases the code had already named. The findings still ride in the payload, becaus
 they make the repair TARGETED. A free rewrite is how a grounded bullet drifts off
 its atoms, and every guard below exists to make that drift impossible to commit.
 
-**P0 and P1 are repaired. P2 is reported.** That is this cycle's frozen answer,
-and it is why only P1 findings reach the prompt: a P2 finding the model can see
-is a P2 finding the model will fix. The P2 material comes back in the result for
-the run report to print. The P0 material is lexical and rides in
-``aiwriting.RESUME_RULES_PROMPT`` rather than in a finding.
+**P0 and P1 are repaired. P2 is reported by default.** Only the repaired tiers
+reach the prompt, because a finding the model can see is a finding the model will
+fix; the rest comes back in the result for the run report to print. The P0
+material is lexical and rides in ``aiwriting.RESUME_RULES_PROMPT`` rather than in
+a finding.
+
+P2 is `length_uniformity` and `rule_of_three`, and it is reported rather than
+repaired because the repair is not reliably an improvement. A rule-of-three hit is
+often an enumeration of things that genuinely come in threes, and breaking one up
+means either dropping a real item or padding to four.
+``config.sweep_p2_enabled()`` (``RESUME_TAILOR_SWEEP_P2``) moves P2 into the
+repaired set for anyone who wants to make that trade; it adds no calls, since the
+findings ride in the one the item already makes.
 
 ── the acceptance check, which is the layout guarantee ──────────────────────
 
@@ -438,13 +446,17 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
     lingering: List[Lingering] = []
     failures: List[str] = []
     calls = items = 0
+    repaired = ((itemcheck.P1, itemcheck.P2) if config.sweep_p2_enabled()
+                else (itemcheck.P1,))
 
     for item, gkeys in compose._blocks_in_order(sel):
         pre = itemcheck.item_findings(item, [(gk, bullets[gk]) for gk in gkeys
                                              if gk in bullets])
-        # Only P1 reaches the model. P2 the model can see is P2 the model fixes,
-        # and this cycle's frozen answer reports P2 rather than repairing it.
-        p1 = [f for f in pre if f.tier == itemcheck.P1]
+        # Only the REPAIRED tiers reach the model: a finding the model can see is a
+        # finding the model fixes. P1 is always repaired; P2 is reported instead
+        # unless `config.sweep_p2_enabled()` says otherwise, because a P2 repair is
+        # not reliably an improvement (see that toggle's docstring).
+        p1 = [f for f in pre if f.tier in repaired]
         specs = _specs(gkeys, bullets, targets, gm, p1)
         if not specs:
             continue
@@ -458,7 +470,7 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
             log.warning("sweep: item %r failed, leaving its bullets as they are: %s",
                         item, exc)
             failures.append(item)
-            unfixed.extend(f for f in pre if f.tier != itemcheck.P1)
+            unfixed.extend(f for f in pre if f.tier not in repaired)
             continue
 
         item_changed: List[str] = []
@@ -492,9 +504,9 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
             # to clear is not reported as still present.
             post = itemcheck.item_findings(item, [(s.gkey, bullets[s.gkey])
                                                   for s in specs])
-            unfixed.extend(f for f in post if f.tier != itemcheck.P1)
+            unfixed.extend(f for f in post if f.tier not in repaired)
         else:
-            unfixed.extend(f for f in pre if f.tier != itemcheck.P1)
+            unfixed.extend(f for f in pre if f.tier not in repaired)
 
         # Measured on the text that ships. A bullet still carrying a rule hit here
         # was flagged, sent, and came back with the hit intact.

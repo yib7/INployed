@@ -304,6 +304,34 @@ def avoid_ai_writing_enabled() -> bool:
     return bool(_config_json().get("cover_letter_avoid_ai_writing", False))
 
 
+def aiwriting_sweep_enabled() -> bool:
+    """Whether the item-level AI-writing sweep runs over the résumé bullets
+    (sweep.sweep_items): each Experience / Projects / Leadership entry goes to the model
+    as a WHOLE -- the entry plus all of its bullets -- so the tells that only exist across
+    an item can be seen at all (one sentence skeleton reused down the list, every bullet
+    the same length, a three-part series in each line, one noun cycling through them).
+    compose.enforce_style sees one bullet at a time and is structurally blind to those; it
+    stays on underneath this as the deterministic backstop. A rewrite is committed only
+    when it fits the same per-bullet line budget the trim enforces, so the pass can never
+    push the résumé onto a second page.
+
+    Defaults ON, on the user's explicit instruction, chosen over cheaper detect-then-repair
+    gating: the detectors are deterministic, so gating on a deterministic hit would only
+    ever send the model the cases the code had already named. THE COST IS ONE MODEL CALL
+    PER RÉSUMÉ ITEM ON EVERY TAILOR RUN (a second call for an item whose rewrite came back
+    too long), which is what the setting turns off. Precedence:
+    RESUME_TAILOR_AIWRITING_SWEEP env > config.json 'resume_aiwriting_sweep' > True."""
+    env = os.getenv("RESUME_TAILOR_AIWRITING_SWEEP")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    # `is not False` rather than avoid_ai_writing_enabled()'s bool(): that one defaults
+    # OFF, so a missing key and a false key mean the same thing there. Here the default is
+    # ON, and every other ON-by-default toggle in this module spells it this way so a
+    # non-bool value in config.json (an editor's "true", a stray string) reads as on
+    # instead of silently disabling a stage.
+    return _config_json().get("resume_aiwriting_sweep", True) is not False
+
+
 def resume_layout_enabled() -> bool:
     """Master on/off for the custom bullet layout (config.json `resume_layout_enabled`).
     Defaults True when absent, so existing configs keep applying their saved targets.

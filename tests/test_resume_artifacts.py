@@ -88,6 +88,14 @@ def offline_tailor(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod.compose, "block_briefs", lambda *a, **k: {})
     monkeypatch.setattr(run_mod, "_resolve_bullets", lambda *a, **k: dict(bullets))
     monkeypatch.setattr(run_mod, "_trim_to_caps", lambda *a, **k: None)
+    # Cycle 12's item-level AI-writing sweep is an LLM touchpoint like every other one
+    # stubbed here, so it is stubbed at the seam rather than at its transport: the
+    # fixture's `sel` names an atom id ("a") that no master holds, and building the real
+    # per-item payload would go looking for it.
+    monkeypatch.setattr(run_mod.sweep, "sweep_items",
+                        lambda *a, **k: run_mod.sweep.SweepResult(
+                            changed=(), rejected=(), reasked=(), unfixed_p2=(),
+                            calls=0, items=0, failures=()))
     monkeypatch.setattr(run_mod.compose, "compress_skills", lambda *a, **k: ["Python"])
     monkeypatch.setattr(run_mod.output, "resolve_dir", lambda *a, **k: out_dir)
     monkeypatch.setattr(run_mod.output, "resume_filename", lambda: "resume.pdf")

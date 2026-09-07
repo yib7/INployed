@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from . import (apply_data, ats, compose, config, coverletter, llm, measure, output,
-               research, verify)
+               research, sweep, verify)
 from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
@@ -46,7 +46,14 @@ KIND_ADVISORY = "advisory"
 # warnings" mean nothing (see DECISIONS, SP4).
 #   UNDERFULL — a bullet the underfull fill rewrote is still underfull after the
 #               re-trim: the fill was paid for and the trim took it back.
+#   AI WRITING — what the item-level AI-writing sweep did and did not do: how many
+#               bullets it rewrote, which rewrites it refused and why, and the P2
+#               findings it left alone ON PURPOSE. Every one of those leaves text that
+#               is grounded, clean and fitting, because a refused rewrite keeps the
+#               original, so none of them is a degradation. A sweep call that RAISED is
+#               the one thing here that is, and it goes out as a warning instead.
 KIND_UNDERFULL = "underfull"
+KIND_AIWRITING = "ai writing"
 
 
 def _noop(_msg: str) -> None:
@@ -559,15 +566,113 @@ def _pass_enforce_style(ctx: PassCtx) -> None:
         ctx.log(f"style gate: repaired {fixed} bullet(s).")
 
 
+# The stage label. Named once so the `Pass` registration and every report line the
+# sweep writes cannot drift apart.
+AIWRITING_SWEEP_STAGE = "ai writing sweep"
+
+
+def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> None:
+    """Fold one `SweepResult` into `ctx.report`, at two severities.
+
+    A WARNING for an item whose model call raised: the stage the run paid for did not
+    happen for that item, which is the same class of event as a skipped ATS report or a
+    failed cover letter, and those are warnings.
+
+    A NOTE for everything else. A refused rewrite keeps the original bullet, and the
+    original was already grounded, already within its line budget and already past the
+    deterministic style gate, so nothing about it is degraded. The P2 findings are the
+    same: this cycle repairs P0 and P1 and reports P2 by decision, so a P2 line is the
+    record of a policy, and putting it on `on_warning` would tell the dashboard a correct
+    résumé finished degraded. Each line says so in its own words, because a line is read
+    out of context once it is in a Qt dialog.
+    """
+    if ctx.report is None:
+        return
+    rep = ctx.report
+    for item in result.failures:
+        rep.warn(KIND_AIWRITING,
+                 f"[{stage}] item '{item}' was not swept (its model call failed); its "
+                 f"bullets ship exactly as they were")
+    reask = (f"; the bounded re-ask ran for {len(result.reasked)} item(s): "
+             + ", ".join(result.reasked)) if result.reasked else \
+            "; no item needed the bounded re-ask"
+    rep.note(KIND_AIWRITING,
+             f"[{stage}] swept {result.items} item(s) in {result.calls} call(s) and "
+             f"rewrote {len(result.changed)} bullet(s){reask}")
+    for rejection in result.rejected:
+        rep.note(KIND_AIWRITING,
+                 f"[{stage}] kept the original of bullet '{rejection.gkey}' in "
+                 f"'{rejection.item}' ({rejection.reason}: {rejection.detail})")
+    for finding in result.unfixed_p2:
+        # itemcheck.findings_payload() renders the same material as JSON for a prompt
+        # body. The report is plain text a person reads, so the fields are spelled out
+        # here instead: detector, item, and the sentence the detector wrote.
+        rep.note(KIND_AIWRITING,
+                 f"[{stage}] {finding.tier} polish left in place by policy (this stage "
+                 f"repairs P0 and P1 only): {finding.detector} in '{finding.item}' "
+                 f"({finding.detail})")
+
+
+def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
+    """Item-level AI-writing sweep: one model call per résumé entry, reading the entry
+    and all of its bullets together so the tells that only exist ACROSS an item can be
+    seen at all. `compose.enforce_style` reads one bullet at a time and is structurally
+    blind to those. See `sweep.py` for the five acceptance conditions.
+
+    `retrim=True` is a BACKSTOP ONLY, and it should never do anything. The sweep's own
+    acceptance check refuses any rewrite that renders past its per-bullet line budget, so
+    every committed bullet already fits and `_trim_to_caps` has nothing to cut (SP5
+    asserts exactly that). The flag is set anyway because the alternative is trusting one
+    check with the page-fit guarantee and nothing behind it. So a trim FIRING here is not
+    the backstop working, it is the report that the acceptance check has a hole: the
+    whole design is fit-or-revert, and a silent trim would quietly convert a rejected
+    rewrite into a mid-sentence bullet, which is the exact outcome the fit-or-revert rule
+    exists to prevent.
+
+    `verify=True` because the grounding gate covers the direction the sweep's own check
+    cannot. `verify.enforce_grounded` reverts a bullet that INTRODUCES a token with no
+    trace in its atoms; the sweep's fifth condition rejects one that DROPS a fact the
+    original carried. Neither implies the other, so both run.
+    """
+    ctx.log("sweeping each résumé item for AI-writing tells…")
+    try:
+        result = sweep.sweep_items(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
+    except Exception as exc:  # noqa: BLE001 - phrasing polish never sinks a résumé
+        # `sweep_items` guards each item's model call itself, so what reaches here is a
+        # defect rather than a flaky transport. It is still caught: by the time this pass
+        # runs, every bullet is grounded, style-gated and inside its line budget, and
+        # losing that résumé over the stage that only polishes phrasing is the worse
+        # outcome. Warned, not noted, because the stage really did not run.
+        ctx.log(f"AI-writing sweep skipped ({exc})")
+        if ctx.report is not None:
+            ctx.report.warn(KIND_AIWRITING,
+                            f"[{AIWRITING_SWEEP_STAGE}] skipped ({exc}); every bullet "
+                            f"ships as the style gate left it")
+        return
+    if result.changed:
+        ctx.log(f"AI-writing sweep: rewrote {len(result.changed)} bullet(s).")
+    _report_sweep(ctx, result, stage=AIWRITING_SWEEP_STAGE)
+
+
 # The order of this tuple IS the pipeline: it transcribes the sequence tailor() used to
 # spell out inline, and reordering it is now the only way to reorder the stages.
 # `enabled` holds the toggle FUNCTION rather than its value, so it is read per run.
+#
+# The AI-writing sweep is LAST, after the deterministic style gate, for two reasons that
+# pull the same way. The gate is free and mechanical, so running it first means the
+# judgment pass reads text the banned phrasing is already out of and spends its one call
+# per item on the structural tells only it can see. And the sweep commits a rewrite only
+# when that rewrite fits its own printed-line budget, which makes the pass's total line
+# count non-increasing; a stage placed after it could re-lengthen a bullet and take that
+# guarantee away, so there is nothing after it.
 _BULLET_PASSES = (
     Pass("verb dedupe", _pass_dedupe_verbs),
     Pass("verbatim + trim", _pass_merge_verbatim, verify=False),
     Pass("underfull fill", _pass_fill_underfull,
          enabled=config.fill_underfull_enabled, retrim=True, recheck_fill=True),
     Pass("style gate", _pass_enforce_style, retrim=True),
+    Pass(AIWRITING_SWEEP_STAGE, _pass_aiwriting_sweep,
+         enabled=config.aiwriting_sweep_enabled, retrim=True),
 )
 
 
@@ -669,7 +774,8 @@ def tailor(
     _gate(ctx, stage="rephrase")
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
-    # Verb dedupe -> verbatim merge + trim -> underfull fill + re-trim -> style gate.
+    # Verb dedupe -> verbatim merge + trim -> underfull fill + re-trim -> style gate ->
+    # item-level AI-writing sweep.
     _run_bullet_passes(ctx)
 
     log("compressing skills…")

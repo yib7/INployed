@@ -393,6 +393,13 @@ SETTINGS_SCHEMA: list[Field] = [
                "overused AI vocabulary, hedging and chatbot tics that make writing read "
                "as machine-made (résumé bullets are unaffected). Off by default because "
                "it is a taste call; docs/USER_GUIDE.md lists exactly what it catches."),
+    Field("resume_aiwriting_sweep", "Strip AI writing patterns from the résumé bullets",
+          "bool", True, "Resume", "config",
+          help="Sends each résumé entry to the model as a whole to clear the tells that "
+               "only show up across its bullets: one sentence shape reused down the "
+               "list, every bullet the same length, a three-part series in each line. "
+               "COSTS ONE MODEL CALL PER RÉSUMÉ ENTRY ON EVERY TAILOR RUN. Turn it off "
+               "to save that; the always-on per-bullet style gate is unaffected."),
 
     # --- Auto-apply: the batch queue knobs (config.json). Read by the dashboard's
     # _queue_for_auto_apply and by apply_queue.build_context() for the agent run. ---

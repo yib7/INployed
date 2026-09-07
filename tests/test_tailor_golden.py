@@ -13,7 +13,8 @@ The test drives the whole bullet pipeline in the exact order ``run.tailor()`` ru
 ``select`` -> ``inject_verbatim`` -> ``lead_with_overview`` -> ``block_briefs`` ->
 ``rephrase`` -> grounding gate -> ``dedupe_leading_verbs`` -> gate -> verbatim merge ->
 ``_trim_to_caps`` -> ``fill_underfull`` -> retrim -> gate -> ``enforce_style`` -> retrim ->
-gate -> ``compress_skills`` -> ``methods_line`` -> ``render.render`` — and asserts the EXACT final
+gate -> ``sweep.sweep_items`` -> retrim -> gate -> ``compress_skills`` -> ``methods_line`` ->
+``render.render`` — and asserts the EXACT final
 ``bullets`` dict and the EXACT rendered ``.tex``. The expected values below are literals:
 they were produced by running this pipeline once and pasting what came out, so the test
 compares the engine against a frozen recording rather than against itself.
@@ -70,6 +71,7 @@ Hermetic by construction, and it must stay that way:
   glyph-width capacities. A default flipped in ``config.py`` must fail its own test, not
   quietly rewrite this golden.
 """
+import json
 import sys
 import textwrap
 from pathlib import Path
@@ -80,7 +82,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 from resume_tailor import (assets, compose, config, layout, measure, output,  # noqa: E402
-                           render, verify)
+                           render, sweep, verify)
 from resume_tailor import apply_data  # noqa: E402
 from resume_tailor import run as rt_run  # noqa: E402
 from resume_tailor.compile import CompileResult  # noqa: E402
@@ -337,6 +339,50 @@ _STYLE = {"bullets": [
 ]}
 
 
+def _item_body(user):
+    """The JSON payload back out of a sweep prompt.
+
+    ``sweep._user_prompt`` writes ``TARGET JOB: ...``, then the body, then a closing
+    sentence and a shape example. The body is the first ``{`` and its matching ``}``:
+    no bullet in this file carries a brace, so counting depth is exact.
+    """
+    start = user.index("{")
+    depth = 0
+    for i, ch in enumerate(user[start:], start):
+        depth += (ch == "{") - (ch == "}")
+        if depth == 0:
+            return json.loads(user[start:i + 1])
+    raise AssertionError("no JSON body in the sweep prompt")
+
+
+def _sweep_echo(user):
+    """Every bullet of the item, returned exactly as it arrived.
+
+    This is what a model does with an item it finds nothing wrong in, and it is the
+    right answer for the golden: the recording is a clean, already-style-gated résumé,
+    so a sweep that rewrote any of it would be inventing a defect to repair. Echoing
+    commits nothing (``sweep._commit`` treats identical text as neither a change nor a
+    rejection), which keeps the golden bullets and the golden .tex pinned to what they
+    pin today while still driving the real call, payload construction and acceptance
+    path for every item.
+    """
+    return {"bullets": [{"gkey": b["gkey"], "text": b["text"]}
+                        for b in _item_body(user)["bullets"]]}
+
+
+def _reask_echo(user):
+    """The re-ask's answer: each bullet's own ORIGINAL text, which is the shortest
+    thing guaranteed to fit.
+
+    Unreached at this recording, because nothing overflows when the item call echoes.
+    It is stubbed anyway so that a future change which does make a rewrite overflow
+    fails on the golden diff it caused rather than on ``unstubbed LLM stage``, which
+    would say nothing about the change.
+    """
+    return {"bullets": [{"gkey": b["gkey"], "text": b["original"]}
+                        for b in _item_body(user)["bullets"]]}
+
+
 def _make_stub(stages):
     """A ``compose.call`` replacement that dispatches on the stage's system prompt and
     appends the stage name to `stages`. Unknown prompts raise: an unstubbed stage must
@@ -368,6 +414,12 @@ def _make_stub(stages):
         if "slipped into banned phrasing" in system:
             stages.append("enforce_style")
             return _STYLE
+        if "You clean AI-writing tells" in system:
+            stages.append("aiwriting_sweep")
+            return _sweep_echo(user)
+        if "came back too long" in system:
+            stages.append("aiwriting_reask")
+            return _reask_echo(user)
         if "EXACTLY FOUR fixed lines" in system:   # compress_skills' fallback call
             raise AssertionError(
                 "compress_skills fell back to its own LLM call — select()'s skills "
@@ -413,7 +465,7 @@ def pinned_engine(tmp_path, monkeypatch):
                 "RESUME_TAILOR_FILL_UNDERFULL", "RESUME_TAILOR_LEAD_OVERVIEW",
                 "RESUME_TAILOR_METHODS_LINE", "RESUME_TAILOR_METHODS_LABEL",
                 "RESUME_TAILOR_TECH_ALIASES", "RESUME_TAILOR_SKILL_TARGETS",
-                "RESUME_TAILOR_CANDIDATE"):
+                "RESUME_TAILOR_AIWRITING_SWEEP", "RESUME_TAILOR_CANDIDATE"):
         monkeypatch.delenv(var, raising=False)
 
     # Import-time constants: env can no longer reach them, so pin the attributes.
@@ -487,6 +539,14 @@ def _run_bullet_pipeline():
     rt_run._trim_to_caps(sel, bullets)     # SP2: the style repair may lengthen a bullet
     verify.enforce_grounded(sel, bullets, fallback=grounded_snap)
 
+    if config.aiwriting_sweep_enabled():
+        grounded_snap = dict(bullets)
+        sweep.sweep_items(jd, job_title, sel, bullets)
+        # The re-trim is the pass's declared backstop, and it must stay a no-op: the
+        # sweep commits only rewrites that already fit their line budget.
+        rt_run._trim_to_caps(sel, bullets)
+        verify.enforce_grounded(sel, bullets, fallback=grounded_snap)
+
     skill_lines = compose.compress_skills(jd, job_title, sel)
     if config.methods_line_enabled():
         methods = compose.methods_line(jd, sel)
@@ -508,6 +568,14 @@ _GOLDEN_STAGES = [
     "reverb",
     "fill_underfull",
     "enforce_style",
+    # Cycle 12 SP4: one AI-writing sweep call per non-verbatim ITEM, in selection order
+    # (Globex Analytics, Trailhead, Ledgerly, Robotics Club). Side Gig is verbatim, so it
+    # is not an item here at all. No "aiwriting_reask" entry: the stub echoes each bullet
+    # back unchanged, so nothing overflows and the bounded re-ask never fires.
+    "aiwriting_sweep",
+    "aiwriting_sweep",
+    "aiwriting_sweep",
+    "aiwriting_sweep",
 ]
 
 _GOLDEN_BULLETS = {
@@ -689,7 +757,7 @@ def test_render_uses_the_real_template_preamble(pinned_engine):
 
 def test_grounding_gate_runs_at_every_bullet_pass(pinned_engine, stub_template_head,
                                                   tmp_path, monkeypatch):
-    """The grounding gate is called FOUR times, and only the first one runs without a
+    """The grounding gate is called FIVE times, and only the first one runs without a
     fallback.
 
     The golden above can't see this on its own: with everything grounded the gate is a
@@ -697,7 +765,11 @@ def test_grounding_gate_runs_at_every_bullet_pass(pinned_engine, stub_template_h
     text. The snapshot -> mutate -> re-verify discipline is precisely what SP2 makes
     structural, so pin the shape of it — one fallback-less prologue gate after rephrase,
     then one fallback-bearing gate after each bullet-mutating pass (verb dedupe,
-    underfull fill, style gate).
+    underfull fill, style gate, AI-writing sweep).
+
+    The fifth is cycle 12's sweep, and it is not redundant with the sweep's own
+    acceptance check: this gate reverts a bullet whose rewrite INTRODUCED an ungrounded
+    token, while `sweep._accept` refuses one that DROPPED a fact the original carried.
     """
     calls: list = []
     real_gate = verify.enforce_grounded
@@ -723,4 +795,4 @@ def test_grounding_gate_runs_at_every_bullet_pass(pinned_engine, stub_template_h
     monkeypatch.setattr(apply_data, "write", lambda *a, **k: None)
 
     rt_run.tailor(_JOB, ats_report=False)
-    assert calls == [True, False, False, False]
+    assert calls == [True, False, False, False, False]

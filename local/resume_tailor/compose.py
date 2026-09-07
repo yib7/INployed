@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # monkeypatch them), so they stay bound here alongside the name re-exports below.
 from . import assets, ats, config, layout, measure  # noqa: F401
 from .common import _PRINCIPLE, _gkey, fence_jd
+from .itemcheck import leading_verb
 from .llm import as_dict, call
 # Re-exports. The two seams below moved to their own modules in cycle 9; every
 # historical `compose.X` call site (run.py, prep.py, verify.py, the Qt layer, the
@@ -477,19 +478,13 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ..
 
 
 # ── Stage 2b: unique leading verbs (no opener reused across the resume) ───────
-# Punctuation stripped from the EDGES of a leading token (an inner hyphen in
-# "Co-developed" is kept). The palette verbs are capitalized past-tense; matching is
-# case-insensitive on this normalized form.
-_EDGE_PUNCT = " \t\n\r\"'`()[]{}.,;:!?"
-
-
-def leading_verb(text: str) -> str:
-    """The bullet's opening verb, normalized for comparison: the first whitespace token,
-    edge-punctuation-stripped and lowercased. '' for an empty/blank bullet."""
-    toks = (text or "").split()
-    if not toks:
-        return ""
-    return toks[0].strip(_EDGE_PUNCT).lower()
+# `leading_verb` is defined in `itemcheck` and re-exported here (the import at the
+# top of this module). Two components need the same normalization and must not drift:
+# this dedupe, which guarantees every opener on the page is distinct, and
+# `itemcheck.shape_repetition`, whose skeleton is built on top of that guarantee.
+# `itemcheck` is the one that can hold it, being stdlib-only and importable without
+# `config.load_dotenv()`. `compose.leading_verb` stays the name every call site and
+# test uses, and resolves to that single definition.
 
 
 def _pick_unused_verb(palette: Dict[str, List[str]], current: str, used) -> str:

@@ -68,6 +68,25 @@ def test_number_boundary_no_substring_credit(monkeypatch):
     assert "40" in verify.unseen_tokens("Moved 40 rows nightly in Python", src)
 
 
+def test_a_term_recorded_only_in_angles_grounds_that_term(monkeypatch):
+    """`angles` is a real grounding source, not just routing metadata.
+
+    `group_source_text` walks every non-underscore field of an atom, so a term the
+    candidate recorded ONLY as an angle is theirs to use in a bullet, and the match is
+    case-insensitive: `etl` in the yaml grounds `ETL` on the page. master_experience.yaml
+    depends on this -- several atoms carry a term like `etl` in `angles` and nowhere else,
+    and a bullet naming that term is deleted outright by the prologue gate if this stops
+    holding, taking the entry's opening line with it."""
+    atoms = {"a3": {"what": "moved nightly job rows between two stores",
+                    "angles": ["data-pipeline", "etl"], "_block": "Globex"}}
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: dict(atoms))
+    src = verify.group_source_text(["a3"], extra="Globex")
+    assert verify.unseen_tokens("Moved nightly job rows through an ETL flow", src) == []
+    # A term in no field at all is still caught, so the check above is not vacuous.
+    assert "Airflow" in verify.unseen_tokens(
+        "Moved nightly job rows through an Airflow flow", src)
+
+
 def test_unseen_tool_is_caught_but_substring_tool_passes(monkeypatch):
     _fake_assets(monkeypatch)
     src = verify.group_source_text(["a1"], extra="Globex")

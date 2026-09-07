@@ -622,3 +622,77 @@ def test_findings_payload_round_trips_the_unfixed_p2(engine, monkeypatch):
     result = sweep.sweep_items("", "Data Engineer", _sel(), dict(three))
     dumped = json.loads(json.dumps(itemcheck.findings_payload(result.unfixed_p2)))
     assert dumped and dumped[0]["tier"] == itemcheck.P2
+
+
+# ── the per-bullet phrasing arm reaches the model ────────────────────────────
+# Regression tests for a real production defect. The first live run swept 8 items
+# in 8 calls and rewrote nothing, and one of the bullets it left alone opened with
+# "Assisted with", which aiwriting.resume_violations flags as a formulaic opening.
+# The rule fired, and the model was never told: the payload carried only the
+# item-level itemcheck findings, and the prompt said to repair what the findings
+# flag. The model was following its instructions exactly.
+_FORMULAIC = ("Assisted with building a batched async fetcher for the nightly "
+              "ingestion job, cutting runtime from 6 hours to 90 minutes across 12 "
+              "source systems.")
+
+
+def test_the_fixture_bullet_really_is_flagged_and_really_does_fit():
+    """Both halves matter: a bullet that did not fit would be rejected for length
+    instead, and the test would pass while proving nothing about phrasing."""
+    assert aiwriting.resume_violations(_FORMULAIC) == ["formulaic opening"]
+    assert measure.line_count(_FORMULAIC) <= 2
+    # No item-level detector fires on it, so `findings` alone would leave it silent.
+    assert itemcheck.item_findings(ITEM, [("a1", _FORMULAIC)]) == []
+
+
+def test_a_bullet_with_a_phrasing_hit_is_named_in_the_payload(engine, monkeypatch):
+    """The defect itself: the model has to be TOLD the rule fired."""
+    bullets = dict(CLEAN, a1=_FORMULAIC)
+    rec = _install(monkeypatch, Recorder(first=_answer()))
+    sweep.sweep_items("", "Data Engineer", _sel(), bullets)
+    sent = {b["gkey"]: b for b in rec.payload(0)["bullets"]}
+    assert sent["a1"]["phrasing"] == ["formulaic opening"]
+    # And a clean bullet in the same item still carries an empty list, so the model
+    # can tell the two apart rather than treating the whole entry as suspect.
+    assert sent["a2"]["phrasing"] == []
+
+
+def test_a_declined_phrasing_repair_is_reported_rather_than_silent(engine, monkeypatch):
+    """The model may decline. What it may not do is decline invisibly: a run that
+    changed nothing used to be indistinguishable from a run that found nothing."""
+    bullets = dict(CLEAN, a1=_FORMULAIC)
+    _install(monkeypatch, Recorder(first=_answer(a1=_FORMULAIC)))
+    result = sweep.sweep_items("", "Data Engineer", _sel(), bullets)
+    assert result.changed == ()
+    assert result.rejected == ()          # nothing was refused; it was never repaired
+    assert [(x.gkey, x.names) for x in result.unfixed_phrasing] == [
+        ("a1", ("formulaic opening",))]
+
+
+def test_a_committed_phrasing_repair_leaves_nothing_lingering(engine, monkeypatch):
+    """The other end. A rewrite that clears the rule reports no leftover, so the
+    warning cannot cry wolf on a bullet the sweep actually fixed."""
+    fixed = ("Assisted engineers by building a batched async fetcher for the nightly "
+             "ingestion job, cutting runtime from 6 hours to 90 minutes across 12 "
+             "source systems.")
+    assert aiwriting.resume_violations(fixed) == []
+    bullets = dict(CLEAN, a1=_FORMULAIC)
+    _install(monkeypatch, Recorder(first=_answer(a1=fixed)))
+    result = sweep.sweep_items("", "Data Engineer", _sel(), bullets)
+    assert bullets["a1"] == fixed
+    assert result.changed == ("a1",)
+    assert result.unfixed_phrasing == ()
+
+
+def test_a_clean_item_reports_no_lingering_phrasing(engine, monkeypatch):
+    """The no-op case stays a no-op: nothing flagged, nothing warned."""
+    bullets = dict(CLEAN)
+    _install(monkeypatch, Recorder(first=_answer()))
+    result = sweep.sweep_items("", "Data Engineer", _sel(), bullets)
+    assert result.unfixed_phrasing == ()
+
+
+def test_the_prompt_tells_the_model_phrasing_is_repairable(engine):
+    """The payload field is inert unless the instructions name it. This is the
+    other half of the fix and it is the half a refactor would drop."""
+    assert "PHRASING" in sweep._SWEEP_SYSTEM

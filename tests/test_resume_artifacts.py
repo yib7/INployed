@@ -95,7 +95,7 @@ def offline_tailor(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod.sweep, "sweep_items",
                         lambda *a, **k: run_mod.sweep.SweepResult(
                             changed=(), rejected=(), reasked=(), unfixed_p2=(),
-                            calls=0, items=0, failures=()))
+                            unfixed_phrasing=(), calls=0, items=0, failures=()))
     monkeypatch.setattr(run_mod.compose, "compress_skills", lambda *a, **k: ["Python"])
     monkeypatch.setattr(run_mod.output, "resolve_dir", lambda *a, **k: out_dir)
     monkeypatch.setattr(run_mod.output, "resume_filename", lambda: "resume.pdf")

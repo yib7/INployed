@@ -611,6 +611,17 @@ def _report_sweep(ctx: PassCtx, result: sweep.SweepResult, *, stage: str) -> Non
                  f"[{stage}] {finding.tier} polish left in place by policy (this stage "
                  f"repairs P0 and P1 only): {finding.detector} in '{finding.item}' "
                  f"({finding.detail})")
+    for lingering in result.unfixed_phrasing:
+        # A WARNING, unlike the two loops above. A rejection means the guard worked and
+        # correct text was kept; a P2 finding is a policy choice this stage made on
+        # purpose. This one is the stage failing at the job it was paid for: the rule
+        # fired, the bullet went to the model naming it, and the tell is still on the
+        # page. Silence here is what made the first production run read as a clean
+        # 8-call no-op, so it gets the severity that reaches a reader.
+        rep.warn(KIND_AIWRITING,
+                 f"[{stage}] bullet '{lingering.gkey}' in '{lingering.item}' still "
+                 f"reads as {', '.join(lingering.names)} after the sweep: it was "
+                 f"flagged and sent, and the rewrite did not clear it")
 
 
 def _pass_aiwriting_sweep(ctx: PassCtx) -> None:

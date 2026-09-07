@@ -120,6 +120,21 @@ class Rejection(NamedTuple):
     detail: str
 
 
+class Lingering(NamedTuple):
+    """A deterministic phrasing hit that was flagged and is still on the page.
+
+    The sweep names these in the payload and asks for them to be repaired, and the
+    model is free to decline. Nothing else in the result records that: a refused
+    rewrite lands in `rejected`, but a rewrite that never came back at all looks
+    identical to a bullet nobody had anything to say about. So the one case the
+    feature exists to catch would have been the one case it reported nothing for.
+    Measured on the text that ships, so a repair that worked leaves no entry.
+    """
+    gkey: str
+    item: str
+    names: Tuple[str, ...]
+
+
 class SweepResult(NamedTuple):
     """What SP4's run report is written from.
 
@@ -133,6 +148,7 @@ class SweepResult(NamedTuple):
     rejected: Tuple[Rejection, ...]
     reasked: Tuple[str, ...]
     unfixed_p2: Tuple[itemcheck.Finding, ...]
+    unfixed_phrasing: Tuple[Lingering, ...]
     calls: int
     items: int
     failures: Tuple[str, ...]
@@ -158,9 +174,12 @@ _SWEEP_SYSTEM = (
     "live ACROSS an item's bullets: one sentence skeleton reused down the list, "
     "every bullet the same length, a three-part series in each line, one noun "
     "cycling through all of them. A single bullet read alone shows none of that.\n"
-    "SCOPE. Repair only what the item's FINDINGS flag. A bullet no finding touches "
-    "comes back exactly as it arrived. Return every bullet you were given, keyed "
-    "by its gkey, repaired or unchanged.\n"
+    "SCOPE. Repair two things and nothing else. The item's FINDINGS, which are the "
+    "tells measured across the whole entry. And each bullet's own PHRASING list, "
+    "which names a deterministic rule that bullet broke by itself, so a bullet "
+    "carrying one is always worth repairing. A bullet whose findings and phrasing "
+    "are both empty comes back exactly as it arrived. Return every bullet you were "
+    "given, keyed by its gkey, repaired or unchanged.\n"
     "KEEP, in every bullet you do touch:\n"
     "1. Every fact, number, tool and proper name, spelled the same way. Add "
     "nothing. Drop nothing. A bullet's 'atoms' are the only facts it may state, "
@@ -235,6 +254,16 @@ class _Spec(NamedTuple):
     max_chars: int
     atoms: Dict[str, Any]
     findings: Tuple[str, ...]
+    # The deterministic per-bullet hits (aiwriting.resume_violations): tier-1
+    # vocabulary, hedging, promotional language, significance inflation, vague
+    # attribution, a formulaic opening, a chatbot artifact. Held apart from
+    # `findings` because the two have different scope. A finding is measured
+    # ACROSS the item and names its bullets through spans; a phrasing hit belongs
+    # to one bullet on its own. Both have to reach the model. Carrying only the
+    # first is what let a bullet opening "Assisted with" ship: the rule caught it,
+    # the prompt said to repair only what the findings flagged, and that bullet
+    # arrived carrying none.
+    phrasing: Tuple[str, ...]
 
 
 def _accept(new: str, old: str, spec: _Spec) -> Tuple[str, str]:
@@ -291,7 +320,8 @@ def _specs(gkeys: Sequence[str], bullets: Dict[str, str],
         out.append(_Spec(gkey=gk, text=bullets[gk], target_lines=target,
                          max_chars=measure.char_budget(target),
                          atoms={a: compose._atom_payload(a) for a in gm.get(gk, [])},
-                         findings=tuple(touched.get(gk, ()))))
+                         findings=tuple(touched.get(gk, ())),
+                         phrasing=tuple(aiwriting.resume_violations(bullets[gk]))))
     return out
 
 
@@ -310,6 +340,7 @@ def _sweep_body(item: str, specs: Sequence[_Spec],
         "findings": itemcheck.findings_payload(findings),
         "bullets": [
             {"gkey": s.gkey, "text": s.text, "findings": list(s.findings),
+             "phrasing": list(s.phrasing),
              "lines": measure.line_count(s.text), "max_lines": s.target_lines,
              "max_chars": s.max_chars, "atoms": s.atoms}
             for s in specs
@@ -404,6 +435,7 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
     rejected: Dict[str, Rejection] = {}
     reasked: List[str] = []
     unfixed: List[itemcheck.Finding] = []
+    lingering: List[Lingering] = []
     failures: List[str] = []
     calls = items = 0
 
@@ -464,9 +496,17 @@ def sweep_items(jd: str, job_title: str, sel: Dict[str, Any],
         else:
             unfixed.extend(f for f in pre if f.tier != itemcheck.P1)
 
+        # Measured on the text that ships. A bullet still carrying a rule hit here
+        # was flagged, sent, and came back with the hit intact.
+        for spec in specs:
+            names = aiwriting.resume_violations(bullets.get(spec.gkey, ""))
+            if names:
+                lingering.append(Lingering(spec.gkey, item, tuple(names)))
+
     return SweepResult(changed=tuple(changed),
                        rejected=tuple(rejected[gk] for gk in sorted(rejected)),
                        reasked=tuple(reasked), unfixed_p2=tuple(unfixed),
+                       unfixed_phrasing=tuple(lingering),
                        calls=calls, items=items, failures=tuple(failures))
 
 

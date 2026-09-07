@@ -287,6 +287,21 @@ def test_a_plural_acronym_is_grounded_by_its_singular(monkeypatch):
     assert verify.unseen_tokens("Shipped the SDKs", src) == ["SDKs"]
 
 
+def test_a_two_letter_stem_grounds_only_on_a_whole_word(monkeypatch):
+    """Live case: the INployed atom writes "the small vm" and "cron vm", the model
+    wrote "VMs", and the bullet was dropped. A two-letter stem is the weakest case
+    for one-sided matching, so it is held to a WHOLE-WORD match rather than refused:
+    that grounds "VMs" off a real "vm" while still refusing "IDs" off "identical",
+    which the neighbouring test pins."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
+        "a1": {"what": "scheduled the scraper on a cron vm with identical retries",
+               "_block": "Globex"}})
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens("Ran the scrapers across two VMs", src) == []
+    # the same atom carries "identical", which must still not ground "IDs"
+    assert verify.unseen_tokens("Deduplicated the record IDs", src) == ["IDs"]
+
+
 def test_plural_stripping_does_not_ground_an_acronym_ending_in_s(monkeypatch):
     """The two guards on that fix, one case each, because they catch different
     tokens and a single example would leave one of them unpinned.

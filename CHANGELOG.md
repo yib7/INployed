@@ -69,8 +69,9 @@ test suite proves the guarantee behind that over a whole generated résumé.
   asymmetry, on a page where it was the most relevant line on offer. A written plural is now
   grounded by its own singular. The strip stays narrow on purpose: the trailing `s` has to be
   lowercase, so "HTTPS" is still not grounded by a plain "HTTP" and "CORS" not by an ordinary
-  "correctness", and two-letter stems are refused, so "AWS" cannot trace to "aware". Only the
-  plain `s` plural is handled, and an irregular one falls through to the re-ask above.
+  "correctness". A two-letter stem is matched only as a whole word, so "VMs" is grounded by an
+  atom that writes "cron vm" while "IDs" still cannot trace to "identical". Only the plain `s`
+  plural is handled, and an irregular one falls through to the re-ask above.
 - **Each bullet's own phrasing hits reach the AI-writing sweep.** The lexical half of the
   sweep (hedging, promotional language, inflated significance, vague attribution,
   formulaic openings) was only ever consulted to refuse a rewrite that introduced a new

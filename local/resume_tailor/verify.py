@@ -116,33 +116,49 @@ def _word_grounded(tok: str, norm_src: str) -> bool:
     )
 
 
-_PLURAL_MIN_STEM = 3
+# A two-letter stem is the weak case (see `_word_grounded`), so it is held to a
+# stricter test rather than refused outright: "VMs" over an atom that writes "vm"
+# as a word is ordinary, and refusing it cost a real bullet a recovery call.
+_PLURAL_MIN_STEM = 2
+_PLURAL_SHORT_STEM = 2
 
 
-def _singular_stem(tok: str) -> Optional[str]:
-    """The lowercased singular of a WRITTEN plural ("APIs" -> "api"), else None.
+def _plural_grounded(tok: str, norm_src: str) -> bool:
+    """True when `tok` is a WRITTEN plural whose singular is grounded in `norm_src`.
 
     `_word_grounded` searches the token inside the source, so the two inflections
     disagree: "API" is grounded by an atom's "APIs" (it is a prefix of it), while
     "APIs" is NOT grounded by an atom's "API". A real run lost a whole bullet to
-    that asymmetry. Stripping the plural marker makes a plural behave exactly as
-    its own singular already does; it inherits that tolerance, it does not widen
-    it, and the reverse direction was never in question.
+    that asymmetry. Stripping the plural marker makes a plural behave as its own
+    singular does; the reverse direction was never in question.
 
-    Two guards keep the strip from opening a hole. The trailing `s` must be
-    LOWERCASE (`str.endswith` is case-sensitive), because a capital one belongs to
-    the acronym: "HTTPS" would otherwise be grounded by a plain "HTTP", which is a
-    different claim, and "CORS" by an ordinary "correctness". And the stem must
-    stay long enough to be distinctive, since "AWS" -> "aw" traces to "aware" and
-    "IDs" -> "id" to "identical" — the MIT/"committed" failure `_word_grounded`'s
-    boundary rule exists to close. Only the plain `s` plural is handled; "es" and
-    irregular forms are left alone rather than guessed at, because a wrong stem is
-    a grounding hole while a missed one is only a warning.
+    The trailing `s` must be LOWERCASE (`str.endswith` is case-sensitive), because
+    a capital one belongs to the acronym: "HTTPS" would otherwise be grounded by a
+    plain "HTTP", which is a different claim, and "CORS" by an ordinary
+    "correctness".
+
+    Stem length decides how the stem is then matched, rather than whether it is
+    matched at all. Two letters is the weakest case the module docstring already
+    calls out, so a stem that short must appear as a WHOLE WORD: "vm" grounds
+    "VMs" because the atom writes "the small vm", while "id" does not ground "IDs"
+    off "identical" and "aw" does not ground "AWs" off "aware" - the MIT/"committed"
+    failure the boundary rule exists to close. Longer stems use the ordinary
+    one-sided match, so "APIs" grounds on "API" wherever "API" itself would.
+
+    Only the plain `s` plural is handled; "es" and irregular forms are left alone
+    rather than guessed at, because a wrong stem is a grounding hole while a missed
+    one is a warning and a re-ask.
     """
     if not tok.endswith("s") or tok.endswith("ss"):
-        return None
+        return False
     stem = tok[:-1]
-    return stem.lower() if len(stem) >= _PLURAL_MIN_STEM else None
+    if len(stem) < _PLURAL_MIN_STEM:
+        return False
+    low = stem.lower()
+    if len(stem) <= _PLURAL_SHORT_STEM:
+        esc = re.escape(low)
+        return bool(re.search(rf"(?<![0-9a-z]){esc}(?![0-9a-z])", norm_src))
+    return _word_grounded(low, norm_src)
 
 
 def _distinctive_word(tok: str) -> bool:
@@ -191,8 +207,7 @@ def unseen_tokens(text: str, source: str,
             low = tok.lower()
             if low in allowed or _word_grounded(low, norm_src):
                 continue
-            stem = _singular_stem(tok)
-            if stem and _word_grounded(stem, norm_src):
+            if _plural_grounded(tok, norm_src):
                 continue
             if tok not in bad:
                 bad.append(tok)

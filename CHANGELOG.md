@@ -43,6 +43,25 @@ test suite proves the guarantee behind that over a whole generated résumé.
   lines marks a run degraded. The one warning is an entry
   whose call failed, whose bullets then ship exactly as the style gate left them.
 
+- **A switch to let the AI-writing sweep repair its P2 findings, off by default.** The sweep
+  measures four item-level tells and repairs two of them. The other two, `length_uniformity`
+  and `rule_of_three`, are reported and left alone; that policy is now a setting rather than a
+  rule. `RESUME_TAILOR_SWEEP_P2=1` and `resume_sweep_p2` in `config.json` move them into the
+  repaired set, and it adds no model calls, because the findings ride in the call each item
+  already makes.
+
+  **It stays off because turning it on was measured, and it made the résumé worse.** On one
+  job, with the bullets entering the sweep held identical across both arms, P2-off rewrote
+  nothing and P2-on rewrote two bullets. One regrouped a plain four-item list into a pairing
+  that implies a relationship the work does not have. The other collapsed a three-stage
+  description of an ingestion pipeline (classification, triggered downloads, landing in S3)
+  into two stages ending in S3, which demotes a pipeline stage to a destination and drops
+  the word that said the pipeline was one thing. The sweep's acceptance check passed both,
+  because it traces tokens and "S3" was still there: a claim that quietly changes shape is
+  invisible to it. A three-part series in a résumé is usually three things that really come
+  in threes, and asking for it to be broken up offers the model a choice between dropping
+  one and padding.
+
 ### Fixed
 - **A dropped bullet gets one chance to come back, instead of taking the entry's
   introduction with it.** The grounding gate that runs on the first draft is the only one

@@ -17,12 +17,18 @@ from . import assets
 from .latexutil import clean_bullet, escape_url, fmt_dates, to_latex
 
 
+# The contact fields that hold an address rather than a printed value. These render
+# as \href so they pick up the template's urlcolor, matching the Projects section's
+# repo link; location, phone and email stay plain text.
+_LINK_FIELDS = ("linkedin", "github")
+
+
 def _header(basics: dict) -> str:
     """The centered name + contact line, from yaml `basics`. Missing fields are
     simply omitted so the line stays clean for any user."""
     name = to_latex(basics.get("name", "") or "")
     contact_bits = [
-        to_latex(str(basics[k]))
+        _contact_bit(k, str(basics[k]))
         for k in ("location", "phone", "email", "linkedin", "github")
         if basics.get(k)
     ]
@@ -33,6 +39,23 @@ def _header(basics: dict) -> str:
         f"{contact}\n"
         "\\end{center}\n\\vspace{-10pt}\n\n"
     )
+
+
+def _contact_bit(field: str, value: str) -> str:
+    """One entry of the contact line. Address fields become a coloured, clickable
+    \\href; everything else is printed as-is.
+
+    The two arguments take different escaping and mixing them up is a real bug:
+    to_latex is for the printed text (it backslashes `_`, right on the page), and
+    escape_url is for the target (it must not, or the link resolves to an address
+    with a literal backslash in it). Display text is left exactly as it reads today
+    -- only the colour and the clickability change.
+    """
+    text = to_latex(value)
+    if field not in _LINK_FIELDS:
+        return text
+    href = escape_url(assets.full_url(value))
+    return f"\\href{{{href}}}{{{text}}}" if href else text
 
 
 def _degree_line(e: dict) -> str:

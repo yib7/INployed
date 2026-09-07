@@ -132,3 +132,56 @@ def test_leadership_and_projects_omit_a_missing_name_instead_of_printing_none(mo
          "atoms": ["a1"]}]})
     assert "None" not in render._projects(
         {"projects": [{"name": None, "groups": [["a1"]]}]}, _BULLETS)
+
+
+# The contact header's LinkedIn and GitHub entries were printed as plain text while
+# the Projects section rendered its repo as a coloured \href. Same kind of address,
+# two different treatments: on the compiled PDF the project link was blue and
+# clickable and the header's own links were dead black text. hyperref is already
+# configured in resume_template.tex (colorlinks=true, urlcolor=LinkColor), so the
+# only thing missing was the \href itself.
+
+
+def _header_of(**basics) -> str:
+    return render._header(basics)
+
+
+def test_header_linkedin_is_a_clickable_href():
+    tex = _header_of(name="Jane Doe", linkedin="linkedin.com/in/janedoe")
+    assert "\\href{https://linkedin.com/in/janedoe}" in tex
+
+
+def test_header_github_is_a_clickable_href():
+    tex = _header_of(name="Jane Doe", github="github.com/janedoe")
+    assert "\\href{https://github.com/janedoe}" in tex
+
+
+def test_header_link_stored_as_full_url_does_not_double_the_scheme():
+    tex = _header_of(github="https://github.com/janedoe")
+    assert "\\href{https://github.com/janedoe}" in tex
+    assert "https://https://" not in tex
+
+
+def test_header_href_target_keeps_underscores_unescaped():
+    """escape_url, not escape_latex: a backslash in the target breaks the address."""
+    tex = _header_of(github="github.com/foo_bar")
+    assert "\\href{https://github.com/foo_bar}" in tex
+
+
+def test_header_link_display_text_is_unchanged():
+    """Only the colour and the clickability change; the printed line reads the same."""
+    tex = _header_of(linkedin="linkedin.com/in/janedoe")
+    assert "linkedin.com/in/janedoe" in tex
+
+
+def test_header_non_link_fields_stay_plain_text():
+    tex = _header_of(location="City, ST", phone="555-555-0100", email="jane@example.com")
+    assert "\\href" not in tex
+    for v in ("City, ST", "555-555-0100", "jane@example.com"):
+        assert v in tex
+
+
+def test_header_omits_missing_link_fields():
+    tex = _header_of(name="Jane Doe", location="City, ST")
+    assert "\\href" not in tex
+    assert "$|$" not in tex          # a single contact bit needs no separator

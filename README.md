@@ -109,10 +109,11 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 Everything is version-pinned in `requirements.txt`, so you get the exact set CI tests. Calling
 the venv's `python.exe` by path means you never have to activate it, which Windows' default
 execution policy blocks. The launcher in Step 4 finds this `venv` on its own. The pip upgrade
-comes first because `python -m venv` seeds whatever pip shipped with your interpreter (25.2 on
-Python 3.14.0), and six advisories against pip 25.2 are fixed by 26.2, among them path
-traversal in entry-point names, a symlink escape in its fallback tar extractor, and a
-doubly-encoded index URL it resolved wrong.
+comes first because `python -m venv` seeds whatever pip shipped with your interpreter, and that
+varies by patch release: 3.14.0 seeds 25.2, 3.14.7 seeds 26.2.1. Six advisories against pip 25.2
+are fixed by 26.2, among them path traversal in entry-point names, a symlink escape in its
+fallback tar extractor, and a doubly-encoded index URL it resolved wrong. Running the upgrade
+gets you a fixed pip whichever patch you installed.
 
 ### Step 3: Create your local config files
 ```powershell

@@ -43,6 +43,34 @@ test suite proves the guarantee behind that over a whole generated résumé.
   lines marks a run degraded. The one warning is an entry
   whose call failed, whose bullets then ship exactly as the style gate left them.
 
+### Fixed
+- **A dropped bullet gets one chance to come back, instead of taking the entry's
+  introduction with it.** The grounding gate that runs on the first draft is the only one
+  with nothing to fall back to: every later stage can revert a bullet to its previous
+  grounded text, but the first has no previous text, so it deletes the line outright. That
+  is right for the fabricated fact it exists to stop, and wrong for what actually happens
+  most of the time, which is a faithful bullet wearing one summarising label you never
+  wrote. A real run lost a project's opening bullet to the word "ETL", and the entry
+  shipped as a single implementation detail that never said what the project was. A reader
+  needs to know what a thing is before the detail about it means anything.
+
+  The deleted bullet is now re-asked once, from the same atoms, with the unsupported term
+  banned and no synonym allowed in its place unless you wrote that too. The same gate then
+  runs over the answer, so a repair that is still ungrounded is deleted a second time and
+  reported: nothing reaches the page without passing the identical check every other
+  bullet passes. It costs one cheap call, and only on a run that already lost a bullet, so
+  a clean run never pays for it. `RESUME_TAILOR_REGROUND=0` and `reground` in
+  `config.json` turn it off. `tailor_report.txt` names the bullets it recovered, and says
+  so when the re-ask came back empty.
+- **Each bullet's own phrasing hits reach the AI-writing sweep.** The lexical half of the
+  sweep (hedging, promotional language, inflated significance, vague attribution,
+  formulaic openings) was only ever consulted to refuse a rewrite that introduced a new
+  tell, never to ask for one. The model was shown the entry-wide findings and told to
+  repair what those flag, so a bullet opening "Assisted with" arrived with an empty list
+  and an instruction to leave it alone. Every bullet now carries its own flagged phrasing
+  alongside the entry's findings, and the report warns when a bullet that was flagged and
+  sent still reads the same way afterwards.
+
 ## [1.10.0] - 2026-09-06
 
 A résumé-engine quality pass, then a full ship audit over the top of it. The headline of the

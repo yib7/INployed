@@ -478,6 +478,60 @@ def _gate(ctx: PassCtx, *, stage: str = "rephrase",
     return handled
 
 
+def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
+    """Give the prologue gate's DELETIONS one bounded re-ask, then re-gate the result.
+
+    A gkey in `handled` that is no longer in `ctx.bullets` was deleted rather than
+    reverted, because the prologue runs on rephrase's first output and has no earlier
+    grounded text to fall back to. That deletion is usually one stray label away from a
+    perfectly grounded line, and it lands hardest on a block's opening bullet — an entry
+    that loses its overview leads with a detail bullet and stops explaining itself.
+
+    `compose.reground` re-asks from the same atoms with the offending tokens banned. The
+    gate then runs again over the whole set, which is what makes this safe: nothing the
+    re-ask returns is trusted, a still-ungrounded line is deleted a second time and
+    reported, and only a line that passes the same deterministic check as every other
+    bullet reaches the page. Recovered bullets rejoin `ctx.bullets` before the bullet
+    passes run, so they are trimmed and re-verified exactly like the rest.
+
+    Fires only on a run that already lost a bullet; a clean run costs nothing. Advisory,
+    never fatal — on any failure the deletions simply stand."""
+    dropped = {gk: toks for gk, toks in handled.items() if gk not in ctx.bullets}
+    if not dropped:
+        return
+    if ctx.report is not None:
+        ctx.report.stage("reground")
+    ctx.log(f"re-asking {len(dropped)} dropped bullet(s) against their own atoms…")
+    try:
+        recovered = compose.reground(ctx.jd, ctx.job_title, ctx.sel, dropped)
+    except Exception as exc:  # noqa: BLE001 - recovery is advisory; the drop stands
+        if ctx.report is not None:
+            ctx.report.warn(KIND_GROUNDING,
+                            f"[reground] re-ask failed, {len(dropped)} bullet(s) stay "
+                            f"dropped: {exc}")
+        return
+    if not recovered:
+        # `compose.reground` handles its own transport failure and returns {}, so this is
+        # the only place a dead re-ask becomes visible. Without it the run reports the
+        # drop and then goes quiet about the attempt to undo it.
+        if ctx.report is not None:
+            ctx.report.warn(KIND_GROUNDING,
+                            f"[reground] the re-ask returned nothing; "
+                            f"{len(dropped)} bullet(s) stay dropped")
+        return
+    ctx.bullets.update({gk: text for gk, text in recovered.items() if gk in dropped})
+    # The same pinned gate, second time around. Anything still ungrounded is deleted
+    # again and warned about under the "reground" label, so a failed recovery is as
+    # visible as the original drop rather than reading like a clean run.
+    _gate(ctx, stage="reground")
+    kept = sorted(gk for gk in dropped if gk in ctx.bullets)
+    if kept and ctx.report is not None:
+        ctx.report.note(
+            KIND_GROUNDING,
+            f"[reground] recovered {len(kept)} dropped bullet(s) on a re-ask: "
+            f"{', '.join(kept)}")
+
+
 def _note_still_underfull(ctx: PassCtx, before: Dict[str, str], *,
                           stage: str) -> List[str]:
     """Re-measure the bullets `stage` actually changed and note the ones that are STILL
@@ -782,7 +836,9 @@ def tailor(
     # fallback-less one: there is no earlier grounded text to revert to yet. Every
     # later bullet-mutating pass re-runs it against its own snapshot, reverting
     # instead of dropping when it can (see _run_bullet_passes).
-    _gate(ctx, stage="rephrase")
+    handled = _gate(ctx, stage="rephrase")
+    if config.reground_enabled():
+        _recover_dropped(ctx, handled)
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
     # Verb dedupe -> verbatim merge + trim -> underfull fill + re-trim -> style gate ->

@@ -252,6 +252,21 @@ def lead_overview_enabled() -> bool:
     return _config_json().get("lead_overview", True) is not False
 
 
+def reground_enabled() -> bool:
+    """Whether a bullet the FIRST grounding gate deletes gets one bounded re-ask
+    (compose.reground). That gate has no earlier text to revert to, so it drops the line
+    outright over a single unsupported term -- and the line it drops is often the block's
+    opening bullet, the one that says what the job or project IS. The re-ask rewrites from
+    the same atoms with that term banned, and the gate re-runs over the result, so nothing
+    ungrounded can slip back in. Costs one cheap call, and ONLY on a run that already lost
+    a bullet: a clean run never makes it. Defaults ON. Precedence:
+    RESUME_TAILOR_REGROUND env > config.json 'reground' > True."""
+    env = os.getenv("RESUME_TAILOR_REGROUND")
+    if env is not None and str(env).strip():
+        return str(env).strip().lower() not in ("0", "false", "no", "off")
+    return _config_json().get("reground", True) is not False
+
+
 def methods_line_enabled() -> bool:
     """Whether the résumé renders a 'Methods' concepts line (compose.methods_line): a 5th
     technical-skills line that surfaces the JD's concept buzzwords ('A/B Testing', 'ETL',

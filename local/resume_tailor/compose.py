@@ -477,6 +477,83 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ..
     return result
 
 
+def reground(jd: str, job_title: str, sel: Dict[str, Any],
+             dropped: Dict[str, List[str]]) -> Dict[str, str]:
+    """One bounded re-ask for bullets the PROLOGUE grounding gate had to DELETE.
+
+    That gate is the only fallback-less one — it runs on rephrase's first output, so a
+    bullet whose distinctive tokens don't trace to its own atoms has no earlier grounded
+    text to revert to and is deleted outright. Deleting is the right call (an ungrounded
+    line must never print) but a poor remedy on its own: the bullet is usually a faithful
+    paraphrase carrying ONE stray label the model reached for while summarizing — 'ETL'
+    for a source -> score -> triage -> tailor flow. The facts are still in the atoms; only
+    the wording failed, and the whole line dies with it. An entry thinned this way then
+    leads with whatever detail bullet survived, which is how a project stops introducing
+    itself to a reader.
+
+    So: one batched re-ask over every dropped group, naming the tokens that must not come
+    back. It invents nothing — the atoms are the ones rephrase already had, and the ask is
+    narrower. The CALLER re-runs the gate over whatever returns, so a re-ask that fails
+    again simply stays dropped. Advisory, never fatal: {} on any failure."""
+    gm = group_map(sel)
+    targets = bullet_line_targets(sel)
+    payload = []
+    for gk, tokens in dropped.items():
+        if gk not in gm:
+            continue
+        item: Dict[str, Any] = {
+            "gkey": gk,
+            "atoms": {a: _atom_payload(a) for a in gm[gk]},
+            "banned_tokens": sorted(tokens),
+        }
+        if gk in targets:
+            item["length_target"] = _length_hint(targets[gk])
+        payload.append(item)
+    if not payload:
+        return {}
+
+    system = (
+        "You repair resume bullets that failed a grounding check. Each bullet you are "
+        "given was written from its own fact-atoms and then rejected, because it used a "
+        "distinctive term that appears NOWHERE in those atoms. Rewrite each one so it says "
+        "what the atoms say, WITHOUT any term in its 'banned_tokens' list and without "
+        "reaching for a different unsupported term to replace it. Do not substitute a "
+        "synonym for a banned token unless that synonym is itself written in the atoms; "
+        "say the thing plainly in the atoms' own words instead.\n" + _PRINCIPLE + "\n"
+        "These are usually a block's OPENING bullet: the line that tells a reader what "
+        "the job or project IS before the detail bullets can mean anything. Keep that "
+        "job, and lead with what the thing is and what it does, using only grounded "
+        "facts.\n"
+        "STYLE: past tense, no first-person pronouns, no markdown, no LaTeX, no bold or "
+        "italics. One sentence (a fused group may run to ~2 clauses), opening with a "
+        "strong action verb. Numbers exactly as the atoms write them. A COMPLETE sentence "
+        "that ends naturally within its 'length_target'; never write long expecting a "
+        "trim. BANNED PHRASING (a bullet using any of these is wrong): " + BANNED_PHRASING)
+    user = f"""TARGET JOB: {job_title}
+
+{fence_jd(jd, 1500)}
+
+REJECTED BULLETS (rewrite each from its OWN atoms only; every term in its
+"banned_tokens" must be gone, and no new unsupported term may take its place):
+{json.dumps(payload, ensure_ascii=False, indent=1)}
+
+Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<one bullet>"}}, ...]}}"""
+    try:
+        out = as_dict(call(system, user, config.TIER_FLASH, json_out=True,
+                           temperature=0.1), "bullets")
+    except Exception as exc:  # noqa: BLE001 - recovery is advisory; the drop stands
+        log.warning("reground: LLM re-ask failed, dropped bullets stay dropped: %s", exc)
+        return {}
+    result: Dict[str, str] = {}
+    for b in out.get("bullets") or []:
+        if not isinstance(b, dict):
+            continue
+        gk, text = b.get("gkey"), (b.get("text") or "").strip()
+        if gk in dropped and gk in gm and text:
+            result[gk] = text
+    return result
+
+
 # ── Stage 2b: unique leading verbs (no opener reused across the resume) ───────
 # `leading_verb` is defined in `itemcheck` and re-exported here (the import at the
 # top of this module). Two components need the same normalization and must not drift:

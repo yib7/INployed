@@ -270,6 +270,45 @@ def test_acronym_is_not_grounded_by_an_unrelated_longer_word(monkeypatch):
     assert verify.unseen_tokens("Shipped Java tooling", src) == []
 
 
+def test_an_abbreviated_figure_grounds_its_long_form(monkeypatch):
+    """Live case: the atom writes "100K+ messages", the model wrote "100,000", and the
+    bullet was dropped and re-asked. `_NUM_RE` captures digits only, so the literal
+    check compares "100000" against a source reading "100k+" and never matches."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
+        "a1": {"what": "an archive browser over 100K+ messages and 10M cells, "
+                       "8.2M media items, indexed with Qwen3-Embedding-0.6B",
+               "_block": "Globex"}})
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens("Browsed 100,000 archived messages", src) == []
+    assert verify.unseen_tokens("Scanned 10,000,000 cells", src) == []
+    # Decimal, not float: 8.2 * 1e6 is 8199999.999999999, so this pair is the one
+    # that fails under float arithmetic. "0.6B" below happens to be exact in
+    # binary, which is why it cannot be the case that pins the choice.
+    assert verify.unseen_tokens("Indexed 8,200,000 media items", src) == []
+    assert verify.unseen_tokens("Embedded with 600,000,000 parameters", src) == []
+    # ...and a figure the atoms do NOT state is still caught
+    assert verify.unseen_tokens("Browsed 200,000 archived messages", src) == ["200,000"]
+
+
+def test_a_unit_suffix_is_not_read_as_a_magnitude(monkeypatch):
+    """The guard. "512MB" is a size, not 512 million, so the suffix letter must be
+    followed by a non-letter before it counts. Without this the gate would ground a
+    fabricated figure on an ordinary unit, which is the payload it exists to stop."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
+        "a1": {"what": "rejected uploads over 512MB after a 30m timeout window",
+               "_block": "Globex"}})
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens("Processed 512,000,000 rows", src) == ["512,000,000"]
+    # KNOWN GAP, pinned rather than left lurking: a bare "30m" that means thirty
+    # MINUTES is indistinguishable from thirty million to a rule that only looks at
+    # the character after the suffix, so this figure grounds when it should not.
+    # Narrow (it needs the atom to abbreviate a unit AND the model to invent exactly
+    # that magnitude) and it costs a wrong pass, not a wrong claim: the number still
+    # has to be one the model chose to write. Change this assertion if the rule is
+    # ever tightened to a unit whitelist.
+    assert verify.unseen_tokens("Handled 30,000,000 events", src) == []
+
+
 def test_a_plural_acronym_is_grounded_by_its_singular(monkeypatch):
     """Real miss on an Emonics run: the atom wrote "the API", the bullet wrote
     "APIs", and the whole bullet was dropped. Matching searches the TOKEN inside

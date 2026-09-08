@@ -22,7 +22,8 @@ match must align to a word boundary on at least one side (so "SQL" is grounded b
 a written plural is grounded by its own singular ("APIs" by an atom's "API",
 which the substring direction alone would miss), and numbers must match on
 their own digit boundaries ("40" is NOT grounded by "40,000" — a different
-figure is a different claim).
+figure is a different claim), though a figure the atoms abbreviate is grounded
+by its long form ("100,000" by an atom's "100K").
 
 What this gate does NOT catch (audit C6-11 — stated so nobody reads it as
 airtight):
@@ -54,6 +55,7 @@ from __future__ import annotations
 
 import calendar
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
 
 from . import assets, compose
@@ -93,7 +95,46 @@ def _num_grounded(tok: str, norm_src: str) -> bool:
     if re.search(rf"(?<![\d.]){re.escape(norm)}(?![\d])", norm_src):
         return True
     word = _DIGIT_WORDS.get(norm)
-    return bool(word and word in norm_src)
+    if word and word in norm_src:
+        return True
+    return _suffix_grounded(norm, norm_src)
+
+
+# Figures written with a magnitude suffix. `_NUM_RE` only ever captures the DIGITS,
+# so an atom writing "100K+" and a bullet writing "100,000" are the same claim that
+# the literal check cannot see: the source normalizes to "100k+" and the token to
+# "100000". The suffix must sit directly against the digits and be followed by a
+# non-letter, which is what keeps "512MB" from reading as 512 million.
+_SUFFIX_MULTIPLIERS = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
+_SUFFIXED_NUM_RE = re.compile(r"(?<![0-9a-z.])(\d+(?:\.\d+)?)([kmb])(?![0-9a-z])")
+
+
+def _suffix_grounded(norm: str, norm_src: str) -> bool:
+    """True when the source states this same figure in suffixed form.
+
+    Decimal rather than float, because the comparison is for exact equality and
+    binary floating point does not deliver it for every decimal suffix: 8.2 * 1e6
+    is 8199999.999999999, so a "8.2M" in the atoms would not match a bullet's
+    "8,200,000". Which decimals survive is arbitrary (0.6 * 1e9 IS exact), so the
+    test pins one of the failing ones rather than the master's own "0.6B".
+
+    Only the direction that was observed is bridged: the source abbreviates and the
+    bullet spells the figure out. The mirror (an atom writing "100,000" and a bullet
+    writing "100K") still reads as ungrounded, because `_NUM_RE` discards the
+    bullet's suffix before this function ever sees it, and widening that regex would
+    change tokenization for every number the gate traces.
+    """
+    try:
+        value = Decimal(norm)
+    except InvalidOperation:
+        return False
+    for digits, suffix in _SUFFIXED_NUM_RE.findall(norm_src):
+        try:
+            if Decimal(digits) * _SUFFIX_MULTIPLIERS[suffix] == value:
+                return True
+        except InvalidOperation:  # pragma: no cover - the regex yields parseable digits
+            continue
+    return False
 
 
 def _word_grounded(tok: str, norm_src: str) -> bool:

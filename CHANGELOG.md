@@ -81,6 +81,17 @@ test suite proves the guarantee behind that over a whole generated résumé.
   a clean run never pays for it. `RESUME_TAILOR_REGROUND=0` and `reground` in
   `config.json` turn it off. `tailor_report.txt` names the bullets it recovered, and says
   so when the re-ask came back empty.
+- **A figure your atoms abbreviate is no longer treated as invented.** The grounding check
+  compares digits, and only digits: an atom writing "100K+ messages" and a bullet writing
+  "100,000" normalize to "100k+" and "100000", which never match. So a true figure was
+  dropped, and on a real run it cost one project bullet a recovery call every time. A
+  suffixed figure in your atoms now grounds its written-out form, for K, M and B. The suffix
+  has to sit directly against the digits and be followed by a non-letter, so "512MB" is still
+  a size rather than 512 million. Only that direction is bridged: an atom writing "100,000"
+  and a bullet writing "100K" still reads as ungrounded, because the bullet's suffix is
+  discarded before the check sees it. One known gap comes with this, and the tests pin it
+  rather than hide it: a bare "30m" meaning thirty minutes is indistinguishable from thirty
+  million to a rule that only inspects the next character.
 - **A plural no longer counts as a word you never wrote.** The grounding check looks for a
   bullet's distinctive words inside your own atoms, and it matched in one direction only: an
   atom that wrote "APIs" grounded a bullet saying "API", but an atom that wrote "API" did not

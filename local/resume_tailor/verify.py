@@ -23,7 +23,10 @@ a written plural is grounded by its own singular ("APIs" by an atom's "API",
 which the substring direction alone would miss), and numbers must match on
 their own digit boundaries ("40" is NOT grounded by "40,000" — a different
 figure is a different claim), though a figure the atoms abbreviate is grounded
-by its long form ("100,000" by an atom's "100K").
+by its long form ("100,000" by an atom's "100K"). A dotted version string is
+one figure rather than one per dot: a lone digit after a dot can never satisfy
+that boundary rule, so splitting "v1.4.0" into "1.4" and "0" rejected the
+atoms' own version string.
 
 What this gate does NOT catch (audit C6-11 — stated so nobody reads it as
 airtight):
@@ -60,8 +63,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from . import assets, compose
 
-# Digit-bearing figures: 40,000 / 37% / 3.5 — commas normalized away.
-_NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# Digit-bearing figures: 40,000 / 37% / 3.5 / v1.4.0 — commas normalized away.
+_NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)*")
 _WORD_RE = re.compile(r"[A-Za-z][\w+#]*")
 # Real sentence boundaries only. `:` and `;` were in this class and were a live
 # bypass: the tracer skips each segment's first word because that slot holds the

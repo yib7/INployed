@@ -309,6 +309,33 @@ def test_a_unit_suffix_is_not_read_as_a_magnitude(monkeypatch):
     assert verify.unseen_tokens("Handled 30,000,000 events", src) == []
 
 
+_VERSION_ATOMS = {
+    "a1": {"what": "a re-audit five weeks after the v1.4.0 release closed "
+                   "2 bypasses",
+           "_block": "Globex"},
+}
+
+
+def test_a_dotted_version_string_is_grounded_by_its_own_atoms(monkeypatch):
+    """Real loss (2026-09-14): the atoms' own "v1.4.0" tokenized as ['1.4', '0'],
+    and the trailing '0' can never satisfy the digit-boundary rule because it
+    follows a dot in the source, so the atoms' own text was rejected as unseen."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: dict(_VERSION_ATOMS))
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens(
+        "Hardened the sandbox after the v1.4.0 release.", src) == []
+
+
+def test_an_invented_patch_version_is_caught(monkeypatch):
+    """The defect is symmetric: checking each dot-group independently let an
+    invented "v1.4.2" pass whenever "1.4" and a standalone "2" each occurred
+    somewhere in the atoms, even though no atom ever wrote that patch version."""
+    monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: dict(_VERSION_ATOMS))
+    src = verify.group_source_text(["a1"], extra="Globex")
+    assert verify.unseen_tokens(
+        "Hardened the sandbox after the v1.4.2 release.", src) == ["1.4.2"]
+
+
 def test_a_plural_acronym_is_grounded_by_its_singular(monkeypatch):
     """Real miss on an Emonics run: the atom wrote "the API", the bullet wrote
     "APIs", and the whole bullet was dropped. Matching searches the TOKEN inside

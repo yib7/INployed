@@ -22,7 +22,7 @@ import json
 import logging
 import re
 from math import ceil
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # `ats`/`layout` are no longer used by the bullet stages, but `compose.ats` and
 # `compose.layout` are part of this module's historical surface (call sites read and
@@ -654,7 +654,9 @@ def dedupe_leading_verbs(bullets: Dict[str, str], gm: Dict[str, List[str]], jd: 
 
 # ── Stage 2c: fill underfull bullets from unused SAME-block atoms ─────────────
 def fill_underfull(jd: str, job_title: str, sel: Dict[str, Any],
-                   bullets: Dict[str, str]) -> Dict[str, str]:
+                   bullets: Dict[str, str], *,
+                   on_reject: Optional[Callable[[str, List[str], str], None]] = None
+                   ) -> Dict[str, str]:
     """Grow each UNDERFULL tailored bullet toward its configured line target by fusing in one
     UNUSED atom from the SAME block, then re-phrasing it. Strictly grounded: the folded detail
     can come ONLY from a real atom in the same entry, so it can never fabricate; a bullet whose
@@ -665,7 +667,16 @@ def fill_underfull(jd: str, job_title: str, sel: Dict[str, Any],
     `sel` and re-keys `bullets[old_gk] -> bullets[new_gk]`, so render / bullet_line_targets /
     one-page drop / fact-trace all key off the same atom ids and the borrowed atom becomes
     "used" for real. Mutates `sel` and `bullets`; returns `bullets`. Best-effort: any failure
-    leaves `bullets` unchanged (advisory, never fatal -- like block_briefs / shrink)."""
+    leaves `bullets` unchanged (advisory, never fatal -- like block_briefs / shrink).
+
+    That "strictly grounded" contract is enforced HERE, not just assumed: a committed fill
+    re-keys the bullet onto a new gkey, and the driver's pre-pass snapshot -- keyed by the OLD
+    gkey -- cannot revert a key it never held, so an ungrounded fill has to be caught before it
+    commits or the bullet is simply gone. `on_reject(gk, bad_tokens, text)`, when given, is how
+    a caller (the driver) still learns of a refusal; either way the grounded original survives.
+    """
+    from . import verify  # verify imports compose at module scope; a top-level import would be a cycle
+
     targets = bullet_line_targets(sel)
     used: set[str] = {
         aid
@@ -747,6 +758,15 @@ Return ONLY JSON: {{"bullets": [{{"gkey": "<gkey>", "text": "<lengthened or unch
         if not text or text == bullets[gk].strip():
             continue
         new_ids = c["ids"] + [c["spare"]]
+        # Gate the fill BEFORE it commits: a committed fill re-keys `bullets[gk]` onto
+        # `_gkey(new_ids)`, and the driver's pre-pass snapshot is keyed by the OLD gkey, so it
+        # cannot revert a key it never held (see the docstring above). Checked against the
+        # AUGMENTED group -- the folded detail legitimately comes from the spare atom.
+        bad = verify.group_unseen(sel, new_ids, text)
+        if bad:
+            if on_reject is not None:
+                on_reject(gk, bad, text)
+            continue
         c["entry"]["groups"][c["gi"]] = new_ids
         bullets.pop(gk, None)
         bullets[_gkey(new_ids)] = text

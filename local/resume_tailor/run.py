@@ -437,6 +437,10 @@ class Pass:
     verify  — snapshot before the pass and re-run the grounding gate after it, with
               that snapshot as the revert target. False only for a pass that cannot
               un-ground anything (the verbatim merge folds in the user's own text).
+              A pass that RE-KEYS a bullet must gate its OWN change before committing it (as
+              `compose.fill_underfull` does), because this snapshot is keyed by the OLD gkey
+              and cannot revert a key it does not hold; the driver's gate here is then only
+              the backstop.
     recheck_fill — after the bracketing above, re-measure every bullet this pass
               actually changed and note the ones that are STILL underfull. Only
               meaningful on a pass whose job is to lengthen (see
@@ -601,9 +605,24 @@ def _pass_fill_underfull(ctx: PassCtx) -> None:
     one detail from an unused SAME-block atom (never fabricates — a no-op when there's no
     spare material). `retrim=True` re-trims the (over)filled bullets back to a clean line
     boundary before the gate re-checks them, and `recheck_fill=True` re-measures the result
-    (the trim can hand back exactly what the fill was paid to grow)."""
+    (the trim can hand back exactly what the fill was paid to grow).
+
+    The fill gates itself: a committed fill re-keys the bullet onto its augmented gkey, and
+    this driver's own snapshot — taken before the pass runs, keyed by the OLD gkey — cannot
+    revert a fill it rejects. `on_reject` is what still gets a refusal into the run report, as
+    a NOTE rather than a warning: the bullet that ships is the grounded original, which is
+    correct and shippable.
+    """
     ctx.log("filling underfull bullets from spare atoms…")
-    compose.fill_underfull(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets)
+
+    def on_reject(gk: str, tokens: List[str], text: str) -> None:
+        if ctx.report is not None:
+            ctx.report.note(
+                KIND_GROUNDING,
+                f"[underfull fill] refused a fill for '{gk}' (ungrounded: {', '.join(tokens)}); "
+                f"kept the grounded original. Rejected text: {text!r}")
+
+    compose.fill_underfull(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets, on_reject=on_reject)
 
 
 def _pass_enforce_style(ctx: PassCtx) -> None:

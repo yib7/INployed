@@ -299,6 +299,13 @@ def _entry_names(sel: Dict[str, Any]) -> str:
     return "\n".join(names)
 
 
+def group_unseen(sel: Dict[str, Any], ids: Iterable[str], text: str) -> List[str]:
+    """Distinctive tokens in `text` with no trace in the atoms `ids` (plus the
+    selection's entry names) — the exact check `enforce_grounded` applies to one
+    bullet, exposed so a pass that re-keys a bullet can gate its own change."""
+    return unseen_tokens(text, group_source_text(ids, extra=_entry_names(sel)))
+
+
 def enforce_grounded(sel: Dict[str, Any], bullets: Dict[str, str], *,
                      fallback: Optional[Dict[str, str]] = None,
                      log=None) -> Dict[str, List[str]]:
@@ -309,19 +316,17 @@ def enforce_grounded(sel: Dict[str, Any], bullets: Dict[str, str], *,
     fallback = fallback or {}
     say = log or (lambda _msg: None)
     gm = compose.group_map(sel)
-    names = _entry_names(sel)
     handled: Dict[str, List[str]] = {}
     for gk in list(bullets):
         if compose.is_verbatim_gkey(gk):
             continue
         ids = gm.get(gk) or gk.split("+")
-        src = group_source_text(ids, extra=names)
-        bad = unseen_tokens(bullets[gk], src)
+        bad = group_unseen(sel, ids, bullets[gk])
         if not bad:
             continue
         handled[gk] = bad
         fb = (fallback.get(gk) or "").strip()
-        if fb and not unseen_tokens(fb, src):
+        if fb and not group_unseen(sel, ids, fb):
             bullets[gk] = fb
             say(f"grounding gate: reverted a bullet that introduced {bad} "
                 "(kept its last grounded text).")

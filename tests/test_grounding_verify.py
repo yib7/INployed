@@ -152,6 +152,23 @@ def test_rephrase_prompt_fences_jd(monkeypatch):
     assert "IGNORE" in seen["user"].upper()
 
 
+def test_rephrase_prompt_forbids_a_figure_that_only_a_sibling_group_states(monkeypatch):
+    """Pins the 2026-09-14 case: a sibling atom's 40,000 figure leaked into this bullet."""
+    monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
+    monkeypatch.setattr(compose.assets, "example_text", lambda: "exemplar")
+    seen = {}
+
+    def fake_call(system, user, *a, **k):
+        seen["system"] = system
+        return {"bullets": []}
+
+    monkeypatch.setattr(compose, "call", fake_call)
+    compose.rephrase("some jd", "Eng", _SEL)
+    sentences = seen["system"].split(".")
+    assert any("only in another group's atoms" in s and "same subject" in s
+               for s in sentences), seen["system"]
+
+
 def test_reverb_and_fill_prompts_fence_jd(monkeypatch):
     monkeypatch.setattr(compose, "_atom_payload", lambda a: {"what": f"did {a}"})
     monkeypatch.setattr(compose.assets, "active_verbs", lambda: {"Built": ["Built"]})

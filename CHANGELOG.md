@@ -110,6 +110,66 @@ test suite proves the guarantee behind that over a whole generated résumé.
   and an instruction to leave it alone. Every bullet now carries its own flagged phrasing
   alongside the entry's findings, and the report warns when a bullet that was flagged and
   sent still reads the same way afterwards.
+- **A version number in your atoms is no longer split into pieces and rejected.** The
+  grounding gate's number pattern matched at most one decimal segment after a run of
+  digits, so a version string like an atom's own "v1.4.0" tokenized into two pieces:
+  "1.4" and "0". A trailing "0" that follows a dot can never clear the digit-boundary
+  rule by itself, so a bullet that copied that version string verbatim came back
+  `ungrounded: 0` and the line was lost. The break cut both ways: an invented "v1.4.2"
+  used to pass whenever "1.4" and a bare "2" each turned up somewhere in the atoms,
+  though no atom ever wrote that patch version. A dotted version string now reads as
+  one figure, so a real version number grounds the bullet that quotes it and an
+  invented patch number still gets caught.
+- **A bullet the fill pass could not lengthen safely keeps its original text.** The
+  fill pass grows an underfull bullet by folding in one spare atom, then commits by
+  re-keying the bullet onto a new group id, so later stages, the fact trace and the
+  one-page drop all agree on which atoms it now covers. The driver's revert snapshot
+  is taken before the pass runs and stays keyed by the old id, so once a fill commits
+  under the new one, a fold-in the grounding gate has to flag can no longer be
+  reverted to the grounded original: the gate's lookup finds nothing under the new
+  key, and the bullet is simply gone. A résumé run on 2026-09-14 lost a project's lead
+  bullet this way.
+
+  The fill now runs the grounding check on its own result, against the augmented
+  group, before it commits or re-keys anything. A fold-in that introduces a token no
+  atom supports is refused on the spot: the bullet, its group and the spare atom it
+  would have borrowed all stay untouched, and the refusal is filed as a note in
+  `tailor_report.txt` naming the gkey, the unseen tokens and the rejected text. A fill
+  that only draws on the spare atom's own material, version strings included, still
+  commits exactly as before. This costs nothing extra: a refused fill keeps the
+  bullet you already had, and the résumé ships with the line intact.
+- **A recovered bullet no longer marks the résumé as degraded, and the report shows
+  what was rejected.** The grounding gate warned the moment it dropped a bullet, even
+  on the first draft, where a drop is only provisional: reground gets one re-ask to
+  recover it before the run moves on. A 2026-09-14 batch dialog read "4 with
+  warnings," but three of those four were prologue drops the re-ask had already
+  recovered into fully grounded bullets, with no way to take back a warning already
+  shown. A failed or empty re-ask also only reported a count, "1 bullet(s) stay
+  dropped," with nothing to say which bullet or why.
+
+  A prologue drop is now filed as a note while reground can still overturn it, and
+  the outcome decides what reaches the report: a bullet the re-ask recovers surfaces
+  only as a note, and every bullet still missing once the run finishes, whether the
+  re-ask fails outright, comes back empty, or is still ungrounded the second time, is
+  named in exactly one warning. Every gate finding in every stage, reverted or
+  dropped, also files a note with the rejected text verbatim: the token name alone
+  cannot tell a fabricated fact from a tokenizer false positive like the dotted
+  version above, and now the report carries the text to tell them apart. This costs
+  nothing extra: one fewer false warning for a résumé that actually shipped clean,
+  and a `tailor_report.txt` that says more.
+- **The rephrase pass is told that a sibling atom's figure is off-limits.** A
+  2026-09-14 batch wrote one atom's subscriber count into a bullet from a
+  different group in three runs out of three, because that group's own atom also
+  names the same subject and the existing rule against moving a fact between groups
+  only said so in the abstract: the model read the shared subject as license to
+  reuse the number that came with it elsewhere. The grounding gate caught the figure
+  every time and a re-ask recovered the bullet, so nothing shipped wrong, but each
+  catch spent a billed call the run did not need. The rephrase prompt now says
+  plainly that a figure appearing only in another group's atoms stays off-limits for
+  this bullet, even when this group's own atom names the same subject: state the
+  subject the way that atom does, and leave the figure to the bullet whose atoms
+  actually carry it. This costs nothing extra: only fewer billed re-asks for the
+  same mistake.
 
 ## [1.10.0] - 2026-09-06
 

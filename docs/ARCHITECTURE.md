@@ -452,19 +452,28 @@ loop can run out of project bullets to drop and ship two pages. None of that is 
 is exactly why a status line that only says "done" hides all of it.
 
 `tailor()` collects those as warnings and writes `tailor_report.txt` into the output
-folder on every run: which passes ran, every bullet the gate reverted or dropped and the
-token that caused it, the final page count, and each advisory failure. Callers can also
-pass `on_warning` to receive them live; the dashboard does this and reports degraded runs
-in the batch summary, so a two-page résumé reads differently from a clean one. A degraded
-run is still a success that produced a PDF. It is just not a silent one.
+folder on every run: which passes ran, every bullet the gate reverted or dropped, the
+token that caused it and the rejected text behind it, the final page count, and each
+advisory failure. Callers can also pass `on_warning` to receive them live; the dashboard
+does this and reports degraded runs in the batch summary, so a two-page résumé reads
+differently from a clean one. A degraded run is still a success that produced a PDF. It
+is just not a silent one.
 
 The report has a second, quieter section: **notes**. Same `<kind>: <message>` line shape,
 one severity down, and deliberately NOT streamed to `on_warning` — a note is something the
 run could not fully deliver that still leaves a correct, shippable résumé, so it must not
-make the batch summary call the job degraded. The one note kind today is `underfull`: a
-bullet the fill pass grew and the re-trim took straight back. With the user's two-line
-layout that is a part-empty last line, a cosmetic blemish; putting it on the degraded
-channel would make "finished with warnings" mean nothing.
+make the batch summary call the job degraded.
+
+Three kinds land here today. `underfull` is a bullet the fill pass grew and the re-trim
+took straight back, a part-empty last line under the user's two-line layout: a cosmetic
+blemish. `ai writing` is what the AI-writing sweep rewrote and every rewrite it refused.
+`grounding` covers three things: a first-draft drop that the reground re-ask then
+recovered, where the outcome decides the severity (exactly one warning for a bullet
+still missing, none for one recovered); the rejected text behind every gate finding,
+reverted or dropped; and an underfull fill the fill pass refused outright because
+folding it in would have introduced a token no atom supports. Putting a cosmetic or
+self-healed finding on the degraded channel would make "finished with warnings" mean
+nothing.
 
 ### One model, or one per stage
 `model_for(tier)` maps flash-lite / flash / pro onto three env vars, and `claude_model_for`

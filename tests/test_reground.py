@@ -178,17 +178,40 @@ def test_a_bullet_for_a_key_that_was_not_dropped_is_discarded(engine, monkeypatc
 # ── the recovery, end to end ─────────────────────────────────────────────────
 
 def test_a_recovered_overview_is_restored_and_reported(engine, monkeypatch):
-    """The regression itself: the project keeps the bullet that says what it is."""
+    """The regression itself: the project keeps the bullet that says what it is. A
+    recovered drop is not a degraded run -- the resume that ships is fully grounded --
+    so it must not warn; the record of the original drop lives in the notes instead,
+    still on the record for anyone who reads the report, just not on the channel that
+    marks a run degraded in the dialog."""
     monkeypatch.setattr(compose, "call", Recorder(answer=_answer(p1=REGROUNDED_OVERVIEW)))
     bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": DETAIL}
     report = rt_run.RunLog()
     ctx = _ctx(bullets, report)
-    rt_run._recover_dropped(ctx, rt_run._gate(ctx, stage="rephrase"))
+    rt_run._prologue_gate(ctx)
     assert bullets["p1"] == REGROUNDED_OVERVIEW
+    assert report.warnings == []
+    # The original drop is still on the record -- just as a note, not a warning.
+    assert any("[rephrase] dropped bullet 'p1'" in n and "ETL" in n
+               for n in report.note_lines)
     assert any("recovered 1 dropped bullet(s)" in n for n in report.note_lines)
-    # The original drop is still on the record. A recovery does not erase the fact that
-    # the first attempt was ungrounded.
-    assert any("dropped bullet 'p1'" in w for w in report.warnings)
+
+
+def test_a_still_ungrounded_re_ask_leaves_exactly_one_warning(engine, monkeypatch):
+    """The other half of the same invariant: when the re-ask does NOT save the bullet,
+    the loss still reads as exactly one warning -- the reground stage's, not the
+    prologue's, since the prologue's drop was provisional and never printed as one."""
+    monkeypatch.setattr(compose, "call", Recorder(answer=_answer(
+        p1="Designed a job-discovery pipeline built on a Kafka backbone.")))
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._prologue_gate(ctx)
+    assert "p1" not in bullets
+    assert len(report.warnings) == 1
+    assert "[reground] dropped bullet 'p1'" in report.warnings[0]
+    assert "Kafka" in report.warnings[0]
+    # The prologue's own drop line is in the notes, not the warnings.
+    assert any("[rephrase] dropped bullet 'p1'" in n for n in report.note_lines)
 
 
 def test_a_re_ask_that_is_still_ungrounded_is_dropped_again_and_named(engine, monkeypatch):
@@ -206,6 +229,21 @@ def test_a_re_ask_that_is_still_ungrounded_is_dropped_again_and_named(engine, mo
     assert not any("recovered" in n for n in report.note_lines)
 
 
+def test_a_failed_re_ask_names_the_bullet_it_lost(engine, monkeypatch):
+    """A transport failure still has to name what it lost: "1 bullet(s) stay dropped"
+    on its own reads as one anonymous blob once a batch loses more than one. Naming
+    the gkey and its ungrounded tokens on the same line as the failure is what makes
+    the warning useful without opening the report."""
+    monkeypatch.setattr(compose, "call", Recorder(raises=True))
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._prologue_gate(ctx)
+    assert len(report.warnings) == 1
+    w = report.warnings[0]
+    assert "stay dropped" in w and "p1" in w and "ETL" in w
+
+
 def test_a_transport_failure_leaves_the_drop_standing(engine, monkeypatch):
     """Advisory, never fatal: a re-ask that cannot run costs the run nothing beyond the
     bullet it had already lost."""
@@ -216,6 +254,20 @@ def test_a_transport_failure_leaves_the_drop_standing(engine, monkeypatch):
     rt_run._recover_dropped(ctx, rt_run._gate(ctx, stage="rephrase"))
     assert bullets == {"p2": DETAIL}
     assert any("stay dropped" in w for w in report.warnings)
+
+
+def test_a_re_ask_that_returns_nothing_names_the_bullet_it_lost(engine, monkeypatch):
+    """The other silent-failure path: the model answers, but with no bullets at all.
+    Same naming requirement as a transport failure -- the report has to say which
+    bullet(s) stayed dropped, not just how many."""
+    monkeypatch.setattr(compose, "call", Recorder(answer={"bullets": []}))
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._prologue_gate(ctx)
+    assert len(report.warnings) == 1
+    w = report.warnings[0]
+    assert "returned nothing" in w and "p1" in w and "ETL" in w
 
 
 def test_a_clean_run_never_spends_a_call(engine, monkeypatch):
@@ -246,6 +298,53 @@ def test_a_reverted_bullet_is_not_re_asked(engine, monkeypatch):
     assert bullets["p1"] == REGROUNDED_OVERVIEW      # reverted, not dropped
     rt_run._recover_dropped(ctx, handled)
     assert rec.systems == []
+
+
+# ── drops_as_notes: severity, not existence ───────────────────────────────────
+
+def test_with_reground_off_a_prologue_drop_is_still_a_warning(engine, monkeypatch):
+    """`drops_as_notes` tracks whether a re-ask is actually coming, not just which
+    stage is calling. With reground off there is no recovery to wait for, so the
+    prologue's drop is the final word on the bullet and has to warn immediately, same
+    as any other stage's drop."""
+    monkeypatch.setenv("RESUME_TAILOR_REGROUND", "0")
+    monkeypatch.setattr(compose, "call", Recorder())  # raises if called at all
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._prologue_gate(ctx)
+    assert "p1" not in bullets
+    assert len(report.warnings) == 1
+    assert "[rephrase] dropped bullet 'p1'" in report.warnings[0]
+    assert not any("recovered" in n for n in report.note_lines)
+
+
+def test_the_report_records_the_rejected_text(engine, monkeypatch):
+    """The token name alone cannot tell a fabrication from a tokenizer false positive
+    (the v1.4.0 -> 0 case). The rejected text, captured verbatim before the gate
+    mutates `bullets`, is what makes that call possible after the run, from the
+    report alone."""
+    monkeypatch.setattr(compose, "call", Recorder(answer=_answer(p1=REGROUNDED_OVERVIEW)))
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._prologue_gate(ctx)
+    assert any("[rephrase] rejected text for 'p1'" in n and "whose ETL flow" in n
+               for n in report.note_lines)
+
+
+def test_a_reverted_bullet_still_warns_even_when_drops_are_notes(engine):
+    """`drops_as_notes` only ever downgrades a DROP. A REVERTED bullet means some
+    pass produced ungrounded text outright and a fallback happened to exist -- there
+    is no re-ask coming to excuse it -- so it must warn regardless of the flag."""
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._gate(ctx, stage="style gate", fallback={"p1": REGROUNDED_OVERVIEW},
+                 drops_as_notes=True)
+    assert bullets["p1"] == REGROUNDED_OVERVIEW
+    assert len(report.warnings) == 1
+    assert "[style gate] reverted bullet 'p1'" in report.warnings[0]
 
 
 # ── the toggle ───────────────────────────────────────────────────────────────

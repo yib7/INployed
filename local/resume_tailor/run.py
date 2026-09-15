@@ -455,7 +455,8 @@ class Pass:
 
 
 def _gate(ctx: PassCtx, *, stage: str = "rephrase",
-          fallback: Optional[Dict[str, str]] = None) -> Dict[str, List[str]]:
+          fallback: Optional[Dict[str, str]] = None,
+          drops_as_notes: bool = False) -> Dict[str, List[str]]:
     """The single call site for the deterministic grounding gate. Returns
     {gkey: unseen_tokens} for every bullet it reverted or dropped (empty = all
     grounded).
@@ -468,18 +469,64 @@ def _gate(ctx: PassCtx, *, stage: str = "rephrase",
     `bullets` after the call was REVERTED to its snapshot, one that is gone was
     DROPPED outright (no grounded text to fall back to).
 
+    `drops_as_notes` downgrades a DROP to a note instead of a warning. Only the
+    prologue passes it (see `_prologue_gate`), and only because a prologue drop is not
+    yet the run's last word on the bullet: reground is about to either overturn it (the
+    bullet comes back, recovered, nothing left to warn about) or confirm it (a second
+    `_gate` call, flag off, warns for real). So it is the RE-ASK's outcome that decides
+    the severity, not this call. A REVERTED bullet always warns regardless of the
+    flag — the pass that produced it already ran to completion and wrote ungrounded
+    text, and there is no second attempt coming to change that verdict.
+
+    Every finding handled here — reverted or dropped, flagged or not — also gets one
+    note recording the REJECTED text verbatim, captured before `enforce_grounded` runs
+    (a drop deletes the key outright, so the text has to be captured first). The
+    offending token alone cannot tell a fabricated fact from a tokenizer false
+    positive (a version string, a number spelled two ways); the rejected text is what
+    lets that call be made after the run, from the report alone.
+
     `enforce_grounded` itself is deliberately untouched — the suite pins its exact
     signature `(sel, bullets, *, fallback=None, log=None)` — so this reads the return
     value rather than taking a callback.
     """
+    before = dict(ctx.bullets)
     handled = verify.enforce_grounded(ctx.sel, ctx.bullets, fallback=fallback, log=ctx.log)
     if handled and ctx.report is not None:
         for gkey, tokens in handled.items():
             action = "reverted" if gkey in ctx.bullets else "dropped"
-            ctx.report.warn(
+            line = f"[{stage}] {action} bullet '{gkey}' (ungrounded: {', '.join(tokens)})"
+            if action == "dropped" and drops_as_notes:
+                ctx.report.note(KIND_GROUNDING, line)
+            else:
+                ctx.report.warn(KIND_GROUNDING, line)
+            ctx.report.note(
                 KIND_GROUNDING,
-                f"[{stage}] {action} bullet '{gkey}' (ungrounded: {', '.join(tokens)})")
+                f"[{stage}] rejected text for '{gkey}': {before.get(gkey, '')!r}")
     return handled
+
+
+def _prologue_gate(ctx: PassCtx) -> None:
+    """Run the prologue grounding gate and, when reground is enabled, its recovery.
+
+    The prologue is the only fallback-less gate (see `_gate`): a drop here has no
+    earlier grounded text to revert to. That makes every prologue drop PROVISIONAL
+    while a re-ask can still overturn it, so it is filed as a note rather than a
+    warning (`drops_as_notes=True`) — the outcome of `_recover_dropped`, not this
+    call, is what decides whether the run actually lost the bullet. With reground OFF
+    there is no re-ask coming, so the drop is not provisional at all and this warns
+    immediately, the same as any other stage's drop.
+    """
+    handled = _gate(ctx, stage="rephrase", drops_as_notes=config.reground_enabled())
+    if config.reground_enabled():
+        _recover_dropped(ctx, handled)
+
+
+def _name_dropped(dropped: Dict[str, List[str]]) -> str:
+    """Render `{gkey: tokens}` as `"p1 (ungrounded: ETL), p2 (ungrounded: Kafka)"`,
+    sorted by gkey, so a re-ask that could not save any bullet still names every one
+    it lost in the one warning that reports the loss, instead of a bare count."""
+    return ", ".join(f"{gk} (ungrounded: {', '.join(dropped[gk])})"
+                     for gk in sorted(dropped))
 
 
 def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
@@ -499,7 +546,14 @@ def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
     passes run, so they are trimmed and re-verified exactly like the rest.
 
     Fires only on a run that already lost a bullet; a clean run costs nothing. Advisory,
-    never fatal — on any failure the deletions simply stand."""
+    never fatal — on any failure the deletions simply stand.
+
+    The caller (`_prologue_gate`) files the prologue's drop as a note on the bet that
+    this function is about to undo it. This function is what has to make that bet
+    honest: exactly one warning for every bullet still missing once it returns — named
+    here on a failed or empty re-ask, or by the second `_gate` call below on a re-ask
+    that is still ungrounded — and none at all for a bullet it recovers.
+    """
     dropped = {gk: toks for gk, toks in handled.items() if gk not in ctx.bullets}
     if not dropped:
         return
@@ -510,18 +564,20 @@ def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
         recovered = compose.reground(ctx.jd, ctx.job_title, ctx.sel, dropped)
     except Exception as exc:  # noqa: BLE001 - recovery is advisory; the drop stands
         if ctx.report is not None:
-            ctx.report.warn(KIND_GROUNDING,
-                            f"[reground] re-ask failed, {len(dropped)} bullet(s) stay "
-                            f"dropped: {exc}")
+            ctx.report.warn(
+                KIND_GROUNDING,
+                f"[reground] re-ask failed, {len(dropped)} bullet(s) stay dropped "
+                f"({_name_dropped(dropped)}): {exc}")
         return
     if not recovered:
         # `compose.reground` handles its own transport failure and returns {}, so this is
         # the only place a dead re-ask becomes visible. Without it the run reports the
         # drop and then goes quiet about the attempt to undo it.
         if ctx.report is not None:
-            ctx.report.warn(KIND_GROUNDING,
-                            f"[reground] the re-ask returned nothing; "
-                            f"{len(dropped)} bullet(s) stay dropped")
+            ctx.report.warn(
+                KIND_GROUNDING,
+                f"[reground] the re-ask returned nothing; {len(dropped)} bullet(s) "
+                f"stay dropped ({_name_dropped(dropped)})")
         return
     ctx.bullets.update({gk: text for gk, text in recovered.items() if gk in dropped})
     # The same pinned gate, second time around. Anything still ungrounded is deleted
@@ -854,10 +910,10 @@ def tailor(
     # dropped here, never printed. This first call is the prologue and the only
     # fallback-less one: there is no earlier grounded text to revert to yet. Every
     # later bullet-mutating pass re-runs it against its own snapshot, reverting
-    # instead of dropping when it can (see _run_bullet_passes).
-    handled = _gate(ctx, stage="rephrase")
-    if config.reground_enabled():
-        _recover_dropped(ctx, handled)
+    # instead of dropping when it can (see _run_bullet_passes). A prologue drop is
+    # provisional, not final, while reground can still recover it — see
+    # _prologue_gate for how that changes its severity.
+    _prologue_gate(ctx)
     if not bullets and not verbatim:
         raise RuntimeError("No grounded bullets survived selection/rephrase.")
     # Verb dedupe -> verbatim merge + trim -> underfull fill + re-trim -> style gate ->

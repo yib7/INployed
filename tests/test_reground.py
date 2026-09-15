@@ -200,6 +200,27 @@ def test_a_recovered_overview_is_restored_and_reported(engine, monkeypatch):
     assert any("recovered 1 dropped bullet(s)" in n for n in report.note_lines)
 
 
+def test_two_drops_both_recovered_leave_no_warning(engine, monkeypatch):
+    """The commonest shape in the 2026-09-15 batch, pinned from a real report: one run
+    lost TWO bullets to the prologue gate, the re-ask brought both back, and the
+    dashboard still counted the resume among the ones "with warnings". The single-drop
+    test above pins the severity of one recovered drop; this one pins that the count of
+    drops changes nothing. A run whose every drop was recovered ships a complete,
+    grounded resume, so it warns zero times however many bullets the re-ask had to
+    save, and the notes carry each drop plus one recovery line that names them all."""
+    monkeypatch.setattr(compose, "call",
+                        Recorder(answer=_answer(p1=REGROUNDED_OVERVIEW, p2=DETAIL)))
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": UNGROUNDED_DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._prologue_gate(ctx)
+    assert bullets == {"p1": REGROUNDED_OVERVIEW, "p2": DETAIL}
+    assert report.warnings == []
+    assert sum("[rephrase] dropped bullet" in n for n in report.note_lines) == 2
+    assert any("recovered 2 dropped bullet(s) on a re-ask: p1, p2" in n
+               for n in report.note_lines)
+
+
 def test_a_still_ungrounded_re_ask_leaves_exactly_one_warning(engine, monkeypatch):
     """The other half of the same invariant: when the re-ask does NOT save the bullet,
     the loss still reads as exactly one warning -- the reground stage's, not the

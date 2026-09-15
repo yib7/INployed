@@ -136,8 +136,7 @@ test suite proves the guarantee behind that over a whole generated résumé.
   would have borrowed all stay untouched, and the refusal is filed as a note in
   `tailor_report.txt` naming the gkey, the unseen tokens and the rejected text. A fill
   that only draws on the spare atom's own material, version strings included, still
-  commits exactly as before. This costs nothing extra: a refused fill keeps the
-  bullet you already had, and the résumé ships with the line intact.
+  commits exactly as before.
 - **A recovered bullet no longer marks the résumé as degraded, and the report shows
   what was rejected.** The grounding gate warned the moment it dropped a bullet, even
   on the first draft, where a drop is only provisional: reground gets one re-ask to
@@ -154,9 +153,7 @@ test suite proves the guarantee behind that over a whole generated résumé.
   named in exactly one warning. Every gate finding in every stage, reverted or
   dropped, also files a note with the rejected text verbatim: the token name alone
   cannot tell a fabricated fact from a tokenizer false positive like the dotted
-  version above, and now the report carries the text to tell them apart. This costs
-  nothing extra: one fewer false warning for a résumé that actually shipped clean,
-  and a `tailor_report.txt` that says more.
+  version above, and now the report carries the text to tell them apart.
 - **The rephrase pass is told that a sibling atom's figure is off-limits.** A
   2026-09-14 batch wrote one atom's subscriber count into a bullet from a
   different group in three runs out of three, because that group's own atom also
@@ -168,8 +165,7 @@ test suite proves the guarantee behind that over a whole generated résumé.
   plainly that a figure appearing only in another group's atoms stays off-limits for
   this bullet, even when this group's own atom names the same subject: state the
   subject the way that atom does, and leave the figure to the bullet whose atoms
-  actually carry it. This costs nothing extra: only fewer billed re-asks for the
-  same mistake.
+  actually carry it.
 
 ## [1.10.0] - 2026-09-06
 

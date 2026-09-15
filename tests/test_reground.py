@@ -51,6 +51,10 @@ REGROUNDED_OVERVIEW = ("Designed a three-subsystem job-discovery pipeline that r
 # A detail bullet that was always grounded, so it is never the thing under test.
 DETAIL = ("Configured a two-stage relevance scorer served by a quota-aware key pool with "
           "per-key rate limits.")
+# A second ungrounded bullet, for the partial-answer test: a re-ask needs two dropped
+# bullets to show it answering one and not the other. "Kafka" is in neither atom.
+UNGROUNDED_DETAIL = ("Configured a two-stage relevance scorer on a Kafka backbone with "
+                     "per-key rate limits.")
 
 
 def _sel():
@@ -270,6 +274,27 @@ def test_a_re_ask_that_returns_nothing_names_the_bullet_it_lost(engine, monkeypa
     assert "returned nothing" in w and "p1" in w and "ETL" in w
 
 
+def test_a_partially_answered_re_ask_names_the_bullet_it_did_not_answer(engine, monkeypatch):
+    """The fourth outcome fix 1 closes: a re-ask that answers some of the dropped
+    bullets but not every one of them. Before the fix `ctx.bullets.update` folded in
+    the answered ones and the rest were simply absent, so the run said nothing about
+    the loss. This pins the new warning, naming only the bullet left behind, and
+    confirms the bullet that was recovered still gets its usual note."""
+    monkeypatch.setattr(compose, "call", Recorder(answer=_answer(p1=REGROUNDED_OVERVIEW)))
+    bullets = {"p1": UNGROUNDED_OVERVIEW, "p2": UNGROUNDED_DETAIL}
+    report = rt_run.RunLog()
+    ctx = _ctx(bullets, report)
+    rt_run._prologue_gate(ctx)
+    assert bullets["p1"] == REGROUNDED_OVERVIEW
+    assert "p2" not in bullets
+    assert len(report.warnings) == 1
+    w = report.warnings[0]
+    assert "[reground]" in w and "p2" in w and "Kafka" in w
+    assert "p1 (ungrounded" not in w
+    assert any("recovered 1 dropped bullet(s) on a re-ask: p1" in n
+               for n in report.note_lines)
+
+
 def test_a_clean_run_never_spends_a_call(engine, monkeypatch):
     """The cost contract. Nothing dropped means nothing to recover, so the stage does not
     exist on a run whose bullets were all grounded."""
@@ -331,6 +356,10 @@ def test_the_report_records_the_rejected_text(engine, monkeypatch):
     rt_run._prologue_gate(ctx)
     assert any("[rephrase] rejected text for 'p1'" in n and "whose ETL flow" in n
                for n in report.note_lines)
+    # Stable, fixed quoting: a JSON-style double quote sits right after the colon.
+    # `!r`'s style flips with the text's own apostrophes; this one does not.
+    line = next(n for n in report.note_lines if "[rephrase] rejected text for 'p1'" in n)
+    assert ': "Designed' in line
 
 
 def test_a_reverted_bullet_still_warns_even_when_drops_are_notes(engine):
@@ -345,6 +374,8 @@ def test_a_reverted_bullet_still_warns_even_when_drops_are_notes(engine):
     assert bullets["p1"] == REGROUNDED_OVERVIEW
     assert len(report.warnings) == 1
     assert "[style gate] reverted bullet 'p1'" in report.warnings[0]
+    assert any("[style gate] rejected text for 'p1'" in n and "ETL" in n
+               for n in report.note_lines)
 
 
 # ── the toggle ───────────────────────────────────────────────────────────────

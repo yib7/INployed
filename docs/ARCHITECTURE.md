@@ -466,7 +466,8 @@ make the batch summary call the job degraded.
 
 Three kinds land here today. `underfull` is a bullet the fill pass grew and the re-trim
 took straight back, a part-empty last line under the user's two-line layout: a cosmetic
-blemish. `ai writing` is what the AI-writing sweep rewrote and every rewrite it refused.
+blemish. `ai writing` is what the AI-writing sweep rewrote, every rewrite it refused,
+and the P2 findings it leaves in place on purpose (the sweep repairs P0 and P1 only).
 `grounding` covers three things: a first-draft drop that the reground re-ask then
 recovered, where the outcome decides the severity (exactly one warning for a bullet
 still missing, none for one recovered); the rejected text behind every gate finding,

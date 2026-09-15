@@ -10,6 +10,7 @@ CLI:  python -m resume_tailor.run --job-id <id> [--cover-letter]
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sys
@@ -52,6 +53,9 @@ KIND_ADVISORY = "advisory"
 #               is grounded, clean and fitting, because a refused rewrite keeps the
 #               original, so none of them is a degradation. A sweep call that RAISED is
 #               the one thing here that is, and it goes out as a warning instead.
+#   GROUNDING — a first-draft drop the re-ask then recovered, where the outcome
+#               decides the severity; the rejected text behind every gate finding,
+#               reverted or dropped; and an underfull fill the pass refused outright.
 KIND_UNDERFULL = "underfull"
 KIND_AIWRITING = "ai writing"
 
@@ -501,7 +505,8 @@ def _gate(ctx: PassCtx, *, stage: str = "rephrase",
                 ctx.report.warn(KIND_GROUNDING, line)
             ctx.report.note(
                 KIND_GROUNDING,
-                f"[{stage}] rejected text for '{gkey}': {before.get(gkey, '')!r}")
+                f"[{stage}] rejected text for '{gkey}': "
+                f"{json.dumps(before.get(gkey, ''), ensure_ascii=False)}")
     return handled
 
 
@@ -515,9 +520,15 @@ def _prologue_gate(ctx: PassCtx) -> None:
     call, is what decides whether the run actually lost the bullet. With reground OFF
     there is no re-ask coming, so the drop is not provisional at all and this warns
     immediately, the same as any other stage's drop.
+
+    The toggle is read once, into `reground`, and reused for both calls below: the
+    dashboard can rewrite config.json while a tailor worker runs, and a flip between
+    two reads could file the drop as a note and then skip the re-ask that was
+    supposed to resolve it.
     """
-    handled = _gate(ctx, stage="rephrase", drops_as_notes=config.reground_enabled())
-    if config.reground_enabled():
+    reground = config.reground_enabled()
+    handled = _gate(ctx, stage="rephrase", drops_as_notes=reground)
+    if reground:
         _recover_dropped(ctx, handled)
 
 
@@ -550,9 +561,10 @@ def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
 
     The caller (`_prologue_gate`) files the prologue's drop as a note on the bet that
     this function is about to undo it. This function is what has to make that bet
-    honest: exactly one warning for every bullet still missing once it returns — named
-    here on a failed or empty re-ask, or by the second `_gate` call below on a re-ask
-    that is still ungrounded — and none at all for a bullet it recovers.
+    honest: exactly one warning for every bullet still missing once it returns, named
+    here on a failed re-ask, an empty re-ask, or a re-ask that answered only some of
+    the dropped bullets, or by the second `_gate` call below on a re-ask that is still
+    ungrounded, and none at all for a bullet it recovers.
     """
     dropped = {gk: toks for gk, toks in handled.items() if gk not in ctx.bullets}
     if not dropped:
@@ -580,6 +592,12 @@ def _recover_dropped(ctx: PassCtx, handled: Dict[str, List[str]]) -> None:
                 f"stay dropped ({_name_dropped(dropped)})")
         return
     ctx.bullets.update({gk: text for gk, text in recovered.items() if gk in dropped})
+    unanswered = {gk: toks for gk, toks in dropped.items() if gk not in recovered}
+    if unanswered and ctx.report is not None:
+        ctx.report.warn(
+            KIND_GROUNDING,
+            f"[reground] the re-ask answered {len(recovered)} of {len(dropped)} bullet(s); "
+            f"{len(unanswered)} stay dropped ({_name_dropped(unanswered)})")
     # The same pinned gate, second time around. Anything still ungrounded is deleted
     # again and warned about under the "reground" label, so a failed recovery is as
     # visible as the original drop rather than reading like a clean run.
@@ -676,7 +694,8 @@ def _pass_fill_underfull(ctx: PassCtx) -> None:
             ctx.report.note(
                 KIND_GROUNDING,
                 f"[underfull fill] refused a fill for '{gk}' (ungrounded: {', '.join(tokens)}); "
-                f"kept the grounded original. Rejected text: {text!r}")
+                f"kept the grounded original. Rejected text: "
+                f"{json.dumps(text, ensure_ascii=False)}")
 
     compose.fill_underfull(ctx.jd, ctx.job_title, ctx.sel, ctx.bullets, on_reject=on_reject)
 
@@ -857,9 +876,10 @@ def tailor(
     changes; the same warnings are written to `tailor_report.txt` in the output
     folder either way, which is the copy that outlives a status bar.
 
-    A finding that leaves a correct, shippable résumé — a bullet the underfull fill
-    could not keep full once it was re-trimmed — is a NOTE instead: report only,
-    never on `on_warning`, so it cannot mark the run degraded.
+    A finding that leaves a correct, shippable résumé, such as a bullet the underfull
+    fill could not keep full once it was re-trimmed, or a prologue drop that reground
+    recovered on its re-ask, is a NOTE instead: report only, never on `on_warning`, so
+    it cannot mark the run degraded.
     """
     log = on_status or _noop
     report = RunLog(on_warning=on_warning)

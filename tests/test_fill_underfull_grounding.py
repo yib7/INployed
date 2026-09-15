@@ -156,8 +156,9 @@ def test_a_rejected_fill_is_reported_with_its_tokens_and_text(engine, monkeypatc
 def test_a_grounded_fill_still_commits_and_rekeys(engine, monkeypatch):
     """Guards against over-rejection: a fill that folds in only the spare atom's own
     material -- including its dotted version string -- must still commit and re-key.
-    This is the SP1+SP2 trigger case (it fails on the pre-Task-1 tokenizer, so it also
-    guards that fix); green before and after this task, on purpose."""
+    This is the SP1+SP2 trigger case (with this gate in place it fails on the
+    pre-Task-1 tokenizer, so it also guards that fix); green before and after this
+    task, on purpose."""
     sel = _sel()
     bullets = {"s_over": ORIGINAL}
     monkeypatch.setattr(compose, "call", _fake_bullets(("s_over", GROUNDED_FILL)))
@@ -188,7 +189,6 @@ def test_the_pass_driver_keeps_the_bullet_when_a_fill_is_ungrounded(engine, monk
     rt_run._run_bullet_passes(ctx, passes=(fill_pass,))
     assert ctx.bullets == {"s_over": ORIGINAL}
     assert sel["projects"][0]["groups"] == [["s_over"]]
-    assert not any("dropped" in w for w in ctx.report.warnings)
     assert ctx.report.warnings == []
     assert any(
         "[underfull fill] refused a fill for 's_over'" in line

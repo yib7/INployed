@@ -377,10 +377,11 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("model_limits", "Per-model rate limits", "list", [],
           "Scoring", "scoring", show_if=("provider", ("gemini",)), advanced=True,
           help="One 'model requests-per-minute requests-per-day' per line, e.g. "
-               "'gemini-3.8-flash 5 20'. For that model it overrides both the "
-               "built-in table and the per-stage requests/minute and requests/day "
-               "settings. Needed only for a model the built-in table doesn't know, or "
-               "when Google changes an allowance. See aistudio.google.com/rate-limit."),
+               "'gemini-3.8-flash 5 20'. For that model it replaces the built-in "
+               "free-tier table, for the scorer and the resume tailor alike. Needed "
+               "only for a model the built-in table doesn't know, or when Google "
+               "changes an allowance. A line without two whole numbers after the "
+               "model id is skipped with a warning. See aistudio.google.com/rate-limit."),
     Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
           advanced=True,
           help="Parallel Stage-1 LLM calls.", min=1, max=50, slider=True),

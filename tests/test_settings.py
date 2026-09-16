@@ -1275,3 +1275,8 @@ def test_no_per_stage_rate_limit_boxes_remain():
     """
     keys = {f.key for f in settings.SETTINGS_SCHEMA}
     assert not {"stage1_rpm", "stage1_rpd", "stage2_rpm", "stage2_rpd"} & keys
+    # ...and no help text may still describe them: the one control that
+    # replaced them said it "overrides the per-stage requests/minute and
+    # requests/day settings" after those settings were gone.
+    for f in settings.SETTINGS_SCHEMA:
+        assert "per-stage requests" not in f.help, f.key

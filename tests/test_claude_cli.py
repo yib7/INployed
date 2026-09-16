@@ -338,6 +338,28 @@ def test_pool_generate_returns_duck_typed_resp(monkeypatch):
     assert resp.usage_metadata.candidates_token_count == 4
 
 
+def test_pool_generate_takes_the_head_of_a_ranked_model_list(monkeypatch):
+    """score_jobs hands every pool a RANKED list (STAGE1_MODELS); KeyPool walks
+    it, ClaudePool has no per-model free tier to walk, so it runs the first id.
+    Before the short-circuit the list itself reached `--model` as a repr."""
+    seen = []
+
+    def fake_run_claude(system, user, model, *, json_mode=False, allow_websearch=False,
+                        timeout_s=claude_cli.DEFAULT_TIMEOUT_S):
+        seen.append(model)
+        return claude_cli.CLIResult("ok", 1, 1, 0, 0)
+
+    monkeypatch.setattr(claude_cli, "run_claude", fake_run_claude)
+    pool = claude_cli.ClaudePool(max_procs=2)
+    config = SimpleNamespace(system_instruction="sys", response_mime_type=None,
+                             response_schema=None)
+    resp = asyncio.run(pool.generate(model=["claude-haiku-4-5", "claude-sonnet-5"],
+                                     contents="hi", config=config))
+    assert resp.text == "ok" and seen == ["claude-haiku-4-5"]
+    with pytest.raises(claude_cli.ClaudeCLIError, match="no model"):
+        asyncio.run(pool.generate(model=[], contents="hi", config=config))
+
+
 def test_pool_generate_json_mode_extracts_json(monkeypatch):
     def fake_run_claude(system, user, model, *, json_mode=False, allow_websearch=False,
                         timeout_s=claude_cli.DEFAULT_TIMEOUT_S):

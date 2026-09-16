@@ -176,7 +176,9 @@ The sections:
   `pdflatex` path (with **Browse…** buttons), and which Chrome profile to open
   links in.
 - **Engine:** the tailor's **provider** (Gemini or Claude) and, on Gemini, which backend
-  it bills (Vertex project vs API key). See the Claude backend note below.
+  it bills: your Vertex project, one API key, or **pool**, the scorer's free keys with Vertex
+  as the spillover (see *Tailoring on the scorer's free keys* below). See the Claude backend
+  note below.
 - **Dashboard / Job discovery / Scoring / Résumé:** scores, follow-up days, search
   keywords, remote types, spend caps, artifact toggles, and more. **Drop Easy Apply jobs
   before scoring** (off by default) discards LinkedIn Easy-Apply postings before they cost
@@ -252,6 +254,25 @@ Like nearly everything saved to `.env`, this one is tagged **`restart`**: Save w
 immediately, but the dashboard picked up its model settings when it launched, so **close and
 reopen the dashboard** before the change affects a tailoring run. Save names the rows that
 need it.
+
+#### Tailoring on the scorer's free keys (`pool`)
+Settings → Engine, **Resume tailor engine**. `vertex` (the default) bills every tailor call to
+your Google Cloud project and `api_key` uses the single **Gemini API key (resume tailor)**.
+`pool` uses the same **Gemini API keys** the job scorer rotates through, every one of them,
+held to Google's free-tier limits, and bills the project only once they have all run dry for
+the day. Google counts that free allowance per key **and per model**, so a second model is a
+second daily allowance: the **fallback models** boxes (under *Show advanced settings*, one
+model id per line, best first) name the models the tailor may move on to when its own runs
+out. With the tailor on **tiers** there is one box per step, because the lite models allow
+roughly 500 free requests a day per key and the full Flash models about 20, and the fast
+selection step makes most of the calls; list other `-lite` ids for that step and keep the
+Flash allowance for the writing step. With **simple** there is one shared box. The scorer has
+the same pair of boxes under Scoring (**Stage-1 / Stage-2 fallback models**), and both sides
+share **Per-model rate limits**, one `model requests-per-minute requests-per-day` line per
+model, which you need only for a model the built-in table does not know or when Google
+changes an allowance. A model Google reports as overloaded is set aside for a minute and the
+next one in the list is tried; a key that has spent its allowance on one model keeps whatever
+it still has on the others.
 
 #### What "Strip AI writing patterns from the cover letter" catches
 Settings → Résumé, off by default. It adds a second, stricter style pass to the **cover

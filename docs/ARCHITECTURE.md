@@ -51,6 +51,15 @@ appends to a cumulative master CSV. Four cost-aware details:
 - `--snapshot <id>` re-downloads an already-collected (already-billed) snapshot
   without triggering a new collection: the recovery path when a run dies after
   billing.
+- **The trigger endpoint has two answer shapes, and both are billed.** `/datasets/v3/scrape`
+  is synchronous with an asynchronous escape hatch: it collects for up to about a minute and
+  only a run still going gets a `202` with a `snapshot_id` to poll. A run that finishes inside
+  that window answers with the records themselves as NDJSON, one object per line, and
+  `resp.json()` dies on line two. `trigger()` therefore reads the body as text and
+  `_parse_collection_body()` returns a `Collection` holding either a snapshot id or the rows;
+  the rest of the run treats the two the same. Before this, the fast branch crashed the
+  scraper and threw away a collection that had already been paid for, with no snapshot to
+  recover it from.
 
 Both pipeline scripts call `load_dotenv()` at import scope, so importing either one arms a
 billed entry point. `INPLOYED_NO_DOTENV=1` (accepted as `1`/`true`/`yes`/`on`, nothing else,
@@ -63,6 +72,51 @@ stage 2 (flash) deep-scores the survivors. A deterministic `min_required_years`
 regex pre-filter drops over-senior roles *before* any LLM sees them (the highest-risk
 function here, and the most heavily tested; see `tests/test_min_required_years.py`).
 Locally the scorer can run through the Claude Code CLI instead (Settings → Scoring provider); the VM always scores with Gemini.
+
+#### The key pool (`pipeline/keypool.py`)
+Every Gemini call the scorer makes goes through one `KeyPool`: N free-tier API keys
+(`GEMINI_API_KEYS`) plus an optional paid Vertex member (`GOOGLE_CLOUD_PROJECT`) behind one
+`generate()`. Free-tier quota is metered by Google per **(key, model)** pair, in requests per
+minute and per day, and that fact shapes the whole module:
+
+- **A stage names a ranked chain, not one model.** `stage1_model` / `stage2_model` lead and
+  `stage1_models` / `stage2_models` (Settings → Scoring, or `SCORE_STAGE1_MODELS` /
+  `SCORE_STAGE2_MODELS` on the VM) follow, best first; `keypool.ranked_models` builds the
+  list and `_select` walks it **models outermost, keys innermost**, so every key is tried on
+  the preferred model before the second model is considered. A second model is an
+  independent daily allowance, which is the only reason the chain exists. The résumé tailor
+  reuses the same pool and the same walk in its `pool` auth mode (see `llm.py` below).
+- **Limits per model, not per stage.** `LIMITS` carries the free-tier rpm/rpd for the whole
+  Flash family; an id it does not know gates at `DEFAULT_LIMITS`, and `model_limits`
+  (Settings → Scoring, `SCORE_MODEL_LIMITS`) overrides one model at a time as
+  `<model> <rpm> <rpd>` rows. The old per-stage rpm/rpd boxes are gone: two stages naming
+  one model collapsed last-write-wins, and 96% of a 15/500 allowance once went to paid
+  Vertex because the other stage's boxes said 5/20. `limits_from_disk` reads the same
+  `scoring_config.json` the Settings tab writes, so the tailor resolves the same numbers
+  without importing the scorer.
+- **Three different refusals, three different answers.** A full RPM window is the pool's
+  own counter and certain to clear, so it spills sideways to the next model first and waits
+  only when no pair anywhere is usable. A **503** is Google short of capacity for that
+  *model*, so every key would collect the same refusal: the model is parked for
+  `OVERLOAD_COOLDOWN_S` (in memory, no allowance spent) and the chain moves on. A **429** is
+  the ambiguous one: its payload rarely says whether the minute or the day is spent, and
+  stamping the daily ceiling on the first one once wrote off three keys' 500-call
+  allowances after a run of a few dozen calls. Unless `_quota_scope` finds a `PerDay` metric,
+  the first 429 only parks the pair for `QUOTA_COOLDOWN_S` and counts a strike; the second
+  retires the pair for the day (`QUOTA_STRIKES_BEFORE_DAILY`), and a successful answer on
+  that pair (`mark_ok`) forgets the strike.
+- **Vertex is the backstop, in a fixed order.** It is taken only when no free pair has daily
+  headroom, or when everything left is a park (a guess about the next minute that the
+  caller asked not to stall on). A pool with no Vertex member waits.
+- **Daily counters persist, keyed by fingerprint.** `UsageState` writes `score_state.json`
+  under an 8-character SHA-256 of each key (never the key), debounced every ten
+  reservations and forced on exhaustion and at exit, folding in another process's counts by
+  per-key max; the day rolls over at midnight America/Los_Angeles. The tailor points its
+  pool at the **same** file on purpose, because both lanes spend one allowance.
+
+Two lanes, one instance each: the scorer awaits `generate()` under an `asyncio.Lock`, the
+tailor takes `lease_sync()` / `mark_exhausted()` under a `threading.Lock` and drives the
+request itself. The locks do not exclude each other, so one `KeyPool` serves exactly one lane.
 
 ### 3. Dashboard (`local/app.py` + `local/qt/`) + résumé engine (`local/resume_tailor/`)
 PySide6/Qt app (entry point `local/app.py`): high-score triage, an SQLite-backed
@@ -118,6 +172,24 @@ open Excel window produces, and that string names the person, often their employ
 straight into a screenshot or a bug report. The caller already knows which file it was working
 on and says so itself. It is deliberately **not** a log scrubber: `watcher.log` and `scraper.log`
 keep their full paths, because a log on the user's own disk is exactly where a path belongs.
+
+The **batch auto-apply queue** is the one dashboard feature driven from outside the process.
+`local/apply_queue.py` is an atomic JSON store beside `seen.db` (every mutation under a sidecar
+byte lock) plus the agent CLI (`claim` / `finish`); the dashboard enqueues while the tailor
+runs, and the **Auto-apply** tab (`local/qt/apply_queue_panel.py`) is a read-only,
+file-watched mirror of it with the few human controls (re-queue, remove, the kickoff command).
+The drain itself is the auto-apply skill driving Chrome, parked at review and never
+submitting. Two optional Playwright modules sit beside it for the portals that path cannot
+serve (`playwright` is not in `requirements.txt`; its comment gives the install):
+`local/apply_driver.py`, a file-driven headed browser REPL whose `paste` action issues a
+Ctrl+V keystroke and reports only a length, so a password never enters the process, and
+`local/apply_playwright.py`, the Greenhouse-family filler that can attach a résumé PDF
+(`page.set_input_files` works below the extension's session-share policy) and stops before
+Submit unless the caller passes `submit=True`, handling the emailed security-code gate through
+`local/apply_verify.py`'s file handshake. `local/ats_accounts.py` is the per-portal account
+ledger: one master password in the Windows Credential Manager, a JSON ledger that records
+email and method and rejects any password-shaped field on write, and the clipboard as the
+password's only exit.
 
 **Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
 jobs" run or manual add writes its new full master rows to `<repo>/outbox/local_rows_*.csv.gz`
@@ -292,8 +364,8 @@ bullet must be traceable to a fact ("atom") the user wrote in
 
 | Module | Role |
 |--------|------|
-| `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. `model_for` / `claude_model_for` resolve a tier live; `model_mode()` / `claude_model_mode()` can collapse all three tiers onto one id (see "One model, or one per stage"). |
-| `llm.py` | The single LLM transport: Gemini (`call()` → `_call_gemini`) or the local Claude Code CLI when the provider is 'claude' (dispatch in `call()`; `claude -p` subprocess, same rate-limit budget). Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
+| `config.py` | Paths + model tiers (flash-lite / flash / pro) + the escalating timeout schedule, all env-overridable. `model_for` / `claude_model_for` resolve a tier live; `model_mode()` / `claude_model_mode()` can collapse all three tiers onto one id (see "One model, or one per stage"). `gemini_auth()` picks the Gemini lane and `gemini_fallback_models(tier)` the pool's per-tier fallback chain (one shared chain in `simple` mode, one per tier in `tiers` mode, because the lite and full Flash quotas run 500 and 20 requests a day per key and a shared list would spend the scarce one on the high-volume selection pass). |
+| `llm.py` | The single LLM transport: Gemini (`call()` → `_call_gemini`) or the local Claude Code CLI when the provider is 'claude' (dispatch in `call()`; `claude -p` subprocess, same rate-limit budget). Gemini is reached one of three ways, chosen by `config.gemini_auth()`: `vertex` (the default, bills the project), `api_key` (one `RESUME_TAILOR_GEMINI_API_KEY`), or `pool`, which leases a (key, model) pair from the scorer's `keypool.KeyPool` (`_invoke_pooled`) over a ranked chain of the step's own model plus `config.gemini_fallback_models(tier)`; a free key's 429 is a rotation signal (`kind="rotate"`, the pair is parked or retired and the next one tried at once), a 503 parks the model, and the rotation ceiling is sized from the pool, so it can never fire while Vertex is still there to fall back to. Each request gets a per-call timeout that escalates across attempts (`tailor_timeout_schedule()`, default 60→120→180s) and retries **on timeout only**, on top of the existing 429/transient backoff, so a hung call can't stall a tailor run. |
 | `assets.py` | Loads/caches `master_experience.yaml` (atoms, blocks, `tailor:` config), the LaTeX preamble, and the style exemplar — `example_text()` is a three-arm resolver, curated file → sample PDF → `""` (see "The style exemplar"). |
 | `common.py` | The three primitives the composition modules share: the `_PRINCIPLE` prompt clause, `fence_jd` (wraps an untrusted JD as data), and `_gkey`. |
 | `selection.py` | Stage 1. `select` asks the model which atoms to use and how to group them, then makes the answer safe deterministically: `_normalize_selection` drops ids the model invented, `_ensure_required_blocks` forces the yaml's `tailor.required` blocks to render, `_order_fixed_blocks` restores template order, and `_enforce_fixed_counts` / `_cap_projects` / `_resize_to_count` pin each block to its configured bullet count. Also owns `bullet_line_targets`. |
@@ -301,7 +373,7 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `skills.py` | The four technical-skills lines and the optional 5th "Methods" concepts line. `compress_skills` ranks each category's pool against the JD; the anchoring layer (`_anchored`, `_base_anchors`, `_merged_members`, `_complete_to_count`, `_cap_items`) is what stops a skill the user does not own from reaching the page. `methods_line` prints concepts from the master's `concepts_and_methodologies` pool that the JD actually references, in the JD's own spelling on an alias hit. |
 | `layout.py` | The count spec: best-N items per skill line (`skill_targets`, env-overridable) and the leadership per-entry line budget. Printed-line *widths* are `measure.py`'s job. |
 | `measure.py` | Width-aware line measurement: per-character Times-Roman advance widths greedily wrapped against the calibrated column capacity, so a bullet's printed line count is modeled from the actual render, not a flat character count. `char_budget` converts that width budget back into the character ceiling the prompt has to state; `FULL_LINE_FILL` / `LAST_LINE_FILL` / `UNDERFULL_FILL` are the fill fractions (see "The length budget"). |
-| `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. |
+| `render.py` | Assembles the `.tex`: header + Education + body, all generated from the yaml. The header's LinkedIn and GitHub fields render as `\href` links in the template's link colour, a project's `repo` becomes a link whenever it is shaped like a host address (any host with a dot in it, github.com included), and `_education` lays each entry out for an ATS parser as much as a reader: school and location on one row, the degree on its own row, GPA and honors on a third, because a GPA glued to the date column extracted as `GPAAugust 2021` and a location at the end of the degree row was read as part of the degree. |
 | `compile.py` | Runs `pdflatex` and enforces one page (drop-weakest-project-bullet loop). `CompileResult.pages` carries the final page count, so a run that could not fit one page is recorded rather than silently accepted. |
 | `latexutil.py` | Escaping, emphasis stripping, date formatting, unicode-math → LaTeX. |
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
@@ -373,7 +445,14 @@ can see. And the sweep's own line count is non-increasing, so a stage placed aft
 re-lengthen a bullet and take that guarantee away. There is nothing after it.
 
 `rephrase` and its first gate stay outside the list. That gate runs with no fallback,
-because there is no earlier grounded text to revert to yet.
+because there is no earlier grounded text to revert to yet, which is why a drop there gets
+the one recovery no other stage needs: `_prologue_gate` files the drop as a note and
+`_recover_dropped` gives every deleted bullet one bounded re-ask (`compose.reground`, from
+the same atoms with the offending tokens named as off-limits), then runs the same gate
+again over the result. Nothing the re-ask returns is trusted; a line still ungrounded is
+deleted a second time and that second verdict is the warning. It fires only on a run that
+already lost a bullet, and `RESUME_TAILOR_REGROUND` (config.json `reground`, default on)
+turns it off, in which case the prologue drop warns immediately like any other.
 
 ### The length budget
 Every bullet has a printed-line target, and two mechanisms have to agree on what that target
@@ -467,7 +546,9 @@ make the batch summary call the job degraded.
 Three kinds land here today. `underfull` is a bullet the fill pass grew and the re-trim
 took straight back, a part-empty last line under the user's two-line layout: a cosmetic
 blemish. `ai writing` is what the AI-writing sweep rewrote, every rewrite it refused,
-and the P2 findings it leaves in place on purpose (the sweep repairs P0 and P1 only).
+and the P2 findings it leaves in place on purpose (the sweep repairs P0 and P1 only, unless
+`RESUME_TAILOR_SWEEP_P2` / config.json `resume_sweep_p2` is on; it ships off because a
+rule-of-three repair is not reliably an improvement).
 `grounding` covers three things: a first-draft drop that the reground re-ask then
 recovered, where the outcome decides the severity (exactly one warning for a bullet
 still missing, none for one recovered); the rejected text behind every gate finding,
@@ -500,7 +581,7 @@ Claude, the tuned tier split on Gemini — without a third "which provider does 
 question to answer.
 
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
-`settings.py` is one schema (`SETTINGS_SCHEMA`) of 64 `Field` rows describing every
+`settings.py` is one schema (`SETTINGS_SCHEMA`) of 72 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
 **Settings** tab auto-renders it grouped by collapsible section, inside a scrollable canvas.
 `SECTION_ORDER` is Credentials / Connection & paths / Engine / Dashboard / Scraper / Scoring /
@@ -523,7 +604,7 @@ is the guard). The fourth is the exception that proves the rule.
 | Attribute | Contract |
 | --- | --- |
 | `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises rather than degrading to "hidden". |
-| `advanced` (18 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` rather than overriding it; `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
+| `advanced` (25 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` rather than overriding it; `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
 | `restart` (20 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
 | `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
 

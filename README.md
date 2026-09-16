@@ -370,7 +370,7 @@ local/app.py            PySide6/Qt dashboard entry point (triage / tracker / sta
 local/open_dashboard.pyw  the launcher's target: resolves the synced master, then opens app.py, no console
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
-local/settings.py       the one schema behind the Settings tab: 64 fields, where each is stored
+local/settings.py       the one schema behind the Settings tab: 72 fields, where each is stored
 local/setup_check.py    what's missing or misconfigured, in plain sentences (the Check setup button)
 local/errmsg.py         the single renderer for user-facing exception text (no home paths, no secrets)
 local/chrome_launch.py  open job/resume links in the configured Chrome profile

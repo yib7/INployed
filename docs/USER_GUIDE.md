@@ -114,7 +114,7 @@ have failed"* once it's older than the **Flag data as stale after (hours)** sett
   ```bash
   python pipeline/scraper.py                              # full run (needs Bright Data keys in .env)
   python pipeline/scraper.py --max-keywords 2 --limit 8   # small, cheap bounded run
-  python pipeline/score_jobs.py                           # needs Vertex AI / ADC (auto-loads .env locally)
+  python pipeline/score_jobs.py                           # needs Gemini API keys or a Vertex AI project (auto-loads .env locally)
   ```
   `--max-keywords N` / `--limit N` cap a run's cost: the job-data provider bills per
   collected posting, so the full keyword list (the VM default) can collect
@@ -134,7 +134,7 @@ so a non-technical user can set things up without touching a file. Each section 
 not editing (the tagline still tells you what each collapsed section is for) and tackle
 one group at a time.
 
-**Finding one setting among sixty-odd.** Three things at the top of the tab, in this order:
+**Finding one setting among seventy-odd.** Three things at the top of the tab, in this order:
 
 - **The search box:** type a word and the tab filters to the rows that mention it. It
   matches the setting's name, its explanation, its config key **and the chips on the
@@ -146,8 +146,8 @@ one group at a time.
   never saved. If a match exists but your configuration makes it inert, a muted line under
   the results says so and names the switch: *"3 more settings apply when Scoring provider
   is 'claude'"*.
-- **Show advanced settings:** off by default, folding 18 power-user rows away (the
-  per-stage model pickers, scorer concurrency and retry caps, VM plumbing). The label counts
+- **Show advanced settings:** off by default, folding 19 power-user rows away (the
+  per-stage model pickers and fallback lists, scorer concurrency and retry caps, VM plumbing). The label counts
   what it is currently withholding *for your configuration*, so ticking it really does
   reveal that many rows. Search ignores the fold: an advanced row still turns up in
   results, tagged `(advanced)`.
@@ -260,7 +260,11 @@ Settings → Engine, **Resume tailor engine**. `vertex` (the default) bills ever
 your Google Cloud project and `api_key` uses the single **Gemini API key (resume tailor)**.
 `pool` uses the same **Gemini API keys** the job scorer rotates through, every one of them,
 held to Google's free-tier limits, and bills the project only once they have all run dry for
-the day. Google counts that free allowance per key **and per model**, so a second model is a
+the day. The keys are the **Gemini API keys (job scorer)** row under Credentials: free-tier
+keys from [Google AI Studio](https://aistudio.google.com/apikey), one per Google account,
+and every extra account is another day's allowance. With no **Google Cloud project ID** set
+there is nothing to spill onto, so a keys-only setup never bills; the tailor stops with a
+rate-limit message once every key and fallback model is spent for the day. Google counts that free allowance per key **and per model**, so a second model is a
 second daily allowance: the **fallback models** boxes (under *Show advanced settings*, one
 model id per line, best first) name the models the tailor may move on to when its own runs
 out. With the tailor on **tiers** there is one box per step, because the lite models allow

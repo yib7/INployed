@@ -128,7 +128,7 @@ nothing is overwritten without `-Force`.
 **Double-click `Open INployed Dashboard.cmd`** in the project folder. That is the single
 entry point, and the only thing you need for every later launch. (Right-click it →
 *Send to* → *Desktop (create shortcut)* for a desktop icon. From a terminal it is
-`venv\Scripts\python.exe local\open_dashboard.pyw` — the same interpreter and the same
+`venv\Scripts\python.exe local\open_dashboard.pyw`: the same interpreter and the same
 script the launcher runs, since Step 2's venv is never activated.)
 
 With no keys and no jobs yet, the window opens to a **get-started panel** rather than a
@@ -144,12 +144,22 @@ You need an account for each feature you want:
 
 | Feature | Account needed |
 |---|---|
-| LLM scoring + résumé tailoring | a **Google Cloud** project with Vertex AI enabled (or a Gemini API key) |
+| LLM scoring + résumé tailoring | **Gemini API keys** (free tier, from [Google AI Studio](https://aistudio.google.com/apikey); keys from separate Google accounts add up) and/or a **Google Cloud** project with Vertex AI enabled (billed) |
 | Finding your own jobs | a **Bright Data** account + LinkedIn dataset |
 | Discovery on a schedule *(optional)* | a **GCP Compute Engine VM** you create, plus the gcloud CLI from Step 7, signed in |
 
+**What bills and what does not.** The scorer uses your API keys first and bills the
+Google Cloud project only after every key has spent its daily free quota. The résumé
+tailor bills the project by default; to keep it on the free keys too, set **Settings →
+Engine → Resume tailor engine** to `pool`. Leave the project ID blank and there is no
+paid spillover: scoring and tailoring stop with a rate-limit message once the free quota
+is gone. (A key from an AI Studio project that has billing switched on is not free-tier;
+Google bills that project.) Details, including the fallback-model lists that stretch the
+free quota:
+[Tailoring on the scorer's free keys](docs/USER_GUIDE.md#tailoring-on-the-scorers-free-keys-pool).
+
 *(Nothing breaks without keys: the dashboard, tracker, and editors all run, and the
-tailor stops with a plain "no key configured" message instead.
+tailor stops with a one-line message naming the missing key or project.
 The VM row is optional even with keys: **Find new jobs** runs the same discovery
 on your PC, and the VM controls stay hidden until you switch on **Enable VM
 features** in Settings.)*
@@ -177,7 +187,7 @@ shows the structure if you would rather edit the file.)
 *(Skip all of these until you want the feature; nothing above depends on them.)*
 ```powershell
 winget install MiKTeX.MiKTeX          # (skip until you tailor) no pdflatex on PATH -> Tailor stops with "pdflatex not found"
-gcloud auth application-default login # (skip if you set a Gemini API key) Vertex AI scoring/tailoring + the VM controls
+gcloud auth application-default login # (skip if you use Gemini API keys) Vertex AI scoring/tailoring + the VM controls
 ```
 Set `PDFLATEX_PATH` if MiKTeX lands somewhere off `PATH`. The
 [gcloud CLI](https://cloud.google.com/sdk/docs/install) is a separate install; without it the

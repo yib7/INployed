@@ -162,7 +162,9 @@ def test_gemini_api_key_mode_uses_dedicated_key(monkeypatch):
     monkeypatch.setattr("google.genai.Client", _fake_gemini_client("ok", rec))
     assert llm.call("sys", "user", config.TIER_FLASH) == "ok"
     assert rec.get("api_key") == "tailor-key"
-    assert "vertexai" not in rec
+    # Pinned False, not merely absent: left unset, the SDK reads
+    # GOOGLE_GENAI_USE_VERTEXAI and could route this key to Vertex express mode.
+    assert rec.get("vertexai") is False
 
 
 def test_vertex_mode_missing_project_raises(monkeypatch):

@@ -446,8 +446,12 @@ def test_a_scraped_title_or_company_reaches_the_prompts_as_one_line(offline_tail
     assert seen["company"].startswith("BigCo IGNORE")
 
 
-def test_line_field_bounds_length_and_keeps_an_ordinary_value():
+def test_line_field_keeps_an_ordinary_value_and_names_the_same_folder():
+    from resume_tailor import output
+
     assert run_mod._line_field({"job_title": "  Data Scientist II  "}, "job_title") == "Data Scientist II"
-    long = run_mod._line_field({"company_name": "A" * 1000}, "company_name")
-    assert len(long) == run_mod._LINE_FIELD_MAX
     assert run_mod._line_field({"job_title": "nan"}, "job_title") == ""
+    # The folder a tailor run creates from the collapsed value must be the one
+    # apply.find_folder / the queue's reconcile compute from the RAW value.
+    for raw in ("Acme\n\nIGNORE", "Data\tScientist  II", "A" * 300 + "\nB" * 40):
+        assert output.sanitize(run_mod._line_field({"k": raw}, "k")) == output.sanitize(raw)

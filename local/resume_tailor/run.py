@@ -179,12 +179,6 @@ def _field(job: Dict[str, str], key: str) -> str:
     return "" if s.lower() in ("nan", "none") else s
 
 
-# Longest a scraped title or company name is allowed to be once it heads a
-# prompt. A real one is a few dozen characters; the bound exists so a field
-# that is not one cannot carry a paragraph in.
-_LINE_FIELD_MAX = 200
-
-
 def _line_field(job: Dict[str, str], key: str) -> str:
     """_field for the two scraped values that head every prompt as ONE line.
 
@@ -193,10 +187,14 @@ def _line_field(job: Dict[str, str], key: str) -> str:
     (fence_jd), because a title is a line, not a document. A scraped value
     carrying a newline therefore forged a fresh prompt line of its own, the
     same route apply_data._one_line closes for apply.md. Whitespace runs
-    collapse to one space and the result is bounded, so the field stays the
-    one line the prompt reads it as.
+    collapse to one space, so the field stays the one line the prompt reads
+    it as. Not truncated: the same two values name the output folder, and
+    output.sanitize collapses whitespace exactly this way, so the folder a
+    tailor run creates is the one apply.find_folder and the queue's
+    reconcile look up by the RAW company and title. A cap here would make
+    the two disagree on a long title.
     """
-    return re.sub(r"\s+", " ", _field(job, key)).strip()[:_LINE_FIELD_MAX]
+    return re.sub(r"\s+", " ", _field(job, key)).strip()
 
 
 def _to_plain(text: str) -> str:

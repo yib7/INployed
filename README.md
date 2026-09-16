@@ -309,7 +309,7 @@ Three model tiers back those stages — fast, standard, deep. Out of the box onl
 fast tier drops to a cheaper model (`gemini-3.1-flash-lite`); standard and deep both
 sit on `gemini-3.5-flash`, so the default costs what a mid-tier model costs and you
 raise the deep tier yourself when you want stronger writing. One setting
-(Settings → Engine, *Tailor models — simple or per stage*) points every stage at a
+(Settings → Engine, *Tailor models: simple or per stage*) points every stage at a
 single model instead; see [the user guide](docs/USER_GUIDE.md). The same three tiers
 map onto Claude models when the tailor provider is set to `claude`.
 

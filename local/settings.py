@@ -270,7 +270,7 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("apply_open_browser", "Open the posting in your browser on Apply", "bool", True,
           "Dashboard", "config",
           help="When on, the Apply button opens the job's application page in Chrome as well "
-               "as showing the apply sheet. Off keeps you in the dashboard — the posting URL "
+               "as showing the apply sheet. Off keeps you in the dashboard; the posting URL "
                "is still on the apply sheet and the Open-folder button still works."),
 
     # --- Scraper: written to root-level search_config.json (read by scraper.py) ---
@@ -327,14 +327,14 @@ SETTINGS_SCHEMA: list[Field] = [
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           advanced=True,
           help="Cheap model that scores every surviving job 1-5. Pick from the "
-               "list or type a model ID your account can use — a wrong name silently "
-               "breaks scoring."),
+               "list or type a model ID your account can use (a wrong name silently "
+               "breaks scoring)."),
     Field("stage2_model", "Stage-2 model", "editable_choice", "gemini-3.5-flash",
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           advanced=True,
           help="Deeper model for jobs that pass the Stage-2 threshold. Pick from "
-               "the list or type a model ID your account can use — a wrong name silently "
-               "breaks scoring."),
+               "the list or type a model ID your account can use (a wrong name silently "
+               "breaks scoring)."),
     # Free-tier quota is metered per (API key, MODEL), not per key -- one key
     # exhausted on gemini-3.8-flash still has its whole gemini-3.7-flash
     # allowance. So naming extra models multiplies the day's free calls
@@ -412,7 +412,7 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("tailor_open_folder", "Open output folder after tailoring", "bool", False,
           "Resume", "config",
           help="When on, the tailored résumé's folder opens in File Explorer after each run. "
-               "Off (default) keeps the screen tidy when you tailor several jobs at once — reach "
+               "Off (default) keeps the screen tidy when you tailor several jobs at once; reach "
                "the folder from the Apply panel's 'Open folder' button or the path in the status bar."),
     Field("tailor_ats_report", "Write ATS report", "bool", True, "Resume", "config",
           help="Write ats_report.txt (keyword coverage) for each tailored résumé."),
@@ -442,7 +442,7 @@ SETTINGS_SCHEMA: list[Field] = [
           "Auto-apply", "config", min=1, max=25,
           help="At most this many jobs go into the auto-apply queue per 'Queue for "
                "auto-apply' action. ~10 keeps a batch reviewable in one sitting (every "
-               "application is parked at its review page for you — never submitted)."),
+               "application is parked at its review page for you, never submitted)."),
     # No auto_apply_inbox_url row: the single fallback URL duplicated the map
     # below, firing only when the signup domain missed it — and the shipped
     # DEFAULT_INBOX_MAP already covers the common providers, so an unmapped domain
@@ -501,7 +501,7 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Needed for job discovery. Create one in your job-data API dashboard, under API tokens."),
     Field("GEMINI_API_KEYS", "Gemini API keys (job scorer)", "str", "",
           "Credentials", "env", secret=True, optional=True, restart=True,
-          help="ONE shared set of keys for both the JOB SCORER and the RESUME TAILOR — the "
+          help="ONE shared set of keys for both the JOB SCORER and the RESUME TAILOR: the "
                "tailor uses them whenever 'Resume tailor engine' is 'pool'. Comma-separated, no "
                "spaces; they are rotated, and one key's daily free quota is counted once across "
                "both. Get keys at aistudio.google.com; blank = use your Google Cloud project."),
@@ -515,7 +515,7 @@ SETTINGS_SCHEMA: list[Field] = [
           "Credentials", "env", secret=True, optional=True, restart=True,
           show_if=("gemini_auth", ("api_key",)),
           help="Rarely needed. ONE key for the RESUME TAILOR alone, used only while 'Resume "
-               "tailor engine' is 'api_key' — for a tailor on a different Google account from the "
+               "tailor engine' is 'api_key', for a tailor on a different Google account from the "
                "scorer. To share the scorer's keys instead, set that engine to 'pool' and leave "
                "this blank; 'vertex' bills your Google Cloud project."),
 
@@ -531,7 +531,7 @@ SETTINGS_SCHEMA: list[Field] = [
           "Connection & paths", "env", advanced=True, restart=True,
           help="Vertex AI region. 'global' works for most users. Left blank, the résumé "
                "tailor falls back to 'global' but the job scorer falls back to "
-               "'us-central1' — set this explicitly to keep the two in sync.",
+               "'us-central1'; set this explicitly to keep the two in sync.",
           choices=("global", "us-central1", "us-east1", "us-west1", "europe-west1")),
     Field("RESUME_TAILOR_CANDIDATE", "Your name (resume filenames)", "str", "Your_Name",
           "Connection & paths", "env", restart=True,
@@ -576,26 +576,26 @@ SETTINGS_SCHEMA: list[Field] = [
                "requests, one per line, best first. Each model has a separate free "
                "daily quota per API key, so this is what keeps tailoring off your "
                "billed cloud project. Used only while 'Resume tailor engine' is 'pool'."),
-    Field("tailor_fallback_flash_lite", "Fallbacks — fast (selection)", "list", [],
+    Field("tailor_fallback_flash_lite", "Fallbacks: fast (selection)", "list", [],
           "Engine", "config", advanced=True,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
           help="Extra models for the FAST step only, one per line, best first. List "
                "other '-lite' models here: they allow ~500 free requests/day per key, "
                "and this step makes the most calls. Listing a full Flash model instead "
                "spends the 20/day budget the deep step needs. Used only in 'pool'."),
-    Field("tailor_fallback_flash", "Fallbacks — standard (writing)", "list", [],
+    Field("tailor_fallback_flash", "Fallbacks: standard (writing)", "list", [],
           "Engine", "config", advanced=True,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
           help="Extra models for the WRITING step only, one per line, best first. Keep "
-               "these in the same quality class as the standard model — the full Flash "
+               "these in the same quality class as the standard model: the full Flash "
                "models are interchangeable here, and each carries its own 20 free "
                "requests/day per key. Used only while the engine is 'pool'."),
-    Field("tailor_fallback_pro", "Fallbacks — deep (pro)", "list", [],
+    Field("tailor_fallback_pro", "Fallbacks: deep (pro)", "list", [],
           "Engine", "config", advanced=True,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
           help="Extra models for the DEEP step only, one per line, best first. This "
                "step writes the cover letter, so list only models you would accept "
-               "that from — a '-lite' model here quietly lowers its quality. Empty is "
+               "that from; a '-lite' model here quietly lowers its quality. Empty is "
                "a fine answer. Used only while the engine is 'pool'."),
 
     Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
@@ -621,55 +621,55 @@ SETTINGS_SCHEMA: list[Field] = [
     # provider uses, and the two sides can differ (one model everywhere on Claude,
     # the tuned tier split on Gemini) without a third "which provider does this
     # apply to?" question. `config.py` reads them as two independent env vars.
-    Field("RESUME_TAILOR_MODEL_MODE", "Tailor models — simple or per stage",
+    Field("RESUME_TAILOR_MODEL_MODE", "Tailor models: simple or per stage",
           "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
           show_if=("tailor_provider", ("gemini",)), restart=True,
-          help="'simple' uses ONE model for every step of tailoring — the one named in "
-               "'Tailor model — one for every step'. 'tiers' uses a different model per "
+          help="'simple' uses ONE model for every step of tailoring, the one named in "
+               "'Tailor model: one for every step'. 'tiers' uses a different model per "
                "stage (the three per-stage pickers, under 'Show advanced settings'): a cheap "
                "one to choose bullets, a stronger one to write them. 'tiers' is the default."),
-    Field("RESUME_TAILOR_MODEL_ALL", "Tailor model — one for every step",
+    Field("RESUME_TAILOR_MODEL_ALL", "Tailor model: one for every step",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("simple",)), restart=True,
-          help="The single model every tailoring stage uses while 'Tailor models — simple or "
+          help="The single model every tailoring stage uses while 'Tailor models: simple or "
                "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
                "tailoring quietly falls back to the three per-stage models."),
-    Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model — fast (selection)",
+    Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model: fast (selection)",
           "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Cheapest model — the bullet-selection / quick stages of tailoring."),
-    Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model — standard (writing)",
+          help="Cheapest model: the bullet-selection / quick stages of tailoring."),
+    Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model: standard (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Default model — re-phrasing bullets and the cover letter."),
-    Field("RESUME_TAILOR_MODEL_PRO", "Tailor model — deep (pro)",
+          help="Default model: re-phrasing bullets and the cover letter."),
+    Field("RESUME_TAILOR_MODEL_PRO", "Tailor model: deep (pro)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Deliberately defaults to the same model as 'Tailor model — standard "
-               "(writing)' to keep costs down — set it to gemini-3.1-pro-preview yourself "
+          help="Deliberately defaults to the same model as 'Tailor model: standard "
+               "(writing)' to keep costs down; set it to gemini-3.1-pro-preview yourself "
                "for the strongest writing (slower / pricier)."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_MODE", "Claude models — simple or per stage",
+    Field("RESUME_TAILOR_CLAUDE_MODEL_MODE", "Claude models: simple or per stage",
           "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
           show_if=("tailor_provider", ("claude",)), restart=True,
-          help="Claude provider only. 'simple' uses ONE model for every step of tailoring — "
-               "the one named in 'Claude model — one for every step'. 'tiers' uses a different "
+          help="Claude provider only. 'simple' uses ONE model for every step of tailoring, "
+               "the one named in 'Claude model: one for every step'. 'tiers' uses a different "
                "model per stage (the three per-stage pickers, under 'Show advanced settings'): "
                "haiku to choose bullets, sonnet or opus to write them."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_ALL", "Claude model — one for every step",
+    Field("RESUME_TAILOR_CLAUDE_MODEL_ALL", "Claude model: one for every step",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("simple",)), restart=True,
-          help="The single model every tailoring stage uses while 'Claude models — simple or "
+          help="The single model every tailoring stage uses while 'Claude models: simple or "
                "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
                "tailoring quietly falls back to the three per-stage models."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model — fast (selection)",
+    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model: fast (selection)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: cheapest tier (bullet selection / quick stages)."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model — standard (writing)",
+    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model: standard (writing)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: re-phrasing bullets and the cover letter."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model — deep (pro)",
+    Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model: deep (pro)",
           "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Claude provider only: highest-quality tier (rephrase / cover letter)."),
@@ -681,7 +681,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # off (the default) hides the whole VM area in the GUI and silences push prompts.
     Field("vm_enabled", "Enable VM features", "bool", False, "VM (cloud scraper)", "config",
           help="Turn on to manage a cloud job-discovery VM from here (schedule, pause, push config). "
-               "Off hides all VM settings and never prompts to push — leave off if you don't use a VM."),
+               "Off hides all VM settings and never prompts to push; leave off if you don't use a VM."),
     Field("VM_INSTANCE", "VM instance name", "str", "", "VM (cloud scraper)", "env",
           optional=True,
           help="GCP instance that runs job discovery (e.g. scraper-vm). Blank = VM actions disabled."),

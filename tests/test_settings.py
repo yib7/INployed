@@ -1193,6 +1193,21 @@ def test_no_help_string_points_at_a_row_by_position():
     assert offenders == set(), "name the setting instead of its position"
 
 
+def test_no_label_or_help_carries_an_em_dash():
+    """The maintainer's ban on em dashes covers every string a user reads, and a
+    Settings row is read more often than any prompt. c14's Phase 7 found the
+    three fallback-chain labels shipped as "Fallbacks — fast (selection)"
+    beside ten older "Tailor model — ..." rows and eighteen help strings
+    with the same dash; all of them now use a colon, a semicolon or a
+    parenthesis. Comments and docstrings are the repo's own prose and are not
+    covered (tests/test_prompt_hygiene.py draws the same line for prompts)."""
+    dash = "—"
+    offenders = {f.key: where for f in settings.SETTINGS_SCHEMA
+                 for where in ("label", "help")
+                 if dash in getattr(f, where)}
+    assert offenders == {}, f"replace the em dash with ':' or parentheses: {offenders}"
+
+
 def test_validate_rejects_a_line_break_in_an_env_field(tmp_path):
     """A .env value is one physical line, so a newline cannot round-trip.
 

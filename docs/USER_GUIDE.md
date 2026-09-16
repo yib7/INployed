@@ -233,13 +233,13 @@ the VM keeps running unchanged.
 > regardless of this setting.
 
 #### One model for every step, or one per stage
-Settings → Engine, **Tailor models — simple or per stage** (and, on the Claude provider,
-**Claude models — simple or per stage**). Tailoring runs in stages, and by default each one
+Settings → Engine, **Tailor models: simple or per stage** (and, on the Claude provider,
+**Claude models: simple or per stage**). Tailoring runs in stages, and by default each one
 gets its own model: a cheap model to pick which of your experiences to use, a stronger one to
 write the bullets. That saves money, but it means three dropdowns and three decisions before
 you have a working setup.
 
-Switch the row to **simple** and there is one: **Tailor model — one for every step** — pick a
+Switch the row to **simple** and there is one: **Tailor model: one for every step** — pick a
 listed id or type your own, and every stage uses it. The three per-stage pickers (which live
 under *Show advanced settings*) disappear while simple is on, and reappear with your choices
 intact if you switch back — nothing you typed is lost either way. Leave it on **tiers**, the

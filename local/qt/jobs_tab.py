@@ -416,7 +416,33 @@ class JobsTab(QtWidgets.QWidget):
             hh.setSortIndicator(-1, QtCore.Qt.SortOrder.AscendingOrder)
         else:
             hh.setSortIndicator(self._sort_col, self._sort_order)
+            self._make_room_for_sort_mark(self._sort_col)
         self._apply_filters()
+
+    def _sort_mark_px(self) -> int:
+        """The width the style spends on a section's sort arrow, margin included."""
+        hh = self.table.horizontalHeader()
+        style = hh.style()
+        pm = QtWidgets.QStyle.PixelMetric
+        return (style.pixelMetric(pm.PM_HeaderMarkSize, None, hh)
+                + style.pixelMetric(pm.PM_HeaderMargin, None, hh))
+
+    def _make_room_for_sort_mark(self, index: int) -> None:
+        """Widen the sorted column so its arrow does not sit on its label.
+
+        `_header_floor` fits the label alone; the sort indicator is painted
+        INSIDE the same section, so a column sitting at its floor (Applicants,
+        80px at 100%) had the arrow drawn over its last letter the moment it
+        was sorted (c14 Phase 7, `s1.0_1100x700_high_score.png`). A floor
+        again: a column already wider than label plus arrow is left alone."""
+        need = self._header_floor(index) + self._sort_mark_px()
+        hh = self.table.horizontalHeader()
+        if hh.sectionSize(index) < need:
+            interactive = QtWidgets.QHeaderView.ResizeMode.Interactive
+            if hh.sectionResizeMode(index) != interactive:
+                hh.setSectionResizeMode(index, interactive)
+            self.table.setColumnWidth(index, need)
+            self._update_stretch()
 
     def _sorted_view(self, view: pd.DataFrame) -> pd.DataFrame:
         """Apply the header-click sort to `view` with pandas (see _build for why)."""

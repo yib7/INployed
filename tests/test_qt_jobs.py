@@ -495,3 +495,30 @@ def test_sort_role_survives_a_missing_text_cell(qapp):
     assert m.data(m.index(1, company), SORT_ROLE) == ""
     deep = COL_IDS.index("deep_score")
     assert m.data(m.index(1, deep), SORT_ROLE) == float("-inf")
+
+
+# ---- the sort arrow never sits on the header label -------------------------
+
+def test_sorting_a_column_at_its_floor_widens_it_for_the_arrow(qtbot):
+    """`_header_floor` fits the label alone, and the sort indicator is painted
+    inside the same section: Applicants (80px at 100%) showed its arrow over
+    the final "s" the moment it was sorted. Sorting must widen a column that
+    sits at its floor by the arrow's width, and leave a wide one alone."""
+    tab = JobsTab("high", COLS)
+    qtbot.addWidget(tab)
+    tab.resize(1400, 600)
+    tab.show()
+    tab.set_source_df(_df())
+    hh = tab.table.horizontalHeader()
+    mark = tab._sort_mark_px()
+    assert mark > 0
+    col = COL_IDS.index("recommendation")
+    tab.table.setColumnWidth(col, tab._header_floor(col))   # exactly the label
+    tab._on_header_clicked(col)
+    assert hh.sortIndicatorSection() == col
+    assert hh.sectionSize(col) >= tab._header_floor(col) + mark
+    wide = COL_IDS.index("company_name")
+    tab.table.setColumnWidth(wide, 400)
+    tab._on_header_clicked(wide)
+    assert hh.sectionSize(wide) == 400                        # already had room
+

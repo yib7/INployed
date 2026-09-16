@@ -1038,6 +1038,12 @@ class SettingsForm(QtWidgets.QWidget):
             txt = QtWidgets.QPlainTextEdit()
             txt.setAccessibleName(f.label)
             txt.setMinimumHeight(150)
+            # Seven of the nine list fields default to EMPTY (the fallback-model
+            # chains and the per-model limits), and an empty 150px box with no
+            # text in it reads as a control that has not loaded. The line rule
+            # is the one fact every list shares; each help paragraph says what
+            # a line holds.
+            txt.setPlaceholderText("One per line")
             txt.setPlainText("\n".join(str(v) for v in (value if isinstance(value, list) else [])))
             self._lists[f.key] = txt
             self._widgets[f.key] = txt

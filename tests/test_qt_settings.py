@@ -36,6 +36,21 @@ def test_renders_widgets_by_type(qtbot, tmp_path):
     assert "time_range" in form._getters
 
 
+def test_every_list_field_shows_the_line_rule_while_empty(qtbot, tmp_path):
+    """c14 Phase 7: the fallback-chain and rate-limit lists default to empty,
+    so their 150px boxes rendered as bare dark rectangles with nothing to say
+    what goes in them. The placeholder carries the one rule they all share."""
+    form = SettingsForm(targets=_targets(tmp_path))
+    qtbot.addWidget(form)
+    list_keys = {f.key for f in settings.SETTINGS_SCHEMA if f.type == "list"}
+    assert list_keys <= set(form._lists)
+    for key in list_keys:
+        assert form._lists[key].placeholderText() == "One per line", key
+    # An empty default is the case the placeholder exists for; there are several.
+    empty = [key for key in list_keys if form._lists[key].toPlainText() == ""]
+    assert len(empty) >= 5, empty
+
+
 def test_editable_combo_opens_popup_on_click(qtbot, monkeypatch):
     # Editable model selectors must drop down when their text field is clicked,
     # not just sit there looking like a text box.

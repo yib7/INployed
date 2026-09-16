@@ -146,6 +146,36 @@ def test_run_claude_websearch_flag_adds_allowed_tools(monkeypatch, fake_exe):
     assert argv[argv.index("--allowedTools") + 1] == "WebSearch"
 
 
+def test_run_claude_never_lifts_the_permission_gate_and_runs_outside_the_repo(monkeypatch, fake_exe):
+    """`-p` with no permission override is what keeps the child from acting: a
+    tool that needs approval is refused in print mode because nobody can grant
+    it. That property is one flag away from gone, so the flags that would lift
+    it are pinned absent, along with the cwd (a temp dir, never the repo) and the
+    env scrub. WebSearch is the only tool ever allowed, and only on request."""
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return _proc(stdout=_envelope("hi"))
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1,k2")
+    monkeypatch.setenv("BRIGHT_DATA_API_TOKEN", "t")
+    claude_cli.run_claude("sys", "user", "m", allow_websearch=True)
+    argv = captured["argv"]
+    joined = " ".join(argv)
+    assert "--dangerously-skip-permissions" not in joined
+    assert "--permission-mode" not in joined and "bypassPermissions" not in joined
+    assert "--allowedTools" in argv and argv[argv.index("--allowedTools") + 1] == "WebSearch"
+    assert argv.count("--allowedTools") == 1
+    assert "-p" in argv and "--system-prompt" in argv
+    assert "--exclude-dynamic-system-prompt-sections" in argv
+    kw = captured["kwargs"]
+    assert kw["cwd"] == claude_cli.tempfile.gettempdir()
+    assert "GEMINI_API_KEYS" not in kw["env"] and "BRIGHT_DATA_API_TOKEN" not in kw["env"]
+
+
 def test_run_claude_no_websearch_flag_by_default(monkeypatch, fake_exe):
     captured = {}
 

@@ -105,6 +105,16 @@ test suite proves the guarantee behind that over a whole generated résumé.
   `Awards & Honors` line becoming `{State University}{, Austin, TX}{...}{<degree>}` +
   `GPA: 3.8/4.0 $|$ Awards & Honors`; and the Trailhead link text `\textit{Link}` becoming
   `github.com/alexrivera/trailhead`. Bullets, skills and every other line are byte-identical.
+- **Dependencies pulled forward to current stable.** `google-genai` 2.22.0 to 2.23.0 in both
+  pin sets, `pypdf` 6.16.2 to 6.18.1, `ruff` 0.16.6 to 0.16.7 and `tzdata` 2026.3 to 2026.4;
+  those were the only direct pins `pip` reported outdated. The pypdf bump is the one that
+  matters: 6.17.0 through 6.18.1 add five more input bounds (Roman numerals, indirect-object
+  token length, FlateDecode recovery, font `/Widths` entry count, `bfchar` token length) on the
+  text-extraction path the résumé engine runs over your own PDF. `numpy` stays on 2.4.6 (2.5.x
+  needs Python 3.12 and the VM runs 3.11) and `pytest-timeout` stays on 2.4.0 (2.5.0 is still
+  yanked on PyPI). Neither pin set has an advisory against it: OSV.dev and `pip-audit` agree,
+  zero. The pinned interpreter is Python 3.14.7, the newest 3.14 patch; its `venv` seeds pip
+  26.2.1, so the pip upgrade line in Step 2 is now a no-op on a current install.
 
 ### Fixed
 - **A dropped bullet gets one chance to come back, instead of taking the entry's

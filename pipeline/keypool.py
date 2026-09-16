@@ -769,10 +769,18 @@ class KeyPool:
             if single:
                 keys = [single]
         members: list[dict] = []
+        # vertexai=False is not a default restated: left unset, the SDK reads
+        # GOOGLE_GENAI_USE_VERTEXAI / GOOGLE_GENAI_USE_ENTERPRISE, and a truthy
+        # value turns an api-key client into a Vertex "express mode" client --
+        # the free key then rides to aiplatform.googleapis.com, a different
+        # endpoint with different billing, while this pool keeps metering it as
+        # free-tier quota. Those variables are Google's, and load_dotenv() reads
+        # .env as readily as the shell. The lane a key takes is decided here.
         for k in keys:
             members.append(
                 {
-                    "client": genai.Client(api_key=k, http_options=http_options),
+                    "client": genai.Client(api_key=k, vertexai=False,
+                                           http_options=http_options),
                     "kind": "free",
                     "fp": key_fingerprint(k),
                 }

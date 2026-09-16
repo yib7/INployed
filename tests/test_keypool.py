@@ -219,6 +219,57 @@ def test_known_model_limits_unchanged_by_default_limits_addition():
     assert keypool.LIMITS["gemini-3.1-flash-lite"] == {"rpm": 15, "rpd": 500}
 
 
+# --- each key goes to the endpoint it was issued for, whatever the shell says --
+# google-genai reads GOOGLE_GENAI_USE_VERTEXAI / GOOGLE_GENAI_USE_ENTERPRISE
+# whenever `vertexai` is left unset, and a truthy value turns an api-key client
+# into a Vertex "express mode" client: the key then rides x-goog-api-key to
+# aiplatform.googleapis.com, a different endpoint with different billing, while
+# the pool keeps metering it as free-tier quota. Those variables are Google's,
+# not this project's, and load_dotenv() would pick one up from .env just as
+# readily as from the shell. The lane is therefore pinned in the constructor.
+
+def test_free_key_clients_are_pinned_to_the_gemini_api_whatever_the_environment_says(
+        monkeypatch, tmp_path):
+    created = []
+
+    def fake_client(**kwargs):
+        created.append(kwargs)
+        return _client(lambda *_: _resp("ok"))
+
+    monkeypatch.setattr("google.genai.Client", fake_client)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "1")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1,k2")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+
+    keypool.KeyPool.from_env(state_path=tmp_path / "s.json")
+
+    free = [k for k in created if "api_key" in k]
+    vertex = [k for k in created if k.get("vertexai") is True]
+    assert len(free) == 2 and len(vertex) == 1
+    for kwargs in free:
+        assert kwargs["vertexai"] is False, "an api key must never be routed by the shell"
+    # and the paid lane never carries a key: ADC only
+    assert "api_key" not in vertex[0]
+
+
+def test_the_sdk_honours_the_pin_and_the_vertex_member_drops_an_ambient_key(monkeypatch):
+    """The premise, against the installed SDK (construction only, no request)."""
+    from google import genai
+
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+    monkeypatch.setenv("GEMINI_API_KEY", "ambient-free-key")
+    pinned = genai.Client(api_key="not-a-real-key", vertexai=False)._api_client
+    assert pinned._http_options.base_url.startswith("https://generativelanguage.googleapis.com")
+    unpinned = genai.Client(api_key="not-a-real-key")._api_client
+    assert "aiplatform" in unpinned._http_options.base_url, "the pin is load-bearing"
+    vertex = genai.Client(vertexai=True, project="proj", location="us-central1")._api_client
+    assert vertex.api_key is None, "explicit project/location must outrank an env key"
+    assert "aiplatform" in vertex._http_options.base_url
+
+
 # --- P1-4: from_env-built clients must carry an HTTP timeout ---------------
 
 def test_from_env_sets_default_http_timeout_on_free_and_vertex_clients(monkeypatch, tmp_path):

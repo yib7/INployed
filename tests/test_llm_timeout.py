@@ -139,3 +139,35 @@ def test_build_client_passes_http_options_timeout(monkeypatch):
     llm._build_client(60)
     assert rec.get("api_key") == "k"
     assert rec["http_options"].timeout == 60_000   # seconds -> milliseconds
+
+
+def test_build_client_pins_the_api_key_lane_to_the_gemini_api(monkeypatch):
+    """RESUME_TAILOR_GEMINI_API_KEY goes to generativelanguage.googleapis.com and
+    nowhere else. Left unset, google-genai's `vertexai` flag is read from
+    GOOGLE_GENAI_USE_VERTEXAI, and a truthy value would carry this key to Vertex
+    express mode instead: a different endpoint with different billing. The lane
+    is pinned, so the shell (or a stray .env line) cannot re-route a credential."""
+    monkeypatch.setattr(config, "_config_json", lambda: {"gemini_auth": "api_key"})
+    monkeypatch.setenv("RESUME_TAILOR_GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    rec = {}
+    monkeypatch.setattr("google.genai.Client",
+                        lambda **kwargs: rec.update(kwargs) or SimpleNamespace(**kwargs))
+    llm._build_client(60)
+    assert rec.get("api_key") == "k"
+    assert rec.get("vertexai") is False
+
+
+def test_build_client_vertex_lane_carries_no_key(monkeypatch):
+    """The paid lane authenticates by ADC: no api_key kwarg, so an ambient
+    GEMINI_API_KEY cannot be attached to a Vertex request by the SDK."""
+    monkeypatch.setattr(config, "_config_json", lambda: {"gemini_auth": "vertex"})
+    monkeypatch.setattr(config, "GCP_PROJECT", "proj")
+    monkeypatch.setattr(config, "GCP_LOCATION", "us-central1")
+    monkeypatch.setenv("GEMINI_API_KEY", "ambient")
+    rec = {}
+    monkeypatch.setattr("google.genai.Client",
+                        lambda **kwargs: rec.update(kwargs) or SimpleNamespace(**kwargs))
+    llm._build_client(60)
+    assert rec.get("vertexai") is True and rec.get("project") == "proj"
+    assert "api_key" not in rec

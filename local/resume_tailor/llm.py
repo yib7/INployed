@@ -385,8 +385,11 @@ def _build_client(timeout_s: float):
 
     http_options = types.HttpOptions(timeout=int(timeout_s * 1000))
     if config.gemini_auth() == "api_key":
+        # vertexai=False pins the lane: left unset, the SDK reads
+        # GOOGLE_GENAI_USE_VERTEXAI from the environment and a truthy value would
+        # carry this key to Vertex express mode instead (see keypool.from_env).
         return genai.Client(api_key=os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"),
-                            http_options=http_options)
+                            vertexai=False, http_options=http_options)
     return genai.Client(vertexai=True, project=config.GCP_PROJECT,
                         location=config.GCP_LOCATION, http_options=http_options)
 

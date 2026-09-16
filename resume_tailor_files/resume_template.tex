@@ -39,6 +39,12 @@
 \usepackage{fancyhdr}
 \usepackage[english]{babel}
 
+% T1, not the OT1 default: in OT1 an underscore (\_) is drawn as a rule rather
+% than typeset as a glyph, so it has no character in the PDF's text stream and a
+% repo link like github.com/x/my_repo extracts as "github.com/x/my repo". Same
+% metrics for the ASCII range, so line breaks do not move (the cover letter's
+% preamble already uses T1).
+\usepackage[T1]{fontenc}
 \usepackage{newtxtext,newtxmath}  % Times New Roman font
 \input{glyphtounicode}
 
@@ -82,12 +88,19 @@
 }
 }
 
-% --- EDUCATION header (two rows: school+GPA / degree+location) ---
+% --- EDUCATION header (two rows: school+location / degree) ---
+% #1 = school (bold); #2 = the ", <location>" suffix in plain weight, or empty;
+% #3 = dates (right); #4 = the degree line, alone on its own row.
+% ATS shape: the school row ends in the same regular font the date column starts
+% in, and the degree row has nothing on its right, so a parser that reads a row's
+% two cells as one run sees "ST August 2021", never "GPAAugust 2021" or
+% "Data Science City". GPA and honors go on their own labelled line
+% below (render._education), where "GPA: 3.7/4.0" is the form parsers match.
 \newcommand{\resumeSubheading}[4]{
 \vspace{-2pt}\item
 \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
-\resumeHeaderSize\textbf{#1} & \resumeHeaderSize#2 \\
-\resumeHeaderSize\textit{#3} & \resumeHeaderSize\textit{#4} \\
+\resumeHeaderSize\textbf{#1}#2 & \resumeHeaderSize#3 \\
+\resumeHeaderSize\textit{#4} & \\
 \end{tabular*}\vspace{-14pt}
 }
 
@@ -108,8 +121,10 @@
 }
 
 % --- PROJECTS header (one line: bold name | link, all left-aligned) ---
-% #1 = project name (bolded here); #2 = the " | <link>" suffix (link italicized by
-% the renderer), or empty for a project with no link.
+% #1 = project name (bolded here); #2 = the " | <link>" suffix, or empty for a
+% project with no link. The renderer prints the repo's own host+path as the link
+% text (not the word "Link"): an ATS keeps only the extracted text and drops the
+% \href target, so a bare "Link" reaches it as a dead word.
 \newcommand{\resumeProjectHeadingInline}[2]{
 \vspace{-2pt}\item
 \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}

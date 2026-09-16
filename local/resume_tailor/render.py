@@ -24,8 +24,17 @@ _LINK_FIELDS = ("linkedin", "github")
 
 
 def _header(basics: dict) -> str:
-    """The centered name + contact line, from yaml `basics`. Missing fields are
-    simply omitted so the line stays clean for any user."""
+    """The PDF info dictionary plus the centered name + contact line, from yaml
+    `basics`. Missing fields are simply omitted so the line stays clean for any
+    user.
+
+    The \\hypersetup goes here rather than in the template because the title and
+    author are the candidate's name, and the preamble is kept free of personal
+    data. hyperref writes the info dictionary at the end of the run, so setting
+    it after \\begin{document} still lands in the PDF. Without it the file ships
+    with an empty Title/Author, which is what an ATS or a recruiter's PDF viewer
+    displays for the document.
+    """
     name = to_latex(basics.get("name", "") or "")
     contact_bits = [
         _contact_bit(k, str(basics[k]))
@@ -33,8 +42,14 @@ def _header(basics: dict) -> str:
         if basics.get(k)
     ]
     contact = " $|$ ".join(f"\\small{{{b}}}" for b in contact_bits)
+    info = (
+        f"\\hypersetup{{pdftitle={{{name} Resume}},pdfauthor={{{name}}},"
+        "pdfsubject={Resume}}\n\n"
+        if name else ""
+    )
     return (
-        "\\begin{center}\n"
+        info
+        + "\\begin{center}\n"
         f"\\textbf{{\\Huge \\scshape {name}}} \\\\ \\vspace{{1pt}}\n"
         f"{contact}\n"
         "\\end{center}\n\\vspace{-10pt}\n\n"
@@ -71,27 +86,51 @@ def _degree_line(e: dict) -> str:
     return "".join(parts).strip()
 
 
+# The GPA is printed over the scale it was earned on ("GPA: 3.7/4.0"): the
+# labelled, number-then-scale form is the one resume parsers match. A master
+# entry may override the scale (`gpa_scale: 10`) for a non-4.0 system.
+_DEFAULT_GPA_SCALE = "4.0"
+
+
 def _education(edu: List[dict]) -> str:
+    """One \\resumeSubheading per entry, laid out for a parser as much as a reader:
+
+        <school bold>, <location>                          <dates>
+        <degree line, spelled out from the master's fields>
+        GPA: <gpa>/<scale> | Awards & Honors: <honors; ...>
+
+    The location sits with the school (not at the end of the degree row, where a
+    parser reads "Minor in Data Science City, ST" as the degree), the
+    degree has its row to itself, and the GPA moved off the school row -- "3.7
+    GPA" glued to the date column extracted as "GPAAugust 2021" and lost both.
+    """
     if not edu:
         return ""
     rows: List[str] = []
     for e in edu:
         school = to_latex(str(e.get("school", "") or ""))
+        location = to_latex(str(e.get("location", "") or ""))
         gpa = e.get("gpa")
         # Show GPA only when it's a real, non-zero value (0 / blank means "unset").
         show_gpa = gpa not in (None, "", 0, 0.0, "0")
-        left = f"{school} $|$ {to_latex(str(gpa))} GPA" if show_gpa else school
         # \vspace{2pt} follows the degree line in all cases (matches the template),
-        # then an Honors item only when honors are present.
+        # then one \small line carrying GPA and/or honors, only when either exists.
         row = (
             "\\resumeSubheading\n"
-            f"{{{left}}}{{{fmt_dates(str(e.get('dates', '') or ''))}}}\n"
-            f"{{{_degree_line(e)}}}{{{to_latex(str(e.get('location', '') or ''))}}}\\vspace{{2pt}}"
+            f"{{{school}}}{{{', ' + location if location else ''}}}"
+            f"{{{fmt_dates(str(e.get('dates', '') or ''))}}}\n"
+            f"{{{_degree_line(e)}}}\\vspace{{2pt}}"
         )
+        bits: List[str] = []
+        if show_gpa:
+            scale = to_latex(str(e.get("gpa_scale") or _DEFAULT_GPA_SCALE))
+            bits.append(f"\\textbf{{GPA:}} {to_latex(str(gpa))}/{scale}")
         honors = e.get("honors") or []
         if honors:
-            row += "\n\\item \\small{\\textbf{Awards \\& Honors:} " \
-                   + "; ".join(to_latex(str(h)) for h in honors) + "}"
+            bits.append("\\textbf{Awards \\& Honors:} "
+                        + "; ".join(to_latex(str(h)) for h in honors))
+        if bits:
+            row += "\n\\item \\small{" + " $|$ ".join(bits) + "}"
         rows.append(row)
     return ("%-----------EDUCATION-----------\n\\section{Education}\n"
             "\\resumeSubHeadingListStart\n" + "\n".join(rows)
@@ -158,11 +197,16 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         # either a bare host+path (github.com/x/y) or a full URL (https://github.com/x/y);
         # without this, prefixing "https://" onto a full URL doubles the scheme.
         repo = repo.removeprefix("https://").removeprefix("http://")
-        # Link sits inline after the name as " | Link" (italic), mirroring the Work
-        # Experience header; empty (no trailing pipe) when the project has no repo.
+        # The link sits inline after the name as " | github.com/x/y", mirroring the
+        # Work Experience header; empty (no trailing pipe) when the project has no
+        # repo. The visible text is the repo's own host+path, not the word "Link":
+        # an ATS keeps only the extracted text and drops the \href target, so
+        # "Link" reached it as a dead word and the address never did. Display text
+        # goes through to_latex (a `_` in a repo name must print), the target
+        # through escape_url (it must not be backslashed) -- see _contact_bit.
         if "github.com" in repo:
             href = escape_url(f"https://{repo}")
-            link = f" $|$ \\href{{{href}}}{{\\textit{{Link}}}}"
+            link = f" $|$ \\href{{{href}}}{{{to_latex(repo.rstrip('/'))}}}"
         else:
             link = ""
         out.append(

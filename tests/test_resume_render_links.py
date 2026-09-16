@@ -75,10 +75,53 @@ def test_escape_url_empty_is_empty():
 
 
 def test_underscored_repo_href_target_has_no_backslash_escape(monkeypatch):
+    """The target stays a real address; the printed text is where `_` IS escaped
+    (it has to be, or pdflatex reads it as a subscript)."""
     monkeypatch.setattr(assets, "blocks", lambda: _blocks_with_repo("github.com/x/my_repo"))
     tex = render._projects(_SEL, _BULLETS)
-    assert r"\href{https://github.com/x/my_repo}" in tex
-    assert r"my\_repo" not in tex
+    assert r"\href{https://github.com/x/my_repo}{github.com/x/my\_repo}" in tex
+
+
+# The project link used to print the word "Link". An ATS keeps only the extracted
+# text and drops the \href target, so what reached it was "ExampleApp | Link" with no
+# address anywhere. The visible text is now the repo's own host+path.
+
+
+def test_project_link_text_is_the_repo_path_not_the_word_link(monkeypatch):
+    monkeypatch.setattr(assets, "blocks", lambda: _blocks_with_repo("https://github.com/x/y"))
+    tex = render._projects(_SEL, _BULLETS)
+    assert r"{ $|$ \href{https://github.com/x/y}{github.com/x/y}}" in tex
+    assert "Link" not in tex
+    assert r"\textit" not in tex
+
+
+def test_project_link_text_drops_a_trailing_slash(monkeypatch):
+    monkeypatch.setattr(assets, "blocks", lambda: _blocks_with_repo("github.com/x/y/"))
+    tex = render._projects(_SEL, _BULLETS)
+    assert "{github.com/x/y}}" in tex
+
+
+def test_project_without_repo_has_no_link_suffix(monkeypatch):
+    monkeypatch.setattr(assets, "blocks", lambda: _blocks_with_repo(""))
+    tex = render._projects(_SEL, _BULLETS)
+    assert r"\resumeProjectHeadingInline" + "\n{ProjX}{}\n" in tex
+
+
+# The PDF's own Title/Author were blank (hyperref writes an empty info dictionary
+# unless told otherwise), which is what a recruiter's viewer tab and an ATS's
+# document record show. The header now sets them from the candidate's name.
+
+
+def test_header_sets_pdf_title_and_author_from_the_name():
+    tex = _header_of(name="Jane Doe", email="jane@example.com")
+    assert (r"\hypersetup{pdftitle={Jane Doe Resume},pdfauthor={Jane Doe},"
+            r"pdfsubject={Resume}}") in tex
+    assert tex.index(r"\hypersetup") < tex.index(r"\begin{center}")
+
+
+def test_header_without_a_name_sets_no_pdf_metadata():
+    tex = _header_of(email="jane@example.com")
+    assert r"\hypersetup" not in tex
 
 
 def test_escape_url_percent_encodes_an_ampersand():

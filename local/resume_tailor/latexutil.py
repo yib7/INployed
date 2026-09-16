@@ -24,7 +24,8 @@ _LATEX_SPECIALS = {
     "}": r"\}",
     "~": r"\textasciitilde{}",
     "^": r"\textasciicircum{}",
-    # In the template's OT1/T1 font, raw < > render as inverted punctuation.
+    # Raw < > render as inverted punctuation in OT1; the template is T1 now, where
+    # they are fine, but the text commands are correct in both encodings.
     "<": r"\textless{}",
     ">": r"\textgreater{}",
     "|": r"\textbar{}",
@@ -88,7 +89,7 @@ def strip_emphasis(text: str) -> str:
 
 
 # Unicode math glyphs a model may emit in a bullet -> the LaTeX that renders them
-# correctly in the template's OT1 font (raw glyphs render as tofu/wrong chars).
+# correctly in the template's text font (raw glyphs render as tofu/wrong chars).
 # Applied AFTER escape_latex so the replacement values keep their backslashes.
 # Keyed by integer code point to keep this file pure ASCII.
 _MATH_PAIRS = [
@@ -131,8 +132,9 @@ _PUNCT_MAP = {chr(cp): rep for cp, rep in _PUNCT_PAIRS}
 
 
 def _ascii_fallback(text: str) -> str:
-    """Final safety net: guarantee ASCII-only output. The template has no
-    inputenc/fontenc, so ANY undeclared non-ASCII glyph is a fatal pdflatex error.
+    """Final safety net: guarantee ASCII-only output. The template declares no
+    inputenc, so an undeclared non-ASCII glyph is a fatal pdflatex error (T1
+    fontenc changes the output glyph set, not what the input may carry).
     Map known punctuation to ASCII, decompose accents (e-acute -> e), then drop
     anything still non-ASCII. Runs LAST, after the math-glyph pass, so intentional
     LaTeX (which is already ASCII) is untouched."""

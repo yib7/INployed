@@ -40,10 +40,11 @@ basics:
 education:
   - school: State University
     location: City, ST
-    degree: B.S. Computer Science
+    degree: Bachelor of Science in Computer Science   # spell it out: "B.S." alone is a weaker ATS match
     concentration: AI/ML
     minor: Data Science
-    gpa: 3.7                        # no quotes -> parsed as a number
+    gpa: 3.7                        # no quotes -> parsed as a number; prints as "GPA: 3.7/4.0"
+    # gpa_scale: 10                 # only for a non-4.0 system; the printed scale defaults to 4.0
     dates: "2021-08 / 2025-05"
     honors: [Dean's List, Honors College]
 

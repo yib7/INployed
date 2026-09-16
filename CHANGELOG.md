@@ -62,6 +62,50 @@ test suite proves the guarantee behind that over a whole generated résumé.
   in threes, and asking for it to be broken up offers the model a choice between dropping
   one and padding.
 
+### Changed
+- **The Education block and the project links are laid out for an ATS parser as much as
+  for a reader.** Running the compiled PDF through two text extractors (pypdf and pdfminer,
+  which bracket how applicant-tracking systems read a PDF) showed three things a reader
+  never sees. The GPA sat at the end of the school row, hard against the right-aligned
+  date column, and came out as `3.7 GPAAugust 2021 – May 2025` for the example master: the
+  GPA and the start date both lost. The location sat at the end of the degree row, so the
+  degree read as
+  `Minor in Data Science City, ST`. And every project link printed the word
+  "Link": an ATS keeps the extracted text and drops the link target, so the repo address
+  never reached it at all. The block now renders, for the example master, as
+
+  ```
+  State University, City, ST                                     August 2021 – May 2025
+  Bachelor of Science in Computer Science with a Concentration in AI/ML, Minor in Data Science
+  GPA: 3.7/4.0 | Awards & Honors: Dean's List; Honors College
+  ```
+
+  The location travels with the school (`\resumeSubheading` in `resume_template.tex` now
+  takes school / location-suffix / dates / degree, and the degree row has nothing on its
+  right), and GPA and honors share one labelled line in the `GPA: x.xx/4.0` form parsers
+  match — a `gpa_scale:` field on the education entry overrides the 4.0 for another
+  system. The project link prints the repo's own host+path (`github.com/janedoe/exampleapp`)
+  as its text. The PDF's Title and Author, previously blank, are set from the candidate's
+  name via `\hypersetup` in the rendered header, so the preamble stays free of personal
+  data. The example master spells the degree out (`Bachelor of Science in Computer
+  Science`): "B.S." alone is a weaker match for the keyword filters that look for the
+  degree level.
+
+  Printing the repo path exposed a fourth thing: the template used the OT1 font encoding,
+  in which an underscore is drawn as a rule rather than typeset as a glyph, so it has no
+  character in the PDF's text stream and a repo named `example_app_archival` extracted as
+  `example app archival`. The template now loads `[T1]{fontenc}` (the cover letter's
+  preamble already did). The ASCII metrics are identical, verified by compiling the same
+  résumé both ways: same page count, same 56 extracted lines, no overfull or underfull
+  boxes either way.
+
+  The golden in `tests/test_tailor_golden.py` was re-pinned for exactly these three
+  hunks and nothing else — a `\hypersetup{pdftitle=...}` line before `\begin{center}`;
+  the education entry `{State University $|$ 3.8 GPA}{...}{<degree>}{Austin, TX}` +
+  `Awards & Honors` line becoming `{State University}{, Austin, TX}{...}{<degree>}` +
+  `GPA: 3.8/4.0 $|$ Awards & Honors`; and the Trailhead link text `\textit{Link}` becoming
+  `github.com/alexrivera/trailhead`. Bullets, skills and every other line are byte-identical.
+
 ### Fixed
 - **A dropped bullet gets one chance to come back, instead of taking the entry's
   introduction with it.** The grounding gate that runs on the first draft is the only one

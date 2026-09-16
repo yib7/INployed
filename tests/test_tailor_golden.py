@@ -618,6 +618,8 @@ _GOLDEN_SKILL_LINES = [
 _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \begin{document}
 
+\hypersetup{pdftitle={Alex Rivera Resume},pdfauthor={Alex Rivera},pdfsubject={Resume}}
+
 \begin{center}
 \textbf{\Huge \scshape Alex Rivera} \\ \vspace{1pt}
 \small{Austin, TX} $|$ \small{555-0142} $|$ \small{alex@example.com} $|$ \small{\href{https://linkedin.com/in/alexrivera}{linkedin.com/in/alexrivera}}
@@ -628,9 +630,9 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \section{Education}
 \resumeSubHeadingListStart
 \resumeSubheading
-{State University $|$ 3.8 GPA}{August 2021 -- May 2025}
-{B.S. in Computer Science with a Concentration in Data Science}{Austin, TX}\vspace{2pt}
-\item \small{\textbf{Awards \& Honors:} Dean's List}
+{State University}{, Austin, TX}{August 2021 -- May 2025}
+{B.S. in Computer Science with a Concentration in Data Science}\vspace{2pt}
+\item \small{\textbf{GPA:} 3.8/4.0 $|$ \textbf{Awards \& Honors:} Dean's List}
 \resumeSubHeadingListEnd
 
 \vspace{-10pt}
@@ -659,7 +661,7 @@ _GOLDEN_TEX = r"""%%GOLDEN TEMPLATE PREAMBLE%%
 \resumeSubHeadingListStart
 
 \resumeProjectHeadingInline
-{Trailhead}{ $|$ \href{https://github.com/alexrivera/trailhead}{\textit{Link}}}
+{Trailhead}{ $|$ \href{https://github.com/alexrivera/trailhead}{github.com/alexrivera/trailhead}}
 \resumeItemListStart
 \resumeItem{Designed Trailhead, a hiking route planner that ranks trails for a given weather window and serves them through a FastAPI service backed by Redis caching.}
 \resumeItem{Engineered a gradient boosting model on 8,400 logged hikes to predict trail difficulty.}

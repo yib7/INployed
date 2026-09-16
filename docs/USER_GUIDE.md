@@ -3,6 +3,10 @@
 Everything the dashboard and the CLIs can do, once the [README's Quick start](../README.md#quick-start)
 has you running. Skim the headings; nothing here is required reading.
 
+Every `python` in the commands below is the project venv's interpreter from Quick start
+Step 2, which is never activated: from the repo root that is `venv\Scripts\python.exe`
+(`venv/bin/python` on macOS or Linux), and from `local/` it is `..env\Scripts\python.exe`.
+
 ### Tailor a résumé for one job (CLI)
 The résumé-tailor CLI lives in the `resume_tailor` package, so run it from `local/`:
 ```bash

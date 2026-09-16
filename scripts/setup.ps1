@@ -196,9 +196,14 @@ if ($InstallDeps) {
     # names, a symlink escape in the fallback tar extractor, a doubly-encoded
     # index URL). This is the installer, not a project pin, so it is not in
     # requirements.txt.
-    python -m pip install --upgrade pip
-    python -m pip install -r (Join-Path $Root 'requirements.txt')
-    Write-Ok "Dependencies installed"
+    # Install into the project venv README Step 2 builds when it exists: bare
+    # `python` is the global interpreter (the venv is never activated), and the
+    # launcher only looks in venv\Scripts, so a global install is one it cannot see.
+    $venvPy = Join-Path (Join-Path (Join-Path $Root 'venv') 'Scripts') 'python.exe'
+    if (Test-Path -LiteralPath $venvPy) { $py = $venvPy } else { $py = 'python' }
+    & $py -m pip install --upgrade pip
+    & $py -m pip install -r (Join-Path $Root 'requirements.txt')
+    Write-Ok "Dependencies installed (into $py)"
 }
 
 # --- 5. next steps ------------------------------------------------------------
@@ -211,7 +216,9 @@ Write-Host @"
        needs editing by hand.
     3. Enter your experience in the Resume Data tab, which writes
        resume_tailor_files/master_experience.yaml for you.
-    4. Authenticate Google Cloud:  gcloud auth application-default login
-    5. (Scraping) run your own pipeline:  python pipeline\scraper.py   then   python pipeline\score_jobs.py
+    4. (Only if you bill a Google Cloud project; skip if you use Gemini API keys)
+       authenticate it:  gcloud auth application-default login
+    5. (Scraping) run your own pipeline from the venv README Step 2 built:
+       venv\Scripts\python.exe pipeline\scraper.py   then   venv\Scripts\python.exe pipeline\score_jobs.py
        or run it on a small GCP VM via cron, managed from Settings -> VM.
 "@ -ForegroundColor Gray

@@ -263,8 +263,9 @@ need it.
 Settings → Engine, **Resume tailor engine**. `vertex` (the default) bills every tailor call to
 your Google Cloud project and `api_key` uses the single **Gemini API key (resume tailor)**.
 `pool` uses the same **Gemini API keys** the job scorer rotates through, every one of them,
-held to Google's free-tier limits, and bills the project only once they have all run dry for
-the day. The keys are the **Gemini API keys (job scorer)** row under Credentials: free-tier
+held to Google's free-tier limits, and bills the project only when no key can take the call:
+all of them have run dry for the day, or Google is refusing every one of them for the moment
+(a 503 or an unexplained 429). The keys are the **Gemini API keys (job scorer)** row under Credentials: free-tier
 keys from [Google AI Studio](https://aistudio.google.com/apikey), one per Google account,
 and every extra account is another day's allowance. With no **Google Cloud project ID** set
 there is nothing to spill onto, so a keys-only setup never bills; the tailor stops with a

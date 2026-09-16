@@ -102,6 +102,19 @@ for _leaked in (
     "SCORE_STAGE1_CONCURRENCY", "SCORE_STAGE2_CONCURRENCY",
     "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
     "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY", "SCORE_HTTP_TIMEOUT_S",
+    # The multi-model pool's names, read live by keypool.limits_from_disk,
+    # score_jobs.load_scoring_config and config.gemini_fallback_models. Proved
+    # to leak before this line existed: exporting SCORE_MODEL_LIMITS and
+    # RESUME_TAILOR_SWEEP_P2 in the shell failed five tests across
+    # test_scoring_config, test_keypool and test_sweep_pass.
+    "SCORE_STAGE1_MODELS", "SCORE_STAGE2_MODELS", "SCORE_MODEL_LIMITS",
+    "RESUME_TAILOR_FALLBACK_MODELS", "RESUME_TAILOR_FALLBACK_FLASH_LITE",
+    "RESUME_TAILOR_FALLBACK_FLASH", "RESUME_TAILOR_FALLBACK_PRO",
+    # The tailor's per-stage toggles, read live from os.environ by config.py;
+    # a shell export would decide which stages the golden and the sweep tests
+    # see run.
+    "RESUME_TAILOR_REGROUND", "RESUME_TAILOR_AIWRITING_SWEEP",
+    "RESUME_TAILOR_SWEEP_P2",
 ):
     os.environ.pop(_leaked, None)
 

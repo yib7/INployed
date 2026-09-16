@@ -29,6 +29,7 @@ the grounding rule is carried by the system prompt instead.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -100,7 +101,10 @@ def _first(job: Dict[str, Any], *keys: str) -> str:
     for key in keys:
         val = job.get(key)
         if isinstance(val, str):
-            text = val.strip()
+            # One line, bounded: these head the prompt as "Title  : x" /
+            # "Company: x" with no fence, so a scraped newline would forge a
+            # line of its own (the rule run._line_field applies to the tailor).
+            text = re.sub(r"\s+", " ", val).strip()[:200]
             if text and text.lower() not in ("nan", "none"):
                 return text
     return ""

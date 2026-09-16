@@ -179,6 +179,26 @@ def _field(job: Dict[str, str], key: str) -> str:
     return "" if s.lower() in ("nan", "none") else s
 
 
+# Longest a scraped title or company name is allowed to be once it heads a
+# prompt. A real one is a few dozen characters; the bound exists so a field
+# that is not one cannot carry a paragraph in.
+_LINE_FIELD_MAX = 200
+
+
+def _line_field(job: Dict[str, str], key: str) -> str:
+    """_field for the two scraped values that head every prompt as ONE line.
+
+    `TARGET JOB: {job_title}` opens each tailor prompt, and the company name
+    heads the cover letter's; neither is fenced the way the description is
+    (fence_jd), because a title is a line, not a document. A scraped value
+    carrying a newline therefore forged a fresh prompt line of its own, the
+    same route apply_data._one_line closes for apply.md. Whitespace runs
+    collapse to one space and the result is bounded, so the field stays the
+    one line the prompt reads it as.
+    """
+    return re.sub(r"\s+", " ", _field(job, key)).strip()[:_LINE_FIELD_MAX]
+
+
 def _to_plain(text: str) -> str:
     """HTML -> markdown-ish plain text (descriptions are often raw HTML)."""
     if "<" in text and ">" in text:
@@ -888,8 +908,8 @@ def tailor(
     if reset_usage:
         llm.reset_usage()
 
-    company = _field(job, "company_name") or "Unknown Company"
-    job_title = _field(job, "job_title") or "Role"
+    company = _line_field(job, "company_name") or "Unknown Company"
+    job_title = _line_field(job, "job_title") or "Role"
     jd = _job_description_text(job)
     if not pdflatex_available():
         raise RuntimeError(f"pdflatex not found at '{config.PDFLATEX_PATH}'. Install MiKTeX/TeX Live.")
@@ -1071,8 +1091,8 @@ def generate_cover_letter(
     log = on_status or _noop
     llm.reset_usage()
 
-    company = _field(job, "company_name") or "Unknown Company"
-    job_title = _field(job, "job_title") or "Role"
+    company = _line_field(job, "company_name") or "Unknown Company"
+    job_title = _line_field(job, "job_title") or "Role"
     jd = _job_description_text(job)
     if not pdflatex_available():
         raise RuntimeError(f"pdflatex not found at '{config.PDFLATEX_PATH}'. Install MiKTeX/TeX Live.")

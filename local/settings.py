@@ -160,13 +160,14 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # replacement. The date is still the earliest possible retirement rather than a
 # scheduled one, and the model is still on the Stable list, so nothing breaks
 # today -- but it is the stage-1 scoring default and the tailor's flash-lite tier,
-# so the migration is real and dated. It is NOT done here because it needs two
-# things this repo cannot get from documentation: gemini-3.5-flash-lite's
-# free-tier rpm/rpd (Google's rate-limits page stopped publishing per-model
-# numbers and points at each account's AI Studio dashboard), without which the
-# pool would fall back to keypool.DEFAULT_LIMITS and gate 5x tighter than the
-# 15/500 it gates gemini-3.1-flash-lite at; and a scoring run to confirm the
-# swap is not a quality regression. Tracked in .autopilot/BACKLOG.md.
+# so the migration is real and dated. It is NOT done here. Of the two inputs it
+# needed, one is now in the tree: keypool.LIMITS carries a gemini-3.5-flash-lite
+# row (15/500, read from the account's AI Studio dashboard when the multi-model
+# pool filled in the whole Flash family), so the swap no longer falls to
+# keypool.DEFAULT_LIMITS. The other is still open: a stage-1 scoring run to
+# confirm the swap is not a quality regression, and a release pass never
+# invokes the billed scorer. Re-checked against Google's table 2026-09-15: the
+# row is unchanged (Stable, shutdown 2027-05-07). Tracked in .autopilot/BACKLOG.md.
 #
 # The newer flash ids (3.8-flash, 3.7-flash, 3.6-flash, 3.5-flash-lite) are
 # offered as opt-in choices, and the defaults deliberately stay on the
@@ -177,8 +178,9 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # so list price is not what this pipeline pays; and a 2026-06-11 downgrade of
 # exactly these two defaults was reversed eight days later on quality grounds.
 # Changing the pair is a re-tune with a scoring run behind it, not a version bump.
-# keypool.LIMITS has free-tier rpm/rpd only for the two defaults; every other id
-# here falls to keypool.DEFAULT_LIMITS on purpose.
+# keypool.LIMITS has a free-tier rpm/rpd row for every Flash id in this tuple
+# (test_every_gemini_models_choice_has_a_real_limits_row pins that); only the pro
+# preview falls to keypool.DEFAULT_LIMITS, on purpose.
 GEMINI_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash",
                  "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash",
                  "gemini-3.1-pro-preview")
@@ -370,7 +372,8 @@ SETTINGS_SCHEMA: list[Field] = [
     # nothing else -- not the ranked fallbacks, and not a model both stages name
     # (those collapsed last-write-wins, which fired for real: two stages on
     # gemini-3.5-flash-lite left it gated at stage 2's 5/20 instead of 15/500).
-    # Normally left empty; keypool.LIMITS covers every model in the dropdown.
+    # Normally left empty; keypool.LIMITS covers every Flash model in the
+    # dropdown (the pro preview is the one id gated at DEFAULT_LIMITS).
     Field("model_limits", "Per-model rate limits", "list", [],
           "Scoring", "scoring", show_if=("provider", ("gemini",)), advanced=True,
           help="One 'model requests-per-minute requests-per-day' per line, e.g. "

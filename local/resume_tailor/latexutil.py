@@ -131,18 +131,38 @@ _PUNCT_PAIRS = [
 _PUNCT_MAP = {chr(cp): rep for cp, rep in _PUNCT_PAIRS}
 
 
+def _fold_char(ch: str) -> str:
+    """One non-ASCII character as escaped ASCII: NFKD-decompose, drop what is
+    still non-ASCII, then run the result through the escaper.
+
+    The escape step is the point. NFKD is a compatibility fold, and the
+    compatibility forms of the LaTeX specials exist: FULLWIDTH REVERSE SOLIDUS
+    (U+FF3C) and SMALL REVERSE SOLIDUS (U+FE68) both decompose to a backslash,
+    the fullwidth and small-form braces to braces, and so on for %, #, $, &, _,
+    ^, ~. This fold runs AFTER escape_latex, so without its own escaping a
+    bullet written in those glyphs arrived at pdflatex as a live command --
+    the exact injection the escaper exists to stop, with text that a job
+    posting steers. Applied per character so the ASCII the escaper already
+    produced is never touched."""
+    folded = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode("ascii")
+    return escape_latex(folded)
+
+
 def _ascii_fallback(text: str) -> str:
     """Final safety net: guarantee ASCII-only output. The template declares no
     inputenc, so an undeclared non-ASCII glyph is a fatal pdflatex error (T1
     fontenc changes the output glyph set, not what the input may carry).
     Map known punctuation to ASCII, decompose accents (e-acute -> e), then drop
     anything still non-ASCII. Runs LAST, after the math-glyph pass, so intentional
-    LaTeX (which is already ASCII) is untouched."""
+    LaTeX (which is already ASCII) is untouched -- and only the non-ASCII
+    characters are folded, each through _fold_char, so a fold can never
+    produce an unescaped special."""
     for u, a in _PUNCT_MAP.items():
         if u in text:
             text = text.replace(u, a)
-    text = unicodedata.normalize("NFKD", text)
-    return text.encode("ascii", "ignore").decode("ascii")
+    if text.isascii():
+        return text
+    return "".join(ch if ch.isascii() else _fold_char(ch) for ch in text)
 
 
 def to_latex(text: str) -> str:
@@ -177,10 +197,16 @@ def _fmt_one(token: str) -> str:
 
 
 def fmt_dates(dates: str) -> str:
-    """'2025-06 / 2025-07' -> 'June 2025 -- July 2025'."""
+    """'2025-06 / 2025-07' -> 'June 2025 -- July 2025'.
+
+    Escaped on the way out like every other field: the dates box is free text
+    in the Resume Data tab, and a token that is not a year or a month name is
+    printed as written, so it has to go through to_latex before it reaches the
+    .tex. A well-formed date is unchanged by that (digits, month names, '--').
+    """
     if not dates:
         return ""
     if "/" in dates:
         a, b = dates.split("/", 1)
-        return f"{_fmt_one(a)} -- {_fmt_one(b)}"
-    return _fmt_one(dates)
+        return to_latex(f"{_fmt_one(a)} -- {_fmt_one(b)}")
+    return to_latex(_fmt_one(dates))

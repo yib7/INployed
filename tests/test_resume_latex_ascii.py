@@ -52,3 +52,68 @@ def test_cover_letter_paragraphs_are_ascii():
     out = coverletter._paragraphs(body)
     assert out.isascii()
     assert MINUS not in out
+
+
+# -- the fold must not UN-escape ------------------------------------------------
+# ``to_latex`` escapes the ASCII specials first and ASCII-folds (NFKD) last, so a
+# compatibility character whose decomposition IS an ASCII special used to arrive
+# after the escaper had already run: FULLWIDTH REVERSE SOLIDUS (U+FF3C) folded to
+# a live backslash, FULLWIDTH LEFT CURLY BRACKET (U+FF5B) to a live brace, and a
+# bullet the model wrote in fullwidth glyphs reached pdflatex as a real command.
+# Text handed to ``to_latex`` is model output steered by an untrusted job posting,
+# so this is the LaTeX-injection chokepoint, and it must hold for every code point.
+
+FW_BACKSLASH = "＼"     # NFKD -> "\\"
+FW_LBRACE = "｛"        # NFKD -> "{"
+FW_RBRACE = "｝"        # NFKD -> "}"
+SMALL_BACKSLASH = "﹨"  # NFKD -> "\\"
+SMALL_LBRACE = "﹛"
+SMALL_RBRACE = "﹜"
+
+
+def test_a_fullwidth_input_command_renders_as_literal_text():
+    out = to_latex(f"{FW_BACKSLASH}input{FW_LBRACE}/etc/passwd{FW_RBRACE}")
+    assert out.isascii()
+    assert r"\input{" not in out
+    assert out == r"\textbackslash{}input\{/etc/passwd\}"
+
+
+def test_a_small_form_write18_renders_as_literal_text():
+    out = to_latex(f"{SMALL_BACKSLASH}write18{SMALL_LBRACE}rm -rf ~{SMALL_RBRACE}")
+    assert r"\write18" not in out
+    assert out.startswith(r"\textbackslash{}write18\{")
+
+
+def test_no_code_point_folds_into_an_unescaped_latex_special():
+    """Whole code space: for every non-ASCII character, whatever ``to_latex``
+    produces from it alone must contain no bare special. A bare backslash, brace,
+    ``%`` (comment: truncates the line), ``#`` (macro parameter) or ``$`` (math
+    shift) is exactly what the escaper exists to prevent."""
+    from resume_tailor.latexutil import _LATEX_SPECIALS, _MATH_GLYPHS, escape_latex
+
+    allowed = {escape_latex(ch) for ch in _LATEX_SPECIALS} | {""}
+    offenders = []
+    for cp in range(0x80, 0x110000):
+        ch = chr(cp)
+        if ch in _MATH_GLYPHS:
+            continue                      # deliberate LaTeX ($\ge$ and friends)
+        out = to_latex(ch)
+        if out in allowed or not any(sp in out for sp in _LATEX_SPECIALS):
+            continue
+        # a decomposition may yield several characters ("..." or "(1)"); accept
+        # it when every special in it is escaped
+        stripped = out
+        for esc in sorted(allowed, key=len, reverse=True):
+            stripped = stripped.replace(esc, "")
+        if any(sp in stripped for sp in _LATEX_SPECIALS):
+            offenders.append((hex(cp), out))
+    assert not offenders, offenders[:10]
+
+
+def test_bullets_and_fields_go_through_the_same_chokepoint():
+    from resume_tailor.latexutil import clean_bullet
+
+    bullet = clean_bullet(f"Cut latency {FW_BACKSLASH}input{FW_LBRACE}secret{FW_RBRACE}")
+    assert r"\input{" not in bullet
+    edu = [{"school": f"U{FW_BACKSLASH}openout", "degree": "B.S.", "dates": "2020/2024"}]
+    assert r"\openout" not in render._education(edu)

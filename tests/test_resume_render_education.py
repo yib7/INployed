@@ -105,3 +105,28 @@ def test_every_field_is_latex_escaped():
 def test_no_entries_renders_no_section():
     assert render._education([]) == ""
     assert render._education(None) == ""
+
+
+# -- dates are a field like any other ------------------------------------------
+# fmt_dates used to hand its tokens straight to the .tex: "2021-08 / 2025-05"
+# never carries a special, so nothing noticed, but the dates box in the Resume
+# Data tab accepts free text and a master with `dates: "\input{x} / 2024"`
+# reached pdflatex as a live command while every neighbouring field was escaped.
+
+def test_a_dates_field_is_escaped_like_every_other_field():
+    from resume_tailor.latexutil import fmt_dates
+
+    assert fmt_dates(r"\input{secrets.env} / 2024") == (
+        r"\textbackslash{}input\{secrets.env\} -- 2024")
+    assert fmt_dates("50% / 2024-01") == r"50\% -- January 2024"
+    out = render._education([_entry(dates=r"2021-08 / \write18{ls}")])
+    assert r"\write18" not in out
+    assert out.isascii()
+
+
+def test_a_plain_dates_field_is_byte_identical():
+    from resume_tailor.latexutil import fmt_dates
+
+    assert fmt_dates("2021-08 / 2025-05") == "August 2021 -- May 2025"
+    assert fmt_dates("2024 / present") == "2024 -- Present"
+    assert fmt_dates("") == ""

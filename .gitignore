@@ -35,6 +35,11 @@ local/config.json
 # behind if the replace fails — both land next to the config they guard.
 *.json.lock
 *.json.*.tmp
+# The same stranded temp for every other atomic writer (csv_io, jobsdata,
+# master_edit, merge_incoming, scraper): <stem>.<random>.tmp[.gz] beside a
+# master CSV or the personal master_experience.yaml.
+*.tmp
+*.tmp.gz
 search_config.json
 scoring_config.json
 # Legacy flat answer file: apply_answers.py migrates a pre-existing one on first

@@ -1030,3 +1030,33 @@ def test_trigger_hands_back_rows_when_the_scrape_beat_the_sync_window():
 def test_trigger_hands_back_a_snapshot_id_on_the_202_handoff():
     got = asyncio.run(scraper.trigger(_trigger_session(202, '{"snapshot_id": "s9"}'), {}))
     assert got == scraper.Collection("s9", None)
+
+
+def test_a_202_without_a_snapshot_id_is_an_error_not_one_job_record():
+    """202 Accepted is Bright Data saying the collection is still running, so
+    its body is a handoff, never the records. Read as a record set, a
+    `{"status": "running"}` body became one bogus row in the master with no
+    job_posting_id, and the real collection was never polled."""
+    with pytest.raises(RuntimeError, match="202"):
+        asyncio.run(scraper.trigger(_trigger_session(202, '{"status": "running"}'), {}))
+    with pytest.raises(RuntimeError, match="202"):
+        asyncio.run(scraper.trigger(_trigger_session(202, '[]'), {}))
+
+
+def test_a_202_body_that_is_an_error_envelope_still_says_refused():
+    with pytest.raises(RuntimeError, match="refused"):
+        asyncio.run(scraper.trigger(
+            _trigger_session(202, '{"status": "failed", "message": "boom"}'), {}))
+
+
+@pytest.mark.parametrize("body", ['[1, 2]', '"just a string"', '1\n2\n', '[{"a": 1}, 7]'])
+def test_rows_that_are_not_objects_are_refused_not_normalized(body):
+    """pd.json_normalize over scalars is a traceback, not a message."""
+    with pytest.raises(RuntimeError, match="not a record"):
+        scraper._parse_collection_body(body)
+
+
+def test_an_empty_json_array_is_a_zero_row_collection():
+    # `[]` is Bright Data positively saying "nothing matched", unlike an empty
+    # body, which says nothing at all. main() prints the sync-branch NOTE for it.
+    assert scraper._parse_collection_body("[]") == scraper.Collection(None, [])

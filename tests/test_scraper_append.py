@@ -222,6 +222,46 @@ def test_a_synchronous_collection_reaches_the_csv_without_a_second_call(
     assert sorted(got["job_posting_id"]) == ["1", "2"]
 
 
+def test_a_zero_row_synchronous_collection_says_the_rejection_check_did_not_run(
+        tmp_path, monkeypatch, capsys):
+    """The `[]` body: nothing to write, exit clean, and the NOTE that the
+    input-rejection check (which lives on the /progress payload) never ran
+    must be reachable and printed, so a quiet day is not mistaken for a
+    verified one."""
+    label = scraper.RUN_LABELS[0]
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "last_run_job_ids.json")
+    monkeypatch.setattr(scraper, "require_credentials", lambda: None)
+    base = dict(scraper.load_search_config(), keywords=["k"],
+                remote_types=["remote"], limit_per_input=5)
+    monkeypatch.setattr(scraper, "load_search_config", lambda: base)
+    monkeypatch.setattr(scraper, "load_blocklist", lambda: [])
+    monkeypatch.setattr(scraper, "append_to_master", lambda df: len(df))
+    monkeypatch.setattr(scraper, "load_exclude_ids", lambda: [])
+
+    async def no_preflight(session):
+        return None
+
+    monkeypatch.setattr(scraper, "preflight", no_preflight)
+
+    async def fake_trigger(session, payload, limit_per_input=None):
+        return scraper.Collection(None, [])
+
+    monkeypatch.setattr(scraper, "trigger", fake_trigger)
+
+    async def never(*a, **k):
+        raise AssertionError("nothing to poll or download")
+
+    monkeypatch.setattr(scraper, "wait_until_ready", never)
+    monkeypatch.setattr(scraper, "download", never)
+
+    asyncio.run(scraper.main(run_label=label))
+    out = capsys.readouterr().out
+    assert "Collected 0 rows synchronously" in out
+    assert "input-rejection check did not run" in out
+    assert not list(tmp_path.glob("*/linkedin_jobs_*.csv"))
+
+
 def test_the_asynchronous_handoff_still_polls_and_downloads(tmp_path, monkeypatch):
     """The other branch, unchanged: a 202 means the rows are NOT in hand yet."""
     label = scraper.RUN_LABELS[0]

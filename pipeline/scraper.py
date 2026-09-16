@@ -869,7 +869,21 @@ def _looks_like_an_envelope(data: dict) -> bool:
     return "status" in data and "message" in data
 
 
-def _parse_collection_body(body: str) -> Collection:
+def _records(rows: list, text: str) -> Collection:
+    """`rows` as a record set, refusing anything that is not a JSON object.
+
+    pd.json_normalize over a scalar is a traceback, and a scalar here means the
+    body was never a collection: name it instead of filing it.
+    """
+    for n, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            raise RuntimeError(
+                f"Collection body item {n} is not a record but {type(row).__name__} "
+                f"({row!r:.80}); first 200 chars of the body: {text[:200]!r}")
+    return Collection(None, rows)
+
+
+def _parse_collection_body(body: str, status: int | None = None) -> Collection:
     """Read a /datasets/v3/scrape response body, whichever shape it took.
 
     That endpoint is SYNCHRONOUS with an asynchronous escape hatch: it collects
@@ -890,6 +904,13 @@ def _parse_collection_body(body: str) -> Collection:
     All three shapes are accepted here rather than pinned with a `format`
     parameter, because the request that produces them is the billed one and is
     not worth experimenting on to find out.
+
+    `status` is the HTTP status when the caller has one. 202 Accepted is Bright
+    Data saying the collection is still running, so its body is a handoff and
+    never the records: a 202 whose body carries no snapshot id is refused rather
+    than filed as a one-record collection (a `{"status": "running"}` body would
+    otherwise become one bogus row with no job_posting_id, and the real
+    collection would never be polled).
     """
     text = (body or "").strip()
     if not text:
@@ -904,18 +925,27 @@ def _parse_collection_body(body: str) -> Collection:
     except json.JSONDecodeError:
         pass                      # not one JSON value -- fall through to NDJSON
     else:
+        if isinstance(data, dict) and data.get("snapshot_id"):
+            return Collection(str(data["snapshot_id"]), None)
+        if isinstance(data, dict) and _looks_like_an_envelope(data):
+            raise RuntimeError(f"Collection request refused: {data}")
+        if status == 202:
+            raise RuntimeError(
+                f"Bright Data answered 202 Accepted (collection still running) "
+                f"but the body carries no snapshot_id to poll: {text[:200]!r}")
         if isinstance(data, list):
-            return Collection(None, data)
+            return _records(data, text)
         if isinstance(data, dict):
-            snapshot_id = data.get("snapshot_id")
-            if snapshot_id:
-                return Collection(str(snapshot_id), None)
-            if _looks_like_an_envelope(data):
-                raise RuntimeError(f"Collection request refused: {data}")
             return Collection(None, [data])       # a one-record NDJSON body
-        raise RuntimeError(f"Unexpected collection response shape: {data!r}")
+        raise RuntimeError(
+            f"Collection body item 1 is not a record but {type(data).__name__} "
+            f"({data!r:.80}); first 200 chars of the body: {text[:200]!r}")
 
-    rows: list[dict] = []
+    if status == 202:
+        raise RuntimeError(
+            f"Bright Data answered 202 Accepted (collection still running) "
+            f"but the body carries no snapshot_id to poll: {text[:200]!r}")
+    rows: list = []
     for n, line in enumerate(text.splitlines(), 1):
         line = line.strip()
         if not line:
@@ -928,7 +958,7 @@ def _parse_collection_body(body: str) -> Collection:
             raise RuntimeError(
                 f"Collection body is not readable as JSON or NDJSON; line {n} "
                 f"failed to parse ({e}). First 200 chars: {text[:200]!r}") from e
-    return Collection(None, rows)
+    return _records(rows, text)
 
 
 async def trigger(session: aiohttp.ClientSession, payload: dict,
@@ -952,7 +982,7 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
             raise RuntimeError(f"Trigger failed {resp.status}: {body}{hint}")
         # text(), not json(): a collection that beat the sync window comes back
         # as NDJSON, which json() cannot read. See _parse_collection_body.
-        return _parse_collection_body(await resp.text())
+        return _parse_collection_body(await resp.text(), status=resp.status)
 
 
 def _assert_collected_something(progress: dict, snapshot_id: str) -> None:

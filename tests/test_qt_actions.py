@@ -841,6 +841,32 @@ def test_tailor_warning_lines_carry_no_absolute_path():
     assert "page limit: resume shipped on 2 pages (limit is 1)" in block
 
 
+def test_tailor_dialog_block_carries_the_run_log_warnings_and_none_of_its_notes():
+    """c13 split the run report into warnings (streamed to `on_warning`, so the
+    dashboard reads the job as degraded) and notes (report only: a drop the
+    re-ask recovered, the rejected text, a refused underfull fill). The dialog
+    is built from what streamed, so it must carry every warning line as the
+    report spelled it and not one word of a note."""
+    from resume_tailor.run import KIND_AIWRITING, KIND_GROUNDING, RunLog
+
+    streamed: list[str] = []
+    rep = RunLog(on_warning=streamed.append)
+    rep.note(KIND_GROUNDING, "[reground] recovered 1 dropped bullet(s) on a re-ask: exp-1 b2")
+    rep.note(KIND_GROUNDING, "[reground] rejected text for 'exp-1 b2': \"the old bullet\"")
+    rep.note(KIND_AIWRITING, "refused underfull fill for 'exp-2 b1': the rewrite was ungrounded")
+    rep.warn(KIND_GROUNDING, "[reground] the re-ask answered 1 of 2 bullet(s); 1 stay dropped (exp-1 b3)")
+    rep.advisory(r"ATS check skipped ([Errno 13] Permission denied: 'C:\Users\x\ats_report.md')")
+    assert len(rep.notes) == 3 and len(streamed) == 2
+    block = mw._tailor_warning_lines([{"label": "Eng @ A", "warnings": streamed}])
+    assert ("  - Eng @ A: grounding: [reground] the re-ask answered 1 of 2 bullet(s); "
+            "1 stay dropped (exp-1 b3)") in block
+    assert ("  - Eng @ A: advisory: ATS check skipped ([Errno 13] Permission denied: "
+            "'ats_report.md')") in block
+    for note_word in ("recovered", "rejected text", "refused", "the old bullet"):
+        assert note_word not in block
+    assert block.count("\n") == 1               # two lines, nothing else
+
+
 def test_tailor_work_collects_per_job_warnings(qtbot, monkeypatch, tmp_path):
     """_tailor_work hands tailor() an on_warning collector and carries what it caught
     into that job's result dict, which is what _finish_tailor reads."""

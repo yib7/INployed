@@ -183,6 +183,22 @@ def _experience(sel: dict, bullets: Dict[str, str]) -> str:
             "\\resumeSubHeadingListStart\n\n" + "\n".join(out) + "\\resumeSubHeadingListEnd\n\n")
 
 
+def _looks_like_a_host_path(repo: str) -> bool:
+    """True when a scheme-stripped `repo` value is an address worth linking.
+
+    The link used to be gated on the literal "github.com", which silently dropped
+    a project hosted anywhere else (GitLab, Bitbucket, Hugging Face, a personal
+    domain): no href, no printed address, no warning. The field is "Repo", not
+    "GitHub repo". The gate is now the shape of an address: a host segment with
+    a dot in it and no whitespace anywhere, so "private" or "ask me" still
+    render no link, exactly as an empty value does.
+    """
+    if not repo or any(ch.isspace() for ch in repo):
+        return False
+    host = repo.split("/", 1)[0]
+    return "." in host.strip(".")
+
+
 def _projects(sel: dict, bullets: Dict[str, str]) -> str:
     meta = _block_meta("projects")
     out: List[str] = []
@@ -204,7 +220,7 @@ def _projects(sel: dict, bullets: Dict[str, str]) -> str:
         # "Link" reached it as a dead word and the address never did. Display text
         # goes through to_latex (a `_` in a repo name must print), the target
         # through escape_url (it must not be backslashed) -- see _contact_bit.
-        if "github.com" in repo:
+        if _looks_like_a_host_path(repo):
             href = escape_url(f"https://{repo}")
             link = f" $|$ \\href{{{href}}}{{{to_latex(repo.rstrip('/'))}}}"
         else:

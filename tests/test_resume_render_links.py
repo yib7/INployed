@@ -228,3 +228,45 @@ def test_header_omits_missing_link_fields():
     tex = _header_of(name="Jane Doe", location="City, ST")
     assert "\\href" not in tex
     assert "$|$" not in tex          # a single contact bit needs no separator
+
+
+# The link was gated on the literal "github.com", so a project hosted anywhere
+# else (GitLab, Bitbucket, Hugging Face, a personal domain) silently lost its
+# link: no href, no printed address, no warning. The Resume Data tab labels the
+# field "Repo", not "GitHub repo". Any host-shaped value now links; a value that
+# is not an address ("private", "n/a") still renders no link, as an empty repo does.
+
+
+def test_a_non_github_repo_is_linked_like_any_other(monkeypatch):
+    monkeypatch.setattr(assets, "blocks", lambda: _blocks_with_repo("https://gitlab.com/x/y"))
+    tex = render._projects(_SEL, _BULLETS)
+    assert r"{ $|$ \href{https://gitlab.com/x/y}{gitlab.com/x/y}}" in tex
+
+
+def test_a_repo_with_a_query_string_keeps_it_in_both_target_and_text(monkeypatch):
+    monkeypatch.setattr(assets, "blocks",
+                        lambda: _blocks_with_repo("github.com/x/y?tab=readme&ref=main"))
+    tex = render._projects(_SEL, _BULLETS)
+    # The target's `&` is percent-encoded (a raw one is a tabular column break);
+    # the printed text's is backslashed, which is how it prints.
+    assert r"\href{https://github.com/x/y?tab=readme\%26ref=main}" in tex
+    assert r"{github.com/x/y?tab=readme\&ref=main}" in tex
+
+
+def test_a_bare_domain_repo_still_links(monkeypatch):
+    monkeypatch.setattr(assets, "blocks", lambda: _blocks_with_repo("example.dev"))
+    tex = render._projects(_SEL, _BULLETS)
+    assert r"\href{https://example.dev}{example.dev}" in tex
+
+
+def test_a_repo_value_that_is_not_an_address_renders_no_link(monkeypatch):
+    for value in ("private", "n/a", "ask me", "internal repo"):
+        monkeypatch.setattr(assets, "blocks", lambda v=value: _blocks_with_repo(v))
+        tex = render._projects(_SEL, _BULLETS)
+        assert r"\href" not in tex, value
+        assert "\n{ProjX}{}\n" in tex, value
+
+
+def test_header_pdf_metadata_escapes_a_latex_special_in_the_name():
+    tex = _header_of(name="Ana & Bo_Smith", email="ab@example.com")
+    assert r"pdftitle={Ana \& Bo\_Smith Resume},pdfauthor={Ana \& Bo\_Smith}" in tex

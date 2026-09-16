@@ -24,6 +24,8 @@ swaps only) so they track the live ui-scale with no re-polish.
 """
 from __future__ import annotations
 
+import math
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from qt import theme
@@ -264,6 +266,10 @@ class JobRowDelegate(QtWidgets.QStyledItemDelegate):
         try:
             value = float(text)
         except (TypeError, ValueError):
+            value = float("nan")
+        if math.isnan(value):
+            # No deep score (blank cell, or a NaN that slipped past the model):
+            # a dash, not a full bar under the word "nan".
             self._draw_text(painter, rect, "—", self._font(font, "mono"),
                             self._color(muted))
             return

@@ -449,3 +449,49 @@ def test_context_menu_hides_cover_item_on_multi_selection(qtbot, monkeypatch):
     _select_rows(tab, 0, 1)
     texts = _menu_texts(monkeypatch, tab)
     assert texts and not any("cover letter" in t.lower() for t in texts)
+
+
+# ---- missing cells: NaN never reaches Qt ----------------------------------
+
+def _df_with_gaps():
+    """A frame the way `read_csv_gz` hands it over: a float NaN wherever the
+    pipeline had nothing to write (no deep score below the stage-2 threshold,
+    a blank location), not the string "nan"."""
+    return pd.DataFrame({
+        "job_posting_id": ["1", "2", "3"],
+        "score": [5, 4, 3],
+        "deep_score": [8.0, float("nan"), 2.0],
+        "recommendation": ["apply", "consider", "skip"],
+        "job_title": ["Data Analyst", "ML Engineer", "QA Tester"],
+        "company_name": ["Acme", None, "Initech"],
+        "url": ["https://x/1", "https://x/2", "https://x/3"],
+        "is_seen": ["no", "no", "no"], "extracted_date": ["2026-06-20"] * 3,
+    })
+
+
+def test_a_missing_cell_displays_as_empty_not_nan(qapp):
+    """c14 Phase 7: the Phase 3B synthetic master (NaN deep_score on every job
+    that never reached stage 2) put the word "nan" under a FULL deep bar on
+    every such row. pandas 3's astype(str) keeps NaN as NaN, so the model must
+    blank it itself; a QVariant float NaN prints "nan"."""
+    m = JobsTableModel(COL_IDS)
+    m.set_dataframe(_df_with_gaps())
+    deep = COL_IDS.index("deep_score")
+    company = COL_IDS.index("company_name")
+    assert m.data(m.index(1, deep)) == ""
+    assert m.data(m.index(1, company)) == ""
+    assert m.data(m.index(0, deep)) == "8.0"          # a present value is untouched
+    for r in range(3):
+        for c in range(len(COL_IDS)):
+            assert isinstance(m.data(m.index(r, c)), str)
+
+
+def test_sort_role_survives_a_missing_text_cell(qapp):
+    """The sort role lower()s a text column; a NaN there used to raise
+    AttributeError inside data(), which Qt swallows into a half-sorted table."""
+    m = JobsTableModel(COL_IDS)
+    m.set_dataframe(_df_with_gaps())
+    company = COL_IDS.index("company_name")
+    assert m.data(m.index(1, company), SORT_ROLE) == ""
+    deep = COL_IDS.index("deep_score")
+    assert m.data(m.index(1, deep), SORT_ROLE) == float("-inf")

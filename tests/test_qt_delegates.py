@@ -165,3 +165,32 @@ def test_apply_panel_items_carry_status_tag_and_raw_display(qtbot, tmp_path):
                for c in range(len(APPLY_COLUMNS)))
     pixmap = p.table.grab()                          # paint smoke (apply kind)
     assert not pixmap.isNull()
+
+
+def test_deep_bar_draws_a_dash_for_a_missing_score(qtbot, monkeypatch):
+    """A NaN deep score (float NaN, or the text "nan" an older pandas produced)
+    must paint the muted dash the blank cell gets, never a full bar labelled
+    "nan": min(1.0, nan) is 1.0, so the old float() path filled the whole
+    track for a job that was never deep-scored."""
+    from PySide6 import QtGui
+
+    from qt.delegates import JobRowDelegate
+
+    dlg = JobRowDelegate(COL_IDS)
+    drawn: list[str] = []
+    monkeypatch.setattr(dlg, "_draw_text",
+                        lambda painter, rect, text, *a, **k: drawn.append(text))
+    image = QtGui.QImage(120, 30, QtGui.QImage.Format.Format_ARGB32)
+    painter = QtGui.QPainter(image)
+    try:
+        rect = QtCore.QRect(0, 0, 70, 30)
+        font = QtGui.QFont()
+        for text in ("nan", float("nan"), "", None):
+            drawn.clear()
+            dlg._paint_deep_bar(painter, rect, text, font, 1.0, None)
+            assert drawn == ["—"], (text, drawn)
+        drawn.clear()
+        dlg._paint_deep_bar(painter, rect, "7", font, 1.0, None)
+        assert drawn == ["7"]
+    finally:
+        painter.end()

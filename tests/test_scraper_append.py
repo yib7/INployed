@@ -171,3 +171,96 @@ def test_run_dir_csv_written_atomically(tmp_path, monkeypatch):
     assert [p for p in run_dir.iterdir() if p.suffix == ".tmp"] == []
     got = pd.read_csv(written[0], dtype={"job_posting_id": str})
     assert sorted(got["job_posting_id"]) == ["1", "2"]
+
+
+def test_a_synchronous_collection_reaches_the_csv_without_a_second_call(
+        tmp_path, monkeypatch):
+    """Rows that came back WITH the trigger POST must be written, not re-fetched.
+
+    When Bright Data finishes inside its one-minute synchronous window it returns
+    the records themselves and never issues a snapshot id. Polling or downloading
+    on that branch cannot work -- there is no snapshot to ask about -- and the
+    rows are already billed, so dropping them buys the collection twice. This is
+    the branch that crashed the 2026-09-09 run on "Extra data: line 2 column 1".
+    """
+    label = scraper.RUN_LABELS[0]
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "last_run_job_ids.json")
+    monkeypatch.setattr(scraper, "require_credentials", lambda: None)
+    # The real defaults, narrowed: build_inputs reads every filter key, so a
+    # three-key stub config fails on 'location' before the branch under test.
+    base = dict(scraper.load_search_config(), keywords=["k"],
+                remote_types=["remote"], limit_per_input=5)
+    monkeypatch.setattr(scraper, "load_search_config", lambda: base)
+    monkeypatch.setattr(scraper, "load_blocklist", lambda: [])
+    monkeypatch.setattr(scraper, "append_to_master", lambda df: len(df))
+    monkeypatch.setattr(scraper, "load_exclude_ids", lambda: [])
+
+    async def no_preflight(session):
+        return None
+
+    monkeypatch.setattr(scraper, "preflight", no_preflight)
+
+    async def fake_trigger(session, payload, limit_per_input=None):
+        return scraper.Collection(None, [{"job_posting_id": "1", "job_title": "A"},
+                                         {"job_posting_id": "2", "job_title": "B"}])
+
+    monkeypatch.setattr(scraper, "trigger", fake_trigger)
+
+    async def never(*a, **k):
+        raise AssertionError("a synchronous collection has no snapshot to poll "
+                             "or download -- the rows were already in hand")
+
+    monkeypatch.setattr(scraper, "wait_until_ready", never)
+    monkeypatch.setattr(scraper, "download", never)
+
+    asyncio.run(scraper.main(run_label=label))
+
+    written = list((tmp_path / label).glob(f"linkedin_jobs_*_{label}.csv"))
+    assert len(written) == 1
+    got = pd.read_csv(written[0], dtype={"job_posting_id": str})
+    assert sorted(got["job_posting_id"]) == ["1", "2"]
+
+
+def test_the_asynchronous_handoff_still_polls_and_downloads(tmp_path, monkeypatch):
+    """The other branch, unchanged: a 202 means the rows are NOT in hand yet."""
+    label = scraper.RUN_LABELS[0]
+    monkeypatch.setattr(scraper, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "last_run_job_ids.json")
+    monkeypatch.setattr(scraper, "require_credentials", lambda: None)
+    # The real defaults, narrowed: build_inputs reads every filter key, so a
+    # three-key stub config fails on 'location' before the branch under test.
+    base = dict(scraper.load_search_config(), keywords=["k"],
+                remote_types=["remote"], limit_per_input=5)
+    monkeypatch.setattr(scraper, "load_search_config", lambda: base)
+    monkeypatch.setattr(scraper, "load_blocklist", lambda: [])
+    monkeypatch.setattr(scraper, "append_to_master", lambda df: len(df))
+    monkeypatch.setattr(scraper, "load_exclude_ids", lambda: [])
+
+    async def no_preflight(session):
+        return None
+
+    monkeypatch.setattr(scraper, "preflight", no_preflight)
+
+    async def fake_trigger(session, payload, limit_per_input=None):
+        return scraper.Collection("snap-async", None)
+
+    monkeypatch.setattr(scraper, "trigger", fake_trigger)
+
+    polled = []
+
+    async def fake_wait(session, snapshot_id):
+        polled.append(snapshot_id)
+
+    async def fake_download(session, snapshot_id):
+        return [{"job_posting_id": "9", "job_title": "Z"}]
+
+    monkeypatch.setattr(scraper, "wait_until_ready", fake_wait)
+    monkeypatch.setattr(scraper, "download", fake_download)
+
+    asyncio.run(scraper.main(run_label=label))
+
+    assert polled == ["snap-async"]
+    written = list((tmp_path / label).glob(f"linkedin_jobs_*_{label}.csv"))
+    got = pd.read_csv(written[0], dtype={"job_posting_id": str})
+    assert list(got["job_posting_id"]) == ["9"]

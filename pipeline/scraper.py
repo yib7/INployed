@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import aiohttp
 import pandas as pd
@@ -846,8 +847,92 @@ def account_problems(timeout: int = PREFLIGHT_TIMEOUT) -> list[str]:
     return []
 
 
+class Collection(NamedTuple):
+    """What a collection POST came back with. Exactly one side is populated.
+
+    `rows` -- Bright Data finished inside its synchronous window and handed the
+    records straight back with the POST. There is no snapshot behind them.
+    `snapshot_id` -- it ran long, answered 202, and is still collecting.
+    """
+    snapshot_id: str | None
+    rows: list[dict] | None
+
+
+def _looks_like_an_envelope(data: dict) -> bool:
+    """True for a status/error wrapper rather than a collected job record.
+
+    Only used to keep a lone envelope from being filed as one job. A real record
+    carries neither key; `download()` handles the same wrappers on its own path.
+    """
+    if "error" in data:
+        return True
+    return "status" in data and "message" in data
+
+
+def _parse_collection_body(body: str) -> Collection:
+    """Read a /datasets/v3/scrape response body, whichever shape it took.
+
+    That endpoint is SYNCHRONOUS with an asynchronous escape hatch: it collects
+    for up to a minute and, only if the run is still going, answers 202 with a
+    {"snapshot_id": ...} to poll instead. Every production run so far has been
+    slow enough to take the escape hatch -- 40 searches at limit_per_input=150
+    never finished in a minute -- which is the only reason reading the body as a
+    single JSON object and reaching for ["snapshot_id"] ever worked.
+
+    A run that FINISHES in time returns the records themselves, one JSON object
+    per line, and json() then dies on the second line with "Extra data: line 2
+    column 1". That body is not corrupt: it is the collection, already billed,
+    and reading it as an envelope threw it away with no snapshot to recover it
+    from. Which branch you get is a property of how long the scrape took, so it
+    flips on its own -- and flips toward THIS one as the exclude set grows and
+    the runs get smaller.
+
+    All three shapes are accepted here rather than pinned with a `format`
+    parameter, because the request that produces them is the billed one and is
+    not worth experimenting on to find out.
+    """
+    text = (body or "").strip()
+    if not text:
+        # Returning an empty collection here would print "No new jobs returned
+        # this run" and exit 0 -- the silent-success shape that
+        # _assert_collected_something exists to stop.
+        raise RuntimeError(
+            "Bright Data returned an empty body for a collection request: no "
+            "rows and no snapshot id, so there is nothing to poll or download.")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        pass                      # not one JSON value -- fall through to NDJSON
+    else:
+        if isinstance(data, list):
+            return Collection(None, data)
+        if isinstance(data, dict):
+            snapshot_id = data.get("snapshot_id")
+            if snapshot_id:
+                return Collection(str(snapshot_id), None)
+            if _looks_like_an_envelope(data):
+                raise RuntimeError(f"Collection request refused: {data}")
+            return Collection(None, [data])       # a one-record NDJSON body
+        raise RuntimeError(f"Unexpected collection response shape: {data!r}")
+
+    rows: list[dict] = []
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as e:
+            # Name the line: a body that is NDJSON for 200 records and then
+            # truncated is a different problem from one that was never NDJSON.
+            raise RuntimeError(
+                f"Collection body is not readable as JSON or NDJSON; line {n} "
+                f"failed to parse ({e}). First 200 chars: {text[:200]!r}") from e
+    return Collection(None, rows)
+
+
 async def trigger(session: aiohttp.ClientSession, payload: dict,
-                  limit_per_input: int = LIMIT_PER_INPUT) -> str:
+                  limit_per_input: int = LIMIT_PER_INPUT) -> Collection:
     # quote() every interpolated value (audit P2-20 for dataset_id, P2-5 for the
     # limit): a malformed value then fails as a clean API error instead of
     # silently rewriting the query string of a billed collection.
@@ -865,7 +950,9 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
             # is the real problem: 401/403 here means the same thing it does there.
             hint = f"\n{TOKEN_HINT}" if resp.status in (401, 403) else ""
             raise RuntimeError(f"Trigger failed {resp.status}: {body}{hint}")
-        return (await resp.json())["snapshot_id"]
+        # text(), not json(): a collection that beat the sync window comes back
+        # as NDJSON, which json() cannot read. See _parse_collection_body.
+        return _parse_collection_body(await resp.text())
 
 
 def _assert_collected_something(progress: dict, snapshot_id: str) -> None:
@@ -1047,14 +1134,33 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
             kw_used = len(inputs) // max(len(cfg["remote_types"]), 1)
             print(f"Triggering {len(inputs)} searches ({kw_used} keywords x {len(cfg['remote_types'])} remote types), "
                   f"limit_per_input={limit_per_input} -> up to {len(inputs) * limit_per_input} postings")
-            snapshot_id = await trigger(session, payload, limit_per_input=limit_per_input)
-            print(f"Snapshot: {snapshot_id}")
-            await wait_until_ready(session, snapshot_id)
+            collected = await trigger(session, payload, limit_per_input=limit_per_input)
+            if collected.rows is not None:
+                # Finished inside Bright Data's synchronous window: the records
+                # arrived WITH the POST and no snapshot was ever created, so
+                # there is nothing to poll and nothing --snapshot could recover
+                # later. This collection is already paid for; it gets used here
+                # or it is lost.
+                results = collected.rows
+                print(f"Collected {len(results)} rows synchronously "
+                      f"(no snapshot issued -- nothing to poll)")
+                if not results:
+                    # The /progress payload is where input-rejection codes live,
+                    # and this branch never fetches one, so say plainly that the
+                    # rejection check did not run rather than implying a clean
+                    # quiet day. See _assert_collected_something.
+                    print("  NOTE: a synchronous collection has no progress "
+                          "record, so the input-rejection check did not run.")
+            else:
+                snapshot_id = collected.snapshot_id
+                print(f"Snapshot: {snapshot_id}")
+                await wait_until_ready(session, snapshot_id)
+                results = await download(session, snapshot_id)
         else:
             # Recovery path: re-download an already-collected snapshot (e.g. one
             # whose run aborted after billing). No trigger -> no extra cost.
             print(f"Run: {run_label} | Recovering already-collected snapshot {snapshot_id} (no new trigger/billing)")
-        results = await download(session, snapshot_id)
+            results = await download(session, snapshot_id)
 
     df = pd.json_normalize(results)
     if df.empty:

@@ -966,3 +966,67 @@ def test_an_empty_but_valid_master_stays_quiet(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(scraper, "PREVIOUS_IDS_FILE", tmp_path / "missing.json")
     assert scraper.load_exclude_ids() == []
     assert "WARNING" not in capsys.readouterr().out
+
+
+# --- a collection that beat the synchronous window ---------------------------
+# /datasets/v3/scrape collects for up to a minute and only THEN hands back a
+# snapshot id to poll. Every run so far was slow enough to take that branch, so
+# trigger() read the body as one JSON object. The first run that FINISHED in
+# time returned its records as NDJSON instead and killed the scrape on
+# "Extra data: line 2 column 1 (char 46778)" -- holding the billed rows, with no
+# snapshot to recover them from. The branch flips on its own as the exclude set
+# grows and the collections get smaller, so it is the steady state, not an edge.
+
+def test_a_slow_collection_still_hands_back_a_snapshot_to_poll():
+    assert scraper._parse_collection_body('{"snapshot_id": "s_abc"}') == \
+        scraper.Collection("s_abc", None)
+
+
+def test_a_collection_that_finished_in_time_returns_its_rows():
+    body = '{"job_posting_id": "1"}\n{"job_posting_id": "2"}\n'
+    got = scraper._parse_collection_body(body)
+    assert got.snapshot_id is None
+    assert [r["job_posting_id"] for r in got.rows] == ["1", "2"]
+
+
+def test_a_lone_record_is_a_record_set_not_a_snapshot_envelope():
+    got = scraper._parse_collection_body('{"job_posting_id": "1", "title": "x"}')
+    assert got.snapshot_id is None
+    assert got.rows == [{"job_posting_id": "1", "title": "x"}]
+
+
+def test_a_json_array_body_is_read_as_rows():
+    got = scraper._parse_collection_body('[{"job_posting_id": "1"}]')
+    assert got.snapshot_id is None and len(got.rows) == 1
+
+
+def test_blank_lines_between_ndjson_records_are_skipped():
+    assert len(scraper._parse_collection_body('{"a": 1}\n\n{"a": 2}\n').rows) == 2
+
+
+def test_an_empty_body_is_an_error_not_an_empty_collection():
+    """Returning [] would print "No new jobs returned this run" and exit 0 --
+    the silent-success shape _assert_collected_something exists to stop."""
+    with pytest.raises(RuntimeError, match="empty body"):
+        scraper._parse_collection_body("   ")
+
+
+def test_an_error_envelope_is_not_filed_as_a_job_record():
+    with pytest.raises(RuntimeError, match="refused"):
+        scraper._parse_collection_body('{"status": "failed", "message": "boom"}')
+
+
+def test_a_truncated_ndjson_body_names_the_line_it_died_on():
+    with pytest.raises(RuntimeError, match="line 2"):
+        scraper._parse_collection_body('{"a": 1}\n{"a": ')
+
+
+def test_trigger_hands_back_rows_when_the_scrape_beat_the_sync_window():
+    body = '{"job_posting_id": "1"}\n{"job_posting_id": "2"}'
+    got = asyncio.run(scraper.trigger(_trigger_session(200, body), {}))
+    assert got.snapshot_id is None and len(got.rows) == 2
+
+
+def test_trigger_hands_back_a_snapshot_id_on_the_202_handoff():
+    got = asyncio.run(scraper.trigger(_trigger_session(202, '{"snapshot_id": "s9"}'), {}))
+    assert got == scraper.Collection("s9", None)

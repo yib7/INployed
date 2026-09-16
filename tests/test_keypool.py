@@ -61,6 +61,25 @@ def _client(responder):
     return SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=gen)))
 
 
+class _FakeClock:
+    """keypool's monotonic clock under test control: no test here may sleep for
+    real. Both sleep lanes (asyncio for generate, time for lease_sync) advance
+    the clock by what they were asked to wait, so a cooldown expires the way it
+    would on the wall clock, in zero wall time."""
+
+    def __init__(self, monkeypatch, start=1000.0):
+        self.now = start
+        monkeypatch.setattr(keypool.time, "monotonic", lambda: self.now)
+        monkeypatch.setattr(keypool.time, "sleep", self.advance)
+
+        async def async_sleep(secs):
+            self.advance(secs)
+        monkeypatch.setattr(keypool.asyncio, "sleep", async_sleep)
+
+    def advance(self, secs):
+        self.now += float(secs)
+
+
 def _pool(members, tmp_path, limits=None):
     st = keypool.UsageState(tmp_path / "s.json")
     st.load()
@@ -855,6 +874,28 @@ def test_is_overload_error_reads_the_sdk_fields_not_the_prose():
     assert keypool._is_overload_error(RuntimeError("503 UNAVAILABLE. overloaded"))
 
 
+class _Quota429(Exception):
+    """google-genai's APIError shape for a 429: .code and .status set, and a
+    message that need not say "429" or "quota" at all."""
+
+    code = 429
+    status = "RESOURCE_EXHAUSTED"
+
+    def __str__(self):
+        return "Too many requests. Please slow down."
+
+
+def test_is_quota_error_reads_the_sdk_fields_not_the_prose():
+    # The structured code is available on the SDK's error, and the prose is not
+    # a contract: a 429 whose message lacks every keyword still has to rotate.
+    assert keypool._is_quota_error(_Quota429())
+    assert keypool._is_quota_error(SimpleNamespace(code=429))
+    assert keypool._is_quota_error(SimpleNamespace(status="RESOURCE_EXHAUSTED"))
+    assert keypool._is_quota_error(RuntimeError("429 RESOURCE_EXHAUSTED"))
+    assert not keypool._is_quota_error(SimpleNamespace(code=500))
+    assert not keypool._is_quota_error(RuntimeError("connection reset"))
+
+
 def test_a_quota_error_is_not_read_as_an_overload():
     quota = RuntimeError("429 RESOURCE_EXHAUSTED. quota exceeded")
     assert keypool._is_quota_error(quota)
@@ -890,11 +931,13 @@ def test_the_whole_chain_cooling_waits_rather_than_failing(tmp_path):
     assert kind == "wait" and 0 < wait <= keypool.OVERLOAD_COOLDOWN_S
 
 
-def test_the_cooldown_expires_and_the_model_returns(tmp_path):
+def test_the_cooldown_expires_and_the_model_returns(tmp_path, monkeypatch):
+    clock = _FakeClock(monkeypatch)
     pool = _pool([_sync_member("fp1")], tmp_path,
                  limits={m: {"rpm": 5, "rpd": 20} for m in RANKED})
-    pool.mark_unavailable(M1, seconds=0.01)
-    time.sleep(0.02)
+    pool.mark_unavailable(M1)
+    assert pool.lease_sync(RANKED)[1] == M2, "parked: the chain moves on"
+    clock.advance(keypool.OVERLOAD_COOLDOWN_S + 1)
     assert pool.lease_sync(RANKED)[1] == M1, "a spike is temporary, not a write-off"
 
 
@@ -951,7 +994,9 @@ def test_generate_spills_to_the_next_model_on_503_without_burning_the_day(tmp_pa
 
 def test_generate_gives_up_on_a_bounded_number_of_overloads(tmp_path, monkeypatch):
     # Google being broadly down must surface as an error, not an endless loop.
-    monkeypatch.setattr(keypool, "OVERLOAD_COOLDOWN_S", 0.01)
+    # The whole chain ends up cooling, so generate() sleeps out the park; the
+    # fake clock makes that sleep advance time instead of spending it.
+    _FakeClock(monkeypatch)
     calls = []
 
     def responder(model, contents, config):
@@ -1010,6 +1055,60 @@ def test_strikes_are_counted_per_pair_not_per_key(tmp_path):
     pool.mark_exhausted(member, M1, RuntimeError("429"))
     assert pool.mark_exhausted(member, M2, RuntimeError("429")) == "cooldown", \
         "a strike on one model must not retire a different one"
+
+
+def test_a_success_between_two_unproven_429s_resets_the_strike(tmp_path, monkeypatch):
+    # The tailor's pool is a process-wide singleton in the dashboard, and the
+    # scorer shares the same keys from another process, so per-minute blips are
+    # expected. Two of them hours apart must not write off a whole day: a call
+    # that SUCCEEDS on the pair proves the first 429 was not a spent allowance.
+    clock = _FakeClock(monkeypatch)
+    pool = _pool([_sync_member("fp1")], tmp_path)
+    member = pool._members[0]
+    assert pool.mark_exhausted(member, FLASH, RuntimeError("429")) == "cooldown"
+    clock.advance(keypool.QUOTA_COOLDOWN_S + 1)
+    leased, used = pool.lease_sync(FLASH)
+    pool.mark_ok(leased, used)
+    assert pool.mark_exhausted(member, FLASH, RuntimeError("429")) == "cooldown",         "a strike must not outlive a success on the same pair"
+    assert pool._state.get("fp1", FLASH) < keypool.LIMITS[FLASH]["rpd"]
+
+
+def test_generate_resets_the_strike_when_the_pair_answers(tmp_path, monkeypatch):
+    clock = _FakeClock(monkeypatch)
+    answers = iter(["429", "ok", "429"])
+
+    def responder(model, contents, config):
+        a = next(answers)
+        if a == "429":
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+        return _resp(a)
+
+    free = {"client": _client(responder), "kind": "free", "fp": "fp1"}
+    vertex = {"client": _client(lambda *_: _resp("VERTEX")), "kind": "vertex", "fp": None}
+    pool = _pool([free, vertex], tmp_path)
+    assert asyncio.run(pool.generate(model=FLASH, contents="x", config=None)).text == "VERTEX"
+    clock.advance(keypool.QUOTA_COOLDOWN_S + 1)
+    assert asyncio.run(pool.generate(model=FLASH, contents="x", config=None)).text == "ok"
+    clock.advance(1)
+    asyncio.run(pool.generate(model=FLASH, contents="x", config=None))   # the second 429
+    assert pool._state.get("fp1", FLASH) < keypool.LIMITS[FLASH]["rpd"],         "one strike, a success, one strike: the pair is parked again, never retired"
+
+
+def test_the_pacific_rollover_clears_yesterdays_strikes(tmp_path, monkeypatch):
+    # A strike is a guess about THIS minute; carrying it across the daily reset
+    # would let the first 429 of a new day retire the pair outright.
+    monkeypatch.setattr(keypool, "pacific_today", lambda: "2020-01-01")
+    pool = _pool([_sync_member("fp1")], tmp_path)
+    member = pool._members[0]
+    pool.mark_exhausted(member, FLASH, RuntimeError("429"))
+    monkeypatch.setattr(keypool, "pacific_today", lambda: "2020-01-02")
+    pool.lease_sync(FLASH, max_wait=0.0)                  # rolls the day over
+    assert pool.mark_exhausted(member, FLASH, RuntimeError("429")) == "cooldown"
+
+
+def test_mark_ok_ignores_the_vertex_member(tmp_path):
+    pool = _pool([_sync_member(None, kind="vertex")], tmp_path)
+    pool.mark_ok(pool._members[0], FLASH)                 # must not raise
 
 
 def test_mark_exhausted_without_the_exception_still_retires_the_day(tmp_path):

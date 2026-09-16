@@ -340,6 +340,16 @@ class UsageState:
 
 
 def _is_quota_error(exc: Exception) -> bool:
+    """True for a 429 / RESOURCE_EXHAUSTED: a spent or momentarily full quota.
+
+    Structural first, like _is_overload_error: google-genai's APIError carries
+    .code and .status, and the prose beside them is not a contract. The
+    substring arm remains for an error some other layer already stringified.
+    """
+    if getattr(exc, "code", None) == 429:
+        return True
+    if str(getattr(exc, "status", "")).upper() == "RESOURCE_EXHAUSTED":
+        return True
     s = str(exc).lower()
     return any(t in s for t in ("429", "quota", "resource_exhausted", "rate limit"))
 
@@ -505,6 +515,22 @@ class KeyPool:
         self._pair_cooling.pop(key, None)
         return "day"
 
+    def mark_ok(self, member: dict, model: str) -> None:
+        """Forget the strikes against a (key, model) pair that just answered.
+
+        A strike is a guess that a 429 was a spent allowance rather than a
+        per-minute blip, and a successful call on the same pair disproves it.
+        Without this the counter only ever grows: the tailor's pool lives as
+        long as the dashboard process and shares its keys with the scorer in
+        another process, so two ordinary RPM blips hours or days apart would
+        add up to a "second strike" and write off a whole day of that pair.
+        generate() calls this for itself; the sync lane's caller reports its
+        own success here. Not locked: a dict pop is atomic and a lost update
+        costs one wasted call, never a miscounted quota.
+        """
+        if member.get("kind") == "free":
+            self._pair_strikes.pop((member["fp"], model), None)
+
     def _pair_cooling_left(self, key: tuple[str, str], now: float) -> float:
         """Seconds until a 429-parked (key, model) pair is worth trying again."""
         until = self._pair_cooling.get(key)
@@ -572,6 +598,11 @@ class KeyPool:
         # against the old date, under-uses free quota, and spills to paid Vertex.
         if self._state.date != pacific_today():
             self._state.load()
+            # Yesterday's 429 guesses go with yesterday's counters: a strike
+            # carried over would let the first 429 of the new day retire the
+            # pair outright, and a park past midnight has nothing to protect.
+            self._pair_strikes.clear()
+            self._pair_cooling.clear()
         now = time.monotonic()
         soonest: Optional[float] = None       # RPM windows: worth waiting for
         cooling: Optional[float] = None       # 503/429 parks: worth PAYING past
@@ -847,6 +878,7 @@ class KeyPool:
                 continue
             if member["kind"] == "free":
                 self._free_calls += 1
+                self.mark_ok(member, model_used)
             else:
                 self._vertex_calls += 1
             return resp

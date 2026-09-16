@@ -183,3 +183,36 @@ def test_retry_delay_hint_parser():
     assert llm._retry_delay_hint("retry-delay: 90") == 90.0
     assert llm._retry_delay_hint("no hint here") is None
     # Absurd server hints are capped by the caller; parser just parses.
+
+
+class _Sdk429(Exception):
+    """google-genai's APIError shape for a 429 (.code/.status set); the message
+    carries none of the words the substring check looks for."""
+
+    code = 429
+    status = "RESOURCE_EXHAUSTED"
+
+    def __str__(self):
+        return "Too many requests. Please slow down."
+
+
+def test_is_rate_limit_reads_the_sdk_fields_before_the_prose():
+    assert llm._is_rate_limit(_Sdk429())
+    assert llm._is_rate_limit(SimpleNamespace(code=429))
+    assert llm._is_rate_limit(SimpleNamespace(status="RESOURCE_EXHAUSTED"))
+    assert not llm._is_rate_limit(SimpleNamespace(code=500))
+    assert not llm._is_rate_limit(RuntimeError("connection reset"))
+
+
+def test_a_structural_429_takes_the_rate_limit_branch(monkeypatch, sleeps):
+    calls = {"n": 0}
+
+    def invoke(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _Sdk429()
+        return _ok_resp("done")
+
+    monkeypatch.setattr(llm, "_invoke", invoke)
+    assert llm._call_gemini("s", "u", "m") == "done"
+    assert sleeps == [30.0], "backed off as a 429, not as a 1.5s transient"

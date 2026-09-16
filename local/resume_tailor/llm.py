@@ -233,15 +233,20 @@ def _pool_limits() -> dict:
 def _rotation_budget(model: Any, tier: Optional[str]) -> int:
     """How many pooled retirements ONE call may legitimately need.
 
-    Sized from the pool -- free keys x the length of this tier's ranked chain --
-    so the rotation ceiling can never fire while the pool still has members to
-    hand out. The Vertex backstop is the last of those members, which is why an
-    undersized ceiling does not merely retry less: it converts "fall back to
-    Vertex" into "give up".
+    Sized from the pool -- free keys x the length of this tier's ranked chain,
+    times the strikes a pair may take before it is retired -- so the rotation
+    ceiling can never fire while the pool still has members to hand out. The
+    Vertex backstop is the last of those members, which is why an undersized
+    ceiling does not merely retry less: it converts "fall back to Vertex" into
+    "give up". The strike factor matters because an unproven 429 only PARKS a
+    pair (keypool.QUOTA_STRIKES_BEFORE_DAILY), and a slow call lets a parked
+    pair come back for its second strike before the walk is over: each pair can
+    cost two rotations, exactly as KeyPool.generate sizes its own budget.
     """
     kp = _keypool()
     chain = kp.ranked_models(model, config.gemini_fallback_models(tier))
-    return max(POOL_MAX_ROTATIONS, _pool().free_pair_count(chain) + 1)
+    per_pair = kp.QUOTA_STRIKES_BEFORE_DAILY
+    return max(POOL_MAX_ROTATIONS, _pool().free_pair_count(chain) * per_pair + 1)
 
 
 def _pool():
@@ -315,7 +320,15 @@ def _is_timeout(exc: Optional[BaseException]) -> bool:
 
 
 def _is_rate_limit(exc: BaseException) -> bool:
-    """True for a 429 / quota-exhausted error (Gemini API or Vertex)."""
+    """True for a 429 / quota-exhausted error (Gemini API or Vertex).
+
+    Structural first, as _is_overload does: the SDK's APIError sets .code and
+    .status, and a 429 whose message happens to lack every keyword still has
+    to back off (or, in pool mode, rotate) rather than burn a schedule slot."""
+    if getattr(exc, "code", None) == 429:
+        return True
+    if str(getattr(exc, "status", "")).upper() == "RESOURCE_EXHAUSTED":
+        return True
     msg = str(exc).lower()
     return "429" in msg or "quota" in msg or "resource_exhausted" in msg
 
@@ -440,7 +453,7 @@ def _invoke_pooled(model: str, user: str, cfg, *, tier: Optional[str] = None):
     # which is not necessarily the one this step asked for.
     _LAST.model = used
     try:
-        return member["client"].models.generate_content(
+        resp = member["client"].models.generate_content(
             model=used, contents=user, config=cfg)
     except Exception as exc:  # noqa: BLE001
         if member.get("kind") == "free" and _is_rate_limit(exc):
@@ -469,6 +482,10 @@ def _invoke_pooled(model: str, user: str, cfg, *, tier: Optional[str] = None):
                 kind="overload",
             ) from exc
         raise
+    # An answer from the pair disproves any earlier unproven 429 against it; the
+    # pool only learns that if told (its own generate() does this for itself).
+    pool.mark_ok(member, used)
+    return resp
 
 
 def _call_gemini(

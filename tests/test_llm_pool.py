@@ -67,6 +67,7 @@ class FakePool:
         self.exhausted: list = []
         self.unavailable: list = []
         self.cooling: set = set()
+        self.ok: list = []
 
     def lease_sync(self, model, **kw):
         # Mirrors KeyPool.lease_sync: takes a ranked chain, returns the pair it
@@ -86,12 +87,17 @@ class FakePool:
         return "day"
 
     def free_pair_count(self, models):
-        free = [m for m in self.members if m["kind"] == "free"]
+        # Distinct KEYS, as KeyPool counts them: this fake queues one member
+        # entry per lease, so the same key may appear more than once.
+        free = {m["fp"] for m in self.members if m["kind"] == "free"}
         return max(1, len(free)) * max(1, len(keypool.ranked_models(models)))
 
     def mark_unavailable(self, model, seconds=None):
         self.unavailable.append(model)
         self.cooling.add(model)
+
+    def mark_ok(self, member, model):
+        self.ok.append((member["fp"], model))
 
 
 @pytest.fixture
@@ -475,11 +481,53 @@ def test_the_rotation_ceiling_is_sized_from_the_pool_not_a_constant(monkeypatch,
     # A flat ceiling below (free keys x chain length) turns "fall back to
     # Vertex" into "give up": the author's run died reporting 12 rotations with
     # 3 keys x 5 models still to walk and the backstop one lease away.
+    # Each pair can cost TWO rotations, not one: an unproven 429 only parks the
+    # pair (keypool.QUOTA_STRIKES_BEFORE_DAILY), and a slow call lets a parked
+    # pair come back for its second strike before the walk is over. The budget
+    # must exceed every rotate error the pool can hand out, which is what
+    # KeyPool.generate sizes its own by.
     chain = [FALLBACK, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
     monkeypatch.setattr(llm.config, "gemini_fallback_models", lambda tier=None: chain)
     pool = FakePool([_member(f"fp{i}", lambda m: _ok_resp()) for i in range(3)])
     monkeypatch.setattr(llm, "_pool", lambda: pool)
-    assert llm._rotation_budget(MODEL, None) == 3 * 5 + 1
+    assert llm._rotation_budget(MODEL, None) ==         3 * 5 * keypool.QUOTA_STRIKES_BEFORE_DAILY + 1
+
+
+def test_every_pair_striking_twice_still_reaches_the_backstop(monkeypatch, pooled):
+    # 3 keys x 1 model, every pair parked then retired (two 429s each), and the
+    # Vertex member last: six rotations on a pool whose old budget was 3 + 1.
+    monkeypatch.setattr(llm, "POOL_MAX_ROTATIONS", 1)   # flat floor out of the way
+    monkeypatch.setattr(llm.config, "gemini_fallback_models", lambda tier=None: [])
+
+    def boom(model):
+        raise _Quota()
+
+    members = [_member(f"fp{i % 3}", boom) for i in range(6)]
+    members.append(_member(None, lambda m: _ok_resp('{"v": 1}'), kind="vertex"))
+    pool = FakePool(members)
+    monkeypatch.setattr(llm, "_pool", lambda: pool)
+    assert llm._call_gemini("sys", "user", MODEL, json_out=True) == {"v": 1}
+    assert len(pool.exhausted) == 6
+
+
+def test_a_pooled_success_is_reported_back_to_the_pool(monkeypatch, pooled):
+    monkeypatch.setattr(llm.config, "gemini_fallback_models", lambda tier=None: [])
+    pool = FakePool([_member("fp1", lambda m: _ok_resp())])
+    monkeypatch.setattr(llm, "_pool", lambda: pool)
+    llm._call_gemini("sys", "user", MODEL)
+    assert pool.ok == [("fp1", MODEL)], "the strike counter resets only if told"
+
+
+def test_a_pooled_failure_is_not_reported_as_a_success(monkeypatch, pooled):
+    monkeypatch.setattr(llm.config, "gemini_fallback_models", lambda tier=None: [])
+
+    def boom(model):
+        raise _Quota()
+
+    pool = FakePool([_member("fp1", boom), _member("fp2", lambda m: _ok_resp())])
+    monkeypatch.setattr(llm, "_pool", lambda: pool)
+    llm._call_gemini("sys", "user", MODEL)
+    assert pool.ok == [("fp2", MODEL)]
 
 
 def test_a_pool_walk_longer_than_the_flat_ceiling_still_reaches_the_backstop(

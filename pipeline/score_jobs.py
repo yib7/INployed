@@ -202,7 +202,14 @@ def load_scoring_config() -> dict:
         elif kind == "list":
             # Kept as a list of lines. The Settings tab stores JSON lists; an env
             # var can only carry one string, and keypool's parsers accept either.
-            cfg[key] = list(value) if isinstance(value, (list, tuple)) else [str(value)]
+            # A JSON null is "nothing configured", the same as an absent key: it
+            # must not stringify into a model literally named "None".
+            if value is None:
+                cfg[key] = []
+            elif isinstance(value, (list, tuple)):
+                cfg[key] = [str(v) for v in value if v is not None]
+            else:
+                cfg[key] = [str(value)]
         else:
             cfg[key] = value
     return cfg

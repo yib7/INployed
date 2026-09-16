@@ -732,6 +732,21 @@ def test_parse_model_limits_accepts_three_separators_and_skips_junk():
     }
 
 
+def test_a_malformed_limits_row_is_named_in_a_warning_not_dropped_silently(caplog):
+    # A typo in a hand-edited row ("five") means the model silently falls back
+    # to LIMITS or DEFAULT_LIMITS, which is the invisible downgrade _limits_for
+    # exists to remove. Skipping is right (one bad row must not kill a run);
+    # skipping QUIETLY is not.
+    import logging
+    with caplog.at_level(logging.WARNING, logger="keypool"):
+        out = keypool.parse_model_limits([f"{M1} five 20", f"{M2} 15 abc", f"{M3} 5 20",
+                                          "", "   "])
+    assert out == {M3: {"rpm": 5, "rpd": 20}}
+    bad = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(bad) == 2, "one warning per bad row, none for a blank line"
+    assert f"{M1} five 20" in bad[0] and f"{M2} 15 abc" in bad[1]
+
+
 def test_model_limits_beat_the_built_in_table():
     # The escape hatch for a model whose built-in numbers are wrong or absent.
     pool = _pool([_sync_member("fp1")], Path(tempfile.mkdtemp()),

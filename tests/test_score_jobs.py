@@ -156,8 +156,7 @@ def test_make_pool_warns_when_a_model_has_no_limits_anywhere(monkeypatch, capsys
     """The silent downgrade has to announce itself -- that is the whole incident."""
     monkeypatch.setattr(sj.KeyPool, "from_env",
                         classmethod(lambda cls, *, state_path, limits=None: object()))
-    monkeypatch.setattr(sj, "_SCORING", dict(sj._SCORING, stage1_rpm=0, stage1_rpd=0,
-                                             stage2_rpm=0, stage2_rpd=0))
+    monkeypatch.setattr(sj, "_SCORING", dict(sj._SCORING, model_limits=[]))
     monkeypatch.setattr(sj, "STAGE1_MODELS", ["gemini-9.9-unheard-of"])
     sj.make_pool()
     out = capsys.readouterr().out
@@ -171,8 +170,7 @@ def test_make_pool_warns_for_an_unlimited_fallback_model(monkeypatch, capsys):
     whole, not just its primary."""
     monkeypatch.setattr(sj.KeyPool, "from_env",
                         classmethod(lambda cls, *, state_path, limits=None: object()))
-    monkeypatch.setattr(sj, "_SCORING", dict(sj._SCORING, stage1_rpm=0, stage1_rpd=0,
-                                             stage2_rpm=0, stage2_rpd=0))
+    monkeypatch.setattr(sj, "_SCORING", dict(sj._SCORING, model_limits=[]))
     monkeypatch.setattr(sj, "STAGE2_MODELS",
                         ["gemini-3.5-flash", "gemini-9.9-unheard-of"])
     sj.make_pool()

@@ -178,7 +178,10 @@ def parse_model_limits(value: Any) -> dict:
     "gemini-3.8-flash 5 20", "gemini-3.8-flash,5,20" and "gemini-3.8-flash:5:20"
     all parse. A row that does not yield a model plus two numbers is SKIPPED
     rather than raised on: this is a hand-editable box in the Settings tab, and
-    one bad line must not take a scoring run down with it.
+    one bad line must not take a scoring run down with it. It is skipped with a
+    warning naming the row, because the model it meant to describe then falls
+    back to LIMITS or DEFAULT_LIMITS with nothing else to show for it, which is
+    exactly the invisible downgrade an explicit row exists to remove.
     """
     rows: list[str] = []
     if isinstance(value, (list, tuple)):
@@ -190,12 +193,17 @@ def parse_model_limits(value: Any) -> dict:
     for row in rows:
         for chunk in row.split(";"):
             fields = [f for f in chunk.replace(",", " ").replace(":", " ").split() if f]
-            if len(fields) < 3:
+            if not fields:
                 continue
-            model, rpm, rpd = fields[0], _as_int(fields[1], -1), _as_int(fields[2], -1)
-            if rpm < 0 or rpd < 0:
+            rpm = _as_int(fields[1], -1) if len(fields) > 1 else -1
+            rpd = _as_int(fields[2], -1) if len(fields) > 2 else -1
+            if len(fields) < 3 or rpm < 0 or rpd < 0:
+                log.warning("model_limits: skipping %r; a row is '<model> "
+                            "<requests-per-minute> <requests-per-day>' with two "
+                            "whole numbers, and the model it names keeps its "
+                            "built-in limits", chunk.strip())
                 continue
-            out[model] = {"rpm": rpm, "rpd": rpd}
+            out[fields[0]] = {"rpm": rpm, "rpd": rpd}
     return out
 
 

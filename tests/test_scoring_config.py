@@ -8,6 +8,8 @@ run_scraper.sh exports already override via os.environ today).
 """
 import json
 import sys
+
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
@@ -31,8 +33,7 @@ def _clear_env(monkeypatch):
         "SCORE_STAGE1_CONCURRENCY", "SCORE_STAGE2_CONCURRENCY",
         "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
         "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY",
-        "SCORE_STAGE1_RPM", "SCORE_STAGE1_RPD",
-        "SCORE_STAGE2_RPM", "SCORE_STAGE2_RPD",
+        "SCORE_STAGE1_MODELS", "SCORE_STAGE2_MODELS", "SCORE_MODEL_LIMITS",
     ):
         monkeypatch.delenv(k, raising=False)
 
@@ -220,6 +221,29 @@ def test_model_limits_default_to_empty_meaning_use_builtin(monkeypatch, tmp_path
     _clear_env(monkeypatch)
     monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
     assert score_jobs.load_scoring_config()["model_limits"] == []
+
+
+@pytest.mark.parametrize("key", ["stage1_models", "stage2_models", "model_limits"])
+def test_a_null_list_in_the_file_reads_as_empty_not_as_a_model_named_none(
+        monkeypatch, tmp_path, key):
+    # A hand-edited `"stage1_models": null` used to become ["None"]: a model
+    # literally named "None" in the ranked chain, which the pool would have
+    # called for real once the primary ran dry.
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {key: None})
+    cfg = score_jobs.load_scoring_config()
+    assert cfg[key] == []
+    if key != "model_limits":
+        assert "None" not in score_jobs.stage_model_chain(cfg, "gemini", int(key[5]))
+
+
+def test_a_scalar_list_value_in_the_file_is_read_as_one_line(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"stage1_models": "m-a, m-b"})
+    cfg = score_jobs.load_scoring_config()
+    assert score_jobs.stage_model_chain(cfg, "gemini", 1)[1:] == ["m-a", "m-b"]
 
 
 def test_config_file_supplies_model_limits(monkeypatch, tmp_path):

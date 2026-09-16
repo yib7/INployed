@@ -116,6 +116,36 @@ test suite proves the guarantee behind that over a whole generated résumé.
   zero. The pinned interpreter is Python 3.14.7, the newest 3.14 patch; its `venv` seeds pip
   26.2.1, so the pip upgrade line in Step 2 is now a no-op on a current install.
 
+### Security
+- **An API key can no longer be re-routed to Vertex by an environment flag.** The Google
+  SDK reads `GOOGLE_GENAI_USE_VERTEXAI` when a client is built without an explicit lane,
+  and a truthy value turns an API-key client into a Vertex express-mode client: the key
+  travels to `aiplatform.googleapis.com`, a different endpoint with different billing, while
+  the pool still counts the call as free-tier quota. That variable is Google's, and the
+  `.env` loader picks it up as readily as a shell export. Every API-key client in the scorer's
+  pool and the tailor's `api_key` mode is now pinned to the Gemini API in code. The Vertex
+  member never carried a key and still does not.
+- **The résumé's LaTeX escaper closed a hole in its own ASCII fold.** Bullet text is escaped
+  first and ASCII-folded last, and the fold's Unicode decomposition can produce a LaTeX
+  special: a fullwidth backslash (U+FF3C) became a live backslash, a fullwidth brace a live
+  brace, so a bullet written in those glyphs reached pdflatex as a real `\input` or
+  `\openout` command. Bullet text is model output steered by the job posting, which is
+  untrusted. The fold now escapes whatever it produces, character by character, and the test
+  walks every code point. The education dates field, the one field that did not go through
+  the escaper, now does. `pdflatex` still runs with `-no-shell-escape`.
+- **A scraped job title or company name is read as one line before it heads a prompt.** The
+  description is fenced as untrusted data in every prompt; the title and company are single
+  lines and were not, so a scraped value carrying a newline could start a prompt line of its
+  own. Whitespace runs now collapse to a space in the tailor, the cover letter, the prep
+  sheet and the chat, and the output folder name is unchanged for every input.
+- **The tailor's batch dialog no longer prints an absolute path.** A skipped optional
+  artifact is reported with the exception that skipped it, and a file error names its path,
+  which names your home directory. The dialog now shows the file name alone; the folder's
+  `tailor_report.txt` keeps the full line.
+- **A refused Bright Data response is quoted to 2,000 characters, not in full.** The two
+  refusal messages that quoted the whole body become one line of the scraper log and the
+  dashboard's error dialog; the head of an error envelope is the diagnosis.
+
 ### Fixed
 - **A dropped bullet gets one chance to come back, instead of taking the entry's
   introduction with it.** The grounding gate that runs on the first draft is the only one

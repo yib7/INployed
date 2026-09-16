@@ -1060,3 +1060,27 @@ def test_an_empty_json_array_is_a_zero_row_collection():
     # `[]` is Bright Data positively saying "nothing matched", unlike an empty
     # body, which says nothing at all. main() prints the sync-branch NOTE for it.
     assert scraper._parse_collection_body("[]") == scraper.Collection(None, [])
+
+
+# --- a refusal quotes a BOUNDED slice of the body -------------------------------
+# Both refusal messages end up as one line of scraper.log, the console, and the
+# dashboard's crash dialog (which tails the last 15 LINES of output). A body is
+# untrusted bytes from a billed endpoint, and the other arms of
+# _parse_collection_body already quote at most 200 characters of it; these two
+# quoted the whole thing, so an error envelope of any size became one dialog line
+# of the same size. Diagnosis needs the head of the body, never all of it.
+
+def test_a_refused_envelope_is_quoted_bounded():
+    huge = '{"error": "' + "x" * 50_000 + '", "nested": {"more": ["y"]}}'
+    with pytest.raises(RuntimeError, match="refused") as excinfo:
+        scraper._parse_collection_body(huge)
+    assert len(str(excinfo.value)) < scraper.BODY_QUOTE_CHARS + 200
+
+
+def test_a_failed_trigger_quotes_the_body_bounded():
+    with pytest.raises(RuntimeError, match="Trigger failed 500") as excinfo:
+        asyncio.run(scraper.trigger(_trigger_session(500, "boom " * 20_000), {}))
+    assert len(str(excinfo.value)) < scraper.BODY_QUOTE_CHARS + 200
+    # the short, useful case is untouched
+    with pytest.raises(RuntimeError, match="Trigger failed 500: upstream boom"):
+        asyncio.run(scraper.trigger(_trigger_session(500, "upstream boom"), {}))

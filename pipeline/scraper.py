@@ -858,6 +858,22 @@ class Collection(NamedTuple):
     rows: list[dict] | None
 
 
+# How much of a response body a refusal message quotes. The message becomes one
+# line of scraper.log, the console and the dashboard's crash dialog, and a body
+# is untrusted bytes from a billed endpoint: the head of it is the diagnosis,
+# the whole of it is a wall. The other arms of _parse_collection_body already
+# quote 200 characters; this is the bound for the two that quote an envelope.
+BODY_QUOTE_CHARS = 2000
+
+
+def _quoted(text: str) -> str:
+    """`text` cut to BODY_QUOTE_CHARS, saying so when it was longer."""
+    text = str(text)
+    if len(text) <= BODY_QUOTE_CHARS:
+        return text
+    return f"{text[:BODY_QUOTE_CHARS]}... [{len(text) - BODY_QUOTE_CHARS} more chars]"
+
+
 def _looks_like_an_envelope(data: dict) -> bool:
     """True for a status/error wrapper rather than a collected job record.
 
@@ -928,7 +944,7 @@ def _parse_collection_body(body: str, status: int | None = None) -> Collection:
         if isinstance(data, dict) and data.get("snapshot_id"):
             return Collection(str(data["snapshot_id"]), None)
         if isinstance(data, dict) and _looks_like_an_envelope(data):
-            raise RuntimeError(f"Collection request refused: {data}")
+            raise RuntimeError(f"Collection request refused: {_quoted(data)}")
         if status == 202:
             raise RuntimeError(
                 f"Bright Data answered 202 Accepted (collection still running) "
@@ -979,7 +995,7 @@ async def trigger(session: aiohttp.ClientSession, payload: dict,
             # Backstop for when preflight failed open (probe down) but the account
             # is the real problem: 401/403 here means the same thing it does there.
             hint = f"\n{TOKEN_HINT}" if resp.status in (401, 403) else ""
-            raise RuntimeError(f"Trigger failed {resp.status}: {body}{hint}")
+            raise RuntimeError(f"Trigger failed {resp.status}: {_quoted(body)}{hint}")
         # text(), not json(): a collection that beat the sync window comes back
         # as NDJSON, which json() cannot read. See _parse_collection_body.
         return _parse_collection_body(await resp.text(), status=resp.status)

@@ -124,13 +124,18 @@ MAX_TAILOR_WARNINGS_SHOWN = 5
 
 def _tailor_warning_lines(rows: list[dict]) -> str:
     """The dialog block for jobs that finished WITH warnings: '  - <label>: <warning>'
-    per warning, truncated per job so one noisy run can't bury the others."""
+    per warning, truncated per job so one noisy run can't bury the others.
+
+    Paths are scrubbed here, at the screen: an advisory quotes the exception that
+    skipped an optional artifact, and an OSError's own message carries the
+    offending path, which names the person's home directory (see errmsg). The
+    folder's tailor_report.txt keeps the full line."""
     out: list[str] = []
     for r in rows:
         label = r.get("label") or r.get("id") or "job"
         warns = list(r.get("warnings") or [])
         for w in warns[:MAX_TAILOR_WARNINGS_SHOWN]:
-            out.append(f"  - {label}: {w}")
+            out.append(f"  - {label}: {errmsg.scrub_paths(w)}")
         extra = len(warns) - MAX_TAILOR_WARNINGS_SHOWN
         if extra > 0:
             out.append(f"  - {label}: ...and {extra} more (see tailor_report.txt)")

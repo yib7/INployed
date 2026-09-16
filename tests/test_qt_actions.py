@@ -825,6 +825,22 @@ def test_tailor_warning_lines_truncates_a_noisy_job():
     assert "...and 4 more (see tailor_report.txt)" in block
 
 
+def test_tailor_warning_lines_carry_no_absolute_path():
+    """An advisory quotes the exception that skipped an optional artifact, and an
+    OSError's own message carries the offending path (the home directory names the
+    person). tailor_report.txt keeps it; the dialog block does not."""
+    rows = [{"label": "Eng @ A", "warnings": [
+        "advisory: apply sheet skipped ([Errno 13] Permission denied: "
+        r"'C:\Users\someone\Downloads\Generated_Resumes\A\Eng\apply.md')",
+        "advisory: ATS check skipped ([Errno 2] No such file: '/home/someone/x/resume.pdf')",
+        "page limit: resume shipped on 2 pages (limit is 1)",
+    ]}]
+    block = mw._tailor_warning_lines(rows)
+    assert "Users" not in block and "someone" not in block and "/home/" not in block
+    assert "apply.md" in block and "resume.pdf" in block
+    assert "page limit: resume shipped on 2 pages (limit is 1)" in block
+
+
 def test_tailor_work_collects_per_job_warnings(qtbot, monkeypatch, tmp_path):
     """_tailor_work hands tailor() an on_warning collector and carries what it caught
     into that job's result dict, which is what _finish_tailor reads."""

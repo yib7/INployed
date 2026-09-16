@@ -522,3 +522,29 @@ def test_sorting_a_column_at_its_floor_widens_it_for_the_arrow(qtbot):
     tab._on_header_clicked(wide)
     assert hh.sectionSize(wide) == 400                        # already had room
 
+
+def test_sorted_header_paints_through_the_sort_aware_header(qtbot):
+    """The sorted section is painted by SortAwareHeader in three passes
+    (section, arrow in its own rect, label short of the arrow); a right-aligned
+    count column and a centred badge column both go through it, and a grab
+    must render every section without raising."""
+    from qt.jobs_tab import SortAwareHeader
+
+    tab = JobsTab("high", COLS)
+    qtbot.addWidget(tab)
+    tab.resize(1200, 400)
+    tab.show()
+    tab.set_source_df(_df())
+    hh = tab.table.horizontalHeader()
+    assert isinstance(hh, SortAwareHeader)
+    for key in ("recommendation", "score", "job_title"):
+        tab._sort_col = None
+        tab._on_header_clicked(COL_IDS.index(key))
+        assert hh.sortIndicatorSection() == COL_IDS.index(key)
+        pixmap = hh.grab()
+        assert not pixmap.isNull() and pixmap.width() > 0
+    tab._on_header_clicked(COL_IDS.index("job_title"))     # desc
+    tab._on_header_clicked(COL_IDS.index("job_title"))     # unsorted again
+    assert hh.sortIndicatorSection() == -1
+    assert not hh.grab().isNull()
+

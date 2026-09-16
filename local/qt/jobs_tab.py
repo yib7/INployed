@@ -27,6 +27,69 @@ from vm_schedule import RUN_LABELS
 TITLE_FLOOR_PX = 170
 
 
+class SortAwareHeader(QtWidgets.QHeaderView):
+    """A horizontal header whose sort arrow never sits on its label.
+
+    Under the stylesheet, Qt paints a section's sort indicator at the section's
+    right edge and lays the label out over the FULL content rect, so a
+    right-aligned label (Applicants, Days, every count column) had the arrow
+    drawn across its last letter at any width, and a centred one whenever the
+    column was near its floor. Declaring the arrow as a QSS subcontrol makes Qt
+    clip the label instead of moving it, which is worse. So the sorted section
+    is painted in two passes: the section with its arrow and no text through
+    the style, then the label by hand in the rect that stops short of the
+    arrow, with the stylesheet's own colours (MUTED, TEXT on hover), font
+    weight and the model's alignment. Every other section is painted by Qt as
+    before.
+    """
+
+    def paintSection(self, painter, rect, logicalIndex):  # noqa: N802 - Qt override
+        if (logicalIndex != self.sortIndicatorSection()
+                or not self.isSortIndicatorShown()):
+            super().paintSection(painter, rect, logicalIndex)
+            return
+        opt = QtWidgets.QStyleOptionHeaderV2()
+        self.initStyleOptionForIndex(opt, logicalIndex)
+        opt.rect = rect
+        text, indicator = opt.text, opt.sortIndicator
+        # 1. the section's background and borders alone: no text, no arrow (the
+        #    platform styles place the arrow differently once the text is gone).
+        opt.text = ""
+        opt.sortIndicator = QtWidgets.QStyleOptionHeader.SortIndicator.None_
+        style = self.style()
+        style.drawControl(QtWidgets.QStyle.ControlElement.CE_Header, opt, painter, self)
+        # 2. the arrow, in a rect of its own at the right edge, inside the padding.
+        mark = style.pixelMetric(QtWidgets.QStyle.PixelMetric.PM_HeaderMarkSize, None, self)
+        arrow = QtWidgets.QStyleOptionHeaderV2(opt)
+        arrow.sortIndicator = indicator
+        arrow.rect = QtCore.QRect(rect.right() - _HEADER_PAD_PX - mark, rect.top(),
+                                  mark, rect.height())
+        style.drawPrimitive(QtWidgets.QStyle.PrimitiveElement.PE_IndicatorHeaderArrow,
+                            arrow, painter, self)
+        # 3. the label, stopping short of the arrow.
+        hovered = bool(opt.state & QtWidgets.QStyle.StateFlag.State_MouseOver)
+        label_rect = rect.adjusted(_HEADER_PAD_PX, 0, -_HEADER_PAD_PX - sort_mark_px(self), 0)
+        painter.save()
+        painter.setFont(theme._with_qss_weight(self.font(), widget=self))
+        painter.setPen(QtGui.QColor(theme.TEXT if hovered else theme.MUTED))
+        painter.drawText(label_rect, int(opt.textAlignment.value), text)
+        painter.restore()
+
+
+# `QHeaderView::section { padding: 7px 9px }` in theme.py: the horizontal padding
+# the by-hand label pass reproduces. Kept beside JobsTab._HEADER_CHROME_PX, which
+# counts the same nine pixels twice plus the two 1px borders.
+_HEADER_PAD_PX = 9
+
+
+def sort_mark_px(header: QtWidgets.QHeaderView) -> int:
+    """The width the style spends on a section's sort arrow, margin included."""
+    style = header.style()
+    pm = QtWidgets.QStyle.PixelMetric
+    return (style.pixelMetric(pm.PM_HeaderMarkSize, None, header)
+            + style.pixelMetric(pm.PM_HeaderMargin, None, header))
+
+
 class JobsTab(QtWidgets.QWidget):
     def __init__(self, table_key: str, columns, *, on_open_url=None, on_set_status=None,
                  on_block=None, on_selection=None, on_delete=None, on_edit=None,
@@ -139,6 +202,8 @@ class JobsTab(QtWidgets.QWidget):
         bar.addWidget(self.count_label)
 
         self.table = QtWidgets.QTableView()
+        self.table.setHorizontalHeader(
+            SortAwareHeader(QtCore.Qt.Orientation.Horizontal, self.table))
         self.table.setModel(self.proxy)
         self.table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -420,21 +485,16 @@ class JobsTab(QtWidgets.QWidget):
         self._apply_filters()
 
     def _sort_mark_px(self) -> int:
-        """The width the style spends on a section's sort arrow, margin included."""
-        hh = self.table.horizontalHeader()
-        style = hh.style()
-        pm = QtWidgets.QStyle.PixelMetric
-        return (style.pixelMetric(pm.PM_HeaderMarkSize, None, hh)
-                + style.pixelMetric(pm.PM_HeaderMargin, None, hh))
+        return sort_mark_px(self.table.horizontalHeader())
 
     def _make_room_for_sort_mark(self, index: int) -> None:
         """Widen the sorted column so its arrow does not sit on its label.
 
-        `_header_floor` fits the label alone; the sort indicator is painted
-        INSIDE the same section, so a column sitting at its floor (Applicants,
-        80px at 100%) had the arrow drawn over its last letter the moment it
-        was sorted (c14 Phase 7, `s1.0_1100x700_high_score.png`). A floor
-        again: a column already wider than label plus arrow is left alone."""
+        `_header_floor` fits the label alone, and `SortAwareHeader` gives the
+        sorted section's label a rect that stops short of the arrow, so a
+        column sitting at its floor (Applicants, 80px at 100%) would clip its
+        last letter the moment it was sorted. A floor again: a column already
+        wider than label plus arrow is left alone."""
         need = self._header_floor(index) + self._sort_mark_px()
         hh = self.table.horizontalHeader()
         if hh.sectionSize(index) < need:

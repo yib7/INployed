@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 # ── Locations ────────────────────────────────────────────────────────────────
 PKG_DIR = Path(__file__).resolve().parent              # local/resume_tailor
@@ -490,12 +491,85 @@ def project_rank_bullets(rank: int) -> int | None:
 
 
 def gemini_auth() -> str:
-    """Gemini auth mode: 'vertex' (default; uses GOOGLE_CLOUD_PROJECT) or
-    'api_key' (uses RESUME_TAILOR_GEMINI_API_KEY -- for users without Vertex).
-    Precedence: env var > local/config.json > 'vertex'."""
+    """Gemini auth mode: 'vertex' (default; uses GOOGLE_CLOUD_PROJECT),
+    'api_key' (one RESUME_TAILOR_GEMINI_API_KEY -- for users without Vertex), or
+    'pool' (every key in GEMINI_API_KEYS, rotated and RPD-gated by the job
+    scorer's keypool.KeyPool, with Vertex as the spillover).
+
+    Precedence: env var > local/config.json > 'vertex'. An unrecognised value
+    reads as 'vertex', the mode that needs no key material to be present."""
     val = os.getenv("RESUME_TAILOR_GEMINI_AUTH") or _config_json().get("gemini_auth")
     val = val.strip().lower() if isinstance(val, str) else "vertex"
-    return "api_key" if val == "api_key" else "vertex"
+    return val if val in ("api_key", "pool") else "vertex"
+
+
+# Tier token -> (env var, local/config.json key) for the POOL fallback chains.
+# Mirrors _TIER_ENV deliberately: a fallback list is only ever correct for the
+# tier it belongs to. The tiers are quality/cost classes, and free-tier quota
+# runs the opposite way -- the lite models allow 500 requests/day per key while
+# the full Flash models allow 20 -- so one shared list would send the cheap
+# high-volume selection pass into the scarce allowance the cover letter and the
+# scorer's deep stage depend on, and would let the pro pass quietly drop onto a
+# lite. Each tier falls back inside its own class or not at all.
+_TIER_FALLBACK_ENV = {
+    TIER_FLASH_LITE: ("RESUME_TAILOR_FALLBACK_FLASH_LITE", "tailor_fallback_flash_lite"),
+    TIER_FLASH: ("RESUME_TAILOR_FALLBACK_FLASH", "tailor_fallback_flash"),
+    TIER_PRO: ("RESUME_TAILOR_FALLBACK_PRO", "tailor_fallback_pro"),
+}
+
+# The single chain used in 'simple' mode, where every tier resolves to one model
+# and so shares one correct fallback list. Counterpart of MODEL_ALL_ENV.
+FALLBACK_ALL_ENV = "RESUME_TAILOR_FALLBACK_MODELS"
+FALLBACK_ALL_KEY = "tailor_fallback_models"
+
+
+def _model_names(value: Any) -> list[str]:
+    """Model ids from a JSON list or a delimited string, order kept, deduped."""
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+    out: list[str] = []
+    for item in items:
+        text = str(item)
+        for sep in ",;":
+            text = text.replace(sep, " ")
+        for name in text.split():
+            if name not in out:
+                out.append(name)
+    return out
+
+
+def _fallback_list(env: str, cfg_key: str) -> list[str]:
+    """One fallback chain: env var > local/config.json > empty."""
+    val = os.getenv(env)
+    if val is None or not str(val).strip():
+        val = _config_json().get(cfg_key)
+    return _model_names(val)
+
+
+def gemini_fallback_models(tier: str | None = None) -> list[str]:
+    """Extra models the pool may use after `tier`'s own model, ranked.
+
+    Only consulted in gemini_auth='pool'. Free-tier quota is metered per
+    (key, model), so naming a second model is an independent daily allowance
+    rather than a share of the same one -- which is the only reason this exists.
+    The tier's own model always leads; these follow in the order given.
+
+    Which list applies follows model_for()'s own split, and must:
+      'simple' mode -- every tier resolves to RESUME_TAILOR_MODEL_ALL, so one
+        chain (RESUME_TAILOR_FALLBACK_MODELS) is right for all of them.
+      'tiers' mode  -- each tier gets its OWN chain, from _TIER_FALLBACK_ENV.
+        An unknown or missing tier returns [] rather than borrowing the shared
+        list: no fallback is today's behaviour, while a wrong-class fallback
+        spends an allowance the caller had no business spending.
+
+    Precedence within a chain: env var > local/config.json > empty.
+    """
+    if _model_mode(MODEL_MODE_ENV) == MODEL_MODE_SIMPLE and _one_model(
+            MODEL_MODE_ENV, MODEL_ALL_ENV):
+        return _fallback_list(FALLBACK_ALL_ENV, FALLBACK_ALL_KEY)
+    pair = _TIER_FALLBACK_ENV.get(tier or "")
+    return _fallback_list(*pair) if pair else []
 
 
 def tailor_provider() -> str:

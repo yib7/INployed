@@ -44,6 +44,8 @@ class FakePool:
         self.calls = []
 
     async def generate(self, *, model, contents, config):
+        # `model` is the stage's ranked chain, as KeyPool.generate takes it.
+        model = model[0] if isinstance(model, (list, tuple)) else model
         self.calls.append((model, contents))
         if model == sj.STAGE1_MODEL:
             return _resp(json.dumps({"score": self.score, "reason": "great fit"}))

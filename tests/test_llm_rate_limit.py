@@ -55,7 +55,7 @@ def _invoke_seq(excs):
     seen: list[int] = []
     pending = list(excs)
 
-    def _fake(system, user, model, *, json_out, temperature,
+    def _fake(system, user, model, *, tier=None, json_out, temperature,
               max_output_tokens, tools, timeout_s):
         seen.append(timeout_s)
         if pending:
@@ -129,7 +129,7 @@ def _always_returns(text):
     """Fake _invoke that always answers `text`. Records each attempt's timeout."""
     seen: list[int] = []
 
-    def _fake(system, user, model, *, json_out, temperature,
+    def _fake(system, user, model, *, tier=None, json_out, temperature,
               max_output_tokens, tools, timeout_s):
         seen.append(timeout_s)
         return _ok_resp(text)

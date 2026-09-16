@@ -31,6 +31,8 @@ def _clear_env(monkeypatch):
         "SCORE_STAGE1_CONCURRENCY", "SCORE_STAGE2_CONCURRENCY",
         "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
         "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY",
+        "SCORE_STAGE1_RPM", "SCORE_STAGE1_RPD",
+        "SCORE_STAGE2_RPM", "SCORE_STAGE2_RPD",
     ):
         monkeypatch.delenv(k, raising=False)
 
@@ -205,3 +207,60 @@ def test_the_other_int_settings_may_still_go_negative(monkeypatch, tmp_path):
     monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
     monkeypatch.setenv("SCORE_MIN_FILTER_YEARS", "-1")
     assert score_jobs.load_scoring_config()["min_filter_years"] == -1
+
+
+# --- per-stage free-tier rate limits -------------------------------------------
+#
+# keypool.LIMITS is keyed by exact model id, so every model swap in Settings used
+# to silently drop both stages onto DEFAULT_LIMITS {rpm 5, rpd 100}. These four
+# keys let the numbers travel with the model choice instead. 0 means "not set --
+# use the built-in table", which is what a fresh install and the VM both get.
+
+def test_model_limits_default_to_empty_meaning_use_builtin(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    assert score_jobs.load_scoring_config()["model_limits"] == []
+
+
+def test_config_file_supplies_model_limits(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"model_limits": ["m1 15 500", "m2 10 250"]})
+    cfg = score_jobs.load_scoring_config()
+    assert score_jobs.configured_limits(cfg) == {
+        "m1": {"rpm": 15, "rpd": 500}, "m2": {"rpm": 10, "rpd": 250}}
+
+
+def test_env_overrides_model_limits(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
+    _write_config(tmp_path, {"model_limits": ["m1 15 500"]})
+    monkeypatch.setenv("SCORE_MODEL_LIMITS", "m1 30 900")
+    cfg = score_jobs.load_scoring_config()
+    assert score_jobs.configured_limits(cfg) == {"m1": {"rpm": 30, "rpd": 900}}
+
+
+def test_configured_limits_map_keys_by_model_id(monkeypatch, tmp_path):
+    # What make_pool hands KeyPool: {model_id: {"rpm": .., "rpd": ..}}, built from
+    # the same config rows the Settings tab writes.
+    cfg = {"model_limits": ["m1 15 500", "m2 10 250"]}
+    assert score_jobs.configured_limits(cfg) == {
+        "m1": {"rpm": 15, "rpd": 500},
+        "m2": {"rpm": 10, "rpd": 250},
+    }
+
+
+def test_configured_limits_is_empty_without_rows(monkeypatch, tmp_path):
+    # The normal case. keypool.LIMITS already knows every model the dropdown
+    # offers, so a row exists only for one it does not.
+    assert score_jobs.configured_limits({"stage1_model": "m1", "stage2_model": "m2"}) == {}
+
+
+def test_one_model_named_by_both_stages_resolves_to_one_row(monkeypatch, tmp_path):
+    # The bug the per-stage rpm/rpd boxes caused: both stages on
+    # gemini-3.5-flash-lite left it gated at stage 2's 5/20 rather than its real
+    # 15/500, sending 96% of that model's free quota to the paid backstop. Rows
+    # are keyed by model, so there is no second stage to overwrite the first.
+    cfg = {"stage1_model": "same", "stage2_model": "same",
+           "model_limits": ["same 15 500"]}
+    assert score_jobs.configured_limits(cfg) == {"same": {"rpm": 15, "rpd": 500}}

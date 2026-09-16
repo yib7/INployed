@@ -31,7 +31,8 @@ import pandas as pd
 from google.genai import types
 from markdownify import markdownify
 
-from keypool import KeyPool, PoolError
+from keypool import (DEFAULT_LIMITS, LIMITS, KeyPool, PoolError,
+                     limits_from_config, ranked_models)
 from run_labels import RUN_LABELS
 
 # Data root: the directory holding .env, resume.md, the master CSV and the
@@ -79,10 +80,24 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "provider": ("SCORE_PROVIDER", "gemini", "str"),
     "stage1_model": ("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite", "str"),
     "stage2_model": ("SCORE_STAGE2_MODEL", "gemini-3.5-flash", "str"),
+    # Extra models each stage may fall back to, in preference order after its
+    # primary above. Free-tier quota is metered per (key, model), so naming a
+    # second model is a genuinely separate daily allowance rather than a share of
+    # the same one -- N models x M keys, not M. Empty = today's single-model
+    # behaviour exactly, which is what the VM (no scoring_config.json) gets.
+    "stage1_models": ("SCORE_STAGE1_MODELS", [], "list"),
+    "stage2_models": ("SCORE_STAGE2_MODELS", [], "list"),
     "stage1_model_claude": ("SCORE_STAGE1_MODEL_CLAUDE", "claude-haiku-4-5", "str"),
     "stage2_model_claude": ("SCORE_STAGE2_MODEL_CLAUDE", "claude-sonnet-5", "str"),
     "stage1_concurrency": ("SCORE_STAGE1_CONCURRENCY", 6, "int"),
     "stage2_concurrency": ("SCORE_STAGE2_CONCURRENCY", 4, "int"),
+    # Free-tier rate limits, as "<model> <rpm> <rpd>" rows keyed by MODEL.
+    # keypool.LIMITS is keyed by exact model id and cannot know an id picked in
+    # Settings after it was written, so a swap to an unknown model drops it onto
+    # DEFAULT_LIMITS silently; a row here carries the real numbers. Empty = use
+    # keypool's own table, which covers the whole Flash family and is what a
+    # fresh install and the VM (no scoring_config.json) both get.
+    "model_limits": ("SCORE_MODEL_LIMITS", [], "list"),
     "stage2_threshold": ("SCORE_STAGE2_THRESHOLD", 4, "int"),
     # Spend guards: cap LLM calls per run so a keyword change or scrape anomaly
     # can't fire thousands of calls unattended. Overflow rows keep score=NaN and
@@ -184,9 +199,30 @@ def load_scoring_config() -> dict:
                 cfg[key] = _spend_cap(cfg[key], default, key)
         elif kind == "bool":
             cfg[key] = _as_bool(value)
+        elif kind == "list":
+            # Kept as a list of lines. The Settings tab stores JSON lists; an env
+            # var can only carry one string, and keypool's parsers accept either.
+            cfg[key] = list(value) if isinstance(value, (list, tuple)) else [str(value)]
         else:
             cfg[key] = value
     return cfg
+
+
+def configured_limits(cfg: dict) -> dict:
+    """{model_id: {"rpm": n, "rpd": n}} from the config's `model_limits` rows.
+
+    Keyed by MODEL ID because that is how keypool gates, and free-tier quota is a
+    per-model allowance rather than a per-stage one. A stage naming several
+    models (the ranked fallback chain) needs a row per model, and a model named
+    by both stages must resolve to ONE row -- neither of which a per-stage pair
+    of boxes could express. An empty table is normal: keypool's own LIMITS covers
+    every model the Settings dropdown offers.
+
+    The mapping itself lives in keypool so the resume tailor -- which pools the
+    same keys against the same per-model quota -- resolves identical numbers
+    without importing this module.
+    """
+    return limits_from_config(cfg)
 
 
 def _active_scoring(cfg: dict) -> tuple[str, str, str]:
@@ -202,8 +238,28 @@ def _active_scoring(cfg: dict) -> tuple[str, str, str]:
     return provider, cfg["stage1_model"], cfg["stage2_model"]
 
 
+def stage_model_chain(cfg: dict, provider: str, stage: int) -> list[str]:
+    """The ranked model list a stage hands to the pool: primary, then fallbacks.
+
+    Gemini only. The Claude provider gets a single-element chain because
+    ClaudePool prices and caches per model with no free tier to multiply -- the
+    fallback list exists to spend more of Google's per-(key, model) allowance,
+    which has no Claude equivalent.
+    """
+    primary = cfg[f"stage{stage}_model_claude" if provider == "claude"
+                  else f"stage{stage}_model"]
+    if provider == "claude":
+        return ranked_models(primary)
+    return ranked_models(primary, cfg.get(f"stage{stage}_models"))
+
+
 _SCORING = load_scoring_config()
 SCORING_PROVIDER, STAGE1_MODEL, STAGE2_MODEL = _active_scoring(_SCORING)
+# What actually reaches pool.generate(). STAGE1_MODEL / STAGE2_MODEL stay the
+# single primary id, because that is what the run banner, the per-stage rate
+# limits and every log line mean by "the model".
+STAGE1_MODELS = stage_model_chain(_SCORING, SCORING_PROVIDER, 1)
+STAGE2_MODELS = stage_model_chain(_SCORING, SCORING_PROVIDER, 2)
 STAGE1_CONCURRENCY = _SCORING["stage1_concurrency"]
 STAGE2_CONCURRENCY = _SCORING["stage2_concurrency"]
 STAGE2_THRESHOLD = _SCORING["stage2_threshold"]
@@ -504,8 +560,23 @@ def make_pool():
                     max_procs=max(STAGE1_CONCURRENCY, STAGE2_CONCURRENCY))
             print("Scoring provider is 'claude' but the `claude` CLI is not on "
                   "PATH -- falling back to Gemini.")
+    limits = configured_limits(_SCORING)
+    # Say so when a stage is about to be governed by DEFAULT_LIMITS. That downgrade
+    # is invisible from outside -- the run simply crawls, then spills every call
+    # past the phantom RPD onto the paid Vertex backstop -- so it has to announce
+    # itself rather than be inferred from score_state.json afterwards.
+    for stage, chain in (("Stage-1", STAGE1_MODELS), ("Stage-2", STAGE2_MODELS)):
+        for model in chain:
+            if model in limits or model in LIMITS:
+                continue
+            print(f"{stage} model {model!r} has no configured rate limits and no "
+                  f"built-in entry -- gating at {DEFAULT_LIMITS['rpm']} rpm / "
+                  f"{DEFAULT_LIMITS['rpd']} rpd, which may be far below its real "
+                  f"free-tier allowance. Add a 'Per-model rate limits' row for "
+                  f"it in Settings -> Scoring.")
     try:
-        return KeyPool.from_env(state_path=OUTPUT_DIR / "score_state.json")
+        return KeyPool.from_env(state_path=OUTPUT_DIR / "score_state.json",
+                                limits=limits)
     except PoolError as e:
         sys.exit(str(e))
 
@@ -653,7 +724,7 @@ async def score_stage1(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
             contents = STAGE1_TEMPLATE.format(resume=resume, job=job_md, today=today)
         try:
             resp = await pool.generate(
-                model=STAGE1_MODEL,
+                model=STAGE1_MODELS,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
@@ -682,7 +753,7 @@ async def score_stage2(pool, sem: asyncio.Semaphore, resume: str, job_id: str, j
             contents = STAGE2_TEMPLATE.format(resume=resume, job=job_md, today=today)
         try:
             resp = await pool.generate(
-                model=STAGE2_MODEL,
+                model=STAGE2_MODELS,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,

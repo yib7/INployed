@@ -285,6 +285,16 @@ class ClaudePool:
             event.set()
 
     async def generate(self, *, model, contents, config):
+        # `model` mirrors KeyPool.generate, which takes a single id OR a ranked
+        # list of interchangeable ones. There is nothing to rank here: the list
+        # exists to spend Gemini's per-(key, model) free allowance, and Claude
+        # has no such allowance to multiply -- every model is billed the same
+        # subscription. So take the first and ignore the rest, rather than let a
+        # list reach `--model` and the (model, system) warmup key as a repr.
+        if isinstance(model, (list, tuple)):
+            if not model:
+                raise ClaudeCLIError("generate called with no model")
+            model = model[0]
         system = getattr(config, "system_instruction", "") or ""
         json_mode = getattr(config, "response_mime_type", None) == "application/json"
         schema = getattr(config, "response_schema", None)

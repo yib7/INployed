@@ -756,7 +756,7 @@ def test_prune_deletes_nothing_for_keep_everything_or_off(tmp_path):
 
 # --- show_if: a field is on screen only when it can actually do something ------
 
-# The sixteen gates, spelled out so the schema can't drift without a failure here.
+# Every gate, spelled out so the schema can't drift without a failure here.
 #
 # The six tailor-model tier rows do NOT gate on `tailor_provider` directly, even
 # though the provider is exactly what should hide them: a Field has one `show_if`,
@@ -780,13 +780,28 @@ SHOW_IF_GATES = {
     "RESUME_TAILOR_CLAUDE_MODEL_PRO": ("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)),
     "gemini_auth": ("tailor_provider", ("gemini",)),
     "RESUME_TAILOR_GEMINI_API_KEY": ("gemini_auth", ("api_key",)),
+    # The ranked fallback lists and the per-model limits table: same gate as the
+    # Gemini pickers they extend. Free-tier quota per (key, model) is a Gemini
+    # concept, and the Claude scorer has no allowance to spread across models.
+    "stage1_models": ("provider", ("gemini",)),
+    "stage2_models": ("provider", ("gemini",)),
+    "model_limits": ("provider", ("gemini",)),
+    # The tailor's fallback chains gate on the model MODE, not on gemini_auth: a
+    # chain from the wrong mode is not inert but WRONG (the tiers are quality
+    # classes with opposite free-quota profiles), while a chain shown under
+    # non-pool billing merely does nothing. tailor_provider comes transitively
+    # through the mode field, exactly as it does for the tier model pickers.
+    "tailor_fallback_models": ("RESUME_TAILOR_MODEL_MODE", ("simple",)),
+    "tailor_fallback_flash_lite": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "tailor_fallback_flash": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+    "tailor_fallback_pro": ("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
 }
 
 
-def test_the_sixteen_gates_are_declared_on_the_schema():
+def test_every_gate_is_declared_on_the_schema():
     gated = {f.key: f.show_if for f in settings.SETTINGS_SCHEMA if f.show_if is not None}
     assert gated == SHOW_IF_GATES
-    assert len(SHOW_IF_GATES) == 16
+    assert len(SHOW_IF_GATES) == 23
 
 
 def test_show_if_is_a_declarative_tuple_not_a_callable():
@@ -883,11 +898,12 @@ def test_is_visible_falls_back_to_the_gates_default_when_it_is_absent():
 def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields(tmp_path):
     """The audit's headline finding, pinned. At the shipped defaults
     (provider=gemini, tailor_provider=gemini, gemini_auth=vertex,
-    RESUME_TAILOR_MODEL_MODE=tiers) these nine describe machinery that cannot run
+    RESUME_TAILOR_MODEL_MODE=tiers) these ten describe machinery that cannot run
     — two Claude scorer pickers, the Claude tailor block (its mode field, its
     one-model box and three tier pickers, the last four hidden TRANSITIVELY
     through the mode field), the Gemini one-model box that only 'simple' mode
-    reads, and the Gemini API key that only 'api_key' billing reads."""
+    reads, the Gemini API key that only 'api_key' billing reads, and the tailor's
+    fallback-model chain, which only 'pool' billing can spend."""
     values = settings.load(_targets(tmp_path))
     hidden = {f.key for f in settings.SETTINGS_SCHEMA} - set(settings.visible_keys(values))
     assert hidden == {
@@ -896,6 +912,7 @@ def test_visible_keys_at_the_shipped_defaults_hides_the_nine_inapplicable_fields
         "RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "RESUME_TAILOR_CLAUDE_MODEL_FLASH",
         "RESUME_TAILOR_CLAUDE_MODEL_PRO",
         "RESUME_TAILOR_MODEL_ALL", "RESUME_TAILOR_GEMINI_API_KEY",
+        "tailor_fallback_models",          # belongs to 'simple' mode; default is tiers
     }
 
 
@@ -934,17 +951,24 @@ ADVANCED_KEYS = {
     "RESUME_TAILOR_CLAUDE_MODEL_PRO",
     # VM plumbing, inert unless you run the cloud job-discovery VM
     "VM_GCLOUD_PATH", "VM_REMOTE_DIR", "local_task_offsets",
+    # the ranked fallback chains and the per-model limits table: empty is right
+    # until you have decided one model's free quota is not enough for a day
+    "stage1_models", "stage2_models", "model_limits", "tailor_fallback_models",
+    "tailor_fallback_flash_lite", "tailor_fallback_flash", "tailor_fallback_pro",
 }
 
 
 def test_the_advanced_set_is_declared_on_the_schema():
-    """PLAN.md's P4 calls this list "17 fields"; enumerating it gives 18 (4 + 5
-    singles + 6 + 3). The enumeration names every key explicitly, so it is the
-    authoritative half — see DECISIONS.md. Nothing in the UI hardcodes either
-    number: the checkbox counts at runtime."""
+    """PLAN.md's P4 calls this list "17 fields"; enumerating it gave 18 (4 + 5
+    singles + 6 + 3), and the four rate-limit rows added alongside the keypool
+    LIMITS fix made 22; dropping those four for one per-model table and adding
+    the multi-model rows makes 25. The enumeration
+    names every key explicitly, so it is the authoritative half — see
+    DECISIONS.md. Nothing in the UI hardcodes either number: the checkbox counts
+    at runtime."""
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.advanced}
     assert declared == ADVANCED_KEYS
-    assert len(ADVANCED_KEYS) == 18
+    assert len(ADVANCED_KEYS) == 25
 
 
 def test_advanced_set_excludes_country_pdflatex_and_max_scored():
@@ -1218,3 +1242,36 @@ def test_validate_rejects_the_non_c0_line_separators_too(tmp_path):
     for sep in (chr(0x85), chr(0x2028), chr(0x2029)):
         errs = settings.validate({"GEMINI_API_KEYS": "key1" + sep + "key2"})
         assert "GEMINI_API_KEYS" in errs, f"{sep!r} accepted"
+
+
+# --- per-stage free-tier rate limits, beside the model pickers they belong to ----
+
+def test_the_rate_limit_table_sits_with_the_gemini_model_pickers():
+    """The point of this row is that it travels with the model choice.
+
+    keypool.LIMITS is keyed by exact model id, so a model swap in this very tab
+    used to drop that stage onto DEFAULT_LIMITS silently. If this drifts out of
+    the Scoring section, out of scoring_config.json, or off the gemini gate, it
+    stops being findable by the person who just changed the model.
+    """
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["model_limits"]
+    assert f.type == "list"
+    assert f.default == []                     # empty == "use the built-in table"
+    assert f.section == "Scoring"
+    assert f.target == "scoring"
+    assert f.show_if == ("provider", ("gemini",))
+    assert settings.storage_location(f) == "scoring_config.json"
+
+
+def test_no_per_stage_rate_limit_boxes_remain():
+    """They were removed, and must not come back.
+
+    A per-stage rpm/rpd pair can only describe that stage's PRIMARY model -- not
+    the ranked fallbacks it now also runs -- and two stages naming one model
+    collapsed last-write-wins. That fired for real: both stages on
+    gemini-3.5-flash-lite left it gated at stage 2's 5 rpm / 20 rpd instead of
+    its true 15 / 500, sending 96% of the model's free quota to paid Vertex.
+    `model_limits` is keyed by model and cannot collapse.
+    """
+    keys = {f.key for f in settings.SETTINGS_SCHEMA}
+    assert not {"stage1_rpm", "stage1_rpd", "stage2_rpm", "stage2_rpd"} & keys

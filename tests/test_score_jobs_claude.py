@@ -202,7 +202,7 @@ def test_make_pool_cli_missing_falls_back_to_gemini(monkeypatch, tmp_path, capsy
 
     class _FakeKeyPool:
         @staticmethod
-        def from_env(state_path):
+        def from_env(state_path, limits=None):
             return fallback_pool
 
     monkeypatch.setattr(sj, "KeyPool", _FakeKeyPool)
@@ -231,7 +231,7 @@ def test_make_pool_import_error_falls_back_never_exits(monkeypatch, tmp_path, ca
 
     class _FakeKeyPool:
         @staticmethod
-        def from_env(state_path):
+        def from_env(state_path, limits=None):
             return fallback_pool
 
     monkeypatch.setattr(sj, "KeyPool", _FakeKeyPool)
@@ -250,7 +250,7 @@ def test_make_pool_gemini_provider_unaffected(monkeypatch, tmp_path):
 
     class _FakeKeyPool:
         @staticmethod
-        def from_env(state_path):
+        def from_env(state_path, limits=None):
             return fallback_pool
 
     monkeypatch.setattr(sj, "KeyPool", _FakeKeyPool)

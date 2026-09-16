@@ -333,6 +333,24 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Deeper model for jobs that pass the Stage-2 threshold. Pick from "
                "the list or type a model ID your account can use — a wrong name silently "
                "breaks scoring."),
+    # Free-tier quota is metered per (API key, MODEL), not per key -- one key
+    # exhausted on gemini-3.8-flash still has its whole gemini-3.7-flash
+    # allowance. So naming extra models multiplies the day's free calls
+    # (models x keys) instead of splitting one allowance, and the pool only
+    # reaches the PAID Vertex backstop once every pair is spent. Empty = the
+    # single-model behaviour these lists replaced.
+    Field("stage1_models", "Stage-1 fallback models", "list", [],
+          "Scoring", "scoring", show_if=("provider", ("gemini",)), advanced=True,
+          help="Extra models Stage 1 may use once 'Stage-1 model' runs out of free "
+               "requests, one per line, best first. Each model has its OWN free daily "
+               "quota per API key, so two models double the free calls. Give any model "
+               "the dropdown doesn't list a 'Per-model rate limits' row too."),
+    Field("stage2_models", "Stage-2 fallback models", "list", [],
+          "Scoring", "scoring", show_if=("provider", ("gemini",)), advanced=True,
+          help="Extra models Stage 2 may use once 'Stage-2 model' runs out of free "
+               "requests, one per line, best first. Stage 2 is the expensive stage: the "
+               "full Flash models allow only 20 requests/day each, so listing three of "
+               "them is 4x the deep scores before anything is billed."),
     Field("provider", "Scoring provider", "choice", "gemini", "Scoring", "scoring",
           help="Which AI service scores jobs when scoring runs ON THIS PC. 'claude' uses "
                "your local Claude Code CLI (subscription). This setting IS pushed to the "
@@ -347,6 +365,19 @@ SETTINGS_SCHEMA: list[Field] = [
           "claude-sonnet-5", "Scoring", "scoring", choices=CLAUDE_MODELS,
           show_if=("provider", ("claude",)), advanced=True,
           help="Used only when Scoring provider is 'claude'."),
+    # The ONLY rate-limit control, keyed by model. It replaced a per-stage
+    # rpm/rpd pair per stage, which could describe a stage's PRIMARY model and
+    # nothing else -- not the ranked fallbacks, and not a model both stages name
+    # (those collapsed last-write-wins, which fired for real: two stages on
+    # gemini-3.5-flash-lite left it gated at stage 2's 5/20 instead of 15/500).
+    # Normally left empty; keypool.LIMITS covers every model in the dropdown.
+    Field("model_limits", "Per-model rate limits", "list", [],
+          "Scoring", "scoring", show_if=("provider", ("gemini",)), advanced=True,
+          help="One 'model requests-per-minute requests-per-day' per line, e.g. "
+               "'gemini-3.8-flash 5 20'. For that model it overrides both the "
+               "built-in table and the per-stage requests/minute and requests/day "
+               "settings. Needed only for a model the built-in table doesn't know, or "
+               "when Google changes an allowance. See aistudio.google.com/rate-limit."),
     Field("stage1_concurrency", "Stage-1 concurrency", "int", 6, "Scoring", "scoring",
           advanced=True,
           help="Parallel Stage-1 LLM calls.", min=1, max=50, slider=True),
@@ -466,10 +497,10 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Needed for job discovery. Create one in your job-data API dashboard, under API tokens."),
     Field("GEMINI_API_KEYS", "Gemini API keys (job scorer)", "str", "",
           "Credentials", "env", secret=True, optional=True, restart=True,
-          help="Powers the JOB SCORER, which rates every collected job. A pool of one or more keys, "
-               "comma-separated with no spaces, that it rotates through to spread rate limits. This "
-               "is SEPARATE from 'Gemini API key (resume tailor)'. Get keys at aistudio.google.com; "
-               "leave blank to score with your Google Cloud project instead."),
+          help="ONE shared set of keys for both the JOB SCORER and the RESUME TAILOR — the "
+               "tailor uses them whenever 'Resume tailor engine' is 'pool'. Comma-separated, no "
+               "spaces; they are rotated, and one key's daily free quota is counted once across "
+               "both. Get keys at aistudio.google.com; blank = use your Google Cloud project."),
     # Gated TWO deep: it is only readable when the Gemini side bills by key
     # (gemini_auth == api_key), and gemini_auth is itself only live when the
     # tailor runs on Gemini. The transitive rule in is_visible() is what stops a
@@ -479,10 +510,10 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("RESUME_TAILOR_GEMINI_API_KEY", "Gemini API key (resume tailor)", "str", "",
           "Credentials", "env", secret=True, optional=True, restart=True,
           show_if=("gemini_auth", ("api_key",)),
-          help="Powers the RESUME TAILOR only, and only while 'Resume tailor engine' is set to "
-               "'api_key'. A SINGLE key, kept separate from 'Gemini API keys (job scorer)' so the "
-               "two can use different accounts or quotas. Leave blank if the tailor bills your "
-               "Google Cloud project (engine 'vertex')."),
+          help="Rarely needed. ONE key for the RESUME TAILOR alone, used only while 'Resume "
+               "tailor engine' is 'api_key' — for a tailor on a different Google account from the "
+               "scorer. To share the scorer's keys instead, set that engine to 'pool' and leave "
+               "this blank; 'vertex' bills your Google Cloud project."),
 
     # --- Connection & paths: non-secret identity / locations, also in .env -----
     Field("BRIGHT_DATA_DATASET_ID", "Job-data dataset ID", "str", "",
@@ -521,10 +552,47 @@ SETTINGS_SCHEMA: list[Field] = [
     # the per-stage Gemini + Claude model pickers (.env). ---------------------
     Field("gemini_auth", "Resume tailor engine", "choice", "vertex",
           "Engine", "config", show_if=("tailor_provider", ("gemini",)),
-          help="How the Gemini side bills. 'vertex' uses 'Google Cloud project ID' in "
-               "Connection & paths. 'api_key' uses 'Gemini API key (resume tailor)' in "
-               "Credentials — a box that appears only once you pick 'api_key' here.",
-          choices=("vertex", "api_key")),
+          help="How the Gemini side bills. 'pool' shares the job scorer's 'Gemini API keys': "
+               "all of them, rotated, held to the free-tier limits set under Scoring, and "
+               "billing your cloud project only once they run dry. 'vertex' bills every call "
+               "to it. 'api_key' uses the single 'Gemini API key (resume tailor)'.",
+          choices=("vertex", "api_key", "pool")),
+
+    # The fallback chains, gated on the MODE rather than on gemini_auth. A chain
+    # belonging to the wrong mode is not merely inert, it is wrong: the three
+    # tiers are quality classes whose free quota runs the opposite way (a lite
+    # allows 500 requests/day per key, a full Flash 20), so one shared chain
+    # would send the cheap high-volume selection pass into the scarce allowance
+    # the cover letter needs. The mode gate is what keeps the matching set on
+    # screen; that they only DO anything under 'pool' billing is said in help.
+    Field("tailor_fallback_models", "Tailor fallback models", "list", [],
+          "Engine", "config", advanced=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("simple",)),
+          help="Extra models the tailor may use once its own model runs out of free "
+               "requests, one per line, best first. Each model has a separate free "
+               "daily quota per API key, so this is what keeps tailoring off your "
+               "billed cloud project. Used only while 'Resume tailor engine' is 'pool'."),
+    Field("tailor_fallback_flash_lite", "Fallbacks — fast (selection)", "list", [],
+          "Engine", "config", advanced=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+          help="Extra models for the FAST step only, one per line, best first. List "
+               "other '-lite' models here: they allow ~500 free requests/day per key, "
+               "and this step makes the most calls. Listing a full Flash model instead "
+               "spends the 20/day budget the deep step needs. Used only in 'pool'."),
+    Field("tailor_fallback_flash", "Fallbacks — standard (writing)", "list", [],
+          "Engine", "config", advanced=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+          help="Extra models for the WRITING step only, one per line, best first. Keep "
+               "these in the same quality class as the standard model — the full Flash "
+               "models are interchangeable here, and each carries its own 20 free "
+               "requests/day per key. Used only while the engine is 'pool'."),
+    Field("tailor_fallback_pro", "Fallbacks — deep (pro)", "list", [],
+          "Engine", "config", advanced=True,
+          show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
+          help="Extra models for the DEEP step only, one per line, best first. This "
+               "step writes the cover letter, so list only models you would accept "
+               "that from — a '-lite' model here quietly lowers its quality. Empty is "
+               "a fine answer. Used only while the engine is 'pool'."),
 
     Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
           "Engine", "config",

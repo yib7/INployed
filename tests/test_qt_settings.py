@@ -1098,24 +1098,35 @@ def test_a_collapsed_section_does_not_shrink_the_count(qtbot, tmp_path):
 
 
 def test_the_count_is_recomputed_rather_than_frozen_at_build(qtbot, tmp_path, monkeypatch):
-    """The shipped schema can't show this: `provider` and `tailor_provider` each
-    swap a same-sized pair of advanced pickers, so the real count is the same
-    number in every reachable gate state. Shrink one arm with a monkeypatched
-    schema to prove the label re-reads the gates instead of caching a constant.
+    """Prove the label re-reads the gates instead of caching a constant.
+
+    Flipping `provider` swaps which advanced rows are reachable: the Gemini-gated
+    ones (the two model pickers plus the four free-tier rate-limit boxes) leave,
+    the Claude-gated ones arrive. Dropping one of the incoming pair from a
+    monkeypatched schema makes the two arms different sizes, so a cached count and
+    a recomputed one cannot agree.
+
+    The delta is DERIVED from the schema rather than written as a literal, so a
+    gated advanced field added later moves this test with it instead of breaking
+    it -- and the premise itself is asserted, so if the arms are ever rebalanced
+    the test says so rather than passing on a stale number.
     """
     form = _form(tmp_path)
     qtbot.addWidget(form)
     baseline = form._advanced_hidden_count()
     assert f"({baseline} hidden)" in form._advanced_check.text()
 
-    # Flipping `provider` normally swaps a same-sized pair (two Gemini pickers
-    # out, two Claude ones in), so the count comes back identical. Drop one of the
-    # incoming pair from the schema and the same flip must now read one lower.
     thinner = [f for f in settings.SETTINGS_SCHEMA if f.key != "stage1_model_claude"]
     monkeypatch.setattr(settings, "SETTINGS_SCHEMA", thinner)
+    leaving = sum(1 for f in thinner
+                  if f.advanced and f.show_if == ("provider", ("gemini",)))
+    arriving = sum(1 for f in thinner
+                   if f.advanced and f.show_if == ("provider", ("claude",)))
+    assert leaving != arriving, "thinned schema must leave the two arms uneven"
     form._widgets["provider"].setCurrentText("claude")   # gate change -> recount
-    assert form._advanced_hidden_count() == baseline - 1
-    assert f"({baseline - 1} hidden)" in form._advanced_check.text()
+    assert form._advanced_hidden_count() == baseline - leaving + arriving
+    # and the visible label tracks the recount, not just the internal counter
+    assert f"({baseline - leaving + arriving} hidden)" in form._advanced_check.text()
 
 
 def test_load_save_show_advanced_roundtrip(tmp_path, monkeypatch):

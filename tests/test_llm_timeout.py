@@ -49,7 +49,7 @@ def _invoke_recorder(fail_times, exc_factory, *, ok_text='{"ok": 1}'):
     Records the timeout_s passed on each attempt."""
     seen: list[int] = []
 
-    def _fake(system, user, model, *, json_out, temperature,
+    def _fake(system, user, model, *, tier=None, json_out, temperature,
               max_output_tokens, tools, timeout_s):
         seen.append(timeout_s)
         if len(seen) <= fail_times:

@@ -175,7 +175,7 @@ def test_header_and_education_render_from_yaml(synthetic_master):
     assert "Jane Q. Public" in tex
     assert "jane@example.com" in tex
     assert "State University" in tex
-    assert "3.7 GPA" in tex
+    assert "GPA:} 3.7/4.0" in tex
     assert "B.S. in Computer Science with a Concentration in AI/ML, Minor in Math" in tex
     assert "Awards \\& Honors:" in tex
     # the preamble is reused; no other person's data leaks in
@@ -185,7 +185,7 @@ def test_header_and_education_render_from_yaml(synthetic_master):
 def test_education_gpa_and_spacing(synthetic_master):
     tex = render.render({"experience": [], "projects": [], "leadership": []}, {}, [])
     # real GPA shown; \vspace{2pt} present even with honors absent
-    assert "3.7 GPA" in tex
+    assert "GPA:} 3.7/4.0" in tex
     assert "\\vspace{2pt}" in tex
 
 
@@ -194,8 +194,61 @@ def test_education_hides_zero_gpa(synthetic_master, monkeypatch):
     master["education"][0]["gpa"] = 0
     monkeypatch.setattr(assets, "load_master", lambda: master)
     tex = render.render({"experience": [], "projects": [], "leadership": []}, {}, [])
-    assert "0 GPA" not in tex
+    assert "\\textbf{GPA:}" not in tex
     assert "State University" in tex  # school still rendered, just no GPA
+    assert "Awards \\& Honors:" in tex  # the honors line survives on its own
+
+
+# ATS shape of the Education block. The old layout put "3.7 GPA" at the end of the
+# school row, right against the right-aligned date column, and the location at the
+# end of the degree row: a parser reading each row as one run extracted
+# "GPAAugust 2021" (losing the GPA and the start date) and "Minor in Data Science
+# City, ST" as the degree. Now the location travels with the school, the
+# degree row has nothing to its right, and GPA/honors share one labelled line in
+# the "GPA: x.xx/4.0" form parsers match.
+
+
+def _edu_tex(**overrides) -> str:
+    master = assets.load_master()
+    master["education"][0].update(overrides)
+    return render._education(master["education"])
+
+
+def test_education_location_sits_with_the_school_not_the_degree(synthetic_master):
+    tex = _edu_tex()
+    assert "{State University}{, City, ST}{August 2021 -- May 2025}" in tex
+    # the degree row is a single argument now; nothing follows it on its right
+    assert "{B.S. in Computer Science with a Concentration in AI/ML, Minor in Math}\\vspace{2pt}" in tex
+
+
+def test_education_gpa_and_honors_share_one_labelled_line(synthetic_master):
+    tex = _edu_tex()
+    assert ("\\item \\small{\\textbf{GPA:} 3.7/4.0 $|$ "
+            "\\textbf{Awards \\& Honors:} Dean's List; Honors College}") in tex
+    assert "3.7 GPA" not in tex          # the old number-first form is gone
+
+
+def test_education_gpa_line_alone_when_no_honors(synthetic_master):
+    tex = _edu_tex(honors=[])
+    assert "\\item \\small{\\textbf{GPA:} 3.7/4.0}" in tex
+    assert "$|$ \\textbf{Awards" not in tex
+
+
+def test_education_no_gpa_no_honors_emits_no_item_line(synthetic_master):
+    tex = _edu_tex(honors=[], gpa=None)
+    assert "\\item \\small{" not in tex
+    assert "\\vspace{2pt}" in tex        # the spacing after the degree row stays
+
+
+def test_education_gpa_scale_is_configurable(synthetic_master):
+    tex = _edu_tex(gpa=8.9, gpa_scale=10)
+    assert "\\textbf{GPA:} 8.9/10" in tex
+    assert "/4.0" not in tex
+
+
+def test_education_missing_location_leaves_no_dangling_comma(synthetic_master):
+    tex = _edu_tex(location="")
+    assert "{State University}{}{August 2021 -- May 2025}" in tex
 
 
 def test_candidate_slug_from_basics(synthetic_master):

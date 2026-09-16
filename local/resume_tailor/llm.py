@@ -1,7 +1,9 @@
 """Thin synchronous LLM transport for the resume tailor -- two providers.
 
-Gemini (default) is reached via Vertex AI or a dedicated API key, selected by
-config.gemini_auth(). The optional "claude" provider (config.tailor_provider())
+Gemini (default) is reached one of three ways, selected by config.gemini_auth():
+Vertex AI, a single dedicated API key, or "pool" -- the job scorer's
+keypool.KeyPool over every key in GEMINI_API_KEYS, rotated and RPD-gated per
+model with Vertex as the spillover. The optional "claude" provider (config.tailor_provider())
 runs the headless Claude Code CLI (`claude -p`) on the user's subscription via
 the pipeline/claude_cli.py transport. One public entry-point:
 call(system, user, tier, **kwargs) dispatches to whichever provider is
@@ -16,7 +18,9 @@ import logging
 import os
 import random
 import re
+import threading
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from . import config
@@ -33,6 +37,30 @@ log = logging.getLogger(__name__)
 RATE_LIMIT_MAX_RETRIES = 6
 RATE_LIMIT_BASE_SLEEP = 30.0
 RATE_LIMIT_MAX_SLEEP = 300.0
+
+# In "pool" auth a 429 from a free key is not something to wait out: the pool
+# holds other keys, so the pair is parked or retired and the next one is tried
+# IMMEDIATELY. Rotation is naturally bounded -- each 429 costs a (key, model)
+# pair, and once they are gone the pool hands back its Vertex backstop -- so
+# this ceiling exists only to stop a pathological loop.
+#
+# It is a FLOOR, not the answer: _rotation_budget sizes the real ceiling from
+# the pool, because a flat 12 is smaller than the author's 3 keys x 5 models
+# and made a tailor run give up with "kept hitting quota ... through 12
+# rotations" on the lease immediately before Vertex would have answered.
+POOL_MAX_ROTATIONS = 12
+
+# A 503 UNAVAILABLE ("this model is currently experiencing high demand") is
+# neither a timeout nor a quota error, and used to fall through to the generic
+# transient branch: three attempts, 1.5s and 3s apart, every one of them against
+# the model Google had just said it was short of capacity for. In pool mode the
+# real remedy is a different model, so the first overload rotates with no sleep
+# at all; the backoff below only starts once rotating has already failed, which
+# means either the whole chain is busy or there is nothing to rotate to (a
+# single-model config, or the Vertex backstop).
+OVERLOAD_MAX_RETRIES = 6
+OVERLOAD_BASE_SLEEP = 2.0
+OVERLOAD_MAX_SLEEP = 20.0
 
 
 class LLMError(RuntimeError):
@@ -156,18 +184,113 @@ def call(
         )
     model = config.model_for(tier)
     return _call_gemini(
-        system, user, model,
+        system, user, model, tier=tier,
         json_out=json_out, temperature=temperature,
         max_output_tokens=max_output_tokens, tools=tools,
     )
 
 
+# -- pooled auth --------------------------------------------------------------
+# One KeyPool per process, built on first use. The pool owns N genai clients and
+# a shared RPD state file, so rebuilding it per call would be both wasteful and
+# wrong (the in-memory RPM windows would reset every time).
+_POOL: Any = None
+_POOL_LOCK = threading.Lock()
+# The model the last _invoke on THIS thread actually ran. Thread-local because
+# the tailor runs its jobs on a ThreadPoolExecutor, and in pool mode the model
+# is chosen inside _invoke_pooled -- too deep to return, since _invoke's return
+# value is the SDK response object and callers destructure it.
+_LAST = threading.local()
+
+
+def _keypool():
+    """Lazy import of pipeline/keypool.py -- same sys.path hop as _claude_cli().
+
+    Lazy so llm.py stays importable where pipeline/ is not on sys.path, and so
+    the two non-pool auth modes never pay for it.
+    """
+    import sys
+
+    root = str(Path(config.SCRAPE_DIR) / "pipeline")
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import keypool
+    return keypool
+
+
+def _pool_limits() -> dict:
+    """Free-tier rpm/rpd per model, read from the scorer's scoring_config.json.
+
+    The tailor deliberately does NOT get its own copy of these numbers: a
+    free-tier allowance belongs to the model and the Google account, not to
+    whichever lane happens to be calling. Whatever the Settings tab recorded for
+    the scorer's stage models governs the tailor too when it names one of them;
+    a tailor model the scorer never uses falls back to keypool's own table.
+    """
+    return _keypool().limits_from_disk(config.SCRAPE_DIR)
+
+
+def _rotation_budget(model: Any, tier: Optional[str]) -> int:
+    """How many pooled retirements ONE call may legitimately need.
+
+    Sized from the pool -- free keys x the length of this tier's ranked chain --
+    so the rotation ceiling can never fire while the pool still has members to
+    hand out. The Vertex backstop is the last of those members, which is why an
+    undersized ceiling does not merely retry less: it converts "fall back to
+    Vertex" into "give up".
+    """
+    kp = _keypool()
+    chain = kp.ranked_models(model, config.gemini_fallback_models(tier))
+    return max(POOL_MAX_ROTATIONS, _pool().free_pair_count(chain) + 1)
+
+
+def _pool():
+    """The process-wide KeyPool for gemini_auth='pool'. Built once."""
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is None:
+            kp = _keypool()
+            _POOL = kp.KeyPool.from_env(
+                # The scorer's own state file, on purpose: both lanes spend ONE
+                # per-key daily quota, and separate counters would each believe
+                # they had the whole allowance and double-spend it into real
+                # 429s. UsageState.save() folds the two processes together by
+                # per-key max, which is exactly this case.
+                state_path=Path(config.SCRAPE_DIR) / "score_state.json",
+                limits=_pool_limits(),
+                # Pool clients are built once, so they cannot escalate their
+                # timeout per attempt the way _build_client does. The longest
+                # slot in the schedule is the honest choice: every attempt gets
+                # the most generous timeout instead of the least.
+                http_timeout_s=config.tailor_timeout_schedule()[-1],
+            )
+        return _POOL
+
+
+def reset_pool() -> None:
+    """Drop the cached pool so the next call rebuilds it (tests; a key change)."""
+    global _POOL
+    with _POOL_LOCK:
+        _POOL = None
+
+
 def _check_creds() -> None:
     """Fail fast (no retries) when the selected auth mode has no usable credentials."""
-    if config.gemini_auth() == "api_key":
+    auth = config.gemini_auth()
+    if auth == "api_key":
         if not os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"):
             raise LLMError("RESUME_TAILOR_GEMINI_API_KEY not set (gemini_auth=api_key).",
                            kind="config")
+    elif auth == "pool":
+        # Either lane on its own is a usable pool: keys with no project means no
+        # Vertex spillover, a project with no keys means no free tier.
+        if not (os.environ.get("GEMINI_API_KEYS", "").strip()
+                or os.environ.get("GEMINI_API_KEY", "").strip()
+                or config.GCP_PROJECT):
+            raise LLMError(
+                "gemini_auth=pool needs GEMINI_API_KEYS (the job scorer's keys) "
+                "or GOOGLE_CLOUD_PROJECT, and neither is set.",
+                kind="config")
     elif not config.GCP_PROJECT:
         raise LLMError("Vertex auth selected but GOOGLE_CLOUD_PROJECT is not set.",
                        kind="config")
@@ -195,6 +318,29 @@ def _is_rate_limit(exc: BaseException) -> bool:
     """True for a 429 / quota-exhausted error (Gemini API or Vertex)."""
     msg = str(exc).lower()
     return "429" in msg or "quota" in msg or "resource_exhausted" in msg
+
+
+def _is_overload(exc: BaseException) -> bool:
+    """True for a 503 / UNAVAILABLE: the model is busy, not out of quota.
+
+    Mirrors keypool._is_overload_error, and is duplicated for the same reason
+    _is_rate_limit duplicates keypool._is_quota_error -- llm.py must stay
+    importable where pipeline/ is not on sys.path, and the non-pool auth modes
+    never import keypool at all.
+    """
+    if getattr(exc, "code", None) == 503:
+        return True
+    if str(getattr(exc, "status", "")).upper() == "UNAVAILABLE":
+        return True
+    s = str(exc).lower()
+    return "503" in s and any(
+        t in s for t in ("unavailable", "overloaded", "high demand"))
+
+
+def _overload_delay(retries_used: int) -> float:
+    """Seconds to hold off after an overload that rotating did not fix."""
+    delay = min(OVERLOAD_BASE_SLEEP * (2 ** retries_used), OVERLOAD_MAX_SLEEP)
+    return delay + random.uniform(0, 0.15 * delay)
 
 
 def _retry_delay_hint(message: str) -> Optional[float]:
@@ -237,6 +383,7 @@ def _invoke(
     user: str,
     model: str,
     *,
+    tier: Optional[str] = None,
     json_out: bool,
     temperature: float,
     max_output_tokens: Optional[int],
@@ -248,7 +395,6 @@ def _invoke(
     `_call_gemini` is unit-testable without a real Gemini call."""
     from google.genai import types
 
-    client = _build_client(timeout_s)
     cfg = types.GenerateContentConfig(
         system_instruction=system,
         temperature=temperature,
@@ -256,7 +402,73 @@ def _invoke(
         max_output_tokens=max_output_tokens,
         tools=tools,
     )
+    if config.gemini_auth() == "pool":
+        return _invoke_pooled(model, user, cfg, tier=tier)
+    _LAST.model = model
+    client = _build_client(timeout_s)
     return client.models.generate_content(model=model, contents=user, config=cfg)
+
+
+def _invoke_pooled(model: str, user: str, cfg, *, tier: Optional[str] = None):
+    """One generation against a leased (key, model) pair.
+
+    The pool is asked for a RANKED chain -- the step's own model first, then
+    config.gemini_fallback_models(tier) -- and hands back whichever pair is
+    usable right now. Free-tier quota is metered per (key, model), so a fallback
+    model is a separate daily allowance, and a chain multiplies the free calls
+    available before anything reaches the paid Vertex backstop.
+
+    The chain is looked up BY TIER, not by model id, because in 'tiers' mode the
+    three tiers are different quality/cost classes with opposite quota profiles
+    (a lite allows 500 requests/day per key, a full Flash 20). A shared chain
+    would let the cheap high-volume selection pass drain the scarce allowance the
+    cover letter needs. A caller with no tier gets no fallbacks in 'tiers' mode --
+    see config.gemini_fallback_models.
+
+    A 429 from a FREE key is a rotation signal, not something to wait out: the
+    exhausted PAIR is retired for the day -- that key keeps whatever it still has
+    on the other models -- and the failure is re-raised as kind="rotate" so
+    _call_gemini retries the same schedule slot immediately against the next
+    pair. A 429 from the Vertex member has nothing to rotate to, so it passes
+    through unchanged and lands in the normal backoff budget.
+    """
+    pool = _pool()
+    kp = _keypool()
+    chain = kp.ranked_models(model, config.gemini_fallback_models(tier))
+    member, used = pool.lease_sync(chain)
+    # What USAGE and every log line should name: the model that actually ran,
+    # which is not necessarily the one this step asked for.
+    _LAST.model = used
+    try:
+        return member["client"].models.generate_content(
+            model=used, contents=user, config=cfg)
+    except Exception as exc:  # noqa: BLE001
+        if member.get("kind") == "free" and _is_rate_limit(exc):
+            # The 429 goes WITH the report: only its payload can say whether the
+            # pair is spent for the day or merely busy this minute, and guessing
+            # "day" is how a whole free tier gets written off in one run.
+            what = pool.mark_exhausted(member, used, exc)
+            verb = ("retired for the day" if what == "day"
+                    else "parked for a cooldown")
+            raise LLMError(
+                f"Pooled key {verb} for {used} after a quota error; "
+                f"rotating to the next pair: {exc}",
+                kind="rotate",
+            ) from exc
+        if _is_overload(exc):
+            # Not a spent allowance -- mark_exhausted here would write off a
+            # whole day of this pair for a spike that clears in a minute. The
+            # MODEL is parked instead (every key reaches the same busy backend,
+            # so the next key would collect the identical 503), and the pool
+            # skips it on the re-lease. Applies to the Vertex member too: the
+            # shortage belongs to the model, not to the lane.
+            pool.mark_unavailable(used)
+            raise LLMError(
+                f"{used} returned 503 UNAVAILABLE (overloaded); parking it and "
+                f"moving to the next model in the chain: {exc}",
+                kind="overload",
+            ) from exc
+        raise
 
 
 def _call_gemini(
@@ -264,6 +476,7 @@ def _call_gemini(
     user: str,
     model: str,
     *,
+    tier: Optional[str] = None,
     json_out: bool = False,
     temperature: float = 0.2,
     max_output_tokens: Optional[int] = None,
@@ -281,12 +494,21 @@ def _call_gemini(
     last_err: Optional[Exception] = None
     timed_out = False
     rl_used = 0    # rate-limit waits consumed (per call, across the whole schedule)
+    ol_used = 0    # 503/overload attempts consumed (per call)
+    rotations = 0  # pooled pairs spent mid-call (gemini_auth='pool' only)
+    max_rotations = (_rotation_budget(model, tier)
+                     if config.gemini_auth() == "pool" else POOL_MAX_ROTATIONS)
     idx = 0
     while idx < len(schedule):
         timeout_s = schedule[idx]
         try:
+            # Cleared before every attempt, not just written after one: the value
+            # is only meaningful for the attempt that set it, and a reader that
+            # trusts the last writer picks up the PREVIOUS call's model whenever
+            # _invoke returns without setting it. Falls back to `model` below.
+            _LAST.model = None
             resp = _invoke(
-                system, user, model,
+                system, user, model, tier=tier,
                 json_out=json_out, temperature=temperature,
                 max_output_tokens=max_output_tokens, tools=tools, timeout_s=timeout_s,
             )
@@ -295,19 +517,63 @@ def _call_gemini(
                 raise LLMError("empty response", kind="empty")
             meta = getattr(resp, "usage_metadata", None)
             USAGE.append({
-                "model": model,
+                # Not `model`: in pool mode the chain may have spilled sideways
+                # to a fallback, and attributing its tokens to the requested
+                # model would misreport which allowance the run actually spent.
+                "model": getattr(_LAST, "model", model) or model,
                 "in": getattr(meta, "prompt_token_count", 0) or 0,
                 "out": getattr(meta, "candidates_token_count", 0) or 0,
             })
             return _extract_json(text) if json_out else text.strip()
         except Exception as exc:  # noqa: BLE001
             last_err = exc
-            # Structural classification first. `local` covers the LLMErrors this
+            # Rotation first, and by KIND: _invoke_pooled has already retired the
+            # dead key, and its message quotes the 429 that caused it — so the
+            # substring classifiers below would read it as a rate limit and sleep
+            # out a 30s backoff before reaching for a key that is ready now.
+            if getattr(exc, "kind", "") == "rotate":
+                rotations += 1
+                if rotations > max_rotations:
+                    raise LLMError(
+                        f"Pooled Gemini keys kept hitting quota for {model} "
+                        f"through {rotations - 1} rotations, which is every "
+                        f"(key, model) pair this pool has; giving up: {exc}"
+                    ) from exc
+                log.warning("llm: %s pooled pair spent (rotation %d/%d), "
+                            "trying the next one: %s", model, rotations,
+                            max_rotations, exc)
+                continue  # SAME schedule slot, no sleep — the next key is ready
+            # Structural classification next. `local` covers the LLMErrors this
             # very try block raises (empty body, unparseable JSON) — their
             # messages carry model output, so handing them to the substring
             # classifiers below would let a JD about sales quotas or request
             # timeouts route a deterministic failure into the 429 branch.
             local = _local_failure(exc)
+            # Overload before timeout and rate limit: it is the most specific of
+            # the three (the SDK hands us a numeric .code) and the only one whose
+            # remedy is a different model. `local` still guards it, because a
+            # bad_json message carries up to 500 characters of model output and a
+            # job description quoting a 503 must not park a healthy model.
+            if not local and (getattr(exc, "kind", "") == "overload"
+                              or _is_overload(exc)):
+                if ol_used >= OVERLOAD_MAX_RETRIES:
+                    raise LLMError(
+                        f"Gemini kept returning 503 UNAVAILABLE (model "
+                        f"overloaded) through {ol_used} attempts across the "
+                        f"{model} fallback chain; giving up: {exc}"
+                    ) from exc
+                # The first one is free: in pool mode the model has just been
+                # parked, so re-leasing lands on the next id in the chain
+                # immediately and sleeping would be pure latency.
+                wait = _overload_delay(ol_used - 1) if ol_used else 0.0
+                log.warning("llm: %s overloaded (503) (attempt %d/%d), "
+                            "sleeping %.1fs then retrying on the next model "
+                            "available: %s", model, ol_used + 1,
+                            OVERLOAD_MAX_RETRIES, wait, exc)
+                if wait:
+                    time.sleep(wait)
+                ol_used += 1
+                continue  # SAME schedule slot -- this was not a timeout
             if not local and _is_timeout(exc):
                 timed_out = True
                 log.warning("llm: %s timed out at %ss (attempt %d/%d); escalating "

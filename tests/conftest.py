@@ -343,6 +343,14 @@ def _hermetic_repo_data(tmp_path_factory):
         mp.setattr(score_jobs, "SCORING_PROVIDER", _provider)
         mp.setattr(score_jobs, "STAGE1_MODEL", _s1)
         mp.setattr(score_jobs, "STAGE2_MODEL", _s2)
+        # The ranked chains are frozen at import scope for exactly the same
+        # reason and must be re-resolved together with the primaries above --
+        # rebinding only STAGE1_MODEL leaves STAGE1_MODELS[0] pointing at the
+        # author's configured id, and the two silently disagree.
+        mp.setattr(score_jobs, "STAGE1_MODELS",
+                   score_jobs.stage_model_chain(_scoring, _provider, 1))
+        mp.setattr(score_jobs, "STAGE2_MODELS",
+                   score_jobs.stage_model_chain(_scoring, _provider, 2))
         for _attr, _key in (("STAGE1_CONCURRENCY", "stage1_concurrency"),
                             ("STAGE2_CONCURRENCY", "stage2_concurrency"),
                             ("STAGE2_THRESHOLD", "stage2_threshold"),

@@ -37,6 +37,8 @@ class FakePool:
         self.calls = []
 
     async def generate(self, *, model, contents, config):
+        # `model` is the stage's ranked chain, as KeyPool.generate takes it.
+        model = model[0] if isinstance(model, (list, tuple)) else model
         self.calls.append((model, contents))
         if model == sj.STAGE1_MODEL:
             score = 1
@@ -128,8 +130,53 @@ def test_stage2_dispatched_highest_score_first(monkeypatch):
 def test_make_pool_delegates(monkeypatch):
     sentinel = object()
     monkeypatch.setattr(sj.KeyPool, "from_env",
-                        classmethod(lambda cls, *, state_path: sentinel))
+                        classmethod(lambda cls, *, state_path, limits=None: sentinel))
     assert sj.make_pool() is sentinel
+
+
+def test_make_pool_passes_the_configured_rate_limits_through(monkeypatch):
+    """The limits must actually REACH the pool. Every _limits_for test would still
+    pass if make_pool quietly dropped them, and the symptom -- a slow run that
+    spills onto paid Vertex -- looks identical to having no limits configured."""
+    seen = {}
+
+    def _capture(cls, *, state_path, limits=None):
+        seen["limits"] = limits
+        return object()
+
+    monkeypatch.setattr(sj.KeyPool, "from_env", classmethod(_capture))
+    monkeypatch.setattr(sj, "_SCORING", dict(sj._SCORING, stage1_model="m1",
+                                             model_limits=["m1 15 500"]))
+    monkeypatch.setattr(sj, "STAGE1_MODEL", "m1")
+    sj.make_pool()
+    assert seen["limits"] == {"m1": {"rpm": 15, "rpd": 500}}
+
+
+def test_make_pool_warns_when_a_model_has_no_limits_anywhere(monkeypatch, capsys):
+    """The silent downgrade has to announce itself -- that is the whole incident."""
+    monkeypatch.setattr(sj.KeyPool, "from_env",
+                        classmethod(lambda cls, *, state_path, limits=None: object()))
+    monkeypatch.setattr(sj, "_SCORING", dict(sj._SCORING, stage1_rpm=0, stage1_rpd=0,
+                                             stage2_rpm=0, stage2_rpd=0))
+    monkeypatch.setattr(sj, "STAGE1_MODELS", ["gemini-9.9-unheard-of"])
+    sj.make_pool()
+    out = capsys.readouterr().out
+    assert "gemini-9.9-unheard-of" in out
+    assert "Settings -> Scoring" in out
+
+
+def test_make_pool_warns_for_an_unlimited_fallback_model(monkeypatch, capsys):
+    """A fallback never gets its own rpm/rpd boxes, so an unknown one is exactly
+    the silent-downgrade case the warning exists for -- the chain must be walked
+    whole, not just its primary."""
+    monkeypatch.setattr(sj.KeyPool, "from_env",
+                        classmethod(lambda cls, *, state_path, limits=None: object()))
+    monkeypatch.setattr(sj, "_SCORING", dict(sj._SCORING, stage1_rpm=0, stage1_rpd=0,
+                                             stage2_rpm=0, stage2_rpd=0))
+    monkeypatch.setattr(sj, "STAGE2_MODELS",
+                        ["gemini-3.5-flash", "gemini-9.9-unheard-of"])
+    sj.make_pool()
+    assert "gemini-9.9-unheard-of" in capsys.readouterr().out
 
 
 def test_append_run_stats_migrates_old_header(tmp_path, monkeypatch):

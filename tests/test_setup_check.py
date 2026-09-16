@@ -24,6 +24,14 @@ def test_engine_credential_warnings_flags_missing_vertex_project():
     assert setup_check.engine_credential_warnings("vertex", project="my-proj", has_api_key=False) == []
 
 
+def test_engine_credential_warnings_pool_needs_keys_or_a_project():
+    # Mirrors llm._check_creds: either lane on its own is a usable pool.
+    assert setup_check.engine_credential_warnings("pool", project="", has_api_key=False)
+    assert setup_check.engine_credential_warnings("pool", project="", has_api_key=True)  # tailor key is not the pool
+    assert setup_check.engine_credential_warnings("pool", project="", has_api_key=False, has_pool_keys=True) == []
+    assert setup_check.engine_credential_warnings("pool", project="my-proj", has_api_key=False) == []
+
+
 # --- claude_cli_warnings truth table -------------------------------------------
 
 def test_claude_cli_warnings_cli_found_always_empty():

@@ -32,10 +32,13 @@ import settings
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def engine_credential_warnings(auth: str, project: str, has_api_key: bool) -> list[str]:
+def engine_credential_warnings(auth: str, project: str, has_api_key: bool,
+                               has_pool_keys: bool = False) -> list[str]:
     """Warn when the chosen résumé-tailor engine is missing the credential it needs.
 
-    'api_key' needs a Gemini API key; 'vertex' needs a Google Cloud project.
+    'api_key' needs a Gemini API key; 'vertex' needs a Google Cloud project;
+    'pool' needs either the scorer's Gemini API keys or a project (the same rule
+    as llm._check_creds, so this warning matches the run-time failure).
     Returns [] when the engine has what it needs.
     """
     if auth == "api_key" and not has_api_key:
@@ -44,6 +47,10 @@ def engine_credential_warnings(auth: str, project: str, has_api_key: bool) -> li
     if auth == "vertex" and not str(project).strip():
         return ["Resume tailor engine is 'vertex' but no Google Cloud project is set "
                 "(Settings -> Connection & paths -> Google Cloud project ID)."]
+    if auth == "pool" and not has_pool_keys and not str(project).strip():
+        return ["Resume tailor engine is 'pool' but no Gemini API keys are saved and no "
+                "Google Cloud project is set (Settings -> Credentials -> Gemini API keys "
+                "(job scorer), or Connection & paths -> Google Cloud project ID)."]
     return []
 
 
@@ -86,11 +93,14 @@ def engine_problems() -> list[str]:
             auth = cfg.get("gemini_auth", "vertex")
             project = stored.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get(
                 "GOOGLE_CLOUD_PROJECT", "")
-            has_key = settings.secret_status().get(
-                "RESUME_TAILOR_GEMINI_API_KEY", False) or bool(
-                    os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
+            secrets = settings.secret_status()
+            has_key = secrets.get("RESUME_TAILOR_GEMINI_API_KEY", False) or bool(
+                os.environ.get("RESUME_TAILOR_GEMINI_API_KEY"))
+            has_pool = secrets.get("GEMINI_API_KEYS", False) or bool(
+                os.environ.get("GEMINI_API_KEYS", "").strip()
+                or os.environ.get("GEMINI_API_KEY", "").strip())
             problems.extend(f"[Engine] {w}" for w in
-                            engine_credential_warnings(auth, project, has_key))
+                            engine_credential_warnings(auth, project, has_key, has_pool))
         scoring_provider = str(
             os.environ.get("SCORE_PROVIDER")
             or stored.get("provider") or "gemini").strip().lower()

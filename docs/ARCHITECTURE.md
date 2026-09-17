@@ -404,6 +404,21 @@ Every stage after `rephrase` mutates the same `bullets` dict, and every one of t
 introduce an ungrounded token. The rule is that a mutation is always followed by a
 re-check against the atoms, reverting to the last grounded text when there is one.
 
+```mermaid
+flowchart TD
+    R["rephrase: the first draft"] --> G{"grounding gate<br/>(_prologue_gate)"}
+    G -->|grounded| B["bullets"]
+    G -->|ungrounded| RA["reground: one re-ask from the same atoms,<br/>the unsupported term banned"] --> G2{"the same gate again"}
+    G2 -->|grounded| B
+    G2 -->|still ungrounded| D["dropped for good: one warning,<br/>rejected text in the report"]
+    B --> P["_BULLET_PASSES, in order:<br/>verb dedupe / verbatim merge + trim /<br/>underfull fill / style gate / AI-writing sweep"]
+    P -->|"each pass: snapshot, run,<br/>re-trim if asked, re-verify"| K{"every token still<br/>traces to an atom?"}
+    K -->|yes| N["next pass"]
+    K -->|no| RV["revert that bullet<br/>to the snapshot"] --> N
+    N --> P
+    N -->|after the sweep| C["compile: enforce one page"]
+```
+
 The rule is structural rather than repeated by hand at each stage, so no stage can
 forget it. `run.py` declares a `Pass` (name, the callable, an `enabled` predicate,
 `retrim`, `verify`, `recheck_fill`) and `_run_bullet_passes` does the snapshot,

@@ -15,7 +15,11 @@ The résumé engine's rule is **select and re-phrase, never invent**. Every
 résumé bullet traces back to a fact you wrote, and a deterministic grounding gate
 (no LLM) drops any bullet that doesn't.
 
-2,593 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
+The scorer runs on a pool of free-tier Gemini keys, and the résumé engine can share
+it. Each stage walks a ranked list of models, quota is metered per key and model,
+and a paid Cloud project is billed only when every free pair is spent or refusing.
+
+3,123 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
 push against Windows and Linux, plus a clean-room job that installs from this
 README's own setup steps.
 
@@ -38,7 +42,7 @@ Three pieces do the work:
 |---|---|
 | ![The High Score tab. Thirteen ranked postings, each row tinted by recommendation and carrying a score badge, a deep-score bar, and an Apply, Consider, Tailored or Tailor failed pill; a legend under the table maps the five tints back to those states. The selected job's detail card shows the model's reason, strengths and gaps beside the Tailor résumé and Apply buttons.](docs/dashboard.png) | ![The Tracker tab. Filter chips count five applications by state: Applied 2, Interviewing 1, Offer 1, Rejected 1, Follow-up due 1. The table lists status, updated and applied dates, days elapsed and follow-up state, and the detail card for the oldest application, unanswered for 88 days, spells out a NEXT STEP: send a follow-up note.](docs/tracker.png) |
 | Your source of truth: **Resume Data** | Every knob: **Settings** |
-| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. A search box and a Show advanced settings toggle sit above ten collapsible sections. Credentials and Connection & paths stay folded; Engine is expanded, showing the tailor engine, provider and per-stage model dropdowns, each tagged with the file it writes to — config.json or .env. Dashboard, Job discovery and Scoring follow below, still folded.](docs/settings.png) |
+| ![The Resume Data tab. A form editor over master_experience.yaml: name, email, phone, location, LinkedIn and GitHub above an Experience entry whose achievement is broken into what, angles and impact atom fields. A banner warns that resume.md is older than this data.](docs/resume-data.png) | ![The Settings tab. A search box and a Show advanced settings toggle sit above ten collapsible sections. Credentials and Connection & paths stay folded; Engine is expanded, showing the Resume tailor engine dropdown (vertex, api_key or pool), the provider dropdown and the simple-or-per-stage model switch, each tagged with the file it writes to, config.json or .env, and each with a help paragraph under it. Dashboard, Job discovery and Scoring follow below, still folded.](docs/settings.png) |
 
 **High Score** surfaces only unseen postings scoring ≥4, newest discovery day first and
 highest score within the day. Click any column header to re-sort.
@@ -64,11 +68,17 @@ flowchart TD
     end
     L -->|scp to the VM incoming folder| M
     E -.->|schedule, pause, config, key rotation| Cloud
+    B & F -->|every model call| P["Gemini model pool<br/>free-tier keys x ranked models per stage<br/>paid Vertex only when every pair is spent"]
 ```
 
 One master CSV, two writers. The VM owns it; anything discovered on the PC rides
 the outbox back up and is merged in before the next scrape, so a job is only ever
 paid for once.
+
+One model pool, two callers. Free-tier quota is metered per key and model, so a
+second model on a stage is a second daily allowance. A 503 parks the model for a
+minute, a 429 parks the pair, and the paid Vertex lane is tried last. The tailor
+joins the pool with one Settings row; by default it bills the project.
 
 ---
 
@@ -203,13 +213,21 @@ discovery VM.
   dashboard's **Find new jobs**. It never pays twice for the same posting: the exclude list
   it sends the job-data provider is capped at the newest 2,000 ids, evicted by date. A run
   that collects nothing while the provider reports input errors fails with those error codes
-  instead of logging a clean success.
+  instead of logging a clean success, and a collection that finishes inside the provider's
+  one-minute sync window is read as rows, not as a failure.
 - **Triage:** the **High Score** tab ranks unseen postings by the two-stage score and tints
   each row by recommendation (apply / consider / skip) and by whether a tailored résumé
   already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
 - **Tailor:** one click writes a one-page LaTeX résumé for that posting, plus an optional
   cover letter (PDF and editable `.tex`), an ATS keyword report, and an interview-prep
-  sheet. Batches run in parallel in the background with live progress.
+  sheet. Batches run in parallel in the background with live progress. The PDF is laid out
+  for a parser as much as a reader: the education block extracts as school, degree and a
+  `GPA: x/4.0` line, project links print their own address, and the file carries a title
+  and author.
+- **Clean up:** a last pass reads each résumé entry as a whole and repairs the tells a
+  per-bullet check cannot see (one sentence shape down the list, every bullet the same
+  length). It costs one model call per entry and is on by default; a rewrite is kept only
+  if it still fits its line budget and keeps every number and name.
 - **Ask:** right-click any job for a chat scoped to it. The question goes to the model with
   that job's apply sheet and description as context, so answers come from your own material,
   and it says so plainly when the sheet doesn't cover something.
@@ -253,25 +271,30 @@ look at the data every generated bullet had to come from.
 
 ## Limitations
 
-- **Windows-first:** the dashboard, launcher, and setup script are tested on Windows only;
-  Linux runs the pipeline scripts (that is the VM), macOS is untested.
-- **Costs money to run at full tilt:** job discovery bills per collected posting and scoring
-  bills per token, so an unbounded run is the expensive path. The caps
-  (`--max-keywords`, `--limit`, the spend guards) exist because of that.
-- **Single-user by design:** no accounts, no server, no multi-tenancy. It reads one person's
-  master experience file and writes to one local SQLite file.
-- **Discovery is one provider deep:** postings come from a Bright Data LinkedIn dataset; a
-  broken dataset or a schema change stops the front of the pipeline. The provider does not
-  publish its request-size limit, so the 2,000-id exclude cap is a number measured against
-  the live API, and a change on their side can move it.
+- **Windows-first, single-user:** the dashboard, launcher, and setup script are tested on
+  Windows only; Linux runs the pipeline scripts (that is the VM); macOS is untested. There
+  are no accounts and no server: one experience file, one local SQLite tracker.
+- **It costs money to run at full tilt.** Discovery bills per collected posting and scoring
+  bills per token, which is why `--max-keywords`, `--limit` and the spend guards exist. The
+  tailor bills your Cloud project by default; in `pool` mode the paid Vertex lane still takes
+  a call once every free key and model is spent, unless the project ID is blank.
+- **Two passes add model calls of their own:** the AI-writing cleanup is one call per résumé
+  entry per run (switch it off in Settings), and a bullet the gate drops buys one re-ask.
+- **Discovery is one provider deep:** postings come from a Bright Data LinkedIn dataset, and
+  a broken dataset or a schema change stops the front of the pipeline. The provider does not
+  publish its request-size limit, so the 2,000-id exclude cap was measured against the live
+  API and a change on their side can move it.
 - **Not an auto-submitter, and not a résumé writer:** the apply flow parks at review, and
   the tailor can only select and re-phrase facts you wrote yourself. It will never fill a thin
   experience file with impressive-sounding text.
-- **The grounding gate has a blind spot:** it traces distinctive tokens (numbers, proper
-  nouns, tool names). A rephrasing that overstates using only ordinary words gives it
-  nothing to catch, so read the output before you send it.
-- **Next:** more discovery sources behind the same normalizer, and a scoring calibration
-  loop that learns from tracker outcomes instead of a fixed rubric.
+- **The grounding gate has known gaps, so read the output before you send it.** It traces
+  distinctive tokens only, so an overstatement made of ordinary lowercase words passes. A
+  bare `30m` reads as thirty million, not thirty minutes. A plural is bridged to its singular
+  for the plain `s` form only (`APIs` from `API`), and two- and three-letter acronyms are its
+  weakest match (`MS` traces to `systems`).
+- **The job detail card clips when the window is short**, worst at 150% interface scale:
+  the strengths list is cut mid-line and does not scroll. Drag the divider or open the
+  description to grow it. The scrolling fix is parked because it changes the card's size contract.
 
 ---
 
@@ -280,38 +303,50 @@ look at the data every generated bullet had to come from.
 The composition pipeline (in `local/resume_tailor/`) is built around one rule,
 **select and re-phrase, never invent**:
 
-1. **select** (fast tier): pick the best experiences/projects and group their atoms.
+1. **select** (standard tier): pick the best experiences/projects and group their atoms.
    Selection can only choose from your atoms, so every bullet is grounded by
    construction.
 2. **rephrase** (deep tier): write one bullet per group, fusing only that group's facts.
-3. **layout**: bullets are driven to measured printed-line budgets so the résumé
+   The gate runs on the draft. A bullet it drops is re-asked once from the same atoms
+   with the unsupported term banned, gated again, and only then dropped for good.
+3. **bullet passes** (standard tier), in order: verb dedupe, an underfull bullet filled
+   from a spare fact in its own entry, a deterministic style gate, and last the AI-writing
+   sweep, which reads the whole entry and repairs the tells a per-bullet check cannot see.
+   The gate runs after every pass; a rewrite that fails it reverts to the last grounded text.
+4. **layout**: bullets are driven to measured printed-line budgets so the résumé
    fills one page cleanly. Line length is modelled from real Times glyph widths
-   calibrated against the compiled PDF, not a flat character count, so the budget
-   holds for a wide-word bullet too (a single-line bullet aims to fill ≥90% of its
-   line, a wrapping bullet's last line ≥75%; below 50% the engine folds in a spare
-   fact from the same entry rather than shipping a stub).
-4. **compile**: render LaTeX and enforce one page.
+   calibrated against the compiled PDF, so the budget holds for a wide-word bullet too
+   (a single-line bullet aims to fill at least 90% of its line, a wrapping bullet's
+   last line 75%; below 50% the engine folds in a spare fact from the same entry).
+   No pass can grow an entry's printed line count.
+5. **compile**: render LaTeX and enforce one page.
 
 ```mermaid
 flowchart LR
-    Y[("master_experience.yaml<br/>your atoms")] --> S["select (fast tier)<br/>choose + group atoms"]
+    Y[("master_experience.yaml<br/>your atoms")] --> S["select<br/>choose + group atoms"]
     JD["job description"] --> S
-    S --> R["rephrase (deep tier)<br/>one bullet per group"]
-    R --> V{"verify.py<br/>every distinctive token<br/>traces to an atom?"}
+    S --> R["rephrase<br/>one bullet per group"]
+    R --> PS["bullet passes, in order<br/>verb dedupe - underfull fill<br/>style gate - AI-writing sweep"]
+    PS --> V{"verify.py, after every pass<br/>every distinctive token<br/>traces to an atom?"}
     V -->|yes| LO["layout<br/>fit measured line budgets"]
-    V -->|no| RV["revert to last grounded<br/>text, else drop"]
+    V -->|no| RV["revert to last grounded text;<br/>a first-draft drop gets one re-ask,<br/>then is dropped for good"]
     RV --> LO
     LO --> C["compile LaTeX<br/>enforce one page"]
     C --> P["tailored PDF"]
 ```
 
-Three model tiers back those stages — fast, standard, deep. Out of the box only the
-fast tier drops to a cheaper model (`gemini-3.1-flash-lite`); standard and deep both
-sit on `gemini-3.5-flash`, so the default costs what a mid-tier model costs and you
-raise the deep tier yourself when you want stronger writing. One setting
-(Settings → Engine, *Tailor models: simple or per stage*) points every stage at a
-single model instead; see [the user guide](docs/USER_GUIDE.md). The same three tiers
-map onto Claude models when the tailor provider is set to `claude`.
+Three model tiers back those stages: fast, standard and deep. Out of the box only the
+fast tier drops to a cheaper model (`gemini-3.1-flash-lite`), and it carries the small
+calls: entry briefs, the overview lead, verb swaps. Standard and deep both sit on
+`gemini-3.5-flash`. Standard does selection, the bullet passes and the sweep; deep
+writes the first draft and the cover letter. You raise the deep tier yourself when you
+want stronger writing.
+
+One setting (Settings → Engine, *Tailor models: simple or per stage*) points every
+stage at a single model instead. In `pool` mode each tier has its own fallback list,
+so the high-volume fast calls never spend the 20-a-day allowance the deep tier needs.
+The same three tiers map onto Claude models when the tailor provider is set to
+`claude`; see [the user guide](docs/USER_GUIDE.md).
 
 **A deterministic grounding gate enforces it** (`local/resume_tailor/verify.py`).
 
@@ -320,6 +355,9 @@ the prompt alone is not a guarantee. After generation, with no LLM involved, eve
 bullet's distinctive tokens (numbers, proper nouns, tool names) must trace back to the
 atoms that bullet was built from. A bullet that introduces an unseen token is reverted
 to its last grounded version, or dropped.
+
+The run report names every bullet it recovered or lost and quotes the rejected text, so
+a tokenizer false positive and a fabricated fact can be told apart.
 
 The gate's own docstring names its blind spot: an invented claim made of ordinary
 lowercase words has no distinctive token to check.
@@ -406,12 +444,14 @@ one from PyPI under its own license when you run Step 2.
 Across the tree `pip` actually installs, direct pins and transitive ones together, the
 licenses are MIT, BSD-2/3, 0BSD, Apache-2.0, PSF, Zlib, CC0-1.0 and MPL-2.0 (certifi,
 pulled in by requests and httpx; the Zlib, CC0-1.0 and 0BSD arms come from numpy's
-composite expression, under pandas). All of those permit an MIT release. The one copyleft
-dependency is **PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or commercial from
-The Qt Company. The dashboard imports PySide6 as an ordinary Python module and bundles no
-Qt binaries, so LGPLv3's relink condition is met by construction: you have the full source
-and can swap the PySide6 version with one `pip install`. `docs/CREDITS.md` lists the same
-set per library.
+composite expression, under pandas). All of those permit an MIT release.
+`docs/CREDITS.md` lists the same set per library.
+
+The one copyleft dependency is **PySide6/Qt**, which is LGPL-3.0-only OR GPL-2.0-only OR
+GPL-3.0-only, or commercial from The Qt Company. The dashboard imports PySide6 as an
+ordinary Python module and bundles no Qt binaries, so LGPLv3's relink condition is met by
+construction: you have the full source and can swap the PySide6 version with one
+`pip install`.
 
 Freezing this into a single-file executable is a different case, and those
 obligations would be yours.

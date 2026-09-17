@@ -574,8 +574,9 @@ nothing.
 
 ### One model, or one per stage
 `model_for(tier)` maps flash-lite / flash / pro onto three env vars, and `claude_model_for`
-does the same for the Claude CLI provider. That split is a cost-tuning knob — a cheap model
-to choose bullets, a stronger one to write them — and a leaky abstraction for anyone who just
+does the same for the Claude CLI provider. That split is a cost-tuning knob (flash-lite for
+the briefs, overview lead and verb swaps; flash for selection and every bullet cleanup pass;
+pro for the first draft and the cover letter) and a leaky abstraction for anyone who just
 wants one model everywhere: saying so meant setting three vars consistently, per provider,
 and first learning what "pro" buys.
 

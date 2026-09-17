@@ -576,27 +576,30 @@ SETTINGS_SCHEMA: list[Field] = [
                "requests, one per line, best first. Each model has a separate free "
                "daily quota per API key, so this is what keeps tailoring off your "
                "billed cloud project. Used only while 'Resume tailor engine' is 'pool'."),
-    Field("tailor_fallback_flash_lite", "Fallbacks: fast (selection)", "list", [],
+    Field("tailor_fallback_flash_lite", "Fallbacks: fast (briefs)", "list", [],
           "Engine", "config", advanced=True,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
-          help="Extra models for the FAST step only, one per line, best first. List "
-               "other '-lite' models here: they allow ~500 free requests/day per key, "
-               "and this step makes the most calls. Listing a full Flash model instead "
-               "spends the 20/day budget the deep step needs. Used only in 'pool'."),
-    Field("tailor_fallback_flash", "Fallbacks: standard (writing)", "list", [],
+          help="Extra models for the FAST tier only (the per-entry briefs, the overview "
+               "lead and verb swaps), one per line, best first. List other '-lite' "
+               "models here: they allow ~500 free requests/day per key. Listing a full "
+               "Flash model instead spends the 20/day budget the standard and deep tiers "
+               "need. Used only in 'pool'."),
+    Field("tailor_fallback_flash", "Fallbacks: standard (selection)", "list", [],
           "Engine", "config", advanced=True,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
-          help="Extra models for the WRITING step only, one per line, best first. Keep "
-               "these in the same quality class as the standard model: the full Flash "
-               "models are interchangeable here, and each carries its own 20 free "
-               "requests/day per key. Used only while the engine is 'pool'."),
-    Field("tailor_fallback_pro", "Fallbacks: deep (pro)", "list", [],
+          help="Extra models for the STANDARD tier only, one per line, best first. This "
+               "tier makes the most calls: selecting your atoms, then every bullet "
+               "cleanup pass. Keep these in the same quality class as the standard model: "
+               "the full Flash models are interchangeable here, and each carries its own "
+               "20 free requests/day per key. Used only while the engine is 'pool'."),
+    Field("tailor_fallback_pro", "Fallbacks: deep (writing)", "list", [],
           "Engine", "config", advanced=True,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)),
-          help="Extra models for the DEEP step only, one per line, best first. This "
-               "step writes the cover letter, so list only models you would accept "
-               "that from; a '-lite' model here quietly lowers its quality. Empty is "
-               "a fine answer. Used only while the engine is 'pool'."),
+          help="Extra models for the DEEP tier only, one per line, best first. This "
+               "tier writes the first draft of every bullet and the cover letter, so list "
+               "only models you would accept that from; a '-lite' model here quietly "
+               "lowers their quality. Empty is a fine answer. Used only while the engine "
+               "is 'pool'."),
 
     Field("tailor_provider", "Resume tailor provider", "choice", "gemini",
           "Engine", "config",
@@ -627,26 +630,31 @@ SETTINGS_SCHEMA: list[Field] = [
           help="'simple' uses ONE model for every step of tailoring, the one named in "
                "'Tailor model: one for every step'. 'tiers' uses a different model per "
                "stage (the three per-stage pickers, under 'Show advanced settings'): a cheap "
-               "one to choose bullets, a stronger one to write them. 'tiers' is the default."),
+               "one for the small calls, a standard one to select and clean up, a deep "
+               "one to write. 'tiers' is the default."),
     Field("RESUME_TAILOR_MODEL_ALL", "Tailor model: one for every step",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("simple",)), restart=True,
           help="The single model every tailoring stage uses while 'Tailor models: simple or "
                "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
                "tailoring quietly falls back to the three per-stage models."),
-    Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model: fast (selection)",
+    Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model: fast (briefs)",
           "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Cheapest model: the bullet-selection / quick stages of tailoring."),
-    Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model: standard (writing)",
+          help="Cheapest model, for the small calls: the per-entry briefs, the overview "
+               "lead and verb swaps."),
+    Field("RESUME_TAILOR_MODEL_FLASH", "Tailor model: standard (selection)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Default model: re-phrasing bullets and the cover letter."),
-    Field("RESUME_TAILOR_MODEL_PRO", "Tailor model: deep (pro)",
+          help="Default model, and the busiest: selects and groups your atoms, then runs "
+               "every bullet cleanup pass (re-ask, underfull fill, style gate, AI-writing "
+               "sweep), the skills lines, the prep sheet and the chat."),
+    Field("RESUME_TAILOR_MODEL_PRO", "Tailor model: deep (writing)",
           "editable_choice", "gemini-3.5-flash", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Deliberately defaults to the same model as 'Tailor model: standard "
-               "(writing)' to keep costs down; set it to gemini-3.1-pro-preview yourself "
+          help="Writes the first draft of every bullet and the cover letter. Deliberately "
+               "defaults to the same model as 'Tailor model: standard (selection)' to "
+               "keep costs down; set it to gemini-3.1-pro-preview yourself "
                "for the strongest writing (slower / pricier)."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_MODE", "Claude models: simple or per stage",
           "choice", "tiers", "Engine", "env", choices=MODEL_MODES,
@@ -654,25 +662,28 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Claude provider only. 'simple' uses ONE model for every step of tailoring, "
                "the one named in 'Claude model: one for every step'. 'tiers' uses a different "
                "model per stage (the three per-stage pickers, under 'Show advanced settings'): "
-               "haiku to choose bullets, sonnet or opus to write them."),
+               "haiku for the small calls, sonnet to select and clean up, opus to write."),
     Field("RESUME_TAILOR_CLAUDE_MODEL_ALL", "Claude model: one for every step",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("simple",)), restart=True,
           help="The single model every tailoring stage uses while 'Claude models: simple or "
                "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
                "tailoring quietly falls back to the three per-stage models."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model: fast (selection)",
+    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH_LITE", "Claude model: fast (briefs)",
           "editable_choice", "claude-haiku-4-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Claude provider only: cheapest tier (bullet selection / quick stages)."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model: standard (writing)",
+          help="Claude provider only: the small calls (per-entry briefs, the overview lead, "
+               "verb swaps)."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_FLASH", "Claude model: standard (selection)",
           "editable_choice", "claude-sonnet-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Claude provider only: re-phrasing bullets and the cover letter."),
-    Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model: deep (pro)",
+          help="Claude provider only, the busiest tier: selecting your atoms, then every "
+               "bullet cleanup pass, the skills lines, the prep sheet and the chat."),
+    Field("RESUME_TAILOR_CLAUDE_MODEL_PRO", "Claude model: deep (writing)",
           "editable_choice", "claude-opus-5", "Engine", "env", choices=CLAUDE_MODELS,
           show_if=("RESUME_TAILOR_CLAUDE_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
-          help="Claude provider only: highest-quality tier (rephrase / cover letter)."),
+          help="Claude provider only: writes the first draft of every bullet and the cover "
+               "letter."),
 
     # --- VM (cloud scraper): NON-secret gcloud connection identifiers, in .env --
     # The VM tab pushes config/schedule/pause via `gcloud compute`. Auth is your

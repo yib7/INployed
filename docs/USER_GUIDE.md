@@ -235,9 +235,10 @@ the VM keeps running unchanged.
 #### One model for every step, or one per stage
 Settings → Engine, **Tailor models: simple or per stage** (and, on the Claude provider,
 **Claude models: simple or per stage**). Tailoring runs in stages, and by default each one
-gets its own model: a cheap model to pick which of your experiences to use, a stronger one to
-write the bullets. That saves money, but it means three dropdowns and three decisions before
-you have a working setup.
+gets its own model: a cheap one for the small calls (entry briefs, the overview lead, verb
+swaps), a standard one that selects your atoms and runs every bullet cleanup pass, and a deep
+one that writes the first draft and the cover letter. That saves money, but it means three
+dropdowns and three decisions before you have a working setup.
 
 Switch the row to **simple** and there is one: **Tailor model: one for every step** — pick a
 listed id or type your own, and every stage uses it. The three per-stage pickers (which live

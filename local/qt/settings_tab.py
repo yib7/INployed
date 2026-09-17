@@ -45,7 +45,8 @@ SECTION_HELP = {
                     "change it, or clear the box to remove it."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
     "Engine": ("Which AI service (Gemini or Claude) tailors résumés, how the Gemini side "
-               "bills (Cloud project vs API key), and which model each tailoring stage runs."),
+               "bills (Cloud project, one API key, or the scorer's free-key pool), and "
+               "which model each tailoring stage runs."),
     "Dashboard": "How the dashboard surfaces and tracks jobs.",
     "Scraper": "What job searches the discovery step runs (this drives its API spend).",
     # Rewritten in P8: the old blurb ("which models score jobs … changing the model

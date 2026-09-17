@@ -150,10 +150,11 @@ one group at a time.
   never saved. If a match exists but your configuration makes it inert, a muted line under
   the results says so and names the switch: *"3 more settings apply when Scoring provider
   is 'claude'"*.
-- **Show advanced settings:** off by default, folding 19 power-user rows away (the
-  per-stage model pickers and fallback lists, scorer concurrency and retry caps, VM plumbing). The label counts
-  what it is currently withholding *for your configuration*, so ticking it really does
-  reveal that many rows. Search ignores the fold: an advanced row still turns up in
+- **Show advanced settings:** off by default, folding 16 power-user rows away on a fresh
+  install (the per-stage model pickers and fallback lists, scorer concurrency and retry caps)
+  and 19 once VM features are on, which adds the VM plumbing. The label counts what it is
+  currently withholding *for your configuration*, so ticking it really does reveal that many
+  rows. Search ignores the fold: an advanced row still turns up in
   results, tagged `(advanced)`.
 - **Unsaved-change markers:** an accent dot appears beside every field you have edited, the
   section header picks up "· 2 changed" (visible even when the section is folded, which is

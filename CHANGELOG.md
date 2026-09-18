@@ -138,7 +138,7 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
   degree level.
 
   Printing the repo path exposed a fourth thing: the template used the OT1 font encoding,
-  in which an underscore is drawn as a rule rather than typeset as a glyph, so it has no
+  in which an underscore is drawn as a rule and never typeset as a glyph, so it has no
   character in the PDF's text stream and a repo named `example_app_archival` extracted as
   `example app archival`. The template now loads `[T1]{fontenc}` (the cover letter's
   preamble already did). The ASCII metrics are identical, verified by compiling the same
@@ -180,7 +180,12 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
   parenthesis, and a test pins that none comes back. An empty list box says "One per line"
   as its placeholder, since seven of the nine list fields now default to empty and showed as
   a bare rectangle. The Engine section's description names all three ways the Gemini side
-  can bill.
+  can bill. The same sweep reached the rest of the dashboard's copy: the freshness pill
+  ("Fresh: last run 3h ago"), the Settings search placeholder and section taglines, the
+  High Score legend, the Tracker's NEXT STEP line, the Resume Data staleness banner and
+  every status-bar and dialog string under `local/qt/` (85 strings) read with a colon, a
+  semicolon or a parenthesis where they had an em dash, and a test pins the primary
+  journey.
 - **Dependencies pulled forward to current stable.** `google-genai` 2.22.0 to 2.23.0 in both
   pin sets, `pypdf` 6.16.2 to 6.18.1, `ruff` 0.16.6 to 0.16.7 and `tzdata` 2026.3 to 2026.4;
   those were the only direct pins `pip` reported outdated. The pypdf bump is the one that
@@ -262,7 +267,7 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
   empty list now, and null items inside a list are dropped. A malformed "Per-model rate
   limits" row (`gemini-3.8-flash five 20`) was skipped with no trace and left the model on
   its built-in numbers; it now logs one warning naming the row and the expected shape.
-- **A dropped bullet gets one chance to come back, instead of taking the entry's
+- **A dropped bullet gets one chance to come back before it takes the entry's
   introduction with it.** The grounding gate that runs on the first draft is the only one
   with nothing to fall back to: every later stage can revert a bullet to its previous
   grounded text, but the first has no previous text, so it deletes the line outright. That
@@ -285,11 +290,12 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
   "100,000" normalize to "100k+" and "100000", which never match. So a true figure was
   dropped, and on a real run it cost one project bullet a recovery call every time. A
   suffixed figure in your atoms now grounds its written-out form, for K, M and B. The suffix
-  has to sit directly against the digits and be followed by a non-letter, so "512MB" is still
-  a size rather than 512 million. Only that direction is bridged: an atom writing "100,000"
-  and a bullet writing "100K" still reads as ungrounded, because the bullet's suffix is
-  discarded before the check sees it. One known gap comes with this, and the tests pin it
-  rather than hide it: a bare "30m" meaning thirty minutes is indistinguishable from thirty
+  has to sit directly against the digits and be followed by a non-letter, so "512MB" still
+  reads as a size and never as 512 million. Only that direction is bridged: an atom
+  writing "100,000" and a bullet writing "100K" still reads as ungrounded, because the
+  bullet's suffix is
+  discarded before the check sees it. One known gap comes with this, and the tests pin it:
+  a bare "30m" meaning thirty minutes is indistinguishable from thirty
   million to a rule that only inspects the next character.
 - **A plural no longer counts as a word you never wrote.** The grounding check looks for a
   bullet's distinctive words inside your own atoms, and it matched in one direction only: an

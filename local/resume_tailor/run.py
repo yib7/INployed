@@ -831,8 +831,8 @@ def _pass_aiwriting_sweep(ctx: PassCtx) -> None:
     _report_sweep(ctx, result, stage=AIWRITING_SWEEP_STAGE)
 
 
-# The order of this tuple IS the pipeline: it transcribes the sequence tailor() used to
-# spell out inline, and reordering it is now the only way to reorder the stages.
+# The order of this tuple IS the pipeline, and reordering it is the only way to
+# reorder the stages.
 # `enabled` holds the toggle FUNCTION rather than its value, so it is read per run.
 #
 # The AI-writing sweep is LAST, after the deterministic style gate, for two reasons that

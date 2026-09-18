@@ -186,10 +186,10 @@ def _experience(sel: dict, bullets: Dict[str, str]) -> str:
 def _looks_like_a_host_path(repo: str) -> bool:
     """True when a scheme-stripped `repo` value is an address worth linking.
 
-    The link used to be gated on the literal "github.com", which silently dropped
-    a project hosted anywhere else (GitLab, Bitbucket, Hugging Face, a personal
-    domain): no href, no printed address, no warning. The field is "Repo", not
-    "GitHub repo". The gate is now the shape of an address: a host segment with
+    Gating the link on the literal "github.com" would silently drop a project
+    hosted anywhere else (GitLab, Bitbucket, Hugging Face, a personal domain): no
+    href, no printed address, no warning. The field is "Repo", not "GitHub repo".
+    The gate is the shape of an address: a host segment with
     a dot in it and no whitespace anywhere, so "private" or "ask me" still
     render no link, exactly as an empty value does.
     """

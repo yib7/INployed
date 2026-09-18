@@ -31,7 +31,7 @@ a finding.
 
 P2 is `length_uniformity` and `rule_of_three`, and it is reported rather than
 repaired because the repair is not reliably an improvement. A rule-of-three hit is
-often an enumeration of things that genuinely come in threes, and breaking one up
+often an enumeration of things that come in threes, and breaking one up
 means either dropping a real item or padding to four.
 ``config.sweep_p2_enabled()`` (``RESUME_TAILOR_SWEEP_P2``) moves P2 into the
 repaired set for anyone who wants to make that trade; it adds no calls, since the

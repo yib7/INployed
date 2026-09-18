@@ -15,8 +15,8 @@ python -m resume_tailor.run --job-id <job_posting_id> --cover-letter
 ```
 Output (in `~/Downloads/Generated_Resumes/<Company>/<Title>/`): a one-page PDF, its
 `.tex` source, `ats_report.txt` (keyword coverage), an optional cover letter as **both a
-PDF and its `.tex` source** (so you can edit a word and re-run `pdflatex` instead of
-regenerating), and `apply.md` (a self-contained apply sheet you paste into
+PDF and its `.tex` source** (so you can edit a word and re-run `pdflatex` without a
+second model call), and `apply.md` (a self-contained apply sheet you paste into
 Claude-in-Chrome). The cover letter's plain text lives in `apply.md`'s `## Cover letter`
 section, which is what you paste into an application's cover-letter box.
 
@@ -26,7 +26,7 @@ each section/project gets and how long each one runs. Give a section or project 
 comma-separated list of per-bullet printed-line counts. For example, `2, 2, 1` means three
 bullets sized 2 / 2 / 1 lines (each 1 to 3, up to 5 bullets), and the one-page tailor
 honors it. A **"Bullets by strength"** box sizes projects by how strongly each ranks for
-*this* job instead of a flat count: type tiers as `projects:bullets` pairs (e.g.
+*this* job, overriding the flat count: type tiers as `projects:bullets` pairs (e.g.
 `2:3, 2:2, 1:1`) and the strongest-matching projects earn the extra bullets. A master
 **"Apply custom bullet layout"** checkbox turns the whole feature on or off: unchecked,
 the engine uses its built-in defaults but your saved targets are kept, so you can
@@ -81,8 +81,8 @@ beside it on the right. The card grows to at least about half the window so ther
 room to read. **Hide description** gives that height back, unless you dragged the divider
 above the card while the description was open: then your size stands. The description
 stays open as you click from job to job: only the text changes, so you can read down a
-list without re-opening it each time. It scrolls on its own instead of stretching the
-card, and the text can be selected and copied. Both dividers are draggable: the one
+list without re-opening it each time. It scrolls on its own, so the card keeps its
+height, and the text can be selected and copied. Both dividers are draggable: the one
 between the scoring and the description (your split is remembered until you close the
 dashboard) and **the divider above the card**, which sets its height. A job with no
 description at all folds the card back to one column. On the Tracker the card switches to
@@ -144,7 +144,7 @@ one group at a time.
   matches the setting's name, its explanation, its config key **and the chips on the
   row**, so you can search `GEMINI_API_KEYS` after reading your `.env`, or `restart` to
   list every setting that needs one. Several
-  words narrow rather than widen (`gemini key` is the key box, not everything Gemini).
+  words narrow the match: `gemini key` is the key box alone.
   Sections with no match disappear, sections with one open themselves, and **clearing the
   box puts your layout back exactly as it was**. An opening the search made for you is
   never saved. If a match exists but your configuration makes it inert, a muted line under
@@ -191,7 +191,7 @@ The sections:
 - **Models:** the scorer's two stages **and** the résumé tailor's are **editable
   dropdowns**: the recent Gemini 3.x ids by default, plus the Claude tier ids used when a
   provider is set to `claude`. Pick one or type a custom id. The tailor asks one question
-  before the rest — **simple or per stage** — described under *One model for every step*
+  before the rest, **simple or per stage**, described under *One model for every step*
   below.
 - **Auto-apply / Settings history:** the batch-apply queue cap and which webmail
   inbox the apply agent opens for verification emails; plus a snapshot of your
@@ -217,8 +217,8 @@ in red with a note underneath, the form scrolls to the first one you can act on,
 status line counts them ("2 settings need fixing"). There is no modal listing every problem and
 pointing at none of them. Fields are re-checked when you tab out of them, not only at Save. If a
 number you hand-edited into a config file is outside the allowed range, the spin box shows
-the clamped value **and tells you** what the file actually holds, rather than quietly
-rewriting it on the next Save.
+the clamped value **and tells you** what the file actually holds; nothing is rewritten
+quietly on the next Save.
 
 Edits are written atomically (with a `.bak`) to your git-ignored `.env`,
 `local/config.json`, and `search_config.json` / `scoring_config.json`. Environment
@@ -226,7 +226,7 @@ variables still override a file, and an absent file falls back to built-in defau
 the VM keeps running unchanged.
 
 > **Claude backend (optional).** The résumé tailor and the local job scorer can each run
-> on your Claude Code CLI subscription instead of Gemini. Set **Resume tailor provider** or
+> on your Claude Code CLI subscription. Set **Resume tailor provider** or
 > **Scoring provider** to `claude` (both default to `gemini`). The Claude path drives the
 > headless CLI with your subscription auth (no API key) and prompt caching; left on `tiers`
 > (the default), the tailor stages map fast → `claude-haiku-4-5`, standard →
@@ -241,20 +241,19 @@ swaps), a standard one that selects your atoms and runs every bullet cleanup pas
 one that writes the first draft and the cover letter. That saves money, but it means three
 dropdowns and three decisions before you have a working setup.
 
-Switch the row to **simple** and there is one: **Tailor model: one for every step** — pick a
+Switch the row to **simple** and there is one: **Tailor model: one for every step**. Pick a
 listed id or type your own, and every stage uses it. The three per-stage pickers (which live
 under *Show advanced settings*) disappear while simple is on, and reappear with your choices
-intact if you switch back — nothing you typed is lost either way. Leave it on **tiers**, the
+intact if you switch back; nothing you typed is lost either way. Leave it on **tiers**, the
 default, and nothing about your setup changes.
 
-Two details worth knowing:
+Two details:
 
 - The setting is **per provider**. Gemini and Claude each have their own pair of rows, and
   you only ever see the pair for the provider you're using, so the two can differ: one model
   everywhere on Claude, the tuned per-stage split on Gemini.
 - If you switch to simple and leave the model box **blank**, tailoring quietly goes back to
-  the three per-stage models rather than failing. A blank is treated as "no preference", not
-  as an instruction.
+  the three per-stage models. A blank is treated as "no preference".
 
 Like nearly everything saved to `.env`, this one is tagged **`restart`**: Save writes it
 immediately, but the dashboard picked up its model settings when it launched, so **close and
@@ -303,11 +302,12 @@ nothing else. The grounding gate still runs last either way, so a restyled sente
 introduces an unsupported fact is still rejected.
 
 #### What "Strip AI writing patterns from the résumé bullets" catches
-Settings → Résumé, **on by default**, and it **costs one model call per résumé entry on every
-tailor run** (a second call for an entry whose rewrite came back too long). Turn it off to
-stop paying for it; the free per-bullet style pass keeps running either way.
+Settings → Résumé. This is the sweep, the last of the bullet passes: **on by default**, and it
+**costs one model call per résumé entry on every tailor run** (a second call for an entry
+whose rewrite came back too long). Turn it off to stop paying for it; the free per-bullet
+style gate keeps running either way.
 
-The always-on style pass reads one bullet at a time, so the tells it cannot see are the ones
+The always-on style gate reads one bullet at a time, so the tells it cannot see are the ones
 that live across a whole entry:
 
 - the same sentence shape reused down the list
@@ -325,9 +325,15 @@ only if it prints within the same line budget your bullets are already trimmed t
 entry's printed height can go down and never up, and your résumé cannot be pushed onto a
 second page by it. A rewrite that comes back too long is asked once more for a shorter version
 and then dropped in favour of your original text; the same happens to one that loses a number
-or a name, changes the opening verb, or trips the ordinary style pass. Bullets you marked
+or a name, changes the opening verb, or trips the ordinary style gate. Bullets you marked
 verbatim are never sent. `tailor_report.txt` in the output folder lists what was rewritten,
-what was refused and why, and the lower-priority polish the pass reported and left alone.
+what was refused and why, and the lower-priority polish the sweep reported and left alone.
+
+One more call can follow a run that lost a bullet. When the grounding gate drops a bullet
+from the first draft, the tailor re-asks once from the same atoms with the unsupported term
+banned, then gates the answer again: the re-ask. It has no Settings row;
+`RESUME_TAILOR_REGROUND=0` in `.env` or `"reground": false` in `local/config.json` turns it
+off, and `tailor_report.txt` names each bullet it recovered.
 
 ### What leaves your machine
 There is no analytics, no crash reporting, and no phone-home. The only outbound
@@ -343,8 +349,8 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; plus, only when you click **Set on VM**, the one API key you typed into that box. It runs under your own `gcloud` login |
 | healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
-The healthchecks ping is a dead-man's switch so a silently failing cron run emails
-you instead of rotting in the log. It is off unless you set `HEALTHCHECKS_URL`
+The healthchecks ping is a dead-man's switch: a silently failing cron run emails
+you. It is off unless you set `HEALTHCHECKS_URL`
 yourself (see `scripts/run_scraper.sh`); unset, `ping_hc` is a no-op.
 
 Your credentials never cross providers: the Gemini and Bright Data secrets are

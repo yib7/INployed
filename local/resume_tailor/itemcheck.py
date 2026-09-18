@@ -320,10 +320,10 @@ def shape_repetition(item_name: str, bullets: Bullets) -> List[Finding]:
 #                                                                     < 0.05  8 of 60
 #
 # So the intuitive "three words apart is basically identical" floor would fire on 43%
-# of items that were already correct and already shipped. It is not mistuned, it is
-# the wrong statistic.
+# of items that were already correct and already shipped. An absolute floor is the
+# wrong statistic, and no tuning fixes it.
 #
-# Two consequences, both load-bearing:
+# Two consequences:
 #
 #  1. The measure is RELATIVE (stdev over mean), not absolute. A one-line item at 17
 #     words a bullet and a two-line item at 33 show the same relative variation at
@@ -389,8 +389,8 @@ def length_uniformity(item_name: str, bullets: Bullets) -> List[Finding]:
 _SERIES_SLOT = r"[A-Za-z0-9][\w\-/+%]*(?:\s+[A-Za-z0-9][\w\-/+%]*){0,2}"
 _RULE_OF_THREE_RE = re.compile(
     rf"\b{_SERIES_SLOT},\s+{_SERIES_SLOT},?\s+(?:and|or)\s+{_SERIES_SLOT}\b", re.I)
-# A match that swallows a sentence boundary is not a series, it is two sentences that
-# happen to have commas in them. Rejecting the match keeps the offsets intact, which
+# A match that swallows a sentence boundary is two sentences that happen to have
+# commas in them, and no series. Rejecting the match keeps the offsets intact, which
 # splitting the bullet first would not.
 _SENTENCE_END_RE = re.compile(r"[.!?]\s")
 _RULE_OF_THREE_MAX = 1

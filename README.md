@@ -101,8 +101,8 @@ app; Steps 5-7 connect it to your own data and accounts.
 > optional Task Scheduler / GCP-VM automation are Windows-only. The dashboard and
 > résumé engine are plain Python + Qt with no Windows-specific dependency, so
 > `pip install -r requirements.txt && python local/app.py` will most likely work on
-> macOS or Linux (use MacTeX / TeX Live for `pdflatex` instead of MiKTeX), but
-> nobody has run it there, so treat it as unverified rather than supported.
+> macOS or Linux (MacTeX or TeX Live supplies `pdflatex` there), but nobody has run
+> it there, so treat it as unverified.
 
 ### Step 1: Get the code
 ```powershell
@@ -141,8 +141,8 @@ entry point, and the only thing you need for every later launch. (Right-click it
 `venv\Scripts\python.exe local\open_dashboard.pyw`: the same interpreter and the same
 script the launcher runs, since Step 2's venv is never activated.)
 
-With no keys and no jobs yet, the window opens to a **get-started panel** rather than a
-blank table, so you can confirm the install worked before configuring anything.
+With no keys and no jobs yet, the window opens to a **get-started panel**, so you can
+confirm the install worked before configuring anything.
 
 ### Step 5 (skip to just look around): Set your keys in the Settings tab
 In the running dashboard, open the **Settings** tab and fill in the **Credentials**
@@ -192,7 +192,7 @@ shows the structure if you would rather edit the file.)
   posting's keywords.
 - Hold **more than fits on one page**: selection picks the best evidence per job.
 - Click **Check setup** any time to lint your résumé data + apply answers, so a malformed
-  entry surfaces as a clear error instead of breaking the pipeline silently.
+  entry surfaces as a clear error before it can break the pipeline silently.
 
 ### Step 7 (optional): Extras, each for one feature
 *(Skip all of these until you want the feature; nothing above depends on them.)*
@@ -213,8 +213,8 @@ discovery VM.
   dashboard's **Find new jobs**. It never pays twice for the same posting: the exclude list
   it sends the job-data provider is capped at the newest 2,000 ids, evicted by date. A run
   that collects nothing while the provider reports input errors fails with those error codes
-  instead of logging a clean success, and a collection that finishes inside the provider's
-  one-minute sync window is read as rows, not as a failure.
+  (it never logs as a clean success), and a collection that finishes inside the provider's
+  one-minute sync window is read as rows.
 - **Triage:** the **High Score** tab ranks unseen postings by the two-stage score and tints
   each row by recommendation (apply / consider / skip) and by whether a tailored résumé
   already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
@@ -234,15 +234,15 @@ discovery VM.
 - **Track:** applications move through applied → interviewing → offer / rejected, with
   follow-up nudges. The whole history is a local SQLite file you can export and import.
 - **Apply:** every tailored folder gets a self-contained `apply.md` sheet that a
-  browser agent fills page by page and then **stops at the review screen**. It never logs in, and it never clicks submit.
+  browser agent fills page by page and then stops at the review screen. It never logs in, and it never clicks submit.
 - **Operate:** Settings is one schema-driven form over every key, path, and tunable the
   project has (no file editing), including the schedule, pause, config pushes, and API-key
   rotation for the cloud discovery VM. A rotated key lands in a mode-600
-  `~/scraper_secrets.env` that the cron script sources; the value rides an `scp` rather
-  than an argv, so it never reaches a gcloud log. Stats reports per-run volume, token
+  `~/scraper_secrets.env` that the cron script sources; the value travels by `scp` and
+  stays out of argv, so it never reaches a gcloud log. Stats reports per-run volume, token
   spend and rescore outcomes, with a staleness badge when a cron run goes missing.
 
-Full walkthrough of every tab, CLI, and setting: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
+Full walkthrough of every tab, CLI, and setting: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ---
 
@@ -372,8 +372,8 @@ The skills section follows the same rule:
 - An underfull bullet is filled only from unused facts in its own entry.
 
 Layout is **config-driven** (the `tailor:` block in your yaml). Which sections are
-required, and their line budgets, are declared in data rather than hardcoded, so it
-works for anyone's résumé.
+required, and their line budgets, are declared in that data, so the engine works for
+anyone's résumé.
 
 ---
 

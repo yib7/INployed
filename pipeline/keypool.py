@@ -67,13 +67,14 @@ OVERLOAD_COOLDOWN_S = 60.0
 OVERLOAD_MAX_RETRIES = 6
 
 # What a 429 is allowed to cost. set_exhausted stamps the DAILY ceiling, and
-# _is_quota_error cannot tell a per-minute rejection from a per-day one -- so a
-# single burst used to write off a whole allowance. Observed live: three keys
+# _is_quota_error cannot tell a per-minute rejection from a per-day one -- so if
+# the first 429 stamped the day, a single burst would write off a whole
+# allowance. Observed live: three keys
 # showed 500/500 spent on gemini-3.5-flash-lite (1500 calls) after a run that
 # made a few dozen. Unless the payload positively identifies a per-day metric,
 # the first 429 only parks the PAIR; it takes a second one to retire the day.
-# A per-minute blip therefore costs 90 seconds of one pair, and a genuinely
-# spent pair costs two wasted calls before it is recorded.
+# A per-minute blip therefore costs 90 seconds of one pair, and a spent pair
+# costs two wasted calls before it is recorded.
 QUOTA_COOLDOWN_S = 90.0
 QUOTA_STRIKES_BEFORE_DAILY = 2
 
@@ -374,8 +375,7 @@ def _quota_scope(exc: Exception) -> str:
 
     "unknown" is therefore treated as the cheap case (park the pair) rather than
     the expensive one (write off the day), and the strike counter in
-    _apply_quota_error is what stops a genuinely spent pair from being retried
-    all day.
+    _apply_quota_error is what stops a spent pair from being retried all day.
     """
     flat = str(exc).lower().replace("_", "").replace("-", "").replace(" ", "")
     if "perday" in flat:
@@ -508,7 +508,7 @@ class KeyPool:
         "day" retires the pair via set_exhausted, exactly as before. Anything
         else parks it for QUOTA_COOLDOWN_S and counts a strike; the pair is only
         written off once the strikes reach QUOTA_STRIKES_BEFORE_DAILY, so an
-        ambiguous 429 can no longer spend an allowance it never proved was gone.
+        ambiguous 429 cannot spend an allowance it never proved was gone.
         Callers hold the lane's lock.
         """
         key = (fp, model)
@@ -590,7 +590,7 @@ class KeyPool:
         The lateral spill is the other half: a model whose keys all have RPD
         headroom but are momentarily RPM-full does NOT return "wait", it falls
         through to the next model. Free-tier quota is metered per (key, model),
-        so a second model is a genuinely independent allowance -- sleeping out a
+        so a second model is an independent allowance -- sleeping out a
         60s RPM window while an equally capable model sits idle is pure waste.
         Waiting is the last resort, taken only when no pair anywhere is usable
         right now and at least one still has daily headroom; only once nothing

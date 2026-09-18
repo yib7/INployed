@@ -24,9 +24,9 @@ import re
 from math import ceil
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# `ats`/`layout` are no longer used by the bullet stages, but `compose.ats` and
-# `compose.layout` are part of this module's historical surface (call sites read and
-# monkeypatch them), so they stay bound here alongside the name re-exports below.
+# The bullet stages do not use `ats`/`layout`. `compose.ats` and `compose.layout` are
+# still part of this module's public surface (call sites read and monkeypatch them), so
+# they stay bound here alongside the name re-exports below.
 from . import assets, ats, config, layout, measure  # noqa: F401
 from .common import _PRINCIPLE, _gkey, fence_jd
 from .itemcheck import leading_verb
@@ -82,10 +82,9 @@ BANNED_PHRASING = (
 )
 
 # How much style exemplar the rephrase prompt carries. Against the curated
-# style_exemplar.txt (a handful of bullets, well under 1k chars) this never bites: with a
-# curated source the cap is no longer rationing a noisy 3.5KB page dump, it is a guard
-# against a user pasting an entire résumé — or against the PDF fallback, which still is
-# that page dump — inflating every rephrase call.
+# style_exemplar.txt (a handful of bullets, well under 1k chars) this never bites: the
+# cap is a guard against a user pasting an entire résumé (or against the PDF fallback,
+# which is a noisy 3.5KB page dump) inflating every rephrase call.
 #
 # The cut is on a LINE boundary, never mid-word. A flat `[:1200]` slice of the PDF extract
 # ended the exemplar at "• Proc", so the same prompt that calls a bullet ending mid-clause

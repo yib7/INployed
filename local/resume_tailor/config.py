@@ -353,7 +353,7 @@ def sweep_p2_enabled() -> bool:
 
     P2 is `length_uniformity` and `rule_of_three`. Both are real tells and both are
     measured honestly, but neither implies the repair is an improvement: a rule-of-three
-    hit is often an enumeration of things that genuinely come in threes (three providers,
+    hit is often an enumeration of things that come in threes (three providers,
     the three statistical variable types), and asking a model to break one up gives it a
     choice between dropping a real item and padding. That is why the default is OFF and
     the findings are reported instead. Turn it on to let the model rewrite for them too;

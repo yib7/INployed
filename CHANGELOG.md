@@ -388,7 +388,7 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
 ### Docs
 - **The README, `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` describe the pool, the
   sweep and the re-ask.** The README's lead names the free-tier model pool and its test
-  count is re-derived (3,123 collected); the architecture diagram gains the pool as one box
+  count is re-derived (3,129 collected); the architecture diagram gains the pool as one box
   both the scorer and the tailor call; Step 5 leads with the AI Studio keys and says what
   bills (the Google Cloud project, only after every key's daily quota or when every key is
   parked on a 503 or a refused 429, and never with the project id blank); the engine section

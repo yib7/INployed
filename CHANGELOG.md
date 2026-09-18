@@ -4,14 +4,60 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.11.0] - 2026-09-18
 
-One feature: the résumé bullets get an AI-writing cleanup pass that reads a whole entry at a
-time. It is on by default and it costs one model call per résumé entry per tailor run, so the
-setting that turns it off is named below. Your page layout is unaffected by design, and the
-test suite proves the guarantee behind that over a whole generated résumé.
+The résumé tailor can now run on the job scorer's pool of free-tier Gemini keys, and both
+of them walk a ranked list of models before anything is billed. The résumé bullets get an
+AI-writing cleanup pass that reads a whole entry at a time, and a bullet the grounding
+gate deletes on the first draft gets one re-ask to come back grounded. The PDF's education
+block and its links are laid out so an applicant-tracking parser reads the GPA, the dates
+and the repo address, and the header's LinkedIn and GitHub handles are live links. Under
+that, a scrape that finished inside Bright Data's synchronous window used to crash the
+scraper and discard a billed collection; it is read now. A security pass closed five
+smaller paths, listed under Security, and the dashboard stops printing `nan` in a cell
+the pipeline never filled.
+
+What it costs and what to set: the sweep is on by default and spends one model call per
+résumé entry on every tailor run, the re-ask spends one cheap call only on a run that
+already lost a bullet, and the setting that turns each off is named in its entry. The
+pool engine is opt-in (Settings → Engine → "Resume tailor engine" → `pool`), and every
+fallback list ships empty, which is the single-model behaviour you had. Nothing to
+migrate: every new key defaults to what your install already did, no setting changed
+meaning, and no setting or environment variable that v1.10.0 had was removed.
 
 ### Added
+- **A `pool` engine for the résumé tailor, and ranked model chains for it and the job
+  scorer.** Google meters free-tier quota per API key and per model, so a second model on
+  the same key is a second daily allowance, and until now the tailor's calls always billed
+  the Vertex project or spent one dedicated key. Settings → Engine → "Resume tailor engine"
+  gains `pool` beside `vertex` and `api_key` (`RESUME_TAILOR_GEMINI_AUTH=pool`): the tailor
+  shares the scorer's `GEMINI_API_KEYS`, all of them, rotated, held to the same per-model
+  free-tier limits, and bills the Google Cloud project only once every key has spent its
+  daily allowance for every model in the chain, or when every key is parked on a 503 or an
+  unexplained 429. Keys with no project set means no spillover and no bill; a project with
+  no keys means no free tier. Check setup says so when `pool` is selected with neither.
+
+  Each stage's model is now a ranked list, walked models-outermost and keys-innermost. The
+  scorer reads "Stage-1 fallback models" and "Stage-2 fallback models" under Scoring
+  (`SCORE_STAGE1_MODELS`, `SCORE_STAGE2_MODELS`); the tailor reads one chain per tier under
+  Engine, "Fallbacks: fast (briefs)" / "standard (selection)" / "deep (writing)"
+  (`RESUME_TAILOR_FALLBACK_FLASH_LITE` / `_FLASH` / `_PRO`), or a single "Tailor fallback
+  models" list (`RESUME_TAILOR_FALLBACK_MODELS`) in simple mode. Keep a chain inside its
+  own class: a `-lite` model allows about 500 free requests a day per key and a full Flash
+  model 20, so a full Flash model listed as a fast-tier fallback spends the allowance the
+  cover letter needs. The pool tells its errors apart: a 503 parks the model for a minute
+  on every key, an unexplained 429 parks that one (key, model) pair for 90 seconds and only
+  a second strike in the same day retires it, and the paid Vertex backstop takes the first
+  model in the chain that is not cooling. Claude keeps a single-element chain; it has no
+  free allowance to multiply.
+
+  "Per-model rate limits" (`SCORE_MODEL_LIMITS`, `<model> <rpm> <rpd>` rows) is the one
+  rate-limit control, for the scorer and the tailor alike, and the built-in table in
+  `pipeline/keypool.py` now carries every Flash model in the dropdown, so the field is
+  normally left empty. It is needed only for a model the table does not know, which is
+  otherwise gated at 5 requests a minute and 100 a day and can send most of its free quota
+  to the paid backstop. A row without two whole numbers after the model id is skipped with
+  a warning that names it.
 - **An AI-writing sweep over the résumé bullets, one entry at a time.** The style gate that has
   always run reads one bullet on its own, so it cannot see the tells that only exist across an
   entry: one sentence shape reused down the list, every bullet the same length, a three-part
@@ -44,9 +90,9 @@ test suite proves the guarantee behind that over a whole generated résumé.
   whose call failed, whose bullets then ship exactly as the style gate left them.
 
 - **A switch to let the AI-writing sweep repair its P2 findings, off by default.** The sweep
-  measures four item-level tells and repairs two of them. The other two, `length_uniformity`
-  and `rule_of_three`, are reported and left alone; that policy is now a setting rather than a
-  rule. `RESUME_TAILOR_SWEEP_P2=1` and `resume_sweep_p2` in `config.json` move them into the
+  measures five item-level tells and repairs three of them. The other two, `length_uniformity`
+  and `rule_of_three`, are reported and left alone; that policy is now a setting.
+  `RESUME_TAILOR_SWEEP_P2=1` and `resume_sweep_p2` in `config.json` move them into the
   repaired set, and it adds no model calls, because the findings ride in the call each item
   already makes.
 
@@ -83,7 +129,7 @@ test suite proves the guarantee behind that over a whole generated résumé.
   The location travels with the school (`\resumeSubheading` in `resume_template.tex` now
   takes school / location-suffix / dates / degree, and the degree row has nothing on its
   right), and GPA and honors share one labelled line in the `GPA: x.xx/4.0` form parsers
-  match — a `gpa_scale:` field on the education entry overrides the 4.0 for another
+  match; a `gpa_scale:` field on the education entry overrides the 4.0 for another
   system. The project link prints the repo's own host+path (`github.com/janedoe/exampleapp`)
   as its text. The PDF's Title and Author, previously blank, are set from the candidate's
   name via `\hypersetup` in the rendered header, so the preamble stays free of personal
@@ -100,11 +146,41 @@ test suite proves the guarantee behind that over a whole generated résumé.
   boxes either way.
 
   The golden in `tests/test_tailor_golden.py` was re-pinned for exactly these three
-  hunks and nothing else — a `\hypersetup{pdftitle=...}` line before `\begin{center}`;
+  hunks and nothing else: a `\hypersetup{pdftitle=...}` line before `\begin{center}`;
   the education entry `{State University $|$ 3.8 GPA}{...}{<degree>}{Austin, TX}` +
   `Awards & Honors` line becoming `{State University}{, Austin, TX}{...}{<degree>}` +
   `GPA: 3.8/4.0 $|$ Awards & Honors`; and the Trailhead link text `\textit{Link}` becoming
   `github.com/alexrivera/trailhead`. Bullets, skills and every other line are byte-identical.
+- **The header's LinkedIn and GitHub handles are blue, clickable links in the PDF.** The
+  Projects section already rendered its repo as a link and picked up the template's link
+  colour; the contact line printed the same kind of address as plain black type on the same
+  page. The two handles now carry the full URL as their target and print exactly the text
+  they printed before. The target and the printed text are escaped separately, because the
+  page escape backslashes an underscore, which is right in print and wrong in an address, so
+  a handle like `github.com/foo_bar` links to the right place. Location, phone and email stay
+  plain text. Verified by compiling the real preamble and reading the result: two link
+  annotations carrying the right URIs, blue for the links and black for the rest of the line.
+- **A project's repo link no longer has to be on github.com.** The inline link was gated on
+  that literal host, so a project hosted on GitLab, Bitbucket, Hugging Face or a personal
+  domain lost its link silently: no target, no printed address, no warning, while the Resume
+  Data tab calls the field "Repo". Any value shaped like an address (a dotted host segment,
+  no whitespace) now links; "private" or "ask me" still render nothing, the same as an empty
+  field.
+- **The tailor tiers are named by the passes they actually run.** The Settings labels said
+  the fast tier does selection and the standard tier does the writing. In the code,
+  selection and every bullet cleanup pass run on the standard tier, the fast tier carries
+  the per-entry briefs, the overview lead and the verb swaps, and the deep tier writes the
+  first draft and the cover letter. The Gemini pickers, the Claude pickers and the three
+  fallback lists now read fast (briefs) / standard (selection) / deep (writing), the help
+  text under each says what that tier carries, and README and USER_GUIDE describe the split
+  the same way.
+- **The Settings tab reads more plainly.** Thirteen labels carried an em dash between the
+  field and its tier and eighteen help strings had one mid-sentence; the labels use a colon
+  now ("Tailor model: fast (briefs)") and the help sentences a colon, a semicolon or a
+  parenthesis, and a test pins that none comes back. An empty list box says "One per line"
+  as its placeholder, since seven of the nine list fields now default to empty and showed as
+  a bare rectangle. The Engine section's description names all three ways the Gemini side
+  can bill.
 - **Dependencies pulled forward to current stable.** `google-genai` 2.22.0 to 2.23.0 in both
   pin sets, `pypdf` 6.16.2 to 6.18.1, `ruff` 0.16.6 to 0.16.7 and `tzdata` 2026.3 to 2026.4;
   those were the only direct pins `pip` reported outdated. The pypdf bump is the one that
@@ -115,6 +191,18 @@ test suite proves the guarantee behind that over a whole generated résumé.
   yanked on PyPI). Neither pin set has an advisory against it: OSV.dev and `pip-audit` agree,
   zero. The pinned interpreter is Python 3.14.7, the newest 3.14 patch; its `venv` seeds pip
   26.2.1, so the pip upgrade line in Step 2 is now a no-op on a current install.
+- **`setup.ps1` installs into the project venv and points its next steps at it.**
+  `-InstallDeps` installed into the global interpreter, where the launcher never looks, and
+  the next-steps block told you to run the pipeline with bare `python`; on a fresh machine
+  that interpreter has no pandas or aiohttp. Both now name `venv\Scripts\python.exe` when
+  Step 2 built one, and fall back to bare `python` only without it. The gcloud step is
+  labelled as needed only when a Google Cloud project is billed. The script is still pure
+  ASCII.
+- **`.gitignore` covers the temp file an interrupted atomic write leaves behind.** Only
+  `*.json.*.tmp` was covered; the master CSV, `master_experience.yaml`, the scraper's and the
+  scorer's outputs are all written as `<stem>.<random>.tmp` (or `.tmp.gz`) beside the file
+  they replace, so a crash between the write and the rename left an unignored copy of
+  personal data in the checkout.
 
 ### Security
 - **An API key can no longer be re-routed to Vertex by an environment flag.** The Google
@@ -147,6 +235,33 @@ test suite proves the guarantee behind that over a whole generated résumé.
   dashboard's error dialog; the head of an error envelope is the diagnosis.
 
 ### Fixed
+- **A scrape that finished inside Bright Data's synchronous window no longer crashes the
+  scraper and discards what it billed.** `/datasets/v3/scrape` collects for up to a minute
+  and only answers 202 with a snapshot id when the run is still going. Every production run
+  so far had taken that path, so the scraper assumed it and crashed on the rows a fast run
+  hands straight back, after Bright Data had billed the collection. The response is now read
+  as either rows or a snapshot hand-off, an empty body raises where it used to pass as a
+  quiet day, and a synchronous run prints a note that the input-rejection check (which reads a
+  snapshot's progress) did not run on it. Two shapes on the same path were closed with it: a
+  202 whose body carries no snapshot id was filed as a single job row with no id while the
+  real collection was never polled, and it now raises with the body quoted; and rows that are
+  not JSON objects raise a named error in place of a pandas traceback.
+- **The key pool no longer retires a (key, model) pair for the day over two ordinary
+  rate-limit replies hours apart.** The strike counter only ever grew. The dashboard's pool
+  lives for the whole session and shares its keys with the scorer in another process, so two
+  per-minute 429s a day apart added up to the "second strike" that writes a pair off until
+  the Pacific-time rollover, which is the write-off the two-strike rule exists to prevent. A
+  successful call now clears the pair's strikes, the daily rollover clears every strike and
+  park, and the tailor's rotation budget is sized so a parked pair that comes back for its
+  second strike still leaves room to reach the Vertex backstop; before, that walk could end
+  in "give up" with a paid lane sitting unused. The 429 and quota checks also read the SDK's
+  status code before the message text, as the 503 check already did.
+- **A `null` model list in a hand-edited `scoring_config.json` no longer puts a model named
+  `None` into the chain.** The config reader stringified JSON `null` into `["None"]`, and the
+  pool would have called that model for real once the primary ran dry. `null` reads as an
+  empty list now, and null items inside a list are dropped. A malformed "Per-model rate
+  limits" row (`gemini-3.8-flash five 20`) was skipped with no trace and left the model on
+  its built-in numbers; it now logs one warning naming the row and the expected shape.
 - **A dropped bullet gets one chance to come back, instead of taking the entry's
   introduction with it.** The grounding gate that runs on the first draft is the only one
   with nothing to fall back to: every later stage can revert a bullet to its previous
@@ -250,6 +365,47 @@ test suite proves the guarantee behind that over a whole generated résumé.
   this bullet, even when this group's own atom names the same subject: state the
   subject the way that atom does, and leave the figure to the bullet whose atoms
   actually carry it.
+- **A job the pipeline never deep-scored no longer prints `nan` under a full bar.** Such a
+  job carries a float NaN in `deep_score`, and a blank location or company reads as NaN too.
+  pandas 3 keeps NaN as NaN through `astype(str)`, so the jobs table handed Qt a float: the
+  cell printed "nan", the Deep bar filled its whole track, and sorting a text column raised.
+  Over a 17,000-row master every row below the stage-2 threshold showed it. The model blanks
+  NaN before the strings reach Qt, and the painter draws a dash for one that still arrives.
+- **The sort arrow no longer covers the sorted column's label.** Under the stylesheet Qt lays
+  a header label out over the whole section and paints the sort arrow at the right edge, so
+  every right-aligned count column (Applicants, Days) had its arrow drawn across its last
+  letter whenever it was sorted, and a centred one whenever it sat near its floor. The jobs
+  table's header now paints the arrow in its own space inside the right padding and the label
+  in the space that stops short of it, with the stylesheet's colours and the column's own
+  alignment, and a sorted column that sits below label-plus-arrow width is widened to fit.
+
+### Docs
+- **The README, `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` describe the pool, the
+  sweep and the re-ask.** The README's lead names the free-tier model pool and its test
+  count is re-derived (3,123 collected); the architecture diagram gains the pool as one box
+  both the scorer and the tailor call; Step 5 leads with the AI Studio keys and says what
+  bills (the Google Cloud project, only after every key's daily quota or when every key is
+  parked on a 503 or a refused 429, and never with the project id blank); the engine section
+  describes the three tiers the way the code runs them and the bounded re-ask; and
+  Limitations is rewritten to today's list (the call costs of the sweep and the re-ask, the
+  Vertex spillover, the grounding gate's "30m" / plain-`s` / short-acronym gaps, macOS, the
+  detail-card clipping). `docs/ARCHITECTURE.md` gains a key-pool section (ranked chains,
+  per-model limits, how a full RPM window, a 503 and a 429 are each answered, the Vertex
+  order, the fingerprinted state file), the scraper's two trigger answer shapes, the ATS
+  layout on the `render.py` row, a diagram of the bullet-pass loop, and the auto-apply queue
+  and the two optional Playwright modules, which were in the tree and in no doc. The
+  USER_GUIDE names the interpreter its `python` commands mean (`venv\Scripts\python.exe`),
+  gains a paragraph on the pool engine and the per-tier fallback boxes, and gives both
+  advanced-row counts (16 on a fresh install, 19 with the VM section on).
+- **`.env.example` documents the pool mode and every new variable**: `pool` as the third
+  billing lane, the two scorer chains, the four tailor chains, `SCORE_MODEL_LIMITS`,
+  `RESUME_TAILOR_REGROUND`, `RESUME_TAILOR_SWEEP_P2` and `RESUME_TAILOR_AIWRITING_SWEEP`,
+  each with what it costs.
+- **The Settings screenshot and the last four scenes of the demo GIF are re-shot on the
+  current Settings tab**: the colon labels, the Engine description that names the pool, the
+  per-tier help text, and the advanced count a fresh install computes. The other three stills
+  were rebuilt from the same run so all four come from one frame set. The GIF is 173 frames
+  over 41.6 s.
 
 ## [1.10.0] - 2026-09-06
 
@@ -1519,6 +1675,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[1.11.0]: https://github.com/yib7/INployed/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/yib7/INployed/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/yib7/INployed/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/yib7/INployed/compare/v1.7.1...v1.8.0

@@ -264,7 +264,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         wh.addWidget(self.callout_label, 1)
         self.answer_now_btn = QtWidgets.QPushButton("Answer now")
         self.answer_now_btn.setToolTip(
-            "Open the Apply Answers tab — save the missing answer(s) to the "
+            "Open the Apply Answers tab, save the missing answer(s) to the "
             "answer bank, then Re-queue this job")
         self.answer_now_btn.clicked.connect(on_answer_now or (lambda: None))
         wh.addWidget(self.answer_now_btn, 0, QtCore.Qt.AlignmentFlag.AlignTop)
@@ -451,12 +451,12 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.pw_btn = QtWidgets.QPushButton("Set…")
         self.pw_btn.setToolTip(
             "Store the ONE master password every auto-created ATS account uses "
-            "(Windows Credential Manager — never written to any file)")
+            "(Windows Credential Manager; never written to any file)")
         self.pw_btn.clicked.connect(lambda: self._on_set_password())
         ch.addWidget(self.pw_btn)
         self.copy_pw_btn = QtWidgets.QPushButton("Copy")
         self.copy_pw_btn.setToolTip(
-            "Copy the master password to the clipboard for a manual login — it is "
+            "Copy the master password to the clipboard for a manual login; it is "
             "never shown on screen. Clears from the clipboard when you click Clear.")
         self.copy_pw_btn.clicked.connect(self._copy_password)
         ch.addWidget(self.copy_pw_btn)
@@ -474,11 +474,11 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.start_run_btn = QtWidgets.QPushButton("Start auto-apply run")
         self.start_run_btn.setProperty("accent", True)
         self.start_run_btn.setToolTip(
-            "Launch an auto-apply drain in a NEW terminal window — click once, "
+            "Launch an auto-apply drain in a NEW terminal window: click once, "
             "walk away. You pick how it runs: unattended (no approval prompts) "
-            "or scoped (safer — pre-approves only the tools it needs). Works "
+            "or scoped (safer: pre-approves only the tools it needs). Works "
             "through up to batch_cap queued jobs; every application is PARKED at "
-            "its review page for your approval — nothing is ever submitted.")
+            "its review page for your approval; nothing is ever submitted.")
         self.start_run_btn.clicked.connect(self._start_run)
         actions.addWidget(self.start_run_btn)
         v.addLayout(actions)
@@ -769,7 +769,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             self._set_note("Select a row to mark applied.")
             return
         self._on_mark_applied(e)
-        self._set_note(f"Marked applied — {e.get('company', '')} moved to the Tracker.")
+        self._set_note(f"Marked applied: {e.get('company', '')} moved to the Tracker.")
 
     def _dont_apply(self) -> None:
         e = self._selected_entry()
@@ -778,13 +778,13 @@ class ApplyQueuePanel(QtWidgets.QWidget):
             return
         self._on_mark_seen(e)
         self._set_note(
-            f"Won't apply — {e.get('company', '')} removed from the queue (still under All Jobs).")
+            f"Won't apply: {e.get('company', '')} removed from the queue (still under All Jobs).")
 
     def _copy_password(self) -> None:
         if ats_accounts.copy_password_to_clipboard():
-            self._set_note("Master password copied to the clipboard — paste it, then click Clear.")
+            self._set_note("Master password copied to the clipboard. Paste it, then click Clear.")
         else:
-            self._set_note("No master password stored — click 'Set…' first.")
+            self._set_note("No master password stored; click 'Set…' first.")
 
     def _clear_password(self) -> None:
         if ats_accounts.clear_clipboard_if_password():
@@ -838,7 +838,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         box.setWindowTitle("Start auto-apply run")
         box.setText(
             f"Start an auto-apply run in a new terminal? It works through up to "
-            f"{n} queued job(s), parks each at its review page — nothing is ever "
+            f"{n} queued job(s), parks each at its review page; nothing is ever "
             f"submitted.\n\n"
             f"Unattended: no per-action approval prompts (walk away).\n"
             f"Scoped (safer): pre-approves only the tools the drain needs; it "
@@ -869,14 +869,14 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         if not has_password:
             QtWidgets.QMessageBox.warning(
                 self, "Master password not set",
-                "Set the master password first (the 'Set…' button above) — "
+                "Set the master password first (the 'Set…' button above); "
                 "the auto-apply run needs it to sign in to ATS accounts.")
             return
         queued = self._queued_count()
         if queued == 0:
             QtWidgets.QMessageBox.information(
                 self, "Queue is empty",
-                "Queue is empty — queue jobs from the Jobs tab first.")
+                "Queue is empty; queue jobs from the Jobs tab first.")
             return
         n = self._batch_cap(queued)
         mode = self._ask_run_mode(n)

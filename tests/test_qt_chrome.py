@@ -64,8 +64,8 @@ def test_identity_strip_counts_and_freshness(qtbot):
     assert "27" in strip.jobs_badge.text() and "jobs" in strip.jobs_badge.text()
     assert strip.unseen_badge.value() == 22
     assert strip.tracked_badge.value() == 8
-    strip.set_freshness("fresh", "Fresh — last run 2h ago")
-    assert strip.freshness.text() == "Fresh — last run 2h ago"
-    strip.set_freshness("stale", "Stale — last run 3d ago")
+    strip.set_freshness("fresh", "Fresh: last run 2h ago")
+    assert strip.freshness.text() == "Fresh: last run 2h ago"
+    strip.set_freshness("stale", "Stale: last run 3d ago")
     assert "Stale" in strip.freshness.text()
     assert "INployed".replace("IN", "") in strip.wordmark.text()  # wordmark markup

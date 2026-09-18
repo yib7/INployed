@@ -155,7 +155,7 @@ class AnswersEditor(QtWidgets.QWidget):
         answers = self.collect()
         errs = apply_answers.validate(answers)
         if errs:
-            self.status.setText("Not saved — see error.")
+            self.status.setText("Not saved; see the error.")
             QtWidgets.QMessageBox.critical(self, "Apply answers",
                                            "Problems found:\n\n- " + "\n- ".join(errs))
             return False
@@ -174,12 +174,12 @@ class AnswersEditor(QtWidgets.QWidget):
     def _validate_clicked(self) -> None:
         errs = self.validate()
         if not errs:
-            QtWidgets.QMessageBox.information(self, "Validate", "Looks good — no problems found.")
+            QtWidgets.QMessageBox.information(self, "Validate", "Looks good: no problems found.")
             self.status.setText("Valid.")
         else:
             QtWidgets.QMessageBox.critical(
                 self, "Validate", "Problems found:\n\n- " + "\n- ".join(errs))
-            self.status.setText(f"{len(errs)} problem(s) — see the list.")
+            self.status.setText(f"{len(errs)} problem(s); see the list.")
 
     def revert(self) -> None:
         if self.snapshot:

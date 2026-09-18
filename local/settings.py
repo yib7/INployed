@@ -90,7 +90,7 @@ class Field:
     #
     # THE RULE A PATTERN MUST OBEY: reject only what the consumer would silently
     # DISCARD — never a value it honours. This repo is public and others run it,
-    # so a rule stricter than the runtime is not a nag, it is a lock-out: validate()
+    # so a rule stricter than the runtime is a lock-out: validate()
     # runs over EVERY collected field, so one already-saved value the editor has
     # newly decided it dislikes blocks every future Save of every OTHER setting,
     # from a row a configuration gate may keep off screen entirely. Write the
@@ -155,16 +155,15 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 #
 # gemini-3.1-flash-lite is the one id in this tuple carrying a shutdown date, and
 # as of the 2026-09-04 re-check that row also names a REPLACEMENT: Google's
-# lifecycle table now reads `gemini-3.1-flash-lite | May 7, 2026 | May 7, 2027 |
+# lifecycle table reads `gemini-3.1-flash-lite | May 7, 2026 | May 7, 2027 |
 # gemini-3.5-flash-lite`. Every other 3.x flash id has no shutdown date and no
 # replacement. The date is still the earliest possible retirement rather than a
 # scheduled one, and the model is still on the Stable list, so nothing breaks
 # today -- but it is the stage-1 scoring default and the tailor's flash-lite tier,
 # so the migration is real and dated. It is NOT done here. Of the two inputs it
-# needed, one is now in the tree: keypool.LIMITS carries a gemini-3.5-flash-lite
-# row (15/500, read from the account's AI Studio dashboard when the multi-model
-# pool filled in the whole Flash family), so the swap no longer falls to
-# keypool.DEFAULT_LIMITS. The other is still open: a stage-1 scoring run to
+# needed, one is in the tree: keypool.LIMITS carries a gemini-3.5-flash-lite
+# row (15/500, read from the account's AI Studio dashboard), so the swap does
+# not fall to keypool.DEFAULT_LIMITS. The other is still open: a stage-1 scoring run to
 # confirm the swap is not a quality regression, and a release pass never
 # invokes the billed scorer. Re-checked against Google's table 2026-09-15: the
 # row is unchanged (Stable, shutdown 2027-05-07). Tracked in .autopilot/BACKLOG.md.
@@ -203,8 +202,8 @@ CLAUDE_MODELS = ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5")
 # are the ones `local/resume_tailor/config.py` compares against
 # (config.MODEL_MODE_TIERS / MODEL_MODE_SIMPLE) — the coupling that makes the
 # dropdown mean anything — and this is a plain `choice`, not `editable_choice`,
-# because a value outside the pair is not a custom model id, it is a typo the
-# runtime would silently read as 'tiers'.
+# because a value outside the pair is a typo the runtime would silently read
+# as 'tiers'.
 #
 # Index 0 is 'tiers' because it is the DEFAULT twice over: `settings_tab._set_combo`
 # falls back to `choices[0]` for an unrecognised stored value, and 'tiers' is the
@@ -240,10 +239,9 @@ TARGET_FILES: dict[str, Path] = {
     # No "apply" target: zero fields ever pointed at apply_config.json, and the
     # apply pipeline reads that legacy file itself (resume_tailor.apply_config
     # .load_apply_config opens the repo-root path directly and merges over its own
-    # DEFAULTS), so nothing here needs to know about it. Consequence of dropping
-    # it: a legacy root apply_config.json is no longer copied into settings
-    # snapshots — the same treatment apply_answers.json, the LIVE answer store,
-    # has always had.
+    # DEFAULTS), so nothing here needs to know about it. Consequence: a legacy
+    # root apply_config.json is not copied into settings snapshots, the same
+    # treatment apply_answers.json, the LIVE answer store, gets.
     # Secrets, identity, and paths live in the git-ignored .env at the repo root,
     # the same file scraper.py / score_jobs.py / the tailor load at runtime.
     "env": ROOT / ".env",
@@ -535,7 +533,7 @@ SETTINGS_SCHEMA: list[Field] = [
           choices=("global", "us-central1", "us-east1", "us-west1", "europe-west1")),
     Field("RESUME_TAILOR_CANDIDATE", "Your name (resume filenames)", "str", "Your_Name",
           "Connection & paths", "env", restart=True,
-          help="Used in generated resume filenames. Use underscores instead of spaces."),
+          help="Used in generated resume filenames; write it with underscores, no spaces."),
     Field("RESUME_TAILOR_OUTPUT", "Resume output folder", "path", "",
           "Connection & paths", "env", path_kind="dir", optional=True, restart=True,
           help="Where tailored resumes are saved. Blank = your Downloads/Generated_Resumes."),
@@ -563,7 +561,7 @@ SETTINGS_SCHEMA: list[Field] = [
           choices=("vertex", "api_key", "pool")),
 
     # The fallback chains, gated on the MODE rather than on gemini_auth. A chain
-    # belonging to the wrong mode is not merely inert, it is wrong: the three
+    # belonging to the wrong mode does damage: the three
     # tiers are quality classes whose free quota runs the opposite way (a lite
     # allows 500 requests/day per key, a full Flash 20), so one shared chain
     # would send the cheap high-volume selection pass into the scarce allowance
@@ -969,7 +967,7 @@ def validate(values: dict[str, Any]) -> dict[str, str]:
         # is one message rather than a mark against the offending field. Catch it
         # here so the form says which box is wrong before anything is written.
         if f.target in ENV_TARGETS and isinstance(value, str) and _CONTROL_RE.search(value):
-            errors[key] = ("No line breaks — this is stored as a single line in "
+            errors[key] = ("No line breaks: this is stored as a single line in "
                            ".env. (Several keys go on one line, comma-separated.)")
             continue
         if f.type == "int":

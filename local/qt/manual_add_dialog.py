@@ -40,12 +40,12 @@ class ManualAddDialog(QtWidgets.QDialog):
         if self._edit_mode:
             intro_text = (
                 "Fix this job's details so scoring and résumé tailoring work cleanly. "
-                "This updates the saved fields only — it does not re-score or re-tailor "
+                "This updates the saved fields only; it does not re-score or re-tailor "
                 "(use the table actions for that).")
         else:
             intro_text = (
                 "Add a job by hand (for a posting the automatic search didn't surface). "
-                "Paste the job description — sites usually block fetching — or give a URL "
+                "Paste the job description (sites usually block fetching) or give a URL "
                 "and we'll try a free fetch. It's then scored, and optionally tailored, the "
                 "same way discovered jobs are.")
         intro = QtWidgets.QLabel(intro_text)

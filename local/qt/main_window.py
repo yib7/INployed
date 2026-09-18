@@ -600,7 +600,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_queue_apply = button("Queue auto-apply", self._queue_apply_selected)
         self.btn_queue_apply.setToolTip(
             "Add the selected job(s) to the auto-apply queue (untailored ones are "
-            "tailored first) — see the Auto-apply tab")
+            "tailored first); see the Auto-apply tab")
         button("Find new jobs", self._run_scraper_dialog, accent=True)
 
         # One bottom panel: the interface-size control and a Restart button ride in
@@ -713,7 +713,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if healed:
             self._set_status(
                 f"Recovered {healed} tailored job(s) that didn't finish saving "
-                "last session — now queued for auto-apply.")
+                "last session; now queued for auto-apply.")
             panel = getattr(self, "apply_queue_panel", None)
             if panel is not None:
                 panel.refresh()
@@ -1186,19 +1186,19 @@ class MainWindow(QtWidgets.QMainWindow):
         elif status == "applied" and days_n is not None and days_n >= self.followup_days:
             follow = "DUE"
         if follow == "DUE":
-            next_step = (f"No reply in {days_n} day(s) — send a short follow-up "
+            next_step = (f"No reply in {days_n} day(s): send a short follow-up "
                          "note, then Mark followed up.")
         elif follow == "done":
-            next_step = "Followed up — awaiting a reply."
+            next_step = "Followed up; awaiting a reply."
         elif status == "interviewing":
-            next_step = "Interview ahead — generate an Interview prep sheet."
+            next_step = "Interview ahead: generate an Interview prep sheet."
         elif status == "offer":
-            next_step = "Offer open — respond and update the status."
+            next_step = "Offer open: respond and update the status."
         elif status == "rejected":
-            next_step = "Rejected — no action needed."
+            next_step = "Rejected: no action needed."
         elif status == "applied" and days_n is not None:
             wait = max(0, self.followup_days - days_n)
-            next_step = (f"Applied {days_n} day(s) ago — follow up in {wait} "
+            next_step = (f"Applied {days_n} day(s) ago: follow up in {wait} "
                          "day(s) if there is no reply.")
         else:
             next_step = ""
@@ -1330,7 +1330,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not self._await_tailor():
                     QtWidgets.QMessageBox.warning(
                         self, "Tailoring still running",
-                        "The tailoring run didn't finish in time — it will be "
+                        "The tailoring run didn't finish in time; it will be "
                         "recovered on the next launch.")
         q = getattr(self, "_writes", None)
         if q is not None and not q.is_idle():
@@ -1338,7 +1338,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if not q.drain(timeout_ms=30000):
                 QtWidgets.QMessageBox.warning(
                     self, "Writes still pending",
-                    f"{q.pending_count()} background write(s) did not finish — the "
+                    f"{q.pending_count()} background write(s) did not finish; the "
                     "files on disk may be missing your last mark-seen/delete.")
         super().closeEvent(event)
 
@@ -1483,7 +1483,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status(f"Could not block {company}: {errmsg.for_user(exc)}")
             return
         self.reload_data_async()
-        self._set_status(f"Blocked {company} — hidden now and skipped on the next job search.")
+        self._set_status(f"Blocked {company}: hidden now and skipped on the next job search.")
 
     def _save_hidden(self, key: str, hidden: list[str]) -> None:
         self.hidden_columns[key] = list(hidden)
@@ -1496,7 +1496,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         path = self.registry.resume_path(ids[0])
         if not path or not Path(path).exists():
-            self._set_status("No tailored resume recorded — use 'Tailor resume' first.")
+            self._set_status("No tailored resume recorded; use 'Tailor resume' first.")
             return
         try:
             osopen.open_path(path)
@@ -1523,8 +1523,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Name the script a failed command ran, for the error dialog.
 
         cmd[-1] is only the script on an UNBOUNDED run; a bounded scrape ends with
-        "--limit 5", so the dialog used to open with "5 failed (exit 1)". Find the
-        .py instead and fall back to the old behaviour if there isn't one."""
+        "--limit 5", and naming that would open the dialog with "5 failed (exit 1)".
+        Find the .py, and fall back to cmd[-1] if there isn't one."""
         for part in cmd:
             if part.endswith(".py"):
                 return Path(part).name
@@ -1542,7 +1542,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("Find new jobs")
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
-        box.setText("Finding new jobs collects fresh postings through the job-data provider — this "
+        box.setText("Finding new jobs collects fresh postings through the job-data provider; this "
                     "spends real money / API credits.\n\n- Small test run: 1 keyword, 5 postings/search "
                     "(cheap check).\n- Full run: your full search config (normal daily cost).\n\nIt then "
                     "scores the new jobs and refreshes the dashboard.")
@@ -1605,7 +1605,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "A previous job search was interrupted before its results were "
             "scored, so they never appeared in the dashboard:\n\n"
             f"{names}\n\n"
-            "Score them now? This only runs the scoring step (Gemini) — it does "
+            "Score them now? This only runs the scoring step (Gemini); it does "
             "not collect new jobs and costs no discovery credits.",
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
@@ -1746,7 +1746,7 @@ class MainWindow(QtWidgets.QMainWindow):
             log.flush()
         except Exception as e:  # noqa: BLE001 - sync is best-effort, never fail the scrape
             try:
-                log.write(f"\n=== VM seen-id sync: error ({e}) — scrape unaffected ===\n")
+                log.write(f"\n=== VM seen-id sync: error ({e}); scrape unaffected ===\n")
                 log.flush()
             except Exception:  # noqa: BLE001
                 pass
@@ -1802,7 +1802,7 @@ class MainWindow(QtWidgets.QMainWindow):
             log.flush()
         except Exception as e:  # noqa: BLE001 - sync is best-effort
             try:
-                log.write(f"\n=== outbox sync: error ({e}) — scrape unaffected ===\n")
+                log.write(f"\n=== outbox sync: error ({e}); scrape unaffected ===\n")
                 log.flush()
             except Exception:  # noqa: BLE001
                 pass
@@ -1816,12 +1816,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if p not in self.csv_paths:
                 self.csv_paths.append(p)
         self.reload_data_async()
-        self._set_status("Job search + score complete — dashboard refreshed.")
+        self._set_status("Job search + score complete; dashboard refreshed.")
 
     def _after_scrape_error(self, exc) -> None:
         self._scraping = False
         msg = errmsg.for_user(exc)
-        self._set_status(f"Find new jobs failed — {msg.splitlines()[0] if msg else exc}")
+        self._set_status(f"Find new jobs failed: {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.critical(self, "Find new jobs", f"The run failed.\n\n{msg}")
 
     # ---- add a job by hand (no scraper) --------------------------------------
@@ -1854,8 +1854,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "tone": cfg.get("resume_tone", "professional")}
         self._manual_adding = True
         self._apply_auth_env()
-        self._set_status("Adding job — scoring + tailoring …" if do_tailor
-                         else "Adding job — scoring …")
+        self._set_status("Adding job: scoring + tailoring …" if do_tailor
+                         else "Adding job: scoring …")
         workers.run_async(self, lambda: self._manual_add_work(vals, opts, do_tailor),
                           on_done=self._finish_manual_add, on_error=self._finish_manual_add_error)
 
@@ -1980,7 +1980,7 @@ class MainWindow(QtWidgets.QMainWindow):
         msg = f"Deleted {n} job(s)."
         if trash_failed:
             msg += (f" Couldn't move {len(trash_failed)} résumé folder(s) to the "
-                    "Recycle Bin (folder in use?) — remove them by hand.")
+                    "Recycle Bin (folder in use?); remove them by hand.")
         self._set_status(msg)
 
     def _edit_manual_job(self, jid) -> None:
@@ -2072,7 +2072,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.hsplit.setSizes([max(420, total - 380), 380])
         if resume_pdf:
             QtWidgets.QApplication.clipboard().setText(resume_pdf)
-        self._set_status(f"Apply sheet ready for {job.get('company', '?')} — "
+        self._set_status(f"Apply sheet ready for {job.get('company', '?')}: "
                          f"{job.get('title', '?')}. Paste it into Claude-in-Chrome; "
                          f"review before submitting.")
 
@@ -2101,7 +2101,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                  job_title=title, url=job.get("url", ""))
         self._mark_ids_seen([jid])   # applied implies seen (matches the right-click path)
         self._close_apply_panel()
-        self._set_status(f"Marked applied — added {company} to the tracker.")
+        self._set_status(f"Marked applied: added {company} to the tracker.")
 
     def _finish_apply_error(self, exc) -> None:
         self._applying = False
@@ -2438,7 +2438,7 @@ class MainWindow(QtWidgets.QMainWindow):
             notes.append(f"skipped {len(skipped)} already-applied")
         remaining = [i for i in ids if i not in applied]
         if not remaining:
-            self._set_status(f"Nothing to queue — skipped {len(skipped)} "
+            self._set_status(f"Nothing to queue: skipped {len(skipped)} "
                              "already-applied job(s).")
             return
         cfg = settings.load()
@@ -2471,18 +2471,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._submit_queue_write(lambda e=entry: apply_queue.enqueue(e))
             queued_n += 1
         if no_data:
-            notes.append(f"{no_data} without job data — not queued")
+            notes.append(f"{no_data} without job data, not queued")
 
         started_tailor = False
         tailor_launch_failed = False
         if not_ready:
             if getattr(self, "_tailoring", False):
-                notes.append(f"{len(not_ready)} not tailored — skipped while a "
+                notes.append(f"{len(not_ready)} not tailored, skipped while a "
                              "tailor run is in flight")
             elif QtWidgets.QMessageBox.question(
                     self, "Queue for auto-apply",
                     f"{len(not_ready)} job(s) aren't tailored yet. Tailor now "
-                    "(cover letter included — spends Gemini credit) and queue "
+                    "(cover letter included; spends Gemini credit) and queue "
                     "when done?") == QtWidgets.QMessageBox.StandardButton.Yes:
                 jobs = [j for j in (self._job_payload(i) for i in not_ready) if j]
                 # A job whose entry can't resolve an apply URL can never be
@@ -2499,7 +2499,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 jobs = with_data
                 missing = len(not_ready) - len(jobs)
                 if missing:
-                    notes.append(f"{missing} without job data — not queued")
+                    notes.append(f"{missing} without job data, not queued")
                 if jobs:
                     # Enqueue as "tailoring" FIRST so the panel shows them the
                     # moment the worker starts; _finish_queue_tailor flips each
@@ -2519,7 +2519,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         self._finish_queue_tailor(None, RuntimeError(  # park honestly
                             "a tailor run was already in flight"))     # (no-op if already parked)
             else:
-                notes.append(f"{len(not_ready)} not tailored — left out")
+                notes.append(f"{len(not_ready)} not tailored, left out")
 
         if not started_tailor and not tailor_launch_failed:
             # otherwise _start_tailor owns the status line
@@ -2606,7 +2606,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not first.strip() or first != second:
             QtWidgets.QMessageBox.warning(
                 self, "Master ATS password",
-                "The two entries were blank or didn't match — nothing was stored.")
+                "The two entries were blank or didn't match; nothing was stored.")
             return
         try:
             stored = ats_accounts.set_master_password(first)
@@ -2653,7 +2653,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         state = self._cover_state(jid)
         if state is None:
-            self._set_status("Tailor this job first — the cover letter reuses its "
+            self._set_status("Tailor this job first; the cover letter reuses its "
                              "tailored résumé bullets.")
             return
         if state == "exists" and QtWidgets.QMessageBox.question(
@@ -2663,14 +2663,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         payload = self._payload_with_master_fallback(jid)
         if not payload:
-            self._set_status("Job description not available — cannot generate a "
+            self._set_status("Job description not available; cannot generate a "
                              "cover letter.")
             return
         _, folder = self._apply_ready(jid)
         tone = settings.load().get("resume_tone", "professional")
         self._covering = True
         self._apply_auth_env()
-        self._set_status(f"Generating cover letter for {payload['company_name']} — "
+        self._set_status(f"Generating cover letter for {payload['company_name']}: "
                          f"{payload['job_title']} …")
         try:
             workers.run_async(self, lambda: self._cover_work(payload, folder, tone),
@@ -2684,7 +2684,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Re-check on the worker: the folder may have been deleted between the
         # menu click and this thread starting.
         if not folder or not Path(folder).is_dir():
-            raise RuntimeError("The tailored folder no longer exists — re-tailor "
+            raise RuntimeError("The tailored folder no longer exists; re-tailor "
                                "this job first.")
         return generate_cover_letter(job, Path(folder), tone=tone,
                                      on_status=self.tailor_progress.emit)
@@ -2747,7 +2747,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.show()
         title = payload.get("job_title") or payload.get("title") or "this job"
         company = payload.get("company_name") or payload.get("company") or "?"
-        self._set_status(f"Ask AI — {title} @ {company}. Answers come only from "
+        self._set_status(f"Ask AI: {title} @ {company}. Answers come only from "
                          f"this job's apply sheet and posting.")
 
     def _ask_ai_from_panel(self) -> None:
@@ -2796,7 +2796,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # make the check lie in the other direction, say which reading it is.
             QtWidgets.QMessageBox.information(
                 self, "Check setup",
-                "All good — no problems found.\n\nThis reads your saved settings "
+                "All good: no problems found.\n\nThis reads your saved settings "
                 "files. If you changed a key, model or path in Settings since "
                 "launching, restart the dashboard for it to actually be used.")
             self._set_status("Setup check passed.")
@@ -2811,7 +2811,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 + "\n\nThese are checked against the settings this dashboard loaded "
                 "at launch. If you just changed a key or path, restart the "
                 "dashboard and check again before chasing one of these.")
-            self._set_status(f"Setup check: {len(problems)} problem(s) — see the list.")
+            self._set_status(f"Setup check: {len(problems)} problem(s); see the list.")
 
     # ---- tracker extras ------------------------------------------------------
 
@@ -2886,12 +2886,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         job = self._job_payload(ids[0])
         if job is None:
-            self._set_status("Job description not available — cannot build a prep sheet.")
+            self._set_status("Job description not available; cannot build a prep sheet.")
             return
         resume_dir = self.registry.resume_path(ids[0])
         self._prepping = True
         self._apply_auth_env()
-        self._set_status(f"Generating interview prep for {job['company_name']} — "
+        self._set_status(f"Generating interview prep for {job['company_name']}: "
                          f"{job['job_title']} …")
         workers.run_async(self, lambda: self._prep_work(job, resume_dir),
                           on_done=self._finish_prep, on_error=self._finish_prep_error)
@@ -2920,7 +2920,7 @@ class MainWindow(QtWidgets.QMainWindow):
         read off-thread (audit P1-5): this runs on every mark-seen/undo/delete
         repaint, so it must never do a synchronous Drive read itself."""
         stats_df = getattr(self, "_stats_df", None)
-        summary = "run_stats.csv not synced yet — metrics appear after the next VM run."
+        summary = "run_stats.csv not synced yet; metrics appear after the next VM run."
         table_df = pd.DataFrame()
         newest = None
         if stats_df is not None and not stats_df.empty:
@@ -2938,8 +2938,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Mirror the freshness onto the identity strip + status-bar summary.
         self._last_run_label = ("never" if age == float("inf")
                                 else _human_age(age))
-        label = ("Fresh — last run " if state == "fresh"
-                 else "Stale — last run ") + self._last_run_label
+        label = ("Fresh: last run " if state == "fresh"
+                 else "Stale: last run ") + self._last_run_label
         strip = getattr(self, "identity_strip", None)
         if strip is not None:
             strip.set_freshness(state, label)
@@ -2952,14 +2952,14 @@ class MainWindow(QtWidgets.QMainWindow):
         tok = (pd.to_numeric(recent.get("prompt_tokens", empty), errors="coerce").fillna(0)
                + pd.to_numeric(recent.get("output_tokens", empty), errors="coerce").fillna(0))
         rows_in = pd.to_numeric(recent.get("rows_in", empty), errors="coerce").fillna(0)
-        return (f"{len(stats_df)} run(s) logged · last: {last.get('timestamp', '?')} — "
+        return (f"{len(stats_df)} run(s) logged · last: {last.get('timestamp', '?')}, "
                 f"{last.get('rows_in', 0)} new, {last.get('llm_scored', 0)} scored · "
                 f"7-run avg: {rows_in.mean():.0f} new, {tok.mean():,.0f} tokens/run")
 
     def _calibration_text(self) -> str:
         rows = self.registry.status_rows()
         if not rows:
-            return ("Calibration: no labels yet — right-click a job -> Set status -> applied to "
+            return ("Calibration: no labels yet; right-click a job -> Set status -> applied to "
                     "start building the applied-vs-recommendation dataset (target ~100 labels).")
         by_reco: Counter[str] = Counter()
         for r in rows:
@@ -2967,8 +2967,8 @@ class MainWindow(QtWidgets.QMainWindow):
             by_reco[reco if reco in ("apply", "consider", "skip") else "unscored"] += 1
         parts = " · ".join(f"{k}: {v}" for k, v in by_reco.most_common())
         n = len(rows)
-        note = " — enough to start tuning" if n >= 100 else f" (target ~100, at {n})"
-        return f"Calibration: {n} labeled application(s){note} · by model reco — {parts}"
+        note = ", enough to start tuning" if n >= 100 else f" (target ~100, at {n})"
+        return f"Calibration: {n} labeled application(s){note} · by model reco: {parts}"
 
     # ---- settings ------------------------------------------------------------
 

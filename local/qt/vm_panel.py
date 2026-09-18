@@ -93,7 +93,7 @@ class VMPanel(QtWidgets.QWidget):
         v.addWidget(head)
         t = self._target_factory()
         status = (f"Connected target: {t.user}@{t.instance} (zone {t.zone})" if t.configured()
-                  else "No VM configured — set VM_INSTANCE / VM_ZONE / VM_USER in Settings.")
+                  else "No VM configured; set VM_INSTANCE / VM_ZONE / VM_USER in Settings.")
         self.status_label = QtWidgets.QLabel(status)
         # PlainText, not QLabel's AutoText default: this is the one label here whose
         # text starts with interpolated values (VM_USER / VM_INSTANCE / VM_ZONE from
@@ -111,7 +111,7 @@ class VMPanel(QtWidgets.QWidget):
         v.addWidget(self.status_label)
 
         # --- schedule ---
-        v.addWidget(QtWidgets.QLabel("Schedule — pick up to 6 run times (>=2h apart):"))
+        v.addWidget(QtWidgets.QLabel("Schedule: pick up to 6 run times (>=2h apart):"))
         grid = QtWidgets.QGridLayout()
         for i in range(MAX_TIMES):
             cell = QtWidgets.QHBoxLayout()

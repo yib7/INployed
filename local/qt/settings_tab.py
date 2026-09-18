@@ -41,7 +41,7 @@ from qt.widgets import CollapsibleSection
 
 SECTION_HELP = {
     "Credentials": ("API keys and tokens, saved to your private .env file on this PC. Saved "
-                    "values are masked by default — untick Hide to reveal one, edit it to "
+                    "values are masked by default; untick Hide to reveal one, edit it to "
                     "change it, or clear the box to remove it."),
     "Connection & paths": "Your cloud project, your name, and where files live on this PC.",
     "Engine": ("Which AI service (Gemini or Claude) tailors résumés, how the Gemini side "
@@ -57,19 +57,19 @@ SECTION_HELP = {
     # none, because it reads as a bug in the form.
     "Scoring": ("Which AI service scores collected jobs, the score that earns a deeper "
                 "second pass, and the caps on how much one run may spend. The per-stage "
-                "model names and throughput knobs live under \"Show advanced settings\" — "
+                "model names and throughput knobs live under \"Show advanced settings\"; "
                 "their defaults are tuned, and a model id your account cannot use breaks "
                 "scoring silently."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
     "Auto-apply": ("The batch auto-apply queue (Auto-apply tab): how many jobs one 'Queue for "
                    "auto-apply' action may add, and which webmail inbox the agent may open for "
-                   "account-verification emails. Applications are parked at their review page — "
+                   "account-verification emails. Applications are parked at their review page, "
                    "never submitted for you."),
     "Settings history": ("Every Save snapshots all your settings to a dated folder so you can "
                          "roll one back later with 'Restore from archive...' below. Snapshots "
                          "include your saved keys and live alongside your settings on this PC."),
     "VM (cloud scraper)": ("Connect to your cloud job-discovery VM (GCP) so you can push config, "
-                           "schedule, and pause changes to it. Uses your existing `gcloud` login — "
+                           "schedule, and pause changes to it. Uses your existing `gcloud` login; "
                            "no SSH password or key is ever stored."),
 }
 SECTION_ORDER = ["Credentials", "Connection & paths", "Engine",
@@ -87,7 +87,7 @@ SECTION_DISPLAY = {
 # Short one-liners shown next to each section header — always visible, even when the
 # section is collapsed, so a user knows what to expand without clicking through.
 SECTION_TAGLINE = {
-    "Credentials": "API keys & tokens — saved to your private .env file on this PC",
+    "Credentials": "API keys & tokens: saved to your private .env file on this PC",
     "Connection & paths": "Project, your name, file locations",
     "Engine": "Tailor AI service, billing & per-stage models",
     "Dashboard": "How jobs are surfaced & tracked",
@@ -342,7 +342,7 @@ class SettingsForm(QtWidgets.QWidget):
         looking for a word they already know.
         """
         box = QtWidgets.QLineEdit()
-        box.setPlaceholderText("Search settings — name, description, or config key…")
+        box.setPlaceholderText("Search settings: name, description, or config key…")
         box.setClearButtonEnabled(True)
         box.setAccessibleName("Search settings")
         timer = QtCore.QTimer(self)
@@ -871,7 +871,7 @@ class SettingsForm(QtWidgets.QWidget):
             chip.setProperty("restartTag", True)
             theme.set_type_role(chip, "mono")
             chip.setToolTip("Saved immediately, but the dashboard reads this one at "
-                            "startup — restart it for the new value to take effect.")
+                            "startup; restart it for the new value to take effect.")
             h.addWidget(chip)
         # The "(advanced)" chip: built for every advanced field, hidden, and shown
         # only in search results. Search ignores `advanced` so that a folded-away
@@ -1285,11 +1285,11 @@ class SettingsForm(QtWidgets.QWidget):
         if not readable:
             self._set_field_note(
                 f.key, f"{where} has {stored!r}, which is not a whole number. Showing "
-                       f"the default {shown} — saving stores that.", kind=NOTE_WARN)
+                       f"the default {shown}; saving stores that.", kind=NOTE_WARN)
         else:
             self._set_field_note(
                 f.key, f"{where} has {wanted}, outside the allowed {f.min}–{f.max}. "
-                       f"Showing {shown} — saving stores that.", kind=NOTE_WARN)
+                       f"Showing {shown}; saving stores that.", kind=NOTE_WARN)
 
     def _on_field_edited(self, key: str) -> None:
         """The user changed a field: drop whatever note it was carrying, then
@@ -1586,7 +1586,7 @@ class SettingsForm(QtWidgets.QWidget):
             return
         dot.setText("●" if on else "")
         dot.setProperty("dirty", on)
-        dot.setToolTip("Changed — not saved yet" if on else "")
+        dot.setToolTip("Changed, not saved yet" if on else "")
         _repolish(dot)
 
     def _refresh_section_badges(self) -> None:
@@ -1792,7 +1792,7 @@ class SettingsForm(QtWidgets.QWidget):
                 + (f"\n\n{restart}" if restart else "") + note)
         else:
             QtWidgets.QMessageBox.information(
-                self, "Settings", "No changes to save — your settings are unchanged.")
+                self, "Settings", "No changes to save; your settings are unchanged.")
         self._maybe_prompt_vm_push(before, values, summary)
         if self.on_saved:
             self.on_saved()
@@ -1865,7 +1865,7 @@ class SettingsForm(QtWidgets.QWidget):
                 "updated config to the VM now?")
         if "drop_easy_apply" in changed_vm:
             text += ("\n\nNote: score_jobs.py itself must be re-uploaded to the VM once "
-                     "(there is no automated code push) — run:\n"
+                     "(there is no automated code push); run:\n"
                      "  gcloud compute scp pipeline/score_jobs.py <user>@<vm>:~ --zone=<zone>")
         if QtWidgets.QMessageBox.question(
                 self, "Push config to VM?", text,
@@ -1973,14 +1973,14 @@ class SettingsForm(QtWidgets.QWidget):
         self._repopulate(lambda f: f.default)
         if self._vm_panel is not None:
             self._vm_panel.revert()
-        self.status.setText("Defaults restored — press Save to apply.")
+        self.status.setText("Defaults restored; press Save to apply.")
 
     def revert(self) -> None:
         self._repopulate(lambda f: self._opening_values.get(f.key, f.default))
         self._sync_secret_boxes(self._opening_values)
         if self._vm_panel is not None:
             self._vm_panel.revert()
-        self.status.setText("Reverted to your last-opened settings — press Save to apply.")
+        self.status.setText("Reverted to your last-opened settings; press Save to apply.")
 
     def open_archive(self) -> None:
         ArchiveDialog(self).exec()
@@ -1996,7 +1996,7 @@ class SettingsForm(QtWidgets.QWidget):
             self._secret_hides[key].setChecked(False)
             if key in snap_secrets:
                 edit.setText(snap_secrets[key])
-        self.status.setText("Loaded snapshot — review the fields, then Save to apply.")
+        self.status.setText("Loaded snapshot; review the fields, then Save to apply.")
 
 
 class ArchiveDialog(QtWidgets.QDialog):
@@ -2012,7 +2012,7 @@ class ArchiveDialog(QtWidgets.QDialog):
         v = QtWidgets.QVBoxLayout(self)
         intro = QtWidgets.QLabel(
             "Saved snapshots (newest first). Load one into the form to review, then Save to apply it. "
-            "Secrets are restored too — loading un-masks them in the form so you can review "
+            "Secrets are restored too; loading un-masks them in the form so you can review "
             "exactly what would be saved.")
         intro.setWordWrap(True)
         intro.setProperty("muted", True)
@@ -2055,7 +2055,7 @@ class ArchiveDialog(QtWidgets.QDialog):
         if has:
             self.listw.setCurrentRow(0)
         else:
-            self.preview.setPlainText("No snapshots yet — they're created each time you Save.")
+            self.preview.setPlainText("No snapshots yet; they're created each time you Save.")
 
     def _current(self) -> settings_archive.Snapshot | None:
         i = self.listw.currentRow()

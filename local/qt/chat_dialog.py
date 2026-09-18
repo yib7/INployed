@@ -60,8 +60,8 @@ class JobChatDialog(QtWidgets.QDialog):
 
         hint = QtWidgets.QLabel(
             "Ask about this job's apply sheet, tailored bullets, cover letter or "
-            "posting. Answers come only from those — it says so when something "
-            "isn't there rather than making it up.")
+            "posting. Answers come only from those, and it says so when something "
+            "isn't there.")
         hint.setProperty("muted", True)
         hint.setWordWrap(True)
         v.addWidget(hint)

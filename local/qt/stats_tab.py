@@ -93,12 +93,12 @@ class StatsTab(QtWidgets.QWidget):
     def set_freshness(self, state: str, age_hours: float) -> None:
         """Show a fresh/stale badge for the latest pipeline run."""
         if state == "fresh":
-            self.badge.setText(f"● Fresh — last run {_human_age(age_hours)}")
+            self.badge.setText(f"● Fresh: last run {_human_age(age_hours)}")
             color = theme.GOOD
         else:
             when = "never" if age_hours == float("inf") else _human_age(age_hours)
             self.badge.setText(
-                f"● Stale — last run {when}; the cloud job search may have failed")
+                f"● Stale: last run {when}; the cloud job search may have failed")
             color = theme.AMBER
         self.badge.setStyleSheet(f"color: {color}; font-weight: 600;")
         self.badge.show()

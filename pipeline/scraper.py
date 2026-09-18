@@ -265,7 +265,7 @@ def _keyword_cap(value: int) -> int:
     """
     if value < 0:
         print(f"  WARNING: --max-keywords={value} is negative, which would use "
-              "every keyword BUT the last instead of capping; using 1")
+              "every keyword BUT the last and cap nothing; using 1")
         return 1
     return value
 
@@ -1253,7 +1253,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--snapshot",
-        help="Recover this already-collected snapshot id instead of triggering a new (billed) collection.",
+        help="Recover this already-collected snapshot id; no new (billed) collection is triggered.",
     )
     parser.add_argument(
         "--label",

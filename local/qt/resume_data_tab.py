@@ -34,7 +34,7 @@ _NAME_KEY = {"experience": "org", "projects": "name", "leadership": "org"}
 _BASICS_FIELDS = [("name", "Name"), ("email", "Email"), ("phone", "Phone"),
                   ("location", "Location"), ("linkedin", "LinkedIn"), ("github", "GitHub")]
 
-_TIPS = ("Tips: store FACTS as atoms (what / how / scope / impact), not finished sentences — the "
+_TIPS = ("Tips: store FACTS as atoms (what / how / scope / impact), not finished sentences; the "
          "tailor re-angles them per job. Quantify everything. Add 'angles' tags so an atom matches "
          "a job's keywords. Hold MORE than fits one page; the pipeline SELECTS, never invents.")
 
@@ -164,7 +164,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         row = QtWidgets.QHBoxLayout(frame)
         row.setContentsMargins(8, 6, 8, 6)
         msg = QtWidgets.QLabel(
-            "resume.md is older than your Resume Data — the job scorer is matching "
+            "resume.md is older than your Resume Data, so the job scorer is matching "
             "against an out-of-date résumé. Regenerate to bring it in sync.")
         msg.setWordWrap(True)
         row.addWidget(msg, 1)
@@ -264,7 +264,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         # EXACT bullets (LLM bypassed); the atom editors are hidden and a simple
         # bulleted editor takes over, prefilled from the saved verbatim bullets.
         saved_vb = jobsdata.load_verbatim_blocks().get(name) or []
-        vb_cb = QtWidgets.QCheckBox("Don't tailor — use my exact bullets")
+        vb_cb = QtWidgets.QCheckBox("Don't tailor: use my exact bullets")
         vb_cb.setToolTip("Render this block's bullets exactly as you type them, "
                          "skipping the LLM tailoring for it.")
         vb_cb.setChecked(bool(saved_vb))
@@ -274,7 +274,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         atoms_holder = QtWidgets.QWidget()
         ah = QtWidgets.QVBoxLayout(atoms_holder)
         ah.setContentsMargins(0, 0, 0, 0)
-        cap = QtWidgets.QLabel("Achievements (atoms) — impact: one measurable result per line")
+        cap = QtWidgets.QLabel("Achievements (atoms); impact: one measurable result per line")
         cap.setProperty("muted", True)
         ah.addWidget(cap)
         for atom in entry.get("achievements") or []:
@@ -292,7 +292,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         vb_holder = QtWidgets.QWidget()
         vh = QtWidgets.QVBoxLayout(vb_holder)
         vh.setContentsMargins(0, 0, 0, 0)
-        vh_cap = QtWidgets.QLabel("Your exact bullets — one per line; rendered on the résumé as typed:")
+        vh_cap = QtWidgets.QLabel("Your exact bullets, one per line; rendered on the résumé as typed:")
         vh_cap.setProperty("muted", True)
         vh_cap.setWordWrap(True)
         vh.addWidget(vh_cap)
@@ -411,7 +411,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         Row names are taken from the master so they match what the engine looks up."""
         section = CollapsibleSection(
             "Resume Layout (bullet sizing)",
-            subtitle="per-section / per-project line targets — toggle to A/B test",
+            subtitle="per-section / per-project line targets; toggle to A/B test",
             collapsed=True)
 
         self._stale_layout_rows = []  # rebuilt fresh on each reload
@@ -508,7 +508,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         mode_help = QtWidgets.QLabel(
             "At most N: list up to N of your strongest projects, dropping the weakest to "
             "hold one page. Exactly N: always keep N projects (when you have that many), "
-            "trimming bullets instead of dropping a whole project.")
+            "trimming bullets so no whole project is dropped.")
         mode_help.setWordWrap(True)
         mode_help.setProperty("muted", True)
         form.addRow(mode_help)
@@ -528,7 +528,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         form.addRow(tiers_help)
 
         self._projects_warn = QtWidgets.QLabel(
-            "More than 4 projects rarely fits one page cleanly — the tailor may shrink "
+            "More than 4 projects rarely fits one page cleanly; the tailor may shrink "
             "bullets or (in 'at most' mode) drop your weakest projects to hold one page.")
         self._projects_warn.setWordWrap(True)
         self._projects_warn.setProperty("warn", True)
@@ -689,7 +689,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
 
         errs = self.validate()
         self.reload()
-        self._set_status(f"Saved — but {len(errs)} problem(s) remain; click Validate."
+        self._set_status(f"Saved, but {len(errs)} problem(s) remain; click Validate."
                          if errs else "Saved.")
         if self.on_saved:
             self.on_saved()
@@ -698,12 +698,12 @@ class ResumeDataEditor(QtWidgets.QWidget):
     def _validate_clicked(self) -> None:
         errs = self.validate()
         if not errs:
-            QtWidgets.QMessageBox.information(self, "Validate", "Looks good — no problems found.")
+            QtWidgets.QMessageBox.information(self, "Validate", "Looks good: no problems found.")
             self._set_status("Valid.")
         else:
             QtWidgets.QMessageBox.critical(
                 self, "Validate", "Problems found:\n\n- " + "\n- ".join(errs))
-            self._set_status(f"{len(errs)} problem(s) — see the list.")
+            self._set_status(f"{len(errs)} problem(s); see the list.")
 
     def revert(self) -> None:
         if self.snapshot:
@@ -833,7 +833,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         model = self.md_model.currentText().strip() or "gemini-3.5-flash"
         if not resume_md.MASTER_YAML_PATH.exists():
             QtWidgets.QMessageBox.critical(
-                self, "Generate resume.md", "No master_experience.yaml found — add Resume Data first.")
+                self, "Generate resume.md", "No master_experience.yaml found; add Resume Data first.")
             return
         if QtWidgets.QMessageBox.question(
                 self, "Generate resume.md",
@@ -850,9 +850,9 @@ class ResumeDataEditor(QtWidgets.QWidget):
         QtWidgets.QMessageBox.critical(self, "Generate resume.md", f"Generation failed:\n\n{errmsg.for_user(exc)}")
 
     def _preview(self, md: str) -> None:
-        self._set_status("resume.md generated — review it before it's saved.")
+        self._set_status("resume.md generated; review it before it's saved.")
         dlg = QtWidgets.QDialog(self)
-        dlg.setWindowTitle("Generated resume.md — review before saving")
+        dlg.setWindowTitle("Generated resume.md: review before saving")
         dlg.resize(840, 660)
         v = QtWidgets.QVBoxLayout(dlg)
         note = QtWidgets.QLabel("Review (and edit) the generated resume.md. 'Use this' backs up the "
@@ -891,7 +891,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
             return
         if not resume_md.RESUME_MD_PATH.exists():
             QtWidgets.QMessageBox.critical(
-                self, "Push resume.md", "No resume.md yet — generate it first.")
+                self, "Push resume.md", "No resume.md yet; generate it first.")
             return
         if QtWidgets.QMessageBox.question(
                 self, "Push resume.md", f"Copy resume.md to {target.user}@{target.instance}?"

@@ -82,8 +82,8 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "stage2_model": ("SCORE_STAGE2_MODEL", "gemini-3.5-flash", "str"),
     # Extra models each stage may fall back to, in preference order after its
     # primary above. Free-tier quota is metered per (key, model), so naming a
-    # second model is a genuinely separate daily allowance rather than a share of
-    # the same one -- N models x M keys, not M. Empty = today's single-model
+    # second model is a separate daily allowance: N models x M keys, not M.
+    # Empty = today's single-model
     # behaviour exactly, which is what the VM (no scoring_config.json) gets.
     "stage1_models": ("SCORE_STAGE1_MODELS", [], "list"),
     "stage2_models": ("SCORE_STAGE2_MODELS", [], "list"),
@@ -149,7 +149,7 @@ def _spend_cap(value: int, default: int, key: str) -> int:
     """A spend guard's value, with a negative collapsed to the built-in default."""
     if value < 0:
         print(f"scoring config: {key}={value} is negative, which would DISABLE the "
-              f"spend guard rather than lift it; using {default}")
+              f"spend guard (a negative does not lift it); using {default}")
         return default
     return value
 
@@ -1092,9 +1092,8 @@ async def rescore_master_failures(pool, resume: str) -> tuple[int, int]:
         # Candidate-finding never needs the two ~90 MB job-text columns — but
         # `reason` is itself a free-text column, so even the "light" projection of
         # a tens-of-thousands-row master is not small. Stream it in CHUNK pieces
-        # and keep only the rescore candidates from each (audit C6-4: this was the
-        # one whole-master read P2-21/P2-22 left unchunked). Peak memory is now
-        # the chunk plus the (RESCORE_CAP-bounded) candidate set.
+        # and keep only the rescore candidates from each (audit C6-4). Peak memory
+        # is the chunk plus the (RESCORE_CAP-bounded) candidate set.
         parts = []
         for chunk in pd.read_csv(MASTER_CSV, usecols=light_cols,
                                  dtype={"job_posting_id": str}, chunksize=CHUNK):
@@ -1178,7 +1177,7 @@ async def main() -> None:
             print("Input CSV is empty — nothing to score.")
         else:
             # Make scoring idempotent: drop any prior scoring output so re-scoring an
-            # already-scored input (e.g. the master, which now carries score columns)
+            # already-scored input (e.g. the master, which carries score columns)
             # doesn't collide on the Stage-1/Stage-2 merge (reason_x/reason_y, etc.).
             df = df.drop(columns=[c for c in SCORE_COLS if c in df.columns], errors="ignore")
 

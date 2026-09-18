@@ -746,8 +746,8 @@ def legend_items_for(table_key: str):
         ]
     return [
         (theme.ROW_APPLY, "Apply"),
-        (theme.ROW_HAS_RESUME, "Tailored — resume ready"),
-        (theme.ROW_TAILOR_FAILED, "Tailor failed — re-run"),
+        (theme.ROW_HAS_RESUME, "Tailored: resume ready"),
+        (theme.ROW_TAILOR_FAILED, "Tailor failed: re-run"),
         (theme.ROW_CONSIDER, "Consider"),
         (theme.ROW_SKIP, "Don't consider"),
     ]

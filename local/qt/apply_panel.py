@@ -46,14 +46,14 @@ class ApplyPanel(QtWidgets.QWidget):
         top.addWidget(self._title, 1)
         close = QtWidgets.QPushButton("✕")
         close.setFixedWidth(34)
-        close.setToolTip("Close — back to the score preview")
+        close.setToolTip("Close (back to the score preview)")
         close.clicked.connect(lambda: self._on_close())
         top.addWidget(close)
         v.addLayout(top)
 
         hint = QtWidgets.QLabel(
             "For portals that don't auto-fill from your résumé upload: paste the apply sheet into "
-            "Claude-in-Chrome to fill the fields by hand — it stops before the final Submit. Review "
+            "Claude-in-Chrome to fill the fields by hand; it stops before the final Submit. Review "
             "every field and submit it yourself.")
         hint.setProperty("muted", True)
         hint.setWordWrap(True)
@@ -71,7 +71,7 @@ class ApplyPanel(QtWidgets.QWidget):
         tools.addWidget(self._open_btn)
         self.ask_ai_btn = QtWidgets.QPushButton("Ask AI")
         self.ask_ai_btn.setToolTip(
-            "Chat about this job — its apply sheet, bullets and cover letter")
+            "Chat about this job: its apply sheet, bullets and cover letter")
         self.ask_ai_btn.clicked.connect(lambda: self._on_ask_ai())
         tools.addWidget(self.ask_ai_btn)
         v.addLayout(tools)

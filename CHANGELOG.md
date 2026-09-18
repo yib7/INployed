@@ -183,7 +183,7 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
   can bill. The same sweep reached the rest of the dashboard's copy: the freshness pill
   ("Fresh: last run 3h ago"), the Settings search placeholder and section taglines, the
   High Score legend, the Tracker's NEXT STEP line, the Resume Data staleness banner and
-  every status-bar and dialog string under `local/qt/` (85 strings) read with a colon, a
+  every status-bar and dialog string under `local/qt/` (106 em dashes in 105 strings) read with a colon, a
   semicolon or a parenthesis where they had an em dash, and a test pins the primary
   journey.
 - **Dependencies pulled forward to current stable.** `google-genai` 2.22.0 to 2.23.0 in both

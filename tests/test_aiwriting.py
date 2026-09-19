@@ -56,9 +56,9 @@ _TODAYS_GENERATE_HEAD = (
 _TODAYS_REFINE_HEAD = (
     'You are an editor doing a final polish pass on a cover-letter body. Improve '
     'cohesion and flow so the sentences build ONE connected argument. '
-    'Stay grounded: use ONLY facts already in the draft and the resume '
-    "bullets below; never add a company, number, skill, or claim that isn't supported, "
-    'and cut anything the draft invented. Keep the meaning and roughly the same length; '
+    'Stay grounded: use ONLY facts already in the draft, the resume bullets and '
+    "the background notes below; never add a company, number, skill, or claim that isn't "
+    'supported, and cut anything the draft invented. Keep the meaning and roughly the same length; '
     'no salutation and no sign-off. Show genuine but MEASURED interest: do NOT be '
     'over-the-top or gushing. No exclamation-point enthusiasm, no '
     "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "

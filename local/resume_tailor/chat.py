@@ -120,39 +120,11 @@ def _read_sheet(folder: Optional[Path]) -> str:
         return ""
 
 
-def _atom_line(atom: Dict[str, Any]) -> str:
-    """One achievement atom flattened to a single readable line."""
-    parts: List[str] = []
-    for key in ("what", "how", "scope"):
-        val = str(atom.get(key) or "").strip()
-        if val:
-            parts.append(val)
-    impact = atom.get("impact")
-    if isinstance(impact, (list, tuple)):
-        parts += [str(i).strip() for i in impact if str(i or "").strip()]
-    elif str(impact or "").strip():
-        parts.append(str(impact).strip())
-    return "; ".join(parts)
-
-
-def _entries(master: Dict[str, Any], section: str, *name_keys: str) -> List[str]:
-    lines: List[str] = []
-    for entry in master.get(section) or []:
-        if not isinstance(entry, dict):
-            continue
-        head = ", ".join(
-            s for s in (str(entry.get(k) or "").strip() for k in name_keys) if s)
-        dates = str(entry.get("dates") or "").strip()
-        if dates:
-            head = f"{head} ({dates})" if head else dates
-        if head:
-            lines.append(f"- {head}")
-        for atom in entry.get("achievements") or []:
-            if isinstance(atom, dict):
-                text = _atom_line(atom)
-                if text:
-                    lines.append(f"    - {text}")
-    return lines
+# The atom and entry flattening moved to assets (cycle 15) so the cover letter's
+# background block and this digest are built by one copy; the names stay so the
+# callers below read as before.
+_atom_line = assets.atom_line
+_entries = assets.entry_lines
 
 
 def _master_summary() -> str:

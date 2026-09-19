@@ -20,8 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
-from . import (apply_data, ats, compose, config, coverletter, llm, measure, output,
-               research, sweep, verify)
+from . import (apply_data, assets, ats, compose, config, coverletter, llm, measure,
+               output, research, sweep, verify)
 from .compile import enforce_one_page, pdflatex_available
 
 StatusFn = Optional[Callable[[str], None]]
@@ -168,6 +168,52 @@ def _cover_text(body: str, company: str, log: Callable[[str], None],
         if warn is not None:
             warn(f"cover letter text skipped ({exc})")
         return ""
+
+
+_LETTER_SECTIONS = (("experience", "org"), ("projects", "name"), ("leadership", "org"))
+
+
+def _letter_atom_ids(sel: Dict[str, Any], bullets: Dict[str, str],
+                     master: Dict[str, Any]) -> set:
+    """The master atom ids behind the bullets that made the page, for the cover
+    letter's BACKGROUND block.
+
+    A tailored bullet's group key is its atom ids joined with '+', so the ids are
+    read straight off `bullets` (the post-enforcement dict, which is the set that
+    printed). A verbatim block carries the user's exact text under synthetic keys
+    and no atom ids at all, so its master entry's own atoms stand in: those are
+    the candidate's notes on that employer, and the letter should still be able
+    to tell that story."""
+    ids = {aid for gk in bullets if not compose.is_verbatim_gkey(gk)
+           for aid in gk.split("+") if aid}
+    verbatim_names = {
+        e.get("name") for sec, _key in _LETTER_SECTIONS for e in (sel.get(sec) or [])
+        if any(compose.is_verbatim_gkey(gid) for g in (e.get("groups") or []) for gid in g)
+    }
+    for sec, key in _LETTER_SECTIONS:
+        for entry in master.get(sec) or []:
+            if isinstance(entry, dict) and entry.get(key) in verbatim_names:
+                ids |= {a.get("id") for a in (entry.get("achievements") or [])
+                        if isinstance(a, dict) and a.get("id")}
+    return ids
+
+
+def _letter_inputs(sel: Optional[Dict[str, Any]], bullets: Dict[str, str],
+                   log: Callable[[str], None], warn: WarnFn = None) -> Tuple[str, str]:
+    """(background, seed) for coverletter.generate_body.
+
+    `sel` None means the standalone letter (no selection to filter by), which
+    gets every atom. Advisory: a master the flattening cannot read leaves the
+    letter to run from the bullets alone, as it did before cycle 15, and says so."""
+    try:
+        master = assets.load_master()
+        ids = None if sel is None else _letter_atom_ids(sel, bullets, master)
+        return assets.flatten_entries(master, atom_ids=ids), assets.letter_seed()
+    except Exception as exc:  # noqa: BLE001 - the background is an enrichment, never fatal
+        log(f"cover letter background unavailable ({exc})")
+        if warn is not None:
+            warn(f"cover letter background unavailable ({exc})")
+        return "", ""
 
 
 def _field(job: Dict[str, str], key: str) -> str:
@@ -1033,8 +1079,14 @@ def tailor(
                 except Exception as exc:  # noqa: BLE001 - research is optional
                     log(f"company research unavailable ({exc})")
                     report.advisory(f"company research unavailable ({exc})")
+                # The notes behind the bullets that printed, plus the seed: the
+                # letter tells those bullets as a story, so it needs the material
+                # the bullets compressed away.
+                background, seed = _letter_inputs(sel, final_bullets, log,
+                                                  warn=report.advisory)
                 body = coverletter.generate_body(jd, job_title, company, final_bullets,
-                                                 research=blurb, tone=tone)
+                                                 research=blurb, tone=tone,
+                                                 background=background, seed=seed)
                 cl_tex = tmp_path / "cover_letter.tex"
                 cl_res, _ = coverletter.render_cover_letter(body, company, cl_tex, tmp_path)
                 if cl_res.ok and cl_res.pdf_path:
@@ -1130,8 +1182,12 @@ def generate_cover_letter(
         blurb = research.company_blurb(company, job_title)
     except Exception as exc:  # noqa: BLE001 - research is optional
         log(f"company research unavailable ({exc})")
+    # No selection survives here (the bullets came off the sheet), so the
+    # background is the whole master, bounded, and the seed rides as always.
+    background, seed = _letter_inputs(None, bullets, log)
     body = coverletter.generate_body(jd, job_title, company, bullets,
-                                     research=blurb, tone=tone)
+                                     research=blurb, tone=tone,
+                                     background=background, seed=seed)
 
     with tempfile.TemporaryDirectory(prefix="resume_tailor_") as tmp:
         tmp_path = Path(tmp)

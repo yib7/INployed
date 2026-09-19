@@ -239,7 +239,8 @@ def test_prep_sheet_true_generates_prep(offline_tailor):
 def test_tone_threads_into_cover_letter(offline_tailor, monkeypatch):
     seen = {}
 
-    def capture_body(jd, job_title, company, bullets, research="", tone="professional"):
+    def capture_body(jd, job_title, company, bullets, research="", tone="professional",
+                     background="", seed=""):
         seen["tone"] = tone
         return "body"
 

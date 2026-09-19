@@ -209,9 +209,9 @@ def test_generate_body_raises_when_repair_cannot_ground(monkeypatch):
     monkeypatch.setattr(coverletter.assets, "load_master",
                         lambda: {"basics": {"name": "Al Doe"}})
     monkeypatch.setattr(coverletter, "refine_body",
-                        lambda t, c, body, b, tone="professional": body)
+                        lambda t, c, body, b, **k: body)
     monkeypatch.setattr(coverletter, "enforce_body_style",
-                        lambda t, c, body, b, tone="professional": body)
+                        lambda t, c, body, b, **k: body)
     monkeypatch.setattr(compose, "call",
                         lambda *a, **k: "I earned my PhD at Stanford working on Kubernetes.")
     import pytest

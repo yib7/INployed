@@ -1,7 +1,10 @@
 """Load and cache the tailoring inputs from resume_tailor_files/.
 
-- master_experience.yaml -> parsed dict, a flat atom index, block structure, and
-                             the optional `tailor:` layout config
+- master_experience.yaml -> parsed dict, a flat atom index, block structure, the
+                             optional `tailor:` layout config, the optional
+                             `letter.seed` voice sample, and the plain-text
+                             flattening of its entries that the cover letter and
+                             the per-job chat both read
 - resume_template.tex     -> the LaTeX preamble (candidate-independent), reused
                              verbatim; header/Education/body are rendered from the yaml
 - style_exemplar.txt      -> the curated one-bullet-per-line voice sample used in
@@ -13,7 +16,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -85,6 +88,118 @@ def load_master() -> Dict[str, Any]:
             f"{type(data).__name__ if data is not None else 'empty file'}) "
             "- see master_experience.example.yaml")
     return data
+
+
+# ── the cover letter's two master-file inputs ────────────────────────────────
+# The seed is the candidate's own two-to-four sentences on what they want next
+# (`letter.seed`), and the background is their notes behind the bullets that made
+# the page. Both are bounded here, once, so neither prompt can grow with the
+# master file: a seed is a voice sample, and the background is an excerpt.
+LETTER_SEED_CAP = 1200
+LETTER_BACKGROUND_CAP = 6000
+
+# Appended when a flattened excerpt was cut, so the model knows it is reading a
+# part of the record. chat.py carries the same marker for its own excerpts.
+TRUNCATED_MARKER = "[... truncated ...]"
+
+
+def letter_seed() -> str:
+    """The optional `letter.seed` text from the master, trimmed and capped.
+
+    Blank when the block is absent, empty, or the wrong shape (a non-mapping
+    `letter:` or a non-string `seed`): the letter then runs without a seed, and
+    master_validate reports the malformed block as a warning. Capped at
+    LETTER_SEED_CAP characters on a trailing-whitespace boundary."""
+    letter = load_master().get("letter")
+    if not isinstance(letter, dict):
+        return ""
+    seed = letter.get("seed")
+    if not isinstance(seed, str):
+        return ""
+    return seed.strip()[:LETTER_SEED_CAP].rstrip()
+
+
+def atom_line(atom: Dict[str, Any]) -> str:
+    """One achievement atom flattened to a single readable line: `what; how;
+    scope; impact...`, blank fields dropped, a list impact joined in order."""
+    parts: List[str] = []
+    for key in ("what", "how", "scope"):
+        val = str(atom.get(key) or "").strip()
+        if val:
+            parts.append(val)
+    impact = atom.get("impact")
+    if isinstance(impact, (list, tuple)):
+        parts += [str(i).strip() for i in impact if str(i or "").strip()]
+    elif str(impact or "").strip():
+        parts.append(str(impact).strip())
+    return "; ".join(parts)
+
+
+def entry_lines(master: Dict[str, Any], section: str, *name_keys: str,
+                atom_ids: Optional[Iterable[str]] = None) -> List[str]:
+    """One section of the master as indented plain-text lines: a `- header`
+    line per entry (the named keys joined, then the dates in parentheses) and a
+    `    - atom` line per achievement.
+
+    With `atom_ids` given, only those atoms are listed and an entry with none of
+    them is left out altogether, header included. With it None (chat's use)
+    every atom is listed and the output is what chat._entries always produced."""
+    keep = None if atom_ids is None else set(atom_ids)
+    lines: List[str] = []
+    entries = master.get(section) or []
+    if not isinstance(entries, list):
+        return lines
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        head = ", ".join(
+            s for s in (str(entry.get(k) or "").strip() for k in name_keys) if s)
+        dates = str(entry.get("dates") or "").strip()
+        if dates:
+            head = f"{head} ({dates})" if head else dates
+        atoms: List[str] = []
+        for atom in entry.get("achievements") or []:
+            if not isinstance(atom, dict):
+                continue
+            if keep is not None and atom.get("id") not in keep:
+                continue
+            text = atom_line(atom)
+            if text:
+                atoms.append(f"    - {text}")
+        if keep is not None and not atoms:
+            continue
+        if head:
+            lines.append(f"- {head}")
+        lines += atoms
+    return lines
+
+
+def flatten_entries(master: Dict[str, Any], *, atom_ids: Optional[Iterable[str]] = None,
+                    cap: int = LETTER_BACKGROUND_CAP) -> str:
+    """The master's experience, projects and leadership entries as one bounded
+    plain-text block, in that order, each section under its own label.
+
+    This is the cover letter's BACKGROUND: the notes behind the bullets. The
+    tailor run passes the ids of the atoms that made the page; the standalone
+    letter passes None and gets every atom. The result never exceeds `cap`
+    characters: when the text is longer it is cut on the last line boundary
+    that fits and TRUNCATED_MARKER is appended, so no atom line is ever sent
+    half-finished (a cut number is the one thing an excerpt must not invent)."""
+    lines: List[str] = []
+    for section, keys in (("experience", ("org", "title")),
+                          ("projects", ("name",)),
+                          ("leadership", ("org", "role", "title"))):
+        block = entry_lines(master, section, *keys, atom_ids=atom_ids)
+        if block:
+            lines.append(f"{section.upper()}:")
+            lines += block
+    text = "\n".join(lines)
+    if len(text) <= cap:
+        return text
+    room = max(0, cap - len(TRUNCATED_MARKER))
+    cut = text.rfind("\n", 0, room)
+    kept = text[:cut + 1] if cut > 0 else text[:room]
+    return kept + TRUNCATED_MARKER
 
 
 @lru_cache(maxsize=1)

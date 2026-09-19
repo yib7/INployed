@@ -76,11 +76,14 @@ def offline_cover(monkeypatch, tmp_path):
 
     monkeypatch.setattr(run_mod.research, "company_blurb", fake_blurb)
 
-    def fake_body(jd, job_title, company, bullets, research="", tone="professional"):
+    def fake_body(jd, job_title, company, bullets, research="", tone="professional",
+                  background="", seed=""):
         rec["jd"] = jd
         rec["bullets"] = bullets
         rec["research_text"] = research
         rec["tone"] = tone
+        rec["background"] = background
+        rec["seed"] = seed
         return "cover body"
 
     monkeypatch.setattr(run_mod.coverletter, "generate_body", fake_body)
@@ -172,6 +175,9 @@ def test_tone_and_research_are_passed_through(offline_cover):
     run_mod.generate_cover_letter(_JOB, out_dir, tone="enthusiastic")
     assert rec["tone"] == "enthusiastic"
     assert rec["research_text"] == "a company blurb"
+    # cycle 15: the background block and the voice seed ride along as strings
+    # (their content is pinned in tests/test_coverletter_narrative.py)
+    assert isinstance(rec["background"], str) and isinstance(rec["seed"], str)
 
 
 def test_research_failure_is_nonfatal(offline_cover, monkeypatch):

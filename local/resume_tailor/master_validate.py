@@ -21,7 +21,13 @@ def _norm_skill(item: str) -> str:
 
 
 def validate_master(master: Dict[str, Any]) -> List[str]:
-    """Human-readable problems with master_experience.yaml ([] = OK)."""
+    """Human-readable problems with master_experience.yaml ([] = OK).
+
+    Every finding is advisory to the dashboard (nothing blocks on this list), and
+    the ones that leave the tailor fully working are prefixed `warning:` so a
+    reader can tell them apart: the optional `letter:` block is one of those,
+    since a malformed or over-long seed only means the cover letter runs without
+    it (assets.letter_seed reads it defensively)."""
     errors: List[str] = []
     if not isinstance(master, dict):
         return ["master_experience.yaml must be a mapping (key: value structure)"]
@@ -76,6 +82,8 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
                         errors.append(
                             "tailor.required.%s names a block not in %s: '%s'" % (sec, sec, n))
 
+    errors += _letter_warnings(master.get("letter"))
+
     real = {_norm_skill(item)
             for pool in (master.get("skills", {}) or {}).values()
             for item in (pool or [])}
@@ -88,6 +96,28 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
                         "%s canonical '%s' is not a known skill; anchor it to a real entry in "
                         "`skills:` (usually concepts_and_methodologies) or remove it" % (key, canon))
     return errors
+
+
+def _letter_warnings(letter: Any) -> List[str]:
+    """Warnings for the optional top-level `letter:` block (`seed`: a string of at
+    most assets.LETTER_SEED_CAP characters). Never an error: the cover letter
+    runs without the seed whenever the block is unusable, and the accessor caps
+    an over-long one, so each finding says what will happen."""
+    if letter is None:
+        return []
+    if not isinstance(letter, dict):
+        return ["warning: letter should be a mapping with a `seed` entry; it is ignored"]
+    seed = letter.get("seed")
+    if seed is None:
+        return []
+    if not isinstance(seed, str):
+        return ["warning: letter.seed should be text (a quoted or `>-` block string); "
+                "it is ignored"]
+    length = len(seed.strip())
+    if length > assets.LETTER_SEED_CAP:
+        return [f"warning: letter.seed is {length} characters; only the first "
+                f"{assets.LETTER_SEED_CAP} reach the cover letter"]
+    return []
 
 
 def validate_answers(answers: List[Dict[str, Any]]) -> List[str]:

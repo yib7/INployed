@@ -60,6 +60,15 @@ class SeenRegistry:
             self._conn.execute("PRAGMA journal_mode=WAL")
         except sqlite3.Error:
             pass
+        # Fold any write-ahead log into the main file on open. The dashboard is
+        # a long-lived process that is usually killed rather than closed, so the
+        # WAL never hits SQLite's close-time checkpoint, and the writes here are
+        # far too small to reach the 1000-page auto-checkpoint: on 2026-09-18 the
+        # main file still read as a 2026-07-27 snapshot with seven weeks of marks,
+        # tracker rows and resume links living only in seen.db-wal, and when that
+        # file went missing the registry silently reverted. Every writer below
+        # checkpoints after its commit for the same reason.
+        self._checkpoint()
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS seen ("
             "  job_posting_id TEXT PRIMARY KEY,"
@@ -103,6 +112,15 @@ class SeenRegistry:
 
     def _backup_path(self) -> Path:
         return Path(str(self.path) + ".backup")
+
+    def _checkpoint(self) -> None:
+        """Move the WAL into the main db file (best-effort, a few ms for a db
+        this size). PASSIVE never blocks a concurrent reader; a failure is
+        harmless because the data is still in the WAL."""
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except sqlite3.Error:
+            pass
 
     @staticmethod
     def _probe_ok(path: Path) -> bool:
@@ -187,7 +205,8 @@ class SeenRegistry:
 
         app_status is the only table with no second store (seen self-heals from
         the CSVs, resume_paths from the on-disk apply.md files), so we refresh
-        this backup after every tracker mutation. A whole-db VACUUM INTO of this
+        this backup after every mutation: tracker rows, seen marks and resume
+        links alike, since the 2026-09-18 WAL loss took all three at once. A whole-db VACUUM INTO of this
         small db is a few ms; it's written to a temp then os.replace'd so a crash
         mid-backup can't leave a torn file. Never fatal — a failed backup must
         not break the status write that triggered it."""
@@ -197,6 +216,7 @@ class SeenRegistry:
             if tmp.exists():
                 tmp.unlink()
             self._conn.commit()  # no VACUUM inside an open transaction
+            self._checkpoint()
             self._conn.execute("VACUUM INTO ?", (str(tmp),))
             os.replace(tmp, bak)
         except (sqlite3.Error, OSError):
@@ -214,6 +234,8 @@ class SeenRegistry:
             rows,
         )
         self._conn.commit()
+        self._checkpoint()
+        self._write_backup()
         return cur.rowcount
 
     def unmark(self, job_posting_ids: list[str]) -> int:
@@ -226,6 +248,8 @@ class SeenRegistry:
             [(str(i),) for i in job_posting_ids],
         )
         self._conn.commit()
+        self._checkpoint()
+        self._write_backup()
         return cur.rowcount
 
     def all_ids(self) -> set[str]:
@@ -312,6 +336,8 @@ class SeenRegistry:
             (str(job_posting_id),),
         )
         self._conn.commit()
+        self._checkpoint()
+        self._write_backup()
 
     def resume_path(self, job_posting_id: str) -> str | None:
         cur = self._conn.execute(
@@ -332,6 +358,8 @@ class SeenRegistry:
             "DELETE FROM resume_paths WHERE job_posting_id = ?", (str(job_posting_id),)
         )
         self._conn.commit()
+        self._checkpoint()
+        self._write_backup()
 
     # ---- failed tailor runs ----------------------------------------------------
 
@@ -347,6 +375,7 @@ class SeenRegistry:
             (str(job_posting_id), str(error), now),
         )
         self._conn.commit()
+        self._checkpoint()
 
     def clear_tailor_failure(self, job_posting_id: str) -> None:
         """Remove a job's failed-run flag (no-op if absent) — e.g. when the job
@@ -356,6 +385,7 @@ class SeenRegistry:
             (str(job_posting_id),),
         )
         self._conn.commit()
+        self._checkpoint()
 
     def tailor_failure_ids(self) -> set[str]:
         cur = self._conn.execute("SELECT job_posting_id FROM tailor_failures")
@@ -482,6 +512,7 @@ class SeenRegistry:
         return counts
 
     def close(self) -> None:
+        self._checkpoint()
         self._conn.close()
 
     def __enter__(self) -> "SeenRegistry":

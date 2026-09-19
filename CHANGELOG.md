@@ -4,6 +4,23 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] - 2026-09-18
+
+### Fixed
+
+- **The seen/tracker registry could silently revert to an old snapshot.** `seen.db` runs in
+  WAL mode, the dashboard is a long-lived process that is usually killed and never closed, and
+  its writes are far too small to reach SQLite's 1000-page auto-checkpoint, so nothing ever
+  folded the write-ahead log into the main file. On 2026-09-18 the main file was still a
+  2026-07-27 snapshot: seven weeks of seen marks, tracker rows and resume links lived only in
+  `seen.db-wal`, and when that file went missing the dashboard came back showing July's
+  postings as unseen and half the tracker gone. `SeenRegistry` now checkpoints on open, after
+  every write and on close, and the auto-backup beside the db is refreshed after seen marks
+  and resume-link writes too, where before only a tracker change refreshed it. Two tests pin
+  both: a write must be readable from the main file alone with the registry never closed, and
+  a mark alone must refresh the backup. Recovery for an affected install: the app's own
+  `Restore tracker backup` merge of `seen.db.backup` brings the marks, statuses and links back.
+
 ## [1.12.0] - 2026-09-18
 
 The cheap tier moves off the one Gemini id that carries a shutdown date. Nothing else changes.
@@ -1704,6 +1721,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[1.12.1]: https://github.com/yib7/INployed/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/yib7/INployed/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/yib7/INployed/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/yib7/INployed/compare/v1.9.0...v1.10.0

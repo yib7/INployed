@@ -19,7 +19,7 @@ The scorer runs on a pool of free-tier Gemini keys, and the résumé engine can 
 it. Each stage walks a ranked list of models, quota is metered per key and model,
 and a paid Cloud project is billed only when every free pair is spent or refusing.
 
-3,130 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
+3,132 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
 push against Windows and Linux, plus a clean-room job that installs from this
 README's own setup steps.
 

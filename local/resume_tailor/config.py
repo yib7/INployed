@@ -307,17 +307,21 @@ def tech_aliases_enabled() -> bool:
 
 
 def avoid_ai_writing_enabled() -> bool:
-    """Whether the cover-letter body gets the extra avoid-AI-writing pass (aiwriting.py):
-    the vendored subset of Conor Bronsdon's avoid-ai-writing skill rides in the letter's
-    generation/refine/repair prompts, and its deterministic bans join compose's in the
-    style gate. Letter only -- the résumé bullets keep their own gate untouched. Defaults
-    OFF: it is a taste call, and with it off the letter prompts stay byte-identical to
-    what shipped before the toggle. Precedence: RESUME_TAILOR_AVOID_AI_WRITING env >
-    config.json 'cover_letter_avoid_ai_writing' > False."""
+    """Whether aiwriting.violations (the deterministic bans of the vendored subset of
+    Conor Bronsdon's avoid-ai-writing skill) joins compose's bans in the cover letter's
+    style gate, so a letter that slips into that vocabulary buys the one repair call.
+    The rule text itself (aiwriting.RULES_PROMPT) rides in every letter prompt whatever
+    this says, and the two structural checks (bullet echo, uniform rhythm) run whatever
+    this says; the toggle governs enforcement only. Letter only -- the résumé bullets
+    keep their own gate untouched. Defaults ON since cycle 15. Precedence:
+    RESUME_TAILOR_AVOID_AI_WRITING env > config.json 'cover_letter_avoid_ai_writing' >
+    True."""
     env = os.getenv("RESUME_TAILOR_AVOID_AI_WRITING")
     if env is not None and str(env).strip():
         return str(env).strip().lower() not in ("0", "false", "no", "off")
-    return bool(_config_json().get("cover_letter_avoid_ai_writing", False))
+    # `is not False`, the spelling every ON-by-default toggle in this module uses, so a
+    # non-bool value in config.json (an editor's "true", a stray string) reads as on.
+    return _config_json().get("cover_letter_avoid_ai_writing", True) is not False
 
 
 def aiwriting_sweep_enabled() -> bool:
@@ -340,11 +344,9 @@ def aiwriting_sweep_enabled() -> bool:
     env = os.getenv("RESUME_TAILOR_AIWRITING_SWEEP")
     if env is not None and str(env).strip():
         return str(env).strip().lower() not in ("0", "false", "no", "off")
-    # `is not False` rather than avoid_ai_writing_enabled()'s bool(): that one defaults
-    # OFF, so a missing key and a false key mean the same thing there. Here the default is
-    # ON, and every other ON-by-default toggle in this module spells it this way so a
-    # non-bool value in config.json (an editor's "true", a stray string) reads as on
-    # instead of silently disabling a stage.
+    # `is not False`: the default is ON, and every ON-by-default toggle in this module
+    # spells it this way so a non-bool value in config.json (an editor's "true", a stray
+    # string) reads as on. A bool() here would silently disable a stage on such a value.
     return _config_json().get("resume_aiwriting_sweep", True) is not False
 
 
@@ -362,8 +364,8 @@ def sweep_p2_enabled() -> bool:
     env = os.getenv("RESUME_TAILOR_SWEEP_P2")
     if env is not None and str(env).strip():
         return str(env).strip().lower() not in ("0", "false", "no", "off")
-    # bool() rather than `is not False`: this one defaults OFF, so a missing key and a
-    # false key mean the same thing, as in avoid_ai_writing_enabled().
+    # bool(): this one defaults OFF, so a missing key and a false key mean the same
+    # thing, and only an explicit truthy value turns the P2 repairs on.
     return bool(_config_json().get("resume_sweep_p2", False))
 
 

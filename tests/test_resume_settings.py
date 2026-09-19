@@ -45,6 +45,15 @@ def test_resume_fields_exist_with_exact_defaults_and_types():
     assert by_key["tailor_prep_sheet"].type == "bool"
     assert by_key["tailor_prep_sheet"].default is False
 
+    # cycle 15: the cover-letter avoid-AI-writing check is on unless turned off
+    assert by_key["cover_letter_avoid_ai_writing"].type == "bool"
+    assert by_key["cover_letter_avoid_ai_writing"].default is True
+
+
+def test_load_returns_the_avoid_ai_writing_default_on_a_fresh_config(tmp_path):
+    values = settings.load(_targets(tmp_path))
+    assert values["cover_letter_avoid_ai_writing"] is True
+
 
 def test_resume_tone_is_choice_with_expected_options():
     tone = _by_key()["resume_tone"]

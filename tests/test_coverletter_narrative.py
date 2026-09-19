@@ -290,3 +290,23 @@ def test_grounding_repair_always_carries_the_rules(monkeypatch, toggle, on):
     coverletter._repair_ungrounded_body("Engineer", "Acme", "I led the Zorblatt migration.",
                                         BULLETS, ["Zorblatt"], "professional")
     assert seen["system"].endswith("\n" + aiwriting.RULES_PROMPT)
+
+
+# ── the default flip ──────────────────────────────────────────────────────────
+def test_avoid_ai_writing_now_defaults_on(monkeypatch):
+    monkeypatch.delenv("RESUME_TAILOR_AVOID_AI_WRITING", raising=False)
+    monkeypatch.setattr(config, "_config_json", lambda: {})
+    assert config.avoid_ai_writing_enabled() is True
+    monkeypatch.setattr(config, "_config_json", lambda: {"cover_letter_avoid_ai_writing": False})
+    assert config.avoid_ai_writing_enabled() is False
+
+
+def test_settings_schema_default_is_true_and_help_says_what_the_toggle_now_does():
+    import settings  # noqa: PLC0415
+
+    field = next(f for f in settings.SETTINGS_SCHEMA
+                 if f.key == "cover_letter_avoid_ai_writing")
+    assert field.default is True
+    assert "taste call" not in field.help
+    assert "Off by default" not in field.help
+    assert "USER_GUIDE.md" in field.help

@@ -416,11 +416,12 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Tone used when generating the cover letter.",
           choices=("professional", "concise", "enthusiastic", "impactful")),
     Field("cover_letter_avoid_ai_writing", "Strip AI writing patterns from the cover letter",
-          "bool", False, "Resume", "config",
-          help="Adds a stricter style pass to the COVER LETTER only, stripping the "
-               "overused AI vocabulary, hedging and chatbot tics that make writing read "
-               "as machine-made (résumé bullets are unaffected). Off by default because "
-               "it is a taste call; docs/USER_GUIDE.md lists exactly what it catches."),
+          "bool", True, "Resume", "config",
+          help="Checks the COVER LETTER for the overused AI vocabulary, hedging and "
+               "chatbot tics that make writing read as machine-made, and buys one repair "
+               "call when one slips through (résumé bullets have their own pass). The "
+               "letter prompts carry these rules either way; this decides whether the "
+               "check enforces them. docs/USER_GUIDE.md lists exactly what it catches."),
     Field("resume_aiwriting_sweep", "Strip AI writing patterns from the résumé bullets",
           "bool", True, "Resume", "config",
           help="Sends each résumé entry to the model as a whole to clear the tells that "

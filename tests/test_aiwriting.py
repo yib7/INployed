@@ -1,4 +1,4 @@
-"""The avoid-AI-writing pass on the cover-letter body.
+"""The avoid-AI-writing pass on the cover-letter body (default ON since cycle 15).
 
 `resume_tailor.aiwriting` vendors a bounded extract of the avoid-ai-writing
 skill (v3.18.0, MIT, Conor Bronsdon): a prompt block for the judgment calls and
@@ -11,7 +11,7 @@ tests/test_coverletter_narrative.py and run whatever the toggle says.
 
 No real LLM ever runs: compose.call (the transport coverletter uses) is
 monkeypatched, and the toggle is driven through the real config accessor, never
-a stub, so the env > config.json > default precedence is exercised for real.
+a stub, so the env > config.json > True precedence is exercised for real.
 """
 import sys
 from pathlib import Path
@@ -189,11 +189,20 @@ def test_rules_prompt_covers_the_judgment_calls():
         assert anchor.lower() in rules.lower(), anchor
 
 
-# ── the accessor: env > config.json > False ───────────────────────────────────
-def test_avoid_ai_writing_defaults_to_false(monkeypatch):
+# ── the accessor: env > config.json > True ────────────────────────────────────
+def test_avoid_ai_writing_defaults_to_true(monkeypatch):
     monkeypatch.delenv("RESUME_TAILOR_AVOID_AI_WRITING", raising=False)
     monkeypatch.setattr(config, "_config_json", lambda: {})
-    assert config.avoid_ai_writing_enabled() is False
+    assert config.avoid_ai_writing_enabled() is True
+
+
+def test_avoid_ai_writing_non_bool_config_value_reads_as_on(monkeypatch):
+    """The ON-by-default spelling: only an explicit False turns it off, so an
+    editor's "true" or a stray string cannot silently disable the gate."""
+    monkeypatch.delenv("RESUME_TAILOR_AVOID_AI_WRITING", raising=False)
+    monkeypatch.setattr(config, "_config_json",
+                        lambda: {"cover_letter_avoid_ai_writing": "true"})
+    assert config.avoid_ai_writing_enabled() is True
 
 
 def test_avoid_ai_writing_config_on(monkeypatch):
@@ -231,14 +240,14 @@ def test_avoid_ai_writing_blank_env_falls_through_to_config(monkeypatch):
     assert config.avoid_ai_writing_enabled() is True
 
 
-def test_settings_schema_exposes_the_toggle_defaulting_off():
+def test_settings_schema_exposes_the_toggle_defaulting_on():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local"))
     import settings  # noqa: PLC0415 - imported here so the path insert above applies
 
     field = next(f for f in settings.SETTINGS_SCHEMA
                  if f.key == "cover_letter_avoid_ai_writing")
     assert (field.type, field.default, field.section, field.target) == (
-        "bool", False, "Resume", "config")
+        "bool", True, "Resume", "config")
 
 
 def test_the_attribution_survives_the_help_trim():

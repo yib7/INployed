@@ -285,7 +285,7 @@ next one in the list is tried; a key that has spent its allowance on one model k
 it still has on the others.
 
 #### What "Strip AI writing patterns from the cover letter" catches
-Settings → Résumé, off by default. It adds a second, stricter style pass to the **cover
+Settings → Résumé, on by default. It adds a second, stricter style pass to the **cover
 letter only** (the bullets have their own pass, below), applying a letter-relevant subset of
 Conor Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDITS.md`):
 
@@ -295,11 +295,12 @@ Conor Bronsdon's MIT-licensed `avoid-ai-writing` skill (credited in `docs/CREDIT
 - rhetorical-question openers and *"In conclusion"* endings
 - the metronomic sentence rhythm that makes writing read as machine-made
 
-The rules ride in the writing prompt, and the worst offenders are also caught afterwards by
-a deterministic checker that buys exactly one rewrite. It is off by default because it is a
-taste call: with it off, the cover letter goes through the ordinary style pass and
-nothing else. The grounding gate still runs last either way, so a restyled sentence that
-introduces an unsupported fact is still rejected.
+The rules ride in the writing prompt whatever this setting says; the setting decides whether
+the worst offenders are also caught afterwards by a deterministic checker that buys exactly
+one rewrite. Two structural checks run on every letter regardless: a résumé bullet copied
+into the letter word for word (seven or more words in a row), and a letter whose sentences or
+paragraphs all run the same length. The grounding gate still runs last either way, so a
+restyled sentence that introduces an unsupported fact is still rejected.
 
 #### What "Strip AI writing patterns from the résumé bullets" catches
 Settings → Résumé. This is the sweep, the last of the bullet passes: **on by default**, and it

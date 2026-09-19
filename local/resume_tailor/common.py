@@ -59,12 +59,15 @@ def _gkey(ids: List[str]) -> str:
 # sentence that was never there. A boundary is `.`, `!` or `?` followed by
 # whitespace, or a newline, and it is skipped when the token before it is a
 # dotted initialism (B.S., U.S., Ph.D., e.g.) or one of a few common
-# abbreviations. `:` and `;` never split (see verify's module docstring for the
-# bypass that closed).
+# abbreviations. The list is case-sensitive on purpose: "Inc.", "Dr.", "No."
+# and "Co." are abbreviations only when capitalised, so "I said no. Then I
+# left." still splits, while "vs." and "etc." are only ever lowercase. `:` and
+# `;` never split (see verify's module docstring for the bypass that closed).
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 _ABBREVIATION_RE = re.compile(
-    r"^(?:[A-Za-z]{1,2}\.){2,}$"                                   # B.S. U.S. Ph.D. e.g.
-    r"|^(?:vs|etc|Inc|Ltd|Co|No|Dr|Mr|Mrs|Ms|Jr|Sr|St)\.$", re.I)  # vs. Inc. Dr.
+    r"^(?:[A-Za-z]{1,2}\.){2,}$"                             # B.S. U.S. Ph.D. e.g.
+    r"|^(?:Inc|Ltd|Co|No|Dr|Mr|Mrs|Ms|Jr|Sr|St)\.$"          # Inc. Dr. No. (capitalised)
+    r"|^(?:vs|etc)\.$")                                      # vs. etc. (lowercase)
 
 
 def split_sentences(text: str) -> List[str]:

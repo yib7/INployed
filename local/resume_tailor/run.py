@@ -209,12 +209,31 @@ def _letter_inputs(sel: Optional[Dict[str, Any]], bullets: Dict[str, str],
     try:
         master = assets.load_master()
         ids = None if sel is None else _letter_atom_ids(sel, bullets, master)
-        return assets.flatten_entries(master, entry_atoms=ids), assets.letter_seed()
+        background = assets.flatten_entries(master, entry_atoms=ids)
+        if background.endswith(assets.TRUNCATED_MARKER):
+            # Say so: a letter written from half the record is a quieter failure
+            # than no letter, and the fix (a shorter master, fewer printed
+            # entries) is the user's to make. Entries are the `- header` lines.
+            full = assets.flatten_entries(master, entry_atoms=ids, cap=10 ** 9)
+            total = _entry_headers(full)
+            dropped = total - _entry_headers(background)
+            msg = (f"cover letter background truncated at "
+                   f"{assets.LETTER_BACKGROUND_CAP:,} characters "
+                   f"({dropped} of {total} entries left out)")
+            log(msg)
+            if warn is not None:
+                warn(msg)
+        return background, assets.letter_seed()
     except Exception as exc:  # noqa: BLE001 - the background is an enrichment, never fatal
         log(f"cover letter background unavailable ({exc})")
         if warn is not None:
             warn(f"cover letter background unavailable ({exc})")
         return "", ""
+
+
+def _entry_headers(background: str) -> int:
+    """How many entries a flattened background lists (its `- header` lines)."""
+    return sum(1 for line in background.splitlines() if line.startswith("- "))
 
 
 def _field(job: Dict[str, str], key: str) -> str:

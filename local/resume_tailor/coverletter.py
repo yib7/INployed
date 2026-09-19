@@ -253,8 +253,8 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
         "never copy a bullet and never restate one with a subject bolted on; retell "
         "the work as a story and let the resume hold the list. Creativity you may "
         "use: framing, ordering, connective reasoning, stated interest, and the "
-        "candidate's own words when that block is present (use their ideas and their "
-        "voice, quote them in fragments, never whole). Facts you may use: ONLY what "
+        "candidate's own words when that block is present (use its ideas and its "
+        "voice, and quote at most a fragment of it). Facts you may use: ONLY what "
         "the resume bullets, the basics and, when a BACKGROUND block is present, "
         "those notes hold. Never introduce a new employer, number, tool, date, school "
         "or credential, and never claim interest you cannot support from them. Never "
@@ -278,7 +278,7 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
     seed = (seed or "").strip()
     seed_block = (
         f"\n\nIN THE CANDIDATE'S OWN WORDS (what they want from their next role; use "
-        f"its ideas and its voice, quote it only in fragments, never whole):\n{seed}"
+        f"its ideas and its voice, and quote at most a fragment of it):\n{seed}"
         if seed else "")
     research_block = (
         f"""

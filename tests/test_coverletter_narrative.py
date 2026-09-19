@@ -128,6 +128,13 @@ def test_sentence_splitter_keeps_abbreviations_whole():
     # a newline is always a boundary, punctuation or not
     assert common.split_sentences("One line\nanother") == ["One line", "another"]
     assert common.split_sentences("") == []
+    # the abbreviation list is case-sensitive: "no." is a word, "No." and
+    # "Inc." are abbreviations, "vs." only ever lowercase
+    assert common.split_sentences("I said no. Then I left.") == ["I said no.", "Then I left."]
+    assert common.split_sentences("Acme Inc. hired me. I stayed.") == ["Acme Inc. hired me.", "I stayed."]
+    assert common.split_sentences("Ticket No. 4 was mine. Done.") == ["Ticket No. 4 was mine.", "Done."]
+    assert common.split_sentences("Batch vs. stream matters. It does.") == [
+        "Batch vs. stream matters.", "It does."]
 
 
 def test_uniform_rhythm_needs_six_sentences():
@@ -143,6 +150,37 @@ def test_uniform_rhythm_flags_paragraphs_of_one_length():
             "and the same job finished in ninety minutes. It stuck.")
     body = "\n\n".join([para, para, para])
     assert aiwriting.uniform_rhythm(body) == ["uniform rhythm"]
+
+
+_LONG_A = ("The nightly ingestion job at Example Corp had grown to six hours by the "
+           "time I joined the small platform team, and it failed often enough that "
+           "the morning reports were late more weeks than they were on time.")
+_LONG_B = ("So I rewrote the fetcher to batch its calls, moved the retries onto a "
+           "queue the team already ran, and then watched the same job finish in "
+           "ninety minutes for a full month before I finally called it done.")
+
+
+def _wrap(text: str, per_line: int) -> str:
+    words = text.split()
+    return "\n".join(" ".join(words[i:i + per_line]) for i in range(0, len(words), per_line))
+
+
+def test_uniform_rhythm_ignores_hard_wraps_inside_a_paragraph():
+    """A body hard-wrapped at a fixed column is N equal LINES, and the detector
+    reads the sentences behind them: the wrap is joined before the sentence
+    split, so two sentences stay two (under the six-sentence gate) whether
+    wrapped or unwrapped."""
+    assert len(_LONG_A.split()) == len(_LONG_B.split()) == 39
+    wrapped = _wrap(_LONG_A + " " + _LONG_B, 13)
+    assert wrapped.count("\n") == 5                        # six lines of 13 words
+    assert aiwriting.uniform_rhythm(wrapped) == []
+    assert aiwriting.uniform_rhythm(_LONG_A + " " + _LONG_B) == []
+    # the positive cases still fire when their sentences are wrapped too
+    assert aiwriting.uniform_rhythm(_wrap(_UNIFORM, 7)) == ["uniform rhythm"]
+    # and a blank line is still a paragraph boundary after the wrap join
+    para = ("The job took six hours. I rebuilt the fetcher so it batched every call "
+            "and the same job finished in ninety minutes. It stuck.")
+    assert aiwriting.uniform_rhythm("\n\n".join([_wrap(para, 6)] * 3)) == ["uniform rhythm"]
 
 
 def test_uniform_rhythm_passes_paragraphs_of_different_lengths():

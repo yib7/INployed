@@ -187,7 +187,9 @@ def test_seed_rides_in_the_prompt_when_set(monkeypatch):
     seen = _capture_generate(monkeypatch, seed="I want work where the pipeline is the product.")
     assert "IN THE CANDIDATE'S OWN WORDS" in seen["user"]
     assert "I want work where the pipeline is the product." in seen["user"]
-    assert "quote it only in fragments" in seen["user"]
+    assert "quote at most a fragment of it" in seen["user"]
+    # the system prompt uses the block's own label ("seed" is a yaml key)
+    assert "candidate's own words" in seen["system"] and "seed" not in seen["system"]
 
 
 @pytest.mark.parametrize("seed", ["", "   ", None])
@@ -389,6 +391,28 @@ def test_letter_atom_ids_follow_the_bullets_that_made_the_page():
     background = assets.flatten_entries(MASTER, entry_atoms=ids)
     assert "Example Corp" in background and "Coding Club" in background
     assert "ExampleApp" not in background
+
+
+def test_letter_inputs_warn_when_the_background_is_truncated(monkeypatch):
+    """The cap stays at 6,000; hitting it is said out loud (log + advisory) with
+    the count of entries that never reached the prompt."""
+    big = {"experience": [{"org": f"Org {i}", "title": "T", "dates": "2020",
+                           "achievements": [{"id": f"x{i}", "what": "w" * 200}]}
+                          for i in range(60)]}
+    monkeypatch.setattr(run_mod.assets, "load_master", lambda: big)
+    logs, warns = [], []
+    background, seed = run_mod._letter_inputs(None, {}, logs.append, warn=warns.append)
+    assert background.endswith(assets.TRUNCATED_MARKER) and seed == ""
+    assert warns == logs and len(logs) == 1
+    kept = sum(1 for ln in background.splitlines() if ln.startswith("- Org "))
+    assert logs[0] == (f"cover letter background truncated at 6,000 characters "
+                       f"({60 - kept} of 60 entries left out)")
+    assert 0 < kept < 60
+    # a master that fits says nothing
+    logs.clear()
+    monkeypatch.setattr(run_mod.assets, "load_master", lambda: MASTER)
+    run_mod._letter_inputs(None, {}, logs.append, warn=warns.append)
+    assert logs == []
 
 
 def test_letter_inputs_degrade_to_blank_and_say_so(monkeypatch):

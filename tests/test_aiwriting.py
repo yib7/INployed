@@ -51,8 +51,8 @@ _TODAYS_GENERATE_HEAD = (
     'letter, so never copy a bullet and never restate one with a subject bolted on; '
     'retell the work as a story and let the resume hold the list. Creativity you may '
     "use: framing, ordering, connective reasoning, stated interest, and the candidate's "
-    'own words when that block is present (use their ideas and their voice, quote them '
-    'in fragments, never whole). Facts you may use: ONLY what the resume bullets, the '
+    'own words when that block is present (use its ideas and its voice, and quote at '
+    'most a fragment of it). Facts you may use: ONLY what the resume bullets, the '
     'basics and, when a BACKGROUND block is present, those notes hold. Never introduce '
     'a new employer, number, tool, date, school or credential, and never claim interest '
     'you cannot support from them. Never use the same metric or number twice in the '

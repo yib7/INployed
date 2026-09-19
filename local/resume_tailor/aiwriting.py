@@ -200,6 +200,11 @@ RHYTHM_PARAGRAPH_BAND = 0.15
 
 _FOLD_RE = re.compile(r"[\W_]+")
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
+# A blank line that carries stray spaces, normalised so the wrap join below
+# cannot swallow it; then a lone newline (no newline on either side), which is
+# a hard wrap inside a paragraph.
+_BLANK_LINE_RE = re.compile(r"\n[ \t]*\n")
+_WRAP_RE = re.compile(r"(?<!\n)\n(?!\n)")
 
 BulletSource = Union[Dict[str, str], Iterable[str]]
 
@@ -238,14 +243,21 @@ def uniform_rhythm(body: str) -> List[str]:
 
     Measured only on a letter of RHYTHM_MIN_SENTENCES or more sentences
     (common.split_sentences, the abbreviation-aware splitter the grounding
-    tracer shares, so "a B.S. in CS" is one sentence). Fires when the sentence-length coefficient
-    of variation is under RHYTHM_MIN_CV, or when there are two or more
-    paragraphs (blank-line separated) and every one of them is within
-    RHYTHM_PARAGRAPH_BAND of the mean paragraph length."""
+    tracer shares, so "a B.S. in CS" is one sentence). Fires when the
+    sentence-length coefficient of variation is under RHYTHM_MIN_CV, or when
+    there are two or more paragraphs (blank-line separated) and every one of
+    them is within RHYTHM_PARAGRAPH_BAND of the mean paragraph length.
+
+    A single newline inside a paragraph is a line wrap and is read as one:
+    the shared splitter treats a newline as a boundary (the tracer wants that),
+    so a body hard-wrapped at a fixed column would otherwise read as N equal
+    lines and fire on its own wrapping. Wraps are joined before the sentence
+    split; the paragraph split still uses the blank lines."""
     text = (body or "").strip()
     if not text:
         return []
-    sentences = _word_counts(split_sentences(text))
+    flat = _WRAP_RE.sub(" ", _BLANK_LINE_RE.sub("\n\n", text))
+    sentences = _word_counts(split_sentences(flat))
     if len(sentences) < RHYTHM_MIN_SENTENCES:
         return []
     avg = mean(sentences)

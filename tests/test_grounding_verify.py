@@ -410,15 +410,20 @@ def test_plural_stripping_does_not_ground_an_acronym_ending_in_s(monkeypatch):
 
 
 def test_abbreviation_does_not_open_an_unchecked_first_slot(monkeypatch):
-    """P2-4: _SENTENCE_SPLIT breaks on any `.` + whitespace, so "U.S." spawns a
-    segment whose index 0 is not the generated action verb. Skipping that slot
-    unconditionally ships the fabricated credential."""
+    """P2-4: a splitter that breaks on any `.` + whitespace lets "U.S." spawn a
+    segment whose index 0 is not the generated action verb, and skipping that
+    slot unconditionally ships the fabricated credential. Two lines hold it:
+    common.split_sentences keeps the initialism attached (so even a title-case
+    word after it stays traced), and _sentence_case refuses ALLCAPS at index 0."""
     monkeypatch.setattr(verify.assets, "atoms_by_id", lambda: {
         "a1": {"what": "Built ingestion for the lab", "_block": "Globex"}})
     src = verify.group_source_text(["a1"], extra="Globex")
     assert verify.unseen_tokens("Built ingestion for the U.S. MIT lab", src) == ["MIT"]
     # single-letter-dotted initialisms of every shape open the same slot
     assert "NASA" in verify.unseen_tokens("Built ingestion in the U.K. NASA wing", src)
+    # the title-case slot after an abbreviation is traced too (the shared
+    # splitter never ends the sentence there)
+    assert verify.unseen_tokens("Built ingestion for the U.S. Zorblat lab", src) == ["Zorblat"]
 
 
 def test_the_action_verb_slot_is_still_free_for_sentence_case(monkeypatch):

@@ -40,8 +40,8 @@ basics:
 # ============================================================
 # letter: OPTIONAL. `seed` is your own voice for the cover letter: two to four
 # sentences on what you want from your next role, why this field, and what kind
-# of work you do well. The letter borrows its ideas and its wording (quoted only
-# in fragments, never pasted in whole), so write it the way you would say it.
+# of work you do well. The letter borrows its ideas and its wording and quotes at
+# most a fragment of it, so write it the way you would say it.
 # Plain sentences; no employers, numbers or tools that are not in the atoms
 # below, because the letter may only state facts this file holds. At most 1,200
 # characters (Check setup warns past that). Leave it out and the letter is

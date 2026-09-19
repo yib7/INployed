@@ -63,7 +63,7 @@ def test_md_to_text_dash_list_items_become_bullets():
 
 
 def test_md_to_text_star_list_items_become_bullets():
-    # markdownify's default top-level bullet marker is "*", not "-".
+    # markdownify's default top-level bullet marker is "*".
     out = jobsdata.md_to_text("* alpha\n* beta")
     assert out == "• alpha\n• beta"
 
@@ -160,8 +160,7 @@ def test_job_detail_fields_md_stub_falls_through_to_a_longer_summary():
         job_description_md="## Requirements\n\n- go",      # well under 40 chars
         job_summary="A LinkedIn summary that is long enough to clear the "
         "forty-character bar on its own and describes the role, the team, "
-        "the tech stack, and the day-to-day work in enough detail to read "
-        "as a real, usable job description rather than a one-line teaser."))
+        "the tech stack, and the day-to-day work in real, usable detail."))
     assert f["jd"].startswith("A LinkedIn summary")
     assert "Requirements" not in f["jd"]
 
@@ -174,8 +173,9 @@ def test_job_detail_fields_without_md_column_keeps_the_old_precedence():
 
 
 def test_job_detail_fields_md_renders_through_md_to_text_not_html_to_text():
-    # "<...>" in markdown prose (a value range, not markup) must survive --
-    # html_to_text would read it as a tag and strip it; md_to_text must not.
+    # "<...>" in markdown prose is a value range that must survive verbatim --
+    # html_to_text would read it as a tag and strip it, so this row has to
+    # route through md_to_text.
     f = jobsdata.job_detail_fields(_row(
         job_description_md="## Requirements\n\nMust support values <5 and "
         ">10 in the same query."))

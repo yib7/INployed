@@ -2,8 +2,8 @@
 precedence (the tailor + Ask AI side of the same fix as jobsdata.job_detail_fields).
 
 job_description_md is passed through UNCHANGED -- the tailor already reasons
-over markdown, so running it through _to_plain (markdownify-on-HTML) here would
-throw away structure the prompt can use, not add any.
+over markdown directly, and running it through _to_plain (markdownify-on-HTML)
+here would throw away the structure the prompt uses.
 """
 import sys
 from pathlib import Path
@@ -51,8 +51,7 @@ def test_md_stub_falls_through_to_a_longer_summary():
         "job_description_md": "## Requirements\n\n- go",     # well under 40 chars
         "job_summary": "A LinkedIn summary that is long enough to clear the "
         "forty-character bar on its own and describes the role, the team, "
-        "the tech stack, and the day-to-day work in enough detail to read "
-        "as a real, usable job description rather than a one-line teaser.",
+        "the tech stack, and the day-to-day work in real, usable detail.",
     }
     text = _job_description_text(job)
     assert text.startswith("A LinkedIn summary")

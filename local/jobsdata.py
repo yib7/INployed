@@ -1122,13 +1122,13 @@ def html_to_text(raw: str) -> str:
 # pipeline/score_jobs.py writes job_description_md (markdownify, heading_style=
 # "ATX") into every scored row. Its default options escape a LITERAL "*"/"_" in
 # the posting's own prose to "\*"/"\_" (escape_asterisks / escape_underscores),
-# so `(?<!\\)` on every marker below is load-bearing, not decorative: without
-# it two escaped literals ("full\_time ... part\_time") would pair up as a
-# fake emphasis span once the backslash is ignored, corrupting everything
-# between them. Order matters too -- list markers are consumed BEFORE
-# emphasis, because markdownify's default top-level bullet is "*", the same
-# character `*em*` uses, and a bullet at line-start must not go hunting for a
-# partner "*" later in its own line ("* Requires *Python* experience").
+# so `(?<!\\)` on every marker below earns its keep: it stops two escaped
+# literals ("full\_time ... part\_time") from pairing up as a fake emphasis
+# span once the backslash is ignored, which would corrupt everything between
+# them. Order matters too -- list markers are consumed BEFORE emphasis,
+# because markdownify's default top-level bullet is "*", the same character
+# `*em*` uses, and a bullet at line-start must not go hunting for a partner
+# "*" later in its own line ("* Requires *Python* experience").
 _MD_HEADING_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(.*)$", re.M)
 _MD_LIST_RE = re.compile(r"^[ \t]*[-*+][ \t]+", re.M)
 _MD_BOLD_RE = re.compile(r"(?<!\\)\*\*(.+?)\*\*|(?<!\\)__(.+?)__")
@@ -1144,7 +1144,7 @@ def _md_marker_sub(match: re.Match) -> str:
 def md_to_text(md: str) -> str:
     """Markdown -> structured plain text, the job_description_md counterpart to
     html_to_text above: same reasoning (a plain-text viewer treats markup
-    syntax as noise, not signal), same pure-regex, no-dependency contract.
+    syntax as noise), same pure-regex, no-dependency contract.
 
     `#`-headings become their own line, with a blank line before them even
     when the source had none (marker stripped); `**bold**` / `__bold__` /
@@ -1154,10 +1154,9 @@ def md_to_text(md: str) -> str:
     `\\*`, ...) is unescaped; three or more newlines collapse to two; lines
     are stripped.
 
-    Deliberately hand-rolled rather than delegating to a markdown renderer,
-    for the same reason html_to_text does not: this module carries no soft
-    dependency, and rendered markdown (headings as HTML, `<strong>` spans) is
-    the wrong output for a plain-text viewer anyway.
+    Deliberately hand-rolled, the same choice html_to_text makes above it:
+    this module carries no soft dependency, and produces literal plain text
+    for the QPlainTextEdit that displays it.
 
     Plain text with no markdown syntax passes through unchanged.
     """
@@ -1215,9 +1214,9 @@ def job_detail_fields(row, snapshot: dict | None = None) -> dict:
     # Richest JD text first, summary last — same precedence (and same 40-char
     # bar) as resume_tailor.run._job_description_text: LinkedIn's job_summary is
     # frequently a truncated stub, so preferring it hides most of the posting.
-    # job_description_md (score_jobs.py's markdownify output) goes through
-    # md_to_text rather than html_to_text: it is markdown, not HTML, and
-    # html_to_text's tag-stripping would eat any literal "<"/">" in its prose.
+    # job_description_md (score_jobs.py's markdownify output) is markdown, so
+    # it goes through md_to_text: html_to_text's tag-stripping would eat any
+    # literal "<"/">" in its prose.
     jd = ""
     md = md_to_text(cell("job_description_md"))
     if len(md) >= 40:

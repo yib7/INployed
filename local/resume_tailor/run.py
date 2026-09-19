@@ -213,12 +213,14 @@ def _job_description_text(job: Dict[str, str]) -> str:
     summary last.
 
     job_description_md (score_jobs.py's markdownify output) is returned
-    UNCHANGED, not run through _to_plain: the tailor already reasons over
-    markdown, so flattening it here would throw away structure the prompt can
-    use, not add any. Same 40-char floor as the other three columns (and the
-    same one jobsdata.job_detail_fields uses): LinkedIn's job_summary is often
-    truncated or empty, so tailoring against it alone wastes most of the JD
-    signal (and hard-fails when it's blank).
+    UNCHANGED: the tailor already reasons over markdown directly, and
+    flattening it here would throw away the structure the prompt uses. It
+    clears the same 40-character floor as the other three columns; this
+    function measures that floor against the raw markdown itself, while
+    jobsdata.job_detail_fields measures the same floor against md_to_text's
+    converted output. LinkedIn's job_summary is often truncated or empty, so
+    tailoring against it alone wastes most of the JD signal (and hard-fails
+    when it's blank).
     """
     md = _field(job, "job_description_md")
     if len(md) >= 40:

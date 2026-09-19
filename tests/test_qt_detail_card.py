@@ -472,7 +472,7 @@ def test_card_description_preserves_line_breaks_and_bullets(qtbot):
 def test_card_renders_a_job_description_md_row_with_real_structure(qtbot):
     # SP2: the scored row's job_description_md (markdownify output) now reaches
     # the card through job_detail_fields -> md_to_text, so the QPlainTextEdit
-    # shows real headings and bullets instead of one 5,000-char line.
+    # shows real headings and bullets, with each requirement on its own line.
     f = jobsdata.job_detail_fields(_row(
         job_description_md="## Requirements\n\n- Own the pipeline end to end\n"
         "- Ship weekly\n\n## Nice to have\n\n- AWS"))
@@ -484,7 +484,7 @@ def test_card_renders_a_job_description_md_row_with_real_structure(qtbot):
     assert "\n• Own the pipeline end to end" in shown
     assert "\n• Ship weekly" in shown
     assert "Nice to have" in shown
-    assert len(shown.splitlines()) > 1                # multi-line, not one blob
+    assert len(shown.splitlines()) > 1                # real structure, several lines
 
 
 def test_card_collapsed_size_is_not_inflated_by_the_hidden_pane(qtbot):

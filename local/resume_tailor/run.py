@@ -209,11 +209,24 @@ def _to_plain(text: str) -> str:
 
 
 def _job_description_text(job: Dict[str, str]) -> str:
-    """The richest available JD text: full description first, summary last.
+    """The richest available JD text: markdown first, full description next,
+    summary last.
 
-    LinkedIn's job_summary is often truncated or empty, so tailoring against it
-    alone wastes most of the JD signal (and hard-fails when it's blank).
+    job_description_md (score_jobs.py's markdownify output) is returned
+    UNCHANGED, not run through _to_plain: the tailor already reasons over
+    markdown, so flattening it here would throw away structure the prompt can
+    use, not add any. It wins on ANY non-empty value, no 40-char floor: unlike
+    job_summary (a LinkedIn field that is routinely a short teaser even when
+    the real posting is long), a non-empty job_description_md IS the real
+    posting, markdownified -- same reasoning as jobsdata.job_detail_fields'
+    identical precedence. Falls back to the pre-existing precedence for rows
+    that predate the column -- LinkedIn's job_summary is often truncated or
+    empty, so tailoring against it alone wastes most of the JD signal (and
+    hard-fails when it's blank).
     """
+    md = _field(job, "job_description_md")
+    if md:
+        return md
     for key in ("job_description_formatted", "job_description", "job_summary"):
         text = _to_plain(_field(job, key))
         if len(text) >= 40:

@@ -1119,6 +1119,65 @@ def html_to_text(raw: str) -> str:
     return _BULLET_GAP_RE.sub(r"\1\n", text)
 
 
+# pipeline/score_jobs.py writes job_description_md (markdownify, heading_style=
+# "ATX") into every scored row. Its default options escape a LITERAL "*"/"_" in
+# the posting's own prose to "\*"/"\_" (escape_asterisks / escape_underscores),
+# so `(?<!\\)` on every marker below is load-bearing, not decorative: without
+# it two escaped literals ("full\_time ... part\_time") would pair up as a
+# fake emphasis span once the backslash is ignored, corrupting everything
+# between them. Order matters too -- list markers are consumed BEFORE
+# emphasis, because markdownify's default top-level bullet is "*", the same
+# character `*em*` uses, and a bullet at line-start must not go hunting for a
+# partner "*" later in its own line ("* Requires *Python* experience").
+_MD_HEADING_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(.*)$", re.M)
+_MD_LIST_RE = re.compile(r"^[ \t]*[-*+][ \t]+", re.M)
+_MD_BOLD_RE = re.compile(r"(?<!\\)\*\*(.+?)\*\*|(?<!\\)__(.+?)__")
+_MD_ITALIC_RE = re.compile(r"(?<!\\)\*(.+?)\*|(?<!\\)_(.+?)_")
+_MD_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+.!>-])")
+
+
+def _md_marker_sub(match: re.Match) -> str:
+    g1, g2 = match.group(1), match.group(2)
+    return g1 if g1 is not None else g2
+
+
+def md_to_text(md: str) -> str:
+    """Markdown -> structured plain text, the job_description_md counterpart to
+    html_to_text above: same reasoning (a plain-text viewer treats markup
+    syntax as noise, not signal), same pure-regex, no-dependency contract.
+
+    `#`-headings become their own line, with a blank line before them even
+    when the source had none (marker stripped); `**bold**` / `__bold__` /
+    `*em*` / `_em_` markers are stripped, keeping the words; `- ` / `* ` /
+    `+ ` list items become `• ` (a numbered list keeps its numbers -- it is
+    already the plain text a reader wants); escaped punctuation (`\\-`, `\\.`,
+    `\\*`, ...) is unescaped; three or more newlines collapse to two; lines
+    are stripped.
+
+    Deliberately hand-rolled rather than delegating to a markdown renderer,
+    for the same reason html_to_text does not: this module carries no soft
+    dependency, and rendered markdown (headings as HTML, `<strong>` spans) is
+    the wrong output for a plain-text viewer anyway.
+
+    Plain text with no markdown syntax passes through unchanged.
+    """
+    if not md:
+        return ""
+    text = md
+    # Headings first: force every heading apart from whatever came before it.
+    text = _MD_HEADING_RE.sub(lambda m: "\n" + m.group(1), text)
+    # Lists next (see the module note above for why this must precede bold/
+    # italic): only the marker at a line's own start is touched.
+    text = _MD_LIST_RE.sub("• ", text)
+    text = _MD_BOLD_RE.sub(_md_marker_sub, text)
+    text = _MD_ITALIC_RE.sub(_md_marker_sub, text)
+    # Unescape LAST, once every marker that cares whether a "*"/"_" was
+    # escaped has already been matched.
+    text = _MD_ESCAPE_RE.sub(r"\1", text)
+    text = "\n".join(line.strip() for line in text.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def job_detail_fields(row, snapshot: dict | None = None) -> dict:
     """The job-detail-card content as a flat dict.
 
@@ -1153,15 +1212,25 @@ def job_detail_fields(row, snapshot: dict | None = None) -> dict:
         return {}
 
     posted = cell("job_posted_date").strip()
-    # Richest JD text first, summary last — same precedence (and same 40-char
-    # bar) as resume_tailor.run._job_description_text: LinkedIn's job_summary is
-    # frequently a truncated stub, so preferring it hides most of the posting.
+    # Richest JD text first, summary last — same precedence as
+    # resume_tailor.run._job_description_text. job_description_md
+    # (score_jobs.py's markdownify output) goes through md_to_text rather than
+    # html_to_text: it is markdown, not HTML, and html_to_text's tag-stripping
+    # would eat any literal "<"/">" in its prose. It wins on ANY non-empty
+    # result, no 40-char floor: unlike job_summary (a LinkedIn field that is
+    # routinely a short teaser even when the real posting is long), a
+    # non-empty job_description_md IS the real posting, markdownified, so
+    # there is no "is this a stub" question left to gate on.
     jd = ""
-    for col in ("job_description_formatted", "job_description", "job_summary"):
-        text = html_to_text(cell(col))
-        if len(text) >= 40:
-            jd = text
-            break
+    md = md_to_text(cell("job_description_md"))
+    if md:
+        jd = md
+    else:
+        for col in ("job_description_formatted", "job_description", "job_summary"):
+            text = html_to_text(cell(col))
+            if len(text) >= 40:
+                jd = text
+                break
     return {
         "title": cell("job_title") or "?",
         "company": cell("company_name") or "?",

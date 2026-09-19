@@ -1,10 +1,15 @@
 """Optional cover-letter generation + rendering (off by default).
 
-The body is written by the pro tier but stays grounded: it may only use facts
-already on the tailored resume (the selected bullets) plus the candidate basics.
-Like the bullets, the body passes the deterministic style gate before rendering
-(enforce_body_style — compose.enforce_style's letter arm), so banned AI-tell
-phrasing never reaches the letter.
+The body is written by the pro tier as narrative prose and stays grounded: its
+facts come from the tailored bullets, the candidate's own notes behind them
+(the BACKGROUND block the caller flattens from the master file), the optional
+`letter.seed` voice sample and the candidate basics. A flash-tier humanizer pass
+(refine_body) then fixes rhythm and retells any bullet that was pasted in with a
+subject bolted on, and the deterministic style gate runs last
+(enforce_body_style, compose.enforce_style's letter arm, widened with the
+letter-level bullet-echo and uniform-rhythm checks), so banned AI-tell phrasing
+and a copied bullet never reach the letter. The grounding gate has the final
+word: a fact from nowhere fails the letter.
 Template is self-contained (ported from Resume_Tailor) so there's no file dep.
 """
 from __future__ import annotations
@@ -139,7 +144,7 @@ def _strip_trailing_signoff(body: str) -> str:
 
 
 # One-line style instruction per Settings tone choice. The body's content rules
-# (grounded, 3 short paragraphs, no sign-off) never change — only the voice.
+# (grounded, narrative, no sign-off) never change; only the voice does.
 _TONE_DIRECTIVES: Dict[str, str] = {
     "professional": "Use a confident, professional tone.",
     "concise": "Keep it tight and concise: short sentences, no filler.",
@@ -159,23 +164,25 @@ def tone_directive(tone: str) -> str:
 
 
 def _with_ai_writing_rules(system: str) -> str:
-    """Append the vendored avoid-AI-writing rules when the Settings toggle is on.
+    """Append the vendored avoid-AI-writing rules, always and strictly last.
 
-    Strictly additive and strictly last, so with the toggle OFF (the default)
-    every letter prompt is byte-identical to the one that shipped before the
-    toggle existed."""
-    if config.avoid_ai_writing_enabled():
-        return system + "\n" + aiwriting.RULES_PROMPT
-    return system
+    Every letter prompt (generation, humanizer, both repairs) carries them since
+    cycle 15. The Settings toggle no longer touches the prompts; it decides
+    only whether aiwriting.violations joins the deterministic gate below."""
+    return system + "\n" + aiwriting.RULES_PROMPT
 
 
-def _body_violations(body: str) -> list:
-    """The letter's banned-phrasing names: compose's always, plus the extra
-    avoid-AI-writing set when the toggle is on. One list so the gate keeps its
-    single repair call AND its strict-improvement rule counts both sets."""
+def _body_violations(body: str, bullets: Dict[str, str]) -> list:
+    """The letter's violation names, one list so the gate keeps its single repair
+    call AND its strict-improvement rule counts every set: compose's phrasing
+    bans always; aiwriting's extra bans when the toggle is on; and the two
+    structural checks (a bullet echoed word for word, a metronomic rhythm)
+    always, since those are wrong under any vocabulary policy."""
     names = compose.style_violations(body)
     if config.avoid_ai_writing_enabled():
         names += aiwriting.violations(body)
+    names += aiwriting.bullet_echo(body, bullets)
+    names += aiwriting.uniform_rhythm(body)
     return names
 
 
@@ -192,10 +199,30 @@ def _background_block(background: str, purpose: str) -> str:
     return f"\n\nBACKGROUND ({purpose}):\n{background}"
 
 
+_STRUCTURAL_NOTES = {
+    "bullet echo": (
+        "'bullet echo' means a sentence repeats seven or more words in a row from "
+        "a resume bullet. The resume travels with the letter, so retell that work "
+        "as narrative in new words: the problem, what the candidate did, what came "
+        "of it."),
+    "uniform rhythm": (
+        "'uniform rhythm' means the sentences or the paragraphs all run about the "
+        "same length. Vary them: some sentences under eight words and some over "
+        "twenty, and one paragraph clearly shorter than the rest."),
+}
+
+
+def _structural_notes(violations: list) -> str:
+    """What the letter-level findings mean, for the repair prompt. The named
+    phrasing bans explain themselves; these two need a sentence each."""
+    notes = [_STRUCTURAL_NOTES[v] for v in _STRUCTURAL_NOTES if v in violations]
+    return (" " + " ".join(notes)) if notes else ""
+
+
 def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str],
                   research: str = "", tone: str = "professional",
                   background: str = "", seed: str = "") -> str:
-    """The letter body, generated then refined then gated.
+    """The letter body, generated then humanized then gated.
 
     `background` is the candidate's own notes behind the bullets (the caller
     flattens them from the master with assets.flatten_entries, bounded) and
@@ -203,22 +230,32 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
     are optional; blank means the letter is written from the bullets alone."""
     used = _bullets_block(bullets)
     system = (
-        "Write a concise, genuine cover-letter body (3 short paragraphs) for an "
-        "early-career candidate. Use ONLY facts present in the provided resume bullets "
-        "and basics; never invent experience, numbers, or interest you can't support. "
-        "No salutation and no sign-off (the template adds them). Plain text, paragraphs "
-        "separated by a blank line. Warm but professional; write like a person, in "
-        "plain declarative sentences, no clichés. Show genuine but MEASURED interest: "
-        "never gush or over-sell: no exclamation-point excitement, no "
-        "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
-        "over-eager tone reads as AI-written. " + tone_directive(tone) + " "
+        "Write the body of a cover letter for an early-career candidate as narrative "
+        "prose with ONE through-line. Open on the one thing about this role that "
+        "connects to something the candidate has done: the FIRST sentence must lead "
+        "with that specific link. Do NOT open with boilerplate ('I am writing to "
+        "express my interest...', 'I am writing to apply for...'). Then tell one or "
+        "two of the candidate's experiences as prose: the problem they faced, what "
+        "they did about it, and what came of it. Close on what they want to do next "
+        "at this company. Three or four paragraphs of visibly different lengths, one "
+        "of them clearly shorter than the rest; sentences of mixed length, some under "
+        "eight words and some over twenty. The resume travels with this letter, so "
+        "never copy a bullet and never restate one with a subject bolted on; retell "
+        "the work as a story and let the resume hold the list. Creativity you may "
+        "use: framing, ordering, connective reasoning, stated interest, and the "
+        "candidate's own seed sentences. Facts you may use: ONLY what the resume "
+        "bullets, the BACKGROUND notes and the basics hold. Never introduce a new "
+        "employer, number, tool, date, school or credential, and never claim interest "
+        "you cannot support from them. Never use the same metric or number twice in "
+        "the letter. No salutation and no sign-off (the template adds them). Plain "
+        "text, paragraphs separated by a blank line. Write like a person, in plain "
+        "declarative sentences, no clichés. Show MEASURED interest: no "
+        "exclamation-point excitement, no 'thrilled/ecstatic/passionate/love' "
+        "inflation, no empty superlatives; that over-eager tone reads as AI-written. "
+        + tone_directive(tone) + " "
         "Use the correct tense for education, based on the EDUCATION line: if the "
         "candidate has already graduated, NEVER say they are 'completing' or "
-        "'finishing' their studies; refer to the degree as completed. "
-        "Do NOT open with boilerplate ('I am writing to express my interest...', "
-        "'I am writing to apply for...'): the FIRST sentence must lead with "
-        "something specific about the candidate or the company. "
-        "Never use the same metric or number twice in the letter.\n"
+        "'finishing' their studies; refer to the degree as completed.\n"
         "BANNED PHRASING (using any of these is wrong): " + compose.BANNED_PHRASING
     )
     system = _with_ai_writing_rules(system)
@@ -256,9 +293,10 @@ EDUCATION: {_education_context()}
 
 Write the body now."""
     body = compose.call(system, user, config.TIER_PRO, json_out=False, temperature=0.4)
-    # Second (flash) pass: tighten cohesion/flow, strip any invented claim, and dial
-    # back over-the-top excitement; THEN the deterministic ban gate runs last, so the
-    # refine can never sneak banned phrasing past it.
+    # Second (flash) pass: the humanizer. Rhythm, paragraph variance, any pasted
+    # bullet retold as narrative, tone pulled to measured, still grounded in the
+    # draft, the bullets and the background. THEN the deterministic gate runs
+    # last, so the humanizer can never sneak banned phrasing past it.
     # No jd: both passes are grounded ONLY in the draft, the bullets and the
     # background, so neither prompt ever carried the job description.
     body = refine_body(job_title, company, body, bullets, tone=tone,
@@ -299,6 +337,7 @@ def _repair_ungrounded_body(job_title: str, company: str, body: str,
         "background notes below. Never introduce any new name, number, or "
         "credential. " + tone_directive(tone)
     )
+    system = _with_ai_writing_rules(system)
     user = f"""ROLE: {job_title} at {company}
 
 RESUME BULLETS (an allowed source of facts):
@@ -322,29 +361,34 @@ Rewrite the body now with every unsupported item removed."""
 def refine_body(job_title: str, company: str, body: str,
                 bullets: Dict[str, str], tone: str = "professional",
                 background: str = "") -> str:
-    """One flash-tier cohesion/grounding/tone pass over the generated body.
+    """The humanizer: one flash-tier pass over the generated body.
 
-    A final editor polish: make the paragraphs read as one connected argument,
-    keep it strictly grounded in the resume bullets and the background notes
-    (cut anything the draft invented; no company/number/skill/claim that isn't
-    supported), and pull an over-eager, gushing tone back to measured interest
-    (that AI-slop over-excitement is exactly what the user flagged). Best-effort
-    and advisory: an empty result or a failed call leaves the original body
-    untouched, and the deterministic style gate still runs after this. Pure
-    aside from the LLM call."""
+    Four jobs, in the order the prompt states them: make the paragraphs read as
+    one connected argument; give the letter a human rhythm (mixed sentence
+    lengths, one paragraph clearly shorter); retell any sentence that is a
+    resume bullet with a subject bolted on as narrative; and pull an over-eager
+    tone back to measured interest. It stays strictly grounded in the draft, the
+    bullets and the background notes (cut anything the draft invented; never add
+    a company, number, skill or claim). Best-effort and advisory: an empty result
+    or a failed call leaves the original body untouched, and the deterministic
+    style gate still runs after this. Pure aside from the LLM call."""
     body = (body or "").strip()
     if not body:
         return body
     system = (
-        "You are an editor doing a final polish pass on a cover-letter body. Improve "
-        "cohesion and flow so the sentences build ONE connected argument. "
-        "Stay grounded: use ONLY facts already in the draft, the resume bullets and "
-        "the background notes below; never add a company, number, skill, or claim "
-        "that isn't supported, and cut anything the draft invented. Keep the meaning and roughly "
-        "the same length; no salutation and no sign-off. Show genuine but MEASURED "
-        "interest: do NOT be over-the-top or gushing. No exclamation-point enthusiasm, "
-        "no 'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
-        "over-eager tone reads as AI-written. " + tone_directive(tone) + "\n"
+        "You are an editor giving a cover-letter draft its final pass. Make it read "
+        "as ONE connected argument written by a person. Rhythm: mix sentence length, "
+        "some under eight words and some over twenty, and leave one paragraph "
+        "clearly shorter than the rest. Any sentence that reads as a resume bullet "
+        "with a subject bolted on ('I built X that did Y') is retold as narrative: "
+        "the problem, what the candidate did, what came of it. Pull the tone to "
+        "MEASURED interest: no gushing, no exclamation-point enthusiasm, no "
+        "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
+        "over-eager tone reads as AI-written. Stay grounded: use ONLY facts already "
+        "in the draft, the resume bullets and the background notes below; never add "
+        "a company, number, skill, or claim they do not hold, and cut anything the "
+        "draft invented. Keep the meaning and roughly the same length; no salutation "
+        "and no sign-off. " + tone_directive(tone) + "\n"
         "BANNED PHRASING (do not introduce any of these): " + compose.BANNED_PHRASING
     )
     system = _with_ai_writing_rules(system)
@@ -353,10 +397,10 @@ def refine_body(job_title: str, company: str, body: str,
 RESUME BULLETS (an allowed source of facts):
 {_bullets_block(bullets)}{_background_block(background, "the candidate's own notes; the other allowed source of facts")}
 
-COVER-LETTER DRAFT TO POLISH:
+COVER-LETTER DRAFT TO EDIT:
 {body}
 
-Return ONLY the revised body: same paragraph structure, no preamble, no sign-off."""
+Return ONLY the revised body: no preamble, no sign-off."""
     try:
         refined = (compose.call(system, user, config.TIER_FLASH, json_out=False,
                                 temperature=0.3) or "").strip()
@@ -370,41 +414,44 @@ def enforce_body_style(job_title: str, company: str, body: str,
                        background: str = "") -> str:
     """The letter arm of the deterministic style gate (compose.enforce_style is the
     bullet arm): the generation prompt bans AI-tell phrasing, but a model can still
-    slip one through. When the body violates compose._STYLE_BANS, buy ONE repair
-    call (same letter, same facts: the resume bullets and the background notes
-    are the only allowed sources), committed only on strict improvement so a bad
-    repair can't make it worse, then mechanically strip any em dash that
-    survives, so one can never print. Best-effort: a failed call just leaves the
-    body to the mechanical pass (advisory, never fatal, like the bullet gate).
+    slip one through. When the body violates any check in _body_violations, buy
+    ONE repair call (same letter, same facts: the resume bullets and the
+    background notes are the only allowed sources), committed only on strict
+    improvement so a bad repair can't make it worse, then mechanically strip any
+    em dash that survives, so one can never print. Best-effort: a failed call
+    just leaves the body to the mechanical pass (advisory, never fatal, like the
+    bullet gate).
 
-    With the avoid-AI-writing toggle on, the check widens to compose's bans PLUS
-    aiwriting's (_body_violations) and the repair prompt carries that rule text,
-    so the one call still covers both sets."""
-    violations = _body_violations(body)
+    The check is compose's bans, plus aiwriting's with the toggle on, plus the
+    two structural findings (bullet echo, uniform rhythm) always; the repair
+    prompt names each finding and explains the structural ones, so the one call
+    covers every set."""
+    violations = _body_violations(body, bullets)
     if violations:
         system = (
             "You repair a cover-letter body that slipped into banned AI-tell "
-            "phrasing. Rewrite it as the SAME letter: same facts, same paragraph "
-            "structure, roughly the same length, no salutation and no sign-off. "
-            "Use ONLY facts already in the letter, the resume bullets and the "
-            "background notes below; never add a claim. " + tone_directive(tone) + "\n"
+            "phrasing or structure. Rewrite it as the SAME letter: same facts, "
+            "roughly the same length, no salutation and no sign-off. Use ONLY facts "
+            "already in the letter, the resume bullets and the background notes "
+            "below; never add a claim." + _structural_notes(violations) + " "
+            + tone_directive(tone) + "\n"
             "BANNED: " + compose.BANNED_PHRASING
         )
         system = _with_ai_writing_rules(system)
         user = f"""ROLE: {job_title} at {company}
 
-RESUME BULLETS (an allowed source of facts):
+RESUME BULLETS (an allowed source of facts; never copy one into the letter):
 {_bullets_block(bullets)}{_background_block(background, "the candidate's own notes; the other allowed source of facts")}
 
-LETTER BODY TO REPAIR (banned patterns found: {", ".join(violations)}):
+LETTER BODY TO REPAIR (findings: {", ".join(violations)}):
 {body}
 
-Rewrite the body now, removing every banned pattern."""
+Rewrite the body now, clearing every finding."""
         try:
             fixed = (compose.call(system, user, config.TIER_FLASH, json_out=False,
                                   temperature=0.2) or "").strip()
             # Commit only strict improvement, so a bad repair can't make it worse.
-            if fixed and len(_body_violations(fixed)) < len(violations):
+            if fixed and len(_body_violations(fixed, bullets)) < len(violations):
                 body = fixed
         except Exception:  # noqa: BLE001 - repair is advisory; the mechanical pass still runs
             pass

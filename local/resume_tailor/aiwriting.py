@@ -11,7 +11,10 @@ purpose: the vendored attribution and the tier-1 vocabulary regex are common to
 both, and a second copy is how the two would drift apart.
 
   * The **cover-letter arm** (``RULES_PROMPT`` / ``EXTRA_BANS`` /
-    ``violations()``), opt-in and default OFF.
+    ``violations()``, plus the two letter-level detectors ``bullet_echo()`` and
+    ``uniform_rhythm()``). The prompt rules ride in every letter prompt; the
+    Settings toggle (default ON since cycle 15) decides whether ``violations()``
+    joins the deterministic gate, and the two detectors join it either way.
   * The **résumé arm** (``RESUME_PROFILE`` / ``RESUME_RULES_PROMPT`` /
     ``RESUME_EXTRA_BANS`` / ``resume_violations()``), which serves the
     item-level sweep over Experience, Projects and Leadership bullets.
@@ -26,6 +29,12 @@ the résumé engine already splits its style gate:
     counterpart).
   * ``EXTRA_BANS`` / ``violations()`` -- the deterministic arm, mirroring
     ``compose._STYLE_BANS`` / ``compose.style_violations``.
+  * ``bullet_echo()`` / ``uniform_rhythm()`` -- the structural arm. A regex sees
+    one phrase; these two see the whole letter against the whole résumé. A
+    bullet copied into the letter (the résumé travels with it, so a copy says
+    nothing twice) and a letter whose sentences or paragraphs all run the same
+    length (the strongest AI tell the skill names) are letter-level facts, so
+    they are measured here and reported under the same name-list contract.
 
 **What earns a place in EXTRA_BANS.** Same rule as ``compose._STYLE_BANS``: only
 phrasing that is ALWAYS slop, because a false positive buys a repair call that
@@ -59,7 +68,8 @@ buys a repair call that can damage a bullet that was already right.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, NamedTuple, Tuple
+from statistics import mean, pstdev
+from typing import Dict, Iterable, List, NamedTuple, Set, Tuple, Union
 
 # ══ the cover-letter arm ══════════════════════════════════════════════════════
 # The prompt arm: the patterns that need judgment, written as instructions. Kept
@@ -161,6 +171,90 @@ def violations(text: str) -> List[str]:
     two lists and keep its single repair call.
     """
     return [name for name, pat in EXTRA_BANS if pat.search(text)]
+
+
+# ── the structural arm ───────────────────────────────────────────────────────
+# Two letter-level measurements. Both return the same name-list shape as
+# violations() so coverletter._body_violations can concatenate all three and the
+# gate keeps its one repair call and its strict-improvement rule. Neither
+# depends on the Settings toggle: they measure structure, and the letter is
+# wrong on structure whatever vocabulary policy is in force.
+
+# A bullet is "copied" when this many consecutive folded words appear in both.
+# Seven is long enough that a shared technical phrase ("the nightly ingestion
+# pipeline") never fires on its own and short enough that a bullet lifted with
+# one word changed still does.
+ECHO_SHINGLE = 7
+
+# uniform_rhythm's thresholds. The sentence check needs a sample: under six
+# sentences a letter has no rhythm to be uniform about. A coefficient of
+# variation (population stdev over mean) under 0.30 means the sentences all sit
+# within a few words of each other; human prose lands well above it. The
+# paragraph check fires when every paragraph is within 15% of the mean length,
+# the metronome the skill calls the strongest tell of all.
+RHYTHM_MIN_SENTENCES = 6
+RHYTHM_MIN_CV = 0.30
+RHYTHM_PARAGRAPH_BAND = 0.15
+
+_FOLD_RE = re.compile(r"[\W_]+")
+_SENTENCE_SPLIT_RE = re.compile(r"[.!?]+\s+")
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
+
+BulletSource = Union[Dict[str, str], Iterable[str]]
+
+
+def _fold(text: str) -> List[str]:
+    """Words with case and punctuation folded away, so 'Data-ingestion,' and
+    'data ingestion' compare equal and a shingle survives a repunctuation."""
+    return _FOLD_RE.sub(" ", (text or "").lower()).split()
+
+
+def _shingles(words: List[str], n: int) -> Set[Tuple[str, ...]]:
+    return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+def bullet_echo(body: str, bullets: BulletSource, *, shingle: int = ECHO_SHINGLE) -> List[str]:
+    """["bullet echo"] when any run of `shingle` folded words appears in both the
+    body and one of the bullets, else []. `bullets` is the gkey->text dict the
+    letter code carries, or any iterable of bullet strings."""
+    body_shingles = _shingles(_fold(body), shingle)
+    if not body_shingles:
+        return []
+    texts = bullets.values() if isinstance(bullets, dict) else bullets
+    for text in texts:
+        if body_shingles & _shingles(_fold(str(text or "")), shingle):
+            return ["bullet echo"]
+    return []
+
+
+def _word_counts(pieces: Iterable[str]) -> List[int]:
+    return [n for n in (len(p.split()) for p in pieces) if n > 0]
+
+
+def uniform_rhythm(body: str) -> List[str]:
+    """["uniform rhythm"] when the letter's sentences or paragraphs all run the
+    same length, else [].
+
+    Measured only on a letter of RHYTHM_MIN_SENTENCES or more sentences (split
+    on . ! ? followed by whitespace). Fires when the sentence-length coefficient
+    of variation is under RHYTHM_MIN_CV, or when there are two or more
+    paragraphs (blank-line separated) and every one of them is within
+    RHYTHM_PARAGRAPH_BAND of the mean paragraph length."""
+    text = (body or "").strip()
+    if not text:
+        return []
+    sentences = _word_counts(_SENTENCE_SPLIT_RE.split(text))
+    if len(sentences) < RHYTHM_MIN_SENTENCES:
+        return []
+    avg = mean(sentences)
+    if avg > 0 and pstdev(sentences) / avg < RHYTHM_MIN_CV:
+        return ["uniform rhythm"]
+    paragraphs = _word_counts(_PARAGRAPH_SPLIT_RE.split(text))
+    if len(paragraphs) >= 2:
+        pavg = mean(paragraphs)
+        if all(abs(n - pavg) <= RHYTHM_PARAGRAPH_BAND * pavg for n in paragraphs):
+            return ["uniform rhythm"]
+    return []
 
 
 # ══ the résumé arm ════════════════════════════════════════════════════════════

@@ -1,8 +1,10 @@
 """Post-batch cover-letter tweaks:
 
-  * refine_body — a second, flash-tier polish pass (cohesion + strict grounding
-    + measured tone). Best-effort: an empty result or a raising call leaves the
-    draft untouched. No real LLM runs — compose.call is stubbed.
+  * refine_body: the second, flash-tier pass (since cycle 15 the humanizer:
+    cohesion + rhythm + bullet-echo removal + strict grounding + measured tone;
+    its rules are pinned in tests/test_coverletter_narrative.py). Best-effort:
+    an empty result or a raising call leaves the draft untouched. No real LLM
+    runs; compose.call is stubbed.
   * cover_letter_text — the clean, copy-pasteable plain-text export (same header
     and left-aligned closing as the PDF, no LaTeX, no LinkedIn/GitHub).
   * generate_body pipeline order — generation -> refine -> deterministic gate,

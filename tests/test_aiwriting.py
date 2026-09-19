@@ -1,15 +1,17 @@
-"""The opt-in avoid-AI-writing pass on the cover-letter body (default OFF).
+"""The avoid-AI-writing pass on the cover-letter body.
 
 `resume_tailor.aiwriting` vendors a bounded extract of the avoid-ai-writing
 skill (v3.18.0, MIT, Conor Bronsdon): a prompt block for the judgment calls and
 a small deterministic ban list for the patterns that are ALWAYS slop. It extends
-the existing two-arm gate rather than replacing it, so the hard requirement is
-that with the toggle OFF nothing changes at all -- the letter prompts stay
-byte-identical to what shipped before the toggle existed.
+the existing two-arm gate. Since cycle 15 the prompt block rides in every letter
+prompt whatever the toggle says, and the toggle decides one thing only: whether
+the deterministic ban list joins the gate (and so whether a hit buys the repair
+call). The two structural checks (bullet echo, uniform rhythm) are pinned in
+tests/test_coverletter_narrative.py and run whatever the toggle says.
 
 No real LLM ever runs: compose.call (the transport coverletter uses) is
-monkeypatched, and the toggle is driven through the real config accessor rather
-than a stub so the env > config.json > False precedence is exercised for real.
+monkeypatched, and the toggle is driven through the real config accessor, never
+a stub, so the env > config.json > default precedence is exercised for real.
 """
 import sys
 from pathlib import Path
@@ -24,46 +26,59 @@ from resume_tailor import aiwriting, compose, config, coverletter  # noqa: E402
 BULLETS = {"a1": "Shipped the viewer with 178 tests",
            "a2": "Cut per-run cost by 65%"}
 
-# The letter-owned half of TODAY's system prompts, captured verbatim from the
-# code that shipped before this toggle existed. The shared tail is referenced
-# (not copied) so an intentional edit to compose.BANNED_PHRASING -- which the
-# résumé arm shares -- doesn't fail here with a misleading message.
+# The letter-owned half of TODAY's system prompts, captured verbatim. The shared
+# tail is referenced (never copied) so an intentional edit to
+# compose.BANNED_PHRASING -- which the résumé arm shares -- doesn't fail here
+# with a misleading message.
 #
-# What these two pins protect is the DELTA (the rules block is appended and
-# nothing else moves), not the wording of the head itself. A deliberate reword of
-# the cover-letter prompt re-pins the head here; a head that drifts without anyone
-# meaning to is the failure this catches. Cycle 10 re-pinned two em dashes out
-# (see tests/test_prompt_hygiene.py for why a prompt may not use them).
+# What these two pins protect is the SHAPE (head, then the shared ban list, then
+# the rules block, and nothing else moves), and the head's wording as a tripwire
+# for drift. A deliberate reword of the cover-letter prompt re-pins the head
+# here; a head that drifts without anyone meaning to is the failure this catches.
+# Cycle 10 re-pinned two em dashes out (see tests/test_prompt_hygiene.py for why
+# a prompt may not use them); cycle 15 re-pinned both heads for the narrative
+# brief and the humanizer pass.
 _TODAYS_GENERATE_HEAD = (
-    'Write a concise, genuine cover-letter body (3 short paragraphs) for an '
-    'early-career candidate. Use ONLY facts present in the provided resume bullets and '
-    "basics; never invent experience, numbers, or interest you can't support. No "
-    'salutation and no sign-off (the template adds them). Plain text, paragraphs '
-    'separated by a blank line. Warm but professional; write like a person, in plain '
-    'declarative sentences, no clichés. Show genuine but MEASURED interest: never gush '
-    'or over-sell: no exclamation-point excitement, no '
-    "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
-    'over-eager tone reads as AI-written. Use a confident, professional tone. Use the '
-    'correct tense for education, based on the EDUCATION line: if the candidate has '
-    "already graduated, NEVER say they are 'completing' or 'finishing' their studies; "
-    "refer to the degree as completed. Do NOT open with boilerplate ('I am writing to "
-    "express my interest...', 'I am writing to apply for...'): the FIRST sentence must "
-    'lead with something specific about the candidate or the company. Never use the '
-    'same metric or number twice in the letter.\nBANNED PHRASING (using any of these is '
-    'wrong): '
+    'Write the body of a cover letter for an early-career candidate as narrative prose '
+    'with ONE through-line. Open on the one thing about this role that connects to '
+    'something the candidate has done: the FIRST sentence must lead with that specific '
+    "link. Do NOT open with boilerplate ('I am writing to express my interest...', 'I am "
+    "writing to apply for...'). Then tell one or two of the candidate's experiences as "
+    'prose: the problem they faced, what they did about it, and what came of it. Close '
+    'on what they want to do next at this company. Three or four paragraphs of visibly '
+    'different lengths, one of them clearly shorter than the rest; sentences of mixed '
+    'length, some under eight words and some over twenty. The resume travels with this '
+    'letter, so never copy a bullet and never restate one with a subject bolted on; '
+    'retell the work as a story and let the resume hold the list. Creativity you may '
+    "use: framing, ordering, connective reasoning, stated interest, and the candidate's "
+    'own seed sentences. Facts you may use: ONLY what the resume bullets, the BACKGROUND '
+    'notes and the basics hold. Never introduce a new employer, number, tool, date, '
+    'school or credential, and never claim interest you cannot support from them. Never '
+    'use the same metric or number twice in the letter. No salutation and no sign-off '
+    '(the template adds them). Plain text, paragraphs separated by a blank line. Write '
+    'like a person, in plain declarative sentences, no clichés. Show MEASURED interest: '
+    "no exclamation-point excitement, no 'thrilled/ecstatic/passionate/love' inflation, "
+    'no empty superlatives; that over-eager tone reads as AI-written. Use a confident, '
+    'professional tone. Use the correct tense for education, based on the EDUCATION '
+    "line: if the candidate has already graduated, NEVER say they are 'completing' or "
+    "'finishing' their studies; refer to the degree as completed.\nBANNED PHRASING "
+    '(using any of these is wrong): '
 )
 
 _TODAYS_REFINE_HEAD = (
-    'You are an editor doing a final polish pass on a cover-letter body. Improve '
-    'cohesion and flow so the sentences build ONE connected argument. '
-    'Stay grounded: use ONLY facts already in the draft, the resume bullets and '
-    "the background notes below; never add a company, number, skill, or claim that isn't "
-    'supported, and cut anything the draft invented. Keep the meaning and roughly the same length; '
-    'no salutation and no sign-off. Show genuine but MEASURED interest: do NOT be '
-    'over-the-top or gushing. No exclamation-point enthusiasm, no '
-    "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
-    'over-eager tone reads as AI-written. Use a confident, professional tone.\nBANNED '
-    'PHRASING (do not introduce any of these): '
+    'You are an editor giving a cover-letter draft its final pass. Make it read as ONE '
+    'connected argument written by a person. Rhythm: mix sentence length, some under '
+    'eight words and some over twenty, and leave one paragraph clearly shorter than the '
+    'rest. Any sentence that reads as a resume bullet with a subject bolted on '
+    "('I built X that did Y') is retold as narrative: the problem, what the candidate "
+    'did, what came of it. Pull the tone to MEASURED interest: no gushing, no '
+    "exclamation-point enthusiasm, no 'thrilled/ecstatic/passionate/love' inflation, no "
+    'empty superlatives; that over-eager tone reads as AI-written. Stay grounded: use '
+    'ONLY facts already in the draft, the resume bullets and the background notes '
+    'below; never add a company, number, skill, or claim they do not hold, and cut '
+    'anything the draft invented. Keep the meaning and roughly the same length; no '
+    'salutation and no sign-off. Use a confident, professional tone.\nBANNED PHRASING '
+    '(do not introduce any of these): '
 )
 
 
@@ -252,7 +267,7 @@ def test_the_attribution_survives_the_help_trim():
     assert "USER_GUIDE.md" in field.help
 
 
-# ── prompt wiring: additive when ON, byte-identical when OFF ──────────────────
+# ── prompt wiring: head + shared bans + rules, whatever the toggle says ───────
 def _capture_generate_system(monkeypatch):
     _fake_master(monkeypatch)
     seen = {}
@@ -266,14 +281,9 @@ def _capture_generate_system(monkeypatch):
     return seen["system"]
 
 
-def test_generate_prompt_is_byte_identical_when_off(monkeypatch, toggle):
-    toggle(False)
-    assert _capture_generate_system(monkeypatch) == (
-        _TODAYS_GENERATE_HEAD + compose.BANNED_PHRASING)
-
-
-def test_generate_prompt_appends_rules_when_on(monkeypatch, toggle):
-    toggle(True)
+@pytest.mark.parametrize("on", [True, False])
+def test_generate_prompt_is_head_bans_rules_whatever_the_toggle(monkeypatch, toggle, on):
+    toggle(on)
     assert _capture_generate_system(monkeypatch) == (
         _TODAYS_GENERATE_HEAD + compose.BANNED_PHRASING + "\n" + aiwriting.RULES_PROMPT)
 
@@ -290,14 +300,9 @@ def _capture_refine_system(monkeypatch):
     return seen["system"]
 
 
-def test_refine_prompt_is_byte_identical_when_off(monkeypatch, toggle):
-    toggle(False)
-    assert _capture_refine_system(monkeypatch) == (
-        _TODAYS_REFINE_HEAD + compose.BANNED_PHRASING)
-
-
-def test_refine_prompt_appends_rules_when_on(monkeypatch, toggle):
-    toggle(True)
+@pytest.mark.parametrize("on", [True, False])
+def test_refine_prompt_is_head_bans_rules_whatever_the_toggle(monkeypatch, toggle, on):
+    toggle(on)
     assert _capture_refine_system(monkeypatch) == (
         _TODAYS_REFINE_HEAD + compose.BANNED_PHRASING + "\n" + aiwriting.RULES_PROMPT)
 

@@ -34,8 +34,6 @@ def test_job_description_md_is_passed_through_unchanged_not_flattened():
 
 
 def test_blank_md_falls_through_to_the_old_precedence():
-    # job_description_md wins on ANY non-empty value (no 40-char floor) -- only
-    # a genuinely blank one falls through.
     job = {
         "job_description_md": "   ",       # whitespace only -> "" via _field
         "job_description_formatted": "<p>The real posting, spelled out at "
@@ -45,13 +43,20 @@ def test_blank_md_falls_through_to_the_old_precedence():
     assert text.startswith("The real posting")
 
 
-def test_a_short_md_value_still_wins_over_a_longer_summary():
+def test_md_stub_falls_through_to_a_longer_summary():
+    # job_description_md clears the same 40-char floor as the other three
+    # columns -- a short md stub falls through exactly like a short
+    # job_description_formatted always has.
     job = {
-        "job_description_md": "## Requirements\n\n- a\n- b",
-        "job_summary": "A summary that easily clears the forty character bar "
-        "on its own, but the short markdown value must still win.",
+        "job_description_md": "## Requirements\n\n- go",     # well under 40 chars
+        "job_summary": "A LinkedIn summary that is long enough to clear the "
+        "forty-character bar on its own and describes the role, the team, "
+        "the tech stack, and the day-to-day work in enough detail to read "
+        "as a real, usable job description rather than a one-line teaser.",
     }
-    assert _job_description_text(job) == "## Requirements\n\n- a\n- b"
+    text = _job_description_text(job)
+    assert text.startswith("A LinkedIn summary")
+    assert "Requirements" not in text
 
 
 def test_without_a_md_column_keeps_the_old_precedence():

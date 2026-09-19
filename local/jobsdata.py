@@ -1212,18 +1212,15 @@ def job_detail_fields(row, snapshot: dict | None = None) -> dict:
         return {}
 
     posted = cell("job_posted_date").strip()
-    # Richest JD text first, summary last — same precedence as
-    # resume_tailor.run._job_description_text. job_description_md
-    # (score_jobs.py's markdownify output) goes through md_to_text rather than
-    # html_to_text: it is markdown, not HTML, and html_to_text's tag-stripping
-    # would eat any literal "<"/">" in its prose. It wins on ANY non-empty
-    # result, no 40-char floor: unlike job_summary (a LinkedIn field that is
-    # routinely a short teaser even when the real posting is long), a
-    # non-empty job_description_md IS the real posting, markdownified, so
-    # there is no "is this a stub" question left to gate on.
+    # Richest JD text first, summary last — same precedence (and same 40-char
+    # bar) as resume_tailor.run._job_description_text: LinkedIn's job_summary is
+    # frequently a truncated stub, so preferring it hides most of the posting.
+    # job_description_md (score_jobs.py's markdownify output) goes through
+    # md_to_text rather than html_to_text: it is markdown, not HTML, and
+    # html_to_text's tag-stripping would eat any literal "<"/">" in its prose.
     jd = ""
     md = md_to_text(cell("job_description_md"))
-    if md:
+    if len(md) >= 40:
         jd = md
     else:
         for col in ("job_description_formatted", "job_description", "job_summary"):

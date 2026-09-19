@@ -145,9 +145,6 @@ def test_job_detail_fields_prefers_job_description_md_over_everything():
 
 
 def test_job_detail_fields_blank_md_falls_through_to_formatted_html():
-    # job_description_md wins on ANY non-empty result (no 40-char floor: a
-    # non-empty value IS the real posting, not a truncatable teaser) -- only a
-    # column that comes back blank after md_to_text falls through.
     f = jobsdata.job_detail_fields(_row(
         job_description_md="   \n\n   ",       # whitespace only -> "" after strip
         job_description_formatted="<p>The real posting, spelled out at "
@@ -155,13 +152,18 @@ def test_job_detail_fields_blank_md_falls_through_to_formatted_html():
     assert f["jd"].startswith("The real posting")
 
 
-def test_job_detail_fields_short_but_real_md_still_wins_over_a_longer_summary():
-    # The checkpoint case: a short, clearly-structured job_description_md
-    # beats a long job_summary -- there is no length floor to clear.
-    f = jobsdata.job_detail_fields(_row(job_description_md="## Requirements\n\n- a\n- b"))
-    assert f["jd"].startswith("Requirements")
-    assert "• a" in f["jd"]
-    assert "A summary" not in f["jd"]
+def test_job_detail_fields_md_stub_falls_through_to_a_longer_summary():
+    # job_description_md clears the same 40-character floor as the other
+    # three columns -- a short md stub falls through exactly like a short
+    # job_description_formatted always has.
+    f = jobsdata.job_detail_fields(_row(
+        job_description_md="## Requirements\n\n- go",      # well under 40 chars
+        job_summary="A LinkedIn summary that is long enough to clear the "
+        "forty-character bar on its own and describes the role, the team, "
+        "the tech stack, and the day-to-day work in enough detail to read "
+        "as a real, usable job description rather than a one-line teaser."))
+    assert f["jd"].startswith("A LinkedIn summary")
+    assert "Requirements" not in f["jd"]
 
 
 def test_job_detail_fields_without_md_column_keeps_the_old_precedence():

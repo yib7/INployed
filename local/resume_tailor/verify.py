@@ -62,16 +62,20 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
 
 from . import assets, compose
+from .common import split_sentences
 
 # Digit-bearing figures: 40,000 / 37% / 3.5 / v1.4.0 — commas normalized away.
 _NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)*")
 _WORD_RE = re.compile(r"[A-Za-z][\w+#]*")
-# Real sentence boundaries only. `:` and `;` were in this class and were a live
-# bypass: the tracer skips each segment's first word because that slot holds the
-# GENERATED ACTION VERB, but a clause after a semicolon or colon is ordinary
-# mid-sentence text, so "Built an ETL pipeline; MIT coursework informed it" put
-# the fabricated credential straight into an unchecked slot.
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+# Sentence boundaries come from common.split_sentences, shared with the letter's
+# rhythm detector. Real boundaries only: `:` and `;` were once in this class and
+# were a live bypass, because the tracer skips each segment's first word (that
+# slot holds the GENERATED ACTION VERB) while a clause after a semicolon or
+# colon is ordinary mid-sentence text, so "Built an ETL pipeline; MIT coursework
+# informed it" put the fabricated credential straight into an unchecked slot.
+# The shared splitter also keeps "U.S." and "B.S." attached to their sentence,
+# so an abbreviation no longer manufactures a segment with a free first slot;
+# _sentence_case below stays as the second line for that same case.
 
 # A small digits<->words bridge so "3 models" traces to an atom that wrote "three".
 _DIGIT_WORDS = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
@@ -216,11 +220,13 @@ def _sentence_case(tok: str) -> bool:
 
     The free pass the tracer gives a segment's first word is there for the
     GENERATED ACTION VERB, and sentence case is the only shape that slot can
-    legitimately produce. It is not free for ALLCAPS or InnerCaps, because the
-    sentence splitter manufactures segments from abbreviations: "Built ingestion
-    for the U.S. MIT lab" splits after "U.S." and hands index 0 of the next
-    segment to MIT, which then ships untraced. Same bypass class the module
-    docstring records as fixed for `:` and `;`.
+    legitimately produce. It is not free for ALLCAPS or InnerCaps, because a
+    splitter that broke on every `.` manufactured segments from abbreviations:
+    "Built ingestion for the U.S. MIT lab" split after "U.S." and handed index 0
+    of the next segment to MIT, which then shipped untraced. Same bypass class
+    the module docstring records as fixed for `:` and `;`. common.split_sentences
+    now keeps the initialism attached; this check stays as the second line, for
+    the abbreviation shapes the splitter's list does not name.
     """
     return tok[:1].isupper() and tok[1:].islower()
 
@@ -241,7 +247,7 @@ def unseen_tokens(text: str, source: str,
     for num in _NUM_RE.findall(text or ""):
         if not _num_grounded(num, norm_src) and num not in bad:
             bad.append(num)
-    for sentence in _SENTENCE_SPLIT.split(text or ""):
+    for sentence in split_sentences(text or ""):
         words = _WORD_RE.findall(sentence)
         for i, tok in enumerate(words):
             if i == 0 and _sentence_case(tok):

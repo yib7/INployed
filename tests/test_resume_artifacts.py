@@ -83,6 +83,13 @@ def offline_tailor(monkeypatch, tmp_path):
     bullets = {"a": "did a thing with measurable impact and clear results"}
 
     monkeypatch.setattr(run_mod, "pdflatex_available", lambda: True)
+    # The cover-letter branch reads the master for its background and seed
+    # (run._letter_inputs); a synthetic one keeps this fixture off the real file.
+    monkeypatch.setattr(run_mod.assets, "load_master", lambda: {
+        "basics": {"name": "Test Person", "email": "t@example.com"},
+        "experience": [{"org": "BigCo", "title": "Intern", "dates": "2024",
+                        "achievements": [{"id": "a", "what": "did a thing"}]}],
+    })
     monkeypatch.setattr(run_mod.compose, "select", lambda *a, **k: sel)
     monkeypatch.setattr(run_mod.compose, "inject_verbatim", lambda *a, **k: {})
     monkeypatch.setattr(run_mod.compose, "block_briefs", lambda *a, **k: {})

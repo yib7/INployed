@@ -69,6 +69,14 @@ def offline_cover(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod, "pdflatex_available", lambda: True)
     monkeypatch.setattr(run_mod.llm, "reset_usage", lambda: None)
     monkeypatch.setattr(run_mod.llm, "usage_summary", lambda: "0 tokens")
+    # The letter's background and seed come off the master (run._letter_inputs);
+    # a synthetic one keeps this fixture off the developer's real file.
+    monkeypatch.setattr(run_mod.assets, "load_master", lambda: {
+        "basics": {"name": "Test Person", "email": "t@example.com"},
+        "letter": {"seed": "A synthetic seed."},
+        "experience": [{"org": "BigCo", "title": "Intern", "dates": "2024",
+                        "achievements": [{"id": "x1", "what": "built the pipeline"}]}],
+    })
 
     def fake_blurb(company, job_title):
         rec["research"] += 1
@@ -175,9 +183,11 @@ def test_tone_and_research_are_passed_through(offline_cover):
     run_mod.generate_cover_letter(_JOB, out_dir, tone="enthusiastic")
     assert rec["tone"] == "enthusiastic"
     assert rec["research_text"] == "a company blurb"
-    # cycle 15: the background block and the voice seed ride along as strings
-    # (their content is pinned in tests/test_coverletter_narrative.py)
-    assert isinstance(rec["background"], str) and isinstance(rec["seed"], str)
+    # cycle 15: the background block and the voice seed ride along, built from
+    # the fixture's synthetic master (the shape is pinned in
+    # tests/test_coverletter_inputs.py)
+    assert "built the pipeline" in rec["background"]
+    assert rec["seed"] == "A synthetic seed."
 
 
 def test_research_failure_is_nonfatal(offline_cover, monkeypatch):

@@ -7,6 +7,7 @@ need has to live below all three -- here -- or the import graph is circular.
 """
 from __future__ import annotations
 
+import re
 from typing import List
 
 # Deliberately free of em dashes AND of contrast framing ("X, not Y"): both ride
@@ -45,3 +46,48 @@ def fence_jd(jd: str, limit: int, purpose: str = "angle/emphasis") -> str:
 
 def _gkey(ids: List[str]) -> str:
     return "+".join(ids)
+
+
+# ── sentence splitting ───────────────────────────────────────────────────────
+# One splitter for both arms that read text sentence by sentence: the grounding
+# tracer (verify.unseen_tokens, which gives each sentence's first word a free
+# pass as the generated action verb) and the letter's rhythm detector
+# (aiwriting.uniform_rhythm, which counts words per sentence). Both used their
+# own regex, and both broke a sentence on any `.` plus whitespace, so "a B.S. in
+# CS" or "the U.S. office" counted as two sentences: the tracer then handed the
+# word after the abbreviation an unchecked slot, and the detector measured a
+# sentence that was never there. A boundary is `.`, `!` or `?` followed by
+# whitespace, or a newline, and it is skipped when the token before it is a
+# dotted initialism (B.S., U.S., Ph.D., e.g.) or one of a few common
+# abbreviations. `:` and `;` never split (see verify's module docstring for the
+# bypass that closed).
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+_ABBREVIATION_RE = re.compile(
+    r"^(?:[A-Za-z]{1,2}\.){2,}$"                                   # B.S. U.S. Ph.D. e.g.
+    r"|^(?:vs|etc|Inc|Ltd|Co|No|Dr|Mr|Mrs|Ms|Jr|Sr|St)\.$", re.I)  # vs. Inc. Dr.
+
+
+def split_sentences(text: str) -> List[str]:
+    """`text` as sentences, each keeping its own end punctuation.
+
+    A newline always ends a sentence. Punctuation followed by whitespace ends
+    one unless the word it closes is an abbreviation, so "a B.S. in CS. Next."
+    is two sentences and "the U.S. MIT lab" stays one. Empty segments are kept
+    out; a blank or None `text` gives []."""
+    text = text or ""
+    out: List[str] = []
+    start = 0
+    for m in _SENTENCE_BOUNDARY_RE.finditer(text):
+        if "\n" not in m.group(0):
+            before = text[start:m.start()]
+            tail = before.rsplit(None, 1)[-1] if before.strip() else ""
+            if _ABBREVIATION_RE.match(tail):
+                continue
+        segment = text[start:m.start()]
+        if segment.strip():
+            out.append(segment)
+        start = m.end()
+    last = text[start:]
+    if last.strip():
+        out.append(last)
+    return out

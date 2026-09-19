@@ -51,11 +51,13 @@ _TODAYS_GENERATE_HEAD = (
     'letter, so never copy a bullet and never restate one with a subject bolted on; '
     'retell the work as a story and let the resume hold the list. Creativity you may '
     "use: framing, ordering, connective reasoning, stated interest, and the candidate's "
-    'own seed sentences. Facts you may use: ONLY what the resume bullets, the BACKGROUND '
-    'notes and the basics hold. Never introduce a new employer, number, tool, date, '
-    'school or credential, and never claim interest you cannot support from them. Never '
-    'use the same metric or number twice in the letter. No salutation and no sign-off '
-    '(the template adds them). Plain text, paragraphs separated by a blank line. Write '
+    'own words when that block is present (use their ideas and their voice, quote them '
+    'in fragments, never whole). Facts you may use: ONLY what the resume bullets, the '
+    'basics and, when a BACKGROUND block is present, those notes hold. Never introduce '
+    'a new employer, number, tool, date, school or credential, and never claim interest '
+    'you cannot support from them. Never use the same metric or number twice in the '
+    'letter. No salutation and no sign-off (the template adds them). Plain text, '
+    'paragraphs separated by a blank line. Write '
     'like a person, in plain declarative sentences, no clichés. Show MEASURED interest: '
     "no exclamation-point excitement, no 'thrilled/ecstatic/passionate/love' inflation, "
     'no empty superlatives; that over-eager tone reads as AI-written. Use a confident, '
@@ -74,7 +76,7 @@ _TODAYS_REFINE_HEAD = (
     'did, what came of it. Pull the tone to MEASURED interest: no gushing, no '
     "exclamation-point enthusiasm, no 'thrilled/ecstatic/passionate/love' inflation, no "
     'empty superlatives; that over-eager tone reads as AI-written. Stay grounded: use '
-    'ONLY facts already in the draft, the resume bullets and the background notes '
+    'ONLY facts already in the draft, the resume bullets and any BACKGROUND notes '
     'below; never add a company, number, skill, or claim they do not hold, and cut '
     'anything the draft invented. Keep the meaning and roughly the same length; no '
     'salutation and no sign-off. Use a confident, professional tone.\nBANNED PHRASING '

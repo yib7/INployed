@@ -51,7 +51,7 @@ letter:
   seed: >-
     I want to build the systems a team runs on every day, the pipelines and
     tools that quietly decide whether the rest of the work is possible. I got
-    into this field because a slow nightly job once cost my team a week, and
+    into this field because a slow nightly job once held up my whole team, and
     fixing it taught me more than any course. I do my best work when I own a
     problem end to end, measuring it first and then showing what moved.
 

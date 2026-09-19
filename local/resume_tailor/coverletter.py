@@ -147,7 +147,7 @@ def _strip_trailing_signoff(body: str) -> str:
 # (grounded, narrative, no sign-off) never change; only the voice does.
 _TONE_DIRECTIVES: Dict[str, str] = {
     "professional": "Use a confident, professional tone.",
-    "concise": "Keep it tight and concise: short sentences, no filler.",
+    "concise": "Keep it tight: no filler, no repeated point.",
     "enthusiastic": "Let genuine enthusiasm and energy come through, while staying grounded.",
     "impactful": "Lead with impact and outcomes; make every sentence earn its place.",
 }
@@ -199,6 +199,16 @@ def _background_block(background: str, purpose: str) -> str:
     return f"\n\nBACKGROUND ({purpose}):\n{background}"
 
 
+def _sources_block(bullets: Dict[str, str], background: str, note: str = "") -> str:
+    """The fact sources of a refine or repair user prompt: the RESUME BULLETS
+    section (with `note` added to its label when given) and, when there are
+    notes, the BACKGROUND section after it. One helper so the three prompts
+    that name the same two sources cannot drift apart."""
+    label = "RESUME BULLETS (an allowed source of facts" + (f"; {note}" if note else "") + "):"
+    return label + "\n" + _bullets_block(bullets) + _background_block(
+        background, "the candidate's own notes; the other allowed source of facts")
+
+
 _STRUCTURAL_NOTES = {
     "bullet echo": (
         "'bullet echo' means a sentence repeats seven or more words in a row from "
@@ -243,11 +253,13 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
         "never copy a bullet and never restate one with a subject bolted on; retell "
         "the work as a story and let the resume hold the list. Creativity you may "
         "use: framing, ordering, connective reasoning, stated interest, and the "
-        "candidate's own seed sentences. Facts you may use: ONLY what the resume "
-        "bullets, the BACKGROUND notes and the basics hold. Never introduce a new "
-        "employer, number, tool, date, school or credential, and never claim interest "
-        "you cannot support from them. Never use the same metric or number twice in "
-        "the letter. No salutation and no sign-off (the template adds them). Plain "
+        "candidate's own words when that block is present (use their ideas and their "
+        "voice, quote them in fragments, never whole). Facts you may use: ONLY what "
+        "the resume bullets, the basics and, when a BACKGROUND block is present, "
+        "those notes hold. Never introduce a new employer, number, tool, date, school "
+        "or credential, and never claim interest you cannot support from them. Never "
+        "use the same metric or number twice in the letter. No salutation and no "
+        "sign-off (the template adds them). Plain "
         "text, paragraphs separated by a blank line. Write like a person, in plain "
         "declarative sentences, no clichés. Show MEASURED interest: no "
         "exclamation-point excitement, no 'thrilled/ecstatic/passionate/love' "
@@ -266,7 +278,7 @@ def generate_body(jd: str, job_title: str, company: str, bullets: Dict[str, str]
     seed = (seed or "").strip()
     seed_block = (
         f"\n\nIN THE CANDIDATE'S OWN WORDS (what they want from their next role; use "
-        f"its ideas and its voice, quote it only in fragments):\n{seed}"
+        f"its ideas and its voice, quote it only in fragments, never whole):\n{seed}"
         if seed else "")
     research_block = (
         f"""
@@ -333,15 +345,14 @@ def _repair_ungrounded_body(job_title: str, company: str, body: str,
         "You repair a cover-letter body that mentions facts with NO SOURCE. Rewrite "
         "it as the SAME letter (same paragraph structure, roughly the same length, "
         "no salutation and no sign-off), but REMOVE or replace every listed "
-        "unsupported item using ONLY facts from the resume bullets and the "
-        "background notes below. Never introduce any new name, number, or "
+        "unsupported item using ONLY facts from the resume bullets and any "
+        "BACKGROUND notes below. Never introduce any new name, number, or "
         "credential. " + tone_directive(tone)
     )
     system = _with_ai_writing_rules(system)
     user = f"""ROLE: {job_title} at {company}
 
-RESUME BULLETS (an allowed source of facts):
-{_bullets_block(bullets)}{_background_block(background, "the candidate's own notes; the other allowed source of facts")}
+{_sources_block(bullets, background)}
 
 UNSUPPORTED ITEMS TO REMOVE (they appear in the letter but trace to no source):
 {", ".join(str(b) for b in bad)}
@@ -385,7 +396,7 @@ def refine_body(job_title: str, company: str, body: str,
         "MEASURED interest: no gushing, no exclamation-point enthusiasm, no "
         "'thrilled/ecstatic/passionate/love' inflation, no empty superlatives; that "
         "over-eager tone reads as AI-written. Stay grounded: use ONLY facts already "
-        "in the draft, the resume bullets and the background notes below; never add "
+        "in the draft, the resume bullets and any BACKGROUND notes below; never add "
         "a company, number, skill, or claim they do not hold, and cut anything the "
         "draft invented. Keep the meaning and roughly the same length; no salutation "
         "and no sign-off. " + tone_directive(tone) + "\n"
@@ -394,8 +405,7 @@ def refine_body(job_title: str, company: str, body: str,
     system = _with_ai_writing_rules(system)
     user = f"""ROLE: {job_title} at {company}
 
-RESUME BULLETS (an allowed source of facts):
-{_bullets_block(bullets)}{_background_block(background, "the candidate's own notes; the other allowed source of facts")}
+{_sources_block(bullets, background)}
 
 COVER-LETTER DRAFT TO EDIT:
 {body}
@@ -432,7 +442,7 @@ def enforce_body_style(job_title: str, company: str, body: str,
             "You repair a cover-letter body that slipped into banned AI-tell "
             "phrasing or structure. Rewrite it as the SAME letter: same facts, "
             "roughly the same length, no salutation and no sign-off. Use ONLY facts "
-            "already in the letter, the resume bullets and the background notes "
+            "already in the letter, the resume bullets and any BACKGROUND notes "
             "below; never add a claim." + _structural_notes(violations) + " "
             + tone_directive(tone) + "\n"
             "BANNED: " + compose.BANNED_PHRASING
@@ -440,8 +450,7 @@ def enforce_body_style(job_title: str, company: str, body: str,
         system = _with_ai_writing_rules(system)
         user = f"""ROLE: {job_title} at {company}
 
-RESUME BULLETS (an allowed source of facts; never copy one into the letter):
-{_bullets_block(bullets)}{_background_block(background, "the candidate's own notes; the other allowed source of facts")}
+{_sources_block(bullets, background, note="never copy one into the letter")}
 
 LETTER BODY TO REPAIR (findings: {", ".join(violations)}):
 {body}

@@ -7,11 +7,11 @@ fact sources that widen it and the plumbing that carries them:
     reads it (trimmed, capped, blank when malformed), `master_validate` accepts
     it and warns on a bad one, the example master carries a placeholder, and it
     rides in the generation prompt only when set;
-  * the background block: `assets.flatten_entries` flattens the master entries
-    behind the selected atoms (every atom in the standalone path), bounded on a
-    line boundary, and both `run.py` call sites hand it to `generate_body`,
-    which threads it to the refine pass, the style gate and the grounding
-    repair.
+  * the background block: `assets.flatten_entries` flattens, in full, every
+    master entry that printed a bullet (every entry in the standalone path),
+    bounded on a line boundary, and both `run.py` call sites hand it to
+    `generate_body`, which threads it to the refine pass, the style gate and
+    the grounding repair.
 
 No real LLM ever runs: compose.call (the transport coverletter uses) is
 monkeypatched everywhere, and every master read is a synthetic dict.
@@ -87,6 +87,20 @@ def test_letter_seed_is_capped(monkeypatch):
     assert not seed.endswith(" ")
 
 
+def test_letter_seed_cut_never_lands_mid_word(monkeypatch):
+    # 1,190 chars, then a word that straddles the cap: it goes, whole
+    text = ("x" * 1190) + " straddling the cap " + "y" * 50
+    _fake_master(monkeypatch, {"letter": {"seed": text}})
+    assert assets.letter_seed() == "x" * 1190
+    # the word ending exactly at the cap is kept whole
+    exact = ("z" * 1195) + " abcd " + "w" * 40
+    _fake_master(monkeypatch, {"letter": {"seed": exact}})
+    assert assets.letter_seed() == ("z" * 1195) + " abcd"
+    # a seed with no whitespace at all is cut at the cap
+    _fake_master(monkeypatch, {"letter": {"seed": "q" * 1300}})
+    assert assets.letter_seed() == "q" * 1200
+
+
 # ── the background block ──────────────────────────────────────────────────────
 def test_flatten_entries_lists_headers_and_atoms_in_section_order():
     out = assets.flatten_entries(MASTER)
@@ -103,15 +117,21 @@ def test_flatten_entries_lists_headers_and_atoms_in_section_order():
     assert order == sorted(order)
 
 
-def test_flatten_entries_keeps_only_the_named_atoms():
-    out = assets.flatten_entries(MASTER, atom_ids={"a2", "l1"})
-    assert "raised test coverage" in out
+def test_flatten_entries_lists_whole_entries_that_own_a_named_atom():
+    """The filter is ENTRY-level: an entry that printed any bullet is listed in
+    full, so the letter holds every note on that employer, and an entry that
+    printed nothing drops out header and all."""
+    out = assets.flatten_entries(MASTER, entry_atoms={"a2", "l1"})
+    assert "raised test coverage" in out                  # the marked atom
+    assert "rebuilt the nightly pipeline" in out          # its sibling, same entry
     assert "grew membership" in out
-    assert "rebuilt the nightly pipeline" not in out     # a1 was not selected
-    # a project with no selected atom drops out header and all
-    assert "ExampleApp" not in out and "PROJECTS:" not in out
-    # the headers of the entries that DO carry a selected atom stay
     assert "Example Corp, Intern" in out and "Coding Club, President" in out
+    # a project owning none of the marked atoms drops out header and all
+    assert "ExampleApp" not in out and "PROJECTS:" not in out
+    assert "built a query app" not in out
+    # an empty marker set lists nothing; None lists everything
+    assert assets.flatten_entries(MASTER, entry_atoms=set()) == ""
+    assert assets.flatten_entries(MASTER, entry_atoms=None) == assets.flatten_entries(MASTER)
 
 
 def test_flatten_entries_is_bounded_with_the_truncation_marker():
@@ -218,7 +238,7 @@ def _capture_refine(monkeypatch, **kwargs):
 def test_refine_carries_the_background_as_an_allowed_source(monkeypatch):
     seen = _capture_refine(monkeypatch, background="- Example Corp\n    - notes")
     assert "BACKGROUND" in seen["user"] and "- notes" in seen["user"]
-    assert "background notes" in seen["system"]
+    assert "any BACKGROUND notes below" in seen["system"]
     assert "the draft body" in seen["user"]
     assert "Shipped the viewer with 178 tests" in seen["user"]
 
@@ -240,7 +260,7 @@ def test_gate_repair_carries_the_background(monkeypatch):
                                    "I cut latency by 30%, ensuring fast responses.",
                                    BULLETS, background="- Example Corp\n    - notes")
     assert "BACKGROUND" in seen["user"] and "- notes" in seen["user"]
-    assert "background notes" in seen["system"]
+    assert "any BACKGROUND notes below" in seen["system"]
 
 
 def test_grounding_repair_carries_the_background(monkeypatch):
@@ -256,7 +276,7 @@ def test_grounding_repair_carries_the_background(monkeypatch):
                                         background="- Example Corp\n    - notes")
     assert "BACKGROUND" in seen["user"] and "- notes" in seen["user"]
     assert "Zorblatt" in seen["user"]
-    assert "background notes" in seen["system"]
+    assert "any BACKGROUND notes below" in seen["system"]
 
 
 def test_generate_body_hands_the_background_to_refine_and_gate(monkeypatch):
@@ -365,6 +385,10 @@ def test_letter_atom_ids_follow_the_bullets_that_made_the_page():
     ids = run_mod._letter_atom_ids(sel, final, MASTER)
     assert ids == {"a1", "a2", "l1"}      # l1: the verbatim entry's own master atoms
     assert "p1" not in ids
+    # ...and those ids mark whole entries: the project that printed nothing is out
+    background = assets.flatten_entries(MASTER, entry_atoms=ids)
+    assert "Example Corp" in background and "Coding Club" in background
+    assert "ExampleApp" not in background
 
 
 def test_letter_inputs_degrade_to_blank_and_say_so(monkeypatch):
@@ -431,7 +455,10 @@ def test_tailor_path_passes_selected_background_and_seed(monkeypatch, tmp_path):
     job = {"company_name": "BigCo", "job_title": "Engineer",
            "job_description": "x" * 200, "url": "http://x"}
     run_mod.tailor(job, cover_letter=True)
-    assert rec["background"] == assets.flatten_entries(MASTER, atom_ids={"a2"})
+    assert rec["background"] == assets.flatten_entries(MASTER, entry_atoms={"a2"})
+    # the whole entry that printed: the selected atom and its sibling
     assert "raised test coverage" in rec["background"]
-    assert "rebuilt the nightly pipeline" not in rec["background"]
+    assert "rebuilt the nightly pipeline" in rec["background"]
+    # entries that printed nothing stay out
+    assert "ExampleApp" not in rec["background"] and "Coding Club" not in rec["background"]
     assert rec["seed"] == "I want work where the data pipeline is the product."

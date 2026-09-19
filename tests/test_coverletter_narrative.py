@@ -24,7 +24,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local"))
 
-from resume_tailor import aiwriting, assets, compose, config, coverletter  # noqa: E402
+from resume_tailor import aiwriting, assets, common, compose, config, coverletter  # noqa: E402
 
 
 BULLETS = {"a1": "Shipped the viewer with 178 tests",
@@ -94,15 +94,40 @@ _VARIED = ("Your posting asks for someone who has shipped a pipeline under load,
            "It failed most weeks. "
            "I rebuilt the fetcher so it batched its calls, and the same job "
            "finished in ninety minutes with the cloud bill four hundred dollars lighter. "
+           "Nothing about it was glamorous. "
            "That is the kind of problem I want next.")
 
 
 def test_uniform_rhythm_flags_six_same_length_sentences():
+    assert len(common.split_sentences(_UNIFORM)) == 6
     assert aiwriting.uniform_rhythm(_UNIFORM) == ["uniform rhythm"]
 
 
 def test_uniform_rhythm_passes_mixed_sentence_lengths():
+    # Six sentences, so the check reaches the coefficient-of-variation path
+    # and passes on the merits, never on the too-few-sentences gate.
+    counts = [len(s.split()) for s in common.split_sentences(_VARIED)]
+    assert len(counts) >= aiwriting.RHYTHM_MIN_SENTENCES
+    assert min(counts) < 8 < 20 < max(counts)
     assert aiwriting.uniform_rhythm(_VARIED) == []
+
+
+def test_sentence_splitter_keeps_abbreviations_whole():
+    """One splitter for the rhythm detector and the grounding tracer: "B.S. "
+    and "U.S. " never end a sentence, so a four-sentence body counts as four."""
+    body = ("I finished my B.S. in computer science last May. "
+            "The U.S. office ran the nightly job I rebuilt. "
+            "It took six hours. "
+            "Now it takes ninety minutes.")
+    sentences = common.split_sentences(body)
+    assert len(sentences) == 4
+    assert sentences[0].endswith("last May.") and "B.S." in sentences[0]
+    assert sentences[1].startswith("The U.S. office")
+    # the rhythm detector sees the same four (under its six-sentence gate)
+    assert aiwriting.uniform_rhythm(body) == []
+    # a newline is always a boundary, punctuation or not
+    assert common.split_sentences("One line\nanother") == ["One line", "another"]
+    assert common.split_sentences("") == []
 
 
 def test_uniform_rhythm_needs_six_sentences():

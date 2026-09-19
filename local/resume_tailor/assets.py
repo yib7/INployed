@@ -108,15 +108,25 @@ def letter_seed() -> str:
 
     Blank when the block is absent, empty, or the wrong shape (a non-mapping
     `letter:` or a non-string `seed`): the letter then runs without a seed, and
-    master_validate reports the malformed block as a warning. Capped at
-    LETTER_SEED_CAP characters on a trailing-whitespace boundary."""
+    master_validate reports the malformed block as a warning. A seed over
+    LETTER_SEED_CAP characters is cut at the last whitespace before the cap, so
+    the cut never lands mid-word (a seed with no whitespace at all is cut at
+    the cap)."""
     letter = load_master().get("letter")
     if not isinstance(letter, dict):
         return ""
     seed = letter.get("seed")
     if not isinstance(seed, str):
         return ""
-    return seed.strip()[:LETTER_SEED_CAP].rstrip()
+    seed = seed.strip()
+    if len(seed) <= LETTER_SEED_CAP:
+        return seed
+    head = seed[:LETTER_SEED_CAP]
+    if not seed[LETTER_SEED_CAP].isspace():
+        cut = max(head.rfind(ch) for ch in (" ", "\n", "\t"))
+        if cut > 0:
+            head = head[:cut]
+    return head.rstrip()
 
 
 def atom_line(atom: Dict[str, Any]) -> str:
@@ -136,15 +146,16 @@ def atom_line(atom: Dict[str, Any]) -> str:
 
 
 def entry_lines(master: Dict[str, Any], section: str, *name_keys: str,
-                atom_ids: Optional[Iterable[str]] = None) -> List[str]:
+                entry_atoms: Optional[Iterable[str]] = None) -> List[str]:
     """One section of the master as indented plain-text lines: a `- header`
     line per entry (the named keys joined, then the dates in parentheses) and a
     `    - atom` line per achievement.
 
-    With `atom_ids` given, only those atoms are listed and an entry with none of
-    them is left out altogether, header included. With it None (chat's use)
-    every atom is listed and the output is what chat._entries always produced."""
-    keep = None if atom_ids is None else set(atom_ids)
+    `entry_atoms` is an ENTRY-level filter: with it given, an entry is listed,
+    in full, when it owns at least one of those atom ids, and left out
+    altogether otherwise. With it None (chat's use) every entry is listed and
+    the output is what chat._entries always produced."""
+    marks = None if entry_atoms is None else set(entry_atoms)
     lines: List[str] = []
     entries = master.get(section) or []
     if not isinstance(entries, list):
@@ -152,44 +163,41 @@ def entry_lines(master: Dict[str, Any], section: str, *name_keys: str,
     for entry in entries:
         if not isinstance(entry, dict):
             continue
+        achievements = [a for a in (entry.get("achievements") or []) if isinstance(a, dict)]
+        if marks is not None and not any(a.get("id") in marks for a in achievements):
+            continue
         head = ", ".join(
             s for s in (str(entry.get(k) or "").strip() for k in name_keys) if s)
         dates = str(entry.get("dates") or "").strip()
         if dates:
             head = f"{head} ({dates})" if head else dates
-        atoms: List[str] = []
-        for atom in entry.get("achievements") or []:
-            if not isinstance(atom, dict):
-                continue
-            if keep is not None and atom.get("id") not in keep:
-                continue
-            text = atom_line(atom)
-            if text:
-                atoms.append(f"    - {text}")
-        if keep is not None and not atoms:
-            continue
         if head:
             lines.append(f"- {head}")
-        lines += atoms
+        for atom in achievements:
+            text = atom_line(atom)
+            if text:
+                lines.append(f"    - {text}")
     return lines
 
 
-def flatten_entries(master: Dict[str, Any], *, atom_ids: Optional[Iterable[str]] = None,
+def flatten_entries(master: Dict[str, Any], *, entry_atoms: Optional[Iterable[str]] = None,
                     cap: int = LETTER_BACKGROUND_CAP) -> str:
     """The master's experience, projects and leadership entries as one bounded
     plain-text block, in that order, each section under its own label.
 
     This is the cover letter's BACKGROUND: the notes behind the bullets. The
-    tailor run passes the ids of the atoms that made the page; the standalone
-    letter passes None and gets every atom. The result never exceeds `cap`
-    characters: when the text is longer it is cut on the last line boundary
-    that fits and TRUNCATED_MARKER is appended, so no atom line is ever sent
-    half-finished (a cut number is the one thing an excerpt must not invent)."""
+    tailor run passes the ids of the atoms that made the page and gets every
+    entry that owns one of them, in full (the letter tells an employer's story,
+    so it gets all the notes on that employer); the standalone letter passes
+    None and gets every entry. The result never exceeds `cap` characters: when
+    the text is longer it is cut on the last line boundary that fits and
+    TRUNCATED_MARKER is appended, so no atom line is ever sent half-finished (a
+    cut number is the one thing an excerpt must not invent)."""
     lines: List[str] = []
     for section, keys in (("experience", ("org", "title")),
                           ("projects", ("name",)),
                           ("leadership", ("org", "role", "title"))):
-        block = entry_lines(master, section, *keys, atom_ids=atom_ids)
+        block = entry_lines(master, section, *keys, entry_atoms=entry_atoms)
         if block:
             lines.append(f"{section.upper()}:")
             lines += block

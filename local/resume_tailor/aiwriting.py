@@ -71,6 +71,8 @@ import re
 from statistics import mean, pstdev
 from typing import Dict, Iterable, List, NamedTuple, Set, Tuple, Union
 
+from .common import split_sentences
+
 # ══ the cover-letter arm ══════════════════════════════════════════════════════
 # The prompt arm: the patterns that need judgment, written as instructions. Kept
 # to one block so callers can append it after compose.BANNED_PHRASING verbatim.
@@ -182,7 +184,7 @@ def violations(text: str) -> List[str]:
 
 # A bullet is "copied" when this many consecutive folded words appear in both.
 # Seven is long enough that a shared technical phrase ("the nightly ingestion
-# pipeline") never fires on its own and short enough that a bullet lifted with
+# pipeline") rarely fires on its own and short enough that a bullet lifted with
 # one word changed still does.
 ECHO_SHINGLE = 7
 
@@ -197,7 +199,6 @@ RHYTHM_MIN_CV = 0.30
 RHYTHM_PARAGRAPH_BAND = 0.15
 
 _FOLD_RE = re.compile(r"[\W_]+")
-_SENTENCE_SPLIT_RE = re.compile(r"[.!?]+\s+")
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
 
 BulletSource = Union[Dict[str, str], Iterable[str]]
@@ -235,15 +236,16 @@ def uniform_rhythm(body: str) -> List[str]:
     """["uniform rhythm"] when the letter's sentences or paragraphs all run the
     same length, else [].
 
-    Measured only on a letter of RHYTHM_MIN_SENTENCES or more sentences (split
-    on . ! ? followed by whitespace). Fires when the sentence-length coefficient
+    Measured only on a letter of RHYTHM_MIN_SENTENCES or more sentences
+    (common.split_sentences, the abbreviation-aware splitter the grounding
+    tracer shares, so "a B.S. in CS" is one sentence). Fires when the sentence-length coefficient
     of variation is under RHYTHM_MIN_CV, or when there are two or more
     paragraphs (blank-line separated) and every one of them is within
     RHYTHM_PARAGRAPH_BAND of the mean paragraph length."""
     text = (body or "").strip()
     if not text:
         return []
-    sentences = _word_counts(_SENTENCE_SPLIT_RE.split(text))
+    sentences = _word_counts(split_sentences(text))
     if len(sentences) < RHYTHM_MIN_SENTENCES:
         return []
     avg = mean(sentences)

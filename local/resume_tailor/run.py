@@ -175,15 +175,15 @@ _LETTER_SECTIONS = (("experience", "org"), ("projects", "name"), ("leadership", 
 
 def _letter_atom_ids(sel: Dict[str, Any], bullets: Dict[str, str],
                      master: Dict[str, Any]) -> set:
-    """The master atom ids behind the bullets that made the page, for the cover
-    letter's BACKGROUND block.
+    """The master atom ids behind the bullets that made the page. They MARK the
+    entries the cover letter's BACKGROUND block lists: assets.flatten_entries
+    lists every entry that owns one of them, in full, so the letter holds all
+    the candidate's notes on each employer or project that printed.
 
     A tailored bullet's group key is its atom ids joined with '+', so the ids are
     read straight off `bullets` (the post-enforcement dict, which is the set that
     printed). A verbatim block carries the user's exact text under synthetic keys
-    and no atom ids at all, so its master entry's own atoms stand in: those are
-    the candidate's notes on that employer, and the letter should still be able
-    to tell that story."""
+    and no atom ids at all, so its master entry's own atoms mark it instead."""
     ids = {aid for gk in bullets if not compose.is_verbatim_gkey(gk)
            for aid in gk.split("+") if aid}
     verbatim_names = {
@@ -203,12 +203,13 @@ def _letter_inputs(sel: Optional[Dict[str, Any]], bullets: Dict[str, str],
     """(background, seed) for coverletter.generate_body.
 
     `sel` None means the standalone letter (no selection to filter by), which
-    gets every atom. Advisory: a master the flattening cannot read leaves the
-    letter to run from the bullets alone, as it did before cycle 15, and says so."""
+    gets every entry; the tailor run gets the entries that printed, each in
+    full. Advisory: a master the flattening cannot read leaves the letter to run
+    from the bullets alone, as it did before cycle 15, and says so."""
     try:
         master = assets.load_master()
         ids = None if sel is None else _letter_atom_ids(sel, bullets, master)
-        return assets.flatten_entries(master, atom_ids=ids), assets.letter_seed()
+        return assets.flatten_entries(master, entry_atoms=ids), assets.letter_seed()
     except Exception as exc:  # noqa: BLE001 - the background is an enrichment, never fatal
         log(f"cover letter background unavailable ({exc})")
         if warn is not None:
@@ -1079,9 +1080,9 @@ def tailor(
                 except Exception as exc:  # noqa: BLE001 - research is optional
                     log(f"company research unavailable ({exc})")
                     report.advisory(f"company research unavailable ({exc})")
-                # The notes behind the bullets that printed, plus the seed: the
-                # letter tells those bullets as a story, so it needs the material
-                # the bullets compressed away.
+                # The full notes on every entry that printed a bullet, plus the
+                # seed: the letter tells those entries as a story, so it needs the
+                # material the bullets compressed away.
                 background, seed = _letter_inputs(sel, final_bullets, log,
                                                   warn=report.advisory)
                 body = coverletter.generate_body(jd, job_title, company, final_bullets,

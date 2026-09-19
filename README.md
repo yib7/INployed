@@ -336,7 +336,7 @@ flowchart LR
 ```
 
 Three model tiers back those stages: fast, standard and deep. Out of the box only the
-fast tier drops to a cheaper model (`gemini-3.1-flash-lite`), and it carries the small
+fast tier drops to a cheaper model (`gemini-3.5-flash-lite`), and it carries the small
 calls: entry briefs, the overview lead, verb swaps. Standard and deep both sit on
 `gemini-3.5-flash`. Standard does selection, the bullet passes and the sweep; deep
 writes the first draft and the cover letter. You raise the deep tier yourself when you

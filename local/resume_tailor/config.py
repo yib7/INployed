@@ -61,7 +61,7 @@ MODEL_FLASH = os.getenv("RESUME_TAILOR_MODEL_FLASH", "gemini-3.5-flash")
 # PRO tier maps to 3.5-flash by default; set this to gemini-3.1-pro-preview for
 # max-quality (slower) rephrase + cover-letter passes.
 MODEL_PRO = os.getenv("RESUME_TAILOR_MODEL_PRO", "gemini-3.5-flash")
-MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-3.1-flash-lite")
+MODEL_FLASH_LITE = os.getenv("RESUME_TAILOR_MODEL_FLASH_LITE", "gemini-3.5-flash-lite")
 
 # ── pdflatex ─────────────────────────────────────────────────────────────────
 PDFLATEX_PATH = os.getenv("PDFLATEX_PATH", "pdflatex")

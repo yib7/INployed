@@ -1,7 +1,7 @@
 """Score jobs from the latest scraper run against the resume.
 
 Runs on the VM after scraper.py via run_scraper.sh.
-Stage 1: STAGE1_MODEL (default gemini-3.1-flash-lite) scores every surviving job 1-5 with a short reason.
+Stage 1: STAGE1_MODEL (default gemini-3.5-flash-lite) scores every surviving job 1-5 with a short reason.
 Stage 2: STAGE2_MODEL (default gemini-3.5-flash) gives deep analysis for jobs scoring >= STAGE2_THRESHOLD.
 After the fresh batch, master rows whose scoring previously failed (transient
 Vertex errors) are retried, capped at RESCORE_CAP per run.
@@ -78,7 +78,7 @@ SCORING_CONFIG_FILE = "scoring_config.json"
 # "bool" routes through _as_bool() (env strings like "1"/"true" AND JSON bools).
 _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "provider": ("SCORE_PROVIDER", "gemini", "str"),
-    "stage1_model": ("SCORE_STAGE1_MODEL", "gemini-3.1-flash-lite", "str"),
+    "stage1_model": ("SCORE_STAGE1_MODEL", "gemini-3.5-flash-lite", "str"),
     "stage2_model": ("SCORE_STAGE2_MODEL", "gemini-3.5-flash", "str"),
     # Extra models each stage may fall back to, in preference order after its
     # primary above. Free-tier quota is metered per (key, model), so naming a

@@ -49,7 +49,7 @@ def test_model_for_returns_gemini_tier(monkeypatch):
 
 
 def test_model_defaults_are_upgraded():
-    assert config.MODEL_FLASH_LITE == "gemini-3.1-flash-lite"
+    assert config.MODEL_FLASH_LITE == "gemini-3.5-flash-lite"
     assert config.MODEL_FLASH == "gemini-3.5-flash"
     assert config.MODEL_PRO == "gemini-3.5-flash"
 

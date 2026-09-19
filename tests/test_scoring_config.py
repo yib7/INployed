@@ -42,7 +42,7 @@ def test_absent_file_uses_builtin_defaults(monkeypatch, tmp_path):
     _clear_env(monkeypatch)
     monkeypatch.setattr(score_jobs, "OUTPUT_DIR", tmp_path)
     cfg = score_jobs.load_scoring_config()
-    assert cfg["stage1_model"] == "gemini-3.1-flash-lite"
+    assert cfg["stage1_model"] == "gemini-3.5-flash-lite"
     assert cfg["stage2_model"] == "gemini-3.5-flash"
     assert cfg["stage1_concurrency"] == 6
     assert cfg["stage2_concurrency"] == 4
@@ -66,7 +66,7 @@ def test_config_file_overrides_threshold_and_years(monkeypatch, tmp_path):
     assert cfg["max_scored_per_run"] == 50
     # untouched keys still fall back to defaults
     assert cfg["rescore_cap"] == 200
-    assert cfg["stage1_model"] == "gemini-3.1-flash-lite"
+    assert cfg["stage1_model"] == "gemini-3.5-flash-lite"
 
 
 def test_env_overrides_config_file(monkeypatch, tmp_path):

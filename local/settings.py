@@ -153,24 +153,19 @@ TEXT_TYPES = ("str", "path", "editable_choice")
 # 2026-09-04: no GA 3.1-pro/3.5-pro exists, and the preview id is still active.
 # Every other id here is on Google's Stable list.
 #
-# gemini-3.1-flash-lite is the one id in this tuple carrying a shutdown date, and
-# as of the 2026-09-04 re-check that row also names a REPLACEMENT: Google's
-# lifecycle table reads `gemini-3.1-flash-lite | May 7, 2026 | May 7, 2027 |
-# gemini-3.5-flash-lite`. Every other 3.x flash id has no shutdown date and no
-# replacement. The date is still the earliest possible retirement rather than a
-# scheduled one, and the model is still on the Stable list, so nothing breaks
-# today -- but it is the stage-1 scoring default and the tailor's flash-lite tier,
-# so the migration is real and dated. It is NOT done here. Of the two inputs it
-# needed, one is in the tree: keypool.LIMITS carries a gemini-3.5-flash-lite
-# row (15/500, read from the account's AI Studio dashboard), so the swap does
-# not fall to keypool.DEFAULT_LIMITS. The other is still open: a stage-1 scoring run to
-# confirm the swap is not a quality regression, and a release pass never
-# invokes the billed scorer. Re-checked against Google's table 2026-09-15: the
-# row is unchanged (Stable, shutdown 2027-05-07). Tracked in .autopilot/BACKLOG.md.
+# gemini-3.1-flash-lite is the one id in this tuple carrying a shutdown date:
+# Google's lifecycle table reads `gemini-3.1-flash-lite | May 7, 2026 | May 7, 2027 |
+# gemini-3.5-flash-lite` (re-read 2026-09-15; the date is the earliest possible
+# retirement and the model is still on the Stable list). It stays in the tuple as
+# an opt-in so stored configs that name it keep resolving, but since v1.12.0
+# (2026-09-18, the author's call) the stage-1 scoring default and the tailor's
+# flash-lite tier both sit on gemini-3.5-flash-lite, its named replacement.
+# keypool.LIMITS carries a 15/500 row for it (read from the account's AI Studio
+# dashboard), the same gate the old default had, so the swap costs no throughput.
 #
-# The newer flash ids (3.8-flash, 3.7-flash, 3.6-flash, 3.5-flash-lite) are
-# offered as opt-in choices, and the defaults deliberately stay on the
-# flash-lite/flash pair the VM scores with. Price alone would argue for moving the
+# The newer flash ids (3.8-flash, 3.7-flash, 3.6-flash) are offered as opt-in
+# choices, and the defaults deliberately stay on the flash-lite/flash pair the VM
+# scores with. Price alone would argue for moving the
 # stage-2 default off 3.5-flash, since 3.6/3.7/3.8-flash list at $0.75/$3.75 per
 # 1M through 2026-12-31 against 3.5-flash's $1.50/$9.00. Two reasons it stays
 # anyway: scoring normally runs on the free-tier key pool rather than paid credit,
@@ -321,7 +316,7 @@ SETTINGS_SCHEMA: list[Field] = [
     # The two model PAIRS below are gated on `provider` (declared after them — see
     # the deferred signal wiring in settings_tab._build): only the pair the chosen
     # provider actually uses is on screen. The other pair keeps its stored value.
-    Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.1-flash-lite",
+    Field("stage1_model", "Stage-1 model", "editable_choice", "gemini-3.5-flash-lite",
           "Scoring", "scoring", choices=GEMINI_MODELS, show_if=("provider", ("gemini",)),
           advanced=True,
           help="Cheap model that scores every surviving job 1-5. Pick from the "
@@ -637,7 +632,7 @@ SETTINGS_SCHEMA: list[Field] = [
                "per stage' is 'simple'. Pick a listed id or type your own. Left blank, "
                "tailoring quietly falls back to the three per-stage models."),
     Field("RESUME_TAILOR_MODEL_FLASH_LITE", "Tailor model: fast (briefs)",
-          "editable_choice", "gemini-3.1-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
+          "editable_choice", "gemini-3.5-flash-lite", "Engine", "env", choices=GEMINI_MODELS,
           show_if=("RESUME_TAILOR_MODEL_MODE", ("tiers",)), advanced=True, restart=True,
           help="Cheapest model, for the small calls: the per-entry briefs, the overview "
                "lead and verb swaps."),

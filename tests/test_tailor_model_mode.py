@@ -30,7 +30,7 @@ _TIERS = (config.TIER_FLASH_LITE, config.TIER_FLASH, config.TIER_PRO)
 # The shipped tier maps, spelled out rather than read back out of `config._TIER_ENV`:
 # comparing the resolver against the table it reads would pass with the table empty.
 _GEMINI_TIER_DEFAULTS = {
-    config.TIER_FLASH_LITE: "gemini-3.1-flash-lite",
+    config.TIER_FLASH_LITE: "gemini-3.5-flash-lite",
     config.TIER_FLASH: "gemini-3.5-flash",
     config.TIER_PRO: "gemini-3.5-flash",
 }

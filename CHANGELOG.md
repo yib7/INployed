@@ -4,6 +4,26 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-09-18
+
+The cheap tier moves off the one Gemini id that carries a shutdown date. Nothing else changes.
+
+### Changed
+
+- **The stage-1 scoring default and the tailor's fast tier now sit on `gemini-3.5-flash-lite`.**
+  `gemini-3.1-flash-lite` is the only id in the model list with a retirement row in Google's
+  lifecycle table (earliest May 7, 2027) and it names `gemini-3.5-flash-lite` as its
+  replacement, so the defaults for `SCORE_STAGE1_MODEL` (`pipeline/score_jobs.py`), the
+  `Stage-1 model` Settings field, `RESUME_TAILOR_MODEL_FLASH_LITE`
+  (`local/resume_tailor/config.py`) and the `Tailor model: fast (briefs)` field follow it.
+  The key pool already gates the new id at the same 15 rpm / 500 rpd row the old one had, so
+  a free-tier run keeps its throughput. The old id stays in the dropdown as an opt-in, and any
+  stored config or `.env` that names it keeps resolving; only the unset case moves. A VM that
+  pins `SCORE_STAGE1_MODEL` is unaffected until that line changes. `.env.example` and the
+  README's tier paragraph say the new id; the tests that assert the shipped defaults
+  (`tests/test_scoring_config.py`, `tests/test_llm_backend.py`,
+  `tests/test_tailor_model_mode.py`) moved with them.
+
 ## [1.11.0] - 2026-09-18
 
 The résumé tailor can now run on the job scorer's pool of free-tier Gemini keys, and both
@@ -1684,6 +1704,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[1.12.0]: https://github.com/yib7/INployed/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/yib7/INployed/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/yib7/INployed/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/yib7/INployed/compare/v1.8.0...v1.9.0

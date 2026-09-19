@@ -399,7 +399,7 @@ class JobDetailCard(QtWidgets.QFrame):
         if fields.get("snapshot_only"):
             meta.append(fields.get("note", ""))
         self.meta_label.setText(" · ".join(m for m in meta if m))
-        plain.append(f"{title} — {company}")
+        plain.append(f"{title} at {company}")
         if self.meta_label.text():
             plain.append(self.meta_label.text())
 

@@ -1347,7 +1347,7 @@ class SettingsForm(QtWidgets.QWidget):
     def _error_status(self, unreachable: list[settings.Field] | None = None) -> str:
         n = len(self._errors)
         msg = f"{n} setting{'' if n == 1 else 's'} need{'s' if n == 1 else ''} fixing"
-        hints = [f"{f.label} — {self._blocking_gate(f)}" for f in (unreachable or [])]
+        hints = [f"{f.label}: {self._blocking_gate(f)}" for f in (unreachable or [])]
         if hints:
             msg += " (" + "; ".join(hints[:2])
             msg += f"; and {len(hints) - 2} more)" if len(hints) > 2 else ")"
@@ -1608,7 +1608,7 @@ class SettingsForm(QtWidgets.QWidget):
             counts[f.section] += 1
             gate = self._blocking_gate(f)
             if gate is not None:
-                hidden[f.section].append(f"{f.label} — {gate}")
+                hidden[f.section].append(f"{f.label}: {gate}")
         for section, n in counts.items():
             hint = ("Not shown on this form: " + "; ".join(hidden[section])
                     if n and hidden[section] else "")
@@ -1784,7 +1784,7 @@ class SettingsForm(QtWidgets.QWidget):
         self._sync_secret_boxes(self._opening_values)  # reflect the canonical stored values
         self._refresh_dirty()     # ...and the new baseline is what was just written
         self.status.setText(
-            ("Saved. " + restart if restart else "Saved.") if summary else "Saved — no changes.")
+            ("Saved. " + restart if restart else "Saved.") if summary else "Saved; no changes.")
         if summary:
             note = "\n\nA snapshot was saved to the archive." if archived else ""
             QtWidgets.QMessageBox.information(

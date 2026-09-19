@@ -91,3 +91,45 @@ def test_resume_data_stale_banner_carries_no_em_dash(qtbot, master_tmp):
     labels = [lbl.text() for lbl in ed.stale_banner.findChildren(QtWidgets.QLabel)]
     assert any(t.startswith("resume.md is older than your Resume Data,") for t in labels), labels
     assert all(DASH not in t for t in labels)
+
+
+def _string_literals(path):
+    """Every non-docstring string token in the file, as (line, text)."""
+    import ast
+    import io
+    import tokenize
+    src = path.read_text(encoding="utf-8")
+    doc_lines = set()
+    for node in ast.walk(ast.parse(src)):
+        body = getattr(node, "body", None)
+        if (isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str)):
+            doc_lines.add(body[0].lineno)
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type == tokenize.STRING and tok.start[0] not in doc_lines:
+            yield tok.start[0], tok.string
+        elif tok.type == getattr(tokenize, "FSTRING_MIDDLE", -1):
+            yield tok.start[0], tok.string
+
+
+def test_no_shipped_string_literal_carries_an_em_dash():
+    """Census over every shipped package: the only em dash a string may hold is the
+    lone glyph a table draws for an empty cell (DASH on its own) or a regex that
+    detects the dash (compose._STYLE_BANS, the years-of-experience pattern).
+    theme.py's stylesheet strings hold CSS comments and are the one file skipped."""
+    import re
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    files = sorted(p for sub in ("local", "local/qt", "local/resume_tailor", "pipeline", "scripts")
+                   for p in (repo / sub).glob("*.py") if p.name != "theme.py")
+    assert len(files) > 60, files
+    offenders = []
+    for path in files:
+        for line, text in _string_literals(path):
+            if DASH not in text or text.strip("\"'fFrRbBuU ") == DASH:
+                continue
+            if re.match(r"^[rR][bB]?['\"]", text):       # a regex pattern, not prose
+                continue
+            offenders.append(f"{path.relative_to(repo)}:{line} {text[:60]}")
+    assert offenders == [], "use ':' or ';' in the string: " + "; ".join(offenders)

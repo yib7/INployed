@@ -2104,7 +2104,7 @@ def test_a_stored_string_int_does_not_open_dirty(qtbot, tmp_path, monkeypatch):
     assert form._save_btn.text() == "Save settings"
 
     assert form.save() is True
-    assert form.status.text() == "Saved — no changes."
+    assert form.status.text() == "Saved; no changes."
     assert [m for m in modals if "No changes to save" in str(m[1])], modals
 
 

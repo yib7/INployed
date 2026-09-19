@@ -221,7 +221,7 @@ def write_report(jd_text: str, pdf_path: Path, out_dir: Path) -> float:
         *(f"  - {k}" for k in missing),
         "",
         "Note: a missing term is only worth adding if it is genuinely true of the",
-        "candidate (it must exist in master_experience.yaml) — never keyword-stuff.",
+        "candidate (it must exist in master_experience.yaml); never keyword-stuff.",
         "If a missing skill IS real but absent from the master file, add it there",
         "and re-tailor. Concept buzzwords are matched through skill_aliases: a JD",
         "synonym counts as present when the real skill it maps to is on the page, so",

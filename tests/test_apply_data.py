@@ -342,7 +342,7 @@ def test_parse_resume_bullets_placeholder_returns_empty():
 
 def test_parse_resume_bullets_tolerates_hand_edits():
     md = (
-        "# Apply sheet — Engineer @ Acme\n\n"
+        "# Apply sheet: Engineer @ Acme\n\n"
         "## Work experience\n\n"
         "**Acme Corp** — SWE · NYC\n"
         "a stray sentence the user typed by hand\n"

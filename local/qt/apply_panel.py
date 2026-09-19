@@ -130,7 +130,7 @@ class ApplyPanel(QtWidgets.QWidget):
         job = ctx.get("job") or {}
         title = job.get("title") or "Role"
         company = job.get("company") or "?"
-        self._title.setText(f"Apply — {title} @ {company}")
+        self._title.setText(f"Apply: {title} @ {company}")
         self._folder = ctx.get("generated_dir", "") or ""
 
         self._resume_edit.setText(ctx.get("resume_pdf", "") or "")

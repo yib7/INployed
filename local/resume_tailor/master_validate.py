@@ -85,7 +85,7 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
             for canon in aliases:
                 if str(canon).strip() and _norm_skill(str(canon)) not in real:
                     errors.append(
-                        "%s canonical '%s' is not a known skill — anchor it to a real entry in "
+                        "%s canonical '%s' is not a known skill; anchor it to a real entry in "
                         "`skills:` (usually concepts_and_methodologies) or remove it" % (key, canon))
     return errors
 
@@ -109,7 +109,7 @@ def check_setup() -> Dict[str, List[str]]:
     if assets.using_example_master():
         return {
             "master": [
-                "No résumé data yet — the tailor is using the built-in example "
+                "No résumé data yet: the tailor is using the built-in example "
                 "(master_experience.example.yaml), so it would generate someone "
                 "else's career. Add yours on the Resume Data tab, or run "
                 "scripts/setup.ps1."

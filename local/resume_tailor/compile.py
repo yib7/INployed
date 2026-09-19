@@ -167,6 +167,6 @@ def enforce_one_page(
             return result, cur, tex
         dropped = _drop_weakest_group(sel, cur, keep_projects)
         if not dropped:
-            log("over one page but nothing left to drop — returning best effort")
+            log("over one page but nothing left to drop; returning best effort")
             return result, cur, tex
         log(f"over one page; dropping weakest project bullet [{dropped}]")

@@ -1915,7 +1915,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_manual_add_error(self, exc) -> None:
         self._manual_adding = False
         msg = errmsg.for_user(exc)
-        self._set_status(f"Add job failed — {msg.splitlines()[0] if msg else exc}")
+        self._set_status(f"Add job failed: {msg.splitlines()[0] if msg else exc}")
         QtWidgets.QMessageBox.warning(self, "Add a job by hand", f"Could not add the job.\n\n{msg}")
 
     # ---- delete / edit job entries -------------------------------------------
@@ -2217,7 +2217,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def report(label: str, msg: str) -> None:
             # Cross-thread-safe: queued onto the UI thread by the Qt signal.
-            self.tailor_progress.emit(f"Tailoring ({done}/{n} done): {label} — {msg}")
+            self.tailor_progress.emit(f"Tailoring ({done}/{n} done): {label}: {msg}")
 
         def one(job: dict) -> dict:
             nonlocal done
@@ -2911,7 +2911,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_prep_error(self, exc) -> None:
         self._prepping = False
-        self._set_status(f"Interview prep FAILED — {errmsg.for_user(exc)}")
+        self._set_status(f"Interview prep FAILED: {errmsg.for_user(exc)}")
 
     # ---- stats + calibration -------------------------------------------------
 

@@ -571,7 +571,7 @@ _APPLY_CTX = {
     "job": {"company": "Acme", "title": "Engineer", "job_posting_id": "1"},
     "resume_pdf": "C:/Generated/Acme/Engineer/Cand_Resume.pdf",
     "cover_letter_pdf": "",
-    "apply_md": "# Apply sheet — Engineer @ Acme\n\nPaste me into Claude-in-Chrome.",
+    "apply_md": "# Apply sheet: Engineer @ Acme\n\nPaste me into Claude-in-Chrome.",
     "apply_md_path": "C:/Generated/Acme/Engineer/apply.md",
     "apply_url": "http://x/1",
     "generated_dir": "C:/Generated/Acme/Engineer",

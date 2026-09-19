@@ -918,7 +918,7 @@ def tailor(
     report.stage("select")
     sel = compose.select(jd, job_title, company)
     if not sel.get("experience"):
-        raise RuntimeError("Selection returned no experience — aborting (check the JD/model).")
+        raise RuntimeError("Selection returned no experience; aborting (check the JD/model).")
 
     # Per-block "don't tailor": swap selected verbatim blocks to the user's exact
     # bullets BEFORE rephrase, so the LLM never sees (or rewrites) them.
@@ -1101,12 +1101,12 @@ def generate_cover_letter(
     apply_md = out_dir / "apply.md"
     if not apply_md.exists():
         raise RuntimeError(
-            "No apply.md found in this job's tailored folder — re-tailor the job "
+            "No apply.md found in this job's tailored folder; re-tailor the job "
             "first, then generate the cover letter.")
     parsed = apply_data.parse_resume_bullets(apply_md.read_text(encoding="utf-8"))
     if not parsed:
         raise RuntimeError(
-            "This job's apply.md carries no tailored résumé bullets — re-tailor "
+            "This job's apply.md carries no tailored résumé bullets; re-tailor "
             "the job first, then generate the cover letter.")
     # coverletter.generate_body reads bullets.values() (tailor hands it the
     # group-key -> text dict); synthetic keys keep the same shape + order.

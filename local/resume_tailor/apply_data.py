@@ -362,7 +362,7 @@ def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
             shown = raw
         out.append(f"- **{_one_line(e.get('question', eid))}** {_one_line(shown)}\n")
     if len(out) == 1:
-        out.append("- (none recorded — add them in the Apply Answers tab)\n")
+        out.append("- (none recorded; add them in the Apply Answers tab)\n")
     return "".join(out)
 
 
@@ -384,7 +384,7 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     company = _one_line(job.get("company_name", "")) or "the company"
 
     parts: List[str] = []
-    parts.append(f"# Apply sheet — {title} @ {company}\n")
+    parts.append(f"# Apply sheet: {title} @ {company}\n")
     parts.append(f"Generated {date.today().isoformat()}.\n")
 
     parts.append("\n## Candidate\n")
@@ -402,7 +402,7 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
         parts.append("\n" + _cover_letter_section(cover_body or ""))
     parts.append("\n" + _standard_answer_lines(answers))
 
-    parts.append("\n## Electronic signature (use at the end, where the form asks — do not submit)\n")
+    parts.append("\n## Electronic signature (use at the end, where the form asks; do not submit)\n")
     parts.append(_kv("Signature (type)", basics.get("name", ""), always=True))
     parts.append(_kv("Date", "use today's date (the day you apply)", always=True))
 

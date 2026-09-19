@@ -83,7 +83,7 @@ def load_config() -> dict:
         try:
             cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError) as e:
-            log.warning("config.json unreadable (%s) — using defaults", e)
+            log.warning("config.json unreadable (%s); using defaults", e)
     return cfg
 
 
@@ -102,7 +102,7 @@ def save_config_key(key: str, value) -> None:
     except FileLockTimeout:
         # Another process is mid-write. gdrive_root re-detects on the next fire;
         # never take down the watcher loop over a contended config write.
-        log.warning("config.json is locked by another process — "
+        log.warning("config.json is locked by another process; "
                     "skipping the %s write; it retries on the next fire", key)
 
 
@@ -288,7 +288,7 @@ def launch_ui(csv_paths: list[Path]) -> None:
             log.info("UI launched with job breakaway")
             return
         except OSError as e:
-            log.warning("Job breakaway denied (%s) — launching without it", e)
+            log.warning("Job breakaway denied (%s); launching without it", e)
             subprocess.Popen(args, creationflags=base, close_fds=True)
     else:
         subprocess.Popen(args, close_fds=True, start_new_session=True)
@@ -319,14 +319,14 @@ def sync_back_to_vm(gdrive_root: Path) -> None:
             return
         target = vm_sync.VMTarget.from_env()
         if not target.configured():
-            log.info("sync-back: %d unsynced id(s), %d pending file(s) — no VM configured",
+            log.info("sync-back: %d unsynced id(s), %d pending file(s): no VM configured",
                      len(ids), len(pending))
             return
         queued, pushed, kept = outbox.sync_back(target, drive_master)
         log.info("sync-back: queued %d id(s); pushed %d, kept %d outbox file(s)",
                  queued, pushed, kept)
     except Exception:  # noqa: BLE001 - best-effort by contract
-        log.exception("sync-back failed — continuing")
+        log.exception("sync-back failed; continuing")
 
 
 # --------------------------------------------------------------------------- main
@@ -336,7 +336,7 @@ def main() -> int:
 
     lock = SingleInstance(LOCK_PATH)
     if not lock.acquire():
-        log.info("Another watcher instance is running — exiting.")
+        log.info("Another watcher instance is running; exiting.")
         return 0
 
     try:
@@ -369,7 +369,7 @@ def main() -> int:
                 age_h = (time.time() - _safe_mtime(master_path)) / 3600
                 if master_is_stale(age_h, cfg):
                     log.warning(
-                        "Master is %.0f h old — VM pipeline or Drive sync may be broken "
+                        "Master is %.0f h old: VM pipeline or Drive sync may be broken "
                         "(check ~/scraper.log on the VM)", age_h,
                     )
 
@@ -395,7 +395,7 @@ def main() -> int:
                         pass
                 state["acknowledged_on_startup"] = True
                 save_state(state)
-                log.info("First run: acknowledged %d existing files — exiting without popup", len(files))
+                log.info("First run: acknowledged %d existing files; exiting without popup", len(files))
                 return 0
 
             changed: list[Path] = []
@@ -408,17 +408,17 @@ def main() -> int:
                 if last == mtime:
                     continue
                 if not mtime_stable(f, cfg["mtime_stable_seconds"]):
-                    log.info("Skipping %s — mtime not yet stable", f.name)
+                    log.info("Skipping %s: mtime not yet stable", f.name)
                     continue
                 try:
                     n = reconcile_file(f, registry)
                 except (OSError, ValueError, pd.errors.ParserError) as e:
                     # Read mid-sync, partial gzip, etc. Skip this round — next
                     # fire will retry once mtime stabilizes again.
-                    log.warning("Reconcile failed for %s: %s — will retry next run", f.name, e)
+                    log.warning("Reconcile failed for %s: %s; will retry next run", f.name, e)
                     continue
                 except Exception:
-                    log.exception("Unexpected error reconciling %s — skipping", f.name)
+                    log.exception("Unexpected error reconciling %s; skipping", f.name)
                     continue
                 if n:
                     log.info("Reconciled %d rows in %s", n, f.name)
@@ -446,9 +446,9 @@ def main() -> int:
                 if to_show:
                     launch_ui(to_show)
                 else:
-                    log.info("No unseen high-score rows — skipping UI launch.")
+                    log.info("No unseen high-score rows; skipping UI launch.")
             else:
-                log.info("No file changes since last run — exiting silently.")
+                log.info("No file changes since last run; exiting silently.")
 
             # Data flows the other way too: push anything this PC collected
             # that the shared master doesn't have yet (see sync_back_to_vm).

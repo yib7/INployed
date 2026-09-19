@@ -48,7 +48,7 @@ class JobChatDialog(QtWidgets.QDialog):
 
         title = (self._job.get("job_title") or self._job.get("title") or "this job")
         company = (self._job.get("company_name") or self._job.get("company") or "?")
-        self.setWindowTitle(f"Ask AI — {title} @ {company}")
+        self.setWindowTitle(f"Ask AI: {title} @ {company}")
         self.setModal(False)      # the user keeps working in the dashboard
         self.resize(720, 800)
         self._build()

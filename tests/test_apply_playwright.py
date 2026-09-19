@@ -18,7 +18,7 @@ import apply_playwright  # noqa: E402
 
 # A synthetic slice of an apply.md, in the shape the generator emits.
 _APPLY_MD = """\
-# Apply sheet — Associate Business Analyst @ Acme Analytics
+# Apply sheet: Associate Business Analyst @ Acme Analytics
 Generated 2026-07-05.
 
 ## Instructions for the form-filler (read first)

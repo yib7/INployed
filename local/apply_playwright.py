@@ -224,7 +224,7 @@ def _handle_code_gate(page, run_dir: Path, meta: Dict[str, Any]) -> Optional[str
         page.wait_for_timeout(1000)
     if not gate:
         return None
-    _log("CODE GATE DETECTED — requesting code from orchestrator")
+    _log("CODE GATE DETECTED: requesting code from orchestrator")
     apply_verify.request_code(run_dir, meta)
     code = apply_verify.await_code(run_dir, timeout=300, poll=2)
     if not code:
@@ -309,7 +309,7 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
             code = _handle_code_gate(page, rd, {"url": url, "folder": folder})
             report["code_gate"] = bool(code)
             if apply_verify.detect_code_gate(page) is not None and not code:
-                report["status"] = "code gate appeared but no code arrived — parked"
+                report["status"] = "code gate appeared but no code arrived; parked"
                 _write_report(rd, report)
                 if hold:
                     _hold(browser)
@@ -336,7 +336,7 @@ def run(url: str, folder: str, *, submit: bool = False, run_dir: Optional[str] =
             if hold:
                 _hold(browser)
         except Exception as exc:  # noqa: BLE001
-            report["status"] = f"submitted (unconfirmed — post-submit crash: {exc})"
+            report["status"] = f"submitted (unconfirmed; post-submit crash: {exc})"
             _log(report["status"])
             _write_report(rd, report)
             if hold and browser is not None:
@@ -405,7 +405,7 @@ def _spawn_detached(args) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="apply_playwright",
-        description="Playwright Greenhouse-family driver — parks at review by default.")
+        description="Playwright Greenhouse-family driver: parks at review by default.")
     ap.add_argument("--url", required=True, help="the Greenhouse application URL")
     ap.add_argument("--folder", required=True,
                     help="job folder containing apply.md + résumé/cover PDFs")

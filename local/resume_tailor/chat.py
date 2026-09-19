@@ -271,7 +271,7 @@ def context_for_job(job: Dict[str, Any]) -> str:
         folder = apply_mod.resolve_generated_dir(
             job_id=_first(job or {}, "job_posting_id"), job=job)
     except (FileNotFoundError, ValueError, OSError) as exc:
-        log.info("chat: no tailored folder for this job (%s) — JD-only context", exc)
+        log.info("chat: no tailored folder for this job (%s): JD-only context", exc)
     return build_context(folder, job)
 
 

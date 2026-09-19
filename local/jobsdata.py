@@ -494,7 +494,7 @@ def append_manual_job(record: dict, *, master_csv: Path | None = None) -> bool:
         except OSError as e:
             # The canonical master append is what matters, but a silently missing
             # gz row makes the master and the dashboard bridge diverge — say so.
-            log.warning("manual job %s: gz bridge append failed (%s) — master and "
+            log.warning("manual job %s: gz bridge append failed (%s); master and "
                         "manual/manual_jobs_scored.csv.gz now differ", row.get(
                             "job_posting_id", "?"), e)
     return added

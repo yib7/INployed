@@ -103,7 +103,7 @@ def build_apply_context(generated_dir: Path) -> Dict[str, Any]:
     meta_path = generated_dir / APPLY_SHEET
     if not meta_path.exists():
         raise FileNotFoundError(
-            f"{APPLY_SHEET} missing in {generated_dir} — tailor this job first."
+            f"{APPLY_SHEET} missing in {generated_dir}; tailor this job first."
         )
     text = meta_path.read_text(encoding="utf-8")
 
@@ -111,7 +111,7 @@ def build_apply_context(generated_dir: Path) -> Dict[str, Any]:
     if not resume_pdf.exists():
         raise FileNotFoundError(
             f"Résumé PDF missing for {generated_dir} "
-            f"({output.resume_filename()!r} not found) — re-tailor this job."
+            f"({output.resume_filename()!r} not found); re-tailor this job."
         )
     cover_pdf = generated_dir / output.cover_filename()
 
@@ -136,7 +136,7 @@ def build_apply_context(generated_dir: Path) -> Dict[str, Any]:
 def _summary(ctx: Dict[str, Any]) -> str:
     job = ctx.get("job") or {}
     lines = [
-        "Apply — review before submitting (this tool never submits for you):",
+        "Apply: review before submitting (this tool never submits for you):",
         f"  Job       : {job.get('title', '?')} @ {job.get('company', '?')} "
         f"(id {job.get('job_posting_id', '?')})",
         f"  Apply URL : {ctx.get('apply_url') or '(none)'}",

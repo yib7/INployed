@@ -28,7 +28,7 @@ def _make_folder(base: Path, company: str, title: str, job_id: str,
     marker = apply_data.build_marker({"job_posting_id": job_id, "company_name": company,
                                       "job_title": title, "url": url})
     (folder / "apply.md").write_text(
-        f"# Apply sheet — {title} @ {company}\n\nSome content.\n\n{marker}\n", encoding="utf-8")
+        f"# Apply sheet: {title} @ {company}\n\nSome content.\n\n{marker}\n", encoding="utf-8")
     return folder
 
 

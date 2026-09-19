@@ -91,7 +91,7 @@ def _assert_no_password_keys(rec: Dict[str, Any]) -> None:
     for key in rec:
         if _FORBIDDEN_KEY_RE.search(str(key)):
             raise ValueError(
-                f"refusing to store field {key!r} in the ATS ledger — "
+                f"refusing to store field {key!r} in the ATS ledger: "
                 "the ledger is plaintext JSON and never carries credentials "
                 f"(the master password lives in keyring service {SERVICE!r})")
 
@@ -161,14 +161,14 @@ def set_master_password(password: Optional[str] = None) -> bool:
     ValueError. The value is never echoed, printed, or returned either way."""
     kr = _keyring()
     if kr is None:
-        print("keyring is not installed — run: pip install keyring",
+        print("keyring is not installed; run: pip install keyring",
               file=sys.stderr)
         return False
     if password is None:
         first = _getpass("New master password: ")
         second = _getpass("Repeat to confirm: ")
         if not first or first != second:
-            print("passwords empty or did not match — nothing stored.",
+            print("passwords empty or did not match; nothing stored.",
                   file=sys.stderr)
             return False
         password = first
@@ -391,10 +391,10 @@ def _run_verb(args: argparse.Namespace) -> int:
         return 0
     if args.verb == "clip-password":
         if not copy_password_to_clipboard():
-            print("no master password stored — run set-password first.",
+            print("no master password stored; run set-password first.",
                   file=sys.stderr)
             return 1
-        print("master password copied to clipboard — paste it, then run "
+        print("master password copied to clipboard; paste it, then run "
               "clip-clear.")
         return 0
     if args.verb == "clip-clear":

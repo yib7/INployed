@@ -299,7 +299,7 @@ def push_outbox(target, outbox_dir: Path | None = None, log=None,
     if not files:
         return (0, 0)
     if target is None or not target.configured():
-        note(f"outbox push: no VM configured — keeping {len(files)} queued file(s)")
+        note(f"outbox push: no VM configured; keeping {len(files)} queued file(s)")
         return (0, len(files))
     pushed = kept = 0
     for f in files:
@@ -307,7 +307,7 @@ def push_outbox(target, outbox_dir: Path | None = None, log=None,
             res = run(target.push_outbox_file_cmd(str(f)))
             rc = getattr(res, "returncode", 1)
         except Exception as e:  # noqa: BLE001 - keep the file, try the rest
-            note(f"outbox push: {f.name} ERROR ({e}) — kept for retry")
+            note(f"outbox push: {f.name} ERROR ({e}); kept for retry")
             kept += 1
             continue
         if rc == 0:
@@ -325,7 +325,7 @@ def push_outbox(target, outbox_dir: Path | None = None, log=None,
         else:
             kept += 1
             err = (getattr(res, "stderr", "") or getattr(res, "stdout", "")).strip()
-            note(f"outbox push: {f.name} FAILED (exit {rc}) {err} — kept for retry")
+            note(f"outbox push: {f.name} FAILED (exit {rc}) {err}; kept for retry")
     return (pushed, kept)
 
 
@@ -348,7 +348,7 @@ def sync_back(target, drive_master, master_csv: Path | None = None,
     except Exception as e:  # noqa: BLE001 - best-effort by contract
         if log is not None:
             try:
-                log.write(f"sync_back: error ({e}) — skipped\n")
+                log.write(f"sync_back: error ({e}); skipped\n")
                 log.flush()
             except Exception:  # noqa: BLE001
                 pass

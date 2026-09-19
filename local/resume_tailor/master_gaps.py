@@ -281,14 +281,14 @@ def main() -> None:
     ap.add_argument("--apply", action="store_true",
                     help="write the proposed additions (otherwise just preview the diff)")
     ap.add_argument("--yes", "--force", action="store_true", dest="assume_yes",
-                    help="skip per-item confirmation with --apply — you acknowledge you "
+                    help="skip per-item confirmation with --apply: you acknowledge you "
                          "genuinely have EVERY listed skill")
     args = ap.parse_args()
 
     jd = Path(args.jd_file).read_text(encoding="utf-8")
     prop = propose(jd)
     if prop.is_empty():
-        print("No non-identifying gap skills found — your master file already covers the JD.")
+        print("No non-identifying gap skills found: your master file already covers the JD.")
         return
     print("Skills the JD wants that aren't in your master file (confirm those you truly have):")
     for bucket, items in prop.placements.items():
@@ -298,10 +298,10 @@ def main() -> None:
     if args.apply:
         to_apply = _confirm_placements(prop.placements, assume_yes=args.assume_yes)
         if not to_apply:
-            print("\nNothing confirmed — master file unchanged.")
+            print("\nNothing confirmed: master file unchanged.")
             return
         apply_to_file(to_apply)
-        print("\nApplied. Backup written to master_experience.yaml.bak — review and re-tailor.")
+        print("\nApplied. Backup written to master_experience.yaml.bak; review and re-tailor.")
     else:
         print("\nPreview only. Re-run with --apply to write (a .bak backup is made).")
 

@@ -28,7 +28,7 @@ MASTER_YAML_PATH = ROOT / "resume_tailor_files" / "master_experience.yaml"
 SYSTEM_PROMPT = (
     "You convert a candidate's master-experience YAML into a clean Markdown "
     "resume that an automated job-matching scorer reads. Absolute rule: SELECT "
-    "and REPHRASE only what the YAML contains — NEVER invent employers, titles, "
+    "and REPHRASE only what the YAML contains; NEVER invent employers, titles, "
     "dates, numbers, skills, or achievements. Include the candidate's full breadth "
     "(this resume is for matching against many jobs, not a one-page tailored "
     "version): every experience, project, leadership entry, and skill present in "
@@ -53,7 +53,7 @@ and the strongest evidence; do not invent claims.>
 location, dates, honors if present.>
 
 ## Work Experience
-### <Title> — <Org>
+### <Title> at <Org>
 <Location | dates>
 - <one bullet per achievement atom, rephrased faithfully from its what/impact/angles>
 
@@ -69,7 +69,7 @@ location, dates, honors if present.>
 ## Technical Skills
 **<Pool>:** <comma-separated items>   (one line per skills pool in the YAML)
 ALWAYS include a **Concepts & Methodologies:** line listing every item from that pool
-verbatim — it is what the scorer screens concept keywords against, so never summarize,
+verbatim; it is what the scorer screens concept keywords against, so never summarize,
 sample, or drop it.
 """
 

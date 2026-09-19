@@ -183,9 +183,12 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
   can bill. The same sweep reached the rest of the dashboard's copy: the freshness pill
   ("Fresh: last run 3h ago"), the Settings search placeholder and section taglines, the
   High Score legend, the Tracker's NEXT STEP line, the Resume Data staleness banner and
-  every status-bar and dialog string under `local/qt/` (106 em dashes in 105 strings) read with a colon, a
-  semicolon or a parenthesis where they had an em dash, and a test pins the primary
-  journey.
+  every status-bar and dialog string under `local/qt/` (121 em dashes in 120 strings) read with a colon, a
+  semicolon or a parenthesis where they had an em dash. The same rule now holds for every
+  string the pipeline prints and the tailor logs, the apply sheet's headings, the resume.md
+  format prompt and the scorer's two prompts (67 more), and a census test over every shipped
+  package pins it: the only em dash a string may still hold is the lone glyph a table draws
+  for an empty cell.
 - **Dependencies pulled forward to current stable.** `google-genai` 2.22.0 to 2.23.0 in both
   pin sets, `pypdf` 6.16.2 to 6.18.1, `ruff` 0.16.6 to 0.16.7 and `tzdata` 2026.3 to 2026.4;
   those were the only direct pins `pip` reported outdated. The pypdf bump is the one that
@@ -388,7 +391,7 @@ meaning, and no setting or environment variable that v1.10.0 had was removed.
 ### Docs
 - **The README, `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` describe the pool, the
   sweep and the re-ask.** The README's lead names the free-tier model pool and its test
-  count is re-derived (3,129 collected); the architecture diagram gains the pool as one box
+  count is re-derived (3,130 collected); the architecture diagram gains the pool as one box
   both the scorer and the tailor call; Step 5 leads with the AI Studio keys and says what
   bills (the Google Cloud project, only after every key's daily quota or when every key is
   parked on a 503 or a refused 429, and never with the project id blank); the engine section

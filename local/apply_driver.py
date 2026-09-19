@@ -481,7 +481,7 @@ def reopen(workdir: str, headless: bool = False, timeout: float = 90.0) -> int:
         res = send(str(wd), {"action": "goto", "url": url, "wait": 3500}, timeout=timeout)
         print(f"reopened at {url} (ok={res.get('ok')})")
     else:
-        print("driver relaunched; no parked.json URL to restore — the profile session is intact")
+        print("driver relaunched; no parked.json URL to restore; the profile session is intact")
     return 0
 
 

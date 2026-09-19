@@ -291,7 +291,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         self._content.setVisible(True)
 
         status = str(e.get("status", ""))
-        self.title_label.setText(f"{e.get('company', '')} — {e.get('title', '')}")
+        self.title_label.setText(f"{e.get('company', '')}: {e.get('title', '')}")
         self.status_pill.setText(STATUS_LABELS.get(status, status.capitalize()))
         self.status_pill.set_family(STATUS_TAGS.get(status, "neutral"))
 
@@ -305,7 +305,7 @@ class _DetailsPanel(QtWidgets.QFrame):
             status, "NOTES")
         lede_parts = [p for p in (str(e.get("notes") or ""),
                                   str(e.get("tab_note") or "")) if p]
-        lede = " — ".join(lede_parts)
+        lede = " | ".join(lede_parts)
         if lede:
             self.lede_label.setText(
                 f'<span style="color:{theme.MUTED};font-weight:600;'
@@ -319,7 +319,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         for m in missing:
             if isinstance(m, dict):
                 q = m.get("question", "")
-                extra = " — ".join(x for x in (m.get("context", ""),
+                extra = "; ".join(x for x in (m.get("context", ""),
                                                m.get("suggestion", "")) if x)
                 questions.append(f"{q}" + (f"  ({extra})" if extra else ""))
             else:
@@ -341,7 +341,7 @@ class _DetailsPanel(QtWidgets.QFrame):
         self.artifacts_label.setVisible(bool(shown))
 
         # Plain-text mirror — SAME composition the old QPlainTextEdit held.
-        lines = [f"{e.get('company', '')} — {e.get('title', '')}  [{status}]",
+        lines = [f"{e.get('company', '')}: {e.get('title', '')}  [{status}]",
                  f"Apply URL: {e.get('apply_url', '')}"]
         if e.get("notes"):
             lines.append(f"Notes: {e['notes']}")

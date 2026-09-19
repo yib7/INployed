@@ -196,7 +196,7 @@ def load(path: Optional[Path] = None, *, quarantine: bool = False) -> Dict[str, 
     else:
         warnings.warn(
             f"apply queue {qp} is corrupt/unparseable; treating as empty "
-            "(left in place — the next locked mutation quarantines it)",
+            "(left in place; the next locked mutation quarantines it)",
             RuntimeWarning, stacklevel=2)
     return _fresh()
 
@@ -508,7 +508,7 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
                 apply_data.refresh_standard_answers(Path(folder))
             except Exception as exc:  # never fail the requeue over the sheet
                 msg = (f"WARNING: standard-answers refresh FAILED "
-                       f"({type(exc).__name__}: {exc}) — apply.md answers may be "
+                       f"({type(exc).__name__}: {exc}); apply.md answers may be "
                        f"stale; regenerate from the dashboard before draining.")
                 print(f"apply_queue: refresh_standard_answers failed for "
                       f"{folder}: {exc}", file=sys.stderr)

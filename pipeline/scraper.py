@@ -1212,7 +1212,7 @@ async def main(snapshot_id: str | None = None, run_label: str | None = None,
     if df.empty:
         # Write nothing: a columnless CSV would crash the scoring step, and the
         # rest of run_scraper.sh (master upload) should still proceed.
-        print("No new jobs returned this run — nothing to write.")
+        print("No new jobs returned this run; nothing to write.")
         return
 
     if "job_posting_id" in df.columns:

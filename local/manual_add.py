@@ -343,7 +343,7 @@ def add_manual_job(
         log("fetching page text (free GET; optional)…")
         fetched = fetch_fn(url)
         if not fetched:
-            log("fetch returned nothing — a pasted job description is required.")
+            log("fetch returned nothing; a pasted job description is required.")
 
     log("building job record…")
     record = build_job_record(
@@ -371,7 +371,7 @@ def add_manual_job(
             resume_dir = Path(out) if out else None
             record["resume"] = str(resume_dir) if resume_dir else ""
         except Exception as exc:  # noqa: BLE001 - tailoring is best-effort; the job is still added
-            log(f"tailoring failed ({exc}); the job is still added — tailor it later.")
+            log(f"tailoring failed ({exc}); the job is still added. Tailor it later.")
 
     log("appending to the master jobs list…")
     import jobsdata

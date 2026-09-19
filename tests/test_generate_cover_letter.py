@@ -23,7 +23,7 @@ _JOB = {"company_name": "BigCo", "job_title": "Engineer",
 
 # A minimal but structurally-faithful apply.md: résumé sections + the decoys the
 # parser must skip (Candidate contact bullets, Technical skills, meta marker).
-_APPLY_MD = """# Apply sheet — Engineer @ BigCo
+_APPLY_MD = """# Apply sheet: Engineer @ BigCo
 
 ## Candidate
 - **Name:** Test Person
@@ -49,7 +49,7 @@ _APPLY_MD = """# Apply sheet — Engineer @ BigCo
 <!-- inployed-apply-meta: {"job_posting_id": "42"} -->
 """
 
-_PLACEHOLDER_MD = """# Apply sheet — Engineer @ BigCo
+_PLACEHOLDER_MD = """# Apply sheet: Engineer @ BigCo
 
 ## Résumé
 _(Re-tailor this job to embed the résumé contents here.)_

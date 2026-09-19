@@ -391,7 +391,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         lines = []
         for e in data.get("education") or []:
             if isinstance(e, dict):
-                lines.append(f"•  {e.get('school', '')} — {e.get('degree', '')} ({e.get('dates', '')})")
+                lines.append(f"•  {e.get('school', '')}, {e.get('degree', '')} ({e.get('dates', '')})")
         skills = data.get("skills") or {}
         if isinstance(skills, dict):
             for pool, items in skills.items():
@@ -790,7 +790,7 @@ class ResumeDataEditor(QtWidgets.QWidget):
         what = QtWidgets.QLineEdit()
         angles = QtWidgets.QLineEdit()
         impact = QtWidgets.QLineEdit()
-        form.addRow("First achievement — What", what)
+        form.addRow("First achievement (what)", what)
         form.addRow("Angles (comma-separated)", angles)
         form.addRow("Impact (comma-separated, optional)", impact)
         buttons = QtWidgets.QDialogButtonBox(

@@ -647,6 +647,71 @@ def test_apply_sheet_pop_out_shows_sheet_and_copies(qtbot):
     assert QtWidgets.QApplication.clipboard().text() == raw        # copy keeps raw md
 
 
+def test_apply_panel_shows_linkedin_and_hides_blank_github(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.show_application({"links": {"LinkedIn": "https://linkedin.com/in/x", "GitHub": ""}})
+    assert p._linkedin_edit.text() == "https://linkedin.com/in/x"
+    assert p._linkedin_edit.isVisibleTo(p)
+    assert not p._github_edit.isVisibleTo(p)
+
+
+def test_apply_panel_missing_links_key_hides_both_rows(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.show_application(dict(_APPLY_CTX))  # older-caller ctx: no "links" key at all
+    assert not p._linkedin_edit.isVisibleTo(p)
+    assert not p._github_edit.isVisibleTo(p)
+
+
+def test_apply_panel_link_rows_carry_a_copy_hint_tooltip(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    hint = "Copy to paste into the application form"
+    assert p._linkedin_edit.toolTip() == hint
+    assert p._github_row.itemAt(2).widget().toolTip() == hint
+    assert p._resume_edit.toolTip() == ""  # unrelated rows keep no tooltip
+
+
+def test_apply_panel_copy_github_row_sets_clipboard(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    p.show_application({"links": {"LinkedIn": "", "GitHub": "https://github.com/x"}})
+    copy_btn = p._github_row.itemAt(2).widget()
+    copy_btn.click()
+    assert QtWidgets.QApplication.clipboard().text() == "https://github.com/x"
+
+
+def test_apply_panel_link_rows_sit_above_resume_row(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    v = p.layout()
+    order = [v.itemAt(i).layout() for i in range(v.count())]
+    order = [item for item in order if item is not None]
+    li_idx = order.index(p._linkedin_row)
+    gh_idx = order.index(p._github_row)
+    resume_idx = order.index(p._resume_row)
+    assert li_idx < gh_idx < resume_idx
+
+
+def test_apply_panel_label_column_fits_the_widest_label(qtbot):
+    from qt.apply_panel import ApplyPanel
+    p = ApplyPanel()
+    qtbot.addWidget(p)
+    labels = [p._linkedin_row.itemAt(0).widget(), p._github_row.itemAt(0).widget(),
+             p._resume_row.itemAt(0).widget(), p._cover_row.itemAt(0).widget()]
+    widths = {lab.width() for lab in labels}
+    assert len(widths) == 1  # one shared column width
+    cover_label = p._cover_row.itemAt(0).widget()
+    assert cover_label.text() == "Cover letter PDF"
+    assert cover_label.width() >= cover_label.sizeHint().width()  # no more clipping
+
+
 def test_apply_panel_applied_button_invokes_callback(qtbot):
     from qt.apply_panel import ApplyPanel
     called = []

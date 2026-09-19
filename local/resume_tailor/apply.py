@@ -17,7 +17,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from . import apply_data, config, output
+from . import apply_data, assets, config, output
 
 APPLY_SHEET = "apply.md"
 
@@ -122,6 +122,11 @@ def build_apply_context(generated_dir: Path) -> Dict[str, Any]:
         "title": meta.get("title", ""),
         "url": meta.get("url", ""),
     }
+    basics = (assets.load_master() or {}).get("basics") or {}
+    links = {
+        "LinkedIn": assets.full_url(basics.get("linkedin", "")),
+        "GitHub": assets.full_url(basics.get("github", "")),
+    }
     return {
         "generated_dir": str(generated_dir),
         "resume_pdf": str(resume_pdf),
@@ -130,6 +135,7 @@ def build_apply_context(generated_dir: Path) -> Dict[str, Any]:
         "apply_md": text,
         "apply_md_path": str(meta_path),
         "job": job,
+        "links": links,
     }
 
 

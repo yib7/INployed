@@ -2,10 +2,11 @@
 
 When the user clicks Apply on a tailored job, this panel opens beside the job
 tables (replacing the bottom score preview) and shows everything needed to fill
-the application by hand or with Claude-in-Chrome: copyable résumé / cover-letter
-PDF paths, an Open-folder button, and the full self-contained apply sheet
-(apply.md) in a read-only viewer with a one-click "Copy apply sheet". A Close
-button hides the panel and restores the score preview. Nothing here submits.
+the application by hand or with Claude-in-Chrome: copyable LinkedIn / GitHub
+links, résumé / cover-letter PDF paths, an Open-folder button, and the full
+self-contained apply sheet (apply.md) in a read-only viewer with a one-click
+"Copy apply sheet". A Close button hides the panel and restores the score
+preview. Nothing here submits.
 """
 from __future__ import annotations
 
@@ -59,11 +60,25 @@ class ApplyPanel(QtWidgets.QWidget):
         hint.setWordWrap(True)
         v.addWidget(hint)
 
-        # Document paths (copyable)
-        self._resume_row, self._resume_edit = self._path_row("Résumé PDF")
+        # Profile links + document paths (copyable). LinkedIn and GitHub sit above
+        # the résumé so they're the first thing pasted into the application form.
+        link_tip = "Copy to paste into the application form"
+        self._linkedin_row, self._linkedin_edit, linkedin_label = self._path_row(
+            "LinkedIn", tooltip=link_tip)
+        v.addLayout(self._linkedin_row)
+        self._github_row, self._github_edit, github_label = self._path_row(
+            "GitHub", tooltip=link_tip)
+        v.addLayout(self._github_row)
+        self._resume_row, self._resume_edit, resume_label = self._path_row("Résumé PDF")
         v.addLayout(self._resume_row)
-        self._cover_row, self._cover_edit = self._path_row("Cover letter PDF")
+        self._cover_row, self._cover_edit, cover_label = self._path_row("Cover letter PDF")
         v.addLayout(self._cover_row)
+
+        # One shared label column, sized to the widest label, so none of them clip.
+        row_labels = (linkedin_label, github_label, resume_label, cover_label)
+        label_width = max(lab.sizeHint().width() for lab in row_labels) + 6
+        for lab in row_labels:
+            lab.setFixedWidth(label_width)
 
         tools = QtWidgets.QHBoxLayout()
         self._open_btn = QtWidgets.QPushButton("Open folder")
@@ -108,21 +123,24 @@ class ApplyPanel(QtWidgets.QWidget):
         self.applied_btn.clicked.connect(lambda: self._on_applied())
         v.addWidget(self.applied_btn)
 
-    def _path_row(self, label: str):
+    def _path_row(self, label: str, tooltip: str | None = None):
         row = QtWidgets.QHBoxLayout()
         lab = QtWidgets.QLabel(label)
         lab.setProperty("muted", True)
-        lab.setFixedWidth(96)
         edit = QtWidgets.QLineEdit()
         edit.setAccessibleName(label)
         edit.setReadOnly(True)
         copy = QtWidgets.QPushButton("Copy")
         copy.setFixedWidth(56)
         copy.clicked.connect(lambda: self._copy_text(edit.text()))
+        if tooltip:
+            lab.setToolTip(tooltip)
+            edit.setToolTip(tooltip)
+            copy.setToolTip(tooltip)
         row.addWidget(lab)
         row.addWidget(edit, 1)
         row.addWidget(copy)
-        return row, edit
+        return row, edit, lab
 
     # ---- population ----------------------------------------------------------
 
@@ -132,6 +150,14 @@ class ApplyPanel(QtWidgets.QWidget):
         company = job.get("company") or "?"
         self._title.setText(f"Apply: {title} @ {company}")
         self._folder = ctx.get("generated_dir", "") or ""
+
+        links = ctx.get("links") or {}
+        linkedin = links.get("LinkedIn", "") or ""
+        self._linkedin_edit.setText(linkedin)
+        self._set_row_visible(self._linkedin_row, bool(linkedin))
+        github = links.get("GitHub", "") or ""
+        self._github_edit.setText(github)
+        self._set_row_visible(self._github_row, bool(github))
 
         self._resume_edit.setText(ctx.get("resume_pdf", "") or "")
         cover = ctx.get("cover_letter_pdf", "") or ""

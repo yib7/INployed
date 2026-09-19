@@ -56,3 +56,40 @@ def test_resolve_does_not_nest_a_dated_subfolder_when_backfilling(tmp_path, monk
         company="AcmeCo", title="Data Scientist",
         job={"job_posting_id": "1", "company_name": "AcmeCo", "job_title": "Data Scientist"})
     assert resolved == folder  # not folder/<today>
+
+
+def test_build_apply_context_returns_linkedin_and_github_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "OUTPUT_ROOT", tmp_path)
+    monkeypatch.setattr(assets, "load_master", lambda: {
+        "basics": {"name": "Test User", "email": "t@e.com", "phone": "1",
+                   "location": "Remote", "linkedin": "linkedin.com/in/testuser",
+                   "github": "github.com/testuser"},
+        "education": [],
+    })
+    monkeypatch.setenv("RESUME_TAILOR_CANDIDATE", "Test_User")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "apply_config.json")
+    folder = tmp_path / "AcmeCo" / "Data Scientist"
+    folder.mkdir(parents=True)
+    (folder / output.resume_filename()).write_text("%PDF-1.4 fake", encoding="utf-8")
+
+    resolved = apply_mod.resolve_generated_dir(
+        job_id="42", company="AcmeCo", title="Data Scientist",
+        job={"job_posting_id": "42", "company_name": "AcmeCo",
+             "job_title": "Data Scientist", "url": "https://x/42"})
+    ctx = apply_mod.build_apply_context(resolved)
+
+    assert ctx["links"] == {
+        "LinkedIn": "https://linkedin.com/in/testuser",
+        "GitHub": "https://github.com/testuser",
+    }
+
+
+def test_build_apply_context_blank_links_come_back_as_empty_strings(tmp_path, monkeypatch):
+    # _tailored_folder_without_sheet's synthetic master has no linkedin/github keys.
+    _tailored_folder_without_sheet(tmp_path, monkeypatch)
+    resolved = apply_mod.resolve_generated_dir(
+        job_id="7", company="AcmeCo", title="Data Scientist",
+        job={"job_posting_id": "7", "company_name": "AcmeCo", "job_title": "Data Scientist"})
+    ctx = apply_mod.build_apply_context(resolved)
+    assert ctx["links"] == {"LinkedIn": "", "GitHub": ""}

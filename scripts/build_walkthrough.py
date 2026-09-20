@@ -142,6 +142,10 @@ def scenes(win):
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 1), rows, 2.0),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 2), rows, 2.0),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 3), rows, 2.0),
+        ("High Score (Unseen)", lambda: win.preview.desc_toggle.setChecked(True),
+         "Show description keeps the posting's own headings and bullets", 3.0),
+        ("High Score (Unseen)", lambda: win.preview.desc_toggle.setChecked(False),
+         rows, 1.4),
         ("High Score (Unseen)", lambda: _pick(win.high_tab, 7),
          "Colour tracks tailoring state: tailored, failed, untouched", 2.6),
         # Typed one character at a time so the table visibly sheds rows.

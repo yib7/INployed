@@ -134,6 +134,20 @@ def _jobs_df() -> pd.DataFrame:
             "job_summary": f"Synthetic summary for {title} at {company}. " * 4,
             "job_description": f"Synthetic description for {title} at {company}. " * 8,
             "job_description_formatted": f"Synthetic formatted JD for {title}.",
+            # Markdown, the shape score_jobs.py's job_description_md column actually
+            # holds (cycle 15): headings + a bullet list, so a "Show description"
+            # grab exercises jobsdata.md_to_text's structure over the flat
+            # job_description_formatted fallback.
+            "job_description_md": (
+                f"## About the role\n\n{title} at {company}. A synthetic posting "
+                "for dashboard media.\n\n"
+                "## What you will do\n\n"
+                "- Build and ship features end to end\n"
+                "- Partner with the team on design reviews\n\n"
+                "## What we are looking for\n\n"
+                "- Strong Python experience\n"
+                "- Comfort working through ambiguity\n"
+            ),
         })
     return pd.DataFrame(rows)
 

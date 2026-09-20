@@ -349,7 +349,7 @@ def test_filter_high_unseen_blocks_a_repost_of_a_low_score_mark():
     ])
     marked_at = {"A": "2026-09-14T00:00:00+00:00"}   # 5 days before TODAY
     out, hidden = jobsdata.filter_high_unseen_with_count(
-        df, 4, marked_at=marked_at, window_days=30)
+        df, 4, marked_at=marked_at, window_days=30, today=TODAY)
     assert out.empty
     assert hidden == 1
 
@@ -367,21 +367,21 @@ def _checkpoint_df():
 def test_checkpoint_mark_in_window_hides_all_unseen_reposts():
     df = _checkpoint_df()
     marked_at = {"A": "2026-09-09T00:00:00+00:00"}   # 10 days before TODAY
-    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=30)
+    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=30, today=TODAY)
     assert out.empty
 
 
 def test_checkpoint_mark_out_of_window_keeps_newest_unseen_repost():
     df = _checkpoint_df()
     marked_at = {"A": "2026-08-19T00:00:00+00:00"}   # 31 days before TODAY
-    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=30)
+    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=30, today=TODAY)
     assert list(out["job_posting_id"]) == ["C"]
 
 
 def test_filter_high_unseen_window_zero_ignores_marked_at():
     df = _checkpoint_df()
     marked_at = {"A": "2026-09-09T00:00:00+00:00"}
-    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=0)
+    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=0, today=TODAY)
     assert set(out["job_posting_id"]) == {"B", "C"}   # unchanged: both unseen rows show
 
 
@@ -396,6 +396,6 @@ def test_filter_high_unseen_with_count_reports_the_hidden_total():
     df = _checkpoint_df()
     marked_at = {"A": "2026-09-09T00:00:00+00:00"}
     out, hidden = jobsdata.filter_high_unseen_with_count(
-        df, 4, marked_at=marked_at, window_days=30)
+        df, 4, marked_at=marked_at, window_days=30, today=TODAY)
     assert out.empty
     assert hidden == 2

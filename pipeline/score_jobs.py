@@ -802,6 +802,7 @@ SCORE_COLS = [
     "score", "reason", "deep_score", "strengths", "gaps", "recommendation",
     "filter_junk_title", "filter_junk_desc", "filter_too_many_years",
     "filter_clearance", "filter_degree", "filter_easy_apply", "filtered_out", "is_seen",
+    "score_reused", "score_reused_from",
 ]
 MASTER_CSV = OUTPUT_DIR / "linkedin_jobs_master.csv"
 
@@ -1088,7 +1089,13 @@ def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_day
     extracted = pd.to_datetime(m["extracted_date"], format="mixed", errors="coerce")
     age_days = (today_ts - extracted.dt.normalize()).dt.days
     in_window = extracted.notna() & age_days.between(0, reuse_days)
-    m = m[has_score & in_window].copy()
+    # A row that itself only carries a REUSED score is never a valid source: it
+    # was never scored by the model, so chaining through it would let a score
+    # drift arbitrarily far from the posting that actually earned it (A -> B ->
+    # C, with B and A both long out of window by the time C would reuse via B).
+    not_reused_itself = (~m["score_reused"].fillna(False).astype(bool)
+                          if "score_reused" in m.columns else True)
+    m = m[has_score & in_window & not_reused_itself].copy()
     if m.empty:
         return df, 0
     m["_age_days"] = age_days[m.index]
@@ -1140,6 +1147,7 @@ _REPOST_MASTER_COL_CANDIDATES = (
     ("company_name", "company"),
     ("job_location", "location"),
     ("job_description_md", "job_description_formatted", "job_description"),
+    ("score_reused",),
 )
 
 
@@ -1151,8 +1159,9 @@ def load_master_for_reuse() -> pd.DataFrame | None:
     parse all mean the same thing here -- no repost gets to reuse an old
     score THIS run -- never a crashed run. Only the unreadable case prints a
     line; the other two are the ordinary cold-start/older-schema shape.
-    Projects only the needed columns (usecols) so this never has to hold the
-    master's full ~90 MB text columns in memory twice.
+    Projects only the needed columns (usecols), including the description
+    column reuse needs to fingerprint a match, so this never has to hold the
+    master's other, unrelated text columns in memory twice.
     """
     if not MASTER_CSV.exists():
         return None
@@ -1186,7 +1195,11 @@ def _restore_reused_scores(result: pd.DataFrame, reused_snapshot: pd.DataFrame) 
     if reused_snapshot.empty:
         return result
     result = result.set_index("job_posting_id")
-    snap = reused_snapshot.set_index("job_posting_id")
+    # A duplicated job_posting_id in the snapshot would make `.loc[snap.index]
+    # = ...` raise (pandas refuses an ambiguous reindex on a duplicate-valued
+    # index), so keep only the first row per id before indexing.
+    snap = reused_snapshot.drop_duplicates(
+        "job_posting_id", keep="first").set_index("job_posting_id")
     for col in snap.columns:
         # pandas >= 3 refuses to write an object-dtype value (e.g. an int
         # score copied alongside NaN/NA neighbours) into a stricter numeric

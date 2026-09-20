@@ -771,6 +771,93 @@ def test_rows_needing_rescore_ignores_a_reused_row_with_a_copied_score():
     assert "NEW-2" in out_ids
 
 
+# P2-fix-15: a reused row must never chain-provide a score to a third
+# repost -- a row's score is only ever trustworthy back to a row the model
+# actually scored, so `score_reused` must exclude reused rows from the
+# candidate set on the master side of the lookup.
+
+def test_reuse_repost_scores_does_not_chain_through_a_reused_row():
+    # A scored day 0. B (day 25) reused from A. By day 50, A is out of the
+    # 30-day window and B only carries a copied score (score_reused=True), so
+    # C must find nothing to reuse and goes to the pool.
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([
+        _master_row("OLD-A", 50, today, score_reused=False, score_reused_from=pd.NA),
+        _master_row("OLD-B", 25, today, score_reused=True, score_reused_from="OLD-A"),
+    ])
+    df = pd.DataFrame([_fresh_row("NEW-C")])
+
+    out, n = sj.reuse_repost_scores(df, master, 30, today=today)
+
+    assert n == 0
+    assert bool(out.iloc[0]["score_reused"]) is False
+    assert pd.isna(out.iloc[0]["score_reused_from"])
+
+
+def test_reuse_repost_scores_still_works_against_an_older_master_schema():
+    # A master written before score_reused existed has no such column at all
+    # -- must not crash, and a genuinely-scored row must still be reusable.
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("OLD-1", 5, today)])
+    assert "score_reused" not in master.columns
+    df = pd.DataFrame([_fresh_row("NEW-1")])
+
+    out, n = sj.reuse_repost_scores(df, master, 30, today=today)
+
+    assert n == 1
+    assert out.iloc[0]["score_reused_from"] == "OLD-1"
+
+
+def test_load_master_for_reuse_loads_score_reused_when_present(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame([{
+        "job_posting_id": "OLD-1", "score": 5, "extracted_date": "2026-09-14",
+        "job_title": "Data Engineer", "company_name": "Acme", "job_location": "Seattle, WA",
+        "job_description_md": "Build pipelines.", "score_reused": True,
+    }]).to_csv(master, index=False)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    out = sj.load_master_for_reuse()
+
+    assert out is not None
+    assert "score_reused" in out.columns
+    assert bool(out.iloc[0]["score_reused"]) is True
+
+
+def test_load_master_for_reuse_tolerates_a_master_without_score_reused(tmp_path, monkeypatch):
+    master = tmp_path / "linkedin_jobs_master.csv"
+    pd.DataFrame([{
+        "job_posting_id": "OLD-1", "score": 5, "extracted_date": "2026-09-14",
+        "job_title": "Data Engineer", "company_name": "Acme", "job_location": "Seattle, WA",
+        "job_description_md": "Build pipelines.",
+    }]).to_csv(master, index=False)
+    monkeypatch.setattr(sj, "MASTER_CSV", master)
+
+    out = sj.load_master_for_reuse()
+
+    assert out is not None
+    assert "score_reused" not in out.columns
+
+
+def test_restore_reused_scores_drops_a_duplicated_job_posting_id():
+    # A duplicated job_posting_id in the reused snapshot must not raise on the
+    # `.loc[snap.index] = ...` write -- keep the first occurrence only.
+    result = pd.DataFrame([
+        {"job_posting_id": "NEW-1", "score": None},
+        {"job_posting_id": "NEW-2", "score": None},
+    ])
+    reused_snapshot = pd.DataFrame([
+        {"job_posting_id": "NEW-1", "score": 5},
+        {"job_posting_id": "NEW-1", "score": 9},   # duplicate id, different value
+    ])
+
+    out = sj._restore_reused_scores(result, reused_snapshot)
+
+    row1 = out[out["job_posting_id"] == "NEW-1"].iloc[0]
+    assert row1["score"] == 5   # first occurrence wins
+    assert len(out) == 2
+
+
 def test_repost_reuse_days_config_default_and_disable(monkeypatch, tmp_path):
     monkeypatch.delenv("SCORE_REPOST_REUSE_DAYS", raising=False)
     monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)

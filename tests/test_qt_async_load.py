@@ -12,6 +12,7 @@ concurrent loads coalesce, and a load failure is reported instead of crashing.
 """
 import gzip
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -116,13 +117,17 @@ def test_reload_data_async_reports_errors_without_crashing(qtbot, tmp_path, monk
 def _repost_master(tmp_path):
     """Three postings sharing one repost key: one already marked seen, two not."""
     p = tmp_path / "linkedin_jobs_master.csv.gz"
+    today = date.today()
     df = pd.DataFrame([
         {"job_posting_id": "A", "job_title": "Data Engineer", "company_name": "Acme",
-         "job_location": "Seattle, WA", "score": "5", "extracted_date": "2026-08-10"},
+         "job_location": "Seattle, WA", "score": "5",
+         "extracted_date": str(today - timedelta(days=40))},
         {"job_posting_id": "B", "job_title": "Data Engineer", "company_name": "Acme",
-         "job_location": "Seattle, WA", "score": "5", "extracted_date": "2026-08-15"},
+         "job_location": "Seattle, WA", "score": "5",
+         "extracted_date": str(today - timedelta(days=35))},
         {"job_posting_id": "C", "job_title": "Data Engineer", "company_name": "Acme",
-         "job_location": "Seattle, WA", "score": "5", "extracted_date": "2026-08-20"},
+         "job_location": "Seattle, WA", "score": "5",
+         "extracted_date": str(today - timedelta(days=30))},
     ])
     with gzip.open(p, "wt", encoding="utf-8", newline="") as fh:
         df.to_csv(fh, index=False)
@@ -138,7 +143,8 @@ def _mark(reg, jid, marked_at):
 def test_refresh_hides_reposts_marked_inside_the_window(qtbot, tmp_path):
     reg = SeenRegistry(tmp_path / "seen.db")
     try:
-        _mark(reg, "A", "2026-09-09T00:00:00+00:00")   # 10 days before 2026-09-19
+        mark_at = date.today() - timedelta(days=10)
+        _mark(reg, "A", f"{mark_at}T00:00:00+00:00")   # 10 days before today
         p = _repost_master(tmp_path)
         w = MainWindow(csv_paths=[p], registry=reg)
         qtbot.addWidget(w)
@@ -156,7 +162,8 @@ def test_refresh_hides_reposts_marked_inside_the_window(qtbot, tmp_path):
 def test_refresh_keeps_the_newest_repost_once_the_mark_ages_out(qtbot, tmp_path):
     reg = SeenRegistry(tmp_path / "seen.db")
     try:
-        _mark(reg, "A", "2026-08-19T00:00:00+00:00")   # 31 days before 2026-09-19
+        mark_at = date.today() - timedelta(days=31)
+        _mark(reg, "A", f"{mark_at}T00:00:00+00:00")   # 31 days before today
         p = _repost_master(tmp_path)
         w = MainWindow(csv_paths=[p], registry=reg)
         qtbot.addWidget(w)

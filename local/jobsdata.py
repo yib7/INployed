@@ -1210,7 +1210,8 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
 def filter_high_unseen_with_count(
         df: pd.DataFrame, min_score: int = 4, *,
         marked_at: dict[str, str] | None = None,
-        window_days: int = 0) -> tuple[pd.DataFrame, int]:
+        window_days: int = 0,
+        today: date | None = None) -> tuple[pd.DataFrame, int]:
     """`filter_high_unseen`, also reporting how many rows the repost window hid."""
     if df.empty or "score" not in df.columns:
         return df.iloc[0:0], 0
@@ -1225,7 +1226,8 @@ def filter_high_unseen_with_count(
         # `df` here (score-filtered, seen included) is only what gets actually
         # filtered/collapsed, then narrowed to unseen once suppression has run.
         scored = df.loc[score_mask].copy()
-        scored, hidden = suppress_reposts(scored, marked_at, window_days, key_source=df)
+        scored, hidden = suppress_reposts(
+            scored, marked_at, window_days, today=today, key_source=df)
         scored_is_seen = is_seen.loc[scored.index]
         out = scored.loc[scored_is_seen == "no"].copy()
     else:
@@ -1250,9 +1252,10 @@ def filter_high_unseen_with_count(
 
 def filter_high_unseen(df: pd.DataFrame, min_score: int = 4, *,
                         marked_at: dict[str, str] | None = None,
-                        window_days: int = 0) -> pd.DataFrame:
+                        window_days: int = 0,
+                        today: date | None = None) -> pd.DataFrame:
     out, _hidden = filter_high_unseen_with_count(
-        df, min_score, marked_at=marked_at, window_days=window_days)
+        df, min_score, marked_at=marked_at, window_days=window_days, today=today)
     return out
 
 

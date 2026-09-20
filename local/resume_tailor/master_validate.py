@@ -10,6 +10,11 @@ from typing import Any, Dict, List
 
 from . import apply_answers, assets
 
+try:
+    from . import verify as _verify   # no import cycle: verify only pulls in assets/compose
+except ImportError:                    # pragma: no cover - defensive only
+    _verify = None
+
 _SECTIONS = ("experience", "projects", "leadership")
 _NAME_KEY = {"experience": "org", "projects": "name", "leadership": "org"}
 
@@ -82,7 +87,7 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
                         errors.append(
                             "tailor.required.%s names a block not in %s: '%s'" % (sec, sec, n))
 
-    errors += _letter_warnings(master.get("letter"))
+    errors += _letter_warnings(master.get("letter"), master)
 
     real = {_norm_skill(item)
             for pool in (master.get("skills", {}) or {}).values()
@@ -98,7 +103,25 @@ def validate_master(master: Dict[str, Any]) -> List[str]:
     return errors
 
 
-def _letter_warnings(letter: Any) -> List[str]:
+_CAP_WORD_RE = re.compile(r"\b[A-Z][a-zA-Z]*\b")
+_DIGIT_RUN_RE = re.compile(r"\d+")
+
+
+def _local_unseen_tokens(seed: str, source: str) -> List[str]:
+    """Small fallback for `verify.unseen_tokens` when that module is unavailable:
+    capitalised words and digit runs in `seed` with no trace anywhere in `source`
+    (case-insensitive substring). Coarser than the real grounding gate (no word
+    boundaries, no plural/abbreviation handling) but enough to flag a seed that
+    names something the master never mentions."""
+    low_source = source.lower()
+    bad: List[str] = []
+    for tok in _CAP_WORD_RE.findall(seed) + _DIGIT_RUN_RE.findall(seed):
+        if tok.lower() not in low_source and tok not in bad:
+            bad.append(tok)
+    return bad
+
+
+def _letter_warnings(letter: Any, master: Dict[str, Any]) -> List[str]:
     """Warnings for the optional top-level `letter:` block (`seed`: a string of at
     most assets.LETTER_SEED_CAP characters). Never an error: the cover letter
     runs without the seed whenever the block is unusable, and the accessor caps
@@ -113,11 +136,22 @@ def _letter_warnings(letter: Any) -> List[str]:
     if not isinstance(seed, str):
         return ["warning: letter.seed should be text (a quoted or `>-` block string); "
                 "it is ignored"]
+    warnings: List[str] = []
     length = len(seed.strip())
     if length > assets.LETTER_SEED_CAP:
-        return [f"warning: letter.seed is {length} characters; only the first "
-                f"{assets.LETTER_SEED_CAP} reach the cover letter"]
-    return []
+        warnings.append(f"warning: letter.seed is {length} characters; only the first "
+                         f"{assets.LETTER_SEED_CAP} reach the cover letter")
+
+    master_without_letter = {k: v for k, v in master.items() if k != "letter"}
+    if _verify is not None:
+        unseen = _verify.unseen_tokens(seed, str(master_without_letter))
+    else:
+        unseen = _local_unseen_tokens(seed, str(master_without_letter))
+    if unseen:
+        warnings.append(
+            "warning: letter.seed names something the rest of the master does not: "
+            + ", ".join(unseen) + "; the letter will print it as a fact")
+    return warnings
 
 
 def validate_answers(answers: List[Dict[str, Any]]) -> List[str]:

@@ -209,7 +209,7 @@ def test_background_rides_in_the_prompt_after_the_bullets(monkeypatch):
     assert "BACKGROUND (the candidate's own notes behind those bullets" in user
     assert bg in user
     assert user.index("Shipped the viewer with 178 tests") < user.index("BACKGROUND")
-    assert "never for a new employer, number, tool, date, school or credential" in user
+    assert "every employer, number, tool, date, school and credential must already appear" in user
 
 
 def test_no_background_block_when_blank(monkeypatch):
@@ -417,7 +417,7 @@ def test_letter_inputs_warn_when_the_background_is_truncated(monkeypatch):
 
 def test_letter_inputs_degrade_to_blank_and_say_so(monkeypatch):
     """A master the flattening cannot read leaves the letter to run from the
-    bullets alone, with a log line and an advisory, never an exception."""
+    bullets alone: it logs a line and an advisory, and stays an ordinary return."""
     def boom():
         raise ValueError("bad yaml")
 

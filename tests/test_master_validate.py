@@ -67,6 +67,22 @@ def test_master_flags_unanchored_match_only_alias():
     assert not any("Docker" in e for e in errs)             # anchored -> fine
 
 
+def test_letter_seed_naming_an_absent_employer_warns():
+    m = {"basics": {"name": "A", "email": "a@b.c"},
+         "experience": [{"org": "Acme Corp", "achievements": [{"id": "a1", "what": "built pipelines"}]}],
+         "letter": {"seed": "I want to build the systems Globex relies on every day."}}
+    errs = mv.validate_master(m)
+    assert any("Globex" in e and "letter.seed names something" in e for e in errs)
+
+
+def test_letter_seed_built_from_master_words_does_not_warn():
+    m = {"basics": {"name": "A", "email": "a@b.c"},
+         "experience": [{"org": "Acme Corp", "achievements": [{"id": "a1", "what": "built pipelines"}]}],
+         "letter": {"seed": "I want to build the pipelines a team at Acme Corp runs on every day."}}
+    errs = mv.validate_master(m)
+    assert not any("letter.seed names something" in e for e in errs)
+
+
 def test_validate_answers_delegates():
     bad = [{"id": "x", "question": "", "answer": "", "kind": "fixed", "status": "active"}]
     assert mv.validate_answers(bad)  # non-empty

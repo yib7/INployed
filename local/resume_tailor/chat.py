@@ -419,6 +419,11 @@ def _prose_gate(answer: str) -> str:
     `coverletter.enforce_body_style`. The em-dash strip runs again on a
     committed repair, since the repair call is free to introduce one of its
     own.
+
+    A long answer that quotes a posting phrase carrying a banned word buys the
+    one repair call same as a genuine violation, and that repair is free to
+    reword the quote; an accepted cost, since the gate cannot tell a quoted
+    phrase from the model's own writing.
     """
     if len(answer.split()) < PROSE_WORD_FLOOR:
         return answer

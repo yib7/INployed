@@ -224,7 +224,7 @@ def _letter_inputs(sel: Optional[Dict[str, Any]], bullets: Dict[str, str],
             if warn is not None:
                 warn(msg)
         return background, assets.letter_seed()
-    except Exception as exc:  # noqa: BLE001 - the background is an enrichment, never fatal
+    except Exception as exc:  # noqa: BLE001 - the background is an enrichment; any failure here is caught and logged
         log(f"cover letter background unavailable ({exc})")
         if warn is not None:
             warn(f"cover letter background unavailable ({exc})")

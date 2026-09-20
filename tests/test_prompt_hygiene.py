@@ -60,7 +60,7 @@ BANNED_CHARS: Tuple[Tuple[str, re.Pattern], ...] = (
 # from it -- keep the two in step. Skipped inside the ENUMERATIONS below.
 BANNED_PHRASINGS: Tuple[Tuple[str, re.Pattern], ...] = (
     ("contrast framing",
-     re.compile(r",\s*not\s|\bnot just\b|\brather than\b|\binstead of\b", re.I)),
+     re.compile(r",\s*not\s|,\s*never\s|\bnot just\b|\brather than\b|\binstead of\b", re.I)),
     ("participial tail",
      re.compile(r",\s*(?:[a-z]+\s+){0,6}?(?:enabling|ensuring|allowing|driving"
                 r"|resulting in|empowering|showcasing|highlighting|demonstrating)\b",

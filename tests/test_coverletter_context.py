@@ -141,8 +141,8 @@ def test_system_prompt_carries_tense_opener_and_metric_rules(monkeypatch):
     coverletter.generate_body("jd", "Engineer", "Acme", {"a1": "did a thing"})
     system = seen["system"]
     # tense rule
-    assert "NEVER say" in system and "completing" in system
-    assert "completed" in system
+    assert "completing" in system
+    assert "completed degree" in system
     # boilerplate opener ban + first-sentence rule
     assert "I am writing to express my interest" in system
     assert "I am writing to apply" in system

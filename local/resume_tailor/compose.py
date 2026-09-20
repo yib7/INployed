@@ -210,8 +210,8 @@ def _length_hint(target_lines: int) -> str:
         share = ((target_lines - 1) + measure.LAST_LINE_FILL) / target_lines
         floor = ceil(share * cap)
     unit = "line" if target_lines == 1 else "lines"
-    return (f"about {target_lines} {unit} ({floor}-{cap} characters; aim to fill "
-            f"the line(s), never exceed {cap})")
+    return (f"about {target_lines} {unit} ({floor}-{cap} characters; fill the "
+            f"line(s), staying at or under {cap})")
 
 
 def _blocks_in_order(sel: Dict[str, Any]) -> List[Tuple[str, List[str]]]:

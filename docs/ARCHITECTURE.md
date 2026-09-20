@@ -363,8 +363,8 @@ pattern-matches prose, so EEO statements and agency notices survive.
 
 That precedence changed in cycle 15: `job_detail_fields` now prefers `job_description_md`
 (`score_jobs.py`'s markdownify output) whenever it clears 40 characters, run through the new
-`jobsdata.md_to_text`; it is markdown and not HTML, so `html_to_text`'s tag stripping would
-eat a literal "<"/">" in the posting's own prose. Only when that column is short or missing
+`jobsdata.md_to_text`; the column holds markdown, and running `html_to_text`'s tag stripping
+over it would eat a literal "<"/">" in the posting's own prose. Only when that column is short or missing
 does it fall back through `job_description_formatted` → `job_description` → `job_summary`,
 unchanged. `md_to_text` turns a `#` heading onto its own
 line, strips `**bold**`/`*em*` markers while keeping the words, and turns a `-`/`*`/`+` list
@@ -397,7 +397,8 @@ first comma, every other run of non-alphanumeric characters collapsed to one spa
 vectorised paths compute that key over a whole frame at once (`_repost_keys_pyarrow` when
 pyarrow is importable, `_repost_keys_pandas` otherwise; both pinned to match the scalar
 function row by row): a per-row Python loop measured around 130ms on a 30k-row refresh,
-where pyarrow's compiled string kernels bring that under 60ms. `SeenRegistry.marked_at_all()`
+where pyarrow's compiled string kernels bring that to ~30 ms (~90 ms on the pandas-only
+fallback). `SeenRegistry.marked_at_all()`
 supplies every marked id and its timestamp; `blocked_repost_keys` narrows to marked rows
 first (a small fraction of a full frame) before computing keys, and `suppress_reposts` hides
 an unseen row whose key was marked within the configured window, then collapses any

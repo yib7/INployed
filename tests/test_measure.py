@@ -386,7 +386,7 @@ def test_length_hint_ceiling_is_the_measured_budget():
         cap = measure.char_budget(n)
         hint = compose._length_hint(n)
         assert f"-{cap} characters" in hint
-        assert f"never exceed {cap}" in hint
+        assert f"at or under {cap}" in hint
         floor = int(re.search(r"\((\d+)-", hint).group(1))
         assert 0 < floor < cap
 

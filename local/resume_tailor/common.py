@@ -15,7 +15,7 @@ from typing import List
 # the punctuation and the sentence shapes it is shown. tests/test_prompt_hygiene.py
 # holds the line for the whole package.
 _PRINCIPLE = (
-    "ABSOLUTE RULE: select and re-phrase, never invent. You may ONLY restate facts "
+    "ABSOLUTE RULE: select and re-phrase; invention is forbidden. You may ONLY restate facts "
     "that are present in the provided atom(s). Never add a metric, number, tool, "
     "technology, company, or claim that is not literally in the atom. Copy every "
     "number/metric VERBATIM. Never upgrade the verb beyond the atom's stated ownership "

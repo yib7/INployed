@@ -62,9 +62,9 @@ _TODAYS_GENERATE_HEAD = (
     "no exclamation-point excitement, no 'thrilled/ecstatic/passionate/love' inflation, "
     'no empty superlatives; that over-eager tone reads as AI-written. Use a confident, '
     'professional tone. Use the correct tense for education, based on the EDUCATION '
-    "line: if the candidate has already graduated, NEVER say they are 'completing' or "
-    "'finishing' their studies; refer to the degree as completed.\nBANNED PHRASING "
-    '(using any of these is wrong): '
+    "line: a candidate who has already graduated has a completed degree, so refer to "
+    "it that way; writing 'completing' or 'finishing' their studies is wrong.\n"
+    'BANNED PHRASING (using any of these is wrong): '
 )
 
 _TODAYS_REFINE_HEAD = (

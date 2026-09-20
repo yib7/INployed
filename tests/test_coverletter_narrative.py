@@ -5,7 +5,8 @@ this pins what the letter does with them:
 
   * the generation system prompt is a narrative brief (one through-line, open
     on the link to the role, one or two experiences as prose, close on what
-    comes next, visibly different paragraph lengths, never a copied bullet);
+    comes next, visibly different paragraph lengths, every experience retold
+    in the candidate's own voice);
   * the refine pass is the humanizer (rhythm, paragraph variance, a bullet with
     a subject bolted on retold as narrative, measured tone), still grounded;
   * both, and the repair prompts, always carry `aiwriting.RULES_PROMPT`,
@@ -105,7 +106,7 @@ def test_uniform_rhythm_flags_six_same_length_sentences():
 
 def test_uniform_rhythm_passes_mixed_sentence_lengths():
     # Six sentences, so the check reaches the coefficient-of-variation path
-    # and passes on the merits, never on the too-few-sentences gate.
+    # and its pass is decided purely on the merits, past the too-few-sentences gate.
     counts = [len(s.split()) for s in common.split_sentences(_VARIED)]
     assert len(counts) >= aiwriting.RHYTHM_MIN_SENTENCES
     assert min(counts) < 8 < 20 < max(counts)
@@ -270,7 +271,7 @@ def test_generation_system_prompt_is_the_narrative_brief(monkeypatch):
     assert "framing" in low and "ordering" in low
     assert "new employer, number, tool, date, school or credential" in low
     # the rules that carried over
-    assert "NEVER say" in system and "completing" in system and "completed" in system
+    assert "completing" in system and "completed degree" in system
     assert "I am writing to express my interest" in system
     assert "FIRST sentence" in system
     assert "same metric or number twice" in system
@@ -316,7 +317,7 @@ def test_refine_is_the_humanizer(monkeypatch):
     for anchor in ("one connected argument", "sentence length", "clearly shorter",
                    "bullet with a subject bolted on", "narrative", "measured"):
         assert anchor in low, anchor
-    # grounding stays: draft + bullets + background, never anything new
+    # grounding stays: every fact traces to the draft, the bullets or the background
     assert "ONLY facts" in seen["system"]
     assert "never add" in seen["system"] and "invent" in low
     assert "BACKGROUND" in seen["user"] and "- notes" in seen["user"]

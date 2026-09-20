@@ -159,7 +159,7 @@ def select(jd: str, job_title: str, company: str) -> Dict[str, Any]:
         "verbatim. You MAY merge closely-related API entries into one compact token (e.g. "
         "'Gemini/OpenAI/Claude API'). ALSO rank the candidate's concepts/methodologies (the "
         "METHODS POOL) by relevance to this job, most-relevant first, copying items verbatim "
-        "from that pool (selection only, never invent) for the 'methods' output.\n"
+        "from that pool (selection only; invention is forbidden) for the 'methods' output.\n"
         + _PRINCIPLE
     )
     pools = _skill_pools()
@@ -186,7 +186,7 @@ Frameworks: {json.dumps(pools["Frameworks"], ensure_ascii=False)}
 Developer Tools: {json.dumps(pools["Developer Tools"], ensure_ascii=False)}
 Libraries: {json.dumps(pools["Libraries"], ensure_ascii=False)}
 
-METHODS POOL (for the "methods" output only, the candidate's concepts/methodologies; RANK by relevance to THIS job, most-relevant FIRST, and return ~8-10. SELECTION ONLY: copy items VERBATIM from this pool, never invent. These become the résumé's concepts line; lead with the concepts this role centers on (e.g. data analysis, ETL, A/B testing, modeling)):
+METHODS POOL (for the "methods" output only, the candidate's concepts/methodologies; RANK by relevance to THIS job, most-relevant FIRST, and return ~8-10. SELECTION ONLY: copy items VERBATIM from this pool; invention is forbidden. These become the résumé's concepts line; lead with the concepts this role centers on (e.g. data analysis, ETL, A/B testing, modeling)):
 {json.dumps(methods_pool, ensure_ascii=False)}
 
 Selection guidance. The resume template has FIXED sections; fill them to one full page (~14-18 bullets):

@@ -24,8 +24,8 @@ section, which is what you paste into an application's cover-letter box.
 Add `--cover-letter` to the tailor CLI (or tick the box in the dashboard) and the engine
 writes the letter as narrative prose built from the atoms the tailor selected for that job.
 An optional `letter.seed` block in `master_experience.yaml` gives it your own voice: two to
-four sentences on what you want from your next role, quoted only in fragments and never
-pasted in whole. For example:
+four sentences on what you want from your next role; the letter draws on its ideas and its
+voice, quoting at most a short fragment of it. For example:
 
 ```yaml
 letter:

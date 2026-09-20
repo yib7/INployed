@@ -323,6 +323,31 @@ def test_suppress_reposts_collapse_handles_mixed_date_formats():
     assert hidden == 1
 
 
+def test_suppress_reposts_handles_a_timezone_mix_in_the_marks_and_the_dates():
+    """The live seen.db holds naive and offset-bearing timestamps in one column
+    (2026-09-20: `pd.to_datetime(format="mixed")` raised "Mixed timezones
+    detected" on the real data and the filter never ran). Both shapes parse,
+    both marks block, and the newest extracted_date still wins the collapse."""
+    df = pd.DataFrame([
+        _row("A", "yes", "2026-08-01"),
+        _row("B", "yes", "2026-08-02T09:00:00+00:00"),
+        _row("C", "no", "2026-08-15 10:30:00"),
+        _row("D", "no", "2026-08-16T10:30:00+00:00"),
+        _row("E", "no", "2026-08-17T10:30:00-04:00"),
+    ])
+    marked_at = {"A": "2026-09-14 08:00:00", "B": "2026-09-15T08:00:00+00:00"}
+    out, hidden = jobsdata.suppress_reposts(df, marked_at, 30, today=TODAY)
+    assert list(out["job_posting_id"]) == ["A", "B"]      # every unseen repost blocked
+    assert hidden == 3
+    # with no mark in the window, the collapse keeps the newest of the mixed dates
+    out, hidden = jobsdata.suppress_reposts(df.iloc[2:], {}, 30, today=TODAY)
+    assert list(out["job_posting_id"]) == ["E"] and hidden == 2
+    parsed = jobsdata._mixed_timestamps(pd.Series(["2026-08-01", "2026-08-02T09:00:00+00:00",
+                                                   "garbage", None]))
+    assert parsed.dt.tz is None
+    assert parsed.notna().tolist() == [True, True, False, False]
+
+
 def test_suppress_reposts_key_source_blocks_regardless_of_the_marked_rows_own_score():
     # The mark itself (A) can sit at any score -- blocking is purely about the
     # repost key -- so key_source must be the FULL frame, ahead of any

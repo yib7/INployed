@@ -1106,6 +1106,20 @@ def _pick_repost_winners(candidates: pd.DataFrame) -> pd.Index:
     return ordered.index[~ordered["key"].duplicated(keep="first")]
 
 
+def _mixed_timestamps(values: pd.Series) -> pd.Series:
+    """`values` (ISO strings of any shape: bare dates, naive timestamps, and
+    timestamps carrying an offset) as tz-naive UTC datetimes, NaT where unparseable.
+
+    The real seen.db holds both `2026-07-27 14:03:11` and
+    `2026-09-19T20:11:04+00:00` in one column, and `pd.to_datetime(format=
+    "mixed")` alone raises "Mixed timezones detected" on that (seen 2026-09-20
+    on the live data; the synthetic fixtures were all one shape). `utc=True`
+    makes the parse accept the mix; a naive value is read as UTC, which for a
+    day-granular window is the right call."""
+    parsed = pd.to_datetime(values, format="mixed", errors="coerce", utc=True)
+    return parsed.dt.tz_localize(None)
+
+
 def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days: int,
                          today: date | None = None) -> set[str]:
     """Repost keys a mark blocks, over EVERY row of `df` whatever its score.
@@ -1117,9 +1131,10 @@ def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days
     `marked_at` is `job_posting_id -> ISO timestamp` (SeenRegistry.marked_at_all(),
     a single-table scan over the whole `seen` table -- a few thousand rows in
     practice, cheap on every refresh). Both that timestamp and `extracted_date`
-    below are parsed with `format="mixed"`: `add_extracted_date` merges a bare
-    date and a full ISO timestamp into the same column, and a single inferred
-    format turns the other shape into NaT.
+    below go through `_mixed_timestamps`: `add_extracted_date` merges a bare
+    date and a full ISO timestamp into the same column, seen.db mixes naive and
+    offset-bearing timestamps, and a single inferred format turns the other
+    shape into NaT (or raises on the timezone mix).
     """
     if df.empty or window_days <= 0 or not marked_at:
         return set()
@@ -1135,7 +1150,7 @@ def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days
         return set()
     marked_ids = ids[marked_mask]
     keys = _repost_keys_vectorized(df.loc[marked_mask])
-    mark_ts = pd.to_datetime(marked_ids.map(marked_at), format="mixed", errors="coerce")
+    mark_ts = _mixed_timestamps(marked_ids.map(marked_at))
     in_window = pd.Series(False, index=marked_ids.index)
     have_mark = mark_ts.notna()
     if have_mark.any():
@@ -1180,7 +1195,7 @@ def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: i
     keys = pd.Series("", index=df.index)
     if unseen.any():
         keys.loc[unseen] = _repost_keys_vectorized(df.loc[unseen])
-    extracted = (pd.to_datetime(df["extracted_date"], format="mixed", errors="coerce")
+    extracted = (_mixed_timestamps(df["extracted_date"])
                  if "extracted_date" in df.columns else pd.Series(pd.NaT, index=df.index))
     ids = _repost_col(df, "job_posting_id").astype(str)
     drop_blocked = unseen & (keys != "") & keys.isin(blocked_keys)

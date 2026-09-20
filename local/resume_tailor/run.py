@@ -211,15 +211,17 @@ def _letter_inputs(sel: Optional[Dict[str, Any]], bullets: Dict[str, str],
         ids = None if sel is None else _letter_atom_ids(sel, bullets, master)
         background = assets.flatten_entries(master, entry_atoms=ids)
         if background.endswith(assets.TRUNCATED_MARKER):
-            # Say so: a letter written from half the record is a quieter failure
-            # than no letter, and the fix (a shorter master, fewer printed
-            # entries) is the user's to make. Entries are the `- header` lines.
+            # Say so: a letter written from part of the record is a quieter
+            # failure than no letter, and the fix (a shorter master, fewer
+            # printed entries) is the user's to make. The trim takes atoms off
+            # the longest entries and keeps every header, so the count is atoms.
             full = assets.flatten_entries(master, entry_atoms=ids, cap=10 ** 9)
-            total = _entry_headers(full)
-            dropped = total - _entry_headers(background)
+            total = _atom_lines(full)
+            dropped = total - _atom_lines(background)
             msg = (f"cover letter background truncated at "
                    f"{assets.LETTER_BACKGROUND_CAP:,} characters "
-                   f"({dropped} of {total} entries left out)")
+                   f"({dropped} of {total} achievement notes left out, "
+                   f"every entry kept)")
             log(msg)
             if warn is not None:
                 warn(msg)
@@ -231,9 +233,10 @@ def _letter_inputs(sel: Optional[Dict[str, Any]], bullets: Dict[str, str],
         return "", ""
 
 
-def _entry_headers(background: str) -> int:
-    """How many entries a flattened background lists (its `- header` lines)."""
-    return sum(1 for line in background.splitlines() if line.startswith("- "))
+def _atom_lines(background: str) -> int:
+    """How many achievement notes a flattened background lists (its indented
+    `    - atom` lines)."""
+    return sum(1 for line in background.splitlines() if line.startswith("    - "))
 
 
 def _field(job: Dict[str, str], key: str) -> str:

@@ -596,8 +596,9 @@ runs four stages in order, all in `local/resume_tailor/coverletter.py`.
 
 1. **generate** (pro tier): a narrative prompt writes three or four paragraphs of visibly
    different lengths from the tailored bullets, an optional background excerpt of the
-   selected atoms (`assets.flatten_entries`, capped at `LETTER_BACKGROUND_CAP` = 6,000
-   characters) and the optional `letter.seed` voice sample (`assets.letter_seed`, capped at
+   selected atoms (`assets.flatten_entries`, capped at `LETTER_BACKGROUND_CAP` = 30,000
+   characters; over the cap, atoms come off the longest entries first and every entry
+   keeps its header) and the optional `letter.seed` voice sample (`assets.letter_seed`, capped at
    `LETTER_SEED_CAP` = 1,200 characters).
 2. **humanize** (flash tier, `refine_body`): a second pass gives the draft mixed sentence
    and paragraph lengths, retells any sentence that reads like a bullet with a subject

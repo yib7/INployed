@@ -37,6 +37,10 @@ by reusing a still-fresh score from the master.
 
 ### Changed
 
+- **The cover letter's background block fits a whole master.** The cap is 30,000
+  characters (the same as the Ask AI digest), and a history that still overflows loses
+  its longest entries' last notes first, so every employer stays in the brief. The
+  generation prompt also asks for 280 to 400 words, so a letter cannot come back thin.
 - **"Strip AI writing patterns from the cover letter" now defaults on.** The AI-writing
   rules already rode in every letter prompt; the toggle only decides whether the
   deterministic checker also runs afterward.

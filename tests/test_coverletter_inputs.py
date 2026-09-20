@@ -136,10 +136,11 @@ def test_flatten_entries_lists_whole_entries_that_own_a_named_atom():
 
 def test_flatten_entries_is_bounded_with_the_truncation_marker():
     big = {"experience": [{"org": f"Org {i}", "title": "T", "dates": "2020",
-                           "achievements": [{"id": f"x{i}", "what": "w" * 200}]}
+                           "achievements": [{"id": f"x{i}{j}", "what": "w" * 200}
+                                            for j in range(4)]}
                           for i in range(200)]}
     out = assets.flatten_entries(big)
-    assert len(out) <= assets.LETTER_BACKGROUND_CAP == 6000
+    assert len(out) <= assets.LETTER_BACKGROUND_CAP == 30_000
     assert out.endswith(assets.TRUNCATED_MARKER)
     # the cut lands on a line boundary, so no atom line is sent half-finished
     body = out[:-len(assets.TRUNCATED_MARKER)]
@@ -150,6 +151,37 @@ def test_flatten_entries_is_bounded_with_the_truncation_marker():
     small = assets.flatten_entries(MASTER)
     assert assets.TRUNCATED_MARKER not in small
     assert assets.flatten_entries(MASTER, cap=80).endswith(assets.TRUNCATED_MARKER)
+
+
+def test_flatten_entries_trims_atoms_evenly_and_keeps_every_entry():
+    """Over the cap, atoms come off the longest entries first and every entry
+    keeps its header: a rich history loses detail evenly, and no employer
+    drops out of the letter (the 2026-09-20 report: 5 of 8 entries lost)."""
+    big = {"experience": [{"org": f"Org {i}", "title": "T", "dates": "2020",
+                           "achievements": [{"id": f"x{i}{j}", "what": f"o{i} " + "w" * 150}
+                                            for j in range(6)]}
+                          for i in range(8)]}
+    full = assets.flatten_entries(big, cap=10 ** 9)
+    out = assets.flatten_entries(big, cap=len(full) // 2)
+    assert out.endswith(assets.TRUNCATED_MARKER)
+    assert len(out) <= len(full) // 2
+    headers = [ln for ln in out.splitlines() if ln.startswith("- Org ")]
+    assert len(headers) == 8                       # every entry still listed
+    per_entry = [sum(1 for ln in out.splitlines() if ln.startswith(f"    - o{i} "))
+                 for i in range(8)]
+    assert all(n >= 1 for n in per_entry)          # and every entry keeps a note
+    assert max(per_entry) - min(per_entry) <= 1    # trimmed evenly
+    # a longer entry gives first: three entries of six atoms and one of one
+    lopsided = {"experience": [{"org": f"Org {i}", "title": "T",
+                                "achievements": [{"id": f"y{i}{j}", "what": f"o{i} " + "w" * 150}
+                                                 for j in range(6 if i else 1)]}
+                               for i in range(4)]}
+    out = assets.flatten_entries(lopsided, cap=len(assets.flatten_entries(lopsided, cap=10 ** 9)) // 2)
+    assert sum(1 for ln in out.splitlines() if ln.startswith("    - o0 ")) == 1
+    # headers alone over the cap fall back to a line-boundary cut
+    tiny = assets.flatten_entries(big, cap=60)
+    assert tiny.endswith(assets.TRUNCATED_MARKER) and len(tiny) <= 60
+    assert tiny[:-len(assets.TRUNCATED_MARKER)].endswith("\n")
 
 
 def test_flatten_entries_of_an_empty_master_is_blank():
@@ -394,20 +426,23 @@ def test_letter_atom_ids_follow_the_bullets_that_made_the_page():
 
 
 def test_letter_inputs_warn_when_the_background_is_truncated(monkeypatch):
-    """The cap stays at 6,000; hitting it is said out loud (log + advisory) with
-    the count of entries that never reached the prompt."""
+    """The cap is 30,000; hitting it is said out loud (log + advisory) with the
+    count of achievement notes that never reached the prompt (entries are all
+    kept, so the count is atoms)."""
     big = {"experience": [{"org": f"Org {i}", "title": "T", "dates": "2020",
-                           "achievements": [{"id": f"x{i}", "what": "w" * 200}]}
+                           "achievements": [{"id": f"x{i}{j}", "what": "w" * 200}
+                                            for j in range(5)]}
                           for i in range(60)]}
     monkeypatch.setattr(run_mod.assets, "load_master", lambda: big)
     logs, warns = [], []
     background, seed = run_mod._letter_inputs(None, {}, logs.append, warn=warns.append)
     assert background.endswith(assets.TRUNCATED_MARKER) and seed == ""
     assert warns == logs and len(logs) == 1
-    kept = sum(1 for ln in background.splitlines() if ln.startswith("- Org "))
-    assert logs[0] == (f"cover letter background truncated at 6,000 characters "
-                       f"({60 - kept} of 60 entries left out)")
-    assert 0 < kept < 60
+    kept = sum(1 for ln in background.splitlines() if ln.startswith("    - "))
+    assert logs[0] == (f"cover letter background truncated at 30,000 characters "
+                       f"({300 - kept} of 300 achievement notes left out, every entry kept)")
+    assert 0 < kept < 300
+    assert sum(1 for ln in background.splitlines() if ln.startswith("- Org ")) == 60
     # a master that fits says nothing
     logs.clear()
     monkeypatch.setattr(run_mod.assets, "load_master", lambda: MASTER)

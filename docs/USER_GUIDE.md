@@ -39,8 +39,9 @@ when a seed runs past 1,200 characters or the block is shaped wrong; either way 
 still generates, with the seed capped or skipped.
 
 Generation draws on a background excerpt of the selected entries' own atoms (capped at
-6,000 characters, with an advisory in `tailor_report.txt` when a long history gets
-truncated) plus the seed, then a second pass rewrites the draft for rhythm: varied
+30,000 characters, enough for a whole master; a longer history loses its longest
+entries' last notes first, every entry stays listed, and `tailor_report.txt` carries an
+advisory) plus the seed, then a second pass rewrites the draft for rhythm: varied
 sentence and paragraph lengths, and any sentence that reads like a bullet with a subject
 bolted on retold as a story. Two structural checks always run, whatever the **"Strip AI
 writing patterns"** toggle says: a seven-word run copied straight from a résumé bullet

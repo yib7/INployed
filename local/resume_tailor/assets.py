@@ -96,7 +96,7 @@ def load_master() -> Dict[str, Any]:
 # the page. Both are bounded here, once, so neither prompt can grow with the
 # master file: a seed is a voice sample, and the background is an excerpt.
 LETTER_SEED_CAP = 1200
-LETTER_BACKGROUND_CAP = 6000
+LETTER_BACKGROUND_CAP = 30_000   # matches chat.MASTER_CHAR_CAP: a whole master fits
 
 # Appended when a flattened excerpt was cut, so the model knows it is reading a
 # part of the record. chat.py carries the same marker for its own excerpts.
@@ -189,25 +189,50 @@ def flatten_entries(master: Dict[str, Any], *, entry_atoms: Optional[Iterable[st
     tailor run passes the ids of the atoms that made the page and gets every
     entry that owns one of them, in full (the letter tells an employer's story,
     so it gets all the notes on that employer); the standalone letter passes
-    None and gets every entry. The result never exceeds `cap` characters: when
-    the text is longer it is cut on the last line boundary that fits and
-    TRUNCATED_MARKER is appended, so no atom line is ever sent half-finished (a
-    cut number is the one thing an excerpt must not invent)."""
-    lines: List[str] = []
+    None and gets every entry. The result never exceeds `cap` characters. When
+    the text is longer, atoms come off the tail of whichever entry is currently
+    the longest, one at a time, until it fits: every entry keeps its header
+    and its first atoms, so the trim costs detail evenly and no employer
+    vanishes from the letter. TRUNCATED_MARKER is appended after a trim. If the
+    headers alone overflow the cap, the text is cut on the last line boundary
+    that fits. Either way no atom line is ever sent half-finished (a cut number
+    is the one thing an excerpt must not invent)."""
+    # groups: one [header, atom, atom...] list per entry, plus one-line groups
+    # for the section labels, in output order
+    groups: List[List[str]] = []
     for section, keys in (("experience", ("org", "title")),
                           ("projects", ("name",)),
                           ("leadership", ("org", "role", "title"))):
         block = entry_lines(master, section, *keys, entry_atoms=entry_atoms)
-        if block:
-            lines.append(f"{section.upper()}:")
-            lines += block
-    text = "\n".join(lines)
+        if not block:
+            continue
+        groups.append([f"{section.upper()}:"])
+        for ln in block:
+            if ln.startswith("- "):
+                groups.append([ln])
+            else:   # an atom line; a headerless entry's atoms ride on the label
+                groups[-1].append(ln)
+
+    def _text() -> str:
+        return "\n".join(ln for g in groups for ln in g)
+
+    text = _text()
     if len(text) <= cap:
         return text
     room = max(0, cap - len(TRUNCATED_MARKER))
-    cut = text.rfind("\n", 0, room)
-    kept = text[:cut + 1] if cut > 0 else text[:room]
-    return kept + TRUNCATED_MARKER
+    while len(text) > room:
+        trimmable = [g for g in groups if len(g) > 1]
+        if not trimmable:
+            break
+        longest = max(trimmable, key=lambda g: sum(len(ln) + 1 for ln in g))
+        longest.pop()
+        text = _text()
+    if len(text) > room:
+        cut = text.rfind("\n", 0, room)
+        text = text[:cut + 1] if cut > 0 else text[:room]
+    elif not text.endswith("\n"):
+        text += "\n"
+    return text + TRUNCATED_MARKER
 
 
 @lru_cache(maxsize=1)

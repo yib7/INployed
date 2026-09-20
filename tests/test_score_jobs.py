@@ -575,6 +575,65 @@ def test_reuse_repost_scores_hit_copies_six_columns_and_sets_reused_from():
     assert bool(row["score_reused"]) is True
 
 
+def test_reuse_repost_scores_two_reposts_of_one_master_job_both_reuse(capsys):
+    # Two DIFFERENT new postings that both happen to fingerprint-match the
+    # same master row (e.g. the same listing reposted twice by the company
+    # before this run scored either): both must reuse independently. Matching
+    # is a repeatable lookup against the master, so a second row with the
+    # same fingerprint still finds it.
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("OLD-1", 5, today)])
+    df = pd.DataFrame([_fresh_row("NEW-1"), _fresh_row("NEW-2")])
+
+    out, n = sj.reuse_repost_scores(df, master, 30, today=today)
+
+    assert n == 2
+    assert "Reposts: reused 2 scores" in capsys.readouterr().out
+    for _, row in out.iterrows():
+        assert row["score"] == 5
+        assert row["score_reused_from"] == "OLD-1"
+        assert bool(row["score_reused"]) is True
+
+
+def test_reuse_repost_scores_miss_when_master_score_is_blank():
+    # A fingerprint match against a master row that was never actually scored
+    # (blank/NaN score, e.g. a prior run's spend-cap overflow) must not
+    # "reuse" a score that doesn't exist -- the row goes to the pool as usual.
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("OLD-1", 5, today, score=float("nan"))])
+    df = pd.DataFrame([_fresh_row("NEW-1")])
+
+    out, n = sj.reuse_repost_scores(df, master, 30, today=today)
+
+    assert n == 0
+    assert bool(out.iloc[0]["score_reused"]) is False
+    assert pd.isna(out.iloc[0]["score_reused_from"])
+
+
+def test_run_scoring_skips_pool_for_two_reposts_of_one_master_job():
+    """The pool must receive zero calls for EITHER reused row."""
+    reused_cols = {
+        "score": 5, "reason": "good fit", "deep_score": 8,
+        "strengths": "python", "gaps": "", "recommendation": "apply",
+    }
+    df = pd.DataFrame([
+        {"job_posting_id": "NEW-1", "job_description_md": "reused job one",
+         "filtered_out": False, "score_reused": True, "score_reused_from": "OLD-1",
+         **reused_cols},
+        {"job_posting_id": "NEW-2", "job_description_md": "reused job two",
+         "filtered_out": False, "score_reused": True, "score_reused_from": "OLD-1",
+         **reused_cols},
+    ])
+    pool = FakePool({})
+
+    merged = asyncio.run(sj.run_scoring(pool, "resume", df))
+
+    assert pool.calls == []   # zero calls for BOTH reused rows
+    for _, row in merged.iterrows():
+        assert row["score"] == 5
+        assert row["score_reused_from"] == "OLD-1"
+
+
 def test_reuse_repost_scores_miss_on_changed_description():
     today = date(2026, 9, 19)
     master = pd.DataFrame([_master_row("OLD-1", 5, today)])

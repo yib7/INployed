@@ -1162,7 +1162,7 @@ def load_master_for_reuse() -> pd.DataFrame | None:
             pd.errors.ParserError, pd.errors.EmptyDataError) as e:
         print(f"Reposts: could not read {MASTER_CSV.name} ({e}); skipping score reuse this run")
         return None
-    usecols = [pick_col(pd.DataFrame(columns=header), candidates)
+    usecols = [next((c for c in candidates if c in header), None)
               for candidates in _REPOST_MASTER_COL_CANDIDATES]
     usecols = [c for c in usecols if c]
     if not {"job_posting_id", "score", "extracted_date"} <= set(usecols):

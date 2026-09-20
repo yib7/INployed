@@ -168,6 +168,42 @@ def test_enforce_fixed_counts_pins_bullets(synthetic_master, monkeypatch):
     assert len(big["groups"]) == 2
 
 
+def test_enforce_fixed_counts_splits_a_fused_group_when_no_atom_is_left(synthetic_master, monkeypatch):
+    """Side Gig has 3 atoms and a 3-bullet config, and select fused two of
+    them into one group: with no unused atom to pad from, the largest fused
+    group splits in place so the block still renders its configured count
+    (the 2026-09-20 Octus run shipped 2 of 3)."""
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
+        "Side Gig": {"line_targets": [2, 2, 2]},
+        "Big Co": {"line_targets": [1]},
+        "Club A": {"line_targets": [1, 1]},
+        "Club B": {"line_targets": [1]},
+    }})
+    sel = {
+        "experience": [
+            {"name": "Big Co", "groups": [["bigco_a", "bigco_b"]]},
+            {"name": "Side Gig", "groups": [["gig_a", "gig_b"], ["gig_c"]]},
+        ],
+        "leadership": [
+            {"name": "Club A", "groups": [["la_a"], ["la_b"]]},
+            {"name": "Club B", "groups": [["lb_a"]]},
+        ],
+        "projects": [],
+    }
+    compose._enforce_fixed_counts(sel)
+    side = next(e for e in sel["experience"] if e["name"] == "Side Gig")
+    assert side["groups"] == [["gig_a"], ["gig_b"], ["gig_c"]]   # split in place, order kept
+    big = next(e for e in sel["experience"] if e["name"] == "Big Co")
+    assert big["groups"] == [["bigco_a", "bigco_b"]]              # a 1-bullet config keeps its fusion
+    # every group single and still short: nothing to split, the block stays short
+    sel2 = {"experience": [{"name": "Big Co", "groups": [["bigco_a"], ["bigco_b"]]}],
+            "leadership": [], "projects": []}
+    monkeypatch.setattr(config, "_config_json", lambda: {"resume_layout": {
+        "Big Co": {"line_targets": [2, 2, 2]}}})
+    compose._enforce_fixed_counts(sel2)
+    assert sel2["experience"][0]["groups"] == [["bigco_a"], ["bigco_b"]]
+
+
 def test_header_and_education_render_from_yaml(synthetic_master):
     tex = render.render(
         {"experience": [], "projects": [], "leadership": []}, {}, []

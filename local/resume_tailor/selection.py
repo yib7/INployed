@@ -354,9 +354,13 @@ def _cap_projects(clean: Dict[str, Any]) -> None:
 def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
                      used: set[str], *, singles: bool) -> None:
     """Make `entry` have exactly `n` bullet groups. Trim extra groups from the
-    end; pad from this block's still-unused atoms. With singles=True every bullet
-    is one atom (splitting any fused group), matching the leadership "one tight
-    bullet per atom" plan."""
+    end; pad from this block's still-unused atoms; when those run out, split
+    the largest fused group (its last atom becomes the next bullet, in place)
+    until the count is met or every group is a single atom. Without the split a
+    block whose atoms select fused two-to-a-bullet shipped short of its
+    configured count (Octus, 3 atoms, 3 targets, rendered 2 on 2026-09-20).
+    With singles=True every bullet is one atom (splitting any fused group),
+    matching the leadership "one tight bullet per atom" plan."""
     avail = _block_atoms(section, name)
     if singles:
         ordered = [a for g in entry["groups"] for a in g]  # flatten, keep order
@@ -385,6 +389,12 @@ def _resize_to_count(entry: Dict[str, Any], section: str, name: str, n: int,
             break
         used.add(extra)
         entry["groups"].append([extra])
+    while len(entry["groups"]) < n:
+        fused = [i for i, g in enumerate(entry["groups"]) if len(g) > 1]
+        if not fused:
+            break
+        i = max(fused, key=lambda k: len(entry["groups"][k]))
+        entry["groups"].insert(i + 1, [entry["groups"][i].pop()])
 
 
 def bullet_line_targets(sel: Dict[str, Any]) -> Dict[str, int]:

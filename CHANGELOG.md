@@ -47,6 +47,10 @@ by reusing a still-fresh score from the master.
 
 ### Fixed
 
+- **An experience block could render short of its configured bullet count.** When
+  select fused two atoms into one bullet and the block had no unused atom left to pad
+  from, the count enforcement gave up (3 atoms, 3 targets, 2 bullets on the page). It
+  now splits the largest fused group in place until the count is met.
 - **The job description card lost the posting's own structure.** It read the raw
   `job_description_formatted` HTML column through the plain-text stripper, so a scraped
   posting's headings and bullet lists ran together. The card, the tailor, and Ask AI now

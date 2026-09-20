@@ -1241,8 +1241,14 @@ def filter_high_unseen_with_count(
         # `df` here (score-filtered, seen included) is only what gets actually
         # filtered/collapsed, then narrowed to unseen once suppression has run.
         scored = df.loc[score_mask].copy()
-        scored, hidden = suppress_reposts(
-            scored, marked_at, window_days, today=today, key_source=df)
+        try:
+            scored, hidden = suppress_reposts(
+                scored, marked_at, window_days, today=today, key_source=df)
+        except Exception as exc:  # noqa: BLE001 - a view-time filter must never take the refresh down
+            # One unparseable date in seen.db or the master is not worth an
+            # empty High Score tab: show the unsuppressed list and say why.
+            log.warning("repost suppression skipped: %s", exc)
+            hidden = 0
         scored_is_seen = is_seen.loc[scored.index]
         out = scored.loc[scored_is_seen == "no"].copy()
     else:

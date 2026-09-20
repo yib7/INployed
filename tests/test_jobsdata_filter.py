@@ -348,6 +348,24 @@ def test_suppress_reposts_handles_a_timezone_mix_in_the_marks_and_the_dates():
     assert parsed.notna().tolist() == [True, True, False, False]
 
 
+def test_filter_high_unseen_survives_a_suppression_failure(monkeypatch, caplog):
+    """The filter runs on the UI thread with no guard at the call site; a
+    failure inside suppression shows the unsuppressed list with a warning
+    (until 2026-09-20 the timezone mix raised and the refresh died with it)."""
+    df = pd.DataFrame([_row("A", "no", "2026-08-01", score="5"),
+                       _row("B", "no", "2026-08-02", score="5")])
+
+    def boom(*a, **k):
+        raise ValueError("Mixed timezones detected")
+
+    monkeypatch.setattr(jobsdata, "suppress_reposts", boom)
+    with caplog.at_level("WARNING", logger="jobsdata"):
+        out, hidden = jobsdata.filter_high_unseen_with_count(
+            df, 4, marked_at={"A": "2026-09-14"}, window_days=30, today=TODAY)
+    assert sorted(out["job_posting_id"]) == ["A", "B"] and hidden == 0
+    assert "repost suppression skipped: Mixed timezones detected" in caplog.text
+
+
 def test_suppress_reposts_key_source_blocks_regardless_of_the_marked_rows_own_score():
     # The mark itself (A) can sit at any score -- blocking is purely about the
     # repost key -- so key_source must be the FULL frame, ahead of any

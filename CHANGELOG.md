@@ -47,6 +47,11 @@ by reusing a still-fresh score from the master.
 
 ### Fixed
 
+- **Repost suppression raised on a real `seen.db`.** The seen table mixes timestamps
+  with and without a timezone offset, and the date parse refused the mix, so the filter
+  never ran on live data. Both shapes now parse (naive values read as UTC), and a failure
+  inside suppression shows the unsuppressed list with a logged warning; the High Score
+  refresh completes either way.
 - **An experience block could render short of its configured bullet count.** When
   select fused two atoms into one bullet and the block had no unused atom left to pad
   from, the count enforcement gave up (3 atoms, 3 targets, 2 bullets on the page). It

@@ -73,6 +73,22 @@ regex pre-filter drops over-senior roles *before* any LLM sees them (the highest
 function here, and the most heavily tested; see `tests/test_min_required_years.py`).
 Locally the scorer can also run through the Claude Code CLI (Settings → Scoring provider); the VM always scores with Gemini.
 
+**Repost score reuse** (`reuse_repost_scores`, gated by `SCORE_REPOST_REUSE_DAYS` / Settings
+→ Scoring → "Repost score reuse window (days)", default 30) runs before either LLM stage.
+`repost_fingerprint` extends the dashboard's `repost_key` (a private, byte-for-byte-pinned
+copy, since this script ships standalone to the VM with no `local/` package around it) with
+a sha1 of the first 400 normalised characters of the description, so two postings sharing a
+title, company and location but describing different roles never share a fingerprint. A new
+row whose fingerprint matches a `load_master_for_reuse()` row scored within the window
+copies that row's six score columns, sets `score_reused=True` and `score_reused_from=<id>`
+to mark it for `run_scoring` to skip; the newest match wins when several master rows share a
+fingerprint. `run_scoring` strips the six reused columns from its working frame before
+Stage 1 and Stage 2 (so the merge's left join can never blank a reused score back to NaN for
+an id it never scored) and `_restore_reused_scores` copies them back onto the result
+afterward. The run prints `Reposts: reused N scores` and records `scores_reused` in
+`run_stats.csv`; 0 turns reuse off, and every row is scored fresh, the same as before the
+feature existed.
+
 #### The key pool (`pipeline/keypool.py`)
 Every Gemini call the scorer makes goes through one `KeyPool`: N free-tier API keys
 (`GEMINI_API_KEYS`) plus an optional paid Vertex member (`GOOGLE_CLOUD_PROJECT`) behind one
@@ -343,7 +359,21 @@ it); then block tags become line breaks, `<li>` a `• ` bullet, bullets within 
 consecutive lines (a blank line still separates a list from the prose around it), source
 indentation is stripped per line, and entities are unescaped *after* the tag strip so an escaped
 tag in the posting's own prose stays inert text. The cleanup is structural only: it never
-pattern-matches prose, so EEO statements and agency notices survive. **Restart**
+pattern-matches prose, so EEO statements and agency notices survive.
+
+That precedence changed in cycle 15: `job_detail_fields` now prefers `job_description_md`
+(`score_jobs.py`'s markdownify output) whenever it clears 40 characters, run through the new
+`jobsdata.md_to_text`; it is markdown and not HTML, so `html_to_text`'s tag stripping would
+eat a literal "<"/">" in the posting's own prose. Only when that column is short or missing
+does it fall back through `job_description_formatted` → `job_description` → `job_summary`,
+unchanged. `md_to_text` turns a `#` heading onto its own
+line, strips `**bold**`/`*em*` markers while keeping the words, and turns a `-`/`*`/`+` list
+item into a `• ` bullet, so the card renders the posting's own structure directly, without
+printing the raw markdown syntax underneath it; escaped punctuation is unescaped only after
+every marker regex has run, so an escaped literal can never pair up as a fake emphasis span.
+`resume_tailor.run._job_description_text` reads the same column first and in the same order,
+but keeps `job_description_md` as markdown: flattening it there would only remove structure
+the tailoring prompt can use. **Restart**
 (`MainWindow._restart_app`) flags the intent and closes the window; `app.main` relaunches a fresh
 process after the single-instance lock is released.
 
@@ -358,6 +388,24 @@ is a deliberately untinted plain list. Each tinted tab shows a matching `ColorLe
 (`qt/wheelguard.py`) stops a stray scroll from editing a combo/spin/slider regardless of focus, so the
 editable model dropdowns can't be scroll-edited. Settings sections are **collapsible**
 (`qt/widgets.py:CollapsibleSection`) with always-visible taglines, and the fold state persists to `config.json`.
+
+**Repost suppression** (`jobsdata.repost_key` / `suppress_reposts` / `filter_high_unseen_with_count`)
+runs on every High Score refresh, on the UI thread. `repost_key` folds a title, company and
+location down to one identity string: NFKC-normalised, lowercased, a trailing "(Remote)" /
+"- Hybrid" / "On-site" marker dropped from the title, location cut to the part before its
+first comma, every other run of non-alphanumeric characters collapsed to one space. Two
+vectorised paths compute that key over a whole frame at once (`_repost_keys_pyarrow` when
+pyarrow is importable, `_repost_keys_pandas` otherwise; both pinned to match the scalar
+function row by row): a per-row Python loop measured around 130ms on a 30k-row refresh,
+where pyarrow's compiled string kernels bring that under 60ms. `SeenRegistry.marked_at_all()`
+supplies every marked id and its timestamp; `blocked_repost_keys` narrows to marked rows
+first (a small fraction of a full frame) before computing keys, and `suppress_reposts` hides
+an unseen row whose key was marked within the configured window, then collapses any
+remaining unseen duplicates sharing a key to the newest `extracted_date` (ties keep the
+higher `job_posting_id`). `filter_high_unseen_with_count` runs suppression against the FULL
+frame (`key_source`), so a job marked at any score still blocks a higher-scored repost of
+itself, and returns the hidden count alongside the filtered rows for the status-bar line.
+Nothing here writes to disk; a repost reappears on its own once its window passes.
 
 ## The résumé engine in depth (`local/resume_tailor/`)
 
@@ -382,10 +430,10 @@ bullet must be traceable to a fact ("atom") the user wrote in
 | `output.py` | Where the PDF goes; candidate name from the yaml. |
 | `ats.py` | Deterministic ATS keyword-coverage report, plus the **anchored alias layer**: the master's optional `skill_aliases` (matched *and* printable: Methods line / tech-line swap) and `skill_aliases_match_only` (matched, never printed) maps, where a group only survives if its canonical is a real skill in the taxonomy, so an alias can never inject an untethered keyword. |
 | `coverletter.py`, `prep.py`, `research.py`, `apply_data.py` | Optional artifacts: cover letter, interview-prep sheet, grounded company research, and the self-contained `apply.md` apply sheet. |
-| `aiwriting.py` | The vendored extract of the MIT-licensed *avoid-ai-writing* skill (v3.18.0, Conor Bronsdon; attribution in its docstring and `docs/CREDITS.md`), in two arms that share one copy of the vocabulary so the two cannot drift. The **cover-letter arm** (`RULES_PROMPT` / `EXTRA_BANS` / `violations()`) is **off by default** and gates the letter body. The **résumé arm** (`RESUME_PROFILE` / `RESUME_RULES_PROMPT` / `RESUME_EXTRA_BANS` / `resume_violations()`) serves the item sweep below. A bullet is a subjectless fragment that opens on a past-tense verb, which matches none of the skill's six context profiles, so `RESUME_PROFILE` is a seventh column of its tolerance matrix: it switches off the rules that fire on correct résumé grammar (subjectless fragments, missing first person, copula avoidance) and tightens the ones a résumé really does fail (promotional language, significance inflation, hedging), with a written reason on every deviation. Both arms split the same two ways the résumé style gate does: prompt text for the calls that need judgment, regexes for what is always slop. A phrase earns a regex only when it is always slop, because a false positive buys a repair call that can damage correct text. |
+| `aiwriting.py` | The vendored extract of the MIT-licensed *avoid-ai-writing* skill (v3.18.0, Conor Bronsdon; attribution in its docstring and `docs/CREDITS.md`), in two arms that share one copy of the vocabulary so the two cannot drift. The **cover-letter arm** (`RULES_PROMPT` / `EXTRA_BANS` / `violations()`, plus the letter-level `bullet_echo()` and `uniform_rhythm()` detectors) rides in every letter prompt; the Settings toggle (default **on** since cycle 15) decides only whether `violations()` joins the deterministic gate, and the two detectors join it regardless. `RULES_PROMPT` also rides in `chat.py`'s system prompt now, guiding every Ask AI answer. The **résumé arm** (`RESUME_PROFILE` / `RESUME_RULES_PROMPT` / `RESUME_EXTRA_BANS` / `resume_violations()`) serves the item sweep below. A bullet is a subjectless fragment that opens on a past-tense verb, which matches none of the skill's six context profiles, so `RESUME_PROFILE` is a seventh column of its tolerance matrix: it switches off the rules that fire on correct résumé grammar (subjectless fragments, missing first person, copula avoidance) and tightens the ones a résumé really does fail (promotional language, significance inflation, hedging), with a written reason on every deviation. Both arms split the same two ways the résumé style gate does: prompt text for the calls that need judgment, regexes for what is always slop. A phrase earns a regex only when it is always slop, because a false positive buys a repair call that can damage correct text. |
 | `itemcheck.py` | The item-level detectors: the AI-writing tells that exist only *across* one entry's bullets, which `compose.enforce_style` is structurally blind to because it reads one bullet at a time. `shape_repetition` (one sentence skeleton reused down the list), `length_uniformity` (every bullet the same length), `rule_of_three`, `noun_cycling` and `bare_noun_bullet`, each returning findings with their offending spans and a P1/P2 tier. Stdlib only, and that is a hard requirement: `config.py` loads the `.env` at import scope, so a module that depends on nothing but `re` and `statistics` can be exercised standalone. Every threshold is calibrated against 57 résumés this pipeline generated, because a correct item already has each property these detectors measure to some degree, and a threshold picked by intuition fires on text that was already right. |
 | `sweep.py` | The item-level AI-writing sweep: one model call per Experience / Projects / Leadership entry, sending the entry and all of its bullets together along with `itemcheck`'s P1 findings, so the repair is targeted; a free rewrite is how a grounded bullet drifts off its atoms. A rewrite is committed only when all five acceptance conditions hold against the text it replaces: non-empty, renders within the same per-bullet printed-line budget `run._trim_to_caps` enforces, adds no deterministic style violation, keeps its opening verb, and drops no number or proper name the original carried. Anything else keeps the original, which was already grounded, clean and fitting. Bullets refused for length buy one bounded re-ask that names each one's exact character overage, and then it stops: never a third call, and nothing here is ever trimmed. On by default, and it costs one call per entry per run. |
-| `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity + the JD fenced as untrusted data + the folder's `apply.md`, or a bounded master-file digest when the job was never tailored) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants, because the whole payload is re-sent (and re-billed) each turn. No style or grounding gate runs on an answer; the grounding rule is carried by the system prompt. |
+| `chat.py` | The per-job "Ask AI" chat, toolkit-agnostic: `build_context` assembles one stable system prompt (job identity, the JD fenced as untrusted data, the folder's `apply.md` when there is one, and now `master_digest()` alongside it on every turn, capped at `MASTER_CHAR_CAP` = 30,000 characters) and `ask` sends only the turns as the user message, which is the prompt-cache split, so the provider switch is honoured with no new setting. Every excerpt and the transcript are capped by named constants (the per-turn floor runs about 46,000 characters, roughly 11.5k tokens on the flash tier), because the whole payload is re-sent (and re-billed) each turn. `master_digest()` walks the known sections by name (basics, education, experience, projects, leadership, skills, the `letter.seed` voice sample) then every other top-level key the file holds, skipping the tailor's own layout configuration. No grounding gate runs on an answer; the grounding rule is carried by the system prompt. `_prose_gate` does run: an answer of `PROSE_WORD_FLOOR` (60) words or more is checked against `compose.style_violations` and `aiwriting.violations`, the same two deterministic scans the résumé and letter arms use, and a flash repair call fires once, kept only when it strictly lowers the finding count; an em dash is stripped from every answer regardless of length. |
 | `verify.py` | The grounding gate. Every rephrased bullet is checked back against the atom it came from before it can reach the `.tex`; anything that drifted is rejected before it can print. This is what enforces the project's one hard rule: select and re-phrase, never invent. |
 | `master_gaps.py` | The JD-gap suggester: find skills the JD wants that aren't in your file, screen + place them (flash-lite), write back with a reviewable diff + backup. |
 | `master_edit.py` | Comment-preserving `master_experience.yaml` writer (ruamel round-trip; append/edit/delete with a `.bak` before every write) behind the dashboard's Résumé Data editor. |
@@ -540,6 +588,31 @@ bites. `_exemplar_for_prompt` cuts on a **line** boundary, taking whole lines wh
 A character cut ends the exemplar at "• Proc", so the prompt that calls a bullet ending
 mid-clause a failure would itself be showing the model one: a whole bullet dropped is a cost,
 a fragment taught as an example is a defect.
+
+### The cover letter pipeline
+Optional, and separate from the résumé's bullet pipeline above: `coverletter.generate_body`
+runs four stages in order, all in `local/resume_tailor/coverletter.py`.
+
+1. **generate** (pro tier): a narrative prompt writes three or four paragraphs of visibly
+   different lengths from the tailored bullets, an optional background excerpt of the
+   selected atoms (`assets.flatten_entries`, capped at `LETTER_BACKGROUND_CAP` = 6,000
+   characters) and the optional `letter.seed` voice sample (`assets.letter_seed`, capped at
+   `LETTER_SEED_CAP` = 1,200 characters).
+2. **humanize** (flash tier, `refine_body`): a second pass gives the draft mixed sentence
+   and paragraph lengths, retells any sentence that reads like a bullet with a subject
+   bolted on, and pulls an over-eager tone back to measured interest. Best-effort: a failed
+   or empty call leaves the draft untouched.
+3. **gates** (`enforce_body_style`): `compose.style_violations`, and with the Settings
+   toggle on, `aiwriting.violations`, plus two structural checks that always run:
+   `aiwriting.bullet_echo` (a seven-word run copied from a résumé bullet) and
+   `aiwriting.uniform_rhythm` (sentences or paragraphs all within a narrow band of the
+   average length). A violation buys one flash repair call, committed only when it strictly
+   lowers the finding count; an em dash is stripped from the result unconditionally.
+4. **grounding** (`verify.letter_allowed_source` / `letter_unseen`): every distinctive token
+   in the body must trace to the bullets, the background, the research blurb or the posting
+   itself. One repair call removes any named unsupported item; a body still holding one
+   after that fails the letter outright, since an optional artifact must not ship a
+   fabricated one.
 
 ### Run reporting
 A tailor run can succeed and still have gone partly wrong: the ATS report can fail, the

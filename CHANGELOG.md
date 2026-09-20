@@ -4,6 +4,53 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-09-20
+
+The Apply panel now shows your LinkedIn and GitHub links, the job description and Ask AI
+both read the scorer's structured markdown over the older raw HTML, the cover letter can
+draw on your own words and reads as narrative prose with a humanizer pass and two new
+structural gates, Ask AI's every turn now carries your full experience file, and High Score hides
+reposts of a job you already marked. The scorer can also skip a repost's LLM calls entirely
+by reusing a still-fresh score from the master.
+
+### Added
+
+- **LinkedIn and GitHub rows on the Apply panel**, pulled from your master file's basics
+  and shown only when you filled them in, above the résumé and cover-letter PDF paths.
+- **An optional `letter.seed` block in `master_experience.yaml`** for the cover letter: two
+  to four sentences in your own words on what you want from your next role. See the
+  updated `master_experience.example.yaml` and the user guide's cover-letter section.
+- **A humanizer pass and two structural gates for the cover letter.** After the narrative
+  draft, a flash-tier pass fixes rhythm and retells any sentence pasted in with a subject
+  bolted on; `bullet_echo` and `uniform_rhythm` then run on every letter regardless of the
+  AI-writing toggle, catching a copied bullet or a metronomic sentence pattern.
+- **The full master experience file rides in every Ask AI turn**, alongside the job's apply
+  sheet, so a follow-up question can draw on work the tailor left out of that one résumé.
+  The 13 AI-writing rules now guide chat answers too, with a repair pass for longer replies.
+- **Repost suppression on High Score.** A posting matching the title, company and location
+  of one you already marked seen or applied stays out of the list for a configurable
+  window (Settings, default 30 days, 0 = off); unseen duplicates collapse to the newest
+  copy. Nothing is marked, and the status bar reports how many were hidden.
+- **Repost score reuse in the scorer.** A new posting matching a master row's title,
+  company, location and first 400 description characters, scored within a configurable
+  window (default 30 days), reuses that row's score and skips both Gemini stages.
+
+### Changed
+
+- **"Strip AI writing patterns from the cover letter" now defaults on.** The AI-writing
+  rules already rode in every letter prompt; the toggle only decides whether the
+  deterministic checker also runs afterward.
+
+### Fixed
+
+- **The job description card lost the posting's own structure.** It read the raw
+  `job_description_formatted` HTML column through the plain-text stripper, so a scraped
+  posting's headings and bullet lists ran together. The card, the tailor, and Ask AI now
+  read the scorer's `job_description_md` column first, rendered with its structure intact.
+- **A long link label clipped the Apply panel's "Cover letter PDF" row.** The label column
+  now sizes itself to the widest row, so LinkedIn, GitHub, résumé and cover-letter labels
+  all print in full.
+
 ## [1.12.1] - 2026-09-18
 
 ### Fixed
@@ -1721,6 +1768,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[1.13.0]: https://github.com/yib7/INployed/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/yib7/INployed/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/yib7/INployed/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/yib7/INployed/compare/v1.10.0...v1.11.0

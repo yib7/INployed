@@ -20,6 +20,35 @@ second model call), and `apply.md` (a self-contained apply sheet you paste into
 Claude-in-Chrome). The cover letter's plain text lives in `apply.md`'s `## Cover letter`
 section, which is what you paste into an application's cover-letter box.
 
+### Write a grounded cover letter
+Add `--cover-letter` to the tailor CLI (or tick the box in the dashboard) and the engine
+writes the letter as narrative prose built from the atoms the tailor selected for that job.
+An optional `letter.seed` block in `master_experience.yaml` gives it your own voice: two to
+four sentences on what you want from your next role, quoted only in fragments and never
+pasted in whole. For example:
+
+```yaml
+letter:
+  seed: >-
+    I want to build the systems a team runs on every day, the pipelines and
+    tools that quietly decide whether the rest of the work is possible.
+```
+
+Leave the block out and the letter is written from the atoms alone. **Check setup** warns
+when a seed runs past 1,200 characters or the block is shaped wrong; either way the letter
+still generates, with the seed capped or skipped.
+
+Generation draws on a background excerpt of the selected entries' own atoms (capped at
+6,000 characters, with an advisory in `tailor_report.txt` when a long history gets
+truncated) plus the seed, then a second pass rewrites the draft for rhythm: varied
+sentence and paragraph lengths, and any sentence that reads like a bullet with a subject
+bolted on retold as a story. Two structural checks always run, whatever the **"Strip AI
+writing patterns"** toggle says: a seven-word run copied straight from a résumé bullet
+("bullet echo"), and sentences or paragraphs that all sit within a narrow band of the
+average length ("uniform rhythm"). Settings → Résumé's **"Strip AI writing patterns from
+the cover letter"** toggle now defaults **on**; see [what it
+catches](#what-strip-ai-writing-patterns-from-the-cover-letter-catches) below.
+
 ### Fine-tune the résumé layout
 The **Resume Data** tab has a collapsible **Resume Layout** editor for how many bullets
 each section/project gets and how long each one runs. Give a section or project a
@@ -77,9 +106,12 @@ score / deep-score / applicants chips, the model's reasoning, strengths, and gap
 **Show description** button (on jobs that came with a description), and the per-job
 actions (**Open posting**, **Tailor résumé**, **Apply**). Click **Show description** and
 the card splits into two columns: the scoring stays on the left, the whole posting opens
-beside it on the right. The card grows to at least about half the window so there is
-room to read. **Hide description** gives that height back, unless you dragged the divider
-above the card while the description was open: then your size stands. The description
+beside it on the right, with its headings, bullet lists and paragraph breaks intact: the
+scorer's markdown description renders as structured text, the same column and the same
+40-character floor the résumé tailor and **Ask AI** read. The card grows to at least about
+half the window so there is room to read. **Hide description** gives that height back,
+unless you dragged the divider above the card while the description was open: then your
+size stands. The description
 stays open as you click from job to job: only the text changes, so you can read down a
 list without re-opening it each time. It scrolls on its own, so the card keeps its
 height, and the text can be selected and copied. Both dividers are draggable: the one
@@ -93,6 +125,13 @@ single column (there is no description there). The card appears only on the job-
 At-a-glance colors: a job whose tailored-résumé folder still exists on disk is tinted
 **blue** in the High Score / All Jobs lists (delete the folder and the tint clears on the
 next refresh); in the **Tracker**, an *applied* job is **blue** and a *rejected* one is **red**.
+
+**Reposts.** High Score hides a posting that shares a title, company and location with
+one you already marked seen or applied, for **Hide reposts for (days)** in Settings
+(Dashboard section, default 30, 0 turns it off), and an unseen duplicate of the same
+posting collapses to its newest copy the same way. Nothing is marked by this: the older
+posting keeps its own status, and the repost simply stays out of the list until the
+window passes. When the filter hides anything, the status bar says so ("N reposts hidden").
 
 Right-click any job to work with it: **Set status →** marks it applied / interviewing /
 rejected / offer from any tab, and the menu also offers **Delete job** (any row) and
@@ -188,6 +227,10 @@ The sections:
   keywords, remote types, spend caps, artifact toggles, and more. **Drop Easy Apply jobs
   before scoring** (off by default) discards LinkedIn Easy-Apply postings before they cost
   a scoring call, for anyone who only wants postings with a real application form.
+  **Repost score reuse window (days)** (Scoring, under *Show advanced settings*; default
+  30, 0 turns it off) copies a still-fresh master row's score onto a new posting that
+  matches on title, company, location and the first 400 characters of the description, so
+  a repost does not spend a fresh Gemini call every time it resurfaces.
 - **Models:** the scorer's two stages **and** the résumé tailor's are **editable
   dropdowns**: the recent Gemini 3.x ids by default, plus the Claude tier ids used when a
   provider is set to `claude`. Pick one or type a custom id. The tailor asks one question
@@ -432,13 +475,14 @@ exactly with no extra AI call. To apply:
    folder after tailoring** on if you want that.
 2. Click **Apply** on the detail card. The Apply button is **green only once the job has
    both its résumé PDF and `apply.md`**. Clicking it opens the posting in Chrome and
-   swaps the bottom detail card for a right-side **Apply panel** with the copyable
-   résumé / cover-letter paths and the apply sheet **rendered as formatted markdown** (the
-   **Copy apply sheet** button still copies the raw markdown source). An **Expand** button
-   opens the sheet in a large, resizable window for easier reading. Closing the panel brings
-   the detail card back; **"I applied to this job"** confirms, adds the
-   job to your Tracker as *applied*, and closes the panel (the right-click → *Set status →
-   applied* still works too).
+   swaps the bottom detail card for a right-side **Apply panel**: copyable **LinkedIn** and
+   **GitHub** links from your master file's basics (each row shown only when you filled
+   that field in) above the résumé / cover-letter paths, and the apply sheet **rendered as
+   formatted markdown** (the **Copy apply sheet** button still copies the raw markdown
+   source). An **Expand** button opens the sheet in a large, resizable window for easier
+   reading. Closing the panel brings the detail card back; **"I applied to this job"**
+   confirms, adds the job to your Tracker as *applied*, and closes the panel (the
+   right-click → *Set status → applied* still works too).
 3. **In Claude** (the Claude desktop app or this CLI) **with the Claude-in-Chrome
    extension connected**, paste the apply sheet into the chat and let Claude fill the
    Greenhouse / Lever / Ashby / Workday / generic form **page by page until the final
@@ -455,6 +499,16 @@ placeholder it flags for you. Manage your reusable answers (including address) i
 (adaptable per job).
 
 CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
+
+### Ask AI about a job
+Right-click any job (or click **Ask AI** on the Apply panel, next to **Open folder**) for
+a per-job chat window. It answers only from what it can see for that job: the posting, the
+apply sheet when one exists, and now the full master experience file on every turn, so a
+follow-up question can draw on work the tailor left out of that one résumé. An untailored
+job still gets a conversation scoped to its description alone. The same 13 AI-writing rules
+that guide the cover letter ride in the chat's own system prompt, and an answer of 60 words
+or longer runs through the same deterministic checks: a flash-tier repair call fires once
+when one trips, and em dashes are stripped from every answer regardless.
 
 **Batch queue (advanced).** The **Auto-apply** tab is a live view of a batch apply
 queue: **Queue auto-apply** adds the selected tailored jobs, and the tab tracks each one

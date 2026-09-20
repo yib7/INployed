@@ -19,7 +19,7 @@ The scorer runs on a pool of free-tier Gemini keys, and the résumé engine can 
 it. Each stage walks a ranked list of models, quota is metered per key and model,
 and a paid Cloud project is billed only when every free pair is spent or refusing.
 
-3,132 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
+3,334 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
 push against Windows and Linux, plus a clean-room job that installs from this
 README's own setup steps.
 
@@ -218,6 +218,9 @@ discovery VM.
 - **Triage:** the **High Score** tab ranks unseen postings by the two-stage score and tints
   each row by recommendation (apply / consider / skip) and by whether a tailored résumé
   already exists. Selecting one opens a detail card with the model's reason, strengths, and gaps.
+- **Skip repeats:** a posting sharing a title, company and location with one you already
+  marked stays out of High Score for a configurable window, and unseen reposts of the same
+  job collapse to the newest copy.
 - **Tailor:** one click writes a one-page LaTeX résumé for that posting, plus an optional
   cover letter (PDF and editable `.tex`), an ATS keyword report, and an interview-prep
   sheet. Batches run in parallel in the background with live progress. The PDF is laid out

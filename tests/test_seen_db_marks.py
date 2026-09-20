@@ -1,8 +1,7 @@
 """SeenRegistry.mark / marked_at_all: the seen table's write and full-table read.
 
-`marked_at_all` backs the dashboard's repost-suppression window (SP5): the
-window needs every marked id's timestamp, not just the id set `all_ids()`
-already returns.
+`marked_at_all` backs the dashboard's repost-suppression window (SP5), which
+needs every marked id's own timestamp alongside the id set `all_ids()` returns.
 """
 from datetime import datetime, timezone
 

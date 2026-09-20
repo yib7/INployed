@@ -401,6 +401,10 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("min_filter_years", "Min required years cutoff", "int", 1, "Scoring", "scoring",
           help="Roles requiring at least this many years of experience are filtered out.",
           min=0, max=20, slider=True),
+    Field("repost_reuse_days", "Repost score reuse window (days)", "int", 30, "Scoring",
+          "scoring", advanced=True,
+          help="Reuse a matching prior score for a repost within this many days. 0 turns "
+               "reuse off, so every repost is scored fresh.", min=0, max=180, slider=True),
 
     # --- Resume: artifact toggles + cover-letter tone (config.json) ---
     # Layout controls live in the Resume Data tab's "Resume Layout (bullet sizing)"

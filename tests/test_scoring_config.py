@@ -34,6 +34,7 @@ def _clear_env(monkeypatch):
         "SCORE_STAGE2_THRESHOLD", "SCORE_MAX_PER_RUN", "SCORE_RESCORE_CAP",
         "SCORE_MIN_FILTER_YEARS", "SCORE_DROP_EASY_APPLY",
         "SCORE_STAGE1_MODELS", "SCORE_STAGE2_MODELS", "SCORE_MODEL_LIMITS",
+        "SCORE_REPOST_REUSE_DAYS",
     ):
         monkeypatch.delenv(k, raising=False)
 
@@ -50,9 +51,11 @@ def test_absent_file_uses_builtin_defaults(monkeypatch, tmp_path):
     assert cfg["max_scored_per_run"] == 800
     assert cfg["rescore_cap"] == 200
     assert cfg["min_filter_years"] == 1
+    assert cfg["repost_reuse_days"] == 30
     # the module constants the existing tests rely on keep their defaults
     assert score_jobs.MIN_FILTER_YEARS == 1
     assert score_jobs.STAGE2_THRESHOLD == 4
+    assert score_jobs.REPOST_REUSE_DAYS == 30
 
 
 def test_config_file_overrides_threshold_and_years(monkeypatch, tmp_path):

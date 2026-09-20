@@ -370,7 +370,8 @@ def _hermetic_repo_data(tmp_path_factory):
                             ("MAX_SCORED_PER_RUN", "max_scored_per_run"),
                             ("RESCORE_CAP", "rescore_cap"),
                             ("MIN_FILTER_YEARS", "min_filter_years"),
-                            ("DROP_EASY_APPLY", "drop_easy_apply")):
+                            ("DROP_EASY_APPLY", "drop_easy_apply"),
+                            ("REPOST_REUSE_DAYS", "repost_reuse_days")):
             mp.setattr(score_jobs, _attr, _scoring[_key])
         yield
 

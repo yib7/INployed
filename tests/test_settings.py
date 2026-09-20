@@ -952,7 +952,7 @@ ADVANCED_KEYS = {
     # the four scoring model pickers — a wrong id breaks scoring silently
     "stage1_model", "stage2_model", "stage1_model_claude", "stage2_model_claude",
     # scorer throughput / retry plumbing
-    "stage1_concurrency", "stage2_concurrency", "rescore_cap",
+    "stage1_concurrency", "stage2_concurrency", "rescore_cap", "repost_reuse_days",
     # a Stats-tab warning threshold
     "stale_after_hours",
     # the Vertex region — 'global' works for most users
@@ -974,13 +974,13 @@ def test_the_advanced_set_is_declared_on_the_schema():
     """PLAN.md's P4 calls this list "17 fields"; enumerating it gave 18 (4 + 5
     singles + 6 + 3), and the four rate-limit rows added alongside the keypool
     LIMITS fix made 22; dropping those four for one per-model table and adding
-    the multi-model rows makes 25. The enumeration
-    names every key explicitly, so it is the authoritative half — see
-    DECISIONS.md. Nothing in the UI hardcodes either number: the checkbox counts
-    at runtime."""
+    the multi-model rows makes 25; SP6's repost-reuse window (cycle 15) makes
+    26. The enumeration names every key explicitly, so it is the authoritative
+    half; see DECISIONS.md. Nothing in the UI hardcodes either number: the
+    checkbox counts at runtime."""
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.advanced}
     assert declared == ADVANCED_KEYS
-    assert len(ADVANCED_KEYS) == 25
+    assert len(ADVANCED_KEYS) == 26
 
 
 def test_advanced_set_excludes_country_pdflatex_and_max_scored():

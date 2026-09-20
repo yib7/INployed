@@ -124,7 +124,10 @@ def test_live_resume_ids_handles_empty_or_non_dict():
 
 # --- SP5: repost_key normalisation table ----------------------------------------
 
-@pytest.mark.parametrize("title,company,location,expected", [
+# Shared with tests/test_score_jobs.py (SP6): that file asserts its own
+# pipeline-local repost_key copy agrees with jobsdata.repost_key on every row
+# here, so the two implementations can never quietly drift apart.
+REPOST_KEY_CASES = [
     ("Data Engineer", "Acme", "Seattle, WA", "data engineer|acme|seattle"),
     # a trailing parenthetical workplace marker on the title is dropped
     ("Data Engineer (Remote)", "Acme", "Seattle, WA", "data engineer|acme|seattle"),
@@ -152,7 +155,10 @@ def test_live_resume_ids_handles_empty_or_non_dict():
     # "nothing safe to match on" -- it must not stringify to the word "nan"
     (float("nan"), "Acme", "Seattle, WA", ""),
     ("Data Engineer", float("nan"), "Seattle, WA", ""),
-])
+]
+
+
+@pytest.mark.parametrize("title,company,location,expected", REPOST_KEY_CASES)
 def test_repost_key_normalisation_table(title, company, location, expected):
     assert jobsdata.repost_key(title, company, location) == expected
 

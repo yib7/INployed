@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,7 +10,10 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "local"))
 import score_jobs as sj  # noqa: E402
+
+from test_jobsdata_filter import REPOST_KEY_CASES  # noqa: E402
 
 
 # P2-8: both scorer system prompts must tell the model the job description is
@@ -180,7 +184,7 @@ def test_make_pool_warns_for_an_unlimited_fallback_model(monkeypatch, capsys):
 def test_append_run_stats_migrates_old_header(tmp_path, monkeypatch):
     import csv as _csv
     old = tmp_path / "run_stats.csv"
-    old_cols = sj.RUN_STATS_COLS[:-3]  # header before free_calls/vertex_calls/easy_apply_dropped
+    old_cols = sj.RUN_STATS_COLS[:-4]  # header before free_calls/vertex_calls/easy_apply_dropped/scores_reused
     with open(old, "w", encoding="utf-8", newline="") as f:
         w = _csv.DictWriter(f, fieldnames=old_cols)
         w.writeheader()
@@ -486,3 +490,234 @@ def test_append_run_stats_self_heal_rewrite_is_atomic(tmp_path, monkeypatch):
 
     assert old.read_bytes() == before                              # untouched: replace never landed
     assert [p for p in tmp_path.iterdir() if p.name != "run_stats.csv"] == []
+
+
+# --- SP6: score-side repost reuse -------------------------------------------------
+#
+# pipeline/score_jobs.py is copied standalone to the VM (no local/ package), so it
+# carries its OWN self-contained repost_key. The table below (shared with
+# tests/test_jobsdata_filter.py) pins the two copies to agreeing on every row
+# so they can't quietly drift apart.
+
+def test_pipeline_repost_key_matches_jobsdata_repost_key():
+    import jobsdata
+    for title, company, location, _expected in REPOST_KEY_CASES:
+        assert sj.repost_key(title, company, location) == jobsdata.repost_key(
+            title, company, location)
+
+
+def test_repost_fingerprint_empty_key_is_never_reused():
+    # No company -> repost_key is "" -> the fingerprint must also be "", so an
+    # empty key can only ever produce an empty fingerprint that never matches.
+    assert sj.repost_fingerprint("Data Engineer", "", "Seattle, WA", "some jd text") == ""
+
+
+def test_repost_fingerprint_changes_with_description():
+    fp1 = sj.repost_fingerprint("Data Engineer", "Acme", "Seattle, WA", "Build pipelines.")
+    fp2 = sj.repost_fingerprint("Data Engineer", "Acme", "Seattle, WA", "Ship dashboards.")
+    assert fp1 != fp2
+
+
+def test_repost_fingerprint_stable_for_identical_inputs():
+    fp1 = sj.repost_fingerprint("Data Engineer", "Acme", "Seattle, WA", "Build pipelines.")
+    fp2 = sj.repost_fingerprint("Data Engineer", "Acme", "Seattle, WA", "Build pipelines.")
+    assert fp1 == fp2 and fp1 != ""
+
+
+def _master_row(job_id, days_ago, today, **overrides):
+    row = {
+        "job_posting_id": job_id,
+        "job_title": "Data Engineer",
+        "company_name": "Acme",
+        "job_location": "Seattle, WA",
+        "job_description_md": "Build data pipelines end to end.",
+        "score": 5,
+        "reason": "good fit",
+        "deep_score": 8,
+        "strengths": "python",
+        "gaps": "",
+        "recommendation": "apply",
+        "extracted_date": (today - timedelta(days=days_ago)).strftime("%Y-%m-%d"),
+    }
+    row.update(overrides)
+    return row
+
+
+def _fresh_row(job_id, **overrides):
+    row = {
+        "job_posting_id": job_id,
+        "job_title": "Data Engineer",
+        "company_name": "Acme",
+        "job_location": "Seattle, WA",
+        "job_description_md": "Build data pipelines end to end.",
+        "filtered_out": False,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_reuse_repost_scores_hit_copies_six_columns_and_sets_reused_from():
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("OLD-1", 5, today)])
+    df = pd.DataFrame([_fresh_row("NEW-1")])
+
+    out, n = sj.reuse_repost_scores(df, master, 30, today=today)
+
+    assert n == 1
+    row = out.iloc[0]
+    assert row["score"] == 5
+    assert row["deep_score"] == 8
+    assert row["reason"] == "good fit"
+    assert row["strengths"] == "python"
+    assert row["gaps"] == ""
+    assert row["recommendation"] == "apply"
+    assert row["score_reused_from"] == "OLD-1"
+    assert bool(row["score_reused"]) is True
+
+
+def test_reuse_repost_scores_miss_on_changed_description():
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("OLD-1", 5, today)])
+    df = pd.DataFrame([_fresh_row("NEW-1", job_description_md="A completely different role.")])
+
+    out, n = sj.reuse_repost_scores(df, master, 30, today=today)
+
+    assert n == 0
+    assert bool(out.iloc[0]["score_reused"]) is False
+    assert pd.isna(out.iloc[0]["score_reused_from"])
+
+
+def test_reuse_repost_scores_miss_on_same_id():
+    # A row already IN the master (a re-scrape of the same posting) must not
+    # "reuse" its own prior score through this path -- update_master_scores'
+    # normal fold already handles that case.
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("SAME-1", 5, today)])
+    df = pd.DataFrame([_fresh_row("SAME-1")])
+
+    out, n = sj.reuse_repost_scores(df, master, 30, today=today)
+
+    assert n == 0
+    assert bool(out.iloc[0]["score_reused"]) is False
+
+
+def test_reuse_repost_scores_off_when_reuse_days_is_zero():
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("OLD-1", 5, today)])
+    df = pd.DataFrame([_fresh_row("NEW-1")])
+
+    out, n = sj.reuse_repost_scores(df, master, 0, today=today)
+
+    assert n == 0
+    assert bool(out.iloc[0]["score_reused"]) is False
+
+
+def test_reuse_repost_scores_window_edge_30_in_31_out():
+    today = date(2026, 9, 19)
+    master_in = pd.DataFrame([_master_row("OLD-1", 30, today)])
+    master_out = pd.DataFrame([_master_row("OLD-1", 31, today)])
+    df = pd.DataFrame([_fresh_row("NEW-1")])
+
+    _, n_in = sj.reuse_repost_scores(df.copy(), master_in, 30, today=today)
+    _, n_out = sj.reuse_repost_scores(df.copy(), master_out, 30, today=today)
+
+    assert n_in == 1
+    assert n_out == 0
+
+
+def test_reuse_repost_scores_missing_master_yields_no_reuse_and_no_crash():
+    today = date(2026, 9, 19)
+    df = pd.DataFrame([_fresh_row("NEW-1")])
+
+    out, n = sj.reuse_repost_scores(df, None, 30, today=today)
+
+    assert n == 0
+    assert bool(out.iloc[0]["score_reused"]) is False
+
+    out2, n2 = sj.reuse_repost_scores(df, pd.DataFrame(), 30, today=today)
+    assert n2 == 0
+
+
+def test_reuse_repost_scores_prints_the_count_only_when_positive(capsys):
+    today = date(2026, 9, 19)
+    master = pd.DataFrame([_master_row("OLD-1", 5, today)])
+    df = pd.DataFrame([_fresh_row("NEW-1")])
+
+    sj.reuse_repost_scores(df, master, 30, today=today)
+    assert "Reposts: reused 1 scores" in capsys.readouterr().out
+
+    df_miss = pd.DataFrame([_fresh_row("NEW-2", job_description_md="totally different")])
+    sj.reuse_repost_scores(df_miss, master, 30, today=today)
+    assert "Reposts" not in capsys.readouterr().out
+
+
+def test_run_scoring_skips_pool_for_reused_rows_and_keeps_their_scores():
+    """The checkpoint case: a reused row's six columns must survive run_scoring's
+    stage-1/stage-2 merge, and the mocked pool must receive ZERO calls for it."""
+    df = pd.DataFrame([
+        {
+            "job_posting_id": "NEW-1", "job_description_md": "reused job",
+            "filtered_out": False, "score_reused": True, "score_reused_from": "OLD-1",
+            "score": 5, "reason": "good fit", "deep_score": 8,
+            "strengths": "python", "gaps": "", "recommendation": "apply",
+        },
+        {
+            "job_posting_id": "NEW-2", "job_description_md": "fresh job",
+            "filtered_out": False, "score_reused": False, "score_reused_from": pd.NA,
+            "score": pd.NA, "reason": pd.NA, "deep_score": pd.NA,
+            "strengths": pd.NA, "gaps": pd.NA, "recommendation": pd.NA,
+        },
+    ])
+    pool = FakePool({"fresh job": 3})
+
+    merged = asyncio.run(sj.run_scoring(pool, "resume", df))
+
+    for _, contents in pool.calls:
+        assert "reused job" not in contents   # zero calls for the reused row
+
+    reused_row = merged[merged["job_posting_id"] == "NEW-1"].iloc[0]
+    assert reused_row["score"] == 5
+    assert reused_row["deep_score"] == 8
+    assert reused_row["reason"] == "good fit"
+    assert reused_row["recommendation"] == "apply"
+
+    fresh_row = merged[merged["job_posting_id"] == "NEW-2"].iloc[0]
+    assert fresh_row["score"] == 3
+
+
+def test_reused_row_lands_in_save_output_scored_csv(tmp_path, monkeypatch):
+    monkeypatch.setattr(sj, "MASTER_CSV", tmp_path / "linkedin_jobs_master.csv")
+    input_csv = tmp_path / "linkedin_jobs_2026-09-19_morning.csv"
+    input_csv.write_text("job_posting_id\nNEW-1\n", encoding="utf-8")
+
+    df = pd.DataFrame([{
+        "job_posting_id": "NEW-1", "score": 5, "score_reused": True,
+        "score_reused_from": "OLD-1",
+    }])
+    out_path = sj.save_output(df, input_csv)
+
+    out = pd.read_csv(out_path, dtype={"job_posting_id": str}, compression="gzip")
+    assert out.iloc[0]["score"] == 5
+    assert out.iloc[0]["score_reused_from"] == "OLD-1"
+
+
+def test_rows_needing_rescore_ignores_a_reused_row_with_a_copied_score():
+    master = pd.DataFrame([
+        {"job_posting_id": "NEW-1", "score": 5, "filtered_out": "False", "reason": "good fit",
+         "recommendation": "apply", "score_reused": "True", "score_reused_from": "OLD-1"},
+        {"job_posting_id": "NEW-2", "score": "", "filtered_out": "False", "reason": ""},
+    ])
+    out_ids = set(sj.rows_needing_rescore(master)["job_posting_id"])
+    assert "NEW-1" not in out_ids  # has a real copied score -> not a rescore candidate
+    assert "NEW-2" in out_ids
+
+
+def test_repost_reuse_days_config_default_and_disable(monkeypatch, tmp_path):
+    monkeypatch.delenv("SCORE_REPOST_REUSE_DAYS", raising=False)
+    monkeypatch.setattr(sj, "OUTPUT_DIR", tmp_path)
+    cfg = sj.load_scoring_config()
+    assert cfg["repost_reuse_days"] == 30
+
+    monkeypatch.setenv("SCORE_REPOST_REUSE_DAYS", "0")
+    cfg = sj.load_scoring_config()
+    assert cfg["repost_reuse_days"] == 0

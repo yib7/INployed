@@ -18,12 +18,14 @@ service-account key file.
 import argparse
 import asyncio
 import csv
+import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
-from datetime import datetime
+import unicodedata
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +110,11 @@ _SCORING_DEFAULTS: dict[str, tuple[str, object, str]] = {
     "min_filter_years": ("SCORE_MIN_FILTER_YEARS", 1, "int"),
     # When on, Easy Apply jobs are dropped before scoring (saves scoring tokens).
     "drop_easy_apply": ("SCORE_DROP_EASY_APPLY", False, "bool"),
+    # SP6: a repost (same title+company+location+description as a master row
+    # scored within this many days) reuses that row's score, saving a fresh
+    # LLM call. 0 disables reuse entirely -- every incoming row is scored
+    # fresh, exactly like before this feature existed.
+    "repost_reuse_days": ("SCORE_REPOST_REUSE_DAYS", 30, "int"),
 }
 
 
@@ -273,6 +280,7 @@ STAGE2_THRESHOLD = _SCORING["stage2_threshold"]
 MAX_SCORED_PER_RUN = _SCORING["max_scored_per_run"]
 RESCORE_CAP = _SCORING["rescore_cap"]
 DROP_EASY_APPLY = _SCORING["drop_easy_apply"]
+REPOST_REUSE_DAYS = _SCORING["repost_reuse_days"]
 
 # Per-run metrics appended to run_stats.csv (uploaded to Drive by run_scraper.sh,
 # shown in the dashboard's Stats tab). One row per score_jobs.py invocation, so
@@ -282,7 +290,7 @@ RUN_STATS_COLS = [
     "timestamp", "input_csv", "rows_in", "filtered_out", "llm_scored",
     "llm_errors", "stage2_done", "rescore_attempted", "rescore_scored",
     "llm_calls", "prompt_tokens", "output_tokens", "free_calls", "vertex_calls",
-    "easy_apply_dropped",
+    "easy_apply_dropped", "scores_reused",
 ]
 
 # Aggregate token spend across both stages and both passes (fresh + rescore).
@@ -968,27 +976,261 @@ def add_filter_columns(df: pd.DataFrame, desc_col: str, title_col: str | None,
     return df
 
 
-async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
-    """Stage 1 + Stage 2 over the unfiltered rows of df; returns df with score columns merged.
+# --- SP6: score-side repost reuse ----------------------------------------------
+# score_jobs.py is copied standalone to the VM (no local/ package -- see the
+# _atomic_to_csv note above for the same constraint), so this is a private,
+# self-contained copy of local/jobsdata.py's repost_key. Reference:
+# jobsdata.repost_key. tests/test_score_jobs.py pins the two copies to
+# agreeing on jobsdata's own normalisation table so they cannot quietly drift
+# apart.
+_REPOST_SUFFIX_RE = re.compile(r"[\s\-\(]+\s*(remote|hybrid|on[- ]?site)\s*\)?\s*$",
+                               re.IGNORECASE)
+_REPOST_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
 
-    df must carry job_posting_id (str), job_description_md, and the filter columns.
+
+def repost_key(title: Any, company: Any, location: Any) -> str:
+    """Identity key for spotting a repost: the same title, company and location.
+
+    See local/jobsdata.py's repost_key for the full normalisation notes; kept
+    byte-for-byte equivalent to that function.
     """
-    to_score = df[~df["filtered_out"]].copy()
-    print(f"Mechanical filter: {len(df)} -> {len(to_score)} to score")
+    title = "" if pd.isna(title) else str(title)
+    company = "" if pd.isna(company) else str(company)
+    location = "" if pd.isna(location) else str(location)
+    title = unicodedata.normalize("NFKC", title)
+    company = unicodedata.normalize("NFKC", company)
+    location = unicodedata.normalize("NFKC", location)
+    if not title.strip() or not company.strip():
+        return ""
+    title = _REPOST_SUFFIX_RE.sub("", title.lower())
+    location = location.lower().split(",", 1)[0]
+    parts = [_REPOST_NON_ALNUM_RE.sub(" ", part).strip()
+            for part in (title, company.lower(), location)]
+    return "|".join(parts)
+
+
+def repost_fingerprint(title: Any, company: Any, location: Any, description_md: Any) -> str:
+    """`repost_key(...)` plus a hash of the job description.
+
+    Two postings can share a repost_key (same title/company/location) while
+    describing different roles, so the fingerprint also folds in a sha1 of the
+    first 400 characters of the description, taken AFTER the same
+    normalisation repost_key applies to its own fields (NFKC, lowercase, every
+    run of non-alphanumeric characters collapsed to one space, stripped). An
+    empty repost_key means there is nothing safe to match on regardless of the
+    description, so the fingerprint is "" and a caller must never treat "" as
+    a match.
+    """
+    key = repost_key(title, company, location)
+    if not key:
+        return ""
+    text = "" if pd.isna(description_md) else str(description_md)
+    text = unicodedata.normalize("NFKC", text).lower()
+    text = _REPOST_NON_ALNUM_RE.sub(" ", text).strip()
+    digest = hashlib.sha1(text[:400].encode("utf-8")).hexdigest()
+    return f"{key}#{digest}"
+
+
+_REPOST_REUSE_COLS = ("score", "reason", "deep_score", "strengths", "gaps", "recommendation")
+
+
+def reuse_repost_scores(df: pd.DataFrame, master: pd.DataFrame | None, reuse_days: int,
+                        today: date | None = None) -> tuple[pd.DataFrame, int]:
+    """Copy a repost's score from a matching, still-fresh master row.
+
+    A row of `df` reuses a master row's `_REPOST_REUSE_COLS` when both share a
+    `repost_fingerprint` (same title+company+location+description) AND the
+    master row has a real score AND its `extracted_date` is within
+    `reuse_days` of `today`, AND that master row is not the SAME id (a
+    re-scrape of a still-open posting is folded back by update_master_scores
+    already; this path is only for a genuinely different posting that
+    happens to fingerprint-match). The newest matching master row wins when
+    several share a fingerprint. Reused rows are marked with `score_reused=True` (so
+    run_scoring skips both LLM stages for them) and `score_reused_from` set to
+    the master row's id.
+
+    `reuse_days <= 0` disables reuse (0 = off, matching the config's
+    documented meaning); a missing/empty master yields no reuse. Neither case
+    is an error -- both leave `df` scored fresh, exactly like before this
+    feature existed.
+    """
+    df = df.copy()
+    if "score_reused" not in df.columns:
+        df["score_reused"] = False
+    if "score_reused_from" not in df.columns:
+        df["score_reused_from"] = pd.NA
+
+    if reuse_days <= 0 or master is None or master.empty:
+        return df, 0
+    if not {"job_posting_id", "score", "extracted_date"} <= set(master.columns):
+        return df, 0
+
+    m_title = pick_col(master, ("job_title", "job_posting_title", "title"))
+    m_company = pick_col(master, ("company_name", "company"))
+    m_location = pick_col(master, ("job_location", "location"))
+    m_desc = pick_col(master, ("job_description_md", "job_description_formatted", "job_description"))
+    if not m_title or not m_company or not m_desc:
+        return df, 0
+
+    df_title = pick_col(df, ("job_title", "job_posting_title", "title"))
+    df_company = pick_col(df, ("company_name", "company"))
+    df_location = pick_col(df, ("job_location", "location"))
+    if not df_title or not df_company or "job_description_md" not in df.columns:
+        return df, 0
+
+    if today is None:
+        today = datetime.now().date()
+    today_ts = pd.Timestamp(today)
+
+    m = master.copy()
+    m["job_posting_id"] = m["job_posting_id"].astype(str)
+    has_score = pd.to_numeric(m["score"], errors="coerce").notna()
+    extracted = pd.to_datetime(m["extracted_date"], format="mixed", errors="coerce")
+    age_days = (today_ts - extracted.dt.normalize()).dt.days
+    in_window = extracted.notna() & age_days.between(0, reuse_days)
+    m = m[has_score & in_window].copy()
+    if m.empty:
+        return df, 0
+    m["_age_days"] = age_days[m.index]
+
+    desc_series = m[m_desc] if m_desc == "job_description_md" else m[m_desc].apply(html_to_md)
+    m["_fingerprint"] = [
+        repost_fingerprint(t, c, loc, d)
+        for t, c, loc, d in zip(
+            m[m_title], m[m_company],
+            m[m_location] if m_location else [""] * len(m), desc_series,
+        )
+    ]
+    m = m[m["_fingerprint"] != ""]
+    if m.empty:
+        return df, 0
+    # Newest match wins per fingerprint.
+    m = m.sort_values("_age_days", ascending=False).drop_duplicates("_fingerprint", keep="last")
+    lookup = m.set_index("_fingerprint")
+
+    n_reused = 0
+    for idx, row in df.iterrows():
+        if row.get("filtered_out", False):
+            continue
+        fp = repost_fingerprint(
+            row.get(df_title, ""), row.get(df_company, ""),
+            row.get(df_location, "") if df_location else "",
+            row.get("job_description_md", ""),
+        )
+        if not fp or fp not in lookup.index:
+            continue
+        candidate = lookup.loc[fp]
+        master_id = str(candidate["job_posting_id"])
+        if master_id == str(row["job_posting_id"]):
+            continue
+        for col in _REPOST_REUSE_COLS:
+            df.at[idx, col] = candidate.get(col)
+        df.at[idx, "score_reused"] = True
+        df.at[idx, "score_reused_from"] = master_id
+        n_reused += 1
+
+    if n_reused:
+        print(f"Reposts: reused {n_reused} scores")
+    return df, n_reused
+
+
+_REPOST_MASTER_COL_CANDIDATES = (
+    ("job_posting_id",), ("score",), ("extracted_date",),
+    ("job_title", "job_posting_title", "title"),
+    ("company_name", "company"),
+    ("job_location", "location"),
+    ("job_description_md", "job_description_formatted", "job_description"),
+)
+
+
+def load_master_for_reuse() -> pd.DataFrame | None:
+    """The master's repost-reuse-relevant columns, or None when it can't help.
+
+    Read-only and tolerant by design: a missing master (cold start), one
+    missing the columns reuse needs (older schema), or one that fails to
+    parse all mean the same thing here -- no repost gets to reuse an old
+    score THIS run -- never a crashed run. Only the unreadable case prints a
+    line; the other two are the ordinary cold-start/older-schema shape.
+    Projects only the needed columns (usecols) so this never has to hold the
+    master's full ~90 MB text columns in memory twice.
+    """
+    if not MASTER_CSV.exists():
+        return None
+    try:
+        header = pd.read_csv(MASTER_CSV, nrows=0).columns.tolist()
+    except (OSError, ValueError, UnicodeDecodeError,
+            pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        print(f"Reposts: could not read {MASTER_CSV.name} ({e}); skipping score reuse this run")
+        return None
+    usecols = [pick_col(pd.DataFrame(columns=header), candidates)
+              for candidates in _REPOST_MASTER_COL_CANDIDATES]
+    usecols = [c for c in usecols if c]
+    if not {"job_posting_id", "score", "extracted_date"} <= set(usecols):
+        return None
+    try:
+        return pd.read_csv(MASTER_CSV, usecols=usecols, dtype={"job_posting_id": str})
+    except (OSError, ValueError, UnicodeDecodeError,
+            pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        print(f"Reposts: could not read {MASTER_CSV.name} ({e}); skipping score reuse this run")
+        return None
+
+
+def _restore_reused_scores(result: pd.DataFrame, reused_snapshot: pd.DataFrame) -> pd.DataFrame:
+    """Copy `_REPOST_REUSE_COLS` from `reused_snapshot` back onto `result`.
+
+    `result` is whatever run_scoring built (the empty-to_score early return, or
+    the Stage-1/Stage-2 merge below) with those same columns dropped from its
+    input first -- so neither path can produce a name collision or leave a
+    reused row's score blanked to NaN by a left join that has no row for it.
+    """
+    if reused_snapshot.empty:
+        return result
+    result = result.set_index("job_posting_id")
+    snap = reused_snapshot.set_index("job_posting_id")
+    for col in snap.columns:
+        # pandas >= 3 refuses to write an object-dtype value (e.g. an int
+        # score copied alongside NaN/NA neighbours) into a stricter numeric
+        # block without widening first -- same upcast-before-write idiom as
+        # update_master_scores' chunk.update(s) above.
+        if col in result.columns and result[col].dtype != object:
+            result[col] = result[col].astype(object)
+        result.loc[snap.index, col] = snap[col]
+    return result.reset_index()
+
+
+async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Stage 1 + Stage 2 over the unfiltered, unreused rows of df; returns df
+    with score columns merged.
+
+    df must carry job_posting_id (str), job_description_md, and the filter
+    columns. A row with score_reused=True (set by reuse_repost_scores) already
+    carries its six score columns and is excluded from both LLM stages; its
+    columns are stripped before the merge below and restored afterward, so the
+    merge's left join -- which has no row for an id that was never scored --
+    can never blank them back to NaN.
+    """
+    reused_mask = (df["score_reused"].fillna(False).astype(bool)
+                  if "score_reused" in df.columns else pd.Series(False, index=df.index))
+    present_reuse_cols = [c for c in _REPOST_REUSE_COLS if c in df.columns]
+    reused_snapshot = df.loc[reused_mask, ["job_posting_id"] + present_reuse_cols].copy()
+    base = df.drop(columns=present_reuse_cols, errors="ignore")
+
+    to_score = base[~base["filtered_out"] & ~reused_mask].copy()
+    print(f"Mechanical filter: {len(base)} -> {len(to_score)} to score")
     if len(to_score) > MAX_SCORED_PER_RUN:
         print(f"Spend guard: capping at {MAX_SCORED_PER_RUN} of {len(to_score)} jobs "
               "(rest stays unscored; the rescore pass picks them up on later runs)")
         to_score = to_score.head(MAX_SCORED_PER_RUN)
 
     if to_score.empty:
-        df = df.copy()
-        df["score"] = None
-        df["reason"] = "filtered_out"
-        df["deep_score"] = None
-        df["strengths"] = ""
-        df["gaps"] = ""
-        df["recommendation"] = ""
-        return df
+        result = base.copy()
+        result["score"] = None
+        result["reason"] = "filtered_out"
+        result["deep_score"] = None
+        result["strengths"] = ""
+        result["gaps"] = ""
+        result["recommendation"] = ""
+        return _restore_reused_scores(result, reused_snapshot)
 
     # max(1, ...): a Semaphore(0) is never released, so asyncio.gather below would
     # block forever -- and on the VM that holds run_scraper.sh's flock for good, so
@@ -1025,9 +1267,9 @@ async def run_scoring(pool, resume: str, df: pd.DataFrame) -> pd.DataFrame:
     else:
         s2_df = pd.DataFrame(columns=["job_posting_id", "deep_score", "strengths", "gaps", "recommendation"])
 
-    merged = df.merge(s1_df, on="job_posting_id", how="left").merge(s2_df, on="job_posting_id", how="left")
+    merged = base.merge(s1_df, on="job_posting_id", how="left").merge(s2_df, on="job_posting_id", how="left")
     merged.loc[merged["filtered_out"], "reason"] = merged.loc[merged["filtered_out"], "reason"].fillna("filtered_out")
-    return merged
+    return _restore_reused_scores(merged, reused_snapshot)
 
 
 def rows_needing_rescore(master: pd.DataFrame) -> pd.DataFrame:
@@ -1196,6 +1438,9 @@ async def main() -> None:
             n_easy = int(df["filter_easy_apply"].sum())
             if n_easy > 0:
                 print(f"Easy Apply drop: {n_easy} job(s) filtered before scoring")
+            master_for_reuse = load_master_for_reuse()
+            df, n_reused = reuse_repost_scores(df, master_for_reuse, REPOST_REUSE_DAYS)
+            stats["scores_reused"] = n_reused
             merged = await run_scoring(pool, resume, df)
             out = save_output(merged, csv_path)
             n_scored = merged["score"].notna().sum()

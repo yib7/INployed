@@ -1,10 +1,10 @@
 """SP4: the toolkit-agnostic half of the per-job "Ask AI" chat.
 
 `resume_tailor.chat` assembles one stable system-prompt payload per job (identity
-+ the fenced JD + the folder's apply.md, or a bounded master-file fallback when
-the job was never tailored) and sends the volatile turns as the user message.
-That split is the prompt-cache contract `claude_cli.py` documents, and it is what
-makes the provider switch honour the chat with no new setting.
++ the fenced JD + the folder's apply.md + a full master-file digest that rides
+along every time) and sends the volatile turns as the user message. That split
+is the prompt-cache contract `claude_cli.py` documents, and it is what makes the
+provider switch honour the chat with no new setting.
 
 The whole payload is re-sent every turn, which the Gemini lane bills in full, so
 every excerpt is capped by a named constant and the transcript is trimmed. Those
@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "local"))
 
-from resume_tailor import chat, compose, config  # noqa: E402
+from resume_tailor import aiwriting, chat, compose, config  # noqa: E402
 
 
 JOB = {
@@ -31,16 +31,33 @@ JOB = {
     "url": "https://jobs.example.com/42",
 }
 
+# Covers every known digest section plus the generic walk: a `letter.seed`, an
+# extra field on one entry per section (beyond what atom_line prints), and an
+# OTHER top-level key next to the four keys the digest must never print.
 MASTER = {
     "basics": {"name": "Jane Doe", "location": "City, ST"},
+    "letter": {"seed": "I want to keep building the tools a team relies on daily."},
     "education": [{"school": "State University", "degree": "B.S. Computer Science",
                    "dates": "2021-08 / 2025-05"}],
     "experience": [{"org": "Example Corp", "title": "Intern", "dates": "2024",
+                    "tech": ["Python", "EXTRAFIELD_TECH_MARKER"],
                     "achievements": [{"id": "a1", "what": "rebuilt the ingestion pipeline",
                                       "impact": ["cut runtime from 6h to 90min"]}]}],
-    "projects": [{"name": "ProjX", "dates": "2024",
+    "projects": [{"name": "ProjX", "dates": "2024", "link": "EXTRAFIELD_LINK_MARKER",
                   "achievements": [{"id": "p1", "what": "built a retrieval viewer"}]}],
+    "leadership": [{"org": "Campus Club", "role": "Lead", "dates": "2023",
+                    "keywords": ["EXTRAFIELD_KEYWORDS_MARKER"],
+                    "achievements": [{"id": "l1", "what": "ran weekly study sessions"}]}],
     "skills": {"languages": ["Python", "SQL"]},
+    "certifications": {
+        "aws": {"name": "OTHERKEY_CERT_MARKER", "year": 2024},
+        "other": ["OTHERKEY_LIST_MARKER"],
+    },
+    "tailor": {"required": {"experience": "SKIP_TAILOR_MARKER"}},
+    "skill_aliases": {"SQL": ["SKIP_ALIAS_MARKER"]},
+    "skill_aliases_match_only": {"Python": ["SKIP_MATCHONLY_MARKER"]},
+    "project_layout": {"ProjX": {"bullets": "SKIP_LAYOUT_MARKER"}},
+    "_private_note": "SKIP_UNDERSCORE_MARKER",
 }
 
 
@@ -143,10 +160,20 @@ def test_untailored_context_says_the_job_was_never_tailored():
     assert "not been tailored" in ctx.lower()
 
 
-def test_tailored_context_does_not_also_ship_the_master_file(tmp_path):
-    """Belt AND braces would double the billed payload every single turn."""
+def test_tailored_context_carries_the_master_digest_alongside_the_sheet(tmp_path):
+    """SP4: the digest rides along every turn, sheet or no sheet, so a follow-up
+    question can reach a fact the sheet's chosen subset left out."""
     ctx = chat.build_context(_folder(tmp_path), JOB)
-    assert "rebuilt the ingestion pipeline" not in ctx
+    assert "rebuilt the ingestion pipeline" in ctx
+    assert "CANDIDATE MASTER RECORD" in ctx
+    assert "the apply sheet above is the subset chosen for this job" in ctx
+    body = _between(ctx, chat.MASTER_BEGIN, chat.MASTER_END)
+    assert "rebuilt the ingestion pipeline" in body
+
+
+def test_tailored_context_puts_the_master_record_after_the_sheet(tmp_path):
+    ctx = chat.build_context(_folder(tmp_path), JOB)
+    assert ctx.index(chat.SHEET_END) < ctx.index(chat.MASTER_BEGIN)
 
 
 def test_master_fallback_survives_a_broken_master_file(monkeypatch):
@@ -156,6 +183,65 @@ def test_master_fallback_survives_a_broken_master_file(monkeypatch):
     monkeypatch.setattr(chat.assets, "load_master", boom)
     ctx = chat.build_context(None, JOB)               # must not raise
     assert "Data Analyst" in ctx
+
+
+# ── master_digest(): every section, every field ────────────────────────────────
+def test_master_digest_covers_every_known_section():
+    digest = chat.master_digest()
+    assert "Jane Doe" in digest                              # basics
+    assert "B.S. Computer Science" in digest                  # education
+    assert "rebuilt the ingestion pipeline" in digest         # experience
+    assert "cut runtime from 6h to 90min" in digest           # experience impact
+    assert "built a retrieval viewer" in digest                # projects
+    assert "ran weekly study sessions" in digest               # leadership
+    assert "Python" in digest and "SQL" in digest              # skills
+
+
+def test_master_digest_includes_the_own_words_seed():
+    digest = chat.master_digest()
+    assert "IN THE CANDIDATE'S OWN WORDS" in digest
+    assert "keep building the tools a team relies on daily" in digest
+
+
+def test_master_digest_omits_the_own_words_header_when_the_seed_is_blank(monkeypatch):
+    no_seed = {k: v for k, v in MASTER.items() if k != "letter"}
+    monkeypatch.setattr(chat.assets, "load_master", lambda: no_seed)
+    digest = chat.master_digest()
+    assert "IN THE CANDIDATE'S OWN WORDS" not in digest
+
+
+def test_master_digest_includes_extra_entry_fields_atom_line_does_not_print():
+    digest = chat.master_digest()
+    assert "EXTRAFIELD_TECH_MARKER" in digest        # experience entry's `tech`
+    assert "EXTRAFIELD_LINK_MARKER" in digest        # projects entry's `link`
+    assert "EXTRAFIELD_KEYWORDS_MARKER" in digest    # leadership entry's `keywords`
+
+
+def test_master_digest_walks_other_top_level_keys():
+    digest = chat.master_digest()
+    assert "OTHERKEY_CERT_MARKER" in digest           # nested dict value
+    assert "2024" in digest
+    assert "OTHERKEY_LIST_MARKER" in digest           # list value under the same key
+
+
+def test_master_digest_skips_tailoring_configuration_keys():
+    digest = chat.master_digest()
+    for marker in ("SKIP_TAILOR_MARKER", "SKIP_ALIAS_MARKER", "SKIP_MATCHONLY_MARKER",
+                   "SKIP_LAYOUT_MARKER", "SKIP_UNDERSCORE_MARKER"):
+        assert marker not in digest, marker
+
+
+def test_master_digest_of_a_non_mapping_master_is_blank(monkeypatch):
+    monkeypatch.setattr(chat.assets, "load_master", lambda: ["not", "a", "dict"])
+    assert chat.master_digest() == ""
+
+
+def test_master_digest_survives_a_broken_master_file(monkeypatch):
+    def boom():
+        raise ValueError("master_experience.yaml is not valid YAML")
+
+    monkeypatch.setattr(chat.assets, "load_master", boom)
+    assert chat.master_digest() == ""
 
 
 # ── the system rules ──────────────────────────────────────────────────────────
@@ -177,6 +263,21 @@ def test_system_rules_name_what_may_never_be_invented():
     low = chat.SYSTEM_RULES.lower()
     for word in ("experience", "number", "employer"):
         assert word in low, word
+
+
+def test_system_rules_ask_for_plain_specific_human_prose():
+    assert "plain, specific, human prose" in chat.SYSTEM_RULES
+
+
+def test_system_rules_carry_the_ai_writing_rules_prompt():
+    assert aiwriting.RULES_PROMPT in chat.SYSTEM_RULES
+
+
+def test_system_rules_are_a_static_string_so_the_context_stays_cacheable():
+    """Appending aiwriting.RULES_PROMPT must be a module-level constant, not
+    something built fresh per call, or the cached prompt would drift."""
+    assert chat.build_context(None, JOB).startswith(chat.SYSTEM_RULES)
+    assert isinstance(chat.SYSTEM_RULES, str)
 
 
 # ── the cost caps ─────────────────────────────────────────────────────────────
@@ -204,9 +305,13 @@ def test_apply_sheet_excerpt_is_capped(tmp_path):
     assert chat.TRUNCATED_MARKER in body     # the model is told it is seeing an excerpt
 
 
+def test_master_char_cap_is_thirty_thousand():
+    assert chat.MASTER_CHAR_CAP == 30_000
+
+
 def test_master_fallback_is_capped(monkeypatch):
     big = dict(MASTER, projects=[{"name": "Big", "achievements": [
-        {"id": f"p{i}", "what": "z" * 400} for i in range(50)]}])
+        {"id": f"p{i}", "what": "z" * 400} for i in range(100)]}])
     monkeypatch.setattr(chat.assets, "load_master", lambda: big)
     ctx = chat.build_context(None, JOB)
     body = _between(ctx, chat.MASTER_BEGIN, chat.MASTER_END)
@@ -260,12 +365,37 @@ def test_ask_coerces_a_non_string_answer(monkeypatch):
     assert chat.ask("ctx", [], "q") == ""
 
 
-def test_ask_does_not_run_the_style_gates(monkeypatch):
-    """This is conversation, not résumé copy: banned-phrasing repair, the
-    avoid-AI-writing pass and the grounding gate must all stay out of it."""
-    slop = "Leverage the seamless, end-to-end synergy — it is a testament to the team."
-    _capture(monkeypatch, answer=slop)
-    assert chat.ask("ctx", [], "q") == slop
+def test_ask_strips_an_em_dash_from_every_answer_regardless_of_length(monkeypatch):
+    """Em-dash stripping is unconditional; a two-word answer still gets it."""
+    _capture(monkeypatch, answer="Short answer" + chr(0x2014) + "done.")
+    assert chr(0x2014) not in chat.ask("ctx", [], "q")
+
+
+def test_ask_leaves_a_short_slop_answer_otherwise_untouched(monkeypatch):
+    """Below PROSE_WORD_FLOOR the gate never runs: a short answer is not worth
+    a second call, even when it uses a banned word."""
+    short_slop = "Leverage the plan quickly."
+    _capture(monkeypatch, answer=short_slop)
+    assert chat.ask("ctx", [], "q") == short_slop
+
+
+def test_ask_runs_the_prose_gate_on_a_long_answer_and_commits_a_real_fix(monkeypatch):
+    """A 60+-word answer with a banned pattern buys exactly one repair call, and
+    the cleaned answer replaces the original when it actually improves."""
+    slop_word = "delve"
+    slop = " ".join(["plain"] * 59 + [slop_word])
+    clean = " ".join(["plain"] * 60)
+    calls = []
+
+    def fake_call(system, user, tier, **kw):
+        calls.append((system, user, tier, kw))
+        return slop if len(calls) == 1 else clean
+
+    monkeypatch.setattr(chat, "call", fake_call)
+    result = chat.ask("ctx", [], "q")
+    assert result == clean
+    assert len(calls) == 2                       # the turn, then one repair
+    assert calls[1][2] == config.TIER_FLASH
 
 
 def test_ask_trims_the_transcript_to_the_turn_cap(monkeypatch):

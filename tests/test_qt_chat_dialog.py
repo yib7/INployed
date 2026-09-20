@@ -116,6 +116,16 @@ def test_dialog_title_names_the_job(qtbot):
     assert "Data Analyst" in dlg.windowTitle() and "Acme" in dlg.windowTitle()
 
 
+def test_hint_names_the_experience_file_as_a_source(qtbot):
+    """SP4: the chat carries the full master digest on every turn, sheet or
+    no sheet, so the hint must say so."""
+    _host, dlg = _dialog(qtbot)
+    hint = next(w for w in dlg.findChildren(QtWidgets.QLabel)
+                if w.accessibleName() == "Ask AI hint")
+    assert "experience file" in hint.text()
+    assert chr(0x2014) not in hint.text()
+
+
 def test_transcript_does_not_follow_links(qtbot):
     """The JD and the apply sheet can carry URLs; this is a reader, not a browser."""
     _host, dlg = _dialog(qtbot)

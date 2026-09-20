@@ -59,9 +59,10 @@ class JobChatDialog(QtWidgets.QDialog):
         v = QtWidgets.QVBoxLayout(self)
 
         hint = QtWidgets.QLabel(
-            "Ask about this job's apply sheet, tailored bullets, cover letter or "
-            "posting. Answers come only from those, and it says so when something "
-            "isn't there.")
+            "Ask about this job's apply sheet, tailored bullets, cover letter, "
+            "posting or your full experience file. Answers come only from those, "
+            "and it says so when something isn't there.")
+        hint.setAccessibleName("Ask AI hint")
         hint.setProperty("muted", True)
         hint.setWordWrap(True)
         v.addWidget(hint)

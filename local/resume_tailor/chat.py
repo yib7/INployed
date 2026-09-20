@@ -18,13 +18,16 @@ Two things bound this module:
   instructions.
 * **Every turn re-sends the whole payload.** That is deliberate (it is what makes
   the prompt cacheable), but the Gemini lane bills the full system prompt each
-  turn, so the JD excerpt, the apply.md excerpt, the master-file fallback and the
+  turn, so the JD excerpt, the apply.md excerpt, the master-file digest and the
   transcript are each capped by a named constant below. Those five numbers are
   the cost ceiling for a chat session; nothing else here grows.
 
-No style gates run on an answer. This is conversation, not résumé copy, so
-`compose.enforce_style`, `aiwriting` and the grounding gate all stay out of it —
-the grounding rule is carried by the system prompt instead.
+An answer gets one AI-writing pass. `compose._strip_em_dashes` runs on every
+answer, and an answer of `PROSE_WORD_FLOOR` words or more is also checked
+against `compose.style_violations` and `aiwriting.violations`, the same two
+deterministic checks the résumé and letter arms use; a flash repair call runs
+once and is kept only when it strictly lowers the count of findings. See
+`_prose_gate`.
 """
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from . import assets, compose, config
+from . import aiwriting, assets, compose, config
 from .llm import call
 
 log = logging.getLogger(__name__)
@@ -45,9 +48,14 @@ log = logging.getLogger(__name__)
 # small enough that a long session cannot quietly run away.
 JD_CHAR_CAP = 4000          # same excerpt the cover letter reasons from
 APPLY_MD_CHAR_CAP = 12000   # a real tailored apply.md runs ~4-8k; this is headroom, not a squeeze
-MASTER_CHAR_CAP = 4000      # only ever used INSTEAD of the sheet, never alongside it
+MASTER_CHAR_CAP = 30_000    # the full digest, sent alongside the sheet on every turn
 HISTORY_TURN_CAP = 8        # the last 8 exchanges: enough to follow a thread
 HISTORY_CHAR_CAP = 6000     # ...and a hard character ceiling under that, for long answers
+
+# An answer this short or shorter skips the AI-writing gate: the deterministic
+# checks are tuned for a paragraph, and a one-line "the sheet doesn't say" reply
+# does not need a second call spent proving it is clean.
+PROSE_WORD_FLOOR = 60
 
 TRUNCATED_MARKER = "[... truncated ...]"
 
@@ -74,12 +82,13 @@ SYSTEM_RULES = (
     "skill. Every claim you make about the candidate must be traceable to something "
     "written in the context.\n"
     "4. When asked to draft text (an answer to an application question, a "
-    "paragraph, a bullet), build it only out of facts already in the context, and "
-    "say which part you had to leave blank.\n"
+    "paragraph, a bullet), build it only out of facts already in the context, "
+    "write it in plain, specific, human prose, and say which part you had to "
+    "leave blank.\n"
     "5. You have no tools and no file access: you cannot open, fetch, or write "
     "anything. Answer in the conversation only.\n"
     "6. Keep it short and plain. No preamble, no restating the question."
-)
+) + "\n" + aiwriting.RULES_PROMPT
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -126,20 +135,107 @@ def _read_sheet(folder: Optional[Path]) -> str:
 _atom_line = assets.atom_line
 _entries = assets.entry_lines
 
+# The master's own tailoring configuration: layout budgets and ATS spelling
+# maps, none of it a fact about the candidate. A digest that answers "what
+# has this person done" has no use for a block-rendering budget, and printing
+# one would only burn characters a real fact could have used. Any key
+# starting with "_" is skipped the same way, for a user's own scratch notes.
+_TAILOR_CONFIG_KEYS = frozenset({"tailor", "skill_aliases", "skill_aliases_match_only",
+                                 "project_layout"})
 
-def _master_summary() -> str:
-    """A bounded plain-text digest of master_experience.yaml.
+# The sections rendered by name below, in that order. A generic walk covers
+# everything else the master holds.
+_KNOWN_SECTIONS = frozenset({"basics", "letter", "education", "experience",
+                             "projects", "leadership", "skills"})
 
-    Used ONLY when the job has no apply sheet — an untailored job should still be
-    askable from the JD alone, and without this the model would know nothing about
-    the candidate. Never sent alongside the sheet: the sheet already carries the
-    same facts, so shipping both would double the billed payload every turn.
-    Any failure to read the master degrades to "" rather than killing the chat.
+_ENTRY_SECTIONS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("experience", ("org", "title")),
+    ("projects", ("name",)),
+    ("leadership", ("org", "role", "title")),
+)
+
+
+def _entry_extra_lines(entry: Dict[str, Any], name_keys: Tuple[str, ...]) -> List[str]:
+    """One `    - key: value` line per scalar or list field of `entry` that
+    `entry_lines` does not already print: everything but `achievements`, the
+    dates and the keys already folded into the header line. A dict-shaped
+    field (a free-form notes block, say) is left for a future pass; guessing
+    at its shape here would risk printing something the atoms never said."""
+    skip = {"achievements", "dates", *name_keys}
+    lines: List[str] = []
+    for key, value in entry.items():
+        if key in skip:
+            continue
+        if isinstance(value, dict):
+            continue
+        if isinstance(value, (list, tuple)):
+            items = [str(v).strip() for v in value if str(v or "").strip()]
+            if items:
+                lines.append(f"    - {key}: {', '.join(items)}")
+        else:
+            text = str(value or "").strip()
+            if text:
+                lines.append(f"    - {key}: {text}")
+    return lines
+
+
+def _generic_lines(value: Any, indent: int = 0) -> List[str]:
+    """`value` as plain-text lines for a top-level key the digest has no
+    named section for: a dict's own keys become `key: value` lines, a list
+    becomes `- item` lines, a nested dict is indented two spaces per level,
+    and a bare scalar is printed inline. Blank values print nothing."""
+    pad = "  " * indent
+    lines: List[str] = []
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            if isinstance(sub, dict):
+                nested = _generic_lines(sub, indent + 1)
+                if nested:
+                    lines.append(f"{pad}{key}:")
+                    lines += nested
+            elif isinstance(sub, (list, tuple)):
+                items = [str(v).strip() for v in sub if str(v or "").strip()]
+                if items:
+                    lines.append(f"{pad}{key}:")
+                    lines += [f"{pad}  - {i}" for i in items]
+            else:
+                text = str(sub or "").strip()
+                if text:
+                    lines.append(f"{pad}{key}: {text}")
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, dict):
+                nested = _generic_lines(item, indent + 1)
+                if nested:
+                    lines.append(f"{pad}-")
+                    lines += nested
+            else:
+                text = str(item or "").strip()
+                if text:
+                    lines.append(f"{pad}- {text}")
+    else:
+        text = str(value or "").strip()
+        if text:
+            lines.append(f"{pad}{text}")
+    return lines
+
+
+def master_digest() -> str:
+    """A bounded plain-text digest of master_experience.yaml: the known
+    sections first (basics, education, experience, projects, leadership,
+    skills, the candidate's own voice sample), then every other top-level key
+    the master holds, except the file's own tailoring configuration.
+
+    Sent alongside the apply sheet on every turn, and always sent on its own
+    when a job has no sheet yet: the sheet is the subset chosen for ONE job,
+    and a follow-up question may need a fact that subset left out. Any
+    failure to read the master degrades to "" so a broken file cannot kill
+    the chat.
     """
     try:
         master = assets.load_master()
     except Exception as exc:  # noqa: BLE001 - a missing/broken master must not kill the chat
-        log.warning("chat: master file unavailable for the untailored fallback (%s)", exc)
+        log.warning("chat: master file unavailable for the digest (%s)", exc)
         return ""
     if not isinstance(master, dict):
         return ""
@@ -153,13 +249,22 @@ def _master_summary() -> str:
     if education:
         lines.append("EDUCATION:")
         lines += education
-    for section, keys in (("experience", ("org", "title")),
-                          ("projects", ("name",)),
-                          ("leadership", ("org", "role", "title"))):
-        entries = _entries(master, section, *keys)
-        if entries:
+    for section, keys in _ENTRY_SECTIONS:
+        entries = master.get(section) or []
+        if not isinstance(entries, list):
+            continue
+        section_lines: List[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            block = _entries({section: [entry]}, section, *keys)
+            if not block:
+                continue
+            section_lines += block
+            section_lines += _entry_extra_lines(entry, keys)
+        if section_lines:
             lines.append(f"{section.upper()}:")
-            lines += entries
+            lines += section_lines
     skills = master.get("skills")
     if isinstance(skills, dict) and skills:
         lines.append("SKILLS:")
@@ -168,6 +273,18 @@ def _master_summary() -> str:
                 lines.append(f"- {group}: {', '.join(str(i) for i in items)}")
             elif str(items or "").strip():
                 lines.append(f"- {group}: {items}")
+    seed = assets.letter_seed()
+    if seed:
+        lines.append(f"IN THE CANDIDATE'S OWN WORDS: {seed}")
+    for key, value in master.items():
+        if not isinstance(key, str):
+            continue
+        if key in _KNOWN_SECTIONS or key in _TAILOR_CONFIG_KEYS or key.startswith("_"):
+            continue
+        body = _generic_lines(value)
+        if body:
+            lines.append(f"{key.upper()}:")
+            lines += body
     return _cap("\n".join(lines), MASTER_CHAR_CAP)
 
 
@@ -197,6 +314,7 @@ def build_context(folder: Optional[Path], job: Dict[str, Any]) -> str:
                    "never guess what the role involves.", ""]
 
     sheet = _read_sheet(folder)
+    digest = master_digest()
     if sheet:
         blocks += [
             "APPLY SHEET (this job's own apply.md: the candidate's basics and "
@@ -205,6 +323,12 @@ def build_context(folder: Optional[Path], job: Dict[str, Any]) -> str:
             SHEET_BEGIN,
             _cap(sheet, APPLY_MD_CHAR_CAP),
             SHEET_END,
+            "CANDIDATE MASTER RECORD (the full experience file the résumé was "
+            "tailored from; the apply sheet above is the subset chosen for "
+            "this job):",
+            MASTER_BEGIN,
+            digest,
+            MASTER_END,
         ]
     else:
         blocks += [
@@ -212,7 +336,7 @@ def build_context(folder: Optional[Path], job: Dict[str, Any]) -> str:
             "no cover letter for it. The candidate's master experience file is "
             "the only record of their background:",
             MASTER_BEGIN,
-            _master_summary(),
+            digest,
             MASTER_END,
         ]
     return "\n".join(blocks)
@@ -270,17 +394,55 @@ def _transcript(history: Sequence[Tuple[str, str]]) -> List[str]:
     return kept
 
 
+def _prose_gate(answer: str) -> str:
+    """The post-answer AI-writing pass: an answer of `PROSE_WORD_FLOOR` words or
+    more is checked against the same two deterministic scans the résumé and
+    letter arms use, and a single flash repair call is bought when either
+    fires. Committed only when the repair strictly lowers the count of
+    findings (a repair that is no better, or blank, or itself fails, leaves
+    the original answer standing), exactly like `compose.enforce_style` and
+    `coverletter.enforce_body_style`. The em-dash strip runs again on a
+    committed repair, since the repair call is free to introduce one of its
+    own.
+    """
+    if len(answer.split()) < PROSE_WORD_FLOOR:
+        return answer
+    names = compose.style_violations(answer) + aiwriting.violations(answer)
+    if not names:
+        return answer
+    system = (
+        "You repair a chat answer that slipped into banned AI-writing patterns. "
+        "Return the SAME answer: same facts, same structure, roughly the same "
+        "length, with every listed pattern removed. Add nothing.\n"
+        + aiwriting.RULES_PROMPT
+    )
+    user = f"ANSWER (findings: {', '.join(names)}):\n{answer}"
+    try:
+        out = call(system=system, user=user, tier=config.TIER_FLASH, temperature=0.2)
+        fixed = out.strip() if isinstance(out, str) else ""
+    except Exception:  # noqa: BLE001 - repair is best-effort, like the letter gate
+        fixed = ""
+    if fixed:
+        new_names = compose.style_violations(fixed) + aiwriting.violations(fixed)
+        if len(new_names) < len(names):
+            return compose._strip_em_dashes(fixed)
+    return answer
+
+
 def ask(context: str, history: List[Tuple[str, str]], question: str) -> str:
     """One chat turn: `context` as the system prompt, the turns as the user message.
 
     The context is the cacheable half and must stay byte-identical across a
     session, so nothing volatile may be folded into it — the transcript and the
-    new question go in `user`. Returns the model's answer verbatim (stripped);
-    no style gate, no grounding gate, no repair pass runs on it.
+    new question go in `user`. The answer is stripped of em dashes
+    unconditionally and passed through `_prose_gate`, which decides on its own
+    whether the answer is long enough to be worth the extra checks.
     """
     parts = _transcript(history)
     if parts:
         parts = ["CONVERSATION SO FAR:", *parts, ""]
     parts.append(f"QUESTION: {question}")
     out = call(system=context, user="\n\n".join(parts), tier=config.TIER_FLASH)
-    return out.strip() if isinstance(out, str) else ""
+    answer = out.strip() if isinstance(out, str) else ""
+    answer = compose._strip_em_dashes(answer)
+    return _prose_gate(answer)

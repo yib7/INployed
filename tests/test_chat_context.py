@@ -231,6 +231,16 @@ def test_master_digest_skips_tailoring_configuration_keys():
         assert marker not in digest, marker
 
 
+def test_a_falsy_scalar_like_zero_or_false_survives_the_generic_walk():
+    """`value or ""` would misread a real `0`/`False` as blank and drop it;
+    the walk must print the value itself."""
+    assert chat._generic_lines({"count": 0, "active": False}) == [
+        "count: 0", "active: False"]
+    assert chat._entry_extra_lines(
+        {"org": "Example Corp", "achievements": [], "rating": 0, "remote": False},
+        ("org",)) == ["    - rating: 0", "    - remote: False"]
+
+
 def test_master_digest_of_a_non_mapping_master_is_blank(monkeypatch):
     monkeypatch.setattr(chat.assets, "load_master", lambda: ["not", "a", "dict"])
     assert chat.master_digest() == ""
@@ -242,6 +252,30 @@ def test_master_digest_survives_a_broken_master_file(monkeypatch):
 
     monkeypatch.setattr(chat.assets, "load_master", boom)
     assert chat.master_digest() == ""
+
+
+def test_master_digest_of_an_empty_master_is_blank(monkeypatch):
+    monkeypatch.setattr(chat.assets, "load_master", lambda: {})
+    assert chat.master_digest() == ""
+
+
+def test_master_digest_skips_a_section_that_is_a_string_not_a_list(monkeypatch):
+    """A hand-edited master can leave `experience:` as a bare string. The
+    digest must skip it cleanly; iterating its characters would be a bug."""
+    broken = dict(MASTER, experience="not a list")
+    monkeypatch.setattr(chat.assets, "load_master", lambda: broken)
+    digest = chat.master_digest()                 # must not raise
+    assert "EXPERIENCE:" not in digest
+    assert "built a retrieval viewer" in digest    # the other sections still render
+
+
+def test_master_digest_skips_a_non_dict_entry_inside_a_section(monkeypatch):
+    """One malformed entry (a bare string where a mapping belongs) must not
+    sink the rest of that section."""
+    broken = dict(MASTER, experience=["not a mapping", *MASTER["experience"]])
+    monkeypatch.setattr(chat.assets, "load_master", lambda: broken)
+    digest = chat.master_digest()                  # must not raise
+    assert "rebuilt the ingestion pipeline" in digest
 
 
 # ── the system rules ──────────────────────────────────────────────────────────

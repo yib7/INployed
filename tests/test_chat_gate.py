@@ -100,6 +100,13 @@ def test_a_blank_repair_reply_is_rejected(monkeypatch):
     assert chat._prose_gate(text) == text
 
 
+def test_a_whitespace_only_repair_reply_is_rejected(monkeypatch):
+    """`"   \\n  ".strip()` is also blank; it must not be treated as a real fix."""
+    text = _words(60, "delve")
+    _fake_call(monkeypatch, ["   \n  "])
+    assert chat._prose_gate(text) == text
+
+
 def test_a_failed_repair_call_leaves_the_original_answer(monkeypatch):
     text = _words(60, "delve")
 

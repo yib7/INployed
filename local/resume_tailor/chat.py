@@ -43,9 +43,10 @@ log = logging.getLogger(__name__)
 
 # ── the cost ceiling ─────────────────────────────────────────────────────────
 # Chosen against what one turn actually costs: the system prompt is re-sent every
-# turn, so (JD + sheet + master) is the per-turn floor. ~16k characters of context
-# is roughly 4k tokens — a few tenths of a cent per turn on the flash tier, and
-# small enough that a long session cannot quietly run away.
+# turn, and the master digest rides alongside the sheet on every turn now, so
+# (JD + sheet + master) is the per-turn floor: 4,000 + 12,000 + 30,000 = 46,000
+# characters, roughly 11.5k tokens. That runs a few cents per turn on the flash
+# tier, small enough that a long session cannot quietly run away.
 JD_CHAR_CAP = 4000          # same excerpt the cover letter reasons from
 APPLY_MD_CHAR_CAP = 12000   # a real tailored apply.md runs ~4-8k; this is headroom, not a squeeze
 MASTER_CHAR_CAP = 30_000    # the full digest, sent alongside the sheet on every turn
@@ -144,7 +145,9 @@ _TAILOR_CONFIG_KEYS = frozenset({"tailor", "skill_aliases", "skill_aliases_match
                                  "project_layout"})
 
 # The sections rendered by name below, in that order. A generic walk covers
-# everything else the master holds.
+# everything else the master holds. "letter" is listed here even though only
+# its `seed` key is ever printed (via assets.letter_seed() below): any other
+# key under `letter` is deliberately left out of the digest on purpose.
 _KNOWN_SECTIONS = frozenset({"basics", "letter", "education", "experience",
                              "projects", "leadership", "skills"})
 
@@ -153,6 +156,18 @@ _ENTRY_SECTIONS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("projects", ("name",)),
     ("leadership", ("org", "role", "title")),
 )
+
+
+def _scalar_text(value: Any) -> str:
+    """`value` as printable text, or "" when there is nothing to print.
+
+    Checks `value is None` explicitly. `value or ""` reads a real, printable
+    scalar like `0`, `0.0` or `False` as blank and drops it, which is wrong
+    for a field that legitimately holds one of those. Only `None` and an
+    all-whitespace string count as blank here."""
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def _entry_extra_lines(entry: Dict[str, Any], name_keys: Tuple[str, ...]) -> List[str]:
@@ -169,11 +184,11 @@ def _entry_extra_lines(entry: Dict[str, Any], name_keys: Tuple[str, ...]) -> Lis
         if isinstance(value, dict):
             continue
         if isinstance(value, (list, tuple)):
-            items = [str(v).strip() for v in value if str(v or "").strip()]
+            items = [i for i in (_scalar_text(v) for v in value) if i]
             if items:
                 lines.append(f"    - {key}: {', '.join(items)}")
         else:
-            text = str(value or "").strip()
+            text = _scalar_text(value)
             if text:
                 lines.append(f"    - {key}: {text}")
     return lines
@@ -194,12 +209,12 @@ def _generic_lines(value: Any, indent: int = 0) -> List[str]:
                     lines.append(f"{pad}{key}:")
                     lines += nested
             elif isinstance(sub, (list, tuple)):
-                items = [str(v).strip() for v in sub if str(v or "").strip()]
+                items = [i for i in (_scalar_text(v) for v in sub) if i]
                 if items:
                     lines.append(f"{pad}{key}:")
                     lines += [f"{pad}  - {i}" for i in items]
             else:
-                text = str(sub or "").strip()
+                text = _scalar_text(sub)
                 if text:
                     lines.append(f"{pad}{key}: {text}")
     elif isinstance(value, (list, tuple)):
@@ -210,11 +225,11 @@ def _generic_lines(value: Any, indent: int = 0) -> List[str]:
                     lines.append(f"{pad}-")
                     lines += nested
             else:
-                text = str(item or "").strip()
+                text = _scalar_text(item)
                 if text:
                     lines.append(f"{pad}- {text}")
     else:
-        text = str(value or "").strip()
+        text = _scalar_text(value)
         if text:
             lines.append(f"{pad}{text}")
     return lines

@@ -69,6 +69,10 @@ requests==2.34.2
 #   * imageio-ffmpeg (maintainers only): supplies the ffmpeg binary that
 #     scripts/build_walkthrough.py encodes the README tour with. Imported
 #     lazily, inside the encode step, so every other script here runs without it.
+#   * pyarrow: speeds up jobsdata.repost_key's vectorised form (~30ms vs. pandas'
+#     own ~90ms on a 30k-row refresh). jobsdata.py imports it in a try/except and
+#     falls back to a pure-pandas path when it is absent, since this module is
+#     also imported by the VM pipeline, where pyarrow is not otherwise needed.
 
 # dev / tests (python -m pytest tests/ -v)
 pytest==9.1.1

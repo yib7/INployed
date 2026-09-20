@@ -148,9 +148,64 @@ def test_live_resume_ids_handles_empty_or_non_dict():
     ("   ", "Acme", "Seattle, WA", ""),
     ("Data Engineer", "", "Seattle, WA", ""),
     ("Data Engineer", "   ", "Seattle, WA", ""),
+    # a float NaN, the real-world shape a missing pandas cell takes, is also
+    # "nothing safe to match on" -- it must not stringify to the word "nan"
+    (float("nan"), "Acme", "Seattle, WA", ""),
+    ("Data Engineer", float("nan"), "Seattle, WA", ""),
 ])
 def test_repost_key_normalisation_table(title, company, location, expected):
     assert jobsdata.repost_key(title, company, location) == expected
+
+
+_VECTORIZED_KEY_ROWS = [
+    ("Data Engineer", "Acme", "Seattle, WA"),
+    ("Data Engineer (Remote)", "Acme", "Seattle, WA"),
+    ("Data Engineer - Hybrid", "Acme", "Seattle, WA"),
+    ("Data Engineer (On-site)", "Acme", "Seattle, WA"),
+    ("Sr. Data Engineer!!", "Acme, Inc.", "New York, NY"),
+    ("Data Engineer（Remote）", "Acme", "Seattle, WA"),
+    ("Data Engineer", "Acme", "Seattle, WA, United States"),
+    ("Data Engineer", "Acme", ""),
+    ("", "Acme", "Seattle, WA"),
+    ("   ", "Acme", "Seattle, WA"),
+    ("Data Engineer", "", "Seattle, WA"),
+    ("Data Engineer", "   ", "Seattle, WA"),
+]
+
+
+def _assert_matches_scalar(keys_fn):
+    """`keys_fn` must agree with the scalar `repost_key` exactly, row by row,
+    over the same normalisation table above (minus the NaN rows: a pandas
+    column represents those as a real missing value, a distinct case already
+    covered by the scalar table's own NaN entries)."""
+    df = pd.DataFrame(_VECTORIZED_KEY_ROWS, columns=["job_title", "company_name", "job_location"])
+    vectorized = list(keys_fn(df))
+    scalar = [jobsdata.repost_key(t, c, loc) for t, c, loc in _VECTORIZED_KEY_ROWS]
+    assert vectorized == scalar
+
+
+def test_repost_keys_vectorized_matches_scalar_row_by_row():
+    # Whichever backend the dispatcher picks in this environment.
+    _assert_matches_scalar(jobsdata._repost_keys_vectorized)
+
+
+def test_repost_keys_pandas_fallback_matches_scalar_row_by_row():
+    # The pandas `.str`-accessor path, exercised directly so it stays correct
+    # even on a machine (like this test run) where pyarrow is also installed
+    # and the dispatcher would otherwise never touch it.
+    _assert_matches_scalar(jobsdata._repost_keys_pandas)
+
+
+@pytest.mark.skipif(jobsdata.pa is None, reason="pyarrow not installed")
+def test_repost_keys_pyarrow_matches_scalar_row_by_row():
+    _assert_matches_scalar(jobsdata._repost_keys_pyarrow)
+
+
+def test_repost_keys_vectorized_treats_a_missing_column_as_blank():
+    # No company_name column at all: same "" fallback as the scalar reference
+    # via _repost_col, so every key comes out "".
+    df = pd.DataFrame({"job_title": ["Data Engineer", "ML Engineer"]})
+    assert list(jobsdata._repost_keys_vectorized(df)) == ["", ""]
 
 
 # --- SP5: suppress_reposts --------------------------------------------------------
@@ -235,6 +290,62 @@ def test_suppress_reposts_keeps_original_index_and_columns():
         df, {"A": "2026-09-09T00:00:00+00:00"}, 30, today=TODAY)
     assert list(out.columns) == list(df.columns)
     assert set(out.index) <= set(df.index)
+
+
+def test_suppress_reposts_collapse_compares_digit_ids_numerically():
+    # "9" > "10" as plain strings but must lose the tie numerically.
+    df = pd.DataFrame([
+        _row("9", "no", "2026-08-20"),
+        _row("10", "no", "2026-08-20"),
+    ])
+    out, hidden = jobsdata.suppress_reposts(df, {}, 30, today=TODAY)
+    assert list(out["job_posting_id"]) == ["10"]
+    assert hidden == 1
+
+
+def test_suppress_reposts_collapse_handles_mixed_date_formats():
+    # add_extracted_date merges a bare-date source with a full-timestamp one,
+    # so the SAME column can hold both shapes. The timestamped row here is the
+    # newer one and must survive -- a single-format parse turns it into NaT
+    # and silently loses the tie-break to the older bare date.
+    df = pd.DataFrame([
+        _row("B", "no", "2026-08-01"),
+        _row("C", "no", "2026-08-15T10:30:00"),
+    ])
+    out, hidden = jobsdata.suppress_reposts(df, {}, 30, today=TODAY)
+    assert list(out["job_posting_id"]) == ["C"]
+    assert hidden == 1
+
+
+def test_suppress_reposts_key_source_blocks_regardless_of_the_marked_rows_own_score():
+    # The mark itself (A) can sit at any score -- blocking is purely about the
+    # repost key -- so key_source must be the FULL frame, ahead of any
+    # score-based narrowing the caller has already done.
+    full_df = pd.DataFrame([
+        _row("A", "yes", "2026-08-01", score="2"),   # marked, low score
+        _row("C", "no", "2026-08-20", score="5"),    # unseen repost, high score
+    ])
+    scored_only = full_df[full_df["score"].astype(int) >= 4].copy()   # excludes A
+    marked_at = {"A": "2026-09-14T00:00:00+00:00"}   # 5 days before TODAY
+    out, hidden = jobsdata.suppress_reposts(
+        scored_only, marked_at, 30, today=TODAY, key_source=full_df)
+    assert out.empty
+    assert hidden == 1
+
+
+def test_filter_high_unseen_blocks_a_repost_of_a_low_score_mark():
+    # End-to-end reproduction of the reported bug: A is marked seen at score 2
+    # (below min_score), C is an unseen score-5 repost of it, marked 5 days
+    # ago. C must NOT survive just because A never entered the scored frame.
+    df = pd.DataFrame([
+        _row("A", "yes", "2026-08-01", score="2"),
+        _row("C", "no", "2026-08-20", score="5"),
+    ])
+    marked_at = {"A": "2026-09-14T00:00:00+00:00"}   # 5 days before TODAY
+    out, hidden = jobsdata.filter_high_unseen_with_count(
+        df, 4, marked_at=marked_at, window_days=30)
+    assert out.empty
+    assert hidden == 1
 
 
 # --- SP5: filter_high_unseen wired to the repost window --------------------------

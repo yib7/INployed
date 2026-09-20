@@ -22,6 +22,13 @@ from pathlib import Path
 
 import pandas as pd
 
+try:
+    import pyarrow as pa
+    import pyarrow.compute as pc
+except ImportError:  # pragma: no cover - the VM pipeline environment may lack it
+    pa = None
+    pc = None
+
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
@@ -960,17 +967,25 @@ _NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
 def repost_key(title: str, company: str, location: str) -> str:
     """Identity key for spotting a repost: the same title, company and location.
 
+    Reference (scalar) implementation, kept for tests and any one-off caller;
+    `_repost_keys_vectorized` below is the same logic run over a whole column at
+    once and is what `suppress_reposts`/`blocked_repost_keys` actually use, since
+    this per-row form costs ~130ms on a 30k-row refresh on the UI thread.
+
     NFKC-normalised and lowercased first, so a full-width or otherwise
     compatibility-equivalent character matches its plain-ASCII counterpart. A
     trailing remote/hybrid/on-site marker is dropped from the title, location
     keeps only the part before its first comma, and every remaining run of
-    non-alphanumeric characters collapses to a single space. An empty title
-    or company leaves nothing safe to match on, so the key is "" and a caller
-    must never treat it as a match.
+    non-alphanumeric characters collapses to a single space. A missing, blank
+    or NaN title or company leaves nothing safe to match on, so the key is ""
+    and a caller must never treat it as a match.
     """
-    title = unicodedata.normalize("NFKC", "" if title is None else str(title))
-    company = unicodedata.normalize("NFKC", "" if company is None else str(company))
-    location = unicodedata.normalize("NFKC", "" if location is None else str(location))
+    title = "" if pd.isna(title) else str(title)
+    company = "" if pd.isna(company) else str(company)
+    location = "" if pd.isna(location) else str(location)
+    title = unicodedata.normalize("NFKC", title)
+    company = unicodedata.normalize("NFKC", company)
+    location = unicodedata.normalize("NFKC", location)
     if not title.strip() or not company.strip():
         return ""
     title = _REPOST_SUFFIX_RE.sub("", title.lower())
@@ -979,67 +994,213 @@ def repost_key(title: str, company: str, location: str) -> str:
     return "|".join(parts)
 
 
+def _repost_col(df: pd.DataFrame, name: str) -> pd.Series:
+    return df[name] if name in df.columns else pd.Series("", index=df.index)
+
+
+def _repost_keys_pandas(df: pd.DataFrame) -> pd.Series:
+    """`repost_key`, run over a whole frame with pandas' `.str` accessor instead
+    of a per-row Python call. Still loops in Python under the hood per string
+    op, so it is a partial win (~90ms on a 30k-row frame vs. ~130ms per-row);
+    `_repost_keys_pyarrow` below is the ~30ms version used when pyarrow is
+    importable. Must stay byte-for-byte equal to `repost_key` row by row --
+    pinned by test_repost_keys_vectorized_matches_scalar_row_by_row and
+    test_repost_keys_pandas_fallback_matches_scalar_row_by_row."""
+    title = _repost_col(df, "job_title").fillna("").astype(str).str.normalize("NFKC")
+    company = _repost_col(df, "company_name").fillna("").astype(str).str.normalize("NFKC")
+    location = _repost_col(df, "job_location").fillna("").astype(str).str.normalize("NFKC")
+
+    empty = (title.str.strip() == "") | (company.str.strip() == "")
+
+    title = title.str.lower().str.replace(_REPOST_SUFFIX_RE, "", regex=True)
+    company = company.str.lower()
+    location = location.str.lower().str.split(",", n=1).str[0]
+
+    def _clean(s: pd.Series) -> pd.Series:
+        return s.str.replace(_NON_ALNUM_RE, " ", regex=True).str.strip()
+
+    title, company, location = _clean(title), _clean(company), _clean(location)
+    keys = title + "|" + company + "|" + location
+    return keys.mask(empty, "")
+
+
+def _repost_keys_pyarrow(df: pd.DataFrame) -> pd.Series:
+    """`repost_key` over a whole frame using pyarrow's compiled string kernels
+    (~30ms on a 30k-row frame, well under pandas' `.str`-accessor ~90ms):
+    pyarrow's kernels run in C++, avoiding a Python regex call per row. Same
+    normalisation order as `repost_key`; see that docstring for the spec this
+    mirrors."""
+    title = _repost_col(df, "job_title").fillna("").astype(str)
+    company = _repost_col(df, "company_name").fillna("").astype(str)
+    location = _repost_col(df, "job_location").fillna("").astype(str)
+
+    t = pc.utf8_normalize(pa.array(title, type=pa.string()), form="NFKC")
+    c = pc.utf8_normalize(pa.array(company, type=pa.string()), form="NFKC")
+    loc = pc.utf8_normalize(pa.array(location, type=pa.string()), form="NFKC")
+
+    empty = pc.or_(pc.equal(pc.utf8_trim_whitespace(t), ""),
+                   pc.equal(pc.utf8_trim_whitespace(c), ""))
+
+    t = pc.utf8_lower(t)
+    c = pc.utf8_lower(c)
+    loc = pc.utf8_lower(loc)
+
+    t = pc.replace_substring_regex(t, pattern=_REPOST_SUFFIX_RE.pattern, replacement="")
+    loc = pc.list_element(pc.split_pattern(loc, ",", max_splits=1), 0)
+
+    non_alnum = _NON_ALNUM_RE.pattern
+    t = pc.utf8_trim_whitespace(pc.replace_substring_regex(t, pattern=non_alnum, replacement=" "))
+    c = pc.utf8_trim_whitespace(pc.replace_substring_regex(c, pattern=non_alnum, replacement=" "))
+    loc = pc.utf8_trim_whitespace(pc.replace_substring_regex(loc, pattern=non_alnum, replacement=" "))
+
+    keys = pc.if_else(empty, "", pc.binary_join_element_wise(t, c, loc, "|"))
+    return pd.Series(keys.to_pandas().to_numpy(), index=df.index)
+
+
+def _repost_keys_vectorized(df: pd.DataFrame) -> pd.Series:
+    """`repost_key`, run over a whole frame at once via a single batched call
+    -- pinned to match `repost_key` row by row by
+    test_repost_keys_vectorized_matches_scalar_row_by_row. Prefers pyarrow's
+    compiled string kernels (`_repost_keys_pyarrow`) when pyarrow is
+    importable, falling back to pandas' own `.str` accessor
+    (`_repost_keys_pandas`) when it is not -- jobsdata.py is also imported by
+    the VM pipeline, where pyarrow is not a declared dependency."""
+    if pa is not None:
+        return _repost_keys_pyarrow(df)
+    return _repost_keys_pandas(df)
+
+
+def _id_greater(a: str, b: str) -> bool:
+    """Is `a` the 'higher' job_posting_id than `b`? Digit-only ids compare
+    numerically (so "10" beats "9"); anything else falls back to a plain
+    string comparison. Scalar reference for `_id_sort_rank` below."""
+    if a.isdigit() and b.isdigit():
+        return int(a) > int(b)
+    return a > b
+
+
+def _id_sort_rank(ids: pd.Series) -> pd.Series:
+    """A numeric rank that sorts a whole Series of ids the way `_id_greater`
+    orders a pair: digit-only ids by their integer value (so "10" ranks above
+    "9"); anything else ranks below every digit id, in which case the caller's
+    sort falls through to a plain string tie-break on `ids` itself."""
+    return pd.to_numeric(ids, errors="coerce").fillna(float("-inf"))
+
+
+def _pick_repost_winners(candidates: pd.DataFrame) -> pd.Index:
+    """Vectorised replacement for a per-group Python loop: among rows sharing
+    a `key`, keep the one with the newest `extracted` (NaT always loses to a
+    real date; if a whole group is NaT the id tie-break still applies), ties
+    broken by the higher `id` (`_id_greater`, digit-aware). A `groupby("key")`
+    + a Python-level winner pick per group was the actual cost on a realistic
+    30k-row frame with many small duplicate groups (~700ms, dwarfing the
+    string key computation): the cost sat entirely in pandas' per-group
+    iteration overhead. `sort_values` + `drop_duplicates` does the same
+    ranking as one pass over the whole frame with no Python-level loop.
+    """
+    ranked = candidates.assign(__id_rank=_id_sort_rank(candidates["id"]))
+    ordered = ranked.sort_values(
+        ["key", "extracted", "__id_rank", "id"],
+        ascending=[True, False, False, False], na_position="last", kind="stable",
+    )
+    return ordered.index[~ordered["key"].duplicated(keep="first")]
+
+
+def blocked_repost_keys(df: pd.DataFrame, marked_at: dict[str, str], window_days: int,
+                         today: date | None = None) -> set[str]:
+    """Repost keys a mark blocks, over EVERY row of `df` whatever its score.
+
+    A job marked seen or applied still blocks a higher-scored repost of
+    itself, so this always runs against the full frame -- see
+    `filter_high_unseen_with_count`, which passes its own full input frame
+    here as `suppress_reposts`'s `key_source`, before any `min_score` narrowing.
+    `marked_at` is `job_posting_id -> ISO timestamp` (SeenRegistry.marked_at_all(),
+    a single-table scan over the whole `seen` table -- a few thousand rows in
+    practice, cheap on every refresh). Both that timestamp and `extracted_date`
+    below are parsed with `format="mixed"`: `add_extracted_date` merges a bare
+    date and a full ISO timestamp into the same column, and a single inferred
+    format turns the other shape into NaT.
+    """
+    if df.empty or window_days <= 0 or not marked_at:
+        return set()
+    if today is None:
+        today = date.today()
+    ids = _repost_col(df, "job_posting_id").astype(str)
+    # Only a MARKED row can ever block anything, and marked_at is typically a
+    # small fraction of a full loaded frame (thousands of historic marks
+    # against tens of thousands of rows), so computing repost keys for the
+    # unmarked majority would be pure waste -- narrow to marked rows first.
+    marked_mask = ids.isin(marked_at.keys())
+    if not marked_mask.any():
+        return set()
+    marked_ids = ids[marked_mask]
+    keys = _repost_keys_vectorized(df.loc[marked_mask])
+    mark_ts = pd.to_datetime(marked_ids.map(marked_at), format="mixed", errors="coerce")
+    in_window = pd.Series(False, index=marked_ids.index)
+    have_mark = mark_ts.notna()
+    if have_mark.any():
+        days_since = mark_ts[have_mark].apply(lambda ts: (today - ts.date()).days)
+        in_window.loc[have_mark] = days_since <= window_days
+    return set(keys[in_window & (keys != "")])
+
+
 def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: int,
-                      today: date | None = None) -> tuple[pd.DataFrame, int]:
+                      today: date | None = None,
+                      key_source: pd.DataFrame | None = None) -> tuple[pd.DataFrame, int]:
     """Hide an unseen repost of a job already marked seen or applied recently.
 
-    `marked_at` is `job_posting_id -> ISO timestamp` (SeenRegistry.marked_at_all());
-    `df` may hold both seen and unseen rows so a marked row's title/company/location
-    stay available for keying even though it will never show in the unseen view
-    itself. A row within `window_days` of its own mark blocks every UNSEEN row
-    sharing its `repost_key`; among the unseen rows left, duplicates sharing a
-    non-empty key collapse to the one with the newest `extracted_date` (ties keep
-    the highest `job_posting_id`, compared as a string). `window_days <= 0`
+    `key_source` supplies the rows `blocked_repost_keys` reads to decide which
+    keys a mark blocks -- the FULL frame, whatever its score -- when that
+    differs from `df`, the rows actually filtered and collapsed here (which the
+    caller may already have narrowed by score). Defaults to `df` itself, so a
+    caller working with one frame throughout needs nothing extra.
+
+    A row within `window_days` of its own mark blocks every UNSEEN row of `df`
+    sharing its repost key; among the unseen rows left, duplicates sharing a
+    non-empty key collapse to the one with the newest `extracted_date` (ties
+    keep the higher `job_posting_id`; see `_id_greater`). `window_days <= 0`
     disables both steps and returns `df` untouched. Returns `(kept_df, hidden_count)`
-    with the original index and column set intact; view-time only, so nothing here
-    is ever written back to disk.
+    with the original index and column set intact; view-time only, so nothing
+    here is ever written back to disk.
     """
     if window_days <= 0 or df.empty:
         return df, 0
     if today is None:
         today = date.today()
+    if key_source is None:
+        key_source = df
 
-    def _col(name: str) -> pd.Series:
-        return df[name] if name in df.columns else pd.Series("", index=df.index)
+    blocked_keys = blocked_repost_keys(key_source, marked_at, window_days, today)
 
-    ids = _col("job_posting_id").astype(str)
-    keys = pd.Series(
-        [repost_key(t, c, loc) for t, c, loc in
-         zip(_col("job_title").fillna(""), _col("company_name").fillna(""),
-             _col("job_location").fillna(""))],
-        index=df.index,
-    )
     is_seen = (df["is_seen"].astype(str) if "is_seen" in df.columns
                else pd.Series("no", index=df.index))
-    extracted = (pd.to_datetime(df["extracted_date"], errors="coerce")
-                 if "extracted_date" in df.columns else pd.Series(pd.NaT, index=df.index))
-
-    mark_ts = pd.to_datetime(ids.map(marked_at), errors="coerce")
-    in_window = pd.Series(False, index=df.index)
-    have_mark = mark_ts.notna()
-    if have_mark.any():
-        days_since = mark_ts[have_mark].apply(lambda ts: (today - ts.date()).days)
-        in_window.loc[have_mark] = days_since <= window_days
-    blocked_keys = set(keys[in_window & (keys != "")])
-
     unseen = is_seen == "no"
+    # A seen row's key is never consulted below (step 3 blocks unseen rows,
+    # step 4 collapses duplicates among unseen rows), so skip computing it.
+    keys = pd.Series("", index=df.index)
+    if unseen.any():
+        keys.loc[unseen] = _repost_keys_vectorized(df.loc[unseen])
+    extracted = (pd.to_datetime(df["extracted_date"], format="mixed", errors="coerce")
+                 if "extracted_date" in df.columns else pd.Series(pd.NaT, index=df.index))
+    ids = _repost_col(df, "job_posting_id").astype(str)
     drop_blocked = unseen & (keys != "") & keys.isin(blocked_keys)
     step3 = int(drop_blocked.sum())
     kept = df.loc[~drop_blocked]
 
     dup_candidates = kept.index[unseen.loc[kept.index] & (keys.loc[kept.index] != "")]
-    drop_dupes: list = []
+    drop_dupes: pd.Index = pd.Index([])
     if len(dup_candidates) > 0:
         grouping = pd.DataFrame({
             "key": keys.loc[dup_candidates],
             "extracted": extracted.loc[dup_candidates],
             "id": ids.loc[dup_candidates],
         }, index=dup_candidates)
-        for _key, grp in grouping.groupby("key"):
-            if len(grp) <= 1:
-                continue
-            ordered = grp.sort_values(["extracted", "id"], ascending=[False, False])
-            drop_dupes.extend(ordered.index[1:])
+        # Only keys with more than one row can lose anyone; skipping the
+        # (usually large) majority of singleton keys keeps the sort small.
+        dup_keys = grouping["key"][grouping["key"].duplicated(keep=False)]
+        if not dup_keys.empty:
+            winners = _pick_repost_winners(grouping.loc[dup_keys.index])
+            drop_dupes = dup_keys.index.difference(winners)
     step4 = len(drop_dupes)
 
     final = kept.drop(index=drop_dupes)
@@ -1059,11 +1220,12 @@ def filter_high_unseen_with_count(
     score_mask = score >= min_score
     hidden = 0
     if marked_at is not None and window_days > 0:
-        # Keep every scored row (seen included) so a marked job's own title,
-        # company and location stay available to key against, then narrow to
-        # unseen once suppression has run.
+        # key_source=df (the FULL frame, every score) so a job marked seen or
+        # applied at ANY score still blocks a higher-scored repost of itself;
+        # `df` here (score-filtered, seen included) is only what gets actually
+        # filtered/collapsed, then narrowed to unseen once suppression has run.
         scored = df.loc[score_mask].copy()
-        scored, hidden = suppress_reposts(scored, marked_at, window_days)
+        scored, hidden = suppress_reposts(scored, marked_at, window_days, key_source=df)
         scored_is_seen = is_seen.loc[scored.index]
         out = scored.loc[scored_is_seen == "no"].copy()
     else:

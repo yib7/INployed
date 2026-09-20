@@ -246,6 +246,12 @@ TARGET_FILES: dict[str, Path] = {
 SETTINGS_SCHEMA: list[Field] = [
     Field("min_score", "Min score to highlight", "int", 4, "Dashboard", "config",
           help="Jobs at/above this score are surfaced as high-priority.", min=1, max=5),
+    Field("repost_window_days", "Hide reposts for (days)", "int", 30, "Dashboard", "config",
+          help="A job with the same title, company and location as one you marked seen or "
+               "applied within this many days stays out of High Score, and unseen duplicates "
+               "collapse to the newest posting. Nothing is marked; after the window the repost "
+               "shows again. 0 turns it off.",
+          min=0, max=180),
     Field("followup_days", "Follow-up after (days)", "int", 5, "Dashboard", "config",
           help="Days after applying before the tracker nudges a follow-up.", min=1, max=60,
           slider=True),

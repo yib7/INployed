@@ -334,6 +334,18 @@ def test_tailor_open_folder_is_a_resume_bool_defaulting_off(tmp_path):
     assert settings.validate({"tailor_open_folder": True}) == {}
 
 
+def test_repost_window_days_is_a_dashboard_int_default_30(tmp_path):
+    f = {x.key: x for x in settings.SETTINGS_SCHEMA}["repost_window_days"]
+    assert f.type == "int" and f.target == "config"
+    assert f.section == "Dashboard"
+    assert (f.min, f.max) == (0, 180)
+    assert f.default == 30
+    assert settings.load(_targets(tmp_path))["repost_window_days"] == 30
+    assert settings.validate({"repost_window_days": 0}) == {}
+    assert settings.validate({"repost_window_days": 180}) == {}
+    assert "repost_window_days" in settings.validate({"repost_window_days": 181})
+
+
 def test_stale_after_hours_is_a_dashboard_int_default_36(tmp_path):
     f = {x.key: x for x in settings.SETTINGS_SCHEMA}["stale_after_hours"]
     assert f.type == "int" and f.target == "config"

@@ -1161,7 +1161,7 @@ def test_load_save_show_advanced_roundtrip(tmp_path, monkeypatch):
 
 # --- cycle 18 P5: spin boxes ----------------------------------------------------
 
-SPIN_KEYS = ("min_score", "stale_after_hours", "limit_per_input",
+SPIN_KEYS = ("min_score", "repost_window_days", "stale_after_hours", "limit_per_input",
              "max_scored_per_run", "rescore_cap", "auto_apply_batch_cap")
 
 

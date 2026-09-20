@@ -15,7 +15,9 @@ import re
 import sys
 import tempfile
 import threading
+import unicodedata
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -668,6 +670,14 @@ def load_followup_days(default: int = 5) -> int:
         return default
 
 
+def load_repost_window_days(default: int = 30) -> int:
+    """Days a repost of a job you marked seen or applied stays out of High Score."""
+    try:
+        return int(_load_cfg().get("repost_window_days", default))
+    except (TypeError, ValueError):
+        return default
+
+
 def live_resume_ids(resume_paths) -> set[str]:
     """Job ids whose recorded tailored-résumé folder still EXISTS on disk.
 
@@ -938,15 +948,127 @@ def drop_blocklisted(df: pd.DataFrame, names: list[str]) -> pd.DataFrame:
     return df[~mask]
 
 
-def filter_high_unseen(df: pd.DataFrame, min_score: int = 4) -> pd.DataFrame:
+# A trailing workplace-type marker on a job title: a parenthetical ("(Remote)")
+# or a dash suffix ("- Hybrid") right before the end of the string. Dropped by
+# repost_key() because the same posting is reworded with a different one of
+# these across a repost, while everything else about it stays identical.
+_REPOST_SUFFIX_RE = re.compile(r"[\s\-\(]+\s*(remote|hybrid|on[- ]?site)\s*\)?\s*$",
+                                re.IGNORECASE)
+_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
+
+
+def repost_key(title: str, company: str, location: str) -> str:
+    """Identity key for spotting a repost: the same title, company and location.
+
+    NFKC-normalised and lowercased first, so a full-width or otherwise
+    compatibility-equivalent character matches its plain-ASCII counterpart. A
+    trailing remote/hybrid/on-site marker is dropped from the title, location
+    keeps only the part before its first comma, and every remaining run of
+    non-alphanumeric characters collapses to a single space. An empty title
+    or company leaves nothing safe to match on, so the key is "" and a caller
+    must never treat it as a match.
+    """
+    title = unicodedata.normalize("NFKC", "" if title is None else str(title))
+    company = unicodedata.normalize("NFKC", "" if company is None else str(company))
+    location = unicodedata.normalize("NFKC", "" if location is None else str(location))
+    if not title.strip() or not company.strip():
+        return ""
+    title = _REPOST_SUFFIX_RE.sub("", title.lower())
+    location = location.lower().split(",", 1)[0]
+    parts = [_NON_ALNUM_RE.sub(" ", part).strip() for part in (title, company.lower(), location)]
+    return "|".join(parts)
+
+
+def suppress_reposts(df: pd.DataFrame, marked_at: dict[str, str], window_days: int,
+                      today: date | None = None) -> tuple[pd.DataFrame, int]:
+    """Hide an unseen repost of a job already marked seen or applied recently.
+
+    `marked_at` is `job_posting_id -> ISO timestamp` (SeenRegistry.marked_at_all());
+    `df` may hold both seen and unseen rows so a marked row's title/company/location
+    stay available for keying even though it will never show in the unseen view
+    itself. A row within `window_days` of its own mark blocks every UNSEEN row
+    sharing its `repost_key`; among the unseen rows left, duplicates sharing a
+    non-empty key collapse to the one with the newest `extracted_date` (ties keep
+    the highest `job_posting_id`, compared as a string). `window_days <= 0`
+    disables both steps and returns `df` untouched. Returns `(kept_df, hidden_count)`
+    with the original index and column set intact; view-time only, so nothing here
+    is ever written back to disk.
+    """
+    if window_days <= 0 or df.empty:
+        return df, 0
+    if today is None:
+        today = date.today()
+
+    def _col(name: str) -> pd.Series:
+        return df[name] if name in df.columns else pd.Series("", index=df.index)
+
+    ids = _col("job_posting_id").astype(str)
+    keys = pd.Series(
+        [repost_key(t, c, loc) for t, c, loc in
+         zip(_col("job_title").fillna(""), _col("company_name").fillna(""),
+             _col("job_location").fillna(""))],
+        index=df.index,
+    )
+    is_seen = (df["is_seen"].astype(str) if "is_seen" in df.columns
+               else pd.Series("no", index=df.index))
+    extracted = (pd.to_datetime(df["extracted_date"], errors="coerce")
+                 if "extracted_date" in df.columns else pd.Series(pd.NaT, index=df.index))
+
+    mark_ts = pd.to_datetime(ids.map(marked_at), errors="coerce")
+    in_window = pd.Series(False, index=df.index)
+    have_mark = mark_ts.notna()
+    if have_mark.any():
+        days_since = mark_ts[have_mark].apply(lambda ts: (today - ts.date()).days)
+        in_window.loc[have_mark] = days_since <= window_days
+    blocked_keys = set(keys[in_window & (keys != "")])
+
+    unseen = is_seen == "no"
+    drop_blocked = unseen & (keys != "") & keys.isin(blocked_keys)
+    step3 = int(drop_blocked.sum())
+    kept = df.loc[~drop_blocked]
+
+    dup_candidates = kept.index[unseen.loc[kept.index] & (keys.loc[kept.index] != "")]
+    drop_dupes: list = []
+    if len(dup_candidates) > 0:
+        grouping = pd.DataFrame({
+            "key": keys.loc[dup_candidates],
+            "extracted": extracted.loc[dup_candidates],
+            "id": ids.loc[dup_candidates],
+        }, index=dup_candidates)
+        for _key, grp in grouping.groupby("key"):
+            if len(grp) <= 1:
+                continue
+            ordered = grp.sort_values(["extracted", "id"], ascending=[False, False])
+            drop_dupes.extend(ordered.index[1:])
+    step4 = len(drop_dupes)
+
+    final = kept.drop(index=drop_dupes)
+    return final, step3 + step4
+
+
+def filter_high_unseen_with_count(
+        df: pd.DataFrame, min_score: int = 4, *,
+        marked_at: dict[str, str] | None = None,
+        window_days: int = 0) -> tuple[pd.DataFrame, int]:
+    """`filter_high_unseen`, also reporting how many rows the repost window hid."""
     if df.empty or "score" not in df.columns:
-        return df.iloc[0:0]
+        return df.iloc[0:0], 0
     score = pd.to_numeric(df["score"], errors="coerce").fillna(0)
     is_seen = (df["is_seen"].astype(str) if "is_seen" in df.columns
                else pd.Series("no", index=df.index))
-    mask = (score >= min_score) & (is_seen == "no")
-    out = df.loc[mask].copy()
-    out["__score_num"] = score[mask]
+    score_mask = score >= min_score
+    hidden = 0
+    if marked_at is not None and window_days > 0:
+        # Keep every scored row (seen included) so a marked job's own title,
+        # company and location stay available to key against, then narrow to
+        # unseen once suppression has run.
+        scored = df.loc[score_mask].copy()
+        scored, hidden = suppress_reposts(scored, marked_at, window_days)
+        scored_is_seen = is_seen.loc[scored.index]
+        out = scored.loc[scored_is_seen == "no"].copy()
+    else:
+        out = df.loc[score_mask & (is_seen == "no")].copy()
+    out["__score_num"] = score.loc[out.index]
     if "deep_score" in out.columns:
         out["__deep_num"] = pd.to_numeric(out["deep_score"], errors="coerce").fillna(0)
     else:
@@ -961,7 +1083,15 @@ def filter_high_unseen(df: pd.DataFrame, min_score: int = 4) -> pd.DataFrame:
     out = out.sort_values(
         ["__score_num", "__appl_num", "__deep_num"], ascending=[False, True, False]
     )
-    return out.drop(columns=["__score_num", "__deep_num", "__appl_num"])
+    return out.drop(columns=["__score_num", "__deep_num", "__appl_num"]), hidden
+
+
+def filter_high_unseen(df: pd.DataFrame, min_score: int = 4, *,
+                        marked_at: dict[str, str] | None = None,
+                        window_days: int = 0) -> pd.DataFrame:
+    out, _hidden = filter_high_unseen_with_count(
+        df, min_score, marked_at=marked_at, window_days=window_days)
+    return out
 
 
 def sort_query(view: pd.DataFrame) -> pd.DataFrame:

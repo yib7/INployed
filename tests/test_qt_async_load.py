@@ -22,6 +22,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 from qt import main_window as mw  # noqa: E402
 from qt.main_window import MainWindow  # noqa: E402
+from seen_db import SeenRegistry  # noqa: E402
 
 
 def _fake_registry():
@@ -108,3 +109,63 @@ def test_reload_data_async_reports_errors_without_crashing(qtbot, tmp_path, monk
     w.reload_data_async()   # must not raise
 
     assert w._loading is False
+
+
+# --- SP5: repost window wiring through a real refresh ----------------------------
+
+def _repost_master(tmp_path):
+    """Three postings sharing one repost key: one already marked seen, two not."""
+    p = tmp_path / "linkedin_jobs_master.csv.gz"
+    df = pd.DataFrame([
+        {"job_posting_id": "A", "job_title": "Data Engineer", "company_name": "Acme",
+         "job_location": "Seattle, WA", "score": "5", "extracted_date": "2026-08-10"},
+        {"job_posting_id": "B", "job_title": "Data Engineer", "company_name": "Acme",
+         "job_location": "Seattle, WA", "score": "5", "extracted_date": "2026-08-15"},
+        {"job_posting_id": "C", "job_title": "Data Engineer", "company_name": "Acme",
+         "job_location": "Seattle, WA", "score": "5", "extracted_date": "2026-08-20"},
+    ])
+    with gzip.open(p, "wt", encoding="utf-8", newline="") as fh:
+        df.to_csv(fh, index=False)
+    return p
+
+
+def _mark(reg, jid, marked_at):
+    reg._conn.execute("INSERT INTO seen (job_posting_id, marked_at) VALUES (?, ?)",
+                      (jid, marked_at))
+    reg._conn.commit()
+
+
+def test_refresh_hides_reposts_marked_inside_the_window(qtbot, tmp_path):
+    reg = SeenRegistry(tmp_path / "seen.db")
+    try:
+        _mark(reg, "A", "2026-09-09T00:00:00+00:00")   # 10 days before 2026-09-19
+        p = _repost_master(tmp_path)
+        w = MainWindow(csv_paths=[p], registry=reg)
+        qtbot.addWidget(w)
+        w.repost_window_days = 30
+
+        w.reload_data()
+
+        assert w.df_high.empty
+        assert w._reposts_hidden == 2
+        assert "2 reposts hidden" in w._summary_line()
+    finally:
+        reg.close()
+
+
+def test_refresh_keeps_the_newest_repost_once_the_mark_ages_out(qtbot, tmp_path):
+    reg = SeenRegistry(tmp_path / "seen.db")
+    try:
+        _mark(reg, "A", "2026-08-19T00:00:00+00:00")   # 31 days before 2026-09-19
+        p = _repost_master(tmp_path)
+        w = MainWindow(csv_paths=[p], registry=reg)
+        qtbot.addWidget(w)
+        w.repost_window_days = 30
+
+        w.reload_data()
+
+        assert list(w.df_high["job_posting_id"]) == ["C"]
+        assert w._reposts_hidden == 1
+        assert "1 repost hidden" in w._summary_line()
+    finally:
+        reg.close()

@@ -256,6 +256,11 @@ class SeenRegistry:
         cur = self._conn.execute("SELECT job_posting_id FROM seen")
         return {row[0] for row in cur.fetchall()}
 
+    def marked_at_all(self) -> dict[str, str]:
+        """Every marked id and when it was marked, for the repost-suppression window."""
+        cur = self._conn.execute("SELECT job_posting_id, marked_at FROM seen")
+        return {row[0]: row[1] for row in cur.fetchall()}
+
     # ---- application tracker ----
 
     def set_status(self, job_posting_id: str, status: str, *,

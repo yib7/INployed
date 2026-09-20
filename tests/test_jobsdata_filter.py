@@ -1,8 +1,10 @@
 """Column-scoped search + multi-filter in jobsdata.filter_and_sort (pure DataFrame logic)."""
 import sys
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
@@ -118,3 +120,165 @@ def test_live_resume_ids_excludes_a_file_path(tmp_path):
 def test_live_resume_ids_handles_empty_or_non_dict():
     assert jobsdata.live_resume_ids({}) == set()
     assert jobsdata.live_resume_ids(set()) == set()   # tolerant of a non-mapping
+
+
+# --- SP5: repost_key normalisation table ----------------------------------------
+
+@pytest.mark.parametrize("title,company,location,expected", [
+    ("Data Engineer", "Acme", "Seattle, WA", "data engineer|acme|seattle"),
+    # a trailing parenthetical workplace marker on the title is dropped
+    ("Data Engineer (Remote)", "Acme", "Seattle, WA", "data engineer|acme|seattle"),
+    # a trailing dash marker too, any of the three workplace words
+    ("Data Engineer - Hybrid", "Acme", "Seattle, WA", "data engineer|acme|seattle"),
+    ("Data Engineer (On-site)", "Acme", "Seattle, WA", "data engineer|acme|seattle"),
+    # punctuation collapses to single spaces, both in the title and the company
+    ("Sr. Data Engineer!!", "Acme, Inc.", "New York, NY",
+     "sr data engineer|acme inc|new york"),
+    # NFKC first: full-width parens must normalise to ASCII before the
+    # trailing-marker regex ever runs, or the marker survives in the key
+    ("Data Engineer（Remote）", "Acme", "Seattle, WA",
+     "data engineer|acme|seattle"),
+    # location keeps only the part before the first comma
+    ("Data Engineer", "Acme", "Seattle, WA, United States", "data engineer|acme|seattle"),
+    # empty location is allowed; the key is still non-empty
+    ("Data Engineer", "Acme", "", "data engineer|acme|"),
+    ("Data Engineer", "Acme", None, "data engineer|acme|"),
+    # an empty title or company means nothing safe to match on
+    ("", "Acme", "Seattle, WA", ""),
+    ("   ", "Acme", "Seattle, WA", ""),
+    ("Data Engineer", "", "Seattle, WA", ""),
+    ("Data Engineer", "   ", "Seattle, WA", ""),
+])
+def test_repost_key_normalisation_table(title, company, location, expected):
+    assert jobsdata.repost_key(title, company, location) == expected
+
+
+# --- SP5: suppress_reposts --------------------------------------------------------
+
+def _row(jid, is_seen, extracted_date, title="Data Engineer", company="Acme",
+         location="Seattle, WA", score="5"):
+    return {"job_posting_id": jid, "job_title": title, "company_name": company,
+            "job_location": location, "is_seen": is_seen,
+            "extracted_date": extracted_date, "score": score}
+
+
+TODAY = date(2026, 9, 19)
+
+
+def test_suppress_reposts_window_zero_disables_and_returns_df_untouched():
+    df = pd.DataFrame([_row("A", "yes", "2026-08-01"), _row("B", "no", "2026-08-20")])
+    out, hidden = jobsdata.suppress_reposts(df, {"A": "2026-09-10T00:00:00+00:00"}, 0, today=TODAY)
+    assert out is df
+    assert hidden == 0
+
+
+def test_suppress_reposts_in_window_hides_every_unseen_duplicate():
+    df = pd.DataFrame([
+        _row("A", "yes", "2026-07-01"),
+        _row("B", "no", "2026-08-15"),
+        _row("C", "no", "2026-08-20"),
+    ])
+    marked_at = {"A": "2026-09-09T00:00:00+00:00"}   # 10 days before TODAY
+    out, hidden = jobsdata.suppress_reposts(df, marked_at, 30, today=TODAY)
+    assert list(out["job_posting_id"]) == ["A"]      # only the (already seen) mark survives
+    assert hidden == 2
+
+
+def test_suppress_reposts_out_of_window_collapses_to_newest_unseen():
+    df = pd.DataFrame([
+        _row("A", "yes", "2026-07-01"),
+        _row("B", "no", "2026-08-15"),
+        _row("C", "no", "2026-08-20"),   # newest extracted_date of the two unseen rows
+    ])
+    marked_at = {"A": "2026-08-19T00:00:00+00:00"}   # 31 days before TODAY: outside the window
+    out, hidden = jobsdata.suppress_reposts(df, marked_at, 30, today=TODAY)
+    assert set(out["job_posting_id"]) == {"A", "C"}
+    assert hidden == 1
+
+
+def test_suppress_reposts_collapse_ties_keep_the_highest_id():
+    # Same extracted_date -> the id tie-break, compared as a STRING (same digit
+    # count here so string order and numeric order agree; "9" vs "10" would not).
+    df = pd.DataFrame([
+        _row("19", "no", "2026-08-20"),
+        _row("20", "no", "2026-08-20"),
+    ])
+    out, hidden = jobsdata.suppress_reposts(df, {}, 30, today=TODAY)
+    assert list(out["job_posting_id"]) == ["20"]
+    assert hidden == 1
+
+
+def test_suppress_reposts_empty_key_never_suppressed():
+    # No company_name column at all -> repost_key is always "" -> never blocked
+    # or collapsed, however many rows share every other field.
+    df = pd.DataFrame([
+        {"job_posting_id": "A", "job_title": "Data Engineer", "is_seen": "yes",
+         "extracted_date": "2026-07-01", "score": "5"},
+        {"job_posting_id": "B", "job_title": "Data Engineer", "is_seen": "no",
+         "extracted_date": "2026-08-15", "score": "5"},
+        {"job_posting_id": "C", "job_title": "Data Engineer", "is_seen": "no",
+         "extracted_date": "2026-08-20", "score": "5"},
+    ])
+    marked_at = {"A": "2026-09-09T00:00:00+00:00"}
+    out, hidden = jobsdata.suppress_reposts(df, marked_at, 30, today=TODAY)
+    assert set(out["job_posting_id"]) == {"A", "B", "C"}
+    assert hidden == 0
+
+
+def test_suppress_reposts_keeps_original_index_and_columns():
+    df = pd.DataFrame([
+        _row("A", "yes", "2026-07-01"),
+        _row("B", "no", "2026-08-15"),
+        _row("C", "no", "2026-08-20"),
+    ], index=[5, 9, 12])
+    out, _hidden = jobsdata.suppress_reposts(
+        df, {"A": "2026-09-09T00:00:00+00:00"}, 30, today=TODAY)
+    assert list(out.columns) == list(df.columns)
+    assert set(out.index) <= set(df.index)
+
+
+# --- SP5: filter_high_unseen wired to the repost window --------------------------
+
+def _checkpoint_df():
+    return pd.DataFrame([
+        _row("A", "yes", "2026-08-10"),
+        _row("B", "no", "2026-08-15"),
+        _row("C", "no", "2026-08-20"),   # newest of the two unseen duplicates
+    ])
+
+
+def test_checkpoint_mark_in_window_hides_all_unseen_reposts():
+    df = _checkpoint_df()
+    marked_at = {"A": "2026-09-09T00:00:00+00:00"}   # 10 days before TODAY
+    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=30)
+    assert out.empty
+
+
+def test_checkpoint_mark_out_of_window_keeps_newest_unseen_repost():
+    df = _checkpoint_df()
+    marked_at = {"A": "2026-08-19T00:00:00+00:00"}   # 31 days before TODAY
+    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=30)
+    assert list(out["job_posting_id"]) == ["C"]
+
+
+def test_filter_high_unseen_window_zero_ignores_marked_at():
+    df = _checkpoint_df()
+    marked_at = {"A": "2026-09-09T00:00:00+00:00"}
+    out = jobsdata.filter_high_unseen(df, 4, marked_at=marked_at, window_days=0)
+    assert set(out["job_posting_id"]) == {"B", "C"}   # unchanged: both unseen rows show
+
+
+def test_filter_high_unseen_without_marked_at_is_unaffected():
+    # No marked_at at all -> today's exact behaviour, unseen duplicates and all.
+    df = _checkpoint_df()
+    out = jobsdata.filter_high_unseen(df, 4)
+    assert set(out["job_posting_id"]) == {"B", "C"}
+
+
+def test_filter_high_unseen_with_count_reports_the_hidden_total():
+    df = _checkpoint_df()
+    marked_at = {"A": "2026-09-09T00:00:00+00:00"}
+    out, hidden = jobsdata.filter_high_unseen_with_count(
+        df, 4, marked_at=marked_at, window_days=30)
+    assert out.empty
+    assert hidden == 2

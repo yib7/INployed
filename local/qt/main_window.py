@@ -39,13 +39,14 @@ from jobsdata import (
     HIGH_SCORE_COLUMNS,
     TRACKER_COLUMNS,
     drop_blocklisted,
-    filter_high_unseen,
+    filter_high_unseen_with_count,
     gdrive_root_dir,
     load_files,
     load_followup_days,
     load_hidden_columns,
     load_local_blocklist,
     load_min_score,
+    load_repost_window_days,
 )
 from qt import theme, workers
 from qt.answers_tab import AnswersEditor
@@ -188,10 +189,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(1000, 660)
 
         self.min_score = load_min_score()
+        self.repost_window_days = load_repost_window_days()
         self.followup_days = load_followup_days()
         self.hidden_columns = load_hidden_columns()
         self.df = pd.DataFrame()
         self.df_high = pd.DataFrame()
+        self._reposts_hidden = 0
         self.id_to_path: dict[str, Path] = {}
         self._row_by_id: dict[str, int] = {}
         self._url_by_id: dict[str, str] = {}
@@ -765,6 +768,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """The persistent status-bar summary: counts + discovery freshness."""
         total = 0 if self.df.empty else len(self.df)
         parts = [f"{total:,} jobs", f"{len(self.df_high)} unseen ≥ {self.min_score}"]
+        if self._reposts_hidden > 0:
+            noun = "repost" if self._reposts_hidden == 1 else "reposts"
+            parts.append(f"{self._reposts_hidden} {noun} hidden")
         if self._last_run_label:
             parts.append(f"last discovery run {self._last_run_label}")
         # A partial failure never reaches the empty panel (the frame is not
@@ -792,7 +798,9 @@ class MainWindow(QtWidgets.QMainWindow):
                            if not df.empty else {})
         self._url_by_id = (dict(zip(df["job_posting_id"].astype(str), df["url"].astype(str)))
                            if not df.empty and "url" in df.columns else {})
-        self.df_high = filter_high_unseen(df, self.min_score)
+        self.df_high, self._reposts_hidden = filter_high_unseen_with_count(
+            df, self.min_score, marked_at=self.registry.marked_at_all(),
+            window_days=self.repost_window_days)
         resume_ids = self._resume_ids()
         failed_ids = self._tailor_failure_ids()
         self.high_tab.set_source_df(self.df_high, resume_ids, failed_ids)
@@ -2979,6 +2987,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_settings_saved(self) -> None:
         """Re-read the values the dashboard caches from config and refresh."""
         self.min_score = load_min_score()
+        self.repost_window_days = load_repost_window_days()
         self.followup_days = load_followup_days()
         self.resume_data_tab.refresh_push_state()  # vm_enabled may have changed
         self.reload_data_async()

@@ -798,6 +798,10 @@ class MainWindow(QtWidgets.QMainWindow):
                            if not df.empty else {})
         self._url_by_id = (dict(zip(df["job_posting_id"].astype(str), df["url"].astype(str)))
                            if not df.empty and "url" in df.columns else {})
+        # Repost suppression runs here on the UI thread: about 60 ms on a 30k-row
+        # frame with pyarrow installed, about 100 ms on the pandas-only fallback
+        # (measured 2026-09-19, cycle 15). pyarrow stays optional; that cost per
+        # refresh is the accepted trade for one fewer hard dependency.
         self.df_high, self._reposts_hidden = filter_high_unseen_with_count(
             df, self.min_score, marked_at=self.registry.marked_at_all(),
             window_days=self.repost_window_days)

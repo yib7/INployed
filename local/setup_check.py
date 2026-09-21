@@ -24,9 +24,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
-import subprocess
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 
 import jobsdata
@@ -157,34 +156,60 @@ def module_found(name: str) -> bool:
 
 
 def chromium_cache_dirs() -> list[Path]:
-    """Where `playwright install` puts its browsers: `ms-playwright` under %LOCALAPPDATA%
-    on Windows and `~/.cache/ms-playwright` elsewhere. Both are listed so the
-    probe works from either side of a shared home."""
-    dirs: list[Path] = []
-    lad = os.environ.get("LOCALAPPDATA", "").strip()
-    if lad:
-        dirs.append(Path(lad) / "ms-playwright")
-    dirs.append(Path.home() / ".cache" / "ms-playwright")
-    return dirs
+    """Where a Playwright Chromium build would live, in probe order.
+
+    `PLAYWRIGHT_BROWSERS_PATH` overrides the default location when set: `0`
+    means the browsers live inside the installed playwright package itself
+    (`driver/package/.local-browsers`), resolved through `find_spec` so
+    nothing is imported; any other value is that directory outright. Without
+    the override the default is platform-specific: `ms-playwright` under
+    %LOCALAPPDATA% on Windows, `~/Library/Caches/ms-playwright` on macOS,
+    `~/.cache/ms-playwright` elsewhere.
+    """
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if override:
+        if override != "0":
+            return [Path(override)]
+        try:
+            spec = importlib.util.find_spec("playwright")
+        except (ImportError, ValueError):
+            spec = None
+        if spec is None or not spec.submodule_search_locations:
+            return []
+        pkg_dir = Path(next(iter(spec.submodule_search_locations)))
+        return [pkg_dir / "driver" / "package" / ".local-browsers"]
+    if sys.platform == "win32":
+        lad = os.environ.get("LOCALAPPDATA", "").strip()
+        return [Path(lad) / "ms-playwright"] if lad else []
+    if sys.platform == "darwin":
+        return [Path.home() / "Library" / "Caches" / "ms-playwright"]
+    return [Path.home() / ".cache" / "ms-playwright"]
 
 
-def chromium_installed(run: Callable[..., object] = subprocess.run,
-                       cache_dirs: Iterable[Path] | None = None) -> bool:
-    """Both halves must hold: `python -m playwright --version` exits 0 AND an
-    `ms-playwright` cache dir exists. The CLI alone proves the package; the dir
-    proves a browser was downloaded. Both are injectable so a test can fake
-    either without a real install. Any failure to probe reads as False, since a
-    browser the check cannot see is one a run cannot launch either."""
+def chromium_installed(cache_dirs: Iterable[Path] | None = None) -> bool:
+    """Is a Chromium build present in a Playwright browsers cache dir?
+
+    A file and environment read only, so it is safe on the UI thread: no
+    subprocess. `playwright` itself must be importable (`module_found`, a
+    `find_spec` probe) and one of the cache dirs must hold a subdirectory
+    whose name starts with "chromium" (the shape `playwright install
+    chromium` produces, e.g. `chromium-1181`). A missing or unreadable cache
+    dir reads as False, since a browser the probe cannot see is one a run
+    cannot launch either. `cache_dirs` is injectable so a test can fake it
+    without a real install.
+    """
+    if not module_found("playwright"):
+        return False
     dirs = list(cache_dirs) if cache_dirs is not None else chromium_cache_dirs()
-    if not any(d.is_dir() for d in dirs):
-        return False
-    try:
-        result = run([sys.executable, "-m", "playwright", "--version"],
-                     capture_output=True, text=True, encoding="utf-8",
-                     errors="replace", timeout=30)
-    except Exception:  # noqa: BLE001
-        return False
-    return getattr(result, "returncode", 1) == 0
+    for d in dirs:
+        try:
+            if not d.is_dir():
+                continue
+            if any(p.name.startswith("chromium") for p in d.iterdir() if p.is_dir()):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def auto_apply_problems() -> list[str]:

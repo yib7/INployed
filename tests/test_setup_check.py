@@ -195,48 +195,99 @@ def test_auto_apply_warnings_everything_missing_is_three_rows():
                    chromium_found=False)) == 3
 
 
-# --- chromium_installed: the CLI probe AND the cache dir --------------------------
+# --- chromium_installed: playwright importable AND a chromium-* build dir ---------
 
-def _run_ok(*a, **k):
-    class R:
-        returncode = 0
-    return R()
-
-
-def _run_fail(*a, **k):
-    class R:
-        returncode = 1
-    return R()
-
-
-def test_chromium_installed_needs_the_cli_and_a_cache_dir(tmp_path):
+def test_chromium_installed_needs_playwright_and_a_build_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(setup_check, "module_found", lambda name: name == "playwright")
     cache = tmp_path / "ms-playwright"
-    assert setup_check.chromium_installed(run=_run_ok, cache_dirs=[cache]) is False
+    assert setup_check.chromium_installed(cache_dirs=[cache]) is False
     cache.mkdir()
-    assert setup_check.chromium_installed(run=_run_ok, cache_dirs=[cache]) is True
-    assert setup_check.chromium_installed(run=_run_fail, cache_dirs=[cache]) is False
+    assert setup_check.chromium_installed(cache_dirs=[cache]) is False, "empty cache, no build"
+    (cache / "chromium-1181").mkdir()
+    assert setup_check.chromium_installed(cache_dirs=[cache]) is True
 
 
-def test_chromium_installed_swallows_a_probe_that_cannot_run(tmp_path):
-    def boom(*a, **k):
-        raise OSError("no python")
+def test_chromium_installed_false_when_playwright_is_not_importable(monkeypatch, tmp_path):
+    cache = tmp_path / "ms-playwright"
+    (cache / "chromium-1181").mkdir(parents=True)
+    monkeypatch.setattr(setup_check, "module_found", lambda name: False)
+    assert setup_check.chromium_installed(cache_dirs=[cache]) is False
+
+
+def test_chromium_installed_ignores_a_file_that_only_starts_with_chromium(monkeypatch, tmp_path):
+    monkeypatch.setattr(setup_check, "module_found", lambda name: True)
     cache = tmp_path / "ms-playwright"
     cache.mkdir()
-    assert setup_check.chromium_installed(run=boom, cache_dirs=[cache]) is False
+    (cache / "chromium-1181.txt").write_text("not a build dir", encoding="utf-8")
+    assert setup_check.chromium_installed(cache_dirs=[cache]) is False
 
 
-def test_chromium_cache_dirs_cover_localappdata_and_home_cache(monkeypatch, tmp_path):
+class _BoomDir:
+    """A cache-dir stand-in whose listing always raises, like a dir that
+    vanishes or a permission error mid-scan."""
+
+    def is_dir(self):
+        return True
+
+    def iterdir(self):
+        raise OSError("permission denied")
+
+
+def test_chromium_installed_swallows_an_unreadable_cache_dir(monkeypatch):
+    monkeypatch.setattr(setup_check, "module_found", lambda name: True)
+    assert setup_check.chromium_installed(cache_dirs=[_BoomDir()]) is False
+
+
+def test_chromium_cache_dirs_localappdata_on_windows(monkeypatch, tmp_path):
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(setup_check.sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lad"))
-    dirs = setup_check.chromium_cache_dirs()
-    assert tmp_path / "lad" / "ms-playwright" in dirs
-    assert Path.home() / ".cache" / "ms-playwright" in dirs
+    assert setup_check.chromium_cache_dirs() == [tmp_path / "lad" / "ms-playwright"]
 
 
-def test_chromium_cache_dirs_skip_a_blank_localappdata(monkeypatch):
+def test_chromium_cache_dirs_empty_when_localappdata_is_blank_on_windows(monkeypatch):
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(setup_check.sys, "platform", "win32")
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    dirs = setup_check.chromium_cache_dirs()
-    assert all(str(d).strip() and "ms-playwright" in str(d) for d in dirs)
-    assert Path.home() / ".cache" / "ms-playwright" in dirs
+    assert setup_check.chromium_cache_dirs() == []
+
+
+def test_chromium_cache_dirs_mac_caches(monkeypatch):
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(setup_check.sys, "platform", "darwin")
+    assert setup_check.chromium_cache_dirs() == [
+        Path.home() / "Library" / "Caches" / "ms-playwright"]
+
+
+def test_chromium_cache_dirs_linux_cache(monkeypatch):
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(setup_check.sys, "platform", "linux")
+    assert setup_check.chromium_cache_dirs() == [Path.home() / ".cache" / "ms-playwright"]
+
+
+def test_chromium_cache_dirs_honours_an_explicit_browsers_path(monkeypatch, tmp_path):
+    custom = tmp_path / "custom-browsers"
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(custom))
+    assert setup_check.chromium_cache_dirs() == [custom]
+
+
+def test_chromium_cache_dirs_zero_resolves_the_playwright_package_dir(monkeypatch, tmp_path):
+    pkg_dir = tmp_path / "site-packages" / "playwright"
+    pkg_dir.mkdir(parents=True)
+
+    class _Spec:
+        submodule_search_locations = [str(pkg_dir)]
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "0")
+    monkeypatch.setattr(setup_check.importlib.util, "find_spec", lambda name: _Spec())
+    assert setup_check.chromium_cache_dirs() == [
+        pkg_dir / "driver" / "package" / ".local-browsers"]
+
+
+def test_chromium_cache_dirs_zero_is_empty_when_playwright_is_not_found(monkeypatch):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "0")
+    monkeypatch.setattr(setup_check.importlib.util, "find_spec", lambda name: None)
+    assert setup_check.chromium_cache_dirs() == []
 
 
 # --- auto_apply_problems: wiring, labels and best-effort silence -----------------

@@ -290,7 +290,7 @@ def test_plan_consent_attest_checks_the_box(catalog):
         _f(2, "Subscribe to job alerts", "checkbox"),
     ])
     answers = _page_answers(digest, {0: ("consent_attest", 0.9),
-                                     1: ("consent_attest", 0.65),      # below FIELD_MAP_MIN_CONF
+                                     1: ("consent_attest", 0.65),      # below CONSENT_MIN_CONF
                                      2: ("leave_blank", 0.9)})
     p = apply_judge.plan(digest, catalog, answers)
     by_n = {f.n: f for f in p.fields}
@@ -301,6 +301,58 @@ def test_plan_consent_attest_checks_the_box(catalog):
     assert p.park_reason == "required field without an answer: I consent to a background check"
     assert [m[0] for m in p.missing] == ["I consent to a background check",
                                          "Subscribe to job alerts"]
+
+
+@pytest.mark.parametrize("conf,expected", [(0.8, "skip"), (0.9, "select"), (0.85, "select")])
+def test_plan_consent_attest_needs_its_own_higher_floor(catalog, conf, expected):
+    """Ticking a box the loop cannot take back needs more than the ordinary
+    mapping floor: below `CONSENT_MIN_CONF` (0.85, above `FIELD_MAP_MIN_CONF`)
+    the ordinary unanswerable rule applies."""
+    assert apply_judge.CONSENT_MIN_CONF == 0.85 > apply_judge.FIELD_MAP_MIN_CONF
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "I agree to the terms", "checkbox", required=True)])
+    p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("consent_attest", conf)}))
+    box = p.fields[0]
+    assert box.action == expected and box.confidence == conf
+    if expected == "select":
+        assert (box.fact_key, box.option, box.value) == ("consent_attest", "checked", "yes")
+        assert p.park_reason == "" and p.missing == []
+    else:
+        assert box.fact_key is None and box.option is None and box.value == ""
+        assert p.park_reason == "required field without an answer: I agree to the terms"
+        assert p.missing == [("I agree to the terms", "checkbox")]
+
+
+def test_unbacked_file_specials_are_not_offered(catalog, tmp_path):
+    """A folder without PDFs (and a sheet without a cover letter) has no
+    `resume_file`, `cover_letter_file` or `cover_letter_text` value: none of
+    them is in `facts` or in any field's criteria, so the model cannot pick a
+    file that does not exist."""
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    (bare / "apply.md").write_text(apply_data.build_markdown(_MASTER, _JOB, _bank()),
+                                   encoding="utf-8")
+    cat = apply_facts.build(bare, answers=_bank())
+    for key in ("resume_file", "cover_letter_file", "cover_letter_text"):
+        assert not cat.has(key)
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Resume", "file", required=True, ident="resume"),
+        _f(1, "Cover letter", "textarea"),
+        _f(2, "Gender", "select", options=("Male", "Female")),
+    ])
+    state, q = apply_judge.page_questions(digest, cat, _JOB)
+    absent = {"resume_file", "cover_letter_file", "cover_letter_text"}
+    assert not absent & set(state["facts"])
+    for f in digest.fields:
+        assert not absent & set(q[f"field_{f.n}_source"]["criteria"]), f.label
+    assert set(q["field_0_source"]["criteria"]) == {"needs_generation", "leave_blank"}
+    assert "signature_today" in q["field_1_source"]["criteria"]
+    # with the PDFs and the cover letter present they are offered as before
+    state, q = apply_judge.page_questions(digest, catalog, _JOB)
+    assert absent <= set(state["facts"])
+    assert set(q["field_0_source"]["criteria"]) == {"resume_file", "cover_letter_file",
+                                                    "needs_generation", "leave_blank"}
+    assert "cover_letter_text" in q["field_1_source"]["criteria"]
 
 
 def test_page_questions_name_fields_by_position_and_carry_n(catalog):
@@ -325,6 +377,7 @@ def test_source_instruction_relates_the_escapes_to_facts(catalog):
     text = q["field_11_source"]["instructions"]
     assert text.startswith("Which key of `facts` describes what")
     assert "`leave_blank`" in text and "`needs_generation`" in text
+    assert "for an essay question no fact answers, `needs_generation`" in text
     assert "written" in apply_judge.SPECIAL_DESCRIPTIONS["needs_generation"]
     assert "blank" in apply_judge.SPECIAL_DESCRIPTIONS["leave_blank"]
 

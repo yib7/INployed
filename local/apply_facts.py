@@ -33,7 +33,8 @@ from apply_playwright import parse_apply_md, split_name
 
 KINDS = ("text", "bool", "choice_text", "file", "date")
 
-# Descriptions read like the form labels they should match. Order is the order
+# Descriptions read like the form labels they should match (a bool's shape is
+# its `kind`; the description does not spell out yes / no). Order is the order
 # the judge sees the options in; the common identity facts come first.
 DESCRIPTIONS: dict[str, str] = {
     "full_name": "The candidate's full name, first and last together",
@@ -51,11 +52,11 @@ DESCRIPTIONS: dict[str, str] = {
     "github_url": "The candidate's GitHub profile URL",
     "website_url": "The candidate's personal website or portfolio URL",
     "work_authorized": "Whether the candidate is legally authorized to work in the "
-                       "United States (Yes or No)",
+                       "United States",
     "requires_sponsorship": "Whether the candidate will now or in the future require "
-                            "visa sponsorship (Yes or No)",
+                            "visa sponsorship",
     "years_experience": "How many years of relevant work experience the candidate has",
-    "willing_to_relocate": "Whether the candidate is willing to relocate (Yes or No)",
+    "willing_to_relocate": "Whether the candidate is willing to relocate",
     "gender": "The candidate's gender, for EEO self-identification",
     "race_ethnicity": "The candidate's race or ethnicity, for EEO self-identification",
     "veteran_status": "The candidate's veteran status, for EEO self-identification",

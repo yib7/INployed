@@ -150,7 +150,8 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
                 "consent to be contacted about this application",
         "not_for": "background-check, drug-test, age, non-compete, relocation or any "
                    "other substantive commitment"},
-    "needs_generation": "An essay or motivation question; a draft is written for it",
+    "needs_generation": "An open-ended prompt about motivation, the role or the candidate; "
+                        "a draft is written for it",
     "leave_blank": "No source applies; the box is left blank",
 }
 
@@ -270,8 +271,8 @@ def _option_question(i: int, options: list[str], candidate_answer: str,
             "question": f"Which of these choices means the same as `candidate_answer`, "
                         f"as an answer to the form field `fields[{i}].label`?"}
     else:
-        instructions = (f"Which of these choices is the plain default answer to the form "
-                        f"field `fields[{i}].label` when the catalog is silent on it?")
+        instructions = (f"Which of these choices is the plain default answer to "
+                        f"`fields[{i}].label` when the catalog is silent on it?")
     return {"type": "choice", "instructions": instructions, "criteria": criteria}
 
 
@@ -307,8 +308,8 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         questions[f"field_{f.n}_source"] = {
             "type": "choice",
             "instructions": f"Which key of `facts` describes what `fields[{i}]` asks for? "
-                            "When nothing fits, `leave_blank`; for prose the facts lack, "
-                            "`needs_generation`.",
+                            "When nothing fits, `leave_blank`; for an essay question no fact "
+                            "answers, `needs_generation`.",
             "criteria": _source_criteria(catalog_keys, f.type),
         }
         if f.options:

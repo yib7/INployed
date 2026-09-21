@@ -2,6 +2,7 @@
 plan, read-back values, listbox opening, button clicks that wait for the DOM
 or a navigation. No network; skips without Playwright or Chromium."""
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,59 @@ def test_click_button_follows_a_navigation(browser_page, fixture_url):
     assert apply_fill.click_button(browser_page, d, _button(d, "Sign in").n) is True
     assert browser_page.url.endswith("ashby_steps.html")
     assert "first_name" in [f.id_or_name for f in apply_form.extract(browser_page).fields]
+
+
+def test_click_button_settles_before_returning_on_a_delayed_navigation(browser_page, fixture_url):
+    browser_page.goto(fixture_url("login_wall.html"))
+    browser_page.fill("#login_password", "not-a-real-password")
+    # the navigation starts 300 ms after the click, so the poll sees the page leave mid-flight
+    browser_page.evaluate("""() => {
+        const b = document.getElementById('btn-signin');
+        b.replaceWith(b.cloneNode(true));
+        document.getElementById('btn-signin').addEventListener('click', () => {
+            setTimeout(() => { window.location.href = 'ashby_steps.html'; }, 300);
+        });
+    }""")
+    d = apply_form.extract(browser_page)
+    assert apply_fill.click_button(browser_page, d, _button(d, "Sign in").n) is True
+    assert browser_page.url.endswith("ashby_steps.html")
+    assert "first_name" in [f.id_or_name for f in apply_form.extract(browser_page).fields]
+
+
+def test_click_button_routes_the_torn_down_frame_path_through_settle(browser_page, fixture_url, monkeypatch):
+    browser_page.goto(fixture_url("lever_single.html"))
+    d = apply_form.extract(browser_page)
+    real_snapshot = apply_fill._snapshot
+    calls = {"snapshots": 0, "settled": 0}
+
+    def torn_down(page):
+        calls["snapshots"] += 1
+        return (("gone",),) if calls["snapshots"] > 1 else real_snapshot(page)
+
+    monkeypatch.setattr(apply_fill, "_snapshot", torn_down)
+    monkeypatch.setattr(apply_fill, "_settle",
+                        lambda page, timeout_s: calls.__setitem__("settled", calls["settled"] + 1))
+    assert apply_fill.click_button(browser_page, d, _button(d, "Submit application").n) is True
+    assert calls["settled"] == 1
+
+
+def test_apply_stops_at_a_passed_deadline(browser_page, fixture_url):
+    browser_page.goto(fixture_url("lever_single.html"))
+    d = apply_form.extract(browser_page)
+    lines = []
+    plan = FillPlan(fields=[_planned(_field(d, "name"), "fill", "Jane Doe")])
+    filled = apply_fill.apply(browser_page, plan, log=lines.append, deadline=time.monotonic() - 1)
+    assert filled == []
+    assert browser_page.input_value('[name="name"]') == ""
+    assert any("deadline" in line for line in lines)
+
+
+def test_apply_with_a_future_deadline_fills(browser_page, fixture_url):
+    browser_page.goto(fixture_url("lever_single.html"))
+    d = apply_form.extract(browser_page)
+    plan = FillPlan(fields=[_planned(_field(d, "name"), "fill", "Jane Doe")])
+    filled = apply_fill.apply(browser_page, plan, deadline=time.monotonic() + 30)
+    assert [x.value for x in filled] == ["Jane Doe"]
 
 
 def test_click_button_returns_false_when_nothing_changes(browser_page, fixture_url):

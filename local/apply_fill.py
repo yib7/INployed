@@ -37,7 +37,8 @@ from apply_judge import PAGE_TEXT_CAP, FillPlan, PlannedField
 
 log = logging.getLogger(__name__)
 
-ACTION_TIMEOUT_MS = 10_000     # one Playwright action (fill, click, select_option)
+ACTION_TIMEOUT_MS = 5_000      # one Playwright action (fill, click, select_option)
+SETTLE_STABLE_S = 2.0          # click_button: the longest wait for two equal snapshots
 LISTBOX_WAIT_MS = 2_000        # for a combobox menu to render its options
 POLL_S = 0.25                  # click_button's DOM poll
 CHECKED_WORDS = ("checked", "yes", "true", "on", "1")
@@ -83,31 +84,7 @@ _READ_JS = """el => {
   return norm(el.textContent);
 }"""
 
-# The option label of one radio, the extractor's rule: label[for], aria-label,
-# an enclosing label, the text after it, else its value.
-_RADIO_LABELS_JS = """els => els.map(el => {
-  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
-  const minus = (node) => {
-    const c = node.cloneNode(true);
-    c.querySelectorAll('input, select, textarea, button').forEach(n => n.remove());
-    return norm(c.textContent);
-  };
-  if (el.id) {
-    const l = document.querySelector('label[for="' + el.id.replace(/"/g, '\\\\"') + '"]');
-    if (l) { const t = minus(l); if (t) return t; }
-  }
-  const aria = norm(el.getAttribute('aria-label'));
-  if (aria) return aria;
-  const enc = el.closest('label');
-  if (enc) { const t = minus(enc); if (t) return t; }
-  let n = el.nextSibling;
-  while (n) {
-    if (n.nodeType === 3) { const t = norm(n.data); if (t) return t; }
-    else if (n.nodeType === 1) { if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(n.tagName)) break; const t = minus(n); if (t) return t; }
-    n = n.nextSibling;
-  }
-  return norm(el.value);
-})"""
+_RADIO_LABELS_JS = "els => els.map(" + apply_form.RADIO_OPTION_LABEL_JS + ")"
 
 _CHECKED_INDEX_JS = "els => els.findIndex(el => el.checked)"
 
@@ -285,14 +262,20 @@ def _read_back(loc, kind: dict[str, str] | None) -> str:
         return ""
 
 
-def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None) -> list[Filled]:
+def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
+          deadline: float | None = None) -> list[Filled]:
     """Perform every `fill` / `select` / `upload` in `plan` and return the
     read-back value of each acted field. `skip` and `generate` are not acted
-    on and do not appear in the result."""
+    on and do not appear in the result. `deadline` is a `time.monotonic()`
+    instant; once it has passed the remaining fields are left alone and the
+    list so far comes back (the job's wall clock belongs to the caller)."""
     out: list[Filled] = []
     for pf in plan.fields:
         if pf.action not in ("fill", "select", "upload"):
             continue
+        if deadline is not None and time.monotonic() >= deadline:
+            _say(log, f"apply_fill: deadline passed before {pf.label!r}; {len(out)} filled")
+            break
         loc = None
         kind = None
         try:
@@ -329,16 +312,29 @@ def _snapshot(page) -> tuple:
 
 
 def _settle(page, timeout_s: float) -> None:
+    """After a change: wait for `domcontentloaded` (a no-op on a page that did
+    not navigate), then for two equal snapshots with no torn-down frame, at
+    most SETTLE_STABLE_S apart in total, so the caller's next `extract` sees a
+    page that has stopped moving."""
     try:
         page.wait_for_load_state("domcontentloaded", timeout=max(1, int(timeout_s * 1000)))
     except Exception:       # noqa: BLE001
         pass
+    last = None
+    stop = time.monotonic() + min(SETTLE_STABLE_S, max(timeout_s, 0.1))
+    while time.monotonic() < stop:
+        snap = _snapshot(page)
+        if snap == last and ("gone",) not in snap:
+            return
+        last = snap
+        page.wait_for_timeout(100)
 
 
 def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:
     """Click button `n` of `digest` and wait, up to `timeout_s`, for a
-    navigation or a DOM change. True when something changed; False on an
-    unknown button, a missing element, or a quiet page."""
+    navigation or a DOM change. True when something changed, and only after
+    `_settle` has seen the page load and hold still; False on an unknown
+    button, a missing element, or a quiet page."""
     button = next((b for b in digest.buttons if b.n == n), None)
     if button is None:
         log.info("apply_fill: no button %s in the digest", n)
@@ -360,10 +356,8 @@ def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: floa
         loc.first.click(timeout=ACTION_TIMEOUT_MS)
         deadline = time.monotonic() + timeout_s
         while True:
-            if navigated or page.url != url0:
+            if navigated or page.url != url0 or _snapshot(page) != before:
                 _settle(page, timeout_s)
-                return True
-            if _snapshot(page) != before:
                 return True
             if time.monotonic() >= deadline:
                 return False

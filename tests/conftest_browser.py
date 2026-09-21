@@ -5,8 +5,8 @@ A browser test module opts in with
     pytest_plugins = ["conftest_browser"]
 
 at module scope (pytest registers the plugin once, so the session fixtures are
-shared across every module that names it, and the non-browser suite never
-loads it). Fixtures:
+shared across every module that names it, and the rest of the suite leaves it
+unloaded). Fixtures:
 
 - `fixtures_server` (session): a `http.server` thread serving `tests/fixtures/`
   on a free localhost port; yields the base URL. The forms fixtures embed an
@@ -17,13 +17,13 @@ loads it). Fixtures:
   Chromium per test module. Skips with "Chromium not installed" when the
   launch fails and via `importorskip` when Playwright itself is absent.
 
-The browser is module-scoped, never session-scoped: Playwright's sync API
-keeps an asyncio loop running on the main thread for as long as the
-`sync_playwright()` context is open, and any test that then calls
-`asyncio.run()` (the scraper suite does) fails with "cannot be called from a
-running event loop". Closing the context when each browser module ends keeps
-the rest of the suite unaware of it. For the same reason a browser test
-module must not call `asyncio.run()` itself.
+The browser is module-scoped because Playwright's sync API keeps an asyncio
+loop running on the main thread for as long as the `sync_playwright()`
+context is open, and any test that then calls `asyncio.run()` (the scraper
+suite does) fails with "cannot be called from a running event loop". Closing
+the context when each browser module ends keeps the rest of the suite
+unaware of it. For the same reason a browser test module should leave
+`asyncio.run()` alone.
 """
 from __future__ import annotations
 
@@ -64,17 +64,19 @@ def fixture_url(fixtures_server):
     return _url
 
 
-def _point_at_installed_browsers() -> None:
+_UNSET = object()
+
+
+def _installed_browsers_path() -> str | None:
     """`tests/conftest.py` redirects LOCALAPPDATA to a scratch dir for the whole
     session, and on Windows Playwright looks for its browsers under
     `%LOCALAPPDATA%\\ms-playwright`, so under pytest the installed Chromium
-    would read as missing. Name the real directory through the env var the
-    driver honours, unless the caller already did."""
+    would read as missing. The real directory, when it exists and the caller
+    has not named one through the env var the driver honours."""
     if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
-        return
+        return None
     real = Path.home() / "AppData" / "Local" / "ms-playwright"
-    if real.is_dir():
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(real)
+    return str(real) if real.is_dir() else None
 
 
 @pytest.fixture(scope="module")
@@ -82,16 +84,25 @@ def _browser():
     pytest.importorskip("playwright")
     from playwright.sync_api import sync_playwright
 
-    _point_at_installed_browsers()
-    with sync_playwright() as pw:
-        try:
-            browser = pw.chromium.launch(headless=True)
-        except Exception as e:    # noqa: BLE001  (Playwright raises its own Error class)
-            pytest.skip(f"Chromium not installed: {e}")
-        try:
-            yield browser
-        finally:
-            browser.close()
+    previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", _UNSET)
+    real = _installed_browsers_path()
+    if real:
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = real
+    try:
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch(headless=True)
+            except Exception as e:    # noqa: BLE001  (Playwright raises its own Error class)
+                pytest.skip(f"Chromium not installed: {e}")
+            try:
+                yield browser
+            finally:
+                browser.close()
+    finally:
+        if previous is _UNSET:
+            os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+        else:
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous
 
 
 @pytest.fixture

@@ -84,8 +84,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_batch_cap": 10,
     "auto_apply_generate": True,
 }
-SETTINGS_KEYS = tuple(DEFAULT_SETTINGS)
-
 _PARK_STATES = {
     "captcha_or_bot_check": "captcha or bot check on the page",
     "payment_request": "payment requested",
@@ -275,6 +273,27 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
     return True, ""
 
 
+def hold_until_closed(ctx, *, sleep: Callable[[float], None] = time.sleep,
+                      log: logging.Logger | None = None) -> None:
+    """Keep the process alive until the user closes the window: every page
+    closed, or the context's close event (the idea `apply_playwright._hold`
+    uses for its parked tab)."""
+    logger = log if log is not None else logging.getLogger("apply_run")
+    closed: list[bool] = []
+    try:
+        ctx.on("close", lambda *_: closed.append(True))
+    except Exception:       # noqa: BLE001  (a context without events)
+        pass
+    logger.info("holding the window open; close it to end the run")
+    while not closed:
+        try:
+            if len(ctx.pages) == 0:
+                break
+        except Exception:       # noqa: BLE001  (the context is gone)
+            break
+        sleep(HOLD_POLL_S)
+
+
 # --- the runner -----------------------------------------------------------------------------
 
 class Runner:
@@ -307,7 +326,7 @@ class Runner:
         self.accounts = accounts if accounts is not None else default
         self.inbox = inbox if inbox is not None else default
         self.answergen = answergen if answergen is not None else default
-        self.log = log or globals()["log"]
+        self.log = log if log is not None else logging.getLogger("apply_run")
         self._injected = context
         self._ctx = context
         self._run_context = run_context
@@ -329,21 +348,7 @@ class Runner:
         return pw, ctx
 
     def _hold(self, ctx) -> None:
-        """Keep the process alive until the user closes the window: every
-        page closed, or the context's close event."""
-        closed = []
-        try:
-            ctx.on("close", lambda *_: closed.append(True))
-        except Exception:       # noqa: BLE001  (a context without events)
-            pass
-        self.log.info("holding the window open; close it to end the run")
-        while not closed:
-            try:
-                if len(ctx.pages) == 0:
-                    break
-            except Exception:       # noqa: BLE001  (the context is gone)
-                break
-            self.sleep(HOLD_POLL_S)
+        hold_until_closed(ctx, sleep=self.sleep, log=self.log)
 
     def _with_browser(self, work: Callable[[Any], Any]) -> Any:
         if self._injected is not None:
@@ -891,9 +896,7 @@ def login(profile_dir: Path | None = None, sleep: Callable[[float], None] = time
         first.goto(LINKEDIN_LOGIN_URL)
         ctx.new_page().goto(inbox_url)
         print("Sign in to both tabs, then close the window")
-        runner = Runner(jev=None, profile_dir=profile, settings={"auto_apply_headless": False},
-                        sleep=sleep, context=ctx)
-        runner._hold(ctx)
+        hold_until_closed(ctx, sleep=sleep)
         try:
             ctx.close()
         except Exception:       # noqa: BLE001

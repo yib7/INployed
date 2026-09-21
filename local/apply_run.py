@@ -801,7 +801,7 @@ class _JobRun:
             raise _Parked("needs_human", why_on)
         submit_n = plan.buttons["submit"][0]
         self.log.info("job %s: clicking submit", self.job_id)
-        self.submit_clicked = True    # before the click: a crash after it reads unconfirmed, never a resend
+        self.submit_clicked = True    # set before the click so a crash after it reads as unconfirmed (no resend)
         result = self._click(digest, submit_n, "submit", rec)
         if not result.clicked:
             # the click never landed: nothing was sent, the form is filled, the human submits

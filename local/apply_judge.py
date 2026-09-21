@@ -13,7 +13,9 @@ browser or the network.
                                            fields whose fact the first answer
                                            chose (quick_map covers the rest)
     verify_questions(filled, sheet)        every typed value against the sheet
-    inbox_questions / code_pick_questions  the emailed-code path
+    inbox_questions / code_pick_questions  the emailed-code path (from-site and
+                                           has-code Nouls per message, then the
+                                           code pick)
     grounding_questions(sentences, sheet)  a generated answer, sentence by sentence
 
     read_page_state, plan, read_verification, read_inbox, read_code_pick,
@@ -61,7 +63,7 @@ PLACEHOLDER_MAX = 0.50          # and look like a placeholder no more than this
 PROHIBITED_MAX = 0.30           # above it: park
 CAPTCHA_MAX = 0.30              # above it: park
 GROUNDING_MIN = 0.70            # a generated sentence below it drops the draft
-INBOX_MIN = 0.70                # the best inbox message must reach this to be opened
+INBOX_MIN = 0.50                # an inbox message needs from_site and has_code both above it
 MAX_PAGES = 12                  # pages per application before parking
 PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 
@@ -539,34 +541,47 @@ def read_verification(filled: list[Mapping[str, Any]],
 # --- the emailed code ----------------------------------------------------------------
 
 def inbox_questions(messages: list[Mapping[str, Any]], site: str) -> tuple[dict, dict]:
-    """`msg_{n}_is_code` per message: is it the code email from `site`."""
+    """Two Nouls per message, one yes/no each: `msg_{n}_from_site` (sent by or
+    on behalf of `site`) and `msg_{n}_has_code` (carries a verification or
+    security code). `read_inbox` combines them."""
     rows = [{"n": int(m["n"]), "sender": str(m.get("sender", "")),
              "subject": str(m.get("subject", "")), "preview": str(m.get("preview", ""))}
             for m in messages]
     state = {"site": site, "messages": rows}
-    questions = {
-        f"msg_{row['n']}_is_code": {
+    questions: dict[str, Any] = {}
+    for i, row in enumerate(rows):
+        n = row["n"]
+        questions[f"msg_{n}_from_site"] = {
             "type": "noul",
             "instructions": {
                 "site_domain": site,
-                "question": f"Is `messages[{i}]` an email sent by `site_domain` carrying a "
-                            "verification code or security code for signing in or applying?",
+                "question": f"Was `messages[{i}]` sent by `site_domain` or on its behalf, "
+                            "judging by the sender address and the message text?",
             },
         }
-        for i, row in enumerate(rows)}
+        questions[f"msg_{n}_has_code"] = {
+            "type": "noul",
+            "instructions": f"Does `messages[{i}]` carry a verification code or a security "
+                            "code for the reader to enter on a website?",
+        }
     return state, questions
 
 
 def read_inbox(answers: Mapping[str, Answer],
                messages: list[Mapping[str, Any]]) -> int | None:
-    """The n of the most likely code email, or None when none reaches `INBOX_MIN`."""
+    """The n of the message maximising `from_site * has_code`, with both above
+    `INBOX_MIN`; None when no message qualifies."""
     best_n, best_p = None, 0.0
     for m in messages:
         n = int(m["n"])
-        p = _noul_of(answers, f"msg_{n}_is_code")
+        from_site = _noul_of(answers, f"msg_{n}_from_site")
+        has_code = _noul_of(answers, f"msg_{n}_has_code")
+        if from_site <= INBOX_MIN or has_code <= INBOX_MIN:
+            continue
+        p = from_site * has_code
         if p > best_p:
             best_n, best_p = n, p
-    return best_n if best_p >= INBOX_MIN else None
+    return best_n
 
 
 def code_pick_questions(candidates: list[str], body: str) -> tuple[dict, dict]:

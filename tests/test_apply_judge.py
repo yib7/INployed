@@ -616,22 +616,53 @@ def test_read_verification_marks_a_field_below_verify_min_as_failed():
 # --- inbox, code pick, grounding -------------------------------------------------
 
 def test_inbox_questions_and_read_inbox():
+    """Two Nouls per message (one yes/no each): sent by the site, carries a
+    code. `read_inbox` takes the message maximising their product with both
+    above `INBOX_MIN`."""
     messages = [{"n": 0, "sender": "news@example.com", "subject": "Weekly digest",
                  "preview": "Top stories this week"},
                 {"n": 1, "sender": "no-reply@greenhouse.io",
                  "subject": "Your Greenhouse verification code",
-                 "preview": "Enter the code 482913 to continue"}]
+                 "preview": "Enter the code 482913 to continue"},
+                {"n": 2, "sender": "no-reply@greenhouse.io",
+                 "subject": "Welcome to Greenhouse",
+                 "preview": "Thanks for creating your account"}]
     state, q = apply_judge.inbox_questions(messages, "greenhouse.io")
     assert state["site"] == "greenhouse.io" and state["messages"] == messages
-    assert set(q) == {"msg_0_is_code", "msg_1_is_code"}
-    assert "greenhouse.io" in json.dumps(q["msg_1_is_code"]["instructions"])
+    assert set(q) == {"msg_0_from_site", "msg_0_has_code", "msg_1_from_site",
+                      "msg_1_has_code", "msg_2_from_site", "msg_2_has_code"}
+    assert all(spec["type"] == "noul" for spec in q.values())
+    assert "greenhouse.io" in json.dumps(q["msg_1_from_site"]["instructions"])
+    assert "greenhouse.io" not in json.dumps(q["msg_1_has_code"]["instructions"])
+    assert "code" in json.dumps(q["msg_1_has_code"]["instructions"])
+    assert "code" not in json.dumps(q["msg_1_from_site"]["instructions"])
     answers = jev.FakeJev().judge(state, q)
-    assert answers["msg_1_is_code"].noul == 0.9 and answers["msg_0_is_code"].noul == 0.1
+    assert answers["msg_1_from_site"].noul == 0.9 and answers["msg_1_has_code"].noul == 0.9
+    assert answers["msg_2_from_site"].noul == 0.9 and answers["msg_2_has_code"].noul == 0.1
+    assert answers["msg_0_from_site"].noul == 0.1 and answers["msg_0_has_code"].noul == 0.1
     assert apply_judge.read_inbox(answers, messages) == 1
-    assert apply_judge.read_inbox({"msg_0_is_code": _noul(0.6), "msg_1_is_code": _noul(0.69)},
+    assert apply_judge.INBOX_MIN == 0.5
+
+
+def _inbox(**p):
+    return {qid: _noul(v) for qid, v in p.items()}
+
+
+def test_read_inbox_needs_both_above_the_floor_and_picks_the_best_product():
+    messages = [{"n": 0}, {"n": 1}, {"n": 2}]
+    # a site email without a code, and a code email from elsewhere: nothing
+    assert apply_judge.read_inbox(_inbox(msg_0_from_site=0.95, msg_0_has_code=0.4,
+                                         msg_1_from_site=0.3, msg_1_has_code=0.99),
                                   messages) is None
-    assert apply_judge.read_inbox({"msg_0_is_code": _noul(0.75), "msg_1_is_code": _noul(0.9)},
+    # exactly at the floor is out
+    assert apply_judge.read_inbox(_inbox(msg_0_from_site=0.5, msg_0_has_code=0.9),
+                                  messages) is None
+    # the best product wins, and a strong single factor cannot beat it
+    assert apply_judge.read_inbox(_inbox(msg_0_from_site=0.6, msg_0_has_code=0.6,
+                                         msg_1_from_site=0.9, msg_1_has_code=0.8,
+                                         msg_2_from_site=0.99, msg_2_has_code=0.51),
                                   messages) == 1
+    assert apply_judge.read_inbox({}, messages) is None
 
 
 def test_code_pick_questions_and_read_code_pick():

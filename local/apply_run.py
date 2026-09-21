@@ -532,7 +532,7 @@ class _JobRun:
                                     generation_enabled=bool(self.r.settings["auto_apply_generate"]))
             rec["flags"] = dict(plan.flags)
             if state == "job_posting":
-                self._job_posting(digest, plan)
+                self._job_posting(digest, answers, plan, rec)
             elif state == "application_form":
                 self._application_form(digest, answers, plan, rec)
             elif state == "review_page":
@@ -567,16 +567,28 @@ class _JobRun:
         self.pages.append(rec)
         return rec
 
-    def _job_posting(self, digest: apply_form.FormDigest, plan: FillPlan) -> None:
+    def _job_posting(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan,
+                     rec: dict) -> None:
+        """Click the posting's Apply entry. A page that carries form fields
+        is only clicked through a confident `apply_entry` role; otherwise it
+        is treated as the application form (a form's own Apply button is a
+        submit, and a text match on "apply" would send it)."""
         n = None
-        if "apply_entry" in plan.buttons:
-            n = plan.buttons["apply_entry"][0]
-        else:
+        entry = plan.buttons.get("apply_entry")
+        if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
+            n = entry[0]
+        elif not digest.fields:
             for b in digest.buttons:
                 if "apply" in b.text.lower():
                     n = b.n
                     break
         if n is None:
+            if digest.fields:
+                self.log.info("job %s: posting with %d form field(s) and no confident Apply "
+                              "entry; treating it as the application form",
+                              self.job_id, len(digest.fields))
+                self._application_form(digest, answers, plan, rec)
+                return
             raise _Parked("needs_human", "no Apply button on the posting")
         button = next(b for b in digest.buttons if b.n == n)
         loc = apply_form.resolve(self.page, button.locator)

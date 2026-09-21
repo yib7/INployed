@@ -475,6 +475,32 @@ def test_job_posting_apply_opens_a_popup_that_the_loop_follows(
     assert "ashby_steps.html" in record
 
 
+class _PostingJudge(jev.FakeJev):
+    """The fake, with every page that carries fields judged `job_posting`."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out and state.get("fields"):
+            out["page_state"] = jev.Answer(kind="choice", choice="job_posting",
+                                           probabilities={"job_posting": 1.0}, confidence=1.0)
+        return out
+
+
+def test_job_posting_with_a_form_is_filled_and_its_apply_button_is_not_clicked(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("posting_with_form.html"))
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    runner.jev = _PostingJudge()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.evaluate("window.__clicks") == 0
+    assert page.locator("body[data-submitted]").count() == 0
+    assert page.locator("#first_name").input_value() == "Jane"
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "State: job_posting" in record and "(apply_entry)" not in record
+
+
 # --- can_submit: every failing reason ---------------------------------------------------
 
 def _pf(n, label, required=True, action="fill"):

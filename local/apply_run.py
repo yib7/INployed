@@ -67,6 +67,7 @@ POPUP_TIMEOUT_MS = 5_000           # for the Apply entry to open a new tab
 CLICK_TIMEOUT_S = 20               # click_button's wait for a change
 SUBMIT_SETTLE_S = 10               # after a quiet submit click: wait this long for the page
 HOLD_POLL_S = 1.0                  # while holding the window open
+FINISH_RETRY_S = 1.0               # before the one retry of a failed queue finish
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
 UNKNOWN_ATS = ("", "other", "linkedin")   # the popup after Apply names the real ATS
@@ -833,8 +834,7 @@ class _JobRun:
                 tab_note = f"{self.page.url} | {self.page.title()}"
             except Exception:       # noqa: BLE001
                 tab_note = ""
-        apply_queue.finish(self.job_id, status, tab_note=tab_note, record=record,
-                           notes=reason, path=self.r.queue_path)
+        self._finish_entry(status, tab_note, record, reason)
         if self.page is not None:
             if status == "submitted":
                 try:
@@ -846,6 +846,26 @@ class _JobRun:
         self.log.info("job %s: %s (%s)", self.job_id, status, reason)
         return Outcome(job_id=self.job_id, status=status, reason=reason, record_path=record,
                        pages=len(self.pages), jev_usage=usage)
+
+
+    def _finish_entry(self, status: str, tab_note: str, record: str, reason: str) -> None:
+        """`apply_queue.finish`, once more after `FINISH_RETRY_S` when it
+        raises (a lock held by the dashboard), then an error naming the job;
+        the drain goes on and the entry stays `in_progress` for the human."""
+        for attempt in (1, 2):
+            try:
+                apply_queue.finish(self.job_id, status, tab_note=tab_note, record=record,
+                                   notes=reason, path=self.r.queue_path)
+                return
+            except Exception as e:      # noqa: BLE001  (the queue write must not end the drain)
+                if attempt == 1:
+                    self.log.warning("job %s: queue finish failed (%s); retrying in %s s",
+                                     self.job_id, e, FINISH_RETRY_S)
+                    self.r.sleep(FINISH_RETRY_S)
+                else:
+                    self.log.error("job %s: queue finish failed twice (%s: %s); the entry "
+                                   "stays in_progress with status %s unrecorded",
+                                   self.job_id, type(e).__name__, e, status)
 
 
 # --- the summary and the CLI ---------------------------------------------------------------

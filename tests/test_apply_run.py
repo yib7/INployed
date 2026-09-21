@@ -691,6 +691,52 @@ def test_write_record_hides_a_password_field_value(tmp_path):
     assert chr(0x2014) not in text
 
 
+# --- _finish survives a failing queue write ------------------------------------------------
+
+def test_finish_retries_the_queue_write_once_after_a_second(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _enqueue(job_folder, fixture_url("captcha.html"))
+    real = apply_run.apply_queue.finish
+    calls = []
+
+    def _flaky(*a, **kw):
+        calls.append(a)
+        if len(calls) == 1:
+            raise apply_queue.QueueLockTimeout("held elsewhere")
+        return real(*a, **kw)
+    monkeypatch.setattr(apply_run.apply_queue, "finish", _flaky)
+    naps = []
+    runner = _runner(context, tmp_path)
+    runner.sleep = naps.append
+    out = runner.drain(cap=1)[0]
+    assert out.status == "needs_human"
+    assert len(calls) == 2 and naps == [apply_run.FINISH_RETRY_S]
+    assert _entry()["status"] == "needs_human"
+
+
+def test_finish_logs_an_error_naming_the_job_and_the_drain_continues(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog):
+    _enqueue(job_folder, fixture_url("captcha.html"), jid="a")
+    _enqueue(job_folder, fixture_url("captcha.html"), jid="b")
+    real = apply_run.apply_queue.finish
+
+    def _broken(job_id, *a, **kw):
+        if job_id == "a":
+            raise OSError("disk full")
+        return real(job_id, *a, **kw)
+    monkeypatch.setattr(apply_run.apply_queue, "finish", _broken)
+    runner = _runner(context, tmp_path)
+    runner.sleep = lambda s: None
+    with caplog.at_level("ERROR", logger="apply_run"):
+        outcomes = runner.drain(cap=5)
+    assert [o.job_id for o in outcomes] == ["a", "b"]
+    assert [o.status for o in outcomes] == ["needs_human", "needs_human"]
+    assert any("job a" in r.getMessage() and "disk full" in r.getMessage()
+               for r in caplog.records if r.levelname == "ERROR")
+    assert _entry("a")["status"] == "in_progress"       # the write never landed
+    assert _entry("b")["status"] == "needs_human"
+
+
 # --- the hooks' defaults ------------------------------------------------------------------
 
 def test_not_configured_hooks_answer_cannot():

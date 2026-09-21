@@ -1,0 +1,343 @@
+"""Tests for local/jev.py: the TypeSafe (Jev) client wrapper, its key-free fake,
+the replay cache and the factory.
+
+Nothing here reaches the network. `TypeSafeJev` is exercised against a fake
+`typesafe_sdk` module installed into `sys.modules`, and every other test uses
+`FakeJev`, whose rules the class docstring pins so later phases can write
+fixtures against them.
+"""
+import json
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "local"))
+
+import jev  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    for var in ("TYPESAFE_API_KEY", "AUTO_APPLY_JEV_MODE", "AUTO_APPLY_JEV_CACHE"):
+        monkeypatch.delenv(var, raising=False)
+    jev.reset_usage()
+    yield
+    jev.reset_usage()
+
+
+STATE = {
+    "page": {"title": "Application for Data Engineer", "url": "https://jobs.example/apply"},
+    "field": {"label": "Are you legally authorized to work in the United States?",
+              "options": ["Yes", "No"]},
+    "sheet": {"work_authorization": "US citizen, authorized to work without sponsorship",
+              "phone": "555-0100"},
+}
+
+QUESTIONS = {
+    "is_captcha": {"type": "noul",
+                   "instructions": "Does `page` show a CAPTCHA or robot check?"},
+    "authorized": {"type": "noul",
+                   "instructions": "Does `sheet.work_authorization` say the candidate is "
+                                   "legally authorized to work in the United States?"},
+    "which_option": {"type": "choice",
+                     "instructions": "Which option in `field.options` matches "
+                                     "`sheet.work_authorization`?",
+                     "criteria": {"yes": "A citizen or permanent resident, authorized to work",
+                                  "no": "Needs a visa",
+                                  "none": "No option fits"}},
+    "fit": {"type": "score",
+            "instructions": "How well does `sheet` cover `field.label`?",
+            "criteria": ["Nothing in the sheet answers the field",
+                         "The sheet answers the field partly",
+                         "The sheet answers the field: work authorization is stated"]},
+}
+
+
+# --- constants and the Answer shape -------------------------------------------
+
+def test_model_and_price_are_pinned():
+    assert jev.MODEL == "jev-1.13.0"
+    assert jev.PRICE_USD_PER_MTOK == 0.042
+
+
+def test_answer_dataclass_fields_and_defaults():
+    a = jev.Answer(kind="noul", noul=0.9)
+    assert (a.kind, a.noul, a.choice, a.score) == ("noul", 0.9, None, None)
+    assert a.probabilities == {} and a.confidence is None
+
+
+# --- (a) FakeJev: an Answer per id with the right kind --------------------------
+
+def test_fake_returns_an_answer_per_question_id_with_the_right_kind():
+    out = jev.get("fake").judge(STATE, QUESTIONS)
+    assert set(out) == set(QUESTIONS)
+    for qid, q in QUESTIONS.items():
+        assert isinstance(out[qid], jev.Answer)
+        assert out[qid].kind == q["type"]
+
+
+def test_fake_noul_is_high_when_the_instruction_words_appear_in_the_state():
+    out = jev.FakeJev().judge(STATE, QUESTIONS)
+    assert out["authorized"].noul == 0.9      # "authorized" and "work" are in the slice
+    assert out["is_captcha"].noul == 0.1      # "captcha", "robot", "check": none in the state
+    assert out["authorized"].confidence is None and out["authorized"].probabilities == {}
+
+
+def test_fake_choice_picks_the_option_with_the_most_word_overlap():
+    a = jev.FakeJev().judge(STATE, QUESTIONS)["which_option"]
+    assert a.choice == "yes"
+    assert a.probabilities == {"yes": 1.0, "no": 0.0, "none": 0.0}
+    assert a.confidence == 1.0
+
+
+def test_fake_choice_falls_back_in_priority_order_when_no_option_overlaps():
+    q = {"pick": {"type": "choice", "instructions": "zzz",
+                  "criteria": {"alpha": None, "no_match": None, "other": None,
+                               "none": None, "leave_blank": None}}}
+    assert jev.FakeJev().judge("qqq", q)["pick"].choice == "none"
+    del q["pick"]["criteria"]["none"]
+    assert jev.FakeJev().judge("qqq", q)["pick"].choice == "other"
+    del q["pick"]["criteria"]["other"]
+    assert jev.FakeJev().judge("qqq", q)["pick"].choice == "leave_blank"
+    del q["pick"]["criteria"]["leave_blank"]
+    assert jev.FakeJev().judge("qqq", q)["pick"].choice == "no_match"
+    del q["pick"]["criteria"]["no_match"]
+    assert jev.FakeJev().judge("qqq", q)["pick"].choice == "alpha"
+
+
+def test_fake_score_is_the_index_of_the_level_with_the_most_overlap():
+    a = jev.FakeJev().judge(STATE, QUESTIONS)["fit"]
+    assert a.kind == "score" and a.score == 2.0
+    assert a.probabilities == {"0": 0.0, "1": 0.0, "2": 1.0}
+    assert a.confidence == 1.0
+
+
+def test_fake_reads_a_backticked_path_slice_of_the_state():
+    """A path that names one slice keeps the rest of the state out of the
+    overlap: `sheet.phone` says nothing about authorization."""
+    q = {"n": {"type": "noul",
+               "instructions": "Does `sheet.phone` state legal work authorization "
+                               "for the United States?"}}
+    assert jev.FakeJev().judge(STATE, q)["n"].noul == 0.1
+
+
+def test_fake_accepts_structured_instructions_and_a_string_state():
+    q = {"n": {"type": "noul",
+               "instructions": {"question": "Is the candidate legally authorized?",
+                                "focus": "work authorization"}}}
+    out = jev.FakeJev().judge("US citizen, legally authorized to work", q)
+    assert out["n"].noul == 0.9
+
+
+def test_fake_is_deterministic_and_never_touches_usage():
+    first = jev.FakeJev().judge(STATE, QUESTIONS)
+    second = jev.FakeJev().judge(STATE, QUESTIONS)
+    assert first == second
+    assert jev.usage() == {"requests": 0, "input_tokens": 0, "usd": 0.0}
+
+
+# --- (b) ReplayJev: record on a miss, replay on a hit ---------------------------
+
+class _Counting:
+    """A Jev that counts calls and delegates to the fake."""
+
+    def __init__(self):
+        self.calls = 0
+        self.inner = jev.FakeJev()
+
+    def judge(self, state, questions):
+        self.calls += 1
+        return self.inner.judge(state, questions)
+
+
+def test_replay_records_on_a_miss_and_replays_on_a_hit(tmp_path):
+    inner = _Counting()
+    cache = tmp_path / "jev_cache" / "cache.json"
+    r = jev.ReplayJev(inner, cache)
+    first = r.judge(STATE, QUESTIONS)
+    assert inner.calls == 1 and cache.is_file()
+    second = r.judge(STATE, QUESTIONS)
+    assert inner.calls == 1, "a hit must not call the inner client again"
+    assert second == first
+    assert (r.hits, r.misses) == (1, 1)
+
+
+def test_replay_survives_a_fresh_instance_over_the_same_file(tmp_path):
+    cache = tmp_path / "cache.json"
+    jev.ReplayJev(_Counting(), cache).judge(STATE, QUESTIONS)
+    inner = _Counting()
+    out = jev.ReplayJev(inner, cache).judge(STATE, QUESTIONS)
+    assert inner.calls == 0
+    assert out["which_option"].choice == "yes" and out["fit"].score == 2.0
+
+
+def test_replay_key_is_the_sha256_of_the_canonical_request(tmp_path):
+    cache = tmp_path / "cache.json"
+    jev.ReplayJev(_Counting(), cache).judge(STATE, QUESTIONS)
+    stored = json.loads(cache.read_text(encoding="utf-8"))
+    assert list(stored) == [jev.ReplayJev.key_for(STATE, QUESTIONS)]
+    assert len(list(stored)[0]) == 64
+    # key order inside the state does not change the key
+    flipped = {k: STATE[k] for k in reversed(list(STATE))}
+    assert jev.ReplayJev.key_for(flipped, QUESTIONS) == jev.ReplayJev.key_for(STATE, QUESTIONS)
+    # a different question does
+    assert jev.ReplayJev.key_for(STATE, {"x": QUESTIONS["fit"]}) != list(stored)[0]
+
+
+def test_replay_misses_on_a_changed_state(tmp_path):
+    inner = _Counting()
+    r = jev.ReplayJev(inner, tmp_path / "cache.json")
+    r.judge(STATE, QUESTIONS)
+    r.judge({**STATE, "page": {"title": "Other"}}, QUESTIONS)
+    assert inner.calls == 2
+
+
+# --- (c) get(): the factory and the missing-key refusal ------------------------
+
+def test_get_typesafe_without_a_key_raises_jev_unavailable_naming_the_console():
+    with pytest.raises(jev.JevUnavailable) as exc:
+        jev.get("typesafe")
+    msg = str(exc.value)
+    assert "console.typesafe.ai/keys" in msg
+    assert "TYPESAFE_API_KEY" in msg and ".env" in msg
+
+
+def test_jev_unavailable_is_a_runtime_error():
+    assert issubclass(jev.JevUnavailable, RuntimeError)
+
+
+def test_get_defaults_to_typesafe_and_the_env_var_picks_the_mode(monkeypatch):
+    with pytest.raises(jev.JevUnavailable):
+        jev.get()
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    assert isinstance(jev.get(), jev.FakeJev)
+    assert isinstance(jev.get(""), jev.FakeJev)
+
+
+def test_get_argument_beats_the_env_var(monkeypatch):
+    monkeypatch.setenv("AUTO_APPLY_JEV_MODE", "fake")
+    with pytest.raises(jev.JevUnavailable):
+        jev.get("typesafe")
+
+
+def test_get_replay_wraps_the_fake_when_no_key_is_set(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_APPLY_JEV_CACHE", str(tmp_path / "c.json"))
+    r = jev.get("replay")
+    assert isinstance(r, jev.ReplayJev)
+    assert isinstance(r.inner, jev.FakeJev)
+    assert r.cache_path == tmp_path / "c.json"
+
+
+def test_get_replay_default_cache_path_sits_under_tests_fixtures():
+    r = jev.get("replay")
+    assert r.cache_path == REPO / "tests" / "fixtures" / "jev_cache" / "cache.json"
+
+
+def test_get_rejects_an_unknown_mode():
+    with pytest.raises(ValueError):
+        jev.get("gemini")
+
+
+# --- (d) TypeSafeJev over a mocked SDK -----------------------------------------
+
+def _fake_sdk(monkeypatch, response, record):
+    """Install a stand-in `typesafe_sdk` whose client returns `response` and
+    records every constructor and system_one call into `record`."""
+    class _Client:
+        def __init__(self, **kw):
+            record.append(("init", kw))
+
+        def system_one(self, state, questions, **kw):
+            record.append(("system_one", state, questions, kw))
+            return response
+
+    mod = types.ModuleType("typesafe_sdk")
+    mod.TypeSafeClient = _Client
+    monkeypatch.setitem(sys.modules, "typesafe_sdk", mod)
+
+
+def _sdk_response(input_tokens=304):
+    ns = types.SimpleNamespace
+    return ns(
+        model="jev-1.13.0",
+        usage=ns(input_tokens=input_tokens, output_tokens=18),
+        answers={
+            "is_captcha": ns(type="noul", noul=0.05),
+            "which_option": ns(type="choice", choice="yes", confidence=0.81,
+                               probabilities={"yes": 0.88, "no": 0.12, "none": 0.0}),
+            "fit": ns(type="score", score=1.05, confidence=0.92,
+                      probabilities={0: 0.0, 1: 0.95, 2: 0.05},
+                      legend={0: "a", 1: "b", 2: "c"}),
+        },
+    )
+
+
+def test_typesafe_translates_nouls_choices_and_scores(monkeypatch):
+    record = []
+    _fake_sdk(monkeypatch, _sdk_response(), record)
+    out = jev.TypeSafeJev(api_key="k-test").judge(STATE, QUESTIONS)
+    assert out["is_captcha"] == jev.Answer(kind="noul", noul=0.05)
+    assert out["which_option"] == jev.Answer(
+        kind="choice", choice="yes", confidence=0.81,
+        probabilities={"yes": 0.88, "no": 0.12, "none": 0.0})
+    assert out["fit"] == jev.Answer(
+        kind="score", score=1.05, confidence=0.92,
+        probabilities={"0": 0.0, "1": 0.95, "2": 0.05})
+
+
+def test_typesafe_passes_raw_question_dicts_and_pins_the_model(monkeypatch):
+    record = []
+    _fake_sdk(monkeypatch, _sdk_response(), record)
+    jev.TypeSafeJev(api_key="k-test").judge(STATE, QUESTIONS)
+    init = next(r for r in record if r[0] == "init")[1]
+    assert init["api_key"] == "k-test" and init["model"] == "jev-1.13.0"
+    call = next(r for r in record if r[0] == "system_one")
+    assert call[1] is STATE and call[2] is QUESTIONS
+    assert call[3].get("model") == "jev-1.13.0"
+
+
+def test_typesafe_adds_input_tokens_to_the_process_usage_counter(monkeypatch):
+    record = []
+    _fake_sdk(monkeypatch, _sdk_response(input_tokens=1_000_000), record)
+    client = jev.TypeSafeJev(api_key="k-test")
+    client.judge(STATE, QUESTIONS)
+    client.judge(STATE, QUESTIONS)
+    u = jev.usage()
+    assert u["requests"] == 2 and u["input_tokens"] == 2_000_000
+    assert u["usd"] == pytest.approx(2 * 0.042)
+    jev.reset_usage()
+    assert jev.usage() == {"requests": 0, "input_tokens": 0, "usd": 0.0}
+
+
+def test_typesafe_reads_the_key_from_the_environment(monkeypatch):
+    record = []
+    _fake_sdk(monkeypatch, _sdk_response(), record)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k-env")
+    assert isinstance(jev.get("typesafe"), jev.TypeSafeJev)
+    assert record[0][1]["api_key"] == "k-env"
+
+
+def test_get_replay_wraps_typesafe_when_a_key_is_set(monkeypatch, tmp_path):
+    _fake_sdk(monkeypatch, _sdk_response(), [])
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k-env")
+    monkeypatch.setenv("AUTO_APPLY_JEV_CACHE", str(tmp_path / "c.json"))
+    r = jev.get("replay")
+    assert isinstance(r.inner, jev.TypeSafeJev)
+
+
+def test_typesafe_without_the_sdk_installed_raises_jev_unavailable(monkeypatch):
+    monkeypatch.setitem(sys.modules, "typesafe_sdk", None)   # import raises
+    with pytest.raises(jev.JevUnavailable) as exc:
+        jev.TypeSafeJev(api_key="k-test")
+    assert "pip install typesafe-sdk" in str(exc.value)
+
+
+def test_typesafe_never_calls_the_api_at_construction(monkeypatch):
+    record = []
+    _fake_sdk(monkeypatch, _sdk_response(), record)
+    jev.TypeSafeJev(api_key="k-test")
+    assert [r[0] for r in record] == ["init"]
+    assert jev.usage()["requests"] == 0

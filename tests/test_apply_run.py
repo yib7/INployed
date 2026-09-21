@@ -365,6 +365,69 @@ def test_login_hook_that_signs_in_continues_the_loop(
     assert "State: login_wall" in record and "State: confirmation" in record
 
 
+# --- the code gate: the inbox hook, or the park note ------------------------------------
+
+def test_code_gate_parks_with_the_code_note_by_default(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("code_gate.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert out.reason == "emailed code needed"
+    assert _entry()["tab_note"] == apply_run.CODE_NOTE ==         "enter the emailed code manually, then Re-queue"
+
+
+def test_code_gate_with_an_inbox_hook_fills_the_code_and_reaches_confirmation(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    class Inbox:
+        calls = []
+
+        def fetch_code(self, page, site, inbox_url):
+            self.calls.append((site, inbox_url))
+            return "MKPZ3QRA"
+
+    _enqueue(job_folder, fixture_url("code_gate.html"))
+    runner = _runner(context, tmp_path)
+    runner.inbox = Inbox()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+    assert Inbox.calls == [("127.0.0.1", "https://mail.example.com/inbox")]
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "State: code_gate" in record and "Security code: MKPZ3QRA" in record
+    assert "Verify and continue (advance)" in record
+
+
+# --- the entry's artifacts name the PDFs -----------------------------------------------
+
+def test_entry_artifacts_override_the_folder_pdfs_and_a_missing_one_is_recorded(
+        context, job_folder, tmp_path, catalog_builder):
+    other = tmp_path / "elsewhere" / "Tailored_Resume.pdf"
+    other.parent.mkdir()
+    other.write_bytes(_PDF)
+    e = _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
+    apply_queue.set_artifacts("42", {"resume_pdf": str(other),
+                                     "cover_letter_pdf": str(tmp_path / "gone.pdf")})
+    e = _entry()
+    run = apply_run._JobRun(_runner(context, tmp_path), context, e)
+    run._prepare()
+    assert run.catalog.value("resume_file") == str(other)
+    assert run.catalog.value("cover_letter_file") == ""
+    assert run.catalog.has("cover_letter_file") is False
+    missing = _entry()["missing_answers"]
+    assert [m["question"] for m in missing] == ["Cover letter PDF"]
+    assert missing[0]["context"] == f"the file is missing: {tmp_path / 'gone.pdf'}"
+
+
+def test_entry_without_artifact_paths_keeps_the_folder_scan(
+        context, job_folder, tmp_path, catalog_builder):
+    e = apply_queue.new_entry("42", apply_url="https://boards.greenhouse.io/acme/jobs/1")
+    e["artifacts"]["apply_md"] = str(job_folder / "apply.md")
+    apply_queue.enqueue(e)
+    run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
+    run._prepare()
+    assert run.catalog.value("resume_file") == str(job_folder / "Jane_Doe_Resume.pdf")
+    assert _entry()["missing_answers"] == []
+
+
 # --- the job posting: Apply opens a new tab that the loop follows -----------------------
 
 def test_job_posting_apply_opens_a_popup_that_the_loop_follows(

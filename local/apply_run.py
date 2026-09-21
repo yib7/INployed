@@ -449,16 +449,44 @@ class _JobRun:
 
     # -- the run ----------------------------------------------------------------------------
 
+    def _prepare(self) -> str:
+        """The catalog, the PDFs from the entry's artifacts, the allowlist;
+        returns the apply URL. Raises `_Parked("failed", ...)` when the sheet
+        or the URL is missing."""
+        if self.folder is None or not (self.folder / "apply.md").exists():
+            raise _Parked("failed", "no apply.md")
+        self.catalog = apply_facts.build(self.folder)
+        self._apply_artifacts()
+        self._build_allowlist()
+        url = str(self.entry.get("apply_url") or "")
+        if not url:
+            raise _Parked("failed", "no apply_url")
+        return url
+
+    def _apply_artifacts(self) -> None:
+        """The entry's `resume_pdf` / `cover_letter_pdf` paths win over the
+        folder scan; a path that names a missing file blanks the fact and
+        records the gap through `add_missing`."""
+        arts = self.entry.get("artifacts") or {}
+        for art_key, fact_key, label in (("resume_pdf", "resume_file", "Resume PDF"),
+                                         ("cover_letter_pdf", "cover_letter_file",
+                                          "Cover letter PDF")):
+            path = str(arts.get(art_key) or "")
+            if not path:
+                continue
+            fact = self.catalog.facts.get(fact_key)
+            if fact is None:
+                continue
+            value = path if Path(path).is_file() else ""
+            self.catalog.facts[fact_key] = apply_facts.Fact(
+                key=fact_key, value=value, description=fact.description, kind=fact.kind)
+            if not value:
+                self._add_missing(label, f"the file is missing: {path}")
+
     def run(self) -> Outcome:
         self.log.info("job %s: start (%s)", self.job_id, self.entry.get("apply_url", ""))
         try:
-            if self.folder is None or not (self.folder / "apply.md").exists():
-                raise _Parked("failed", "no apply.md")
-            self.catalog = apply_facts.build(self.folder)
-            self._build_allowlist()
-            url = str(self.entry.get("apply_url") or "")
-            if not url:
-                raise _Parked("failed", "no apply_url")
+            url = self._prepare()
             self._check_host(url)
             self.page = self.ctx.new_page()
             self.page.goto(url)
@@ -878,10 +906,13 @@ def main(argv: list[str] | None = None) -> int:
     configured (no judge, or the job id is not queued)."""
     ap = argparse.ArgumentParser(prog="apply_run",
                                  description="Jev-judged auto-apply: drain the queue.")
-    ap.add_argument("--verbose", action="store_true", help="DEBUG logging")
     sub = ap.add_subparsers(dest="verb", required=True)
 
+    def _verbose(p):
+        p.add_argument("--verbose", action="store_true", help="DEBUG logging")
+
     def _run_flags(p):
+        _verbose(p)
         p.add_argument("--cap", type=int, default=None, help="jobs per drain")
         p.add_argument("--no-submit", action="store_true", dest="no_submit",
                        help="park every application at its review page")
@@ -895,8 +926,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("job_id")
     _run_flags(p)
     p = sub.add_parser("login", help="sign in to LinkedIn and the inbox in the profile")
+    _verbose(p)
     p.add_argument("--profile", default=None)
     p = sub.add_parser("doctor", help="check the auto-apply setup")
+    _verbose(p)
     p.add_argument("--profile", default=None)
     args = ap.parse_args(argv)
 

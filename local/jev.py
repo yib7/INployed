@@ -195,10 +195,17 @@ class FakeJev:
     - Choice: each option scores the number of its distinct words (option name
       plus its description, stopwords dropped) that appear in the instruction
       words plus the state words. Highest wins; a tie keeps the earlier option.
-      When every overlap is zero the winner is, in order of presence, `none`,
-      `other`, `leave_blank`, `no_match`, else the first option.
+      When no option scores above zero the winner is, in order of presence,
+      `none`, `other`, `leave_blank`, `no_match`, else the first option.
       `probabilities` puts 1.0 on the winner and 0.0 elsewhere; `confidence`
       is 1.0.
+    - Choice, a named option table: a backticked path that resolves to a map
+      sharing a key with the option names is the options' description table.
+      Each option also scores against its own entry, and the table stays out
+      of the state text.
+    - Choice, `not_for`: in a structured description (or table entry) the
+      words under a `not_for` key count against the option, one per word
+      found in the context; the other entries count for it.
     - Noul: 0.9 when at least two distinct instruction content words (four or
       more letters, stopwords excluded) appear in the state text, else 0.1.
       `probabilities` is empty and `confidence` is None, as in the API.
@@ -212,12 +219,19 @@ class FakeJev:
         out: dict[str, Answer] = {}
         for qid, q in questions.items():
             kind = str(q.get("type", ""))
-            instr_text, state_text = _fake_texts(state, q.get("instructions", ""))
+            instr_text, slices = _fake_parts(state, q.get("instructions", ""))
+            state_text = _join_slices(state, slices)
             context = _words(instr_text) | _words(state_text)
             if kind == "noul":
                 out[qid] = self._noul(instr_text, state_text)
             elif kind == "choice":
-                out[qid] = self._choice(q.get("criteria") or {}, context)
+                criteria = q.get("criteria") or {}
+                tables = [t for t in slices
+                          if isinstance(t, Mapping) and set(criteria) & set(t)]
+                if tables:
+                    rest = [x for x in slices if not any(x is t for t in tables)]
+                    context = _words(instr_text) | _words(" ".join(_as_text(x) for x in rest))
+                out[qid] = self._choice(criteria, context, tables)
             elif kind == "score":
                 out[qid] = self._score(q.get("criteria") or [], context)
             else:
@@ -231,12 +245,19 @@ class FakeJev:
         return Answer(kind="noul", noul=0.9 if len(hits) >= 2 else 0.1)
 
     @staticmethod
-    def _choice(criteria: Mapping[str, Any], context: set[str]) -> Answer:
+    def _choice(criteria: Mapping[str, Any], context: set[str],
+                tables: list[Mapping] = ()) -> Answer:
         names = list(criteria)
         if not names:
             raise ValueError("a choice question needs at least one option")
-        scores = {name: len(_words(f"{name} {_flatten(desc)}") & context)
-                  for name, desc in criteria.items()}
+        scores: dict[str, int] = {}
+        for name, desc in criteria.items():
+            pos, neg = _split_desc(desc)
+            for table in tables:
+                tpos, tneg = _split_desc(table.get(name))
+                pos, neg = f"{pos} {tpos}", f"{neg} {tneg}"
+            scores[name] = (len(_words(f"{name} {pos}") & context)
+                            - len(_words(neg) & context))
         best = max(scores.values())
         if best > 0:
             winner = next(n for n in names if scores[n] == best)
@@ -256,6 +277,15 @@ class FakeJev:
                       probabilities={str(i): (1.0 if i == idx else 0.0)
                                      for i in range(len(criteria))},
                       confidence=1.0)
+
+
+def _split_desc(value: Any) -> tuple[str, str]:
+    """(the text that counts for an option, the text that counts against it):
+    a structured description's `not_for` entry is the negative part."""
+    if isinstance(value, Mapping):
+        pos = " ".join(_flatten(v) for k, v in value.items() if k != "not_for")
+        return pos, _flatten(value.get("not_for"))
+    return _flatten(value), ""
 
 
 def _flatten(value: Any) -> str:
@@ -295,19 +325,23 @@ def _as_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-def _fake_texts(state: Any, instructions: Any) -> tuple[str, str]:
-    """(instruction text with the backticked paths removed, the state text the
-    instructions point at)."""
+def _fake_parts(state: Any, instructions: Any) -> tuple[str, list[Any]]:
+    """(instruction text with the backticked paths removed, the state values
+    the instructions point at, in order)."""
     raw = _flatten(instructions)
     slices = []
     for path in _PATH_RE.findall(raw):
         ok, value = _resolve(state, path)
         if ok:
-            slices.append(_as_text(value))
-    instr_text = _PATH_RE.sub(" ", raw)
+            slices.append(value)
+    return _PATH_RE.sub(" ", raw), slices
+
+
+def _join_slices(state: Any, slices: list[Any]) -> str:
+    """The state text: the named slices, else the whole state, capped."""
     if slices:
-        return instr_text, " ".join(slices)
-    return instr_text, _as_text(state)[:_WHOLE_STATE_CAP]
+        return " ".join(_as_text(v) for v in slices)
+    return _as_text(state)[:_WHOLE_STATE_CAP]
 
 
 # --- the replay cache ---------------------------------------------------------------

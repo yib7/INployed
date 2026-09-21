@@ -132,6 +132,49 @@ def test_fake_accepts_structured_instructions_and_a_string_state():
     assert out["n"].noul == 0.9
 
 
+def test_fake_reads_a_named_option_table_as_per_option_descriptions():
+    """A backticked path that resolves to a map keyed by the Choice's option
+    names is the options' description table: each option scores against its
+    own entry, and the table stays out of the shared state text (otherwise
+    every key's own words would be in the context and the earliest key with
+    the most words would win)."""
+    state = {"field": {"label": "Are you legally authorized to work in the US?",
+                       "options": ["Yes", "No"]},
+             "facts": {"gender": "The candidate's gender, for EEO self-identification",
+                       "work_authorized": "Whether the candidate is legally authorized "
+                                          "to work in the United States",
+                       "address_state": "State or province of the mailing address",
+                       "leave_blank": "no source applies"}}
+    q = {"src": {"type": "choice",
+                 "instructions": "Which key of `facts` describes what `field` asks for?",
+                 "criteria": {"address_state": None, "gender": None,
+                              "work_authorized": None, "leave_blank": None}}}
+    assert jev.FakeJev().judge(state, q)["src"].choice == "work_authorized"
+    # a map that shares no key with the options is ordinary state text
+    q["src"]["criteria"] = {"alpha": "mailing address", "beta": "candidate gender", "none": None}
+    assert jev.FakeJev().judge(state, q)["src"].choice == "alpha"
+
+
+def test_fake_choice_not_for_words_count_against_the_option():
+    """A structured description's `not_for` entry is a negative: each of its
+    words found in the context subtracts one, and an option scoring at or
+    below zero cannot win (the escape fallback applies when nothing is
+    positive)."""
+    q = {"src": {"type": "choice",
+                 "instructions": "Which option describes `label`?",
+                 "criteria": {
+                     "consent": {"what": "a checkbox to confirm accuracy or consent to contact",
+                                 "not_for": "background check, drug test"},
+                     "leave_blank": None}}}
+    fake = jev.FakeJev()
+    assert fake.judge({"label": "I consent to be contacted"}, q)["src"].choice == "consent"
+    assert fake.judge({"label": "I consent to a background check and drug test"},
+                      q)["src"].choice == "leave_blank"
+    a = fake.judge({"label": "I consent to a background check"}, q)["src"]
+    assert a.choice == "leave_blank"      # one for, two against
+    assert a.probabilities == {"consent": 0.0, "leave_blank": 1.0}
+
+
 def test_fake_is_deterministic_and_never_touches_usage():
     first = jev.FakeJev().judge(STATE, QUESTIONS)
     second = jev.FakeJev().judge(STATE, QUESTIONS)

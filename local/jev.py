@@ -321,8 +321,19 @@ def _resolve(state: Any, path: str) -> tuple[bool, Any]:
     return True, cur
 
 
+_JSON_ESCAPES = (chr(92) + 'n', chr(92) + 'r', chr(92) + 't')
+
+
 def _as_text(value: Any) -> str:
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    """A string as itself, anything else as JSON with its newline, return
+    and tab escapes turned into spaces (a JSON-escaped line start is a word
+    boundary; without this the escape's letter glues onto the next word)."""
+    if isinstance(value, str):
+        return value
+    text = json.dumps(value, ensure_ascii=False)
+    for esc in _JSON_ESCAPES:
+        text = text.replace(esc, ' ')
+    return text
 
 
 def _fake_parts(state: Any, instructions: Any) -> tuple[str, list[Any]]:

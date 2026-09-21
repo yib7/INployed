@@ -86,6 +86,16 @@ def test_fake_noul_is_high_when_the_instruction_words_appear_in_the_state():
     assert out["authorized"].confidence is None and out["authorized"].probabilities == {}
 
 
+def test_fake_reads_the_first_word_of_every_line_in_a_json_slice():
+    """A state slice is serialised as JSON, where a newline is the two
+    characters backslash and n; the fake must not glue that escape onto the
+    next word (a JSON-escaped "Thank" is "thank", never "nthank")."""
+    state = {"page": {"headline_text": "Analytics Engineer\nApplication received\nThank you"}}
+    q = {"done": {"type": "noul",
+                  "instructions": "Does `page` say the application was received with a thank?"}}
+    assert jev.FakeJev().judge(state, q)["done"].noul == 0.9
+
+
 def test_fake_choice_picks_the_option_with_the_most_word_overlap():
     a = jev.FakeJev().judge(STATE, QUESTIONS)["which_option"]
     assert a.choice == "yes"

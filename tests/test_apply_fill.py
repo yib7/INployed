@@ -195,6 +195,25 @@ def test_click_button_settles_before_returning_on_a_delayed_navigation(browser_p
     assert "first_name" in [f.id_or_name for f in apply_form.extract(browser_page).fields]
 
 
+def test_click_button_outlasts_a_spinner_that_precedes_the_navigation(browser_page, fixture_url):
+    browser_page.goto(fixture_url("login_wall.html"))
+    browser_page.fill("#login_password", "not-a-real-password")
+    # the click shows a spinner at once (a DOM change) and the navigation lands 800 ms later
+    browser_page.evaluate("""() => {
+        const b = document.getElementById('btn-signin');
+        b.replaceWith(b.cloneNode(true));
+        document.getElementById('btn-signin').addEventListener('click', () => {
+            document.body.insertAdjacentHTML('beforeend', '<div id="spinner">Signing in...</div>');
+            setTimeout(() => { window.location.href = 'ashby_steps.html'; }, 800);
+        });
+    }""")
+    d = apply_form.extract(browser_page)
+    assert apply_fill.click_button(browser_page, d, _button(d, "Sign in").n) is True
+    assert browser_page.url.endswith("ashby_steps.html")
+    ids = [f.id_or_name for f in apply_form.extract(browser_page).fields]
+    assert ids == ["first_name", "last_name", "email", "phone"]
+
+
 def test_click_button_routes_the_torn_down_frame_path_through_settle(browser_page, fixture_url, monkeypatch):
     browser_page.goto(fixture_url("lever_single.html"))
     d = apply_form.extract(browser_page)
@@ -207,7 +226,7 @@ def test_click_button_routes_the_torn_down_frame_path_through_settle(browser_pag
 
     monkeypatch.setattr(apply_fill, "_snapshot", torn_down)
     monkeypatch.setattr(apply_fill, "_settle",
-                        lambda page, timeout_s: calls.__setitem__("settled", calls["settled"] + 1))
+                        lambda page, timeout_s, **kw: calls.__setitem__("settled", calls["settled"] + 1))
     assert apply_fill.click_button(browser_page, d, _button(d, "Submit application").n) is True
     assert calls["settled"] == 1
 

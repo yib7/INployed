@@ -38,7 +38,9 @@ from apply_judge import PAGE_TEXT_CAP, FillPlan, PlannedField
 log = logging.getLogger(__name__)
 
 ACTION_TIMEOUT_MS = 5_000      # one Playwright action (fill, click, select_option)
-SETTLE_STABLE_S = 2.0          # click_button: the longest wait for two equal snapshots
+SETTLE_QUIET_S = 2.0           # _settle returns once nothing has moved for this long
+SETTLE_MAX_S = 8.0             # _settle gives up on a page that keeps moving after this
+NETWORK_IDLE_MS = 3_000        # best-effort wait for the network to go quiet
 LISTBOX_WAIT_MS = 2_000        # for a combobox menu to render its options
 POLL_S = 0.25                  # click_button's DOM poll
 CHECKED_WORDS = ("checked", "yes", "true", "on", "1")
@@ -311,22 +313,43 @@ def _snapshot(page) -> tuple:
     return tuple(out)
 
 
-def _settle(page, timeout_s: float) -> None:
-    """After a change: wait for `domcontentloaded` (a no-op on a page that did
-    not navigate), then for two equal snapshots with no torn-down frame, at
-    most SETTLE_STABLE_S apart in total, so the caller's next `extract` sees a
-    page that has stopped moving."""
+def _load(page, state: str, timeout_ms: int) -> None:
     try:
-        page.wait_for_load_state("domcontentloaded", timeout=max(1, int(timeout_s * 1000)))
-    except Exception:       # noqa: BLE001
+        page.wait_for_load_state(state, timeout=max(1, timeout_ms))
+    except Exception:       # noqa: BLE001  (a page with no navigation, or one still busy)
         pass
+
+
+def _settle(page, timeout_s: float, *, navigated: list | None = None) -> None:
+    """After a change: wait for `domcontentloaded` and a best-effort
+    `networkidle`, then return once the page has been quiet for
+    SETTLE_QUIET_S: no snapshot change, no torn-down frame, no navigation.
+    A navigation that lands inside the window (a spinner shown on click, the
+    redirect a second later) re-runs the load waits and restarts the quiet
+    count, so the caller's next `extract` reads the destination page. A page
+    that keeps moving is released after SETTLE_MAX_S."""
+    nav = navigated if navigated is not None else []
+    seen = len(nav)
+    url_seen = page.url
+    _load(page, "domcontentloaded", int(timeout_s * 1000))
+    _load(page, "networkidle", NETWORK_IDLE_MS)
     last = None
-    stop = time.monotonic() + min(SETTLE_STABLE_S, max(timeout_s, 0.1))
-    while time.monotonic() < stop:
+    quiet_since = time.monotonic()
+    hard_stop = quiet_since + SETTLE_MAX_S
+    while True:
+        if len(nav) > seen or page.url != url_seen:
+            seen, url_seen = len(nav), page.url
+            _load(page, "domcontentloaded", int(timeout_s * 1000))
+            _load(page, "networkidle", NETWORK_IDLE_MS)
+            last = None
+            quiet_since = time.monotonic()
         snap = _snapshot(page)
-        if snap == last and ("gone",) not in snap:
+        if snap != last or ("gone",) in snap:
+            last = snap
+            quiet_since = time.monotonic()
+        now = time.monotonic()
+        if now - quiet_since >= SETTLE_QUIET_S or now >= hard_stop:
             return
-        last = snap
         page.wait_for_timeout(100)
 
 
@@ -353,11 +376,12 @@ def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: floa
 
     page.on("framenavigated", _on_nav)
     try:
+        # the listener stays on through _settle so a late navigation restarts the quiet count
         loc.first.click(timeout=ACTION_TIMEOUT_MS)
         deadline = time.monotonic() + timeout_s
         while True:
             if navigated or page.url != url0 or _snapshot(page) != before:
-                _settle(page, timeout_s)
+                _settle(page, timeout_s, navigated=navigated)
                 return True
             if time.monotonic() >= deadline:
                 return False

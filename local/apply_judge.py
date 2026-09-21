@@ -39,6 +39,7 @@ change them.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
@@ -336,6 +337,19 @@ def _noul_of(answers: Mapping[str, Answer], qid: str) -> float:
     return float(a.noul) if a is not None and a.noul is not None else 0.0
 
 
+_DATE_TOKENS = frozenset(("date", "dated", "today"))
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _wants_date(f) -> bool:
+    """A `signature_today` field takes the date when its control is a date
+    input or its label carries `date` / `dated` / `today` as a whole word
+    ("Candidate Signature" contains the letters, and takes the name)."""
+    if f.type == "date":
+        return True
+    return bool(_DATE_TOKENS & set(_TOKEN_RE.findall((f.label or "").lower())))
+
+
 def _action_for(f) -> str:
     if f.type == "file":
         return "upload"
@@ -354,8 +368,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     `park_reason` and a `missing` entry (an optional skip is a `missing` entry
     only); `needs_generation` is `generate` when generation is enabled, else
     the same rule; an option pick below `OPTION_MIN_CONF` or `no_match` follows
-    the same rule; `signature_today` fills the typed name, or today's date for
-    a date-ish label. Buttons keep the highest-confidence n per role. The park
+    the same rule; `signature_today` fills today's date for a date control or
+    a label with `date` / `dated` / `today` as a whole word, else the typed
+    name. Buttons keep the highest-confidence n per role. The park
     reasons are checked in the order prohibited, captcha, required field."""
     out = FillPlan()
     required_reason = ""
@@ -378,8 +393,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
         if fact_key == "needs_generation":
             pf.action = "generate" if generation_enabled else "skip"
         elif fact_key == "signature_today":
-            date_ish = f.type == "date" or "date" in f.label.lower()
-            pf.value = catalog.value("today" if date_ish else "signature_name")
+            pf.value = catalog.value("today" if _wants_date(f) else "signature_name")
             pf.action = "fill" if pf.value else "skip"
         elif fact_key and catalog.has(fact_key):
             pf.value = catalog.value(fact_key)

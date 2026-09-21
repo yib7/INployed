@@ -409,6 +409,24 @@ def test_plan_signature_today_by_label(catalog):
     assert p.fields[1].value == "2026-09-21" and p.fields[1].action == "fill"
 
 
+@pytest.mark.parametrize("label,type_,expected", [
+    ("Candidate Signature", "text", "Jane Doe"),        # "date" inside a word is no date
+    ("Signature (type your full name)", "text", "Jane Doe"),
+    ("Update your signature", "text", "Jane Doe"),
+    ("Date", "text", "2026-09-21"),
+    ("Date signed", "text", "2026-09-21"),
+    ("Dated", "text", "2026-09-21"),
+    ("Today's date", "text", "2026-09-21"),
+    ("Signature date", "text", "2026-09-21"),
+    ("Signature", "date", "2026-09-21"),                # the control type decides too
+])
+def test_plan_signature_today_decides_by_whole_token_or_control_type(catalog, label, type_,
+                                                                     expected):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[_f(0, label, type_)])
+    p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("signature_today", 0.9)}))
+    assert p.fields[0].value == expected and p.fields[0].action == "fill"
+
+
 def test_plan_special_source_without_a_file_follows_the_blank_rule(catalog, tmp_path):
     bare = tmp_path / "bare"
     bare.mkdir()

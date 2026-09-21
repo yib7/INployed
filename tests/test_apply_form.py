@@ -211,8 +211,12 @@ def test_login_wall_password_is_other_and_button_is_plain(browser_page, fixture_
     d = apply_form.extract(browser_page)
     pw = _by_id(d, "login_password")
     assert pw.type == "other" and pw.label == "Password"
+    assert pw.autocomplete == "current-password"
     email = _by_id(d, "login_email")
     assert email.type == "email"
+    assert email.autocomplete == "username"
+    assert {f["id_or_name"]: f["autocomplete"] for f in d.to_dict()["fields"]} == {
+        "login_email": "username", "login_password": "current-password"}
     assert [(b.text, b.kind_hint) for b in d.buttons] == [("Sign in", "")]
 
 

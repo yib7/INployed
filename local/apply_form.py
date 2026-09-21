@@ -43,6 +43,7 @@ class Field:
     help: str = ""
     options: list[str] = field(default_factory=list)
     id_or_name: str = ""
+    autocomplete: str = ""      # the control's autocomplete token, when it has one
 
 
 @dataclass
@@ -74,7 +75,8 @@ class FormDigest:
                         placeholder=str(f.get("placeholder", "") or ""),
                         help=str(f.get("help", "") or ""),
                         options=[str(o) for o in (f.get("options") or [])],
-                        id_or_name=str(f.get("id_or_name", "") or ""))
+                        id_or_name=str(f.get("id_or_name", "") or ""),
+                        autocomplete=str(f.get("autocomplete", "") or ""))
                   for f in (raw.get("fields") or [])]
         buttons = [Button(n=int(b["n"]), locator=_locator(b.get("locator")),
                           text=str(b.get("text", "")),
@@ -300,6 +302,7 @@ _EXTRACT_JS = r"""
       help: helps.filter(Boolean).join(' '),
       options: options,
       id_or_name: el.id || el.getAttribute('name') || '',
+      autocomplete: norm(el.getAttribute('autocomplete')).toLowerCase(),
     };
   };
 
@@ -404,7 +407,8 @@ def extract(page) -> FormDigest:
                 type=str(f["type"]), required=bool(f["required"]),
                 placeholder=str(f.get("placeholder") or ""), help=str(f.get("help") or ""),
                 options=[str(o) for o in (f.get("options") or [])],
-                id_or_name=str(f.get("id_or_name") or "")))
+                id_or_name=str(f.get("id_or_name") or ""),
+                autocomplete=str(f.get("autocomplete") or "")))
         for b in raw.get("buttons") or []:
             buttons.append(Button(n=len(buttons), locator=(idx, str(b["css"])),
                                   text=str(b["text"]), kind_hint=str(b.get("kind_hint") or "")))

@@ -98,6 +98,18 @@ def test_form_digest_json_round_trip():
     assert isinstance(back.fields[1].locator, tuple)
 
 
+def test_form_digest_from_dict_tolerates_a_missing_autocomplete_key():
+    """A digest stored before `autocomplete` existed still loads."""
+    raw = {"url_host": "x", "title": "t", "text": "",
+           "fields": [{"n": 0, "locator": [0, "#pw"], "label": "Password", "type": "other",
+                       "required": False, "id_or_name": "pw"}],
+           "buttons": []}
+    back = apply_form.FormDigest.from_dict(raw)
+    assert back.fields[0].autocomplete == ""
+    raw["fields"][0]["autocomplete"] = "current-password"
+    assert apply_form.FormDigest.from_dict(raw).fields[0].autocomplete == "current-password"
+
+
 def test_field_defaults_are_independent():
     a = apply_form.Field(n=0, locator=(0, "#a"), label="A", type="text", required=False)
     b = apply_form.Field(n=1, locator=(0, "#b"), label="B", type="text", required=False)

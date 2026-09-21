@@ -162,11 +162,20 @@ def _host(url_or_netloc: str) -> str:
     return raw.split("/")[0].rsplit("@", 1)[-1].split(":")[0].lower()
 
 
+_PASSWORD_WORDS = ("pass", "pwd", "secret")
+_PASSWORD_AUTOCOMPLETE = ("current-password", "new-password")
+
+
 def _is_password(row: dict) -> bool:
+    """A password-shaped field: an `other` control (a password input) whose
+    id, name or label carries `pass`, `pwd` or `secret`, or any control whose
+    autocomplete token is `current-password` / `new-password`."""
+    if str(row.get("autocomplete", "")).lower() in _PASSWORD_AUTOCOMPLETE:
+        return True
     if str(row.get("type", "")) != "other":
         return False
     blob = f"{row.get('id_or_name', '')} {row.get('label', '')}".lower()
-    return "pass" in blob
+    return any(w in blob for w in _PASSWORD_WORDS)
 
 
 def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
@@ -727,6 +736,7 @@ class _JobRun:
             rec["filled"].append({
                 "n": f.n, "label": f.label, "value": f.value,
                 "type": df.type if df else "", "id_or_name": df.id_or_name if df else "",
+                "autocomplete": df.autocomplete if df else "",
                 "upload": actions.get(f.n) == "upload"})
         rec["verification"] = [{"n": v.n, "label": v.label, "ok": v.ok,
                                 "p_correct": v.p_correct, "p_placeholder": v.p_placeholder}

@@ -737,6 +737,27 @@ def test_finish_logs_an_error_naming_the_job_and_the_drain_continues(
     assert _entry("b")["status"] == "needs_human"
 
 
+def test_is_password_covers_names_words_and_autocomplete():
+    hidden = [
+        {"type": "other", "id_or_name": "login_password", "label": ""},
+        {"type": "other", "id_or_name": "pwd", "label": ""},
+        {"type": "other", "id_or_name": "", "label": "Account secret"},
+        {"type": "other", "id_or_name": "user_pass", "label": ""},
+        {"type": "text", "id_or_name": "x", "label": "", "autocomplete": "current-password"},
+        {"type": "other", "id_or_name": "x", "label": "", "autocomplete": "new-password"},
+    ]
+    shown = [
+        {"type": "text", "id_or_name": "passport", "label": "Passport number"},
+        {"type": "text", "id_or_name": "secret_santa", "label": ""},
+        {"type": "other", "id_or_name": "otp", "label": "Security code",
+         "autocomplete": "one-time-code"},
+        {"type": "email", "id_or_name": "login_email", "label": "Email",
+         "autocomplete": "username"},
+    ]
+    assert all(apply_run._is_password(r) for r in hidden), hidden
+    assert not any(apply_run._is_password(r) for r in shown), shown
+
+
 # --- the hooks' defaults ------------------------------------------------------------------
 
 def test_not_configured_hooks_answer_cannot():

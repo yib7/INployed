@@ -470,6 +470,32 @@ SETTINGS_SCHEMA: list[Field] = [
                "https://outlook.office.com/mail/' for Microsoft 365. Your signup "
                "email's domain (basics.email) is looked up here; a domain not listed "
                "falls back to Gmail. That inbox must already be signed in in Chrome."),
+    # The Jev-judged run (cycle 16, local/jev.py + local/apply_run.py). The key
+    # row sits here, in the section whose feature spends it, with the same
+    # secret/env/restart shape as the Credentials rows: Field.key is the exact
+    # environment-variable name jev.TypeSafeJev reads, and the apply_run child
+    # inherits the dashboard's startup snapshot of it (hence `restart`).
+    Field("TYPESAFE_API_KEY", "TypeSafe API key (Jev judge)", "str", "",
+          "Auto-apply", "env", secret=True, optional=True, restart=True,
+          help="Needed for auto-apply runs in 'typesafe' mode: every form-field judgment "
+               "goes to the TypeSafe Jev model. Create a key at console.typesafe.ai/keys; "
+               "it bills $0.042 per million input tokens (output is free)."),
+    Field("auto_apply_jev_mode", "Auto-apply judge", "choice", "typesafe",
+          "Auto-apply", "config", choices=("typesafe", "fake"),
+          help="'typesafe' judges each page with the Jev model (needs the API key). "
+               "'fake' is a dry-run judge that never calls the API: it answers from word "
+               "overlap, so you can watch the loop run with no key and no bill. Its "
+               "answers are not fit for a real application."),
+    Field("auto_apply_submit", "Submit when verified", "bool", True,
+          "Auto-apply", "config",
+          help="Submit an application when every required field is filled from your "
+               "answers, verified, and no CAPTCHA, payment, or blocked question appeared. "
+               "Off: park at the review page for you."),
+    Field("auto_apply_headless", "Hide the browser window", "bool", False,
+          "Auto-apply", "config",
+          help="Run the auto-apply Chromium with no visible window. Off (the default) "
+               "shows the window so you can watch each application fill in and step in "
+               "when it parks."),
 
     # --- Settings history: snapshot every Save so settings can be rolled back ---
     # Lives in local/config.json. Snapshots copy every settings file (including the

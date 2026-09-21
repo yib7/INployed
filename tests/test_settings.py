@@ -1057,13 +1057,17 @@ RESTART_KEYS = {
     "LINKEDIN_CHROME_ACCOUNT",          # chrome_launch.CHROME_ACCOUNT, at import
     # module constants inside a SUBPROCESS that inherits the stale snapshot
     "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_DATASET_ID",
+    # read live from os.environ by jev.TypeSafeJev, inside the apply_run
+    # subprocess the dashboard spawns with its stale snapshot; that child's own
+    # load_dotenv(override=False) cannot replace a value it inherited
+    "TYPESAFE_API_KEY",
 }
 
 
 def test_the_restart_set_is_declared_on_the_schema():
     declared = {f.key for f in settings.SETTINGS_SCHEMA if f.restart}
     assert declared == RESTART_KEYS
-    assert len(RESTART_KEYS) == 20
+    assert len(RESTART_KEYS) == 21
 
 
 def test_every_env_field_needs_a_restart_except_the_six_the_vm_tab_re_reads():
@@ -1307,3 +1311,72 @@ def test_no_per_stage_rate_limit_boxes_remain():
     # requests/day settings" after those settings were gone.
     for f in settings.SETTINGS_SCHEMA:
         assert "per-stage requests" not in f.help, f.key
+
+
+# --- Auto-apply (cycle 16): the Jev judge, the submit gate, the browser --------
+
+def test_typesafe_api_key_is_a_masked_secret_in_the_auto_apply_section():
+    """The env-target rule: Field.key IS the environment-variable name, so the
+    key round-trips to .env under the exact name jev.TypeSafeJev reads."""
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["TYPESAFE_API_KEY"]
+    assert (f.type, f.default, f.section, f.target) == ("str", "", "Auto-apply", "env")
+    assert f.secret and f.optional and f.restart
+    assert "console.typesafe.ai/keys" in f.help
+
+
+def test_typesafe_api_key_round_trips_to_dotenv_only(tmp_path):
+    targets = _all_targets_env(tmp_path)
+    assert settings.secret_status(targets)["TYPESAFE_API_KEY"] is False
+    settings.save({"TYPESAFE_API_KEY": "ts-key"}, targets)
+    assert "TYPESAFE_API_KEY=ts-key" in (tmp_path / ".env").read_text("utf-8")
+    assert settings.secret_status(targets)["TYPESAFE_API_KEY"] is True
+    cfg = tmp_path / "config.json"
+    assert not cfg.exists() or "TYPESAFE_API_KEY" not in json.loads(cfg.read_text("utf-8"))
+
+
+def test_auto_apply_jev_mode_is_a_config_choice_defaulting_to_typesafe(tmp_path):
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_jev_mode"]
+    assert (f.type, f.default, f.section, f.target) == ("choice", "typesafe", "Auto-apply", "config")
+    assert f.choices == ("typesafe", "fake")
+    assert "dry-run" in f.help and "never calls the API" in f.help
+    assert settings.load(_targets(tmp_path))["auto_apply_jev_mode"] == "typesafe"
+    assert settings.validate({"auto_apply_jev_mode": "fake"}) == {}
+    assert "auto_apply_jev_mode" in settings.validate({"auto_apply_jev_mode": "replay"})
+    settings.save({"auto_apply_jev_mode": "fake"}, _targets(tmp_path))
+    assert settings.load(_targets(tmp_path))["auto_apply_jev_mode"] == "fake"
+
+
+def test_auto_apply_jev_mode_choices_match_jev_modes():
+    """Only the two user-facing modes are offered; `replay` is a test harness."""
+    import jev
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_jev_mode"]
+    assert set(f.choices) < set(jev.MODES)
+    assert f.default == "typesafe"
+
+
+def test_auto_apply_submit_is_a_config_bool_defaulting_on(tmp_path):
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_submit"]
+    assert (f.type, f.default, f.section, f.target) == ("bool", True, "Auto-apply", "config")
+    assert f.help == ("Submit an application when every required field is filled from "
+                      "your answers, verified, and no CAPTCHA, payment, or blocked "
+                      "question appeared. Off: park at the review page for you.")
+    assert settings.load(_targets(tmp_path))["auto_apply_submit"] is True
+    settings.save({"auto_apply_submit": False}, _targets(tmp_path))
+    assert settings.load(_targets(tmp_path))["auto_apply_submit"] is False
+    assert "auto_apply_submit" in settings.validate({"auto_apply_submit": "yes"})
+
+
+def test_auto_apply_headless_is_a_config_bool_defaulting_off(tmp_path):
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_headless"]
+    assert (f.type, f.default, f.section, f.target) == ("bool", False, "Auto-apply", "config")
+    assert settings.load(_targets(tmp_path))["auto_apply_headless"] is False
+    settings.save({"auto_apply_headless": True}, _targets(tmp_path))
+    assert settings.load(_targets(tmp_path))["auto_apply_headless"] is True
+
+
+def test_the_new_auto_apply_fields_are_neither_advanced_nor_gated():
+    by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
+    for key in ("TYPESAFE_API_KEY", "auto_apply_jev_mode", "auto_apply_submit",
+                "auto_apply_headless"):
+        assert by_key[key].advanced is False, key
+        assert by_key[key].show_if is None, key

@@ -213,7 +213,7 @@ def test_submit_click_is_never_retried(context, fixture_url, job_folder, catalog
     monkeypatch.setattr(apply_run.apply_fill, "click_button", _counting)
     _enqueue(job_folder, fixture_url("slow_submit.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
-    assert clicks == [("Submit", False, 1)]           # one click, read as quiet, never repeated
+    assert clicks == [("Submit", False, 1)]           # one click; read as quiet; no second click
     assert out.status == "submitted" and out.reason == "confirmation page"
 
 

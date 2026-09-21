@@ -127,6 +127,16 @@ def test_open_listbox_options_reports_the_menu_then_closes_it(browser_page, fixt
     assert browser_page.get_attribute("#country", "aria-expanded") == "false"
 
 
+def test_open_listbox_options_without_aria_controls_finds_the_visible_menu(browser_page, fixture_url):
+    browser_page.goto(fixture_url("generic_listbox.html"))
+    browser_page.evaluate("document.getElementById('country').removeAttribute('aria-controls')")
+    d = apply_form.extract(browser_page)
+    country = _field(d, "country")
+    assert apply_fill.open_listbox_options(browser_page, country) == ["United States", "Canada", "Other"]
+    filled = apply_fill.apply(browser_page, FillPlan(fields=[_planned(country, "select", option="Other")]))
+    assert filled[0].value == "Other"
+
+
 def test_apply_select_on_a_listbox_clicks_the_matching_option(browser_page, fixture_url):
     browser_page.goto(fixture_url("generic_listbox.html"))
     d = apply_form.extract(browser_page)

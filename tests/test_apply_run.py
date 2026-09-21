@@ -203,18 +203,83 @@ def test_submit_click_is_never_retried(context, fixture_url, job_folder, catalog
                                        tmp_path, monkeypatch):
     monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
     clicks = []
-    real = apply_run.apply_fill.click_button
+    real = apply_run.apply_fill.click
 
     def _counting(page, digest, n, **kw):
         got = real(page, digest, n, **kw)
-        clicks.append((next(b.text for b in digest.buttons if b.n == n), got,
-                       page.evaluate("window.__clicks")))
+        clicks.append((next(b.text for b in digest.buttons if b.n == n), got.clicked,
+                       got.changed, page.evaluate("window.__clicks")))
         return got
-    monkeypatch.setattr(apply_run.apply_fill, "click_button", _counting)
+    monkeypatch.setattr(apply_run.apply_fill, "click", _counting)
     _enqueue(job_folder, fixture_url("slow_submit.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
-    assert clicks == [("Submit", False, 1)]           # one click; read as quiet; no second click
+    assert clicks == [("Submit", True, False, 1)]     # one click; landed; quiet; no second click
     assert out.status == "submitted" and out.reason == "confirmation page"
+
+
+def test_a_submit_click_that_never_lands_parks_ready_to_submit_without_a_post_submit_judge(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    import apply_form
+    from playwright.sync_api import TimeoutError as PWTimeout
+    real = apply_form.resolve
+
+    class _Raising:
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 1
+
+        def click(self, **kw):
+            raise PWTimeout("Timeout 5000ms exceeded")
+
+    monkeypatch.setattr(apply_run.apply_fill.apply_form, "resolve",
+                        lambda page, loc: _Raising() if loc[1] == "#btn-submit"
+                        else real(page, loc))
+
+    def _no_post_submit(self):
+        raise AssertionError("the post-submit judge ran")
+    monkeypatch.setattr(apply_run._JobRun, "_after_submit", _no_post_submit)
+    _enqueue(job_folder, fixture_url("slow_submit.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    assert out.reason == "submit did not register"
+    entry = _entry()
+    assert entry["tab_note"] == apply_run.SUBMIT_FAILED_NOTE ==         "submit did not register; review and submit"
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("body[data-submitted]").count() == 0
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "SUBMIT CLICKED" not in record and "submit did not register" in record
+
+
+class _AdvanceJudge(jev.FakeJev):
+    """The fake, with every "Apply now" button judged `advance`."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        for i, b in enumerate(state.get("buttons") or []):
+            if b.get("text") == "Apply now" and f"button_{b['n']}_role" in out:
+                out[f"button_{b['n']}_role"] = jev.Answer(
+                    kind="choice", choice="advance", probabilities={"advance": 1.0},
+                    confidence=1.0)
+        return out
+
+
+def test_a_submit_shaped_button_judged_advance_goes_to_the_gate_unclicked(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("apply_now_form.html"))
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    runner.jev = _AdvanceJudge()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    assert out.reason == "auto_apply_submit is off"
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.evaluate("window.__clicks") == 0
+    assert page.locator("body[data-submitted]").count() == 0
+    assert page.locator("#first_name").input_value() == "Jane"
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "(advance)" not in record
 
 
 # --- (c) the captcha page parks needs_human with the flag in the notes ----------------

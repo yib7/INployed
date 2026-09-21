@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Support Engineer - Northwind</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Support Engineer</h1>
+<p>Northwind, Seattle, WA</p>
+<div id="application">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <button type="button" id="btn-apply">Apply now</button>
+</div>
+<h2 id="thanks">Thank you for applying</h2>
+<script>
+  window.__clicks = 0;
+  document.getElementById('btn-apply').addEventListener('click', function () {
+    window.__clicks += 1;
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

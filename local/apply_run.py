@@ -78,6 +78,7 @@ HIDDEN = "<hidden>"
 LOGIN_NOTE = "log in manually, then Re-queue"
 CODE_NOTE = "enter the emailed code manually, then Re-queue"
 REVIEW_NOTE = "review and submit"
+SUBMIT_FAILED_NOTE = "submit did not register; review and submit"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_submit": True,
@@ -176,6 +177,13 @@ def _is_password(row: dict) -> bool:
         return False
     blob = f"{row.get('id_or_name', '')} {row.get('label', '')}".lower()
     return any(w in blob for w in _PASSWORD_WORDS)
+
+
+def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
+    """The extractor's `kind_hint` is `submit` for a `type=submit` control or a
+    text with submit / apply / send / finish: a control that sends the form."""
+    button = next((b for b in digest.buttons if b.n == n), None)
+    return bool(button) and button.kind_hint == "submit"
 
 
 def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
@@ -659,6 +667,16 @@ class _JobRun:
             raise _Parked("needs_human", "could not verify: " + ", ".join(still))
         advance = plan.buttons.get("advance")
         submit = plan.buttons.get("submit")
+        if advance is not None and _submit_shaped(digest, advance[0]):
+            # the DOM says this control sends the form (type=submit, or text with
+            # submit / apply / send / finish): whatever role the judge gave it, it
+            # is only ever clicked through the gate
+            self.log.info("job %s: the advance button is submit-shaped; routing it "
+                          "through the submit gate", self.job_id)
+            if submit is None:
+                submit = advance
+                plan.buttons["submit"] = advance
+            advance = None
         if submit is None and advance is not None \
                 and advance[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
             self._click(digest, advance[0], "advance", rec)
@@ -743,25 +761,32 @@ class _JobRun:
                                 "p_correct": v.p_correct, "p_placeholder": v.p_placeholder}
                                for v in verification]
 
-    def _click(self, digest: apply_form.FormDigest, n: int, role: str, rec: dict) -> bool:
+    def _click(self, digest: apply_form.FormDigest, n: int, role: str,
+               rec: dict) -> apply_fill.ClickResult:
+        """Click button `n` in role `role`. A submit is clicked once whatever
+        the page showed: a quiet page is no proof the click failed and a second
+        click could send twice, so a landed-but-quiet submit waits up to
+        `SUBMIT_SETTLE_S` for the page instead. Any other role gets one retry
+        of a quiet click; a dead advance parks."""
         button = next((b for b in digest.buttons if b.n == n), None)
         text = button.text if button else f"button {n}"
         rec["clicked"].append(f"{text} ({role})")
         timeout = max(1.0, min(CLICK_TIMEOUT_S, self.deadline - self.r.clock()))
-        changed = apply_fill.click_button(self.page, digest, n, timeout_s=timeout)
-        if changed or role == "submit":
-            # a submit is clicked once, whatever the page showed: a quiet page is
-            # no proof the click failed, and a second click could send twice
-            if not changed:
+        result = apply_fill.click(self.page, digest, n, timeout_s=timeout)
+        if role == "submit":
+            if result.clicked and not result.changed:
                 self.log.info("job %s: the submit click changed nothing; waiting up to %s s",
                               self.job_id, SUBMIT_SETTLE_S)
                 changed = apply_fill.wait_for_change(self.page, timeout_s=SUBMIT_SETTLE_S)
-            return changed
+                return apply_fill.ClickResult(clicked=True, changed=changed)
+            return result
+        if result.changed:
+            return result
         self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
-        changed = apply_fill.click_button(self.page, digest, n, timeout_s=timeout)
-        if not changed and role == "advance":
+        result = apply_fill.click(self.page, digest, n, timeout_s=timeout)
+        if not result.changed and role == "advance":
             raise _Parked("needs_human", f"the {role} button ({text}) did nothing")
-        return changed
+        return result
 
     # -- the submit path ----------------------------------------------------------------------
 
@@ -775,10 +800,17 @@ class _JobRun:
                 raise _Parked("ready_to_submit", why, REVIEW_NOTE)
             raise _Parked("needs_human", why_on)
         submit_n = plan.buttons["submit"][0]
+        self.log.info("job %s: clicking submit", self.job_id)
+        self.submit_clicked = True    # before the click: a crash after it reads unconfirmed, never a resend
+        result = self._click(digest, submit_n, "submit", rec)
+        if not result.clicked:
+            # the click never landed: nothing was sent, the form is filled, the human submits
+            self.submit_clicked = False
+            rec["clicked"].append("submit did not register")
+            self.log.info("job %s: the submit click did not register", self.job_id)
+            raise _Parked("ready_to_submit", "submit did not register", SUBMIT_FAILED_NOTE)
         self.log.info("job %s: SUBMIT CLICKED", self.job_id)
-        self.submit_clicked = True
         rec["clicked"].append("SUBMIT CLICKED")
-        self._click(digest, submit_n, "submit", rec)
         self._after_submit()
 
     def _after_submit(self) -> None:

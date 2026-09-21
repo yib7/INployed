@@ -8,12 +8,11 @@ and finds the resume and cover letter PDFs in the folder. Every `Fact` carries
 a `key`, its `value`, a `description` written the way a form label reads (the
 judge matches labels against descriptions) and a `kind`.
 
-Values never reach a model. `FactCatalog.to_criteria()` hands the judge the
-key -> description map for facts that have a value; `value(key)` is read by
-the planner and typed into the form by the filler. `sheet_excerpt()` is the
-one exception: the verification and grounding requests send the sheet's
-Candidate, Address and Standard answers text so Jev can check a typed value
-against it.
+`FactCatalog.to_criteria()` hands the mapping judge descriptions of facts
+that have a value. `value(key)` supplies the value for filling and option
+selection. `sheet_excerpt()` provides source prose for grounding drafts;
+`verification_excerpt()` provides the catalog evidence for checking filled
+values, with artifact paths reduced to filenames.
 
 `quick_map()` is the deterministic first pass for unmistakable fields (a label
 or id that says `first_name`, `email`, `resume`, ...). The judge still asks
@@ -25,7 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable
 
 from apply_form import FIELD_TYPES
@@ -139,18 +138,34 @@ class FactCatalog:
         return {k: f.description for k, f in self.facts.items() if f.value}
 
     def sheet_excerpt(self, max_chars: int = 6000) -> str:
-        """The sheet's Candidate (with its Address sub-block) and Standard answers
-        sections, for the verification and grounding states. Longer than
+        """The candidate, answers, education and achievement source sections
+        for grounding drafts. Generated cover-letter prose is excluded. Longer than
         `max_chars`, it is cut at the last line end at or before the cap (a
         first line longer than the cap is cut at the cap)."""
         sections = _h2_sections(self._sheet_text)
-        parts = [sections[name] for name in ("candidate", "standard answers")
+        parts = [sections[name] for name in ("candidate", "standard answers", "education",
+                                             "work experience", "projects", "leadership")
                  if name in sections]
         text = "\n\n".join(parts).strip()
         if len(text) <= max_chars:
             return text
         cut = text.rfind("\n", 0, max_chars + 1)
         return text[:cut] if cut > 0 else text[:max_chars]
+
+    def verification_excerpt(self, fact_keys: Iterable[str] | None = None) -> str:
+        """Evidence for filled values from the current catalog, including bank
+        fallbacks and the selected artifacts. File values use only the basename
+        on either Windows or POSIX. Callers can select the relevant keys; selected
+        evidence is kept in full so a length cap cannot silently remove a fact."""
+        keys = self.facts if fact_keys is None else dict.fromkeys(fact_keys)
+        rows = []
+        for key in keys:
+            fact = self.facts.get(key)
+            if fact is None or not fact.value:
+                continue
+            value = PureWindowsPath(fact.value).name if fact.kind == "file" else fact.value
+            rows.append(f"- {fact.description} ({key}): {value}")
+        return "\n".join(rows)
 
 
 def build(folder: Path, *, answers: list[dict] | None = None,

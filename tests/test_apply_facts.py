@@ -225,15 +225,39 @@ def test_to_criteria_carries_descriptions_only(folder):
     assert all(cat.has(k) for k in crit)
 
 
-def test_sheet_excerpt_is_candidate_address_and_standard_answers(folder):
+def test_sheet_excerpt_includes_grounding_evidence_from_experience_and_education(folder):
     cat = apply_facts.build(folder, answers=_bank())
     ex = cat.sheet_excerpt()
     assert "## Candidate" in ex and "### Address" in ex and "## Standard answers" in ex
     assert "jane.doe@example.com" in ex and "123 Main Street" in ex
     assert "Are you legally authorized to work in the US?" in ex
-    assert "## Work experience" not in ex and "Built the ingestion" not in ex
+    assert "## Work experience" in ex and "Built the ingestion pipeline." in ex
+    assert "State University" in ex and "Computer Science" in ex
     assert "## Cover letter" not in ex
     assert len(cat.sheet_excerpt(max_chars=100)) <= 100
+
+
+def test_verification_evidence_includes_bank_fallbacks_and_artifact_names(folder):
+    bank = _bank() + [{"id": "availability", "question": "When can you start?",
+                       "answer": "October 15", "status": "active"}]
+    cat = apply_facts.build(folder, answers=bank)
+    evidence = cat.verification_excerpt()
+    for expected in ("State University", "Software Engineer", "When can you start?",
+                     "October 15", "Jane_Doe_Resume.pdf", "Jane_Doe_Cover_Letter.pdf"):
+        assert expected in evidence
+    assert str(folder) not in evidence
+
+
+def test_verification_evidence_limits_facts_without_losing_their_values():
+    cat = apply_facts.FactCatalog([
+        apply_facts.Fact("email", "person@example.com", "Email address"),
+        apply_facts.Fact("answer_late", "start after October 15", "Start date"),
+        apply_facts.Fact("resume_file", r"C:\private\documents\resume.pdf", "Resume", "file"),
+    ])
+    evidence = cat.verification_excerpt(["answer_late", "resume_file"])
+    assert "Start date" in evidence and "start after October 15" in evidence
+    assert "resume.pdf" in evidence
+    assert "private" not in evidence and "person@example.com" not in evidence
 
 
 def test_sheet_excerpt_cuts_on_a_line_boundary(folder):

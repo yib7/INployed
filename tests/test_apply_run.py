@@ -782,7 +782,22 @@ def test_hold_returns_when_every_page_is_closed(tmp_path):
 
 # --- the CLI ----------------------------------------------------------------------------------
 
-def test_main_drain_exits_2_when_the_judge_is_unavailable(monkeypatch, capsys):
+@pytest.fixture
+def hermetic_cli(monkeypatch):
+    """The CLI never reads the developer's .env or config: `_load_env` is a
+    no-op and `load_settings` returns the defaults (a test may override)."""
+    import settings
+    monkeypatch.setattr(apply_run, "_load_env", lambda: None)
+    monkeypatch.setattr(apply_run, "load_settings", lambda: dict(apply_run.DEFAULT_SETTINGS))
+
+    def _never(*a, **kw):
+        raise AssertionError("the real settings store was read")
+    monkeypatch.setattr(settings, "load", _never)
+    monkeypatch.setattr(settings, "secret_status", _never)
+    return monkeypatch
+
+
+def test_main_drain_exits_2_when_the_judge_is_unavailable(hermetic_cli, monkeypatch, capsys):
     def _get(mode=""):
         raise jev.JevUnavailable("No TypeSafe API key. Create one at console.typesafe.ai/keys")
     monkeypatch.setattr(apply_run.jev, "get", _get)
@@ -795,13 +810,13 @@ def test_main_drain_exits_2_when_the_judge_is_unavailable(monkeypatch, capsys):
     assert claimed == []
 
 
-def test_main_one_exits_2_when_the_job_is_not_queued(monkeypatch, capsys):
+def test_main_one_exits_2_when_the_job_is_not_queued(hermetic_cli, monkeypatch, capsys):
     monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
     assert apply_run.main(["one", "nope", "--jev", "fake"]) == 2
     assert "not queued" in capsys.readouterr().err
 
 
-def test_main_drain_prints_the_summary_and_exits_0(monkeypatch, capsys):
+def test_main_drain_prints_the_summary_and_exits_0(hermetic_cli, monkeypatch, capsys):
     monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
     seen = {}
 
@@ -825,7 +840,7 @@ def test_main_drain_prints_the_summary_and_exits_0(monkeypatch, capsys):
     assert seen["settings"]["auto_apply_jev_mode"] == "fake"
 
 
-def test_main_unexpected_error_exits_1(monkeypatch, capsys):
+def test_main_unexpected_error_exits_1(hermetic_cli, monkeypatch, capsys):
     monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
 
     class R:
@@ -840,9 +855,12 @@ def test_main_unexpected_error_exits_1(monkeypatch, capsys):
 
 
 def test_doctor_prints_one_line_per_row_and_the_profile(tmp_path, capsys, monkeypatch):
+    import settings
     import setup_check
     monkeypatch.setattr(setup_check, "module_found", lambda name: True)
     monkeypatch.setattr(setup_check, "chromium_installed", lambda: True)
+    monkeypatch.setattr(settings, "load", lambda: {"auto_apply_jev_mode": "typesafe"})
+    monkeypatch.setattr(settings, "secret_status", lambda: {"TYPESAFE_API_KEY": False})
     monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
     profile = tmp_path / "profile"
     assert apply_run.doctor(profile) == 0
@@ -862,6 +880,40 @@ def test_doctor_prints_one_line_per_row_and_the_profile(tmp_path, capsys, monkey
     out = capsys.readouterr().out
     assert "MISSING  chromium" in out and "playwright install chromium" in out
     assert "ok       browser profile" in out
+
+
+def test_doctor_reads_the_key_from_the_saved_settings_too(tmp_path, capsys, monkeypatch):
+    import settings
+    import setup_check
+    monkeypatch.setattr(setup_check, "module_found", lambda name: True)
+    monkeypatch.setattr(setup_check, "chromium_installed", lambda: True)
+    monkeypatch.setattr(settings, "load", lambda: {"auto_apply_jev_mode": "typesafe"})
+    monkeypatch.setattr(settings, "secret_status", lambda: {"TYPESAFE_API_KEY": True})
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert apply_run.doctor(tmp_path / "profile") == 0
+    assert capsys.readouterr().out.startswith("ok       TypeSafe API key")
+
+
+def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, monkeypatch,
+                                                                capsys):
+    monkeypatch.setattr(apply_run, "load_settings",
+                        lambda: {**apply_run.DEFAULT_SETTINGS, "auto_apply_batch_cap": 3,
+                                 "auto_apply_jev_mode": "fake", "auto_apply_submit": False})
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
+    seen = {}
+
+    class R:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+        def drain(self, cap):
+            seen["cap"] = cap
+            return []
+    monkeypatch.setattr(apply_run, "Runner", R)
+    assert apply_run.main(["drain"]) == 0
+    assert seen["cap"] == 3
+    assert seen["settings"]["auto_apply_submit"] is False
+    assert seen["settings"]["auto_apply_jev_mode"] == "fake"
 
 
 def test_default_profile_dir_sits_under_localappdata(monkeypatch, tmp_path):

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  div[data-step] { display: none; }
+  div[data-step].active { display: block; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  #received { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, New York, NY</p>
+
+<div data-step="1" class="active">
+  <h2>About you</h2>
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="tel"></div>
+  <button type="button" data-next="2">Continue</button>
+</div>
+
+<div data-step="2">
+  <h2>Eligibility</h2>
+  <div class="field"><label for="work_auth">Are you authorized to work in the US? *</label>
+    <select id="work_auth" name="work_auth" required>
+      <option value="">Select an option</option>
+      <option value="yes">Yes</option>
+      <option value="no">No</option>
+    </select>
+  </div>
+  <div class="field">
+    <div class="question">Will you now or in the future require sponsorship? *</div>
+    <label><input type="radio" name="sponsorship" value="yes" required> Yes</label>
+    <label><input type="radio" name="sponsorship" value="no" required> No</label>
+  </div>
+  <button type="button" data-prev="1">Back</button>
+  <button type="button" data-next="3">Continue</button>
+</div>
+
+<div data-step="3">
+  <h2>Almost done</h2>
+  <div class="field"><label for="why">Why do you want to work here?</label><textarea id="why" name="why" rows="4"></textarea></div>
+  <button type="button" data-prev="2">Back</button>
+  <button type="button" id="btn-submit">Submit</button>
+</div>
+
+<section id="received">
+  <h2>Application received</h2>
+  <p>Thank you for applying. We will be in touch.</p>
+</section>
+
+<script>
+  function show(step) {
+    document.querySelectorAll('div[data-step]').forEach(function (d) {
+      d.classList.toggle('active', d.getAttribute('data-step') === String(step));
+    });
+  }
+  document.querySelectorAll('button[data-next]').forEach(function (b) {
+    b.addEventListener('click', function () { show(b.getAttribute('data-next')); });
+  });
+  document.querySelectorAll('button[data-prev]').forEach(function (b) {
+    b.addEventListener('click', function () { show(b.getAttribute('data-prev')); });
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    document.querySelectorAll('div[data-step]').forEach(function (d) { d.classList.remove('active'); });
+    document.getElementById('received').style.display = 'block';
+  });
+</script>
+</body>
+</html>

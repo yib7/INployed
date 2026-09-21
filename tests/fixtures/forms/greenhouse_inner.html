@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Application form</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  .field { margin: 10px 0; }
+  label { display: block; margin-bottom: 2px; }
+  .honeypot { display: none; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<form id="application_form" action="#" method="post">
+  <input type="hidden" name="job_id" value="4012">
+  <div class="honeypot"><label for="website">Website</label><input id="website" name="website" type="text"></div>
+
+  <div class="field"><label for="first_name">First Name *</label><input id="first_name" name="job_application[first_name]" type="text" required></div>
+  <div class="field"><label for="last_name">Last Name *</label><input id="last_name" name="job_application[last_name]" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="job_application[email]" type="email" required></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" name="job_application[phone]" type="tel" placeholder="+1 555 555 0100"></div>
+
+  <div class="field"><label for="resume">Resume/CV *</label><input id="resume" name="job_application[resume]" type="file" required accept=".pdf,.doc,.docx"></div>
+  <div class="field"><label for="cover_letter">Cover Letter</label><input id="cover_letter" name="job_application[cover_letter]" type="file" accept=".pdf,.doc,.docx"></div>
+
+  <div class="field"><label for="linkedin">LinkedIn Profile</label><input id="linkedin" name="job_application[answers_attributes][0][text_value]" type="url" aria-describedby="linkedin-help"><small id="linkedin-help">Paste the full URL of your profile.</small></div>
+
+  <div class="field"><label for="hear_about">How did you hear about us?</label>
+    <select id="hear_about" name="job_application[answers_attributes][1][answer_selected_options]">
+      <option value="">Select...</option>
+      <option value="1">LinkedIn</option>
+      <option value="2">Company website</option>
+      <option value="3">Referral</option>
+      <option value="4">Other</option>
+    </select>
+  </div>
+
+  <fieldset class="field">
+    <legend>Are you legally authorized to work in the United States? *</legend>
+    <label><input type="radio" name="work_auth" value="yes" required> Yes</label>
+    <label><input type="radio" name="work_auth" value="no" required> No</label>
+  </fieldset>
+
+  <div class="field"><label for="salary_old">Previous salary</label><input id="salary_old" name="salary_old" type="text" disabled></div>
+
+  <h3>Voluntary Self-Identification</h3>
+  <div class="field"><label for="gender">Gender</label>
+    <select id="gender" name="job_application[gender]">
+      <option value="">Select...</option>
+      <option value="1">Male</option>
+      <option value="2">Female</option>
+      <option value="3">Decline to self-identify</option>
+    </select>
+  </div>
+
+  <div class="field"><label><input type="checkbox" id="certify" name="certify" required> I certify that the information provided is accurate *</label></div>
+
+  <button type="submit" id="submit_app">Submit application</button>
+</form>
+<h2 id="thanks">Thank you for applying</h2>
+<script>
+  document.getElementById('application_form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application_form').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

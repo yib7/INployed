@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Contoso</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .select-control { border: 1px solid #888; padding: 4px; width: 240px; }
+  .select-control input { border: 0; outline: 0; width: 200px; }
+  ul[role=listbox] { list-style: none; margin: 0; padding: 0; border: 1px solid #888; width: 240px; }
+  li[role=option] { padding: 4px; cursor: pointer; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>Apply</h1>
+<p>Contoso, Austin, TX</p>
+
+<div class="field">
+  <span id="country-label">Country *</span>
+  <div class="select-control" id="country" role="combobox" aria-labelledby="country-label" aria-expanded="false" aria-haspopup="listbox" aria-controls="country-menu" tabindex="0">
+    <input id="country-input" type="text" autocomplete="off" aria-labelledby="country-label" placeholder="Select...">
+  </div>
+</div>
+
+<div class="field">
+  <span id="location-label">Preferred work location</span>
+  <div class="select-control" id="location" role="combobox" aria-labelledby="location-label" aria-expanded="false" aria-haspopup="listbox" aria-controls="location-menu" tabindex="0">
+    <input id="location-input" type="text" autocomplete="off" aria-labelledby="location-label" placeholder="Select...">
+  </div>
+  <ul id="location-menu" role="listbox" class="hidden">
+    <li role="option">Remote</li>
+    <li role="option">Hybrid</li>
+    <li role="option">On-site</li>
+  </ul>
+</div>
+
+<div class="field"><label for="start_date">Available start date</label><input id="start_date" name="start_date" type="date"></div>
+
+<script>
+  function wire(id, options) {
+    var box = document.getElementById(id);
+    var input = document.getElementById(id + '-input');
+    var menuId = id + '-menu';
+    function menu() { return document.getElementById(menuId); }
+    function close() {
+      var m = menu();
+      if (m) { m.classList.add('hidden'); }
+      box.setAttribute('aria-expanded', 'false');
+    }
+    function open() {
+      var m = menu();
+      if (!m) {
+        m = document.createElement('ul');
+        m.id = menuId;
+        m.setAttribute('role', 'listbox');
+        options.forEach(function (text) {
+          var li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.textContent = text;
+          m.appendChild(li);
+        });
+        box.parentNode.appendChild(m);
+      }
+      m.classList.remove('hidden');
+      box.setAttribute('aria-expanded', 'true');
+      m.querySelectorAll('li[role=option]').forEach(function (li) {
+        li.onclick = function () {
+          input.value = li.textContent;
+          box.setAttribute('data-value', li.textContent);
+          close();
+        };
+      });
+    }
+    box.addEventListener('click', function () {
+      if (box.getAttribute('aria-expanded') === 'true') { close(); } else { open(); }
+    });
+    input.addEventListener('input', open);
+    box.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { close(); } });
+  }
+  wire('country', ['United States', 'Canada', 'Other']);
+  wire('location', ['Remote', 'Hybrid', 'On-site']);
+</script>
+</body>
+</html>

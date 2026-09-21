@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Business Analyst - Northwind Traders</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0; }
+  input, textarea { display: block; margin-top: 2px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Business Analyst</h1>
+<p>Northwind Traders, Seattle, WA</p>
+<h2>Submit your application</h2>
+<div id="application">
+  <label>Full name * <input name="name" type="text" required></label>
+  <label>Email * <input name="email" type="email" required></label>
+  <label>Phone <input name="phone" type="tel"></label>
+  <label>Current company <input name="org" type="text"></label>
+  <label>LinkedIn URL <input name="urls[LinkedIn]" type="url"></label>
+  <label>Resume/CV * <input name="resume" type="file" required></label>
+  <label>Additional information <textarea name="comments" rows="4" placeholder="Add a cover letter or anything else you want to share."></textarea></label>
+  <button type="button" id="btn-submit">Submit application</button>
+</div>
+<h2 id="thanks">Thank you for applying</h2>
+<script>
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

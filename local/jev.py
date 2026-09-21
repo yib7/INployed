@@ -359,7 +359,8 @@ def _join_slices(state: Any, slices: list[Any]) -> str:
 
 class ReplayJev:
     """Replays a recorded answer for a request it has seen; records through
-    `inner` on a miss.
+    `inner` on a miss. With `inner=None`, a miss raises `JevUnavailable` and
+    the cache remains unchanged.
 
     The key is the sha256 of the canonical JSON of `{"state", "questions"}`
     (sorted keys, no whitespace), so key order in the state does not matter and
@@ -367,7 +368,7 @@ class ReplayJev:
     `{key: {question_id: answer}}` written atomically after every miss.
     """
 
-    def __init__(self, inner: Jev, cache_path: Path):
+    def __init__(self, inner: Jev | None, cache_path: Path):
         self.inner = inner
         self.cache_path = Path(cache_path)
         self.hits = 0
@@ -393,6 +394,8 @@ class ReplayJev:
             self.hits += 1
             return {qid: Answer.from_dict(raw) for qid, raw in hit.items()}
         self.misses += 1
+        if self.inner is None:
+            raise JevUnavailable("Jev replay cache miss; record this fixture explicitly first")
         answers = self.inner.judge(state, questions)
         cache[key] = {qid: a.to_dict() for qid, a in answers.items()}
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -409,16 +412,17 @@ def _cache_path() -> Path:
 
 def get(mode: str = "") -> Jev:
     """The judge for `mode`: the argument, else `AUTO_APPLY_JEV_MODE`, else
-    "typesafe". "fake" never needs a key. "replay" wraps the live client when a
-    key is set and the fake otherwise, over the cache file `AUTO_APPLY_JEV_CACHE`
-    names (default `tests/fixtures/jev_cache/cache.json` under the repo).
+    "typesafe". "fake" never needs a key. "replay" only reads the cache file
+    `AUTO_APPLY_JEV_CACHE` names (default `tests/fixtures/jev_cache/cache.json`
+    under the repo), and refuses a missing recording. Explicit recording uses
+    `ReplayJev(inner, path)` so a replay cannot silently buy calls or cache fake
+    judgments when credentials are absent.
     "typesafe" raises `JevUnavailable` when `TYPESAFE_API_KEY` is unset."""
     mode = (mode or os.environ.get(MODE_ENV, "") or "typesafe").strip().lower()
     if mode == "fake":
         return FakeJev()
     if mode == "replay":
-        inner: Jev = TypeSafeJev() if os.environ.get(KEY_ENV, "").strip() else FakeJev()
-        return ReplayJev(inner, _cache_path())
+        return ReplayJev(None, _cache_path())
     if mode == "typesafe":
         return TypeSafeJev()
     raise ValueError(f"unknown Jev mode {mode!r}; expected one of {', '.join(MODES)}")

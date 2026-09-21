@@ -292,12 +292,15 @@ def test_get_argument_beats_the_env_var(monkeypatch):
         jev.get("typesafe")
 
 
-def test_get_replay_wraps_the_fake_when_no_key_is_set(monkeypatch, tmp_path):
+def test_get_replay_is_read_only_when_no_key_is_set(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_APPLY_JEV_CACHE", str(tmp_path / "c.json"))
     r = jev.get("replay")
     assert isinstance(r, jev.ReplayJev)
-    assert isinstance(r.inner, jev.FakeJev)
+    assert r.inner is None
     assert r.cache_path == tmp_path / "c.json"
+    with pytest.raises(jev.JevUnavailable, match="cache miss"):
+        r.judge(STATE, QUESTIONS)
+    assert not r.cache_path.exists()
 
 
 def test_get_replay_default_cache_path_sits_under_tests_fixtures():
@@ -389,12 +392,25 @@ def test_typesafe_reads_the_key_from_the_environment(monkeypatch):
     assert record[0][1]["api_key"] == "k-env"
 
 
-def test_get_replay_wraps_typesafe_when_a_key_is_set(monkeypatch, tmp_path):
-    _fake_sdk(monkeypatch, _sdk_response(), [])
+def test_get_replay_never_constructs_live_client_even_with_key(monkeypatch, tmp_path):
+    calls = []
+    _fake_sdk(monkeypatch, _sdk_response(), calls)
     monkeypatch.setenv("TYPESAFE_API_KEY", "k-env")
     monkeypatch.setenv("AUTO_APPLY_JEV_CACHE", str(tmp_path / "c.json"))
     r = jev.get("replay")
-    assert isinstance(r.inner, jev.TypeSafeJev)
+    assert r.inner is None
+    assert calls == []
+    with pytest.raises(jev.JevUnavailable, match="cache miss"):
+        r.judge(STATE, QUESTIONS)
+    assert calls == []
+
+
+def test_read_only_replay_reads_an_explicit_recording(tmp_path):
+    cache = tmp_path / "cache.json"
+    expected = jev.ReplayJev(jev.FakeJev(), cache).judge(STATE, QUESTIONS)
+    replay = jev.ReplayJev(None, cache)
+    assert replay.judge(STATE, QUESTIONS) == expected
+    assert (replay.hits, replay.misses) == (1, 0)
 
 
 def test_typesafe_without_the_sdk_installed_raises_jev_unavailable(monkeypatch):

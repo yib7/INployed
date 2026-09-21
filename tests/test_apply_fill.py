@@ -296,3 +296,38 @@ def test_wait_for_change_sees_a_late_dom_change_and_a_quiet_page(browser_page, f
     assert apply_fill.wait_for_change(browser_page, timeout_s=10.0) is True
     assert browser_page.locator("#thanks").is_visible()
     assert browser_page.evaluate("window.__clicks") == 1
+
+
+# --- click: the tri-state result behind click_button ------------------------------------
+
+def test_click_tells_a_quiet_click_from_one_that_never_landed(browser_page, fixture_url,
+                                                              monkeypatch):
+    from playwright.sync_api import TimeoutError as PWTimeout
+    browser_page.goto(fixture_url("lever_single.html"))
+    browser_page.evaluate("document.body.insertAdjacentHTML('beforeend', "
+                          "'<button type=\"button\" id=\"noop\">Nothing</button>')")
+    d = apply_form.extract(browser_page)
+    r = apply_fill.click(browser_page, d, _button(d, "Nothing").n, timeout_s=1)
+    assert (r.clicked, r.changed) == (True, False) and bool(r) is False
+    r = apply_fill.click(browser_page, d, 42, timeout_s=1)
+    assert (r.clicked, r.changed) == (False, False)
+
+    real = apply_form.resolve
+
+    class _Raising:
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return 1
+
+        def click(self, **kw):
+            raise PWTimeout("Timeout 5000ms exceeded")
+
+    monkeypatch.setattr(apply_fill.apply_form, "resolve",
+                        lambda page, loc: _Raising() if loc == _button(d, "Nothing").locator
+                        else real(page, loc))
+    r = apply_fill.click(browser_page, d, _button(d, "Nothing").n, timeout_s=1)
+    assert (r.clicked, r.changed) == (False, False)
+    assert apply_fill.click_button(browser_page, d, _button(d, "Nothing").n, timeout_s=1) is False

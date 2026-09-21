@@ -362,24 +362,55 @@ def settle(page, timeout_s: float = 20) -> None:
     _settle(page, timeout_s)
 
 
-def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:
+@dataclass(frozen=True)
+class ClickResult:
+    """`clicked`: the click itself landed (the element was found and Playwright
+    reported no error). `changed`: a navigation or a DOM change followed. A
+    landed click on a quiet page is `(True, False)`; one that never landed is
+    `(False, False)`. Truthiness is `changed`, the shape `click_button` returns."""
+    clicked: bool
+    changed: bool
+
+    def __bool__(self) -> bool:
+        return self.changed
+
+
+def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> ClickResult:
     """Click button `n` of `digest` and wait, up to `timeout_s`, for a
-    navigation or a DOM change. True when something changed, and only after
-    `_settle` has seen the page load and hold still; False on an unknown
-    button, a missing element, or a quiet page."""
+    navigation or a DOM change; the `ClickResult` says whether the click
+    landed and whether anything changed (settled through `_settle` when it
+    did)."""
     button = next((b for b in digest.buttons if b.n == n), None)
     if button is None:
         log.info("apply_fill: no button %s in the digest", n)
-        return False
-    loc = apply_form.resolve(page, button.locator)
-    if loc.count() == 0:
-        log.info("apply_fill: button %s (%s) is gone", n, button.locator[1])
-        return False
+        return ClickResult(clicked=False, changed=False)
     try:
-        return _await_change(page, lambda: loc.first.click(timeout=ACTION_TIMEOUT_MS), timeout_s)
+        loc = apply_form.resolve(page, button.locator)
+        if loc.count() == 0:
+            log.info("apply_fill: button %s (%s) is gone", n, button.locator[1])
+            return ClickResult(clicked=False, changed=False)
+    except Exception as e:      # noqa: BLE001  (a torn-down frame)
+        log.info("apply_fill: button %s (%s) unreachable: %s", n, button.locator[1], e)
+        return ClickResult(clicked=False, changed=False)
+    landed: list[bool] = []
+
+    def _act() -> None:
+        loc.first.click(timeout=ACTION_TIMEOUT_MS)
+        landed.append(True)
+
+    try:
+        changed = _await_change(page, _act, timeout_s)
     except Exception as e:      # noqa: BLE001
         log.info("apply_fill: click on %r failed: %s", button.text, e)
-        return False
+        return ClickResult(clicked=bool(landed), changed=False)
+    return ClickResult(clicked=True, changed=changed)
+
+
+def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:
+    """`click(...).changed`: True only when the click landed and something
+    changed (and the page has settled); False on an unknown button, a missing
+    element, a click that raised, or a quiet page. `click` tells those apart."""
+    return click(page, digest, n, timeout_s=timeout_s).changed
 
 
 def wait_for_change(page, *, timeout_s: float = 20) -> bool:

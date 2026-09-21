@@ -108,6 +108,8 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            name, its fieldset's legend, else the text before the first radio.
 #   required the attribute, aria-required="true", or a trailing "*" in the
 #            label (stripped).
+#   help     the aria-describedby text, then "Max N characters." from a
+#            maxlength (the answer generator's length budget).
 #   options  select option texts minus empty or "Select..." placeholders; radio
 #            option labels; ["checked"] for a checkbox; for a combobox the
 #            [role=option] texts of the listbox it controls when one is in the
@@ -273,10 +275,13 @@ _EXTRACT_JS = r"""
   const describe = (el, type, label, required, css, options) => {
     if (STAR.test(label)) { required = true; label = label.replace(STAR, ''); }
     const desc = el.getAttribute('aria-describedby');
+    const helps = [desc ? byIds(desc) : ''];
+    const max = parseInt(el.getAttribute('maxlength') || '', 10);
+    if (max > 0) helps.push('Max ' + max + ' characters.');
     return {
       css: css, label: label, type: type, required: !!required,
       placeholder: norm(el.getAttribute('placeholder')),
-      help: desc ? byIds(desc) : '',
+      help: helps.filter(Boolean).join(' '),
       options: options,
       id_or_name: el.id || el.getAttribute('name') || '',
     };

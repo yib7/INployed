@@ -216,6 +216,16 @@ def test_login_wall_password_is_other_and_button_is_plain(browser_page, fixture_
     assert [(b.text, b.kind_hint) for b in d.buttons] == [("Sign in", "")]
 
 
+def test_essay_textarea_is_required_and_help_carries_the_maxlength(browser_page, fixture_url):
+    browser_page.goto(fixture_url("essay_required.html"))
+    d = apply_form.extract(browser_page)
+    essay = _by_id(d, "project")
+    assert essay.type == "textarea" and essay.required
+    assert essay.label == "Describe a project you are proud of"
+    assert essay.help == "Max 1500 characters."
+    assert _by_id(d, "first_name").help == ""
+
+
 def test_confirmation_page_has_no_fields(browser_page, fixture_url):
     browser_page.goto(fixture_url("confirmation.html"))
     d = apply_form.extract(browser_page)

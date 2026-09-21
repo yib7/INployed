@@ -114,7 +114,7 @@ class TypeSafeJev:
     The key comes from the `api_key` argument, else `TYPESAFE_API_KEY` in the
     environment (`.env` reaches it through the dashboard's and the runner's
     `load_dotenv`). Construction raises `JevUnavailable` when the key or the SDK
-    is missing, so a run refuses to start instead of parking every job. No
+    is missing, so a run refuses to start before it can park every job. No
     request is made until `judge()`.
     """
 
@@ -180,7 +180,7 @@ _FALLBACK_ORDER = ("none", "other", "leave_blank", "no_match")
 
 class FakeJev:
     """A deterministic, key-free judge for tests and dry runs. Never used for a
-    real application on purpose: it reads words, it does not understand them.
+    real application on purpose: it only matches words.
 
     Rules (fixtures are written against these; change them and the fixtures):
 
@@ -200,7 +200,7 @@ class FakeJev:
       `probabilities` puts 1.0 on the winner and 0.0 elsewhere; `confidence`
       is 1.0.
     - Noul: 0.9 when at least two distinct instruction content words (four or
-      more letters, not a stopword) appear in the state text, else 0.1.
+      more letters, stopwords excluded) appear in the state text, else 0.1.
       `probabilities` is empty and `confidence` is None, as in the API.
     - Score: the level whose text overlaps the instruction plus state words
       most (a tie keeps the lower level); `score` is that level's index as a

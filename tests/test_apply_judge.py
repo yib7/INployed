@@ -251,6 +251,24 @@ def test_page_questions_emit_every_question(catalog):
     assert all("instructions" in v for v in q.values())
 
 
+def test_button_role_criteria_are_structured_and_advance_covers_sign_in(catalog):
+    """Spec 3.5 reads a login wall's Sign in button as `advance`: the criteria
+    say so in examples, in the same `what` / `examples` shape for every role."""
+    digest = FormDigest(url_host="x", title="t", text="",
+                        buttons=[Button(n=0, locator=(0, "#s"), text="Sign in")])
+    _, q = apply_judge.page_questions(digest, catalog, _JOB)
+    crit = q["button_0_role"]["criteria"]
+    for role in apply_judge.BUTTON_ROLES:
+        assert set(crit[role]) == {"what", "examples"}, role
+    advance = " | ".join(crit["advance"]["examples"]).lower()
+    for text in ("sign in", "log in", "create account", "continue with email", "next"):
+        assert text in advance, text
+    assert "submit application" in " | ".join(crit["submit"]["examples"]).lower()
+    # the fake reads Sign in as advance too
+    answers = jev.FakeJev().judge(*apply_judge.page_questions(digest, catalog, _JOB))
+    assert answers["button_0_role"].choice == "advance"
+
+
 def test_page_questions_option_instruction_carries_the_quick_map_value(catalog):
     digest = FormDigest(url_host="x", title="t", text="",
                         fields=[_f(0, "Country", "select", options=("United States", "Canada")),

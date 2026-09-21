@@ -141,13 +141,30 @@ _SPECIAL_CRITERIA: dict[str, str] = {
     "leave_blank": "nothing fits; leave empty",
 }
 
-_BUTTON_CRITERIA: dict[str, str] = {
-    "advance": "Next step of the form (Next, Continue, Save and continue)",
-    "submit": "Sends the finished application (Submit, Submit application, Send)",
-    "back": "Previous step (Back, Previous)",
-    "apply_entry": "The job posting's own Apply button, before the form",
-    "upload": "Opens a file picker (Attach, Upload resume, Choose file)",
-    "other": "Anything else: cancel, help, menu, cookie banner, policy",
+# A login wall's sign-in button and a signup form's create-account button are
+# `advance` (spec 3.5): they move the flow forward without sending the
+# application.
+_BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
+    "advance": {
+        "what": "The next step: the next form page, signing in, creating the account, "
+                "continuing with an email",
+        "examples": ["Next", "Continue", "Save and continue", "Sign in", "Log in",
+                     "Create account", "Continue with email"]},
+    "submit": {
+        "what": "Sends the finished application",
+        "examples": ["Submit", "Submit application", "Send application"]},
+    "back": {
+        "what": "The previous step",
+        "examples": ["Back", "Previous"]},
+    "apply_entry": {
+        "what": "The posting's own Apply button, before any form",
+        "examples": ["Apply", "Apply now", "Apply for this job"]},
+    "upload": {
+        "what": "Opens a file picker",
+        "examples": ["Attach", "Upload resume", "Choose file"]},
+    "other": {
+        "what": "Anything else: cancel, help, menu, cookie banner, policy link",
+        "examples": ["Cancel", "Help", "Accept cookies"]},
 }
 
 NO_MATCH_DESCRIPTION = "nothing listed fits"
@@ -270,7 +287,7 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         questions[f"button_{b.n}_role"] = {
             "type": "choice",
             "instructions": f"Which role does the clickable control `buttons[{i}]` have?",
-            "criteria": dict(_BUTTON_CRITERIA),
+            "criteria": {role: dict(desc) for role, desc in _BUTTON_CRITERIA.items()},
         }
     questions["asks_for_prohibited"] = {
         "type": "noul",

@@ -129,16 +129,18 @@ _PAGE_STATE_CRITERIA: dict[str, dict[str, Any]] = {
         "examples": ["A company home page", "A cookie consent screen"]},
 }
 
-# Terse on purpose: these ride in every field's criteria (40 fields on a page
-# is the budget), while the catalog's own descriptions are sent once in the
-# state's `facts` map and the criteria carry only the keys.
-_SPECIAL_CRITERIA: dict[str, str] = {
-    "resume_file": "resume PDF upload",
-    "cover_letter_file": "cover letter PDF upload",
-    "cover_letter_text": "cover letter prose, paste box",
-    "signature_today": "typed signature name, or today's date",
-    "needs_generation": "essay or motivation question; draft an answer",
-    "leave_blank": "nothing fits; leave empty",
+# The special sources' descriptions. They join the catalog's descriptions in
+# the state's `facts` map, sent once per page, so every `field_{n}_source`
+# Choice carries keys only (40 fields on a page is the size budget) and its
+# instruction can say "which key of `facts`". A catalog description wins for
+# a key both have (`resume_file` when a resume PDF exists).
+SPECIAL_DESCRIPTIONS: dict[str, Any] = {
+    "resume_file": "The tailored resume PDF, for a file upload",
+    "cover_letter_file": "The cover letter PDF, for a file upload",
+    "cover_letter_text": "The cover letter as plain text, for a paste box",
+    "signature_today": "A typed signature name, or today's date for a signature date box",
+    "needs_generation": "An essay or motivation question; a draft is written for it",
+    "leave_blank": "No source applies; the box is left blank",
 }
 
 # A login wall's sign-in button and a signup form's create-account button are
@@ -194,7 +196,8 @@ _TYPED_SOURCES: dict[str, tuple[str, ...]] = {
 
 
 def _source_criteria(catalog_keys: list[str], type_: str) -> dict[str, Any]:
-    """The field's option set: `leave_blank` and `needs_generation` always."""
+    """The field's option set, keys only (`facts` in the state describes them):
+    `leave_blank` and `needs_generation` always."""
     if type_ in _FILE_TYPES:
         keys = list(_FILE_SOURCES)
     elif type_ in _TYPED_SOURCES:
@@ -205,7 +208,7 @@ def _source_criteria(catalog_keys: list[str], type_: str) -> dict[str, Any]:
     else:
         keys = [k for k in catalog_keys if k not in _NEVER_IN_TEXT]
         keys += [k for k in SPECIAL_SOURCES if k not in keys and k not in _NEVER_IN_TEXT]
-    return {k: _SPECIAL_CRITERIA.get(k) for k in keys}
+    return {k: None for k in keys}
 
 
 # --- the page request --------------------------------------------------------------
@@ -245,8 +248,9 @@ def _option_question(i: int, options: list[str], candidate_answer: str,
 def page_questions(digest: FormDigest, catalog: FactCatalog,
                    job: Mapping[str, Any] | None = None) -> tuple[dict, dict]:
     """The one request per page. State: the job, the page's host / title /
-    headline, the compact fields and buttons, and the fact descriptions (never
-    values). Questions: `page_state`, `field_{n}_source`, `field_{n}_option`
+    headline, the compact fields and buttons, and `facts`, the description of
+    every source key a field can take (the catalog's facts and the specials;
+    never a value). Questions: `page_state`, `field_{n}_source`, `field_{n}_option`
     for every field with options, `button_{n}_role`, `asks_for_prohibited`,
     `requires_account`, `has_captcha`."""
     job = job or {}
@@ -259,7 +263,7 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         "fields": [_compact_field(f) for f in digest.fields],
         "buttons": [{"n": b.n, "text": b.text, "kind_hint": b.kind_hint}
                     for b in digest.buttons],
-        "facts": catalog.to_criteria(),
+        "facts": {**SPECIAL_DESCRIPTIONS, **catalog.to_criteria()},
     }
     questions: dict[str, Any] = {
         "page_state": {
@@ -272,7 +276,9 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
     for i, f in enumerate(digest.fields):
         questions[f"field_{f.n}_source"] = {
             "type": "choice",
-            "instructions": f"Which listed fact holds what `fields[{i}]` asks for?",
+            "instructions": f"Which key of `facts` describes what `fields[{i}]` asks for? "
+                            "When nothing fits, `leave_blank`; for prose the facts lack, "
+                            "`needs_generation`.",
             "criteria": _source_criteria(catalog_keys, f.type),
         }
         if f.options:

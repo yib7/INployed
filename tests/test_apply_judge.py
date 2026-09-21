@@ -146,7 +146,8 @@ def _page_answers(digest, mapping, options=None, roles=None, *, prohibited=0.05,
     return answers
 
 
-_CONTRAST = re.compile(r",\s*not\s|,\s*never\s|\bnot just\b|\brather than\b|\binstead of\b", re.I)
+_CONTRAST = re.compile(r",\s*not\s|,\s*never\s|\bnot just\b|\brather than\b|\binstead of\b"
+                       r"|\bnot\b[^.]{0,60}\bbut\b", re.I)
 
 
 def _assert_clean_text(obj):
@@ -198,22 +199,29 @@ def test_page_questions_state_shape(catalog):
     assert state["fields"][8]["required"] is True
     assert "placeholder" not in state["fields"][0]      # empty strings are dropped
     assert state["buttons"][0] == {"n": 0, "text": "Submit application", "kind_hint": "submit"}
-    assert state["facts"] == catalog.to_criteria()
+    # `facts` is the one description map: the catalog's facts plus the special
+    # sources, so every key a field-source Choice offers is described there once
+    assert state["facts"] == {**apply_judge.SPECIAL_DESCRIPTIONS, **catalog.to_criteria()}
+    assert state["facts"]["first_name"] == "The candidate's first (given) name"
+    assert state["facts"]["leave_blank"] == apply_judge.SPECIAL_DESCRIPTIONS["leave_blank"]
     assert "Jane" not in json.dumps(state)
 
 
 def test_page_questions_emit_every_question(catalog):
     digest = _greenhouse()
-    _, q = apply_judge.page_questions(digest, catalog, _JOB)
+    state, q = apply_judge.page_questions(digest, catalog, _JOB)
     assert q["page_state"]["type"] == "choice"
     assert set(q["page_state"]["criteria"]) == set(apply_judge.PAGE_STATES)
     for opt in apply_judge.PAGE_STATES:
         assert set(q["page_state"]["criteria"][opt]) == {"what", "not_for", "examples"}
-    for f in digest.fields:
+    for i, f in enumerate(digest.fields):
         src = q[f"field_{f.n}_source"]
         assert src["type"] == "choice"
         assert "leave_blank" in src["criteria"] and "needs_generation" in src["criteria"]
-        assert f"fields[{f.n}]" in json.dumps(src["instructions"])
+        # the instruction names the description map and the field by position
+        assert "`facts`" in src["instructions"] and f"`fields[{i}]`" in src["instructions"]
+        assert set(src["criteria"]) <= set(state["facts"])
+        assert all(v is None for v in src["criteria"].values())
         keys = set(src["criteria"])
         if f.type == "file":
             assert keys == {"resume_file", "cover_letter_file", "needs_generation",
@@ -241,14 +249,40 @@ def test_page_questions_emit_every_question(catalog):
             assert list(opt["criteria"]) == f.options + ["no_match"]
         else:
             assert f"field_{f.n}_option" not in q
-    for b in digest.buttons:
+    for i, b in enumerate(digest.buttons):
         role = q[f"button_{b.n}_role"]
         assert set(role["criteria"]) == set(apply_judge.BUTTON_ROLES)
-        assert f"buttons[{b.n}]" in json.dumps(role["instructions"])
+        assert f"buttons[{i}]" in json.dumps(role["instructions"])
     for qid in ("asks_for_prohibited", "requires_account", "has_captcha"):
         assert q[qid]["type"] == "noul"
     # every id is a real question the model sees in full (ids are never sent)
     assert all("instructions" in v for v in q.values())
+
+
+def test_page_questions_name_fields_by_position_and_carry_n(catalog):
+    """`n` is a field's identity across `plan`; the instruction path is the
+    position in `state.fields`, and the state entry carries `n` explicitly."""
+    digest = FormDigest(url_host="x", title="t", text="",
+                        fields=[_f(3, "First Name", ident="first_name"),
+                                _f(7, "Gender", "select", options=("Male", "Female"))],
+                        buttons=[Button(n=5, locator=(0, "#b"), text="Next")])
+    state, q = apply_judge.page_questions(digest, catalog, _JOB)
+    assert [f["n"] for f in state["fields"]] == [3, 7]
+    assert set(k for k in q if k.startswith("field_")) ==         {"field_3_source", "field_7_source", "field_7_option"}
+    assert "`fields[0]`" in q["field_3_source"]["instructions"]
+    assert "`fields[1]`" in q["field_7_source"]["instructions"]
+    assert "fields[1].label" in json.dumps(q["field_7_option"]["instructions"])
+    assert "`buttons[0]`" in q["button_5_role"]["instructions"]
+    assert not any(f"fields[{n}]" in json.dumps(q) for n in (3, 7))
+
+
+def test_source_instruction_relates_the_escapes_to_facts(catalog):
+    _, q = apply_judge.page_questions(_greenhouse(), catalog, _JOB)
+    text = q["field_11_source"]["instructions"]
+    assert text.startswith("Which key of `facts` describes what")
+    assert "`leave_blank`" in text and "`needs_generation`" in text
+    assert "written" in apply_judge.SPECIAL_DESCRIPTIONS["needs_generation"]
+    assert "blank" in apply_judge.SPECIAL_DESCRIPTIONS["leave_blank"]
 
 
 def test_button_role_criteria_are_structured_and_advance_covers_sign_in(catalog):

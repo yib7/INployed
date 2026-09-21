@@ -51,6 +51,10 @@ tzdata==2026.4         # IANA tz database for zoneinfo on Windows (Pacific RPD r
 PySide6==6.11.2
 Send2Trash==2.1.0      # deleting a job moves its tailored-résumé folder to the Recycle Bin
 keyring==25.7.0        # ATS master password lives in the Windows Credential Manager (ats_accounts.py)
+typesafe-sdk>=0.7.0    # the Jev judge behind auto-apply runs (local/jev.py). Imported lazily,
+                       # so everything else runs without it; needs TYPESAFE_API_KEY in .env.
+                       # 0.7.0 (2026-09-18) is the first pydantic-based release and the one
+                       # whose answer objects local/jev.py translates.
 
 # only needed to run scraper.py locally (it normally runs on the VM)
 aiohttp==3.14.3
@@ -60,9 +64,10 @@ aiohttp==3.14.3
 requests==2.34.2
 
 # NOT installed by this file (optional, install only if you use the feature):
-#   * playwright — the advanced Auto-apply queue driver (local/apply_driver.py /
-#     apply_playwright.py) imports it lazily: pip install playwright, then
-#     playwright install chromium. The everyday per-job Apply flow needs neither.
+#   * playwright — the Auto-apply queue driver (local/apply_driver.py /
+#     apply_playwright.py, and the Jev-judged run) imports it lazily: pip install
+#     playwright, then playwright install chromium. The everyday per-job Apply
+#     flow needs neither; "Check setup" reports both when they are missing.
 #   * Pillow — maintainers only: regenerates the desktop icon
 #     (python local/assets/make_icon.py) and composes the README media
 #     (scripts/build_demo_media.py, build_social_preview.py, build_walkthrough.py).

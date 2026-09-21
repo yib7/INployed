@@ -180,7 +180,8 @@ def chromium_installed(run: Callable[..., object] = subprocess.run,
         return False
     try:
         result = run([sys.executable, "-m", "playwright", "--version"],
-                     capture_output=True, text=True, timeout=30)
+                     capture_output=True, text=True, encoding="utf-8",
+                     errors="replace", timeout=30)
     except Exception:  # noqa: BLE001
         return False
     return getattr(result, "returncode", 1) == 0

@@ -55,6 +55,7 @@ log = logging.getLogger("apply_judge")
 
 PAGE_STATE_MIN_CONF = 0.60      # below it: park needs_human
 FIELD_MAP_MIN_CONF = 0.70       # below it: optional -> blank + flagged; required -> park
+CONSENT_MIN_CONF = 0.85         # consent_attest needs this much: a tick cannot be taken back
 OPTION_MIN_CONF = 0.70          # the same rule for select / radio picks
 BUTTON_SUBMIT_MIN_CONF = 0.90   # a click on a submit-role button needs this
 BUTTON_ADVANCE_MIN_CONF = 0.75
@@ -412,7 +413,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     the same rule; `signature_today` fills today's date for a date control or
     a label with `date` / `dated` / `today` as a whole word, else the typed
     name; `consent_attest` (a checkbox's attestation, privacy or contact
-    consent) is `select` with option `checked`. Buttons keep the highest-confidence n per role. The park
+    consent) is `select` with option `checked` at or above `CONSENT_MIN_CONF`,
+    and below it follows the unanswerable rule. Buttons keep the highest-confidence n per role. The park
     reasons are checked in the order prohibited, captcha, required field."""
     out = FillPlan()
     required_reason = ""
@@ -429,6 +431,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                 log.debug("field %d %r: quick_map %s, model %s (%.2f); keeping quick_map",
                           f.n, f.label, quick, model_key, model_conf)
         elif model_key is None or model_key == "leave_blank" or model_conf < FIELD_MAP_MIN_CONF:
+            fact_key, conf = None, model_conf
+        elif model_key == "consent_attest" and model_conf < CONSENT_MIN_CONF:
             fact_key, conf = None, model_conf
         else:
             fact_key, conf = model_key, model_conf

@@ -304,6 +304,7 @@ class PlannedField:
     option: str | None
     confidence: float
     action: str
+    quick: bool = False      # the fact came from quick_map (its pick rode in the first request)
 
 
 @dataclass
@@ -362,8 +363,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
          generation_enabled: bool = True) -> FillPlan:
     """Turn the page answers into a `FillPlan`.
 
-    Per field: a `quick_map` hit wins over the model's mapping (a disagreement
-    is logged at DEBUG); a mapping below `FIELD_MAP_MIN_CONF` or equal to
+    Per field: a `quick_map` hit whose fact has a value wins over the model's
+    mapping (a disagreement is logged at DEBUG; an empty fact falls through to
+    the model's mapping); a mapping below `FIELD_MAP_MIN_CONF` or equal to
     `leave_blank` is `skip`, and when the field is required the plan carries
     `park_reason` and a `missing` entry (an optional skip is a `missing` entry
     only); `needs_generation` is `generate` when generation is enabled, else
@@ -377,6 +379,10 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     for f in digest.fields:
         model_key, model_conf = _choice_of(answers, f"field_{f.n}_source")
         quick = quick_map(f.label, f.id_or_name, f.type)
+        if quick and not catalog.has(quick):
+            log.debug("field %d %r: quick_map %s has no value; using the model's mapping",
+                      f.n, f.label, quick)
+            quick = None
         if quick:
             fact_key, conf = quick, 1.0
             if model_key and model_key != quick:
@@ -389,7 +395,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
 
         pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=bool(f.required),
                           fact_key=fact_key, value="", option=None, confidence=conf,
-                          action="skip")
+                          action="skip", quick=bool(quick))
         if fact_key == "needs_generation":
             pf.action = "generate" if generation_enabled else "skip"
         elif fact_key == "signature_today":
@@ -447,7 +453,7 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan) -> tuple[dict, dic
         f = by_n.get(pf.n)
         if f is None or not f.options or not pf.fact_key or not pf.value:
             continue
-        if pf.fact_key in SPECIAL_SOURCES or quick_map(f.label, f.id_or_name, f.type):
+        if pf.fact_key in SPECIAL_SOURCES or pf.quick:
             continue
         i = len(state["fields"])
         state["fields"].append(_compact_field(f))

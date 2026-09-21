@@ -357,6 +357,39 @@ def test_plan_quick_map_wins_over_the_model(catalog, caplog):
                for r in caplog.records)
 
 
+def test_plan_quick_map_hit_with_an_empty_fact_falls_through_to_the_model(tmp_path):
+    """No address in the sheet or the bank: `City` quick-maps to `address_city`,
+    which is empty, so the model's `location` is used; a select in the same
+    spot rides in the second request like any model-mapped field."""
+    (tmp_path / "apply.md").write_text(apply_data.build_markdown(_MASTER, _JOB, []),
+                                       encoding="utf-8")
+    cat = apply_facts.build(tmp_path, answers=[])
+    for key in ("address_city", "address_state", "address_zip"):
+        assert not cat.has(key)
+    cat.facts["answer_state"] = apply_facts.Fact("answer_state", "California",
+                                                 "State of residence")
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "City", required=True),
+        _f(1, "State", "select", required=True, options=("California", "Nevada")),
+        _f(2, "Zip", required=True),
+    ])
+    answers = _page_answers(digest, {0: ("location", 0.9), 1: ("answer_state", 0.9),
+                                     2: ("leave_blank", 0.9)})
+    p = apply_judge.plan(digest, cat, answers)
+    by_n = {f.n: f for f in p.fields}
+    assert by_n[0].fact_key == "location" and by_n[0].value == "Anytown, CA"
+    assert by_n[0].action == "fill" and by_n[0].confidence == 0.9
+    assert by_n[1].fact_key == "answer_state" and by_n[1].action == "skip"   # waits for _pick
+    assert by_n[2].fact_key is None and by_n[2].action == "skip"
+    assert p.park_reason == "required field without an answer: State"
+    state2, q2 = apply_judge.option_questions(digest, p)
+    assert set(q2) == {"field_1_pick"} and state2["fields"][0]["n"] == 1
+    answers["field_1_pick"] = _choice("California", 0.95)
+    p2 = apply_judge.plan(digest, cat, answers)
+    assert {f.n: f for f in p2.fields}[1].option == "California"
+    assert p2.park_reason == "required field without an answer: Zip"
+
+
 def test_plan_leave_blank_and_needs_generation(catalog):
     digest = FormDigest(url_host="x", title="t", text="", fields=[
         _f(0, "Anything else?", "textarea"),

@@ -13,9 +13,17 @@ loads it). Fixtures:
   iframe, and Chromium refuses a `file://` iframe, so they are served over http.
 - `fixture_url` (session): `fixture_url(name) -> str` for a page under
   `tests/fixtures/forms/`.
-- `browser_page` (function): a fresh page in a fresh context of one shared
-  headless Chromium. Skips with "Chromium not installed" when the launch fails
-  and via `importorskip` when Playwright itself is absent.
+- `browser_page` (function): a fresh page in a fresh context of one headless
+  Chromium per test module. Skips with "Chromium not installed" when the
+  launch fails and via `importorskip` when Playwright itself is absent.
+
+The browser is module-scoped, never session-scoped: Playwright's sync API
+keeps an asyncio loop running on the main thread for as long as the
+`sync_playwright()` context is open, and any test that then calls
+`asyncio.run()` (the scraper suite does) fails with "cannot be called from a
+running event loop". Closing the context when each browser module ends keeps
+the rest of the suite unaware of it. For the same reason a browser test
+module must not call `asyncio.run()` itself.
 """
 from __future__ import annotations
 
@@ -69,7 +77,7 @@ def _point_at_installed_browsers() -> None:
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(real)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def _browser():
     pytest.importorskip("playwright")
     from playwright.sync_api import sync_playwright

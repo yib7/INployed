@@ -221,7 +221,7 @@ def test_essay_textarea_is_required_and_help_carries_the_maxlength(browser_page,
     d = apply_form.extract(browser_page)
     essay = _by_id(d, "project")
     assert essay.type == "textarea" and essay.required
-    assert essay.label == "Describe a project you are proud of"
+    assert essay.label == "Describe a project you are proud of and your motivation for this role"
     assert essay.help == "Max 1500 characters."
     assert _by_id(d, "first_name").help == ""
 

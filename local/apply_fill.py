@@ -373,6 +373,28 @@ def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: floa
     if loc.count() == 0:
         log.info("apply_fill: button %s (%s) is gone", n, button.locator[1])
         return False
+    try:
+        return _await_change(page, lambda: loc.first.click(timeout=ACTION_TIMEOUT_MS), timeout_s)
+    except Exception as e:      # noqa: BLE001
+        log.info("apply_fill: click on %r failed: %s", button.text, e)
+        return False
+
+
+def wait_for_change(page, *, timeout_s: float = 20) -> bool:
+    """`click_button`'s wait without the click: up to `timeout_s` for a
+    navigation or a DOM change from now, then `_settle`. True when something
+    changed. For a click the caller already made whose effect may still be
+    on its way (a submit that answered quietly)."""
+    try:
+        return _await_change(page, lambda: None, timeout_s)
+    except Exception as e:      # noqa: BLE001
+        log.info("apply_fill: wait_for_change failed: %s", e)
+        return False
+
+
+def _await_change(page, act: Callable[[], Any], timeout_s: float) -> bool:
+    """Snapshot, `act()`, then poll for a navigation or a DOM change until
+    `timeout_s`; settle and return True on a change, False on a quiet page."""
     before = _snapshot(page)
     url0 = page.url
     navigated: list[str] = []
@@ -384,7 +406,7 @@ def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: floa
     page.on("framenavigated", _on_nav)
     try:
         # the listener stays on through _settle so a late navigation restarts the quiet count
-        loc.first.click(timeout=ACTION_TIMEOUT_MS)
+        act()
         deadline = time.monotonic() + timeout_s
         while True:
             if navigated or page.url != url0 or _snapshot(page) != before:
@@ -393,9 +415,6 @@ def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: floa
             if time.monotonic() >= deadline:
                 return False
             page.wait_for_timeout(int(POLL_S * 1000))
-    except Exception as e:      # noqa: BLE001
-        log.info("apply_fill: click on %r failed: %s", button.text, e)
-        return False
     finally:
         page.remove_listener("framenavigated", _on_nav)
 

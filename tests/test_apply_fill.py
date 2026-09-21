@@ -272,3 +272,16 @@ def test_page_text_is_capped(browser_page, fixture_url):
     assert len(text) <= apply_judge.PAGE_TEXT_CAP
     browser_page.evaluate("document.body.insertAdjacentText('beforeend', 'x'.repeat(10000))")
     assert len(apply_fill.page_text(browser_page)) == apply_judge.PAGE_TEXT_CAP
+
+
+# --- wait_for_change: the click_button wait without the click ---------------------------
+
+def test_wait_for_change_sees_a_late_dom_change_and_a_quiet_page(browser_page, fixture_url):
+    browser_page.goto(fixture_url("slow_submit.html"))
+    t0 = time.monotonic()
+    assert apply_fill.wait_for_change(browser_page, timeout_s=1.0) is False
+    assert time.monotonic() - t0 < 3
+    browser_page.click("#btn-submit")                      # the change lands 3 s later
+    assert apply_fill.wait_for_change(browser_page, timeout_s=10.0) is True
+    assert browser_page.locator("#thanks").is_visible()
+    assert browser_page.evaluate("window.__clicks") == 1

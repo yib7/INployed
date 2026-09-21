@@ -65,6 +65,7 @@ JOB_WALL_CLOCK_S = 8 * 60          # per job, on the injectable clock
 GENERATE_MAX = 3                   # generated answers per job (spec 3.7)
 POPUP_TIMEOUT_MS = 5_000           # for the Apply entry to open a new tab
 CLICK_TIMEOUT_S = 20               # click_button's wait for a change
+SUBMIT_SETTLE_S = 10               # after a quiet submit click: wait this long for the page
 HOLD_POLL_S = 1.0                  # while holding the window open
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
@@ -710,9 +711,16 @@ class _JobRun:
         rec["clicked"].append(f"{text} ({role})")
         timeout = max(1.0, min(CLICK_TIMEOUT_S, self.deadline - self.r.clock()))
         changed = apply_fill.click_button(self.page, digest, n, timeout_s=timeout)
-        if not changed:
-            self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
-            changed = apply_fill.click_button(self.page, digest, n, timeout_s=timeout)
+        if changed or role == "submit":
+            # a submit is clicked once, whatever the page showed: a quiet page is
+            # no proof the click failed, and a second click could send twice
+            if not changed:
+                self.log.info("job %s: the submit click changed nothing; waiting up to %s s",
+                              self.job_id, SUBMIT_SETTLE_S)
+                changed = apply_fill.wait_for_change(self.page, timeout_s=SUBMIT_SETTLE_S)
+            return changed
+        self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
+        changed = apply_fill.click_button(self.page, digest, n, timeout_s=timeout)
         if not changed and role == "advance":
             raise _Parked("needs_human", f"the {role} button ({text}) did nothing")
         return changed

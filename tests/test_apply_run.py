@@ -183,6 +183,40 @@ def test_submit_off_finishes_ready_to_submit_and_never_clicks_submit(
     assert "SUBMIT CLICKED" not in record
 
 
+def test_a_quiet_submit_is_clicked_exactly_once_and_the_late_confirmation_is_read(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # the fixture's submit changes nothing for 3 s; click_button's window is cut
+    # to 1 s so the click reads as "quiet", which is no proof it failed
+    monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
+    _enqueue(job_folder, fixture_url("slow_submit.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "submitted" and out.reason == "confirmation page", out
+    page = next(p for p in context.pages if not p.is_closed()) if any(
+        not p.is_closed() for p in context.pages) else None
+    assert page is None                                   # submitted: the page was closed
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert record.count("SUBMIT CLICKED") == 1
+    assert "State: confirmation" in record
+
+
+def test_submit_click_is_never_retried(context, fixture_url, job_folder, catalog_builder,
+                                       tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
+    clicks = []
+    real = apply_run.apply_fill.click_button
+
+    def _counting(page, digest, n, **kw):
+        got = real(page, digest, n, **kw)
+        clicks.append((next(b.text for b in digest.buttons if b.n == n), got,
+                       page.evaluate("window.__clicks")))
+        return got
+    monkeypatch.setattr(apply_run.apply_fill, "click_button", _counting)
+    _enqueue(job_folder, fixture_url("slow_submit.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert clicks == [("Submit", False, 1)]           # one click, read as quiet, never repeated
+    assert out.status == "submitted" and out.reason == "confirmation page"
+
+
 # --- (c) the captcha page parks needs_human with the flag in the notes ----------------
 
 def test_captcha_page_parks_needs_human_with_the_flag(

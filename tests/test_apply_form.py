@@ -122,7 +122,7 @@ def test_field_numbers_run_across_frames_in_document_order(greenhouse):
     assert ids.index("first_name") < ids.index("email") < ids.index("resume")
 
 
-def test_resolve_round_trips_a_frame_locator(browser_page, fixture_url, greenhouse):
+def test_resolve_round_trips_a_frame_locator(browser_page, greenhouse):
     first = _by_id(greenhouse, "first_name")
     loc = apply_form.resolve(browser_page, first.locator)
     loc.fill("Jane")
@@ -189,7 +189,7 @@ def test_listbox_combobox_labelled_by_aria_labelledby(browser_page, fixture_url)
     location = _by_label(d, "Preferred work location")
     assert location.type == "listbox"
     assert location.options == ["Remote", "Hybrid", "On-site"]   # the menu is in the DOM
-    # the inner inputs are part of the widget, never fields of their own
+    # the inner inputs belong to the widget and stay out of the field list
     assert not [f for f in d.fields if f.id_or_name in ("country-input", "location-input")]
     start = _by_label(d, "Available start date")
     assert start.type == "date"

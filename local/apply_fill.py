@@ -15,7 +15,7 @@ by option label, case-insensitively; a radio group checks the radio whose
 label equals the option; a checkbox checks on `"checked"`; a combobox or
 listbox opens and clicks the option text; a file input takes
 `set_input_files` through its frame, the same call `apply_driver._set_files`
-proved on Greenhouse. A file control is never clicked.
+proved on Greenhouse. A file control gets no click.
 
 `click_button(page, digest, n)` clicks a digest button and waits for a
 navigation or a DOM change (body length and the set of visible controls,

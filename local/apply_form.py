@@ -206,7 +206,7 @@ _EXTRACT_JS = r"""
       const p = node.parentElement;
       if (p && /^(SCRIPT|STYLE|OPTION|NOSCRIPT)$/.test(p.tagName)) continue;
       const lab = p && p.closest('label');
-      if (lab && lab.control && lab.control !== el) return '';
+      if (lab && (lab.control || lab.hasAttribute('for')) && lab.control !== el) return '';
       const t = norm(node.data);
       if (t) return t.slice(-120);
     }

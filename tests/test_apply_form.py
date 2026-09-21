@@ -242,6 +242,16 @@ def test_preceding_text_walk_stops_at_another_controls_label(browser_page):
     assert by["office"].label == "Preferred office"
 
 
+def test_preceding_text_walk_stops_at_a_label_whose_for_target_is_missing(browser_page):
+    browser_page.set_content("""
+      <body>
+        <label for="remote_ok_missing">Remote OK</label>
+        <input name="city">
+      </body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.id_or_name, f.label) for f in d.fields] == [("city", "")]
+
+
 def test_confirmation_page_has_no_fields(browser_page, fixture_url):
     browser_page.goto(fixture_url("confirmation.html"))
     d = apply_form.extract(browser_page)

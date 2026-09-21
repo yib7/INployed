@@ -84,8 +84,9 @@ def _f(n, label, type_="text", required=False, options=(), ident="", help=""):
                  options=list(options), id_or_name=ident, help=help)
 
 
-def _greenhouse():
-    """A 12-field Greenhouse-shaped page."""
+def _greenhouse(consent=""):
+    """A 12-field Greenhouse-shaped page; `consent` adds a required checkbox
+    with that label as field 12."""
     fields = [
         _f(0, "First Name", required=True, ident="first_name"),
         _f(1, "Last Name", required=True, ident="last_name"),
@@ -103,6 +104,8 @@ def _greenhouse():
         _f(11, "Why are you interested in this role? Please write a short essay about "
                "your motivation.", "textarea"),
     ]
+    if consent:
+        fields.append(_f(12, consent, "checkbox", required=True))
     buttons = [Button(n=0, locator=(0, "#submit_app"), text="Submit application",
                       kind_hint="submit"),
                Button(n=1, locator=(0, "#back"), text="Back", kind_hint="link")]
@@ -182,7 +185,8 @@ def test_the_option_tuples():
                                         "upload", "other")
     assert apply_judge.SPECIAL_SOURCES == ("resume_file", "cover_letter_file",
                                            "cover_letter_text", "signature_today",
-                                           "needs_generation", "leave_blank")
+                                           "consent_attest", "needs_generation",
+                                           "leave_blank")
 
 
 # --- page_questions: checkpoint (b) ---------------------------------------------
@@ -238,12 +242,12 @@ def test_page_questions_emit_every_question(catalog):
             assert {"work_authorized", "gender", "address_country",
                     "answer_salary_expectation"} <= keys
             assert not keys & {"first_name", "email", "linkedin_url", "resume_file",
-                               "cover_letter_text", "signature_today"}
+                               "cover_letter_text", "signature_today", "consent_attest"}
         else:
             assert set(catalog.to_criteria()) - {"resume_file", "cover_letter_file",
                                                  "signature_name", "today"} <= keys
             assert "signature_today" in keys and "cover_letter_text" in keys
-            assert "resume_file" not in keys
+            assert "resume_file" not in keys and "consent_attest" not in keys
         if f.options:
             opt = q[f"field_{f.n}_option"]
             assert list(opt["criteria"]) == f.options + ["no_match"]
@@ -257,6 +261,46 @@ def test_page_questions_emit_every_question(catalog):
         assert q[qid]["type"] == "noul"
     # every id is a real question the model sees in full (ids are never sent)
     assert all("instructions" in v for v in q.values())
+
+
+def test_consent_attest_is_offered_to_checkboxes_only(catalog):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "I certify that the information provided is accurate", "checkbox",
+           required=True),
+        _f(1, "Gender", "radio", options=("Male", "Female")),
+        _f(2, "Anything else?", "textarea"),
+        _f(3, "Resume", "file"),
+    ])
+    state, q = apply_judge.page_questions(digest, catalog, _JOB)
+    offered = {f.n: "consent_attest" in q[f"field_{f.n}_source"]["criteria"]
+               for f in digest.fields}
+    assert offered == {0: True, 1: False, 2: False, 3: False}
+    desc = state["facts"]["consent_attest"]
+    assert set(desc) == {"what", "not_for"}
+    assert "accuracy of the application" in desc["what"]
+    assert "consent to be contacted" in desc["what"]
+    assert "background-check" in desc["not_for"] and "non-compete" in desc["not_for"]
+    _assert_clean_text(state["facts"])
+
+
+def test_plan_consent_attest_checks_the_box(catalog):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "I agree to the privacy notice", "checkbox", required=True),
+        _f(1, "I consent to a background check", "checkbox", required=True),
+        _f(2, "Subscribe to job alerts", "checkbox"),
+    ])
+    answers = _page_answers(digest, {0: ("consent_attest", 0.9),
+                                     1: ("consent_attest", 0.65),      # below FIELD_MAP_MIN_CONF
+                                     2: ("leave_blank", 0.9)})
+    p = apply_judge.plan(digest, catalog, answers)
+    by_n = {f.n: f for f in p.fields}
+    assert (by_n[0].action, by_n[0].option, by_n[0].value) == ("select", "checked", "yes")
+    assert by_n[0].fact_key == "consent_attest"
+    assert by_n[1].action == "skip" and by_n[1].fact_key is None
+    assert by_n[2].action == "skip"
+    assert p.park_reason == "required field without an answer: I consent to a background check"
+    assert [m[0] for m in p.missing] == ["I consent to a background check",
+                                         "Subscribe to job alerts"]
 
 
 def test_page_questions_name_fields_by_position_and_carry_n(catalog):
@@ -737,6 +781,33 @@ def test_fake_jev_end_to_end_over_the_greenhouse_digest(catalog):
     assert p.flags == {"asks_for_prohibited": 0.1, "requires_account": 0.1,
                        "has_captcha": 0.1}
     assert all(f.confidence >= apply_judge.FIELD_MAP_MIN_CONF for f in p.fields)
+
+
+def _fake_run(digest, catalog):
+    """The two-request loop through FakeJev, returning the settled plan."""
+    fake = jev.FakeJev()
+    state, q = apply_judge.page_questions(digest, catalog, _JOB)
+    answers = fake.judge(state, q)
+    first = apply_judge.plan(digest, catalog, answers)
+    state2, q2 = apply_judge.option_questions(digest, first)
+    if q2:
+        answers.update(fake.judge(state2, q2))
+    return apply_judge.plan(digest, catalog, answers)
+
+
+def test_fake_jev_end_to_end_checks_an_attestation_box_and_parks_a_background_check(catalog):
+    p = _fake_run(_greenhouse("I certify that the information provided in this "
+                              "application is accurate"), catalog)
+    box = {f.n: f for f in p.fields}[12]
+    assert (box.fact_key, box.action, box.option, box.value) ==         ("consent_attest", "select", "checked", "yes")
+    assert p.park_reason == "" and p.missing == []
+
+    p = _fake_run(_greenhouse("I consent to a background check and drug test"), catalog)
+    box = {f.n: f for f in p.fields}[12]
+    assert box.fact_key is None and box.action == "skip"
+    assert p.park_reason == ("required field without an answer: "
+                             "I consent to a background check and drug test")
+    assert [m[0] for m in p.missing] == ["I consent to a background check and drug test"]
 
 
 def test_fake_jev_flags_a_captcha_page_and_a_login_wall(catalog):

@@ -76,7 +76,7 @@ PAGE_STATES = ("application_form", "login_wall", "signup_form", "review_page",
                "error_or_dead", "job_posting", "other")
 BUTTON_ROLES = ("advance", "submit", "back", "apply_entry", "upload", "other")
 SPECIAL_SOURCES = ("resume_file", "cover_letter_file", "cover_letter_text",
-                   "signature_today", "needs_generation", "leave_blank")
+                   "signature_today", "consent_attest", "needs_generation", "leave_blank")
 
 ACTIONS = ("fill", "select", "upload", "generate", "skip")
 
@@ -141,6 +141,14 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
     "cover_letter_file": "The cover letter PDF, for a file upload",
     "cover_letter_text": "The cover letter as plain text, for a paste box",
     "signature_today": "A typed signature name, or today's date for a signature date box",
+    # Offered to checkboxes only. The `not_for` list keeps substantive
+    # commitments out: those park the job for the human.
+    "consent_attest": {
+        "what": "a checkbox that asks the candidate to confirm the accuracy of the "
+                "application, agree to the application's privacy notice or terms, or "
+                "consent to be contacted about this application",
+        "not_for": "background-check, drug-test, age, non-compete, relocation or any "
+                   "other substantive commitment"},
     "needs_generation": "An essay or motivation question; a draft is written for it",
     "leave_blank": "No source applies; the box is left blank",
 }
@@ -182,11 +190,13 @@ _FILE_TYPES = frozenset(("file",))
 _OPTION_TYPES = frozenset(("select", "radio", "checkbox", "listbox"))
 _ALWAYS = ("needs_generation", "leave_blank")
 _FILE_SOURCES = ("resume_file", "cover_letter_file") + _ALWAYS
+_CHECKBOX_SOURCES = ("consent_attest",)
 _NEVER_IN_OPTIONS = frozenset((
     "full_name", "first_name", "last_name", "email", "phone", "linkedin_url",
     "github_url", "website_url", "resume_file", "cover_letter_file", "cover_letter_text",
-    "signature_name", "today", "signature_today"))
-_NEVER_IN_TEXT = frozenset(("resume_file", "cover_letter_file", "signature_name", "today"))
+    "signature_name", "today", "signature_today", "consent_attest"))
+_NEVER_IN_TEXT = frozenset(("resume_file", "cover_letter_file", "signature_name", "today",
+                            "consent_attest"))
 # A typed input takes only the facts of its shape.
 _TYPED_SOURCES: dict[str, tuple[str, ...]] = {
     "email": ("email",),
@@ -199,14 +209,18 @@ _TYPED_SOURCES: dict[str, tuple[str, ...]] = {
 
 def _source_criteria(catalog_keys: list[str], type_: str) -> dict[str, Any]:
     """The field's option set, keys only (`facts` in the state describes them):
-    `leave_blank` and `needs_generation` always."""
+    `leave_blank` and `needs_generation` always, `consent_attest` for a
+    checkbox."""
     if type_ in _FILE_TYPES:
         keys = list(_FILE_SOURCES)
     elif type_ in _TYPED_SOURCES:
         keys = [k for k in _TYPED_SOURCES[type_]
                 if k in catalog_keys or k in SPECIAL_SOURCES] + list(_ALWAYS)
     elif type_ in _OPTION_TYPES:
-        keys = [k for k in catalog_keys if k not in _NEVER_IN_OPTIONS] + list(_ALWAYS)
+        keys = [k for k in catalog_keys if k not in _NEVER_IN_OPTIONS]
+        if type_ == "checkbox":
+            keys += list(_CHECKBOX_SOURCES)
+        keys += list(_ALWAYS)
     else:
         keys = [k for k in catalog_keys if k not in _NEVER_IN_TEXT]
         keys += [k for k in SPECIAL_SOURCES if k not in keys and k not in _NEVER_IN_TEXT]
@@ -397,7 +411,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     the same rule; an option pick below `OPTION_MIN_CONF` or `no_match` follows
     the same rule; `signature_today` fills today's date for a date control or
     a label with `date` / `dated` / `today` as a whole word, else the typed
-    name. Buttons keep the highest-confidence n per role. The park
+    name; `consent_attest` (a checkbox's attestation, privacy or contact
+    consent) is `select` with option `checked`. Buttons keep the highest-confidence n per role. The park
     reasons are checked in the order prohibited, captcha, required field."""
     out = FillPlan()
     required_reason = ""
@@ -423,6 +438,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                           action="skip", quick=bool(quick))
         if fact_key == "needs_generation":
             pf.action = "generate" if generation_enabled else "skip"
+        elif fact_key == "consent_attest":
+            pf.action, pf.option, pf.value = "select", "checked", "yes"
         elif fact_key == "signature_today":
             pf.value = catalog.value("today" if _wants_date(f) else "signature_name")
             pf.action = "fill" if pf.value else "skip"

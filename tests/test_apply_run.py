@@ -684,17 +684,17 @@ def test_write_record_hides_a_password_field_value(tmp_path):
     assert "- Password: <hidden>" in text and "- : <hidden>" in text
     assert "- Passport number: unlikely" in text          # a text control is not a password
     assert "- Uploads:\n  - Resume: Jane.pdf" in text
-    pages[0]["filled"].append({"n": 5, "label": "Security code", "value": "MKPZ3QRA",
-                               "type": "text", "id_or_name": "code", "hidden": True})
-    text = apply_run.write_record(tmp_path, entry, "needs_human", "x", pages, {}, "",
-                                  missing=[]).read_text(encoding="utf-8")
-    assert "- Security code: <hidden>" in text and "MKPZ3QRA" not in text
     assert "- Email: ok (p_correct 0.90, p_placeholder 0.10)" in text
     assert "- Clicked: Sign in (advance)" in text
     assert "- Nickname (text)" in text
     assert "- Requests: 2\n- Input tokens: 1234\n- Cost: $0.0001\n- Model: jev-1.13.0" in text
     assert "Sign in to continue" in text
     assert chr(0x2014) not in text
+    pages[0]["filled"].append({"n": 5, "label": "Security code", "value": "MKPZ3QRA",
+                               "type": "text", "id_or_name": "code", "hidden": True})
+    text = apply_run.write_record(tmp_path, entry, "needs_human", "x", pages, {}, "",
+                                  missing=[]).read_text(encoding="utf-8")
+    assert "- Security code: <hidden>" in text and "MKPZ3QRA" not in text
 
 
 # --- _finish survives a failing queue write ------------------------------------------------

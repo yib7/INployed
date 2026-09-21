@@ -190,8 +190,12 @@ NO_MATCH_DESCRIPTION = "nothing listed fits"
 _FILE_TYPES = frozenset(("file",))
 _OPTION_TYPES = frozenset(("select", "radio", "checkbox", "listbox"))
 _ALWAYS = ("needs_generation", "leave_blank")
-_FILE_SOURCES = ("resume_file", "cover_letter_file") + _ALWAYS
+_FILE_SOURCES = ("resume_file", "cover_letter_file")
 _CHECKBOX_SOURCES = ("consent_attest",)
+# Specials that stand for a catalog value: offered (and described in `facts`)
+# only when the catalog has that value, so the model cannot pick a file that
+# is not on disk or a cover letter the sheet does not carry.
+_BACKED_SPECIALS = frozenset(("resume_file", "cover_letter_file", "cover_letter_text"))
 _NEVER_IN_OPTIONS = frozenset((
     "full_name", "first_name", "last_name", "email", "phone", "linkedin_url",
     "github_url", "website_url", "resume_file", "cover_letter_file", "cover_letter_text",
@@ -211,9 +215,9 @@ _TYPED_SOURCES: dict[str, tuple[str, ...]] = {
 def _source_criteria(catalog_keys: list[str], type_: str) -> dict[str, Any]:
     """The field's option set, keys only (`facts` in the state describes them):
     `leave_blank` and `needs_generation` always, `consent_attest` for a
-    checkbox."""
+    checkbox, a backed special only when the catalog has its value."""
     if type_ in _FILE_TYPES:
-        keys = list(_FILE_SOURCES)
+        keys = [k for k in _FILE_SOURCES if k in catalog_keys] + list(_ALWAYS)
     elif type_ in _TYPED_SOURCES:
         keys = [k for k in _TYPED_SOURCES[type_]
                 if k in catalog_keys or k in SPECIAL_SOURCES] + list(_ALWAYS)
@@ -224,8 +228,17 @@ def _source_criteria(catalog_keys: list[str], type_: str) -> dict[str, Any]:
         keys += list(_ALWAYS)
     else:
         keys = [k for k in catalog_keys if k not in _NEVER_IN_TEXT]
-        keys += [k for k in SPECIAL_SOURCES if k not in keys and k not in _NEVER_IN_TEXT]
+        keys += [k for k in SPECIAL_SOURCES if k not in keys and k not in _NEVER_IN_TEXT
+                 and k not in _BACKED_SPECIALS]
     return {k: None for k in keys}
+
+
+def _facts_map(catalog: FactCatalog) -> dict[str, Any]:
+    """`state.facts`: the special sources' descriptions (a backed special only
+    when the catalog has its value) under the catalog's own descriptions."""
+    specials = {k: v for k, v in SPECIAL_DESCRIPTIONS.items()
+                if k not in _BACKED_SPECIALS or catalog.has(k)}
+    return {**specials, **catalog.to_criteria()}
 
 
 # --- the page request --------------------------------------------------------------
@@ -280,7 +293,7 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         "fields": [_compact_field(f) for f in digest.fields],
         "buttons": [{"n": b.n, "text": b.text, "kind_hint": b.kind_hint}
                     for b in digest.buttons],
-        "facts": {**SPECIAL_DESCRIPTIONS, **catalog.to_criteria()},
+        "facts": _facts_map(catalog),
     }
     questions: dict[str, Any] = {
         "page_state": {

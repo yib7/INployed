@@ -139,11 +139,17 @@ class FactCatalog:
 
     def sheet_excerpt(self, max_chars: int = 6000) -> str:
         """The sheet's Candidate (with its Address sub-block) and Standard answers
-        sections, for the verification and grounding states."""
+        sections, for the verification and grounding states. Longer than
+        `max_chars`, it is cut at the last line end at or before the cap (a
+        first line longer than the cap is cut at the cap)."""
         sections = _h2_sections(self._sheet_text)
         parts = [sections[name] for name in ("candidate", "standard answers")
                  if name in sections]
-        return "\n\n".join(parts).strip()[:max_chars]
+        text = "\n\n".join(parts).strip()
+        if len(text) <= max_chars:
+            return text
+        cut = text.rfind("\n", 0, max_chars + 1)
+        return text[:cut] if cut > 0 else text[:max_chars]
 
 
 def build(folder: Path, *, answers: list[dict] | None = None,

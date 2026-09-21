@@ -224,6 +224,21 @@ def test_sheet_excerpt_is_candidate_address_and_standard_answers(folder):
     assert len(cat.sheet_excerpt(max_chars=100)) <= 100
 
 
+def test_sheet_excerpt_cuts_on_a_line_boundary(folder):
+    cat = apply_facts.build(folder, answers=_bank())
+    full = cat.sheet_excerpt()
+    assert "\n" in full[:100]
+    for cap in (100, 250, 777):
+        cut = cat.sheet_excerpt(max_chars=cap)
+        assert len(cut) <= cap
+        assert full.startswith(cut)
+        assert full[len(cut)] == "\n"          # the cut lands at a line end, never inside one
+    assert cat.sheet_excerpt(max_chars=len(full) + 10) == full
+    # a first line longer than the cap is the one case where mid-line is unavoidable
+    assert apply_facts.FactCatalog(sheet_text="## Candidate\n" + "x" * 50,
+                                   ).sheet_excerpt(max_chars=5) == "## Ca"
+
+
 def test_build_with_no_apply_md_gives_an_empty_catalog(tmp_path):
     cat = apply_facts.build(tmp_path, answers=[])
     assert cat.value("first_name") == ""

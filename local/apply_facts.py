@@ -318,6 +318,11 @@ _QUICK: tuple[tuple[tuple[str, ...], str, frozenset[str]], ...] = (
     (("github",), "github_url", _TEXTISH),
     (("website",), "website_url", _TEXTISH),
     (("portfolio",), "website_url", _TEXTISH),
+)
+# The address tokens are single common words ("State your desired salary",
+# "Country of work authorization"), so they only hit a short label with no
+# other content noun; the model maps the rest.
+_ADDRESS_QUICK: tuple[tuple[tuple[str, ...], str, frozenset[str]], ...] = (
     (("city",), "address_city", _NOT_FILE),
     (("state",), "address_state", _NOT_FILE),
     (("province",), "address_state", _NOT_FILE),
@@ -325,7 +330,11 @@ _QUICK: tuple[tuple[tuple[str, ...], str, frozenset[str]], ...] = (
     (("postal",), "address_zip", _NOT_FILE),
     (("country",), "address_country", _NOT_FILE),
 )
-_NAME_ALONE = (("name",), ("full", "name"))
+_ADDRESS_MAX_TOKENS = 4
+_ADDRESS_STOP = frozenset((
+    "salary", "authorization", "authorized", "work", "desired", "preferred", "citizenship",
+    "company", "employer", "user", "username"))
+_NAME_ALONE = (("name",), ("full", "name"), ("your", "name"))
 
 
 def _tokens(text: str) -> tuple[str, ...]:
@@ -341,9 +350,11 @@ def quick_map(label: str, id_or_name: str, type_: str) -> str | None:
     """The fact key for an unmistakable field, else None. Both strings are
     lowercased, non-alphanumerics become spaces, and a phrase has to appear as
     whole tokens (`email` matches "Email address", never "emailing"). `name`
-    alone (or `full name`) means the full name; `first name` and `company name`
-    are their own cases. The identity phrases apply to text-like controls only,
-    `resume` / `cv` / `cover letter` to file inputs only."""
+    alone (`name`, `full name`, `your name`) means the full name; `first name`
+    and `company name` are their own cases. The identity phrases apply to
+    text-like controls only, `resume` / `cv` / `cover letter` to file inputs
+    only. An address token (`city`, `state`, `zip`, ...) hits only a text of at
+    most `_ADDRESS_MAX_TOKENS` tokens with none of `_ADDRESS_STOP` in it."""
     type_ = (type_ or "").lower()
     for text in (label, id_or_name):
         tokens = _tokens(text)
@@ -354,4 +365,8 @@ def quick_map(label: str, id_or_name: str, type_: str) -> str | None:
                 return key
         if type_ in _TEXTISH and tokens in _NAME_ALONE:
             return "full_name"
+        if len(tokens) <= _ADDRESS_MAX_TOKENS and not _ADDRESS_STOP & set(tokens):
+            for phrase, key, types in _ADDRESS_QUICK:
+                if type_ in types and _contains(tokens, phrase):
+                    return key
     return None

@@ -1026,6 +1026,12 @@ def test_check_setup_reports_ok(qtbot, monkeypatch):
     # all-good case doesn't depend on the developer's shell exporting a provider.
     monkeypatch.delenv("RESUME_TAILOR_PROVIDER", raising=False)
     monkeypatch.delenv("SCORE_PROVIDER", raising=False)
+    # The auto-apply rows (cycle 16) are pinned the same way: a key in the
+    # environment, both packages found, Chromium present. Without these the
+    # all-good case would depend on the developer's .env and installs.
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    monkeypatch.setattr(mw.setup_check, "module_found", lambda name: True)
+    monkeypatch.setattr(mw.setup_check, "chromium_installed", lambda **k: True)
     shown = {}
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         staticmethod(lambda *a, **k: shown.setdefault("info", True)))

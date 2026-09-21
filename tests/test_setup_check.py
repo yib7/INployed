@@ -113,6 +113,7 @@ def test_local_problems_labels_each_validator(monkeypatch):
     monkeypatch.setattr(master_validate, "check_setup",
                         lambda: {"master": ["no name"], "answers": ["no email"]})
     monkeypatch.setattr(setup_check, "engine_problems", lambda: [])
+    monkeypatch.setattr(setup_check, "auto_apply_problems", lambda: [])
     assert setup_check.local_problems() == ["[Resume data] no name", "[Apply answers] no email"]
 
 
@@ -143,3 +144,154 @@ def test_job_data_problems_never_invents_a_problem(monkeypatch):
     the network throws — a setup check must not report what it did not observe."""
     monkeypatch.setitem(sys.modules, "scraper", None)  # attribute access raises
     assert setup_check.job_data_problems() == []
+
+
+# --- auto_apply_warnings truth table (cycle 16) ---------------------------------
+
+def _aa(**kw):
+    base = dict(has_key=True, jev_mode="typesafe", sdk_found=True,
+                playwright_found=True, chromium_found=True)
+    base.update(kw)
+    return setup_check.auto_apply_warnings(**base)
+
+
+def test_auto_apply_warnings_all_present_is_empty():
+    assert _aa() == []
+
+
+def test_auto_apply_warnings_missing_key_names_the_console_and_the_settings_row():
+    out = _aa(has_key=False)
+    assert len(out) == 1
+    assert "console.typesafe.ai/keys" in out[0]
+    assert "Settings -> Auto-apply" in out[0]
+
+
+def test_auto_apply_warnings_fake_mode_needs_neither_key_nor_sdk():
+    assert _aa(has_key=False, sdk_found=False, jev_mode="fake") == []
+
+
+def test_auto_apply_warnings_missing_sdk_says_pip_install():
+    out = _aa(sdk_found=False)
+    assert len(out) == 1
+    assert "pip install typesafe-sdk" in out[0]
+
+
+def test_auto_apply_warnings_missing_playwright_says_pip_and_install_chromium():
+    out = _aa(playwright_found=False, chromium_found=False)
+    assert len(out) == 1, "no separate Chromium row when playwright itself is missing"
+    assert "pip install playwright" in out[0]
+    assert "playwright install chromium" in out[0]
+
+
+def test_auto_apply_warnings_missing_chromium_alone():
+    out = _aa(chromium_found=False)
+    assert len(out) == 1
+    assert "playwright install chromium" in out[0]
+    assert "pip install playwright" not in out[0]
+
+
+def test_auto_apply_warnings_everything_missing_is_three_rows():
+    assert len(_aa(has_key=False, sdk_found=False, playwright_found=False,
+                   chromium_found=False)) == 3
+
+
+# --- chromium_installed: the CLI probe AND the cache dir --------------------------
+
+def _run_ok(*a, **k):
+    class R:
+        returncode = 0
+    return R()
+
+
+def _run_fail(*a, **k):
+    class R:
+        returncode = 1
+    return R()
+
+
+def test_chromium_installed_needs_the_cli_and_a_cache_dir(tmp_path):
+    cache = tmp_path / "ms-playwright"
+    assert setup_check.chromium_installed(run=_run_ok, cache_dirs=[cache]) is False
+    cache.mkdir()
+    assert setup_check.chromium_installed(run=_run_ok, cache_dirs=[cache]) is True
+    assert setup_check.chromium_installed(run=_run_fail, cache_dirs=[cache]) is False
+
+
+def test_chromium_installed_swallows_a_probe_that_cannot_run(tmp_path):
+    def boom(*a, **k):
+        raise OSError("no python")
+    cache = tmp_path / "ms-playwright"
+    cache.mkdir()
+    assert setup_check.chromium_installed(run=boom, cache_dirs=[cache]) is False
+
+
+def test_chromium_cache_dirs_cover_localappdata_and_home_cache(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lad"))
+    dirs = setup_check.chromium_cache_dirs()
+    assert tmp_path / "lad" / "ms-playwright" in dirs
+    assert Path.home() / ".cache" / "ms-playwright" in dirs
+
+
+def test_chromium_cache_dirs_skip_a_blank_localappdata(monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    dirs = setup_check.chromium_cache_dirs()
+    assert all(str(d).strip() and "ms-playwright" in str(d) for d in dirs)
+    assert Path.home() / ".cache" / "ms-playwright" in dirs
+
+
+# --- auto_apply_problems: wiring, labels and best-effort silence -----------------
+
+def _stub_auto_apply(monkeypatch, *, stored=None, secrets=None, env_key=None,
+                     found=(), chromium=True):
+    monkeypatch.setattr(setup_check.settings, "load", lambda: stored or {})
+    monkeypatch.setattr(setup_check.settings, "secret_status", lambda: secrets or {})
+    monkeypatch.setattr(setup_check, "module_found", lambda name: name in found)
+    monkeypatch.setattr(setup_check, "chromium_installed", lambda **k: chromium)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    if env_key:
+        monkeypatch.setenv("TYPESAFE_API_KEY", env_key)
+
+
+def test_auto_apply_problems_clean_when_everything_is_in_place(monkeypatch):
+    _stub_auto_apply(monkeypatch, secrets={"TYPESAFE_API_KEY": True},
+                     found=("typesafe_sdk", "playwright"))
+    assert setup_check.auto_apply_problems() == []
+
+
+def test_auto_apply_problems_labels_every_row(monkeypatch):
+    _stub_auto_apply(monkeypatch, found=(), chromium=False)
+    out = setup_check.auto_apply_problems()
+    assert len(out) == 3
+    assert all(w.startswith("[Auto-apply] ") for w in out)
+
+
+def test_auto_apply_problems_env_key_counts_as_present(monkeypatch):
+    _stub_auto_apply(monkeypatch, env_key="ts-key", found=("typesafe_sdk", "playwright"))
+    assert setup_check.auto_apply_problems() == []
+
+
+def test_auto_apply_problems_honours_fake_mode_from_settings(monkeypatch):
+    _stub_auto_apply(monkeypatch, stored={"auto_apply_jev_mode": "fake"},
+                     found=("playwright",))
+    assert setup_check.auto_apply_problems() == []
+
+
+def test_auto_apply_problems_is_silent_when_settings_cannot_be_read(monkeypatch):
+    def boom():
+        raise OSError("config.json is locked")
+    monkeypatch.setattr(setup_check.settings, "load", boom)
+    assert setup_check.auto_apply_problems() == []
+
+
+def test_local_problems_includes_the_auto_apply_rows(monkeypatch):
+    from resume_tailor import master_validate
+    monkeypatch.setattr(master_validate, "check_setup", lambda: {"master": [], "answers": []})
+    monkeypatch.setattr(setup_check, "engine_problems", lambda: [])
+    monkeypatch.setattr(setup_check, "auto_apply_problems", lambda: ["[Auto-apply] x"])
+    assert setup_check.local_problems() == ["[Auto-apply] x"]
+
+
+def test_module_found_uses_find_spec_without_importing():
+    assert setup_check.module_found("json") is True
+    assert setup_check.module_found("no_such_module_zzz") is False
+    assert "no_such_module_zzz" not in sys.modules

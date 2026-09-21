@@ -21,9 +21,12 @@ call them: this is setup-check logic, not job-data logic.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
+import subprocess
 import sys
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import jobsdata
@@ -112,6 +115,98 @@ def engine_problems() -> list[str]:
         return []
 
 
+# --- Auto-apply (cycle 16): the Jev judge and the Playwright browser -------------
+
+def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
+                        playwright_found: bool, chromium_found: bool) -> list[str]:
+    """Warn when an auto-apply run would refuse to start. Pure, like the two
+    truth tables above.
+
+    The key and the SDK only matter in 'typesafe' mode: 'fake' is the dry-run
+    judge and needs neither. Playwright and Chromium are needed in every mode.
+    A missing Playwright package folds the Chromium row into its own line,
+    since `playwright install chromium` cannot run without it.
+    """
+    out: list[str] = []
+    if jev_mode == "typesafe":
+        if not has_key:
+            out.append("Auto-apply judge is 'typesafe' but no TypeSafe API key is saved. "
+                       "Create one at console.typesafe.ai/keys and paste it into "
+                       "Settings -> Auto-apply -> TypeSafe API key (Jev judge), or set "
+                       "the judge to 'fake' for a dry run.")
+        if not sdk_found:
+            out.append("The typesafe_sdk package is not installed: run "
+                       "`pip install typesafe-sdk` (it is in requirements.txt).")
+    if not playwright_found:
+        out.append("Playwright is not installed, and auto-apply runs drive a Playwright "
+                   "Chromium: run `pip install playwright`, then "
+                   "`playwright install chromium`.")
+    elif not chromium_found:
+        out.append("Playwright is installed but its Chromium is not: run "
+                   "`playwright install chromium`.")
+    return out
+
+
+def module_found(name: str) -> bool:
+    """Is `name` importable? A find_spec probe, so nothing is imported (the
+    Playwright package starts a driver on import and the SDK pulls pydantic)."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def chromium_cache_dirs() -> list[Path]:
+    """Where `playwright install` puts its browsers: `ms-playwright` under %LOCALAPPDATA%
+    on Windows and `~/.cache/ms-playwright` elsewhere. Both are listed so the
+    probe works from either side of a shared home."""
+    dirs: list[Path] = []
+    lad = os.environ.get("LOCALAPPDATA", "").strip()
+    if lad:
+        dirs.append(Path(lad) / "ms-playwright")
+    dirs.append(Path.home() / ".cache" / "ms-playwright")
+    return dirs
+
+
+def chromium_installed(run: Callable[..., object] = subprocess.run,
+                       cache_dirs: Iterable[Path] | None = None) -> bool:
+    """Both halves must hold: `python -m playwright --version` exits 0 AND an
+    `ms-playwright` cache dir exists. The CLI alone proves the package; the dir
+    proves a browser was downloaded. Both are injectable so a test can fake
+    either without a real install. Any failure to probe reads as False, since a
+    browser the check cannot see is one a run cannot launch either."""
+    dirs = list(cache_dirs) if cache_dirs is not None else chromium_cache_dirs()
+    if not any(d.is_dir() for d in dirs):
+        return False
+    try:
+        result = run([sys.executable, "-m", "playwright", "--version"],
+                     capture_output=True, text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        return False
+    return getattr(result, "returncode", 1) == 0
+
+
+def auto_apply_problems() -> list[str]:
+    """Key, SDK, Playwright and Chromium rows for the Jev-judged auto-apply run.
+
+    Best-effort like `engine_problems`: a failure to read settings returns [].
+    The key counts as present from either the saved .env or the live
+    environment, the same two places `jev.TypeSafeJev` looks.
+    """
+    try:
+        stored = settings.load()
+        jev_mode = str(stored.get("auto_apply_jev_mode") or "typesafe").strip().lower()
+        has_key = settings.secret_status().get("TYPESAFE_API_KEY", False) or bool(
+            os.environ.get("TYPESAFE_API_KEY", "").strip())
+        playwright_found = module_found("playwright")
+        chromium_found = playwright_found and chromium_installed()
+        return [f"[Auto-apply] {w}" for w in auto_apply_warnings(
+            has_key, jev_mode, module_found("typesafe_sdk"),
+            playwright_found, chromium_found)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def local_problems() -> list[str]:
     """Everything checkable from local files and environment, inline-safe.
 
@@ -124,6 +219,7 @@ def local_problems() -> list[str]:
     for label, key in (("Resume data", "master"), ("Apply answers", "answers")):
         problems.extend(f"[{label}] {e}" for e in result.get(key, []))
     problems.extend(engine_problems())
+    problems.extend(auto_apply_problems())
     return problems
 
 

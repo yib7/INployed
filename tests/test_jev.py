@@ -165,6 +165,22 @@ def test_replay_records_on_a_miss_and_replays_on_a_hit(tmp_path):
     assert (r.hits, r.misses) == (1, 1)
 
 
+def test_replay_hit_over_typesafe_leaves_usage_at_zero_after_the_replay(monkeypatch, tmp_path):
+    # _sdk_response() only answers is_captcha, which_option and fit, so the
+    # question set here must match it for the second call to land as a hit.
+    q = {k: QUESTIONS[k] for k in ("is_captcha", "which_option", "fit")}
+    record = []
+    _fake_sdk(monkeypatch, _sdk_response(), record)
+    cache = tmp_path / "cache.json"
+    r = jev.ReplayJev(jev.TypeSafeJev(api_key="k-test"), cache)
+    r.judge(STATE, q)
+    assert jev.usage()["requests"] == 1
+    jev.reset_usage()
+    r.judge(STATE, q)
+    assert jev.usage() == {"requests": 0, "input_tokens": 0, "usd": 0.0}
+    assert (r.hits, r.misses) == (1, 1)
+
+
 def test_replay_survives_a_fresh_instance_over_the_same_file(tmp_path):
     cache = tmp_path / "cache.json"
     jev.ReplayJev(_Counting(), cache).judge(STATE, QUESTIONS)

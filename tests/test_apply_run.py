@@ -456,7 +456,8 @@ def test_code_gate_with_an_inbox_hook_fills_the_code_and_reaches_confirmation(
     assert out.status == "submitted", out
     assert Inbox.calls == [("127.0.0.1", "https://mail.example.com/inbox")]
     record = Path(out.record_path).read_text(encoding="utf-8")
-    assert "State: code_gate" in record and "Security code: MKPZ3QRA" in record
+    assert "State: code_gate" in record and "Security code: <hidden>" in record
+    assert "MKPZ3QRA" not in record                    # the emailed code is never written
     assert "Verify and continue (advance)" in record
 
 
@@ -683,6 +684,11 @@ def test_write_record_hides_a_password_field_value(tmp_path):
     assert "- Password: <hidden>" in text and "- : <hidden>" in text
     assert "- Passport number: unlikely" in text          # a text control is not a password
     assert "- Uploads:\n  - Resume: Jane.pdf" in text
+    pages[0]["filled"].append({"n": 5, "label": "Security code", "value": "MKPZ3QRA",
+                               "type": "text", "id_or_name": "code", "hidden": True})
+    text = apply_run.write_record(tmp_path, entry, "needs_human", "x", pages, {}, "",
+                                  missing=[]).read_text(encoding="utf-8")
+    assert "- Security code: <hidden>" in text and "MKPZ3QRA" not in text
     assert "- Email: ok (p_correct 0.90, p_placeholder 0.10)" in text
     assert "- Clicked: Sign in (advance)" in text
     assert "- Nickname (text)" in text

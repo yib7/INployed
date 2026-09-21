@@ -188,7 +188,8 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
                  pages: list[dict], jev_usage: dict, page_text: str, *,
                  missing: list[dict] | None = None) -> Path:
     """`apply_record.md` in the job folder. A value from a password field
-    (type `other`, id or label containing "pass") is written as `<hidden>`."""
+    (`_is_password`) or a row marked `hidden` (the emailed code) is written
+    as `<hidden>`."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     lines = [f"# Apply record: {entry.get('title', '')} at {entry.get('company', '')}", "",
@@ -207,7 +208,7 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
         if filled:
             lines.append("- Filled:")
             for r in filled:
-                value = HIDDEN if _is_password(r) else str(r.get("value", ""))
+                value = HIDDEN if r.get("hidden") or _is_password(r) else str(r.get("value", ""))
                 lines.append(f"  - {r.get('label', '')}: {value}")
         if uploads:
             lines.append("- Uploads:")
@@ -816,7 +817,7 @@ class _JobRun:
         rec["filled"].append({"n": target.n, "label": target.label,
                               "value": filled[0].value if filled else "",
                               "type": target.type, "id_or_name": target.id_or_name,
-                              "upload": False})
+                              "upload": False, "hidden": True})
         button = plan.buttons.get("advance") or plan.buttons.get("submit")
         if button is None:
             raise _Parked("needs_human", "code entered; no button to continue", CODE_NOTE)

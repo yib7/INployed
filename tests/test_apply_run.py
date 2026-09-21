@@ -513,11 +513,18 @@ def test_can_submit_park_reason():
     assert apply_run.can_submit(plan, _ok_verification(), _ON) == (False, plan.park_reason)
 
 
-def test_can_submit_required_skip():
+def test_can_submit_required_field_without_an_answer():
+    """A required field whose action is anything other than fill / select /
+    upload (a skip, or a `generate` nobody resolved) blocks the submit."""
+    for action in ("skip", "generate", "other"):
+        plan = _ok_plan()
+        plan.fields[1].required = True
+        plan.fields[1].action = action
+        assert apply_run.can_submit(plan, _ok_verification(), _ON) == (
+            False, "required field without an answer: Nickname"), action
     plan = _ok_plan()
-    plan.fields[1].required = True
-    assert apply_run.can_submit(plan, _ok_verification(), _ON) == (
-        False, "required field skipped: Nickname")
+    plan.fields[1].action = "generate"                  # optional: no bar
+    assert apply_run.can_submit(plan, _ok_verification(), _ON) == (True, "")
 
 
 def test_can_submit_required_field_unverified_or_failed():
@@ -547,6 +554,48 @@ def test_can_submit_submit_button():
     plan.buttons["submit"] = (3, 0.85)
     assert apply_run.can_submit(plan, _ok_verification(), _ON) == (
         False, "submit button confidence 0.85 below 0.90")
+
+
+# --- the review page resolves generation before the gate ---------------------------------
+
+def test_review_page_resolves_generation_before_the_gate(
+        context, job_folder, tmp_path, catalog_builder):
+    import apply_form
+    e = _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
+    run = apply_run._JobRun(_runner(context, tmp_path), context, e)
+    run._prepare()
+    essay = apply_form.Field(n=0, locator=(0, "#why"), label="Your motivation for this role",
+                             type="textarea", required=True, help="Max 500 characters.")
+    digest = apply_form.FormDigest(url_host="boards.greenhouse.io", title="Review",
+                                   text="Review your application", fields=[essay],
+                                   buttons=[apply_form.Button(0, (0, "#go"), "Submit", "submit")])
+    plan = FillPlan(fields=[PlannedField(n=0, locator=essay.locator, label=essay.label,
+                                         required=True, fact_key="needs_generation", value="",
+                                         option=None, confidence=0.9, action="generate")],
+                    buttons={"submit": (0, 0.95)},
+                    flags={"asks_for_prohibited": 0.1, "requires_account": 0.1,
+                           "has_captcha": 0.1})
+    rec = {"url": "https://boards.greenhouse.io/acme/review", "state": "review_page",
+           "confidence": 0.9, "filled": [], "verification": [], "clicked": [], "flags": {}}
+    with pytest.raises(apply_run._Parked) as info:
+        run._review_page(digest, plan, rec)
+    assert info.value.status == "needs_human"
+    assert info.value.reason == "required field without an answer: Your motivation for this role"
+    missing = _entry()["missing_answers"]
+    assert [(m["question"], m["context"]) for m in missing] == [
+        ("Your motivation for this role", "Max 500 characters.")]
+
+    class Gen:
+        def answer(self, field, catalog, judge, *, budget):
+            return "Two years of ingestion pipelines at Acme Corp."
+    run.r.answergen = Gen()
+    plan.fields[0].action = "generate"
+    plan.missing.clear()
+    plan.park_reason = ""
+    with pytest.raises(apply_run._Parked) as info:
+        run._review_page(digest, plan, rec)
+    # resolved: the gate now fails on verification (nothing was typed on a review page)
+    assert info.value.reason == "required field not verified: Your motivation for this role"
 
 
 # --- write_record: the hidden rule ---------------------------------------------------------

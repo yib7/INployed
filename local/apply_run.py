@@ -85,6 +85,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_batch_cap": 10,
     "auto_apply_generate": True,
 }
+_ACTED = ("fill", "select", "upload")     # the actions that put a value on the page
+
 _PARK_STATES = {
     "captcha_or_bot_check": "captcha or bot check on the page",
     "payment_request": "payment requested",
@@ -240,25 +242,27 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
                settings: dict) -> tuple[bool, str]:
     """(True, "") when the application may be sent, else (False, the first
     failing reason): the setting, the plan's park reason, a required field
-    skipped, a required field unverified, the prohibited and captcha flags,
-    the submit button's confidence."""
+    without an answer (any action other than fill / select / upload), a
+    required field unverified, the prohibited and captcha flags, the submit
+    button's confidence."""
     if not settings.get("auto_apply_submit", True):
         return False, "auto_apply_submit is off"
     if plan.park_reason:
         return False, plan.park_reason
-    for pf in plan.fields:
-        if pf.required and pf.action == "skip":
-            return False, f"required field skipped: {pf.label}"
     by_n = {v.n: v for v in verification}
     for pf in plan.fields:
-        if pf.required and pf.action in ("fill", "select", "upload"):
-            v = by_n.get(pf.n)
-            if v is None:
-                return False, f"required field not verified: {pf.label}"
-            if not v.ok:
-                return False, (f"required field failed verification: {pf.label} "
-                               f"(p_correct {v.p_correct:.2f}, p_placeholder "
-                               f"{v.p_placeholder:.2f})")
+        if not pf.required:
+            continue
+        if pf.action not in _ACTED:
+            # a skip, or a `generate` nobody resolved: the field holds nothing
+            return False, f"required field without an answer: {pf.label}"
+        v = by_n.get(pf.n)
+        if v is None:
+            return False, f"required field not verified: {pf.label}"
+        if not v.ok:
+            return False, (f"required field failed verification: {pf.label} "
+                           f"(p_correct {v.p_correct:.2f}, p_placeholder "
+                           f"{v.p_placeholder:.2f})")
     prohibited = float(plan.flags.get("asks_for_prohibited", 0.0))
     if prohibited > apply_judge.PROHIBITED_MAX:
         return False, f"page asks for prohibited data (p={prohibited:.2f})"
@@ -532,7 +536,7 @@ class _JobRun:
             elif state == "application_form":
                 self._application_form(digest, answers, plan, rec)
             elif state == "review_page":
-                self._submit_gate(digest, plan, [], rec)
+                self._review_page(digest, plan, rec)
             elif state == "login_wall":
                 if not self.r.accounts.login(self.page, digest, digest.url_host):
                     raise _Parked("needs_human", "login wall", LOGIN_NOTE)
@@ -640,6 +644,16 @@ class _JobRun:
             self._submit_gate(digest, plan, verification, rec)
             return
         raise _Parked("needs_human", "no way forward on this page")
+
+    def _review_page(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict) -> None:
+        """A review page still resolves `generate` fields and records what is
+        missing before the gate, so an unresolved required essay parks."""
+        self._resolve_generation(digest, plan)
+        for question, context in plan.missing:
+            self._add_missing(question, context)
+        if plan.park_reason:
+            raise _Parked("needs_human", plan.park_reason)
+        self._submit_gate(digest, plan, [], rec)
 
     def _resolve_generation(self, digest: apply_form.FormDigest, plan: FillPlan) -> None:
         by_n = {f.n: f for f in digest.fields}

@@ -226,6 +226,22 @@ def test_essay_textarea_is_required_and_help_carries_the_maxlength(browser_page,
     assert _by_id(d, "first_name").help == ""
 
 
+def test_preceding_text_walk_stops_at_another_controls_label(browser_page):
+    browser_page.set_content("""
+      <body>
+        <h2>Location</h2>
+        <label><input type="checkbox" name="remote_ok"> Remote OK</label>
+        <input name="city">
+        <div>Preferred office</div>
+        <input name="office">
+      </body>""")
+    d = apply_form.extract(browser_page)
+    by = {f.id_or_name: f for f in d.fields}
+    assert by["remote_ok"].label == "Remote OK"
+    assert by["city"].label == ""            # the neighbour's label text is not the city's
+    assert by["office"].label == "Preferred office"
+
+
 def test_confirmation_page_has_no_fields(browser_page, fixture_url):
     browser_page.goto(fixture_url("confirmation.html"))
     d = apply_form.extract(browser_page)

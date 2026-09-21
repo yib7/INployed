@@ -116,6 +116,37 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            DOM (apply_fill.open_listbox_options reads it live otherwise).
 #   buttons  button, [role=button], input[type=submit|button], a.btn,
 #            a[class*=button]; text from innerText, value, aria-label, title.
+# The label of one radio or checkbox option, self-contained so `apply_fill` can
+# run the same rule on a live locator: label[for], aria-label, an enclosing
+# label (minus the control's own text), the text that follows it, else its
+# value. Spliced into `_EXTRACT_JS` at __OPTION_LABEL__.
+RADIO_OPTION_LABEL_JS = r"""(el) => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const minus = (node) => {
+    const c = node.cloneNode(true);
+    c.querySelectorAll('input, select, textarea, button, script, style').forEach((n) => n.remove());
+    return norm(c.textContent);
+  };
+  if (el.id) {
+    const l = document.querySelector('label[for="' + el.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
+    if (l) { const t = minus(l); if (t) return t; }
+  }
+  const aria = norm(el.getAttribute('aria-label'));
+  if (aria) return aria;
+  const enc = el.closest('label');
+  if (enc) { const t = minus(enc); if (t) return t; }
+  let n = el.nextSibling;
+  while (n) {
+    if (n.nodeType === 3) { const t = norm(n.data); if (t) return t; }
+    else if (n.nodeType === 1) {
+      if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(n.tagName)) break;
+      const t = minus(n); if (t) return t;
+    }
+    n = n.nextSibling;
+  }
+  return norm(el.value);
+}"""
+
 _EXTRACT_JS = r"""
 (cap) => {
   const CONTROL = /^(INPUT|SELECT|TEXTAREA|BUTTON)$/;
@@ -174,20 +205,14 @@ _EXTRACT_JS = r"""
       }
       const p = node.parentElement;
       if (p && /^(SCRIPT|STYLE|OPTION|NOSCRIPT)$/.test(p.tagName)) continue;
+      const lab = p && p.closest('label');
+      if (lab && lab.control && lab.control !== el) return '';
       const t = norm(node.data);
       if (t) return t.slice(-120);
     }
     return '';
   };
-  const followingText = (el) => {
-    let n = el.nextSibling;
-    while (n) {
-      if (n.nodeType === 3) { const t = norm(n.data); if (t) return t; }
-      else if (n.nodeType === 1) { if (CONTROL.test(n.tagName)) return ''; const t = textMinusControls(n); if (t) return t; }
-      n = n.nextSibling;
-    }
-    return '';
-  };
+  const optionLabel = __OPTION_LABEL__;
   const labelElementFor = (el) => {
     if (el.id) {
       const l = document.querySelector('label[for=' + q(el.id) + ']');
@@ -208,15 +233,6 @@ _EXTRACT_JS = r"""
     const legend = fs && fs.querySelector('legend');
     if (legend) { const t = norm(legend.textContent); if (t) return t; }
     return precedingText(el, enclosing);
-  };
-  const optionLabel = (radio) => {
-    const forLabel = labelElementFor(radio);
-    if (forLabel) { const t = textMinusControls(forLabel); if (t) return t; }
-    const aria = norm(radio.getAttribute('aria-label'));
-    if (aria) return aria;
-    const enclosing = radio.closest('label');
-    if (enclosing) { const t = textMinusControls(enclosing); if (t) return t; }
-    return followingText(radio) || norm(radio.value);
   };
   const groupLabel = (first) => {
     const rg = first.closest('[role=radiogroup]');
@@ -352,7 +368,7 @@ _EXTRACT_JS = r"""
   const text = document.body ? (document.body.innerText || '') : '';
   return { fields: out, buttons: buttons, text: text.slice(0, cap) };
 }
-"""
+""".replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS)
 
 _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
 

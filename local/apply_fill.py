@@ -353,6 +353,13 @@ def _settle(page, timeout_s: float, *, navigated: list | None = None) -> None:
         page.wait_for_timeout(100)
 
 
+def settle(page, timeout_s: float = 20) -> None:
+    """Wait for `page` to load and hold still after a click the caller made
+    itself (the runner clicks a posting's Apply button inside
+    `page.expect_popup`, so it cannot go through `click_button`)."""
+    _settle(page, timeout_s)
+
+
 def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:
     """Click button `n` of `digest` and wait, up to `timeout_s`, for a
     navigation or a DOM change. True when something changed, and only after

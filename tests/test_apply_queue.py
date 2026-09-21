@@ -326,6 +326,20 @@ def test_claim_empty_queue_returns_none(tmp_path):
     assert apply_queue.claim(path=_q(tmp_path)) is None
 
 
+def test_claim_by_job_id_takes_that_queued_entry_only(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("old"), path=q)
+    apply_queue.enqueue(_entry("mine"), path=q)
+    apply_queue.enqueue(_entry("done", status="submitted"), path=q)
+    got = apply_queue.claim("apply_run", path=q, job_id="mine")
+    assert got["job_posting_id"] == "mine" and got["status"] == "in_progress"
+    assert got["claimed_by"] == "apply_run"
+    assert apply_queue.load(q)["jobs"][0]["status"] == "queued"     # "old" untouched
+    assert apply_queue.claim(path=q, job_id="done") is None         # terminal: never
+    assert apply_queue.claim(path=q, job_id="nope") is None         # unknown: None
+    assert apply_queue.claim(path=q, job_id="mine") is None         # already in progress
+
+
 # --- set_artifacts: fills paths, flips tailoring -> queued ----------------------
 
 def test_set_artifacts_fills_and_flips_tailoring_to_queued(tmp_path):

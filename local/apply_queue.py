@@ -373,19 +373,23 @@ def _fifo_key(e: Dict[str, Any]) -> tuple:
     return (0, qa) if qa else (1, "")
 
 
-def claim(claimed_by: str = "agent", path: Optional[Path] = None
-          ) -> Optional[Dict[str, Any]]:
+def claim(claimed_by: str = "agent", path: Optional[Path] = None, *,
+          job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Claim the FIFO-oldest "queued" entry (by queued_at; list order breaks
     ties). A blank/missing queued_at sorts LAST (newest-unknown), so a
     hand-edited or pre-schema entry never jumps ahead of older jobs.
     Sets in_progress / attempts+1 / started_at / claimed_by. Entries that are
-    tailoring or terminal are never claimed. None when nothing is queued."""
+    tailoring or terminal are never claimed. None when nothing is queued.
+    `job_id` claims that one entry when it is queued (the `apply_run one`
+    verb), and None when it is missing or in any other status."""
     with locked(path):
         data = load(path, quarantine=True)   # under locked(): may rename aside
         best = None
         best_key = None
         for e in data["jobs"]:
             if e.get("status") != "queued":
+                continue
+            if job_id is not None and str(e.get("job_posting_id")) != str(job_id):
                 continue
             key = _fifo_key(e)
             if best is None or key < best_key:

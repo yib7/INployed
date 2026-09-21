@@ -294,6 +294,36 @@ def test_wall_clock_exhaustion_parks(context, fixture_url, job_folder, catalog_b
     assert out.status == "needs_human" and out.reason == "time budget exhausted"
 
 
+def test_wall_clock_passing_mid_fill_stops_the_fill_on_the_runner_clock(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    """The runner's clock reaches the deadline after the loop check, inside
+    `apply_fill.apply`: nothing is typed, and the next loop check parks."""
+    base = 1e9                     # far past time.monotonic(): only the injected clock can expire
+    now = [base]
+
+    def _clock():
+        return now[0]
+    _enqueue(job_folder, fixture_url("ashby_steps.html"))
+    runner = apply_run.Runner(jev=jev.FakeJev(), profile_dir=tmp_path / "profile",
+                              settings={"auto_apply_headless": True}, context=context,
+                              run_context=_RUN_CONTEXT, clock=_clock)
+    real = apply_run.apply_fill.apply
+
+    def _late(page, plan, **kw):
+        now[0] = base + apply_run.JOB_WALL_CLOCK_S + 1.0     # the clock jumps during the fill
+        return real(page, plan, **kw)
+    runner_apply = apply_run.apply_fill
+    orig = runner_apply.apply
+    runner_apply.apply = _late
+    try:
+        out = runner.drain(cap=1)[0]
+    finally:
+        runner_apply.apply = orig
+    assert out.status == "needs_human" and out.reason == "time budget exhausted"
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("#first_name").input_value() == ""          # the fill saw the clock
+
+
 # --- (f) drain claims FIFO until the queue is empty ----------------------------------
 
 def test_drain_claims_fifo_until_the_queue_is_empty(

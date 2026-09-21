@@ -638,7 +638,7 @@ class _JobRun:
             self._add_missing(question, context)
         if plan.park_reason:
             raise _Parked("needs_human", plan.park_reason)
-        filled = apply_fill.apply(self.page, plan, deadline=self.deadline)
+        filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock)
         verification = self._verify(filled)
         verification = self._retry_failed(plan, filled, verification)
         self._record_fill(rec, digest, plan, filled, verification)
@@ -709,7 +709,7 @@ class _JobRun:
         self.log.info("job %s: retrying %d field(s) that failed verification",
                       self.job_id, len(failed_ns))
         retry = FillPlan(fields=[pf for pf in plan.fields if pf.n in failed_ns])
-        refilled = apply_fill.apply(self.page, retry, deadline=self.deadline)
+        refilled = apply_fill.apply(self.page, retry, deadline=self.deadline, clock=self.r.clock)
         again = {v.n: v for v in self._verify(refilled)}
         by_n = {f.n: f for f in refilled}
         for i, f in enumerate(filled):
@@ -801,7 +801,7 @@ class _JobRun:
         pf = PlannedField(n=target.n, locator=target.locator, label=target.label,
                           required=True, fact_key=None, value=str(code), option=None,
                           confidence=1.0, action="fill")
-        filled = apply_fill.apply(self.page, FillPlan(fields=[pf]), deadline=self.deadline)
+        filled = apply_fill.apply(self.page, FillPlan(fields=[pf]), deadline=self.deadline, clock=self.r.clock)
         rec["filled"].append({"n": target.n, "label": target.label,
                               "value": filled[0].value if filled else "",
                               "type": target.type, "id_or_name": target.id_or_name,

@@ -265,17 +265,19 @@ def _read_back(loc, kind: dict[str, str] | None) -> str:
 
 
 def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
-          deadline: float | None = None) -> list[Filled]:
+          deadline: float | None = None,
+          clock: Callable[[], float] = time.monotonic) -> list[Filled]:
     """Perform every `fill` / `select` / `upload` in `plan` and return the
     read-back value of each acted field. `skip` and `generate` are not acted
-    on and do not appear in the result. `deadline` is a `time.monotonic()`
-    instant; once it has passed the remaining fields are left alone and the
-    list so far comes back (the job's wall clock belongs to the caller)."""
+    on and do not appear in the result. `deadline` is an instant on `clock`
+    (`time.monotonic` by default; the runner passes its own); once it has
+    passed the remaining fields are left alone and the list so far comes back
+    (the job's wall clock belongs to the caller)."""
     out: list[Filled] = []
     for pf in plan.fields:
         if pf.action not in ("fill", "select", "upload"):
             continue
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock() >= deadline:
             _say(log, f"apply_fill: deadline passed before {pf.label!r}; {len(out)} filled")
             break
         loc = None

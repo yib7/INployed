@@ -242,6 +242,17 @@ def test_apply_stops_at_a_passed_deadline(browser_page, fixture_url):
     assert any("deadline" in line for line in lines)
 
 
+def test_apply_reads_the_deadline_on_the_injected_clock(browser_page, fixture_url):
+    """The deadline is an instant on `clock`, so a runner with its own clock
+    (tests, a frozen clock) is honoured; the real clock is the default."""
+    browser_page.goto(fixture_url("lever_single.html"))
+    d = apply_form.extract(browser_page)
+    plan = FillPlan(fields=[_planned(_field(d, "name"), "fill", "Jane Doe")])
+    ticks = iter([5.0, 5.0])
+    assert apply_fill.apply(browser_page, plan, deadline=10.0, clock=lambda: next(ticks)) != []
+    assert apply_fill.apply(browser_page, plan, deadline=10.0, clock=lambda: 10.0) == []
+
+
 def test_apply_with_a_future_deadline_fills(browser_page, fixture_url):
     browser_page.goto(fixture_url("lever_single.html"))
     d = apply_form.extract(browser_page)

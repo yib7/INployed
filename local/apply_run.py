@@ -52,6 +52,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import apply_answergen  # noqa: E402
 import apply_facts  # noqa: E402
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
@@ -411,6 +412,11 @@ def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
             "usd": after["usd"] - before["usd"]}
 
 
+def generated_count(pages: list[dict]) -> int:
+    """Accepted generated answers across the job's page records."""
+    return sum(1 for p in pages for g in p.get("generated", []) if g.get("ok"))
+
+
 def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
                  pages: list[dict], jev_usage: dict, page_text: str, *,
                  missing: list[dict] | None = None) -> Path:
@@ -436,7 +442,8 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
             lines.append("- Filled:")
             for r in filled:
                 value = HIDDEN if r.get("hidden") or _is_password(r) else str(r.get("value", ""))
-                lines.append(f"  - {r.get('label', '')}: {value}")
+                mark = " (generated)" if r.get("generated") else ""
+                lines.append(f"  - {r.get('label', '')}: {value}{mark}")
         if uploads:
             lines.append("- Uploads:")
             for r in uploads:
@@ -448,6 +455,11 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
                 lines.append(f"  - {v.get('label', '')}: {mark} (p_correct "
                              f"{float(v.get('p_correct', 0.0)):.2f}, p_placeholder "
                              f"{float(v.get('p_placeholder', 0.0)):.2f})")
+        if p.get("generated"):
+            lines.append("- Generated answers:")
+            for g in p["generated"]:
+                state = "generated" if g.get("ok") else "rejected"
+                lines.append(f"  - {g.get('label', '')}: {state} ({g.get('note', '')})")
         if p.get("clicked"):
             lines.append("- Clicked: " + "; ".join(str(c) for c in p["clicked"]))
         if p.get("flags"):
@@ -466,7 +478,8 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
               f"- Requests: {int(jev_usage.get('requests', 0))}",
               f"- Input tokens: {int(jev_usage.get('input_tokens', 0))}",
               f"- Cost: ${float(jev_usage.get('usd', 0.0)):.4f}",
-              f"- Model: {jev.MODEL}", ""]
+              f"- Model: {jev.MODEL}",
+              f"- Generated answers used: {generated_count(pages)}", ""]
     if page_text:
         lines += ["## Final page text", "", "```", page_text.strip(), "```", ""]
     path = folder / RECORD_NAME
@@ -858,7 +871,8 @@ class _JobRun:
 
     def _new_page_record(self, state: str, conf: float) -> dict:
         rec = {"url": self.page.url, "state": state, "confidence": conf,
-               "filled": [], "verification": [], "clicked": [], "flags": {}}
+               "filled": [], "verification": [], "clicked": [], "flags": {},
+               "generated": []}
         self.pages.append(rec)
         return rec
 
@@ -949,7 +963,7 @@ class _JobRun:
 
     def _fill_and_verify(self, digest: apply_form.FormDigest, plan: FillPlan,
                          rec: dict) -> list[VerifyResult]:
-        self._resolve_generation(digest, plan)
+        self._resolve_generation(digest, plan, rec)
         for question, context in plan.missing:
             self._add_missing(question, context)
         if plan.park_reason:
@@ -971,25 +985,39 @@ class _JobRun:
         verification = self._fill_and_verify(digest, plan, rec)
         self._submit_gate(digest, plan, verification, rec)
 
-    def _resolve_generation(self, digest: apply_form.FormDigest, plan: FillPlan) -> None:
+    def _resolve_generation(self, digest: apply_form.FormDigest, plan: FillPlan,
+                            rec: dict | None = None) -> None:
+        """Each `generate` field goes through the answergen hook once while the
+        job's draft budget lasts. An accepted draft becomes a fill (the record
+        marks it generated); a rejected or missing one leaves an optional field
+        blank and flagged, and parks a required one with the hook's note."""
         by_n = {f.n: f for f in digest.fields}
+        rows = rec.setdefault("generated", []) if rec is not None else []
         for pf in plan.fields:
             if pf.action != "generate":
                 continue
             f = by_n.get(pf.n)
-            text = None
-            if self.gen_budget > 0 and f is not None:
-                text = self.r.answergen.answer(f, self.catalog, self.r.jev,
-                                               budget=self.gen_budget)
-            if text:
+            text, note = None, ""
+            if self.gen_budget <= 0:
+                note = "generation budget exhausted"
+            elif f is not None:
+                # every attempt spends a draft (a rejected one cost the same calls)
                 self.gen_budget -= 1
+                text = self.r.answergen.answer(f, self.catalog, self.r.jev,
+                                               budget=self.gen_budget + 1)
+                note = str(getattr(getattr(self.r.answergen, "last", None), "note", "") or "")
+            if text:
                 pf.action, pf.value = "fill", str(text)
+                rows.append({"label": pf.label, "ok": True, "note": note or "generated"})
                 continue
+            rows.append({"label": pf.label, "ok": False, "note": note or "no draft"})
             pf.action = "skip"
             hint = (f.help or f.placeholder or f.type) if f is not None else ""
             plan.missing.append((pf.label, hint))
             if pf.required and not plan.park_reason:
                 plan.park_reason = f"required field without an answer: {pf.label}"
+                if note:
+                    plan.park_reason += f"; {note}"
 
     def _add_missing(self, question: str, context: str) -> None:
         self.missing.append({"question": question, "context": context, "suggestion": ""})
@@ -1025,13 +1053,16 @@ class _JobRun:
                      filled: list[apply_fill.Filled], verification: list[VerifyResult]) -> None:
         fields = {f.n: f for f in digest.fields}
         actions = {pf.n: pf.action for pf in plan.fields}
+        generated = {pf.n for pf in plan.fields
+                     if pf.fact_key == "needs_generation" and pf.action == "fill"}
         for f in filled:
             df = fields.get(f.n)
             rec["filled"].append({
                 "n": f.n, "label": f.label, "value": f.value,
                 "type": df.type if df else "", "id_or_name": df.id_or_name if df else "",
                 "autocomplete": df.autocomplete if df else "",
-                "upload": actions.get(f.n) == "upload"})
+                "upload": actions.get(f.n) == "upload",
+                "generated": f.n in generated})
         rec["verification"] = [{"n": v.n, "label": v.label, "ok": v.ok,
                                 "p_correct": v.p_correct, "p_placeholder": v.p_placeholder}
                                for v in verification]
@@ -1164,6 +1195,7 @@ class _JobRun:
 
     def _finish(self, status: str, reason: str, tab_note: str = "") -> Outcome:
         usage = _usage_delta(self.usage_before, jev.usage())
+        usage["generated"] = generated_count(self.pages)
         text = ""
         if self.page is not None:
             try:
@@ -1358,7 +1390,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"apply_run: {e}", file=sys.stderr)
             return 2
         queue = Path(args.queue) if args.queue else None
-        runner = Runner(jev=judge, queue_path=queue, profile_dir=profile, settings=cfg)
+        answergen = (apply_answergen.Generator() if cfg["auto_apply_generate"]
+                     else NotConfigured())
+        runner = Runner(jev=judge, queue_path=queue, profile_dir=profile, settings=cfg,
+                        answergen=answergen)
         if args.verb == "one":
             entry = apply_queue.claim("apply_run", path=queue, job_id=args.job_id)
             if entry is None:

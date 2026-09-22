@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Analyst - Wingtip Toys</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Data Analyst</h1>
+<p>Wingtip Toys, Portland, OR</p>
+<div id="application">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="essay1">Tell us about your motivation for this role</label><textarea id="essay1" name="essay1" rows="4" maxlength="1200"></textarea></div>
+  <div class="field"><label for="essay2">Describe a project you are proud of and your motivation for this role</label><textarea id="essay2" name="essay2" rows="4" maxlength="1200"></textarea></div>
+  <div class="field"><label for="essay3">What about this role matches your motivation as a candidate</label><textarea id="essay3" name="essay3" rows="4" maxlength="1200"></textarea></div>
+  <div class="field"><label for="essay4">Anything else about your motivation for this role</label><textarea id="essay4" name="essay4" rows="4" maxlength="1200"></textarea></div>
+  <button type="button" id="btn-submit">Submit</button>
+</div>
+<h2 id="thanks">Thank you for applying</h2>
+<script>
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

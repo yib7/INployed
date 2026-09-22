@@ -348,6 +348,109 @@ def test_generation_on_uses_the_answergen_hook_and_fills_the_essay(
     assert _entry()["missing_answers"] == []
 
 
+# --- SP6: the real generator behind the hook, drafts mocked, FakeJev grounding ------------
+
+_GROUNDED_DRAFT = "Built the ingestion pipeline at Acme Corp."
+_UNGROUNDED_DRAFT = ("Built the ingestion pipeline at Acme Corp. "
+                     "Baking sourdough bread relaxes me on weekends.")
+_ESSAYS_FOUR = ("Tell us about your motivation for this role",
+                "Describe a project you are proud of and your motivation for this role",
+                "What about this role matches your motivation as a candidate",
+                "Anything else about your motivation for this role")
+
+
+def _generator(text):
+    import apply_answergen
+    calls = []
+
+    def fake_call(system, user, tier, **kw):
+        calls.append((user, tier))
+        return text
+    return apply_answergen.Generator(llm_call=fake_call), calls
+
+
+def test_a_rejected_draft_leaves_an_optional_field_blank_and_flags_it_in_the_record(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("essays_four.html"))
+    runner = _runner(context, tmp_path)
+    runner.answergen, calls = _generator(_UNGROUNDED_DRAFT)
+    out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+    assert len(calls) == apply_run.GENERATE_MAX          # one draft per field, three at most
+    assert all(t == "flash_lite" for _, t in calls)
+    page = next(p for p in context.pages if not p.is_closed()) if any(
+        not p.is_closed() for p in context.pages) else None
+    assert page is None                                   # submitted: the tab was closed
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "- Generated answers:" in record
+    for label in _ESSAYS_FOUR[:3]:
+        assert (f"  - {label}: rejected (draft rejected: weakest sentence grounded 0.10, "
+                "below 0.70)") in record, record
+    assert f"  - {_ESSAYS_FOUR[3]}: rejected (generation budget exhausted)" in record
+    assert "(generated)" not in record
+    assert "- Generated answers used: 0" in record
+    assert out.jev_usage["generated"] == 0
+    questions = [m["question"] for m in _entry()["missing_answers"]]
+    assert questions == list(_ESSAYS_FOUR)
+
+
+def test_a_rejected_draft_parks_a_required_field_with_the_grounding_note(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("essay_required.html"))
+    runner = _runner(context, tmp_path)
+    runner.answergen, calls = _generator(_UNGROUNDED_DRAFT)
+    out = runner.drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert out.reason == ("required field without an answer: Describe a project you are proud "
+                          "of and your motivation for this role; draft rejected: weakest "
+                          "sentence grounded 0.10, below 0.70")
+    assert len(calls) == 1
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("body[data-submitted]").count() == 0
+    assert page.locator("#project").input_value() == ""
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert ("  - Describe a project you are proud of and your motivation for this role: "
+            "rejected (draft rejected: weakest sentence grounded 0.10, below 0.70)") in record
+
+
+def test_at_most_three_drafts_per_job_and_generated_answers_are_marked(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("essays_four.html"))
+    runner = _runner(context, tmp_path)
+    runner.answergen, calls = _generator(_GROUNDED_DRAFT)
+    out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+    assert len(calls) == 3
+    assert out.jev_usage["generated"] == 3
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    for label in _ESSAYS_FOUR[:3]:
+        assert f"  - {label}: {_GROUNDED_DRAFT} (generated)" in record, record
+        assert f"  - {label}: generated (" in record
+    assert f"  - {_ESSAYS_FOUR[3]}: rejected (generation budget exhausted)" in record
+    assert "- Generated answers used: 3" in record
+    assert [m["question"] for m in _entry()["missing_answers"]] == [_ESSAYS_FOUR[3]]
+
+
+def test_main_wires_the_generator_when_auto_apply_generate_is_on(hermetic_cli, monkeypatch):
+    import apply_answergen
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
+    seen = {}
+
+    class R:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+        def drain(self, cap):
+            return []
+    monkeypatch.setattr(apply_run, "Runner", R)
+    assert apply_run.main(["drain"]) == 0
+    assert isinstance(seen["answergen"], apply_answergen.Generator)
+    monkeypatch.setattr(apply_run, "load_settings",
+                        lambda: {**apply_run.DEFAULT_SETTINGS, "auto_apply_generate": False})
+    assert apply_run.main(["drain"]) == 0
+    assert isinstance(seen["answergen"], apply_run.NotConfigured)
+
+
 # --- (e) MAX_PAGES exhaustion parks -------------------------------------------------
 
 def test_max_pages_exhaustion_parks(context, fixture_url, job_folder, catalog_builder,

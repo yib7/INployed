@@ -291,6 +291,10 @@ def test_the_generator_hook_keeps_the_last_attempt():
     ("", "up to 800 chars", 800),
     ("", "", apply_answergen.DEFAULT_CHAR_LIMIT),
     ("Max 5 characters.", "", apply_answergen.DEFAULT_CHAR_LIMIT),
+    ("Max 1,500 characters.", "", 1500),
+    ("Minimum 100 characters.", "", apply_answergen.DEFAULT_CHAR_LIMIT),
+    ("At least 100 characters, max 800 characters.", "", 800),
+    ("min 50 chars", "", apply_answergen.DEFAULT_CHAR_LIMIT),
 ])
 def test_char_limit_for_reads_the_help_or_placeholder(help, placeholder, expected):
     f = apply_form.Field(n=0, locator=(0, "#x"), label="Q", type="textarea", required=False,

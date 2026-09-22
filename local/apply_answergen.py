@@ -243,7 +243,11 @@ def attempt(field: Any, catalog: Any, jev: Any, *, budget: int,
     if not text:
         log.info("generation for %r: the model returned nothing", label)
         return Attempt(None, False, "empty draft")
-    ok, weakest = grounded(text, sheet, jev)
+    try:
+        ok, weakest = grounded(text, sheet, jev)
+    except Exception as e:      # noqa: BLE001  (a judge error can quote the sheet)
+        log.warning("grounding for %r failed: %s", label, type(e).__name__)
+        return Attempt(None, False, f"grounding failed: {type(e).__name__}")
     count = len(sentences(text))
     if not ok:
         log.info("generation for %r rejected: weakest of %d sentences grounded %.2f",

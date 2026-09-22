@@ -164,6 +164,20 @@ def test_sentences_split_on_end_punctuation_and_newlines_and_keep_abbreviations(
     assert apply_answergen.sentences("no end punctuation") == ["no end punctuation"]
 
 
+@pytest.mark.parametrize("text, expected", [
+    ("Wrote tooling, e.g. a scraper. Then shipped it.",
+     ["Wrote tooling, e.g. a scraper.", "Then shipped it."]),
+    ("Cut cost, i.e. the bill. Then more.", ["Cut cost, i.e. the bill.", "Then more."]),
+    ("Used pandas, numpy, etc. for the work. Done.",
+     ["Used pandas, numpy, etc. for the work.", "Done."]),
+    ("Joined the Ops. Then led it.", ["Joined the Ops.", "Then led it."]),
+    ("Reported to Dr. Lee at Acme Inc. in May.", ["Reported to Dr. Lee at Acme Inc. in May."]),
+    ("Earned a B.S. in CS. Then an M.S. at MIT.", ["Earned a B.S. in CS.", "Then an M.S. at MIT."]),
+])
+def test_sentences_keep_common_abbreviations_and_split_ordinary_short_words(text, expected):
+    assert apply_answergen.sentences(text) == expected
+
+
 def test_grounded_asks_one_request_with_one_noul_per_sentence():
     judge = _Counting()
     ok, weakest = apply_answergen.grounded(GROUNDED, SHEET, judge)

@@ -55,7 +55,11 @@ _EMPHASIS_RE = re.compile(r"(?<!\w)(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1(?!\w)")
 _HEADING_RE = re.compile(r"(?m)^#{1,6}\s+")
 _BLANK_RUN_RE = re.compile(r"\n\s*\n(?:\s*\n)+")
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
-_ABBREVIATION_RE = re.compile(r"(?:^|\s)(?:[A-Z]\.)+[A-Z]?\.?$|(?:^|\s)[A-Z][a-z]{0,2}\.$")
+# A piece ending in an abbreviation joins the next one: dotted initials (B.S.,
+# M.S.), the Latin shorthands, and a short list of titles and company suffixes.
+_ABBREVIATION_RE = re.compile(
+    r"(?:^|\s)(?:[A-Za-z]\.){2,}$"
+    r"|(?:^|\s)(?:e\.g|i\.e|etc|vs|Mr|Mrs|Ms|Dr|Prof|Inc|Ltd|Co|Corp|St|Jr|Sr)\.$", re.I)
 
 
 @dataclass

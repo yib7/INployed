@@ -21,10 +21,11 @@ import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
+import jev_harness  # noqa: E402
 from apply_judge import FillPlan, PlannedField, VerifyResult  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
 
-pytest_plugins = ["conftest_browser"]
+pytest_plugins = ["conftest_browser", "conftest_jev"]
 
 _PDF = (b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
         b"2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
@@ -71,7 +72,7 @@ def _bank():
 
 
 @pytest.fixture(autouse=True)
-def _hermetic(tmp_path, monkeypatch):
+def _hermetic(tmp_path, monkeypatch, jev_judge):
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: None)
     monkeypatch.setenv("ATS_ACCOUNTS_PATH", str(tmp_path / "accounts.json"))
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
@@ -127,7 +128,7 @@ def _runner(context, tmp_path, **settings):
             "auto_apply_jev_mode": "fake", "auto_apply_batch_cap": 10,
             "auto_apply_generate": True}
     base.update(settings)
-    return apply_run.Runner(jev=jev.FakeJev(), profile_dir=tmp_path / "profile",
+    return apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
                             settings=base, context=context, run_context=_RUN_CONTEXT)
 
 
@@ -451,7 +452,7 @@ def test_a_hook_without_a_last_attempt_records_no_generator(
 
 def test_main_wires_the_generator_when_auto_apply_generate_is_on(hermetic_cli, monkeypatch):
     import apply_answergen
-    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
     seen = {}
 
     class R:
@@ -488,7 +489,7 @@ def test_wall_clock_exhaustion_parks(context, fixture_url, job_folder, catalog_b
                                      tmp_path):
     ticks = iter([0.0, 0.0, apply_run.JOB_WALL_CLOCK_S + 1.0] + [10_000.0] * 50)
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
-    runner = apply_run.Runner(jev=jev.FakeJev(), profile_dir=tmp_path / "profile",
+    runner = apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
                               settings={"auto_apply_headless": True}, context=context,
                               run_context=_RUN_CONTEXT, clock=lambda: next(ticks))
     out = runner.drain(cap=1)[0]
@@ -505,7 +506,7 @@ def test_wall_clock_passing_mid_fill_stops_the_fill_on_the_runner_clock(
     def _clock():
         return now[0]
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
-    runner = apply_run.Runner(jev=jev.FakeJev(), profile_dir=tmp_path / "profile",
+    runner = apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
                               settings={"auto_apply_headless": True}, context=context,
                               run_context=_RUN_CONTEXT, clock=_clock)
     real = apply_run.apply_fill.apply
@@ -1260,13 +1261,13 @@ def test_main_drain_exits_2_when_the_judge_is_unavailable(hermetic_cli, monkeypa
 
 
 def test_main_one_exits_2_when_the_job_is_not_queued(hermetic_cli, monkeypatch, capsys):
-    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
     assert apply_run.main(["one", "nope", "--jev", "typesafe"]) == 2
     assert "not queued" in capsys.readouterr().err
 
 
 def test_main_drain_prints_the_summary_and_exits_0(hermetic_cli, monkeypatch, capsys):
-    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
     seen = {}
 
     class R:
@@ -1290,7 +1291,7 @@ def test_main_drain_prints_the_summary_and_exits_0(hermetic_cli, monkeypatch, ca
 
 
 def test_main_unexpected_error_exits_1(hermetic_cli, monkeypatch, capsys):
-    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
 
     class R:
         def __init__(self, **kw):
@@ -1348,7 +1349,7 @@ def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, mon
     monkeypatch.setattr(apply_run, "load_settings",
                         lambda: {**apply_run.DEFAULT_SETTINGS, "auto_apply_batch_cap": 3,
                                  "auto_apply_jev_mode": "typesafe", "auto_apply_submit": False})
-    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
     seen = {}
 
     class R:

@@ -6,12 +6,19 @@ import pytest
 
 import apply_form
 import apply_run
-import jev
+import jev_harness
+
+pytest_plugins = ["conftest_jev"]
+
+
+@pytest.fixture(autouse=True)
+def _judge_selector(jev_judge):
+    """Every runner here takes the harness judge (fake unless AUTO_APPLY_TEST_JEV says otherwise)."""
 
 
 def _job():
     context = Mock()
-    runner = apply_run.Runner(jev=jev.FakeJev(), context=context, run_context={})
+    runner = apply_run.Runner(jev=jev_harness.judge(), context=context, run_context={})
     entry = {"job_posting_id": "synthetic", "apply_url": "https://www.linkedin.com/jobs/1",
              "ats": {"domain": "www.linkedin.com", "system": "linkedin"}}
     job = apply_run._JobRun(runner, context, entry)

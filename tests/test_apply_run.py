@@ -19,6 +19,7 @@ import apply_facts  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
+import ats_accounts  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan, PlannedField, VerifyResult  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
@@ -71,6 +72,8 @@ def _bank():
 
 @pytest.fixture(autouse=True)
 def _hermetic(tmp_path, monkeypatch):
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: None)
+    monkeypatch.setenv("ATS_ACCOUNTS_PATH", str(tmp_path / "accounts.json"))
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
     monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
     monkeypatch.setenv("APPLY_QUEUE_PATH", str(tmp_path / "apply_queue.json"))
@@ -499,7 +502,9 @@ def test_login_hook_that_signs_in_continues_the_loop(
 def test_code_gate_parks_with_the_code_note_by_default(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
     _enqueue(job_folder, fixture_url("code_gate.html"))
-    out = _runner(context, tmp_path).drain(cap=1)[0]
+    runner = _runner(context, tmp_path)
+    runner.inbox = apply_run.NotConfigured()
+    out = runner.drain(cap=1)[0]
     assert out.status == "needs_human", out
     assert out.reason == "emailed code needed"
     assert _entry()["tab_note"] == apply_run.CODE_NOTE ==         "enter the emailed code manually, then Re-queue"
@@ -524,6 +529,60 @@ def test_code_gate_with_an_inbox_hook_fills_the_code_and_reaches_confirmation(
     assert "State: code_gate" in record and "Security code: <hidden>" in record
     assert "MKPZ3QRA" not in record                    # the emailed code is never written
     assert "Verify and continue (advance)" in record
+
+
+@pytest.mark.parametrize("fixture,existing", [("login_wall.html", True), ("signup.html", False),
+                                             ("login_wall.html", False)])
+def test_default_accounts_continue_and_keep_password_private(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog,
+        fixture, existing):
+    secret = "synthetic-SP5-password"
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: secret)
+    if existing:
+        ats_accounts.record("127.0.0.1", "existing@example.com")
+    _enqueue(job_folder, fixture_url(fixture))
+    with caplog.at_level("INFO"):
+        out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert secret not in record + caplog.text
+    assert "password filled" in caplog.text
+    account = ats_accounts.lookup("127.0.0.1")
+    assert account["email"] == ("existing@example.com" if existing else "jane.doe@example.com")
+
+
+def test_default_inbox_after_submit_reaches_confirmation(
+        context, fixture_url, fixtures_server, job_folder, catalog_builder, tmp_path, caplog):
+    _enqueue(job_folder, fixture_url("submit_code.html"))
+    runner = _runner(context, tmp_path)
+    runner._run_context = {**_RUN_CONTEXT, "inbox_url": fixtures_server + "/inbox/outlook_list.html"}
+    with caplog.at_level("INFO"):
+        out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+    assert out.reason == "confirmation page after the emailed code"
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "Security code: <hidden>" in record
+    assert "MKPZ3QRA" not in record + caplog.text
+
+
+def test_code_fill_error_never_logs_or_records_code(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog):
+    from playwright.sync_api import Locator
+
+    class Inbox:
+        def fetch_code(self, page, site, inbox_url):
+            return "MKPZ3QRA"
+
+    def fail(self, value, **kwargs):
+        raise RuntimeError("fill failed: " + value)
+
+    monkeypatch.setattr(Locator, "fill", fail)
+    _enqueue(job_folder, fixture_url("code_gate.html"))
+    runner = _runner(context, tmp_path)
+    runner.inbox = Inbox()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "needs_human"
+    assert "MKPZ3QRA" not in Path(out.record_path).read_text(encoding="utf-8") + caplog.text
 
 
 # --- the entry's artifacts name the PDFs -----------------------------------------------
@@ -718,6 +777,28 @@ def test_review_page_resolves_generation_before_the_gate(
         run._review_page(digest, plan, rec)
     # resolved: the gate now fails on verification (nothing was typed on a review page)
     assert info.value.reason == "required field not verified: Your motivation for this role"
+
+
+def test_verify_uses_complete_catalog_evidence(context, job_folder, tmp_path):
+    class CapturingJev:
+        state = None
+
+        def judge(self, state, questions):
+            self.state = state
+            return {qid: jev.Answer(kind="noul", noul=0.9) for qid in questions}
+
+    judge = CapturingJev()
+    e = apply_queue.new_entry("42", apply_url="https://boards.greenhouse.io/acme/jobs/1")
+    run = apply_run._JobRun(
+        apply_run.Runner(jev=judge, context=context, run_context=_RUN_CONTEXT), context, e)
+    run.catalog = type("Catalog", (), {
+        "verification_excerpt": lambda self: "complete catalog evidence",
+        "sheet_excerpt": lambda self: "truncated prose",
+    })()
+
+    run._verify([apply_run.apply_fill.Filled(0, "Email", "jane.doe@example.com")])
+
+    assert judge.state["sheet_excerpt"] == "complete catalog evidence"
 
 
 # --- write_record: the hidden rule ---------------------------------------------------------

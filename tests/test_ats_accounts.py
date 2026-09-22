@@ -19,7 +19,38 @@ sys.path.insert(0, str(REPO / "local"))
 
 import ats_accounts  # noqa: E402
 
+pytest_plugins = ["conftest_browser"]
+
 SECRET = "sekrit-hunter2-XYZZY"
+
+
+def test_direct_password_fill_is_private(browser_page, kr, caplog):
+    kr.set_password(ats_accounts.SERVICE, "master", SECRET)
+    browser_page.set_content('<input id="password" type="password">')
+    with caplog.at_level("INFO"):
+        assert ats_accounts.has_password()
+        assert ats_accounts.fill_password(browser_page, "#password") is True
+    assert browser_page.locator("#password").input_value() == SECRET
+    assert SECRET not in caplog.text
+    assert "chars hidden" in caplog.text
+
+
+def test_direct_password_failure_hides_playwright_error(browser_page, kr, caplog, monkeypatch):
+    kr.set_password(ats_accounts.SERVICE, "master", SECRET)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("fill call included " + SECRET)
+
+    monkeypatch.setattr(browser_page, "locator", fail)
+    assert ats_accounts.fill_password(browser_page, "#password") is False
+    assert SECRET not in caplog.text
+
+
+def test_direct_password_missing_does_not_touch_field(browser_page, kr):
+    browser_page.set_content('<input id="password" type="password" value="existing">')
+    assert ats_accounts.has_password() is False
+    assert ats_accounts.fill_password(browser_page, "#password") is False
+    assert browser_page.locator("#password").input_value() == "existing"
 
 
 class FakeKeyring:

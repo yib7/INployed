@@ -17,8 +17,8 @@ the design (section 3.5):
     job_posting            click the Apply entry, follow a popup
     application_form       plan, fill, verify, then advance, or the submit gate
     review_page            the submit gate
-    login_wall / signup    the accounts hook (SP5); the default parks
-    code_gate              the inbox hook (SP5); the default parks
+    login_wall / signup    fill the account email and hidden keyring password
+    code_gate              read the emailed code in a separate inbox tab
     confirmation           finish submitted
     captcha / payment / error / other / low confidence
                            park needs_human
@@ -39,13 +39,14 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -55,9 +56,11 @@ import apply_facts  # noqa: E402
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
+import apply_inbox  # noqa: E402
 import apply_queue  # noqa: E402
+import ats_accounts  # noqa: E402
 import jev  # noqa: E402
-from apply_judge import FillPlan, PlannedField, VerifyResult  # noqa: E402
+from apply_judge import FillPlan, VerifyResult  # noqa: E402
 
 log = logging.getLogger("apply_run")
 
@@ -131,6 +134,105 @@ class NotConfigured:
 
     def answer(self, field, catalog, judge, *, budget: int) -> str | None:
         return None
+
+
+class _Accounts:
+    """Account transitions for one job; secrets bypass the generic filler."""
+
+    def __init__(self, run):
+        self.run = run
+
+    def login(self, page, digest, host: str) -> bool:
+        account = ats_accounts.lookup(host)
+        if account:
+            if account.get("method") != "master_password":
+                return False
+            return self._fill(page, digest, host, str(account.get("email") or ""), False)
+        if not ats_accounts.has_password():
+            return False
+        # Expose account-creation links as buttons to the same role judge.
+        links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
+        if links.count() != 1:
+            return False
+        try:
+            href = links.first.get_attribute("href")
+            if not href:
+                return False
+            target = urljoin(page.url, href)
+            self.run._check_host(target)
+            link_digest = apply_form.FormDigest(
+                url_host=host, title=digest.title, text=digest.text,
+                buttons=[apply_form.Button(0, (0, "a"), links.first.inner_text(), "")])
+            plan = apply_judge.plan(link_digest, self.run.catalog, self.run._judge_page(link_digest))
+            if plan.buttons.get("advance", (None, 0))[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
+                return False
+            page.goto(target, timeout=self._timeout())
+            fresh = apply_form.extract(page)
+            state, confidence = apply_judge.read_page_state(self.run._judge_page(fresh))
+            if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
+                return False
+            return self.signup(page, fresh, host)
+        except Exception:  # noqa: BLE001  (account details stay out of errors)
+            return False
+
+    def signup(self, page, digest, host: str) -> bool:
+        email = str(self.run.r.run_context().get("signup_email") or "")
+        return self._fill(page, digest, host, email, True)
+
+    def _timeout(self) -> int:
+        return max(1, int(min(5, self.run.deadline - self.run.r.clock()) * 1000))
+
+    def _fill(self, page, digest, host: str, email: str, signup: bool) -> bool:
+        if not email or not ats_accounts.has_password() or self.run.r.clock() >= self.run.deadline:
+            return False
+        try:
+            answers = self.run._judge_page(digest)
+            plan = apply_judge.plan(digest, self.run.catalog, answers)
+            advance = plan.buttons.get("advance")
+            if (advance is None or advance[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF
+                    or plan.flags.get("has_captcha", 0) >= apply_judge.CAPTCHA_MAX
+                    or plan.flags.get("asks_for_prohibited", 0) >= apply_judge.PROHIBITED_MAX):
+                return False
+            passwords = []
+            emails = []
+            for field in digest.fields:
+                loc = apply_form.resolve(page, field.locator).first
+                if loc.get_attribute("type") == "password":
+                    passwords.append(loc)
+                elif field.type == "email" or field.autocomplete == "username":
+                    emails.append(loc)
+                elif field.required:
+                    return False
+            if not passwords or not emails:
+                return False
+            for loc in emails:
+                loc.fill(email, timeout=self._timeout())
+            for loc in passwords:
+                if not ats_accounts.fill_password(page, loc):
+                    return False
+            result = apply_fill.click(page, digest, advance[0], timeout_s=self._timeout() / 1000)
+            if not result.changed:
+                return False
+            self.run._check_host(page.url)
+            state, confidence = apply_judge.read_page_state(self.run._judge_page(apply_form.extract(page)))
+            if state not in ("application_form", "review_page", "code_gate") or confidence < apply_judge.PAGE_STATE_MIN_CONF:
+                return False
+            if signup:
+                ats_accounts.record(host, email)
+            return True
+        except Exception:  # noqa: BLE001  (Playwright may include filled values)
+            return False
+
+
+class _Inbox:
+    def __init__(self, run):
+        self.run = run
+
+    def fetch_code(self, page, site: str, inbox_url: str) -> str | None:
+        self.run._check_host(inbox_url)
+        return apply_inbox.fetch_code(page, site, inbox_url, jev=self.run.r.jev,
+                                      clock=self.run.r.clock, sleep=self.run.r.sleep,
+                                      deadline=self.run.deadline)
 
 
 # --- outcomes and the record ----------------------------------------------------------
@@ -325,9 +427,10 @@ class Runner:
 
     `jev` is any `jev.Jev`; `settings` carries the `auto_apply_*` keys
     (`DEFAULT_SETTINGS` fills gaps); `clock` and `sleep` are injectable for
-    the wall clock and the hold; `accounts`, `inbox`, `answergen` are the
-    hook objects (`NotConfigured` by default); `context` is an already open
-    Playwright browser context (tests), else the persistent profile at
+    the wall clock and the hold; `accounts` and `inbox` can override the
+    built-in adapters, while `answergen` defaults to `NotConfigured`;
+    `context` is an already open Playwright browser context (tests), else the
+    persistent profile at
     `profile_dir` is launched per drain and, when a page is parked and the
     window is visible, held open until the user closes it; `run_context` is
     `apply_queue.build_context()`'s dict (the inbox URL), computed on demand.
@@ -347,8 +450,8 @@ class Runner:
         self.clock = clock
         self.sleep = sleep
         default = NotConfigured()
-        self.accounts = accounts if accounts is not None else default
-        self.inbox = inbox if inbox is not None else default
+        self.accounts = accounts
+        self.inbox = inbox
         self.answergen = answergen if answergen is not None else default
         self.log = log if log is not None else logging.getLogger("apply_run")
         self._injected = context
@@ -451,6 +554,8 @@ class _JobRun:
         self.start = runner.clock()
         self.deadline = self.start + JOB_WALL_CLOCK_S
         self.folder = self._folder()
+        self.accounts = runner.accounts if runner.accounts is not None else _Accounts(self)
+        self.inbox = runner.inbox if runner.inbox is not None else _Inbox(self)
 
     # -- setup ------------------------------------------------------------------------------
 
@@ -557,10 +662,10 @@ class _JobRun:
             elif state == "review_page":
                 self._review_page(digest, plan, rec)
             elif state == "login_wall":
-                if not self.r.accounts.login(self.page, digest, digest.url_host):
+                if not self.accounts.login(self.page, digest, digest.url_host):
                     raise _Parked("needs_human", "login wall", LOGIN_NOTE)
             elif state == "signup_form":
-                if not self.r.accounts.signup(self.page, digest, digest.url_host):
+                if not self.accounts.signup(self.page, digest, digest.url_host):
                     raise _Parked("needs_human", "account signup needed", LOGIN_NOTE)
             elif state == "code_gate":
                 self._code_gate(digest, plan, rec)
@@ -724,7 +829,7 @@ class _JobRun:
         if not filled:
             return []
         rows = [f.to_dict() for f in filled]
-        state, questions = apply_judge.verify_questions(rows, self.catalog.sheet_excerpt())
+        state, questions = apply_judge.verify_questions(rows, self.catalog.verification_excerpt())
         return apply_judge.read_verification(rows, self.r.jev.judge(state, questions))
 
     def _retry_failed(self, plan: FillPlan, filled: list[apply_fill.Filled],
@@ -835,19 +940,19 @@ class _JobRun:
 
     def _code_gate(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict) -> None:
         site = digest.url_host or _host(self.page.url)
-        code = self.r.inbox.fetch_code(self.page, site, str(self.r.run_context().get("inbox_url") or ""))
+        code = self.inbox.fetch_code(self.page, site, str(self.r.run_context().get("inbox_url") or ""))
         if not code:
             raise _Parked("needs_human", "emailed code needed", CODE_NOTE)
         target = next((f for f in digest.fields
                        if "code" in f"{f.label} {f.id_or_name}".lower()), None)
         if target is None:
             raise _Parked("needs_human", "code gate without a code box", CODE_NOTE)
-        pf = PlannedField(n=target.n, locator=target.locator, label=target.label,
-                          required=True, fact_key=None, value=str(code), option=None,
-                          confidence=1.0, action="fill")
-        filled = apply_fill.apply(self.page, FillPlan(fields=[pf]), deadline=self.deadline, clock=self.r.clock)
+        try:
+            apply_form.resolve(self.page, target.locator).first.fill(str(code), timeout=5_000)
+        except Exception:  # noqa: BLE001  (a fill exception may carry the private code)
+            raise _Parked("needs_human", "emailed code could not be filled", CODE_NOTE) from None
         rec["filled"].append({"n": target.n, "label": target.label,
-                              "value": filled[0].value if filled else "",
+                              "value": HIDDEN,
                               "type": target.type, "id_or_name": target.id_or_name,
                               "upload": False, "hidden": True})
         button = plan.buttons.get("advance") or plan.buttons.get("submit")

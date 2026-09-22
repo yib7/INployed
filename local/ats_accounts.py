@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import logging
 import os
 import re
 import sys
@@ -38,7 +39,7 @@ from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 
 __all__ = [
     "SERVICE", "ledger_path", "record", "lookup", "list_accounts",
-    "password_exists", "set_master_password",
+    "password_exists", "has_password", "fill_password", "set_master_password",
     "copy_password_to_clipboard", "clear_clipboard_if_password", "main",
 ]
 
@@ -188,6 +189,25 @@ def _get_master_password() -> Optional[str]:
         return kr.get_password(SERVICE, _MASTER_USER)
     except Exception:
         return None
+
+
+def has_password() -> bool:
+    """Report availability without exposing the stored password."""
+    return bool(_get_master_password())
+
+
+def fill_password(page_or_frame, locator) -> bool:
+    """Move the stored password directly into a field, keeping errors private."""
+    password = _get_master_password()
+    if not password:
+        return False
+    try:
+        target = page_or_frame.locator(locator) if isinstance(locator, str) else locator
+        target.fill(password, timeout=5_000)
+    except Exception:  # noqa: BLE001  (Playwright errors may include the fill value)
+        return False
+    logging.getLogger(__name__).info("password filled (%d chars hidden)", len(password))
+    return True
 
 
 # ── clipboard transit (ctypes, CF_UNICODETEXT) ───────────────────────────────

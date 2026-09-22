@@ -56,11 +56,15 @@ _EMPHASIS_RE = re.compile(r"(?<!\w)(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1(?!\w)")
 _HEADING_RE = re.compile(r"(?m)^#{1,6}\s+")
 _BLANK_RUN_RE = re.compile(r"\n\s*\n(?:\s*\n)+")
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
-# A piece ending in an abbreviation joins the next one: dotted initials (B.S.,
-# M.S.), the Latin shorthands, and a short list of titles and company suffixes.
+# A piece ending in one of these joins the next one whatever follows: dotted
+# initials (B.S., M.S.), the Latin shorthands, and the titles that precede a name.
 _ABBREVIATION_RE = re.compile(
     r"(?:^|\s)(?:[A-Za-z]\.){2,}$"
-    r"|(?:^|\s)(?:e\.g|i\.e|etc|vs|Mr|Mrs|Ms|Dr|Prof|Inc|Ltd|Co|Corp|St|Jr|Sr)\.$", re.I)
+    r"|(?:^|\s)(?:e\.g|i\.e|etc|vs|Mr|Mrs|Ms|Dr|Prof|St)\.$", re.I)
+# A company or name suffix closes a name and often a sentence ("at Acme Corp.
+# Baking is my hobby."), so it joins the next piece only when that piece
+# starts lower case ("at Acme Inc. in May").
+_SUFFIX_RE = re.compile(r"(?:^|\s)(?:Inc|Ltd|Co|Corp|Jr|Sr)\.$", re.I)
 
 
 @dataclass
@@ -183,6 +187,8 @@ def sentences(text: str) -> list[str]:
         for m in _SENTENCE_END_RE.finditer(line):
             piece = line[start:m.start()]
             if _ABBREVIATION_RE.search(piece):
+                continue
+            if _SUFFIX_RE.search(piece) and line[m.end():m.end() + 1].islower():
                 continue
             if piece.strip():
                 out.append(piece.strip())

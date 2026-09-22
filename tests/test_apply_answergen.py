@@ -173,6 +173,10 @@ def test_sentences_split_on_end_punctuation_and_newlines_and_keep_abbreviations(
     ("Joined the Ops. Then led it.", ["Joined the Ops.", "Then led it."]),
     ("Reported to Dr. Lee at Acme Inc. in May.", ["Reported to Dr. Lee at Acme Inc. in May."]),
     ("Earned a B.S. in CS. Then an M.S. at MIT.", ["Earned a B.S. in CS.", "Then an M.S. at MIT."]),
+    ("Worked at Acme Corp. Baking sourdough is my hobby.",
+     ["Worked at Acme Corp.", "Baking sourdough is my hobby."]),
+    ("Worked at Acme Inc. Then moved on.", ["Worked at Acme Inc.", "Then moved on."]),
+    ("Named after John Smith Jr. Then retired.", ["Named after John Smith Jr.", "Then retired."]),
 ])
 def test_sentences_keep_common_abbreviations_and_split_ordinary_short_words(text, expected):
     assert apply_answergen.sentences(text) == expected

@@ -54,8 +54,8 @@ def provider_for(inbox_url: str) -> str | None:
     App at a university) goes through."""
     host = (urlsplit(str(inbox_url or "")).hostname or "").lower()
     for name, hosts in PROVIDER_HOSTS.items():
-        # an exact host or a subdomain of one; never a prefix, since
-        # `outlook.com.example.invalid` starts with a listed host
+        # an exact host or a subdomain of one; a prefix match would accept
+        # `outlook.com.example.invalid`, which starts with a listed host
         if any(host == h or host.endswith("." + h) for h in hosts):
             return name
     return None

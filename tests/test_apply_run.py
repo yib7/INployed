@@ -1352,7 +1352,7 @@ def test_default_profile_dir_sits_under_localappdata(monkeypatch, tmp_path):
     assert apply_run.default_profile_dir() == tmp_path / "linkedin_watcher" / "browser_profile"
 
 
-# --- the code box is the one the email is about, never a postal code ----------------------
+# --- the code box is the one the email is about; a postal code box is passed over ---------
 
 def test_the_emailed_code_never_lands_in_a_postal_code_box(
         context, fixture_url, job_folder, catalog_builder, tmp_path):

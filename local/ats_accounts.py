@@ -100,8 +100,8 @@ def _assert_no_password_keys(rec: Dict[str, Any]) -> None:
 def record(domain_or_url: str, email: str, method: str = "master_password",
            path: Optional[Path] = None, **extra: Any) -> Dict[str, Any]:
     """Upsert one ledger entry keyed by lowercased netloc. `extra` may carry
-    descriptive fields (note, username, ...) but any password-shaped field name
-    raises ValueError — credentials never enter this file."""
+    descriptive fields (note, username, ...); a password-shaped field name
+    raises ValueError, since this file is plaintext and holds no credentials."""
     key = _netloc(domain_or_url)
     if not key:
         raise ValueError("a domain or URL is required")

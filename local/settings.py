@@ -474,8 +474,10 @@ SETTINGS_SCHEMA: list[Field] = [
     # The Jev-judged run (cycle 16, local/jev.py + local/apply_run.py). The key
     # row sits here, in the section whose feature spends it, with the same
     # secret/env/restart shape as the Credentials rows: Field.key is the exact
-    # environment-variable name jev.TypeSafeJev reads, and the apply_run child
-    # inherits the dashboard's startup snapshot of it (hence `restart`).
+    # environment-variable name jev.TypeSafeJev reads. The apply_run child
+    # loads `.env` without overriding what it inherits, so a first paste reaches
+    # it and a rotated key sits behind the dashboard's startup snapshot until a
+    # restart (hence `restart`).
     Field("TYPESAFE_API_KEY", "TypeSafe API key (Jev judge)", "str", "",
           "Auto-apply", "env", secret=True, optional=True, restart=True,
           help="Needed for auto-apply runs in 'typesafe' mode: every form-field judgment "
@@ -484,9 +486,9 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("auto_apply_jev_mode", "Auto-apply judge", "choice", "typesafe",
           "Auto-apply", "config", choices=("typesafe", "fake"),
           help="'typesafe' judges each page with the Jev model (needs the API key). "
-               "'fake' is a dry-run judge that never calls the API: it answers from word "
-               "overlap, so you can watch the loop run with no key and no bill. Its "
-               "answers are not fit for a real application."),
+               "'fake' is a test-only judge that never calls the API: it answers from word "
+               "overlap and the drain refuses it. For a dry run keep 'typesafe' and turn "
+               "off 'Submit when verified' (or pass --no-submit)."),
     Field("auto_apply_submit", "Submit when verified", "bool", True,
           "Auto-apply", "config",
           help="Submit an application when every required field is filled from your "

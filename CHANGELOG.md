@@ -26,10 +26,10 @@ Claude skill becomes the manual fallback.
   reason in the queue row. `Submit when verified` in Settings (or `--no-submit`) parks every
   job instead.
 - **`local/jev.py`**: the TypeSafe client (`jev-1.13.0`, usage metered at $0.042 per million
-  input tokens), a deterministic fake for tests and dry runs, and a replay cache.
+  input tokens), a deterministic fake for tests, and a replay cache.
 - **Account walls and emailed codes.** With the master password set, a portal that forces an
   account is signed up for with your email (ledger in `local/ats_accounts.py`, the password
-  typed only into a real password field and never logged); a code gate is answered from your
+  typed into a real password field; no log line carries it); a code gate is answered from your
   inbox through the same browser profile (`local/apply_inbox.py`), with Jev picking the mail
   and the code.
 - **Drafted free-text answers** (`local/apply_answergen.py`): an open-ended question gets one
@@ -48,8 +48,9 @@ Claude skill becomes the manual fallback.
 
 - **The Start auto-apply run button launches `apply_run.py drain`** in a new console; the
   unattended and scoped Claude variants are gone from the dashboard, and the `auto-apply`
-  skill is the manual fallback. The run inherits the dashboard's environment, so a key
-  pasted into Settings takes effect after a restart.
+  skill is the manual fallback. The run inherits the dashboard's environment and loads
+  `.env` itself, so a key pasted into Settings reaches the next run; a rotated key needs a
+  dashboard restart.
 - **The Auto-apply copy states the gate.** The tab, the confirm dialog, the Settings section
   and the batch-cap help now say when the run submits; the older "never submitted" promise
   described the Claude path and is gone.

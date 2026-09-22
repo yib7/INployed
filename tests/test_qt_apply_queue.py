@@ -970,9 +970,10 @@ def test_kickoff_and_login_argv_decode_to_their_commands(monkeypatch):
 
 
 def test_spawn_helpers_open_a_new_console_with_the_inherited_environment(monkeypatch):
-    """`apply_run.py` is this project's own code and reads `.env` itself, and the
-    Settings tab's TYPESAFE_API_KEY row is marked `restart` because the child
-    inherits the dashboard's environment snapshot: no scrub, no env override."""
+    """`apply_run.py` is this project's own code and reads `.env` itself, so a
+    first pasted key reaches it; the Settings tab's TYPESAFE_API_KEY row is
+    marked `restart` because a rotated key sits behind the dashboard's startup
+    snapshot: no scrub, no env override."""
     seen = []
     monkeypatch.setattr(aqp.subprocess, "Popen",
                         lambda *a, **k: seen.append((a, k)) or None)

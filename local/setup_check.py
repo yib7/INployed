@@ -121,7 +121,7 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
     """Warn when an auto-apply run would refuse to start. Pure, like the two
     truth tables above.
 
-    The key and the SDK only matter in 'typesafe' mode: 'fake' is the dry-run
+    The key and the SDK only matter in 'typesafe' mode: 'fake' is the test-only
     judge and needs neither. Playwright and Chromium are needed in every mode.
     A missing Playwright package folds the Chromium row into its own line,
     since `playwright install chromium` cannot run without it.
@@ -131,8 +131,7 @@ def auto_apply_warnings(has_key: bool, jev_mode: str, sdk_found: bool,
         if not has_key:
             out.append("Auto-apply judge is 'typesafe' but no TypeSafe API key is saved. "
                        "Create one at console.typesafe.ai/keys and paste it into "
-                       "Settings -> Auto-apply -> TypeSafe API key (Jev judge), or set "
-                       "the judge to 'fake' for a dry run.")
+                       "Settings -> Auto-apply -> TypeSafe API key (Jev judge).")
         if not sdk_found:
             out.append("The typesafe_sdk package is not installed: run "
                        "`pip install typesafe-sdk` (it is in requirements.txt).")

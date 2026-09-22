@@ -391,7 +391,7 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
 | the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
 | the employer's application site | only when you run auto-apply on a queued job | the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; it submits only when the gate in *Auto-apply (batch, Jev-judged)* passes |
-| TypeSafe (the Jev judge) | only during an auto-apply run, in `typesafe` mode | each form page's field labels, options and visible text, the names of your facts (never their values) for the field mapping, and, for the verification and grounding checks, the values it typed and an excerpt of your apply sheet |
+| TypeSafe (the Jev judge) | only during an auto-apply run, in `typesafe` mode | each form page's field labels, options and visible text, the names of your facts for the field mapping; the values stay on your machine until the verification and grounding checks, which receive the values it typed and an excerpt of your apply sheet |
 | your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; plus, only when you click **Set on VM**, the one API key you typed into that box. It runs under your own `gcloud` login |
 | healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
@@ -540,7 +540,7 @@ marked untuned in `local/apply_judge.py` until the first live pass tunes them.
 
 1. Create a key at `console.typesafe.ai/keys` and put it in `.env` as
    `TYPESAFE_API_KEY=...`, or paste it into **Settings → Auto-apply → TypeSafe API
-   key** (it is stored write-only and needs a dashboard restart). `pip install
+   key** (it is stored write-only; a rotated key needs a dashboard restart). `pip install
    playwright typesafe-sdk` and `python -m playwright install chromium` if **Check
    setup** says they are missing; `python local/apply_run.py doctor` prints the same
    rows from a terminal.
@@ -573,9 +573,10 @@ The four settings under **Settings → Auto-apply**:
   per job. Off leaves every such field for you.
 - **Hide the browser window** (`auto_apply_headless`, off): on runs Chromium with no
   window. Leave it off to watch the run and step in when it parks.
-- **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`): `fake` is a dry-run judge
-  that answers from word overlap with no key and no bill, for watching the loop; the
-  command line refuses it for a real queue.
+- **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`): `fake` is a test-only judge
+  that answers from word overlap; the drain refuses it (so does `replay`, the test
+  harness's cached judge). A dry run is `drain --no-submit` with the real judge: it
+  fills every queued job and parks it at its review page.
 
 **The record.** Every job the run touches gets an `apply_record.md` beside its
 `apply.md` (the **Open application record** button): the pages it saw with the judged page kind
@@ -590,6 +591,6 @@ that range). Each drafted free-text answer adds one flash-lite call on your Gemi
 lane. There is no per-request minimum and nothing is billed while the queue is empty.
 
 CLI equivalents (from the repo root): `python local/apply_run.py drain` (the Start
-button; `--cap N`, `--no-submit`, `--headless`, `--jev fake`), `one <job_id>` for one
+button; `--cap N`, `--no-submit`, `--headless`), `one <job_id>` for one
 queued job, `login` and `doctor` as above. Exit code 0 means drained or nothing queued,
 2 means not configured (no key, or the job id is not queued), 1 an unexpected error.

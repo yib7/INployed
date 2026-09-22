@@ -1338,7 +1338,9 @@ def test_auto_apply_jev_mode_is_a_config_choice_defaulting_to_typesafe(tmp_path)
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_jev_mode"]
     assert (f.type, f.default, f.section, f.target) == ("choice", "typesafe", "Auto-apply", "config")
     assert f.choices == ("typesafe", "fake")
-    assert "dry-run" in f.help and "never calls the API" in f.help
+    assert "test-only" in f.help and "never calls the API" in f.help
+    assert "refuses" in f.help and "--no-submit" in f.help
+    assert "dry-run judge" not in f.help
     assert settings.load(_targets(tmp_path))["auto_apply_jev_mode"] == "typesafe"
     assert settings.validate({"auto_apply_jev_mode": "fake"}) == {}
     assert "auto_apply_jev_mode" in settings.validate({"auto_apply_jev_mode": "replay"})

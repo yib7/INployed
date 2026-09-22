@@ -99,9 +99,10 @@ def _spawn_console(argv: list[str]) -> None:
     """Launch `argv` in a brand-new, visible console.
 
     The child inherits this process's environment on purpose: `apply_run.py`
-    is this project's own code, it loads `.env` itself, and the Settings tab's
-    TYPESAFE_API_KEY row is marked `restart` because the child sees the
-    dashboard's startup snapshot. The flag is guarded via getattr so importing
+    is this project's own code and loads `.env` itself, so a first pasted key
+    reaches it. The Settings tab's TYPESAFE_API_KEY row is marked `restart`
+    because a rotated key sits behind the dashboard's startup snapshot until a
+    restart. The flag is guarded via getattr so importing
     this module on a non-Windows box (CI, a dev's Mac) never raises at import
     time.
     """

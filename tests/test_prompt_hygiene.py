@@ -48,6 +48,13 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 PKG = Path(__file__).resolve().parents[1] / "local" / "resume_tailor"
 
+# Prompt modules OUTSIDE the package that still reach ``llm.call``. The auto-apply
+# answer generator lives in ``local/`` (it imports the tailor lazily so the
+# runner never loads ``config.py``), and its prompt is held to the same census.
+# Each is parsed beside the package's modules, so an ``aiwriting.RULES_PROMPT``
+# attribute in one of them resolves the way it does inside the package.
+EXTRA_MODULES: Tuple[Path, ...] = (PKG.parent / "apply_answergen.py",)
+
 # What ``compose._STYLE_BANS``'s "em dash" pattern matches, as a literal check.
 # (name, compiled pattern) -- keep in step with that regex. Checked in EVERY
 # literal that reaches a model, the ban enumerations included.
@@ -113,9 +120,14 @@ _SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
 # ── AST plumbing ─────────────────────────────────────────────────────────────
-def _parse(pkg: Path) -> Dict[str, ast.Module]:
+def _module_paths(pkg: Path, extra: Iterable[Path] = EXTRA_MODULES) -> List[Path]:
+    """The package's modules plus the registered outside modules that exist."""
+    return sorted(pkg.glob("*.py")) + [p for p in extra if p.exists()]
+
+
+def _parse(pkg: Path, extra: Iterable[Path] = EXTRA_MODULES) -> Dict[str, ast.Module]:
     return {p.name: ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
-            for p in sorted(pkg.glob("*.py"))}
+            for p in _module_paths(pkg, extra)}
 
 
 def _docstring_ids(tree: ast.Module) -> Set[int]:
@@ -199,10 +211,11 @@ def _walk_pruned(node: ast.AST) -> Iterable[ast.AST]:
 class _Index:
     """Everything the trace needs about one package, parsed from source only."""
 
-    def __init__(self, pkg: Path):
-        self.trees = _parse(pkg)
-        self.sources = {p.name: p.read_text(encoding="utf-8").splitlines()
-                        for p in sorted(pkg.glob("*.py"))}
+    def __init__(self, pkg: Path, extra: Iterable[Path] = EXTRA_MODULES):
+        self.trees = _parse(pkg, extra)
+        self.paths = {p.name: p for p in _module_paths(pkg, extra)}
+        self.sources = {name: p.read_text(encoding="utf-8").splitlines()
+                        for name, p in self.paths.items()}
         self.docstrings = {m: _docstring_ids(t) for m, t in self.trees.items()}
         self.scopes = {m: _scope_map(t) for m, t in self.trees.items()}
         # Per-module, per-scope local bindings.
@@ -358,8 +371,18 @@ def scan(pkg: Path = PKG) -> List[Dict[str, Any]]:
                 lo = max(0, match.start() - 45)
                 snippet = node.value[lo:match.end() + 45].replace("\n", " ")
                 out.append({"module": mod, "line": line, "ban": label,
-                            "snippet": snippet.strip()})
+                            "snippet": snippet.strip(),
+                            "path": _display_path(index.paths.get(mod), mod)})
     return sorted(out, key=lambda h: (h["module"], h["line"], h["ban"], h["snippet"]))
+
+
+def _display_path(path: Optional[Path], mod: str) -> str:
+    if path is None:
+        return f"local/resume_tailor/{mod}"
+    try:
+        return path.relative_to(PKG.parents[1]).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _report(hits: List[Dict[str, Any]]) -> str:
@@ -395,7 +418,7 @@ def test_the_trace_still_reaches_every_prompt_module():
     # `itemcheck.py` is deliberately absent, holding no prompt and no `call` at all.
     expected = {"aiwriting.py", "chat.py", "common.py", "compose.py", "coverletter.py",
                 "master_gaps.py", "prep.py", "research.py", "selection.py",
-                "skills.py", "sweep.py"}
+                "skills.py", "sweep.py", "apply_answergen.py"}
     assert expected <= reached, (
         "the prompt trace no longer reaches: " + ", ".join(sorted(expected - reached))
         + " -- llm.call was probably renamed or wrapped; update LLM_ENTRY.")

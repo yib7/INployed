@@ -112,3 +112,26 @@ def test_inbox_error_does_not_log_email_body(browser_page, fixtures_server, capl
 ])
 def test_candidates_reads_the_subject_and_the_body(subject, body, expected):
     assert _inbox().candidates(body, subject) == expected
+
+
+def test_a_stray_listbox_does_not_hide_the_gmail_rows(browser_page, fixtures_server):
+    """Gmail renders its own `role=listbox` widgets (a label picker), and the
+    Outlook shape is tried first."""
+    inbox = _inbox()
+    rows = inbox.list_messages(browser_page,
+                               fixtures_server + "/inbox/gmail_with_listbox.html")
+    assert [r.subject for r in rows] == [
+        "Order #48213 confirmed", "This week in analytics", "Verify your email for Ashby",
+        "Dinner on Friday", "Your Greenhouse security code", "Your statement is ready"]
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://mail.google.com/mail/u/0/#inbox", "gmail"),
+    ("https://outlook.office.com/mail/", "outlook"),
+    ("https://outlook.live.com/mail/0/", "outlook"),
+    ("https://mail.wm.edu/owa/", None),
+    ("https://outlook.com.example.invalid/mail/", None),
+    ("http://127.0.0.1:8000/inbox/gmail_list.html", None),
+])
+def test_provider_for_reads_the_inbox_host(url, expected):
+    assert _inbox().provider_for(url) == expected

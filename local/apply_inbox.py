@@ -25,6 +25,11 @@ SELECTORS = {
         "body": ".a3s",
     },
 }
+PROVIDER_HOSTS = {
+    "gmail": ("mail.google.com",),
+    "outlook": ("outlook.office.com", "outlook.office365.com", "outlook.live.com",
+                "outlook.com"),
+}
 TIMEOUT_MS = 5_000
 SENDER_SCAN = 4              # elements checked for a sender address attribute
 CANDIDATES_CAP = 15          # code-shaped tokens read out of one message
@@ -40,10 +45,33 @@ class Message:
     open_locator: str
 
 
+def provider_for(inbox_url: str) -> str | None:
+    """The provider the inbox host names, or None when the host says nothing.
+
+    A host match is the reliable signal; the shape trial in `list_messages` is
+    the fallback, and it is what a tenant on its own domain (an Outlook Web
+    App at a university) goes through."""
+    host = (urlsplit(str(inbox_url or "")).hostname or "").lower()
+    for name, hosts in PROVIDER_HOSTS.items():
+        # an exact host or a subdomain of one; never a prefix, since
+        # `outlook.com.example.invalid` starts with a listed host
+        if any(host == h or host.endswith("." + h) for h in hosts):
+            return name
+    return None
+
+
 def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
-    """Read the newest visible rows from the provider's inbox order."""
+    """Read the newest visible rows from the provider's inbox order.
+
+    The provider the inbox host names is tried first; the others follow, so a
+    webmail on its own domain still works. A row with no subject is skipped,
+    which is how a foreign `role=listbox` (Gmail's own label picker matches the
+    Outlook row selector) yields nothing and the next shape gets its turn."""
     page.goto(inbox_url, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
-    for selectors in SELECTORS.values():
+    named = provider_for(inbox_url)
+    order = ([SELECTORS[named]] if named else []) + [s for n, s in SELECTORS.items()
+                                                     if n != named]
+    for selectors in order:
         rows = page.locator(selectors["row"])
         messages = []
         for i in range(rows.count()):
@@ -67,7 +95,10 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
                             return address
                 return matches.first.inner_text()
 
-            messages.append(Message(len(messages), text("sender"), text("subject"),
+            subject = text("subject")
+            if not subject.strip():
+                continue
+            messages.append(Message(len(messages), text("sender"), subject,
                                     text("preview") or row.inner_text(),
                                     f'{selectors["row"]} >> nth={i}'))
         if messages:

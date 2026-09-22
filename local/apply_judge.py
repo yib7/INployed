@@ -34,9 +34,10 @@ only meaningful once the fact is known. The first request carries a
 the value); a model-mapped select waits for `field_{n}_pick` from the second
 request, and until then it is `skip` and, when required, sets `park_reason`.
 
-THRESHOLDS ARE UNTUNED until SP8 records real Jev answers over the fixtures.
-The defaults are the design table's; the constants are the only place to
-change them.
+The thresholds were tuned 2026-09-22 (SP8) against the recorded live answers
+in `tests/fixtures/jev_cache/cache.json`; the block below the constants
+records the distribution each gate was read against. The constants are the
+only place to change them.
 """
 from __future__ import annotations
 
@@ -51,7 +52,7 @@ from jev import Answer
 
 log = logging.getLogger("apply_judge")
 
-# --- thresholds (UNTUNED until SP8) -----------------------------------------------
+# --- thresholds (tuned 2026-09-22 against the recorded live answers) ----------------
 
 PAGE_STATE_MIN_CONF = 0.60      # below it: park needs_human
 FIELD_MAP_MIN_CONF = 0.70       # below it: optional -> blank + flagged; required -> park
@@ -67,6 +68,32 @@ GROUNDING_MIN = 0.70            # a generated sentence below it drops the draft
 INBOX_MIN = 0.50                # an inbox message needs from_site and has_code both above it
 MAX_PAGES = 12                  # pages per application before parking
 PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
+
+# How each gate was read (SP8, 2026-09-22): `scripts/jev_thresholds.py` over the
+# committed cache, 38 live requests and 224 answers from jev-1.13.0 over every
+# runner fixture. Every value stays at the design table's number; the data
+# put every answer on the right side of its gate with margin once four
+# question shapes were fixed (the ATS-aware inbox question, the button text
+# without the extractor's kind_hint, no speculative option pick, generated
+# answers verified in code). Per gate:
+#   PAGE_STATE_MIN_CONF 0.60   28 answers, min 0.90, median 1.00; seven states seen.
+#   FIELD_MAP_MIN_CONF 0.70    49 answers, min 0.69 (a login wall's Email box, which
+#                              the accounts hook fills and `plan` never reads); the
+#                              mappings a fill depends on sit at 0.84 and above.
+#   CONSENT_MIN_CONF 0.85      no fixture checkbox; unexercised, kept.
+#   OPTION_MIN_CONF 0.70       2 real picks (`field_{n}_pick`), 0.89 and 1.00.
+#   BUTTON_SUBMIT_MIN_CONF 0.90 6 answers, min 0.95.
+#   BUTTON_ADVANCE_MIN_CONF 0.75 14 answers, all 1.00 (0.66 on a wizard's Continue
+#                              while the state still carried `kind_hint: submit`).
+#   VERIFY_MIN 0.80            11 typed facts, min 0.98 (the essays that read 0.05 to
+#                              0.20 were generated text checked against a sheet that
+#                              holds no essay; they are compared in code now).
+#   PLACEHOLDER_MAX 0.50       11 answers, max 0.17.
+#   PROHIBITED_MAX 0.30        28 answers, max 0.04; no fixture asks for an SSN.
+#   CAPTCHA_MAX 0.30           captcha.html 0.99, every other page 0.01 to 0.02.
+#   GROUNDING_MIN 0.70         grounded sentence 0.98, the invented one 0.02.
+#   INBOX_MIN 0.50             the ATS's code mail from_site 0.85 / has_code 0.98; the
+#                              decoys 0.06 to 0.12 (another ATS's code mail 0.12).
 
 HEADLINE_CHARS = 600            # of the page text sent as `page.headline_text`
 HELP_CAP = 200                  # per-field help text sent

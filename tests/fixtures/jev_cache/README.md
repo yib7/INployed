@@ -3,8 +3,11 @@
 `cache.json` holds one recorded answer set per request the runner tests
 (`tests/test_apply_run.py`, `tests/test_apply_run_boundaries.py`) make to Jev,
 keyed by the sha256 of the canonical `{"state", "questions"}` JSON
-(`local/jev.py`, `ReplayJev`). It is committed once a key holder records it;
-until then the file is absent and the tests run on `FakeJev`.
+(`local/jev.py`, `ReplayJev`). It was recorded 2026-09-22 (SP8, jev-1.13.0,
+38 requests, replay 161 hits / 0 misses over 95 tests) and is committed; it
+holds fixture text and judgments only. A test that changes a fixture or a
+question shape changes the request key, and the replay run then fails naming
+the test and the re-record command.
 
 `AUTO_APPLY_TEST_JEV` picks the judge for every runner in those two modules:
 
@@ -48,6 +51,18 @@ with the reason and the cache keeps everything recorded so far. A dry run of
 the whole suite with the fake standing in for the live model made 40 unique
 requests over 93 tests, so one recording should sit well under the default
 cap. Without the key, record mode skips every test with the reason.
+
+## What the recording taught the questions
+
+Every runner takes a no-op `sleep` (`_no_sleep` in `test_apply_run.py`): a
+judgment that diverges from the fake must never wait out an inbox poll
+inside the pytest timeout. The first live run found four question shapes the
+fake could not: the from-site inbox question now names the ATS and the
+company (`apply_judge.ATS_NAMES`), the page state sends each button as
+`{n, text}` without the extractor's `kind_hint`, the first request asks an
+option pick only where `quick_map` has the value, and a generated answer is
+verified against its draft in code. The thresholds header in
+`local/apply_judge.py` records the live distribution per gate.
 
 ## Divergences and `outcomes.jsonl`
 

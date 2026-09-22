@@ -173,7 +173,7 @@ def test_threshold_constants_match_the_spec_table():
     assert apply_judge.GROUNDING_MIN == 0.70
     assert apply_judge.MAX_PAGES == 12
     assert apply_judge.PAGE_TEXT_CAP == 4000
-    assert "UNTUNED until SP8" in apply_judge.__doc__
+    assert "tuned 2026-09-22" in apply_judge.__doc__ and "UNTUNED" not in apply_judge.__doc__
 
 
 def test_the_option_tuples():

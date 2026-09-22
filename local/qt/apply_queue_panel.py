@@ -45,25 +45,39 @@ from qt.widgets import ElidedLabel
 # cd here first so the relative `local/apply_run.py` resolves.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# PowerShell-safe (5.1: `;` chains, no `&&`; quoted path survives spaces).
+
+
+def _console_command(root: Path, verb: str) -> str:
+    """The PowerShell line that runs `apply_run.py <verb>` from `root`.
+
+    5.1-safe: `;` chains (no `&&`). The path goes through
+    `Set-Location -LiteralPath '<root>'`: a single-quoted string is literal in
+    PowerShell (no `$` expansion, no backtick escapes) and `-LiteralPath` keeps
+    a `[` from reading as a wildcard, so a checkout under any folder name
+    resolves. The one escape a single-quoted string knows is a doubled quote.
+    """
+    literal = str(root).replace("'", "''")
+    return f"Set-Location -LiteralPath '{literal}'; python local/apply_run.py {verb}"
+
+
 # The drain is this project's own code (local/apply_run.py): it claims each
 # queued job, drives a persistent Chromium profile through the application
 # with the Jev judge, and submits only when the confidence gate passes
 # (`auto_apply_submit` in Settings, `--no-submit` on the command line parks
 # every job at its review page instead). The auto-apply Claude skill is the
 # manual fallback and is no longer launched from here.
-KICKOFF_COMMAND = f'cd "{REPO_ROOT}"; python local/apply_run.py drain'
+KICKOFF_COMMAND = _console_command(REPO_ROOT, "drain")
 
 # The one-time sign-in: opens the same persistent profile, headed, at
 # LinkedIn's login and the configured inbox, and waits for the window to close.
-LOGIN_COMMAND = f'cd "{REPO_ROOT}"; python local/apply_run.py login'
+LOGIN_COMMAND = _console_command(REPO_ROOT, "login")
 
 
 def _console_argv(command: str) -> list[str]:
     """The argv that opens a NEW PowerShell console running `command`.
 
-    Pure and testable: no subprocess call here. The command embeds the quoted
-    REPO_ROOT (`cd "<root>"`), and base64 via -EncodedCommand sidesteps
+    Pure and testable: no subprocess call here. The command embeds the literal
+    REPO_ROOT (`Set-Location -LiteralPath '<root>'`), and base64 via -EncodedCommand sidesteps
     PowerShell 5.1's quoting rules entirely (no re-tokenizing, no escaping) and
     round-trips cleanly for the tests to decode.
     """

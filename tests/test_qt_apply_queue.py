@@ -798,10 +798,25 @@ def test_kickoff_and_login_commands_run_apply_run():
     verb. No `claude` anywhere: the auto-apply skill is the manual fallback."""
     for cmd in (KICKOFF_COMMAND, LOGIN_COMMAND):
         prefix, verb = cmd.split("; ", 1)          # PowerShell chain (5.1-safe)
-        assert prefix == f'cd "{aqp.REPO_ROOT}"'   # quoted path survives spaces
+        # Single-quoted -LiteralPath: no `$` expansion, no backtick escapes, no
+        # `[` wildcard, and spaces survive.
+        assert prefix == f"Set-Location -LiteralPath '{aqp.REPO_ROOT}'"
         assert "claude" not in verb.lower()        # (the checkout path may say it)
     assert KICKOFF_COMMAND.endswith("python local/apply_run.py drain")
     assert LOGIN_COMMAND.endswith("python local/apply_run.py login")
+
+
+def test_console_command_keeps_a_hostile_checkout_path_literal():
+    """A checkout under a folder named with `$`, a backtick or `[` reaches the
+    console byte for byte: single quotes are PowerShell's literal string, and a
+    quote inside the path is doubled, the one escape that string knows."""
+    root = Path("C:/Users/o'brien/$HOME/`x/[1]/scrape_data")
+    cmd = aqp._console_command(root, "drain")
+    literal = str(root).replace("'", "''")
+    assert cmd == f"Set-Location -LiteralPath '{literal}'; python local/apply_run.py drain"
+    for hostile in ("$HOME", "`x", "[1]", "o''brien"):
+        assert hostile in cmd
+    assert _decoded(aqp._console_argv(cmd)) == cmd
 
 
 # --- ApplyQueuePanel: "Start auto-apply run" (SP8) ---------------------------------

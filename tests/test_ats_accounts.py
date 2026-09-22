@@ -35,6 +35,16 @@ def test_direct_password_fill_is_private(browser_page, kr, caplog):
     assert "chars hidden" in caplog.text
 
 
+def test_direct_password_truncated_by_the_field_reports_failure(browser_page, kr, caplog):
+    # a field that silently keeps only part of the value is not a filled password
+    kr.set_password(ats_accounts.SERVICE, "master", SECRET)
+    browser_page.set_content('<input id="password" type="password" maxlength="4">')
+    with caplog.at_level("INFO"):
+        assert ats_accounts.fill_password(browser_page, "#password") is False
+    assert SECRET not in caplog.text
+    assert "password filled" not in caplog.text
+
+
 def test_direct_password_failure_hides_playwright_error(browser_page, kr, caplog, monkeypatch):
     kr.set_password(ats_accounts.SERVICE, "master", SECRET)
 

@@ -197,14 +197,24 @@ def has_password() -> bool:
 
 
 def fill_password(page_or_frame, locator) -> bool:
-    """Move the stored password directly into a field, keeping errors private."""
+    """Move the stored password directly into a field, keeping errors private.
+
+    The read-back compares LENGTHS only, never the value, so a field that
+    truncated or ignored the fill (a maxlength, a widget that rewrites what it
+    was given) reports False instead of leaving a half password behind."""
     password = _get_master_password()
     if not password:
         return False
     try:
         target = page_or_frame.locator(locator) if isinstance(locator, str) else locator
         target.fill(password, timeout=5_000)
+        landed = len(target.input_value(timeout=5_000))
     except Exception:  # noqa: BLE001  (Playwright errors may include the fill value)
+        return False
+    if landed != len(password):
+        logging.getLogger(__name__).warning(
+            "password field kept %d of %d characters; treating the fill as failed",
+            landed, len(password))
         return False
     logging.getLogger(__name__).info("password filled (%d chars hidden)", len(password))
     return True

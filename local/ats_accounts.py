@@ -199,9 +199,9 @@ def has_password() -> bool:
 def fill_password(page_or_frame, locator) -> bool:
     """Move the stored password directly into a field, keeping errors private.
 
-    The read-back compares LENGTHS only, never the value, so a field that
+    The read-back compares LENGTHS only, never the value. A field that
     truncated or ignored the fill (a maxlength, a widget that rewrites what it
-    was given) reports False instead of leaving a half password behind."""
+    was given) reports False, so no half password is left behind."""
     password = _get_master_password()
     if not password:
         return False

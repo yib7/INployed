@@ -180,8 +180,10 @@ def set_master_password(password: Optional[str] = None) -> bool:
 
 
 def _get_master_password() -> Optional[str]:
-    """Module-PRIVATE. The only reader of the stored secret; its only legitimate
-    consumer is the clipboard transit below. Never export, log, or print."""
+    """Module-PRIVATE. The only reader of the stored secret. Its legitimate
+    consumers are `has_password` (which keeps only the boolean),
+    `fill_password` (which types it into a password field in this process) and
+    the clipboard transit below. Never export, log, or print."""
     kr = _keyring()
     if kr is None:
         return None
@@ -199,9 +201,10 @@ def has_password() -> bool:
 def fill_password(page_or_frame, locator) -> bool:
     """Move the stored password directly into a field, keeping errors private.
 
-    The read-back compares LENGTHS only, never the value. A field that
-    truncated or ignored the fill (a maxlength, a widget that rewrites what it
-    was given) reports False, so no half password is left behind."""
+    The read-back compares lengths, so the value is never read back into
+    Python. A field that truncated or ignored the fill (a maxlength, a widget
+    that rewrites what it was given) reports False, so no half password is left
+    behind."""
     password = _get_master_password()
     if not password:
         return False

@@ -366,18 +366,23 @@ def _is_password(row: dict) -> bool:
                                         str(row.get("autocomplete", "")))
 
 
-_CODE_WORDS = re.compile(r"verification|security|one[- ]?time|otp|passcode|auth", re.I)
-_NOT_CODE_WORDS = re.compile(r"zip|postal|country|promo|coupon|discount|area\s*code", re.I)
+# the qualifier has to sit on the word "code": a Social Security Number box or
+# a work authorization box carries the qualifier and is no place for the code
+_CODE_WORDS = re.compile(
+    r"(?:verification|security|one[- ]?time|auth\w*)[ _-]*code|\botp\b|passcode", re.I)
+_NOT_CODE_WORDS = re.compile(
+    r"zip|post\s*code|postal|country|promo|coupon|discount|referral|invite|area\s*code", re.I)
 
 
 def _code_field(fields):
     """The box the emailed code goes in.
 
-    A code gate can carry a postal code, a country code or a promo box as
-    well, and all of them read as "code". A field whose label or id names a
-    verification, security, one-time or OTP code wins; the plain "code" match
-    is the fallback, with the address and promo words excluded. `autocomplete`
-    `one-time-code` is the strongest signal the DOM offers."""
+    A code gate can carry a postal code, a country code, a referral or a
+    promo box as well, and all of them read as "code". A field whose label or
+    id names a verification, security, one-time, auth or OTP code wins; the
+    plain "code" match is the fallback, with the address, referral and promo
+    words excluded. `autocomplete` `one-time-code` is the strongest signal the
+    DOM offers."""
     def blob(f):
         return f"{f.label} {f.id_or_name}"
 

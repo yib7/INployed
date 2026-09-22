@@ -1347,6 +1347,15 @@ def test_the_emailed_code_never_lands_in_a_postal_code_box(
     (["Promo code", "One-time code"], "One-time code"),
     (["Country code", "OTP"], "OTP"),
     (["Access code"], "Access code"),                   # nothing preferred: the code word wins
+    # a box that carries a code word without "code" sits above the real one
+    (["Social Security Number", "Security code"], "Security code"),
+    (["Work authorization status", "Verification code"], "Verification code"),
+    (["Social Security Number", "Work authorization status", "Enter the code"],
+     "Enter the code"),
+    # more boxes that read as "code" and are no place for the emailed one
+    (["Referral code", "Enter the code"], "Enter the code"),
+    (["Invite code", "Access code"], "Access code"),
+    (["Postcode", "Access code"], "Access code"),
 ])
 def test_code_field_pick_prefers_the_verification_box(labels, expected):
     import apply_form

@@ -26,6 +26,7 @@ SELECTORS = {
     },
 }
 TIMEOUT_MS = 5_000
+SENDER_SCAN = 4              # elements checked for a sender address attribute
 CANDIDATES_CAP = 15          # code-shaped tokens read out of one message
 BODY_SELECTOR = ", ".join(s["body"] for s in SELECTORS.values())
 
@@ -53,10 +54,18 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
                 continue
 
             def text(key):
-                loc = row.locator(selectors[key]).first
-                if not loc.count():
+                matches = row.locator(selectors[key])
+                count = matches.count()
+                if not count:
                     return ""
-                return (loc.get_attribute("email") if key == "sender" else None) or loc.inner_text()
+                if key == "sender":
+                    # Gmail keeps the address in an `email` attribute on a span
+                    # inside the cell, and the cell itself matches first.
+                    for j in range(min(count, SENDER_SCAN)):
+                        address = matches.nth(j).get_attribute("email")
+                        if address:
+                            return address
+                return matches.first.inner_text()
 
             messages.append(Message(len(messages), text("sender"), text("subject"),
                                     text("preview") or row.inner_text(),

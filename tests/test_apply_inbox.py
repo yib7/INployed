@@ -18,26 +18,43 @@ def _inbox():
 
 
 @pytest.mark.parametrize("provider", ["outlook", "gmail"])
-def test_fetch_code_keeps_application_tab_and_ignores_order_email(
+def test_fetch_code_keeps_application_tab_and_ignores_the_decoys(
         browser_page, fixtures_server, provider, caplog):
+    """The inbox carries an order number and another site's code as well."""
     inbox = _inbox()
     browser_page.goto(fixtures_server + "/forms/code_gate.html")
     original = browser_page.url
-    code = inbox.fetch_code(browser_page, "127.0.0.1",
+    code = inbox.fetch_code(browser_page, "greenhouse.io",
                             fixtures_server + f"/inbox/{provider}_list.html",
                             jev=jev.FakeJev(), polls=1)
-    assert code == "MKPZ3QRA"
+    assert code == "MKPZ3QRA"          # not Q7R2XK (Ashby) and not 48213 (the order)
     assert browser_page.url == original
     assert len(browser_page.context.pages) == 1
     assert code not in caplog.text
 
 
-def test_list_and_open_message(browser_page, fixtures_server):
+@pytest.mark.parametrize("provider", ["outlook", "gmail"])
+def test_list_messages_reads_every_row_of_the_provider_shape(
+        browser_page, fixtures_server, provider):
+    inbox = _inbox()
+    rows = inbox.list_messages(browser_page,
+                               fixtures_server + f"/inbox/{provider}_list.html")
+    assert [r.n for r in rows] == [0, 1, 2, 3, 4, 5]
+    assert [r.subject for r in rows] == [
+        "Order #48213 confirmed", "This week in analytics", "Verify your email for Ashby",
+        "Dinner on Friday", "Your Greenhouse security code", "Your statement is ready"]
+    assert [r.sender for r in rows] == [
+        "orders@shopfront.example", "newsletter@weekly.example", "no-reply@ashbyhq.com",
+        "nina@friends.example", "no-reply@greenhouse.io", "billing@utilities.example"]
+    assert "MKPZ3QRA" in rows[4].preview
+
+
+def test_list_honours_the_limit_and_open_message_reads_the_body(browser_page, fixtures_server):
     inbox = _inbox()
     rows = inbox.list_messages(browser_page, fixtures_server + "/inbox/outlook_list.html", limit=1)
     assert len(rows) == 1
-    assert rows[0].subject == "Order receipt"
-    assert "987654" in inbox.open_message(browser_page, rows[0])
+    assert rows[0].subject == "Order #48213 confirmed"
+    assert "48213" in inbox.open_message(browser_page, rows[0])
 
 
 def test_open_message_waits_for_the_clicked_rows_body(browser_page, fixtures_server):

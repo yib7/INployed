@@ -1,9 +1,37 @@
-<!doctype html><html lang="en"><title>Inbox</title><body>
+<!doctype html>
+<html lang="en" data-provider="outlook">
+<title>Inbox</title>
+<body>
 <div role="listbox" aria-label="Message list">
+
 <div role="option" onclick="location.href='order_message.html'">
-<span data-testid="sender">shop@example.com</span><span data-testid="subject">Order receipt</span>
-<span data-testid="preview">Your order number is 987654.</span></div>
+<span data-testid="sender">orders@shopfront.example</span>
+<span data-testid="subject">Order #48213 confirmed</span>
+<span data-testid="preview">Your order number is 48213 and it ships on Tuesday.</span></div>
+
+<div role="option" onclick="location.href='plain_message.html'">
+<span data-testid="sender">newsletter@weekly.example</span>
+<span data-testid="subject">This week in analytics</span>
+<span data-testid="preview">Five charts worth a second look.</span></div>
+
+<div role="option" onclick="location.href='ashby_message.html'">
+<span data-testid="sender">no-reply@ashbyhq.com</span>
+<span data-testid="subject">Verify your email for Ashby</span>
+<span data-testid="preview">Your Ashby verification code is Q7R2XK.</span></div>
+
+<div role="option" onclick="location.href='plain_message.html'">
+<span data-testid="sender">nina@friends.example</span>
+<span data-testid="subject">Dinner on Friday</span>
+<span data-testid="preview">Seven works for us if it works for you.</span></div>
+
 <div role="option" onclick="location.href='outlook_message.html'">
-<span data-testid="sender">security@127.0.0.1</span><span data-testid="subject">Security code for your application</span>
-<span data-testid="preview">Sender address: 127.0.0.1. Enter this verification code on the website.</span></div>
+<span data-testid="sender">no-reply@greenhouse.io</span>
+<span data-testid="subject">Your Greenhouse security code</span>
+<span data-testid="preview">Message sent by Greenhouse. Your security code is MKPZ3QRA.</span></div>
+
+<div role="option" onclick="location.href='plain_message.html'">
+<span data-testid="sender">billing@utilities.example</span>
+<span data-testid="subject">Your statement is ready</span>
+<span data-testid="preview">Nothing is due until the end of the month.</span></div>
+
 </div></body></html>

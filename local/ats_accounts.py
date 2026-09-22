@@ -211,7 +211,9 @@ def fill_password(page_or_frame, locator) -> bool:
     try:
         target = page_or_frame.locator(locator) if isinstance(locator, str) else locator
         target.fill(password, timeout=5_000)
-        landed = len(target.input_value(timeout=5_000))
+        # the length is counted in the page, so the value itself never crosses
+        # back into this process (`input_value()` would hand it over)
+        landed = int(target.evaluate("el => (el.value || '').length"))
     except Exception:  # noqa: BLE001  (Playwright errors may include the fill value)
         return False
     if landed != len(password):

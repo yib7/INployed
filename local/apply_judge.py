@@ -157,9 +157,8 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
 
 # A login wall's sign-in button and a signup form's create-account button are
 # `advance` (spec 3.5): they move the flow forward without sending the
-# application. `advance` and `submit` say what they are not for, because a
-# wizard's step button is often an HTML `type=submit` control (the state's
-# `kind_hint`) and the live judge split on that alone (SP8, 0.7 / 0.3).
+# application. `advance` and `submit` say what they are not for: they are the
+# confusable pair, and a wizard's step button is an HTML submit control too.
 _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
     "advance": {
         "what": "The next step: the next form page, signing in, creating the account, "
@@ -169,8 +168,8 @@ _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
                      "Create account", "Continue with email"]},
     "submit": {
         "what": "Sends the finished application from its last page",
-        "not_for": "A step button that opens the next form page, whatever its HTML type: "
-                   "Continue, Next, Save and continue",
+        "not_for": "A step button that opens the next form page: Continue, Next, "
+                   "Save and continue",
         "examples": ["Submit", "Submit application", "Send application"]},
     "back": {
         "what": "The previous step",
@@ -291,8 +290,11 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         "page": {"url_host": digest.url_host, "title": digest.title,
                  "headline_text": text[:HEADLINE_CHARS]},
         "fields": [_compact_field(f) for f in digest.fields],
-        "buttons": [{"n": b.n, "text": b.text, "kind_hint": b.kind_hint}
-                    for b in digest.buttons],
+        # the text only: the extractor's `kind_hint` is a regex guess ("Apply
+        # now" and a wizard's Continue both read `submit`) and the live judge
+        # took the word at face value (SP8: apply_entry 0.55 / submit 0.45,
+        # advance 0.72 / submit 0.28); `apply_run._submit_shaped` guards on text
+        "buttons": [{"n": b.n, "text": b.text} for b in digest.buttons],
         "facts": _facts_map(catalog),
     }
     questions: dict[str, Any] = {

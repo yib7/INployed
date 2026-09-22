@@ -905,13 +905,15 @@ class _JobRun:
     def _job_posting(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan,
                      rec: dict) -> None:
         """Click the posting's Apply entry. A page that carries form fields
-        is only clicked through a confident `apply_entry` role; otherwise it
-        is treated as the application form (a form's own Apply button is a
-        submit, and a text match on "apply" would send it)."""
+        is only clicked through a confident `apply_entry` role whose text is
+        not submit-shaped; otherwise it is treated as the application form (a
+        form's own Apply button is a submit, and clicking it before the fill
+        would send an empty form). A fieldless posting keeps the text match."""
         n = None
         entry = plan.buttons.get("apply_entry")
         if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
-            n = entry[0]
+            if not (digest.fields and _submit_shaped(digest, entry[0])):
+                n = entry[0]
         elif not digest.fields:
             for b in digest.buttons:
                 if "apply" in b.text.lower():
@@ -968,6 +970,14 @@ class _JobRun:
                 submit = advance
                 plan.buttons["submit"] = advance
             advance = None
+        entry = plan.buttons.get("apply_entry")
+        if submit is None and entry is not None and _submit_shaped(digest, entry[0]):
+            # a form's own "Apply" button judged apply_entry sends the form:
+            # it is the submit and goes through the gate like any other
+            self.log.info("job %s: the apply_entry button on a form is submit-shaped; "
+                          "routing it through the submit gate", self.job_id)
+            submit = entry
+            plan.buttons["submit"] = entry
         if submit is None and advance is not None \
                 and advance[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
             self._click(digest, advance[0], "advance", rec)

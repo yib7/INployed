@@ -202,7 +202,7 @@ def test_page_questions_state_shape(catalog):
     assert state["fields"][8]["options"] == ["Yes", "No"]
     assert state["fields"][8]["required"] is True
     assert "placeholder" not in state["fields"][0]      # empty strings are dropped
-    assert state["buttons"][0] == {"n": 0, "text": "Submit application", "kind_hint": "submit"}
+    assert state["buttons"][0] == {"n": 0, "text": "Submit application"}   # no kind_hint
     # `facts` is the one description map: the catalog's facts plus the special
     # sources, so every key a field-source Choice offers is described there once
     assert state["facts"] == {**apply_judge.SPECIAL_DESCRIPTIONS, **catalog.to_criteria()}
@@ -376,11 +376,13 @@ def test_page_questions_name_fields_by_position_and_carry_n(catalog):
 
 
 def test_button_roles_separate_a_wizard_continue_from_the_final_submit(catalog):
-    """A multi-step form's Continue is often an HTML `type=submit` control, and
-    the state says so in `kind_hint`. The live judge split 0.7 / 0.3 on it
-    (confidence 0.64, below the advance gate); the criteria now say what each
-    role is not for, so the HTML type alone cannot pull a step button to
-    `submit`. The fake keeps the same reading."""
+    """A multi-step form's Continue is often an HTML `type=submit` control and
+    the extractor's `kind_hint` says `submit` for it (and for "Apply now": the
+    hint is a regex over the text). The live judge took the word literally
+    (advance 0.72 / submit 0.28, confidence 0.66, below the advance gate;
+    apply_entry 0.55 / submit 0.45 on a posting). The state now carries the
+    button text alone and the criteria say what each role is not for. The
+    fake reads the same roles."""
     for role in ("advance", "submit"):
         assert apply_judge._BUTTON_CRITERIA[role]["not_for"]
     digest = FormDigest(url_host="x", title="t", text="",
@@ -393,6 +395,7 @@ def test_button_roles_separate_a_wizard_continue_from_the_final_submit(catalog):
                                  Button(n=3, locator=(0, "#l"), text="Sign in",
                                         kind_hint="submit")])
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
+    assert all(set(b) == {"n", "text"} for b in state["buttons"])
     answers = jev.FakeJev().judge(state, q)
     assert [answers[f"button_{n}_role"].choice for n in range(4)] ==         ["advance", "submit", "back", "advance"]
 

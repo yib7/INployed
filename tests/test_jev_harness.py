@@ -138,6 +138,32 @@ def test_replay_miss_is_recorded_on_the_test_and_re_raised(tmp_path):
     assert "AUTO_APPLY_TEST_JEV=record" in text and str(tmp_path / "cache.json") in text
 
 
+class _Raising:
+    """A stand-in for a live judge whose SDK / HTTP layer blows up with a
+    message that carries a secret-looking token."""
+
+    def judge(self, state, questions):
+        raise RuntimeError("401 from https://api.typesafe.ai: bad key sk-live-SECRET-9f3a")
+
+
+def test_observed_records_only_the_exception_type_and_re_raises(tmp_path, monkeypatch):
+    """An SDK / HTTP error in record mode lands in `outcomes.jsonl` as the type
+    name alone: the message can quote the request, the URL or the key."""
+    monkeypatch.setattr(jev_harness, "live_judge", lambda: _Raising())
+    s = jev_harness.Session("record", tmp_path / "cache.json", env={jev.KEY_ENV: "k-test"})
+    rec = s.begin("t::boom")
+    with pytest.raises(RuntimeError):
+        s.judge().judge(STATE, QUESTIONS)
+    assert rec.answers == [{"error": "RuntimeError"}]
+    assert rec.misses == []
+    writer = jev_outcomes.OutcomesWriter(jev_harness.outcomes_path(tmp_path / "cache.json"))
+    writer.reset()
+    writer.write(rec)
+    text = writer.path.read_text(encoding="utf-8")
+    assert "RuntimeError" in text
+    assert "SECRET" not in text and "typesafe.ai" not in text
+
+
 def test_observed_answers_carry_the_fake_answer_beside_the_recorded_one(tmp_path):
     cache = tmp_path / "cache.json"
     jev.ReplayJev(jev.FakeJev(), cache).judge(STATE, QUESTIONS)

@@ -76,8 +76,10 @@ def live_judge() -> jev.Jev:
 
 class Observed:
     """A judge that logs every answer (with the fake's answer to the same
-    question) on the current test's record and notes a replay miss on it
-    before re-raising."""
+    question) on the current test's record, notes a replay miss on it before
+    re-raising, and records any other failure by its type name alone (an SDK
+    or HTTP message can quote the request, the URL or the key, and the
+    outcomes file is shared)."""
 
     def __init__(self, inner: jev.Jev, record: TestRecord):
         self.inner = inner
@@ -89,6 +91,9 @@ class Observed:
         except jev.JevUnavailable as e:
             self.record.misses.append({"key": jev.ReplayJev.key_for(state, questions),
                                        "questions": sorted(questions), "error": str(e)})
+            raise
+        except Exception as e:
+            self.record.answers.append({"error": type(e).__name__})
             raise
         try:
             fake = jev.FakeJev().judge(state, questions)

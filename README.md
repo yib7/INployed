@@ -238,6 +238,11 @@ discovery VM.
   follow-up nudges. The whole history is a local SQLite file you can export and import.
 - **Apply:** every tailored folder gets a self-contained `apply.md` sheet that a
   browser agent fills page by page and then stops at the review screen. It never logs in, and it never clicks submit.
+- **Auto-apply:** queue tailored jobs and a code-owned drain works through them in its
+  own browser profile, with TypeSafe's Jev model judging every page kind, field mapping,
+  option and button. It submits when every required field is filled and verified and no
+  CAPTCHA, payment or blocked question is on the page; anything less parks at review with
+  the reason, and an `apply_record.md` per job says what was typed where.
 - **Operate:** Settings is one schema-driven form over every key, path, and tunable the
   project has (no file editing), including the schedule, pause, config pushes, and API-key
   rotation for the cloud discovery VM. A rotated key lands in a mode-600
@@ -262,7 +267,7 @@ look at the data every generated bullet had to come from.
 - **Tailor** writes the résumé, cover letter and a self-contained `apply.md` for that job.
 - **All Jobs** is the same table over everything scraped, seen or not.
 - **Tracker** follows each application from applied through interviewing, offer, rejected.
-- **Auto-apply** is the batch queue the apply helper works through, one job at a time.
+- **Auto-apply** is the batch queue the Jev-judged drain works through, one job at a time.
 - **Stats** reports per-run pipeline metrics.
 - **Resume Data** is the select-and-rephrase source of truth, plus the bullet-sizing editor.
 - **Apply Answers** holds the reusable answers the apply helper fills into forms.
@@ -287,9 +292,11 @@ look at the data every generated bullet had to come from.
   a broken dataset or a schema change stops the front of the pipeline. The provider does not
   publish its request-size limit, so the 2,000-id exclude cap was measured against the live
   API and a change on their side can move it.
-- **Not an auto-submitter, and not a résumé writer:** the apply flow parks at review, and
-  the tailor can only select and re-phrase facts you wrote yourself. It will never fill a thin
-  experience file with impressive-sounding text.
+- **The auto-apply thresholds are untuned, and it is not a résumé writer:** the per-job
+  Apply flow parks at review; the batch drain submits behind a confidence gate whose
+  thresholds wait for the first live pass (switch **Submit when verified** off to park
+  every job). The tailor can only select and re-phrase facts you wrote yourself. It will
+  never fill a thin experience file with impressive-sounding text.
 - **The grounding gate has known gaps, so read the output before you send it.** It traces
   distinctive tokens only, so an overstatement made of ordinary lowercase words passes. A
   bare `30m` reads as thirty million, not thirty minutes. A plural is bridged to its singular
@@ -422,13 +429,23 @@ local/app.py            PySide6/Qt dashboard entry point (triage / tracker / sta
 local/open_dashboard.pyw  the launcher's target: resolves the synced master, then opens app.py, no console
 local/qt/               Qt UI package (main_window, jobs_model/tab, settings_tab, vm_panel, resume_data_tab, answers_tab, ...)
 local/jobsdata.py       toolkit-agnostic data + config logic (load/filter/sort/columns/blocklist)
-local/settings.py       the one schema behind the Settings tab: 72 fields, where each is stored
+local/settings.py       the one schema behind the Settings tab: 79 fields, where each is stored
 local/setup_check.py    what's missing or misconfigured, in plain sentences (the Check setup button)
 local/errmsg.py         the single renderer for user-facing exception text (no home paths, no secrets)
 local/chrome_launch.py  open job/resume links in the configured Chrome profile
 local/vm_schedule.py    pure crontab / pause / run-label generators
 local/vm_sync.py        gcloud ssh/scp argv builders (pause/resume, crontab, config + outbox pushes)
 local/watcher.py        scheduled watcher: reconciles seen-state, pops the dashboard on new high scores
+local/apply_queue.py    the batch auto-apply queue: atomic JSON store + its CLI (claim / finish / add_missing)
+local/apply_run.py      the Jev-judged auto-apply drain (drain / one / login / doctor), state machine + submit gate
+local/jev.py            the TypeSafe Jev judge client, the deterministic fake, and the replay cache
+local/apply_judge.py    every Jev question and threshold behind the drain (untuned until the live pass)
+local/apply_form.py     page digest: visible fields, buttons and text per frame, for the judge
+local/apply_facts.py    the fact catalog (apply.md + answer bank) the judge maps fields onto
+local/apply_fill.py     acts on a fill plan: fill / select / radio / listbox / upload, read-back, click
+local/apply_inbox.py    emailed verification codes read from Outlook web or Gmail web
+local/apply_answergen.py  flash-lite draft for a free-text question, grounded sentence by sentence by Jev
+local/ats_accounts.py   per-portal account ledger + the master password (Credential Manager)
 local/resume_tailor/    résumé/cover-letter/ATS/prep engine + apply_answers + master_validate
 resume_tailor_files/    master_experience.yaml + LaTeX template (your data is git-ignored)
 tests/                  pytest suite + UI smoke test

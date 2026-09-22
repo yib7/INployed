@@ -4,6 +4,57 @@ All notable changes to INployed are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims for
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-09-22
+
+The batch auto-apply drain is now the project's own code. `local/apply_run.py` drives a
+persistent Chromium profile through each queued application and asks TypeSafe's Jev model
+every judgment question along the way; it submits when its confidence gate passes and parks
+at the review page otherwise. The dashboard's Start button launches that drain, and the
+Claude skill becomes the manual fallback.
+
+### Added
+
+- **A Jev-judged auto-apply drain** (`python local/apply_run.py drain`, also `one <job_id>`,
+  `login`, `doctor`). Per job it opens the posting, follows the external Apply button, and per
+  page extracts the form (`local/apply_form.py`), asks Jev what the page is, which fact each
+  field wants, which option and which button (`local/apply_judge.py`), fills and reads back
+  (`local/apply_fill.py`), verifies, and advances. Up to twelve pages and a wall clock per
+  job; every job gets an `apply_record.md` beside its `apply.md`.
+- **The submit gate.** An application is submitted only when every required field was filled
+  from your facts and verified, no CAPTCHA, payment or blocked question is on the page, and
+  the submit button was judged with high confidence; anything less parks the job with the
+  reason in the queue row. `Submit when verified` in Settings (or `--no-submit`) parks every
+  job instead.
+- **`local/jev.py`**: the TypeSafe client (`jev-1.13.0`, usage metered at $0.042 per million
+  input tokens), a deterministic fake for tests and dry runs, and a replay cache.
+- **Account walls and emailed codes.** With the master password set, a portal that forces an
+  account is signed up for with your email (ledger in `local/ats_accounts.py`, the password
+  typed only into a real password field and never logged); a code gate is answered from your
+  inbox through the same browser profile (`local/apply_inbox.py`), with Jev picking the mail
+  and the code.
+- **Drafted free-text answers** (`local/apply_answergen.py`): an open-ended question gets one
+  flash-lite draft from the apply sheet, and Jev checks every sentence against the sheet; a
+  draft with an unsupported sentence is dropped. At most three per job, `Draft free-text
+  answers` in Settings turns it off.
+- **Settings and setup rows**: `TYPESAFE_API_KEY` (write-only, `.env`), `auto_apply_jev_mode`,
+  `auto_apply_submit`, `auto_apply_generate`, `auto_apply_headless`; **Check setup** and
+  `doctor` report the key, `typesafe_sdk`, Playwright and Chromium.
+- **Auto-apply tab**: a **Sign in to sites** button (the one-time `login` for LinkedIn and
+  the inbox) and **Copy kickoff command**.
+- **CI** installs Playwright and Chromium on the Linux job and runs the browser-backed
+  auto-apply tests there; they skip with a reason wherever Chromium is missing.
+
+### Changed
+
+- **The Start auto-apply run button launches `apply_run.py drain`** in a new console; the
+  unattended and scoped Claude variants are gone from the dashboard, and the `auto-apply`
+  skill is the manual fallback. The run inherits the dashboard's environment, so a key
+  pasted into Settings takes effect after a restart.
+- **The Auto-apply copy states the gate.** The tab, the confirm dialog, the Settings section
+  and the batch-cap help now say when the run submits; the older "never submitted" promise
+  described the Claude path and is gone.
+- **`auto_apply_batch_cap`** also caps how many jobs one drain works through.
+
 ## [1.13.0] - 2026-09-20
 
 The Apply panel now shows your LinkedIn and GitHub links, the job description and Ask AI
@@ -1781,6 +1832,7 @@ First public release: an end-to-end job-discovery and résumé-tailoring pipelin
 - Cross-platform dashboard + engine (Windows / macOS / Linux); the setup scripts and VM
   automation are Windows-first.
 
+[1.14.0]: https://github.com/yib7/INployed/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/yib7/INployed/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/yib7/INployed/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/yib7/INployed/compare/v1.11.0...v1.12.0

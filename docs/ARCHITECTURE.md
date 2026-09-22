@@ -192,21 +192,31 @@ keep their full paths, because a log on the user's own disk is exactly where a p
 
 The **batch auto-apply queue** is the one dashboard feature driven from outside the process.
 `local/apply_queue.py` is an atomic JSON store beside `seen.db` (every mutation under a sidecar
-byte lock) plus the agent CLI (`claim` / `finish`); the dashboard enqueues while the tailor
-runs, and the **Auto-apply** tab (`local/qt/apply_queue_panel.py`) is a read-only,
-file-watched mirror of it with the few human controls (re-queue, remove, the kickoff command).
-The drain itself is the auto-apply skill driving Chrome, parked at review and never
-submitting. Two optional Playwright modules sit beside it for the portals that path cannot
-serve (`playwright` is not in `requirements.txt`; its comment gives the install):
-`local/apply_driver.py`, a file-driven headed browser REPL whose `paste` action issues a
-Ctrl+V keystroke and reports only a length, so a password never enters the process, and
-`local/apply_playwright.py`, the Greenhouse-family filler that can attach a résumé PDF
-(`page.set_input_files` works below the extension's session-share policy) and stops before
-Submit unless the caller passes `submit=True`, handling the emailed security-code gate through
-`local/apply_verify.py`'s file handshake. `local/ats_accounts.py` is the per-portal account
-ledger: one master password in the Windows Credential Manager, a JSON ledger that records
-email and method and rejects any password-shaped field on write, and the clipboard as the
-password's only exit.
+byte lock) plus the queue CLI (`claim` / `finish` / `add_missing`); the dashboard enqueues while
+the tailor runs, and the **Auto-apply** tab (`local/qt/apply_queue_panel.py`) is a read-only,
+file-watched mirror of it with the few human controls (re-queue, remove, the sign-in and the
+kickoff command). The drain is `local/apply_run.py`, code-owned and Jev-judged, launched by the
+tab's Start button as `python local/apply_run.py drain` in a new console. Its module map:
+
+| Module | Role |
+| --- | --- |
+| `local/jev.py` | The judge client. `TypeSafeJev` sends raw question dicts (`noul` / `choice` / `score`) to TypeSafe's System One model (`jev-1.13.0`, imported lazily, usage metered at $0.042 per million input tokens); `FakeJev` answers from word overlap so every test runs with no key; `ReplayJev` caches answers by the sha256 of the request for the fixture replay; `get(mode)` picks one from the argument, `AUTO_APPLY_JEV_MODE`, else `typesafe`. |
+| `local/apply_form.py` | The page digest: one `evaluate` per frame lists every visible enabled control as a `Field` (label from `label[for]`, aria, legend or preceding text; required; options; help incl. a `maxlength`), every `Button` with a submit / advance / back hint, and the page text capped at `PAGE_TEXT_CAP`. `resolve` turns a `(frame, selector)` locator back into a Playwright locator. |
+| `local/apply_facts.py` | The fact catalog Jev chooses from: `apply.md` (candidate, address, education, current job, signature, cover letter) plus the answer bank as `answer_<id>` facts, each with a label-shaped description; `to_criteria()` sends keys and descriptions only; the values stay on this side. `quick_map` is the deterministic label table that wins over the judge for the obvious fields. |
+| `local/apply_judge.py` | Every question and every threshold in one place, with the "UNTUNED until the live pass" header: `page_questions` (page kind, per-field source with `leave_blank` and `needs_generation` always present, per-field option, per-button role, the prohibited / account / CAPTCHA nouls), `option_questions`, `verify_questions`, `inbox_questions`, `code_pick_questions`, `grounding_questions`, and the readers that turn answers into a `FillPlan`, a `VerifyResult` list, an inbox pick or a grounding verdict. |
+| `local/apply_fill.py` | Acts on a `FillPlan`: fill, native select, radio and checkbox by label, React-style listbox by click, `set_input_files` for uploads, a read-back after each, and `click_button`, which waits for a navigation or a settled DOM. |
+| `local/apply_run.py` | The state machine and CLI (`drain`, `one`, `login`, `doctor`). Per job: open the posting in a persistent Chromium profile, follow the external Apply button (popup adopted, ATS host allowlisted), then per page extract, judge, act; up to `MAX_PAGES` and a wall clock. `can_submit` is the gate (the setting, no park reason, every required field filled and verified, prohibited and CAPTCHA below their caps, a confident submit button); anything else parks with the window held open. `write_record` writes `apply_record.md` beside the sheet. |
+| `local/apply_inbox.py` | Emailed verification codes: lists the newest rows of Outlook web or Gmail web in a tab of the same profile, asks Jev which message is the code mail, extracts the candidates with `apply_verify.extract_code`, and asks Jev to pick; three polls inside a three-minute budget, the inbox tab closed in a `finally`, every exception swallowed because a browser error can quote private mail. |
+| `local/apply_answergen.py` | Free-text answers: one flash-lite draft from the sheet excerpt under the résumé engine's AI-writing rules, `sentences` split, then `grounded` asks Jev whether each sentence is supported by the sheet; a draft with one unsupported sentence is dropped and the field is left for the user. `GENERATE_MAX` attempts per job. |
+| `local/ats_accounts.py` | The per-portal account ledger: one master password in the Windows Credential Manager, a JSON ledger that records email and method and rejects any password-shaped field on write, `fill_password` (typed into a `type=password` control only, compared by length after the fill, absent from every log line) and the clipboard as the password's other exit. |
+| `local/apply_queue.py` | The store above, plus `build_context()` (batch cap, signup email, inbox URL by email domain) and `infer_ats`. |
+
+The older Playwright helpers stay for the portals the loop cannot serve: `local/apply_driver.py`,
+a file-driven headed browser REPL whose `paste` action issues a Ctrl+V keystroke and reports only
+a length, and `local/apply_playwright.py`, the Greenhouse-family filler (`parse_apply_md`,
+`split_name` and the upload path are reused by the loop) with `local/apply_verify.py`'s
+code-gate handshake. The `auto-apply` Claude skill under `.claude/skills/` is the manual
+fallback for a job the drain parked; the dashboard no longer launches it.
 
 **Local scrapes feed the VM master** (the outbox/incoming bridge): a dashboard "Find new
 jobs" run or manual add writes its new full master rows to `<repo>/outbox/local_rows_*.csv.gz`
@@ -696,8 +706,8 @@ is the guard). The fourth is the exception that proves the rule.
 | Attribute | Contract |
 | --- | --- |
 | `show_if=(gate_key, allowed_values)` | Rendering. A **configuration gate**: the field does nothing for the way this user has things set up, so it is off screen. Resolved **transitively** by `settings.is_visible` / `visible_keys`: a field is visible only if its own predicate holds *and* its gate field is itself visible. A typo'd gate key raises; it never degrades to "hidden". |
-| `advanced` (25 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
-| `restart` (20 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
+| `advanced` (26 fields) | Rendering. A **view fold**: the setting applies, the user has said "not now". Composes with `show_if` (both must pass); `settings_tab._field_visible` is the single place both are decided. Search deliberately ignores it, so a folded row stays findable. |
+| `restart` (21 fields) | Rendering. The dashboard reads this key once, at launch, so a save writes the file but the running process keeps the old value. It is nearly every `.env` field: `local/app.py` calls `load_dotenv()` at startup and `python-dotenv` defaults to `override=False`, so neither a live `os.environ` read nor a subprocess that inherits the environment can see the new value. The six VM keys are exempt, because `vm_sync.VMTarget.from_env` reads the file via `settings.load`. |
 | `pattern` / `pattern_help` | **Not** rendering: `validate()` enforces it with `re.fullmatch`, which is what stops the tab writing free text the consumer would silently discard. **A pattern must reject only what the consumer would DISCARD**, never a value it honours: `validate()` runs over every collected field, so an over-strict rule blocks every future Save of every *other* setting. Write the differential test against the real consumer. |
 
 The six per-stage model rows are where that transitivity earns its keep. A `Field` carries
@@ -774,4 +784,10 @@ flowchart LR
   repair on every copy. Write a prompt with an em dash and this fails.
 - `tests/test_master_gaps.py`: JD-gap detection, comment-preserving write, diff.
 - `tests/test_seen_reconcile.py`, `tests/test_download_race.py`: registry + scraper edge cases.
+- `tests/test_jev.py`, `tests/test_apply_facts.py`, `tests/test_apply_judge.py`,
+  `tests/test_apply_answergen.py`: the pure auto-apply modules on `FakeJev`, no browser.
+- `tests/test_apply_form.py`, `tests/test_apply_fill.py`, `tests/test_apply_run.py`,
+  `tests/test_apply_inbox.py`: headless Chromium over the HTML fixtures under
+  `tests/fixtures/forms/` (`tests/conftest_browser.py` serves them and skips the module with a
+  reason when Chromium is missing; the Linux CI job installs it).
 - `tests/smoke_qt.py`: Qt dashboard smoke (run directly with `QT_QPA_PLATFORM=offscreen`, not under pytest).

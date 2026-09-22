@@ -390,7 +390,8 @@ traffic is the work you asked for, and each destination gets only what it needs:
 | Google Gemini (Vertex or API key) | scoring and résumé tailoring | the job description, your `resume.md` / `master_experience.yaml` content |
 | Anthropic (`claude` CLI) | only if you set a provider to `claude` | the same prompts, through your own CLI login |
 | the job posting's own site | only when you paste a URL into *Add job by hand* | a plain GET for the page text |
-| the employer's application site | only when you run auto-apply on a queued job | the answers you approved, in your own Chrome; it never submits |
+| the employer's application site | only when you run auto-apply on a queued job | the answers from your apply sheet and answer bank, typed into the form by the auto-apply browser profile; it submits only when the gate in *Auto-apply (batch, Jev-judged)* passes |
+| TypeSafe (the Jev judge) | only during an auto-apply run, in `typesafe` mode | each form page's field labels, options and visible text, the names of your facts (never their values) for the field mapping, and, for the verification and grounding checks, the values it typed and an excerpt of your apply sheet |
 | your own GCP VM (`gcloud compute ssh/scp`) | only when you click a VM control in *Settings* | your search and scoring config, the ids already collected, and rows to merge; plus, only when you click **Set on VM**, the one API key you typed into that box. It runs under your own `gcloud` login |
 | healthchecks.io | **opt-in, VM cron only** | a start ping and the run's exit code; no job data, no identifiers |
 
@@ -511,9 +512,84 @@ that guide the cover letter ride in the chat's own system prompt, and an answer 
 or longer runs through the same deterministic checks: a flash-tier repair call fires once
 when one trips, and em dashes are stripped from every answer regardless.
 
-**Batch queue (advanced).** The **Auto-apply** tab is a live view of a batch apply
-queue: **Queue auto-apply** adds the selected tailored jobs, and the tab tracks each one
-(queued, in progress, ready to submit, needs human). Draining the queue runs the same
-semi-automated, **parks-at-review, never-auto-submits** flow one job at a time as an agent
-session, so it's an optional power-user path. For everyday use, the per-job **Apply** flow
-above is the recommended way in.
+### Auto-apply (batch, Jev-judged)
+The **Auto-apply** tab is a live view of a batch apply queue: right-click jobs in any
+table and pick **Queue for auto-apply** to add the selected tailored jobs (a job with no
+résumé yet is tailored first), and the tab tracks each one through queued, in progress,
+ready to submit, submitted, needs human and failed. **Start auto-apply run** works
+through the queue in a new terminal window, one job at a time, in a browser profile of
+its own. This is the power-user path; for one job at a time, the **Apply** flow above is
+the recommended way in.
+
+**What Jev is and what it decides.** The run is ordinary code driving a Chromium
+window (Playwright). Every judgment call inside it goes to Jev, TypeSafe's
+"System One" model, which answers structured questions with a probability: what kind
+of page this is (the posting, an application form, a login wall, a code gate, a
+review page, a confirmation, a CAPTCHA), which of your facts each field asks for
+(with "leave blank" and "needs a written answer" always on offer), which option of a
+dropdown matches your answer, which button advances and which one submits, whether
+the page asks for something the run must never type (payment, SSN, a government ID),
+whether each typed value reads back correctly, and whether every sentence of a
+drafted answer is supported by your apply sheet. Jev never writes text: your facts
+come from the job's `apply.md` and the **Apply Answers** bank, and a free-text answer
+is drafted by the résumé engine's flash-lite tier and then checked sentence by
+sentence by Jev before it is typed. The thresholds behind those decisions are
+marked untuned in `local/apply_judge.py` until the first live pass tunes them.
+
+**Setup, once.**
+
+1. Create a key at `console.typesafe.ai/keys` and put it in `.env` as
+   `TYPESAFE_API_KEY=...`, or paste it into **Settings → Auto-apply → TypeSafe API
+   key** (it is stored write-only and needs a dashboard restart). `pip install
+   playwright typesafe-sdk` and `python -m playwright install chromium` if **Check
+   setup** says they are missing; `python local/apply_run.py doctor` prints the same
+   rows from a terminal.
+2. Click **Sign in to sites** (or run `python local/apply_run.py login`). It opens the
+   run's own browser profile at LinkedIn's login and your inbox in two tabs; sign in
+   to both and close the window. The run reuses those sessions from then on: LinkedIn
+   for the posting's external Apply button, the inbox for the emailed verification
+   codes some portals send when they force an account.
+3. Set the **master password** (the **Set…** button on the tab). It lives in the
+   Windows Credential Manager. When a portal forces an account, the run signs up with
+   your email and that password, records only the email and the method in a small
+   ledger, and on a later visit to the same portal signs in with it. The password is
+   typed into a real password field only, it is compared by length only after the
+   fill, and it never reaches a file, a log, the record or Jev.
+
+**The submit gate.** The run submits an application when every required field was
+filled from your answers and read back correctly, the page shows no CAPTCHA, no
+payment or identity question and no blocked field, and Jev is confident about the
+submit button. Anything less parks the job at its review page with the window left
+open, the queue row says why (a missing answer, a code gate, a login it could not
+pass, a CAPTCHA), and you finish it by hand and **Mark applied** or **Re-queue** it.
+The four settings under **Settings → Auto-apply**:
+
+- **Submit when verified** (`auto_apply_submit`, on): off parks every job at its review
+  page instead. `--no-submit` on the command line does the same for one run.
+- **Draft free-text answers** (`auto_apply_generate`, on): an open-ended question
+  ("why this role", "a project you are proud of") gets one flash-lite draft from your
+  apply sheet, and Jev checks each sentence against the sheet; a draft with an
+  unsupported sentence is dropped and the field is left for you. At most three drafts
+  per job. Off leaves every such field for you.
+- **Hide the browser window** (`auto_apply_headless`, off): on runs Chromium with no
+  window. Leave it off to watch the run and step in when it parks.
+- **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`): `fake` is a dry-run judge
+  that answers from word overlap with no key and no bill, for watching the loop; the
+  command line refuses it for a real queue.
+
+**The record.** Every job the run touches gets an `apply_record.md` beside its
+`apply.md` (the **Open application record** button): the pages it saw with the judged page kind
+and its confidence, every field it filled with the value, the uploads, each
+verification result, the buttons it clicked, the answers it drafted and whether they
+passed, the reason it parked, the Jev requests and cost, and the final page's text.
+Read it before you trust a submitted row.
+
+**Costs.** Jev bills $0.042 per million input tokens, about $0.005 to $0.015 per
+application at the page sizes seen so far (a long multi-page form sits at the top of
+that range). Each drafted free-text answer adds one flash-lite call on your Gemini
+lane. There is no per-request minimum and nothing is billed while the queue is empty.
+
+CLI equivalents (from the repo root): `python local/apply_run.py drain` (the Start
+button; `--cap N`, `--no-submit`, `--headless`, `--jev fake`), `one <job_id>` for one
+queued job, `login` and `doctor` as above. Exit code 0 means drained or nothing queued,
+2 means not configured (no key, or the job id is not queued), 1 an unexpected error.

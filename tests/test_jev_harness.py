@@ -349,7 +349,7 @@ def test_thresholds_helper_prints_every_kind_with_its_threshold(tmp_path):
     rec.outcomes.append({"job_id": "42", "status": "needs_human", "reason": "page state"})
     w.write(rec)
     proc = subprocess.run([sys.executable, str(REPO / "scripts" / "jev_thresholds.py"),
-                           "--cache", str(cache)], capture_output=True, text=True,
+                           "--cache", str(cache)], capture_output=True, text=True, encoding="utf-8",
                           cwd=str(REPO), timeout=60)
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
@@ -366,6 +366,6 @@ def test_thresholds_helper_prints_every_kind_with_its_threshold(tmp_path):
 def test_thresholds_helper_handles_an_empty_cache(tmp_path):
     proc = subprocess.run([sys.executable, str(REPO / "scripts" / "jev_thresholds.py"),
                            "--cache", str(tmp_path / "missing.json")],
-                          capture_output=True, text=True, cwd=str(REPO), timeout=60)
+                          capture_output=True, text=True, encoding="utf-8", cwd=str(REPO), timeout=60)
     assert proc.returncode == 0, proc.stderr
     assert "no answers recorded" in proc.stdout and "page state" in proc.stdout

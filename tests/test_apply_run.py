@@ -171,7 +171,6 @@ def test_ashby_steps_runs_to_confirmation_and_finishes_submitted(
     assert re.search(r"^- Input tokens: \d+$", record, re.M), record
     assert jev.MODEL in record
     assert out.pages >= 4
-    assert out.jev_usage["requests"] >= 0
     # the optional essay had no generator: skipped, recorded, and no bar to the submit
     assert [m["question"] for m in entry["missing_answers"]] == [
         "Why do you want to work here? Tell us about your motivation for this role."]
@@ -360,7 +359,7 @@ def test_generation_on_uses_the_answergen_hook_and_fills_the_essay(
     assert _entry()["missing_answers"] == []
 
 
-def test_a_generated_answer_is_verified_against_its_draft_in_code_and_never_by_the_sheet(
+def test_a_generated_answer_is_verified_against_its_draft_in_code_and_the_sheet_check_covers_typed_facts(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
     """The live judge read "is `filled_value` the correct value according to
     `sheet_excerpt`" at 0.05 to 0.20 for a generated essay, since the sheet

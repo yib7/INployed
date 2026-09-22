@@ -198,6 +198,24 @@ class _Accounts:
         return max(1, int(min(CLICK_TIMEOUT_S,
                               self.run.deadline - self.run.r.clock()) * 1000))
 
+    def _record(self, digest, email: str, advance_n: int, passwords: int) -> None:
+        """Write the account step into the current page's record (spec 3.5):
+        the address that was used, one hidden row per password box, and the
+        button that was clicked. The password value is never carried; the row
+        is marked hidden and `write_record` writes `<hidden>`."""
+        rec = self.run.pages[-1] if self.run.pages else None
+        if rec is None:
+            return
+        rec["filled"].append({"n": -1, "label": "Email", "value": email,
+                              "type": "email", "id_or_name": "account_email",
+                              "upload": False})
+        for i in range(passwords):
+            rec["filled"].append({"n": -2 - i, "label": "Password", "value": "",
+                                  "type": "other", "id_or_name": "account_password",
+                                  "upload": False, "hidden": True})
+        button = next((b for b in digest.buttons if b.n == advance_n), None)
+        rec["clicked"].append(f"{button.text if button else 'account'} (advance)")
+
     def _name_value(self, field) -> str:
         """The catalog's value for a name box on an account screen, else "".
 
@@ -265,6 +283,7 @@ class _Accounts:
                 for loc in passwords:
                     if not ats_accounts.fill_password(page, loc):
                         return False
+                self._record(digest, email, advance[0], len(passwords))
                 result = apply_fill.click(page, digest, advance[0],
                                           timeout_s=self._timeout() / 1000)
             finally:

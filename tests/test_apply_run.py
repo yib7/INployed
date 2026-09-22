@@ -561,6 +561,10 @@ def test_default_accounts_continue_and_keep_password_private(
     assert "password filled" in caplog.text
     account = ats_accounts.lookup("127.0.0.1")
     assert account["email"] == ("existing@example.com" if existing else "jane.doe@example.com")
+    # the account step is in the record: the address, the hidden password, the click
+    assert f"Email: {account['email']}" in record
+    assert "Password: <hidden>" in record
+    assert ("Sign in (advance)" in record) or ("Create account (advance)" in record)
 
 
 def test_default_signup_fills_the_candidates_name_fields_from_the_catalog(

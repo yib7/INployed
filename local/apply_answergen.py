@@ -47,7 +47,8 @@ SYSTEM_PROMPT = (
     "character limit given with the question."
 )
 
-_LIMIT_RE = re.compile(r"(\d{2,5})\s*(?:characters|chars)\b", re.I)
+_LIMIT_RE = re.compile(r"(\d[\d,]{0,6})\s*(?:characters|chars)\b", re.I)
+_MINIMUM_RE = re.compile(r"\b(?:min|minimum|at least)\s*$", re.I)
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 _LEAD_LABEL_RE = re.compile(r"^(?:answer|response|draft)\s*:\s*", re.I)
 _BULLET_RE = re.compile(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+")
@@ -208,9 +209,13 @@ def char_limit_for(field: Any) -> int:
     """The limit the field states in its help or placeholder ("Max 1500
     characters."), else `DEFAULT_CHAR_LIMIT`."""
     for text in (getattr(field, "help", ""), getattr(field, "placeholder", "")):
-        m = _LIMIT_RE.search(text or "")
-        if m and int(m.group(1)) >= MIN_CHAR_LIMIT:
-            return int(m.group(1))
+        text = text or ""
+        for m in _LIMIT_RE.finditer(text):
+            if _MINIMUM_RE.search(text[:m.start()]):
+                continue          # "Minimum 100 characters" states a floor
+            digits = m.group(1).replace(",", "")
+            if digits.isdigit() and int(digits) >= MIN_CHAR_LIMIT:
+                return int(digits)
     return DEFAULT_CHAR_LIMIT
 
 

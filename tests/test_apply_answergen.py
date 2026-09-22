@@ -264,6 +264,17 @@ def test_answer_returns_none_when_the_model_call_fails_and_names_the_error_type(
     assert "AQ.secret" not in out.note
 
 
+def test_answer_returns_none_when_the_judge_fails_and_names_only_the_error_type():
+    class _Raising(jev.FakeJev):
+        def judge(self, state, questions):
+            raise RuntimeError("401 for key AQ.secret")
+    out = apply_answergen.attempt(_field(), _Catalog(), _Raising(), budget=3,
+                                  llm_call=lambda *a, **k: GROUNDED)
+    assert out.text is None and out.ok is False
+    assert out.note == "grounding failed: RuntimeError"
+    assert "AQ.secret" not in out.note
+
+
 def test_the_generator_hook_keeps_the_last_attempt():
     gen = apply_answergen.Generator(llm_call=lambda *a, **k: UNGROUNDED)
     assert gen.last is None

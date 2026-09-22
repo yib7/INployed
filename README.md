@@ -19,7 +19,7 @@ The scorer runs on a pool of free-tier Gemini keys, and the résumé engine can 
 it. Each stage walks a ranked list of models, quota is metered per key and model,
 and a paid Cloud project is billed only when every free pair is spent or refusing.
 
-3,811 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
+3,909 tests cover the pipeline, the Qt UI and the résumé engine. They run on every
 push against Windows and Linux, plus a clean-room job that installs from this
 README's own setup steps.
 
@@ -372,6 +372,13 @@ a tokenizer false positive and a fabricated fact can be told apart.
 The gate's own docstring names its blind spot: an invented claim made of ordinary
 lowercase words has no distinctive token to check.
 
+**The atom layer gets the same guarantee** (`python scripts/atom_audit.py gate --old ...
+--new ...`). Editing your yaml edits the ground truth `verify.py` checks against, so a fact
+invented while rewriting it would be grounded by definition. Snapshot the file first, and the
+gate names every number or proper noun the new version states that the old one did not. The
+same script's `census` and `slop` audit that file for facts written twice and for AI-writing
+tells.
+
 The skills section follows the same rule:
 
 - A **Methods** line surfaces the concept keywords an ATS screens for ("ETL",
@@ -421,6 +428,7 @@ pipeline/               headless pipeline scripts, flat so the VM can run them s
 scripts/run_scraper.sh  VM cron orchestration (discover -> score -> Drive)
 scripts/requirements-vm.txt  pinned VM venv (Python 3.11, pipeline scripts only)
 scripts/setup.ps1       first-run config writer (.env / config.json / master_experience.yaml)
+scripts/atom_audit.py   audits your atoms: repeat + figure census, AI-writing scan, no-new-facts gate
 scripts/ui_screenshots.py  maintainer tool: offscreen dashboard screenshots (synthetic data)
 scripts/build_demo_media.py stamps the four README stills + renders docs/demo.gif
 scripts/build_social_preview.py composes docs/social-preview.png (GitHub's 1280x640 card)

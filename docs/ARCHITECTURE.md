@@ -682,6 +682,36 @@ Each provider carries its **own** mode, so a Claude user's choice cannot silentl
 the Gemini side, and the two can differ (one model everywhere on Claude, the tuned tier split
 on Gemini) with no third "which provider does this apply to?" question to answer.
 
+## Atom hygiene (`scripts/atom_audit.py`)
+`master_experience.yaml` is hand-edited, and every prompt the engine sends is built out of it.
+An editing habit a human reader would never notice, restating a fact in two fields of the same
+atom, therefore spends tokens on every run and prints the fact twice on the page.
+`scripts/atom_audit.py` is the read-only maintainer tool that audits that layer. Standard
+library plus `yaml`; it writes no file and makes no network call, and it never imports
+`local/resume_tailor/`: the two files its slop arm needs (`common.py`, `aiwriting.py`) are
+executed by path under a synthetic package, because a plain import runs `config.load_dotenv()`
+at import scope and a stray credential load has placed a billed request before. The house rules
+it enforces are written into the yaml's own header comment, where a hand-editor sees them.
+
+| Subcommand | What it guarantees |
+|--------|------|
+| `census [--file PATH] [--strict]` | No fact is stated twice, and no figure is off-convention. `assets.atom_line()` flattens `what; how; scope; impact...` into ONE line of the payload, so a phrase repeated across two fields of one atom (`INTRA-ATOM REPEATS`) or across two atoms of one entry (`CROSS-ATOM REPEATS`) is sent twice and comes back in two bullets. It also lists every figure against the K / "over" / exact-digits convention, every `+` or `~` anywhere in the file, and a `STYLE` row set whose baseline is 0. `--strict` exits 1 on any finding. |
+| `slop [--file PATH] [--strict]` | The atom text is clean against the *whole* avoid-ai-writing ruleset, not the bounded subset the bullet layer can afford. Two arms: the vendored `aiwriting.RESUME_EXTRA_BANS` tuples, referenced rather than copied so the two layers cannot drift into separate word lists, and an atom arm carrying everything the vendored extract leaves out (dashes, contrast framing in all four shapes, adjective stacking, template phrases, hollow intensifiers, the tier-2 cluster rule). The extract is bounded because it feeds a *repair* call, where a false positive rewrites correct text; this arm only reports, so it can afford the rest. An atom's register is closest to `docs` / `technical-blog`, so that profile's word-table exception applies verbatim: `robust`, `leverage`, `streamline` and `harness`-the-noun stay silent, while `delve`, `testament to` and `harness`-the-verb still fire. Findings print under the skill's own P0 / P1 / P2 tiers. |
+| `gate --old PATH --new PATH` | **No new facts.** A distinctive token (a number, or a word carrying a capital or internal case) that the new file states and the old one does not is a fabricated fact; the command names it and exits 1. |
+
+`gate` is the reason the tool exists. `verify.py` gives the **bullet** layer the project's one
+rule, select and re-phrase, never invent: every rephrased bullet is checked back against the
+atom it came from, so nothing reaches the `.tex` that the master did not already say. Nothing
+gave the **atom** layer the same guarantee, and an agent-driven rewrite of the master (which is
+what the number convention and the de-duplication passes were) edits precisely the text
+`verify.py` trusts as ground truth. A fabrication introduced there is grounded by definition and
+prints. `gate` closes that hole: snapshot the file, rewrite, then diff the two through
+`verify.py`'s own tokenizing rules, re-stated in the script rather than imported for the
+credential reason above. With both, the chain from your yaml to the PDF is checked at each end.
+
+Tests: `tests/test_atom_audit.py` (census + gate) and `tests/test_atom_slop.py` (the slop arm,
+whose pins are mostly negative: the technical words that must stay quiet).
+
 ## Settings & customization (`local/settings.py` + dashboard Settings tab)
 `settings.py` is one schema (`SETTINGS_SCHEMA`) of 72 `Field` rows describing every
 user-editable option (key, type, default, validation, backing file). The dashboard's
@@ -783,6 +813,8 @@ flowchart LR
   teaching the model the punctuation it is forbidding, which costs a billed `enforce_style`
   repair on every copy. Write a prompt with an em dash and this fails.
 - `tests/test_master_gaps.py`: JD-gap detection, comment-preserving write, diff.
+- `tests/test_atom_audit.py`, `tests/test_atom_slop.py`: `scripts/atom_audit.py`'s repeat and
+  figure census, the no-new-facts gate, and the atom-layer AI-writing scan.
 - `tests/test_seen_reconcile.py`, `tests/test_download_race.py`: registry + scraper edge cases.
 - `tests/test_jev.py`, `tests/test_apply_facts.py`, `tests/test_apply_judge.py`,
   `tests/test_apply_answergen.py`: the pure auto-apply modules on `FakeJev`, no browser.

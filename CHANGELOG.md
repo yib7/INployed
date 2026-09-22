@@ -43,6 +43,20 @@ Claude skill becomes the manual fallback.
   the inbox) and **Copy kickoff command**.
 - **CI** installs Playwright and Chromium on the Linux job and runs the browser-backed
   auto-apply tests there; they skip with a reason wherever Chromium is missing.
+- **`scripts/atom_audit.py`**, a read-only audit of the atoms in your
+  `master_experience.yaml`, in three subcommands. `census` reports a fact written into two
+  fields of one atom or claimed by two atoms of one entry, which `assets.atom_line()` sends
+  to the model twice and which comes back as two bullets, plus every figure that is off the
+  number convention. `slop` scans the same fields against the full avoid-ai-writing ruleset
+  at the atom's own register, under the skill's P0 / P1 / P2 tiers. `gate --old --new` is the
+  no-new-facts guard for a rewrite of that file: it gives the atom layer the guarantee
+  `local/resume_tailor/verify.py` gives the bullet layer, so "select and re-phrase, never
+  invent" now holds at both ends of the chain. Standard library plus `yaml`, no network call,
+  and it never imports `local/resume_tailor/`.
+- **The number and no-repetition conventions are written into the yaml's header comment**,
+  where the next hand-editor reads them, alongside `interview_notes`: a list on an atom for
+  detail that is true and interview-worthy but redundant for the tailor, which
+  `atom_line()` ignores and `master_validate` accepts.
 
 ### Changed
 

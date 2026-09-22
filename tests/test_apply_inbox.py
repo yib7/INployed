@@ -40,6 +40,16 @@ def test_list_and_open_message(browser_page, fixtures_server):
     assert "987654" in inbox.open_message(browser_page, rows[0])
 
 
+def test_open_message_waits_for_the_clicked_rows_body(browser_page, fixtures_server):
+    inbox = _inbox()
+    rows = inbox.list_messages(browser_page, fixtures_server + "/inbox/spa_stale_body.html")
+
+    body = inbox.open_message(browser_page, rows[1])
+
+    assert "NEW-CODE-2468" in body
+    assert "STALE-CODE-1357" not in body
+
+
 def test_no_code_polls_are_bounded(browser_page, fixtures_server):
     inbox = _inbox()
     class Clock:

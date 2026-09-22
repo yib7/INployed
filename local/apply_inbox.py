@@ -26,6 +26,7 @@ SELECTORS = {
     },
 }
 TIMEOUT_MS = 5_000
+BODY_SELECTOR = ", ".join(s["body"] for s in SELECTORS.values())
 
 
 @dataclass
@@ -66,8 +67,24 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
 
 def open_message(page, msg: Message) -> str:
     """Open a row and read its rendered message body."""
-    page.locator(msg.open_locator).click(timeout=TIMEOUT_MS)
-    bodies = page.locator(", ".join(s["body"] for s in SELECTORS.values())).filter(visible=True)
+    row = page.locator(msg.open_locator)
+    was_selected = row.get_attribute("aria-selected") == "true"
+    was_selected = was_selected or row.get_attribute("aria-current") not in (None, "false")
+    previous = page.locator(BODY_SELECTOR).filter(visible=True).all_inner_texts()
+    row.click(timeout=TIMEOUT_MS)
+    if not was_selected:
+        page.wait_for_function(
+            """({selector, previous}) => {
+                const visible = [...document.querySelectorAll(selector)]
+                    .filter(element => element.getClientRects().length)
+                    .map(element => element.innerText);
+                return visible.some(text => text.trim()) &&
+                    JSON.stringify(visible) !== JSON.stringify(previous);
+            }""",
+            arg={"selector": BODY_SELECTOR, "previous": previous},
+            timeout=TIMEOUT_MS,
+        )
+    bodies = page.locator(BODY_SELECTOR).filter(visible=True)
     bodies.first.wait_for(state="visible", timeout=TIMEOUT_MS)
     return "\n".join(bodies.all_inner_texts())
 

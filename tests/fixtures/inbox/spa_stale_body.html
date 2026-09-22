@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<title>Inbox</title>
+<body>
+<div role="listbox" aria-label="Message list">
+  <div role="option" aria-selected="true">
+    <span data-testid="sender">old@example.com</span>
+    <span data-testid="subject">Old message</span>
+    <span data-testid="preview">Previously opened mail.</span>
+  </div>
+  <div role="option" aria-selected="false" onclick="openNewMessage(this)">
+    <span data-testid="sender">security@example.com</span>
+    <span data-testid="subject">New verification message</span>
+    <span data-testid="preview">The newly arrived verification message.</span>
+  </div>
+</div>
+<div role="document">Previous message body: STALE-CODE-1357</div>
+<script>
+function openNewMessage(row) {
+  document.querySelector('[aria-selected="true"]').setAttribute('aria-selected', 'false');
+  row.setAttribute('aria-selected', 'true');
+  window.setTimeout(() => {
+    document.querySelector('[role="document"]').textContent =
+      'Selected message body: NEW-CODE-2468';
+  }, 250);
+}
+</script>
+</body>
+</html>

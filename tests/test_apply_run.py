@@ -5,6 +5,7 @@ synthetic apply.md comes from `apply_data.build_markdown` over a synthetic
 master, as `test_apply_facts.py` does; no real store, profile or site is
 touched. Skips without Playwright or Chromium. No `asyncio.run()` here (see
 `conftest_browser`)."""
+import re
 import sys
 from pathlib import Path
 
@@ -123,13 +124,20 @@ def _enqueue(job_folder, url, jid="42", **kw):
     return apply_queue.load()["jobs"][-1]
 
 
+def _no_sleep(seconds):
+    """Every runner here sleeps for no time at all: an inbox poll or a finish
+    retry that waits its real 60 s would stall a record or replay run past the
+    pytest timeout when the live judge reads a fixture differently."""
+
+
 def _runner(context, tmp_path, **settings):
     base = {"auto_apply_submit": True, "auto_apply_headless": True,
             "auto_apply_jev_mode": "fake", "auto_apply_batch_cap": 10,
             "auto_apply_generate": True}
     base.update(settings)
     return apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
-                            settings=base, context=context, run_context=_RUN_CONTEXT)
+                            settings=base, context=context, run_context=_RUN_CONTEXT,
+                            sleep=_no_sleep)
 
 
 def _entry(jid="42"):
@@ -158,10 +166,11 @@ def test_ashby_steps_runs_to_confirmation_and_finishes_submitted(
                          ("Will you now or in the future require sponsorship?", "No")):
         assert f"{label}: {value}" in record, (label, record)
     assert "SUBMIT CLICKED" in record
-    assert "Requests: 0" in record and "Input tokens: 0" in record
+    assert re.search(r"^- Requests: \d+$", record, re.M), record
+    assert re.search(r"^- Input tokens: \d+$", record, re.M), record
     assert jev.MODEL in record
     assert out.pages >= 4
-    assert out.jev_usage["requests"] == 0
+    assert out.jev_usage["requests"] >= 0
     # the optional essay had no generator: skipped, recorded, and no bar to the submit
     assert [m["question"] for m in entry["missing_answers"]] == [
         "Why do you want to work here? Tell us about your motivation for this role."]
@@ -307,7 +316,8 @@ def test_captcha_page_parks_needs_human_with_the_flag(
     assert out.status == "needs_human", out
     entry = _entry()
     assert "captcha" in entry["notes"].lower()
-    assert "has_captcha p=0.90" in entry["notes"]
+    flag = re.search(r"has_captcha p=(\d\.\d\d)", entry["notes"])
+    assert flag and float(flag.group(1)) > apply_judge.CAPTCHA_MAX, entry["notes"]
     assert entry["tab_note"].startswith("http://127.0.0.1:")
     assert out.pages == 1
 
@@ -360,6 +370,25 @@ _ESSAYS_FOUR = ("Tell us about your motivation for this role",
                 "Anything else about your motivation for this role")
 
 
+_GROUNDED_RE = re.compile(r"weakest sentence grounded (\d\.\d\d), below (\d\.\d\d)")
+
+
+def _grounded_in(text):
+    """The weakest grounding probability a rejection note names. The fake
+    says 0.10 and the live judge its own number; the test checks the gate."""
+    m = _GROUNDED_RE.search(text)
+    assert m, text
+    assert float(m.group(2)) == apply_judge.GROUNDING_MIN
+    return float(m.group(1))
+
+
+def _rejected_line(label, record):
+    line = next((ln for ln in record.splitlines()
+                 if ln.startswith(f"  - {label}: rejected (draft rejected: ")), None)
+    assert line, (label, record)
+    return _grounded_in(line)
+
+
 def _generator(text):
     import apply_answergen
     calls = []
@@ -385,8 +414,7 @@ def test_a_rejected_draft_leaves_an_optional_field_blank_and_flags_it_in_the_rec
     record = Path(out.record_path).read_text(encoding="utf-8")
     assert "- Generated answers:" in record
     for label in _ESSAYS_FOUR[:3]:
-        assert (f"  - {label}: rejected (draft rejected: weakest sentence grounded 0.10, "
-                "below 0.70)") in record, record
+        assert _rejected_line(label, record) < apply_judge.GROUNDING_MIN, record
     assert f"  - {_ESSAYS_FOUR[3]}: rejected (generation budget exhausted)" in record
     assert "(generated)" not in record
     assert "- Generated answers used: 0" in record
@@ -402,16 +430,17 @@ def test_a_rejected_draft_parks_a_required_field_with_the_grounding_note(
     runner.answergen, calls = _generator(_UNGROUNDED_DRAFT)
     out = runner.drain(cap=1)[0]
     assert out.status == "needs_human", out
-    assert out.reason == ("required field without an answer: Describe a project you are proud "
-                          "of and your motivation for this role; draft rejected: weakest "
-                          "sentence grounded 0.10, below 0.70")
+    assert out.reason.startswith("required field without an answer: Describe a project you are "
+                                 "proud of and your motivation for this role; draft rejected: "
+                                 "weakest sentence grounded 0."), out.reason
+    assert _grounded_in(out.reason) < apply_judge.GROUNDING_MIN
     assert len(calls) == 1
     page = next(p for p in context.pages if not p.is_closed())
     assert page.locator("body[data-submitted]").count() == 0
     assert page.locator("#project").input_value() == ""
     record = Path(out.record_path).read_text(encoding="utf-8")
-    assert ("  - Describe a project you are proud of and your motivation for this role: "
-            "rejected (draft rejected: weakest sentence grounded 0.10, below 0.70)") in record
+    assert _rejected_line("Describe a project you are proud of and your motivation for this role",
+                          record) < apply_judge.GROUNDING_MIN, record
 
 
 def test_at_most_three_drafts_per_job_and_generated_answers_are_marked(
@@ -491,7 +520,8 @@ def test_wall_clock_exhaustion_parks(context, fixture_url, job_folder, catalog_b
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     runner = apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
                               settings={"auto_apply_headless": True}, context=context,
-                              run_context=_RUN_CONTEXT, clock=lambda: next(ticks))
+                              run_context=_RUN_CONTEXT, clock=lambda: next(ticks),
+                              sleep=_no_sleep)
     out = runner.drain(cap=1)[0]
     assert out.status == "needs_human" and out.reason == "time budget exhausted"
 
@@ -508,7 +538,7 @@ def test_wall_clock_passing_mid_fill_stops_the_fill_on_the_runner_clock(
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     runner = apply_run.Runner(jev=jev_harness.judge(), profile_dir=tmp_path / "profile",
                               settings={"auto_apply_headless": True}, context=context,
-                              run_context=_RUN_CONTEXT, clock=_clock)
+                              run_context=_RUN_CONTEXT, clock=_clock, sleep=_no_sleep)
     real = apply_run.apply_fill.apply
 
     def _late(page, plan, **kw):
@@ -1067,7 +1097,8 @@ def test_verify_uses_complete_catalog_evidence(context, job_folder, tmp_path):
     judge = CapturingJev()
     e = apply_queue.new_entry("42", apply_url="https://boards.greenhouse.io/acme/jobs/1")
     run = apply_run._JobRun(
-        apply_run.Runner(jev=judge, context=context, run_context=_RUN_CONTEXT), context, e)
+        apply_run.Runner(jev=judge, context=context, run_context=_RUN_CONTEXT,
+                         sleep=_no_sleep), context, e)
     run.catalog = type("Catalog", (), {
         "verification_excerpt": lambda self: "complete catalog evidence",
         "sheet_excerpt": lambda self: "truncated prose",

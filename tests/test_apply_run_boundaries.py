@@ -18,7 +18,8 @@ def _judge_selector(jev_judge):
 
 def _job():
     context = Mock()
-    runner = apply_run.Runner(jev=jev_harness.judge(), context=context, run_context={})
+    runner = apply_run.Runner(jev=jev_harness.judge(), context=context, run_context={},
+                              sleep=lambda seconds: None)
     entry = {"job_posting_id": "synthetic", "apply_url": "https://www.linkedin.com/jobs/1",
              "ats": {"domain": "www.linkedin.com", "system": "linkedin"}}
     job = apply_run._JobRun(runner, context, entry)

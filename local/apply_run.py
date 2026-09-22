@@ -289,6 +289,9 @@ class _Accounts:
                     if not ats_accounts.fill_password(page, loc):
                         return False
                 self._record(digest, email, advance[0], len(passwords))
+                # an aborted navigation leaves the tab on a browser error page,
+                # so the note for the human names the page before the click
+                before = f"{page.url} | {page.title()}"
                 result = apply_fill.click(page, digest, advance[0],
                                           timeout_s=self._timeout() / 1000)
             finally:
@@ -301,7 +304,7 @@ class _Accounts:
                 ats_accounts.record(host, email)
                 signup = False
             if blocked:
-                raise _Parked("needs_human", f"left the allowed sites: {blocked[0]}")
+                raise _Parked("needs_human", f"left the allowed sites: {blocked[0]}", before)
             if not result.changed:
                 return False
             self.run._check_host(page.url)

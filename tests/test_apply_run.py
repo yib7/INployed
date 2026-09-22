@@ -742,6 +742,12 @@ def test_a_signup_that_parks_off_host_still_records_the_account(
     assert out.status == "needs_human", out
     assert "left the allowed sites: localhost" in out.reason
     assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
+    # the aborted navigation leaves the tab on a browser error page; the note
+    # names the page the human has to come back to
+    tab_note = _entry()["tab_note"]
+    assert tab_note.startswith(fixture_url("signup_cross_host.html")), tab_note
+    assert "chrome-error" not in tab_note
+    assert "Create an account - Synthetic Careers" in tab_note
 
 
 def test_default_accounts_block_cross_host_credential_request_before_it_reaches_server(

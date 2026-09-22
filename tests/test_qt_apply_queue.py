@@ -29,8 +29,7 @@ from qt import apply_queue_panel as aqp  # noqa: E402
 from qt import main_window as mw  # noqa: E402
 from qt.apply_queue_panel import (  # noqa: E402
     KICKOFF_COMMAND,
-    KICKOFF_COMMAND_SCOPED,
-    KICKOFF_PROMPT,
+    LOGIN_COMMAND,
     ApplyQueuePanel,
 )
 from qt.jobs_tab import JobsTab  # noqa: E402
@@ -793,28 +792,23 @@ def test_panel_open_buttons_use_artifact_paths(qtbot, tmp_path, monkeypatch):
     assert opened == [str(folder), str(record)]
 
 
-def test_kickoff_command_constants_shape():
-    """The two drain commands the Start button can launch are well-shaped: the
-    unattended variant bypasses prompts, the scoped variant allowlists tools."""
-    assert KICKOFF_PROMPT == "Use the auto-apply skill: drain the apply queue"
-    # Unattended variant: blanket bypass on Sonnet, PowerShell-shaped (5.1-safe).
-    assert KICKOFF_COMMAND.startswith("cd ")
-    assert "--model sonnet" in KICKOFF_COMMAND
-    assert "--dangerously-skip-permissions" in KICKOFF_COMMAND
-    assert f'"{KICKOFF_PROMPT}"' in KICKOFF_COMMAND
-    assert ";" in KICKOFF_COMMAND             # PowerShell chain, not && (5.1-safe)
-    # Scoped variant: allowlisted tools instead of the blanket bypass.
-    assert "--model sonnet" in KICKOFF_COMMAND_SCOPED
-    assert "--allowedTools" in KICKOFF_COMMAND_SCOPED
-    assert "--dangerously-skip-permissions" not in KICKOFF_COMMAND_SCOPED
-    assert "Bash(python:*)" in KICKOFF_COMMAND_SCOPED
-    assert "mcp__claude-in-chrome__*" in KICKOFF_COMMAND_SCOPED
-    # Prompt must precede the variadic --allowedTools so it isn't swallowed as a tool.
-    assert (KICKOFF_COMMAND_SCOPED.index(KICKOFF_PROMPT)
-            < KICKOFF_COMMAND_SCOPED.index("--allowedTools"))
+def test_kickoff_and_login_commands_run_apply_run():
+    """The Start button launches the code-owned Jev drain (`local/apply_run.py
+    drain`); the sign-in button opens the persistent profile through its `login`
+    verb. No `claude` anywhere: the auto-apply skill is the manual fallback."""
+    for cmd in (KICKOFF_COMMAND, LOGIN_COMMAND):
+        prefix, verb = cmd.split("; ", 1)          # PowerShell chain (5.1-safe)
+        assert prefix == f'cd "{aqp.REPO_ROOT}"'   # quoted path survives spaces
+        assert "claude" not in verb.lower()        # (the checkout path may say it)
+    assert KICKOFF_COMMAND.endswith("python local/apply_run.py drain")
+    assert LOGIN_COMMAND.endswith("python local/apply_run.py login")
 
 
 # --- ApplyQueuePanel: "Start auto-apply run" (SP8) ---------------------------------
+
+
+def _actions_row(p):
+    return p.layout().itemAt(1).layout()
 
 
 def test_panel_has_start_run_button(qtbot, tmp_path):
@@ -822,91 +816,98 @@ def test_panel_has_start_run_button(qtbot, tmp_path):
     assert p.start_run_btn.text() == "Start auto-apply run"
     # accent-styled, and the trailing action on the header's second row. The
     # header is two rows: status chips + counts caption over the actions
-    # (master-password cluster, then Start), so that the chips keep their labels
-    # at 125% and 150% on a window narrower than about 1600px.
-    chips_row, actions = p.layout().itemAt(0).layout(), p.layout().itemAt(1).layout()
+    # (master-password cluster, then the two small run buttons, then Start), so
+    # that the chips keep their labels at 125% and 150% on a window narrower
+    # than about 1600px.
+    chips_row, actions = p.layout().itemAt(0).layout(), _actions_row(p)
     assert chips_row.itemAt(0).widget() is p.status_chips
     assert actions.itemAt(actions.count() - 1).widget() is p.start_run_btn
-    assert not [actions.itemAt(i).widget() for i in range(actions.count() - 1)
-                if isinstance(actions.itemAt(i).widget(), QtWidgets.QPushButton)]
+    row_buttons = [actions.itemAt(i).widget() for i in range(actions.count() - 1)
+                   if isinstance(actions.itemAt(i).widget(), QtWidgets.QPushButton)]
+    assert row_buttons == [p.copy_cmd_btn, p.login_btn]
     assert p.start_run_btn.property("accent") is True
     tip = p.start_run_btn.toolTip().lower()
     assert "new terminal" in tip
     assert "batch_cap" in tip or "batch cap" in tip
-    assert "park" in tip
-    assert "nothing is ever submitted" in tip or "never submitted" in tip
-    # The copy-command buttons were folded into the Start button's mode choice.
+    assert "submits when" in tip
+    assert "never submitted" not in tip and "nothing is ever submitted" not in tip
+    # The Claude-era variants are gone from the panel (the skill file stays).
     assert not hasattr(p, "kickoff_btn")
     assert not hasattr(p, "kickoff_scoped_btn")
+    assert not hasattr(aqp, "KICKOFF_COMMAND_SCOPED")
+    assert not hasattr(aqp, "KICKOFF_PROMPT")
+
+
+def test_panel_copy_kickoff_button_copies_the_drain_command(qtbot, tmp_path):
+    p = _panel(qtbot, _qfile(tmp_path))
+    assert p.copy_cmd_btn.text() == "Copy kickoff command"
+    p.copy_cmd_btn.click()
+    assert QtWidgets.QApplication.clipboard().text() == KICKOFF_COMMAND
+    assert "copied" in p.status_label.text().lower()
+
+
+def test_panel_sign_in_button_fires_injected_login(qtbot, tmp_path):
+    spy = []
+    p = _panel(qtbot, _qfile(tmp_path), on_login=lambda: spy.append(True))
+    assert p.login_btn.text() == "Sign in to sites"
+    tip = p.login_btn.toolTip().lower()
+    assert "linkedin" in tip and "inbox" in tip
+    p.login_btn.click()
+    assert spy == [True]
+    assert "sign in" in p.status_label.text().lower()
 
 
 def test_start_run_blocked_when_password_not_set(qtbot, tmp_path, monkeypatch):
     spy = []
-    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda scoped: spy.append(scoped),
+    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda: spy.append(True),
               password_exists=lambda: False)
     warned = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
                         staticmethod(lambda *a, **k: warned.append(a)))
-    mode_calls = []
-    monkeypatch.setattr(p, "_ask_run_mode", lambda n: mode_calls.append(n))
+    confirms = []
+    monkeypatch.setattr(p, "_confirm_run", lambda n: confirms.append(n) or True)
 
     p.start_run_btn.click()
 
     assert spy == []
     assert len(warned) == 1
-    assert mode_calls == []           # never reached the mode dialog
+    assert confirms == []             # never reached the confirm dialog
 
 
 def test_start_run_blocked_on_empty_queue(qtbot, tmp_path, monkeypatch):
     spy = []
-    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda scoped: spy.append(scoped),
+    p = _panel(qtbot, _qfile(tmp_path), on_start_run=lambda: spy.append(True),
               password_exists=lambda: True)
     informed = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "information",
                         staticmethod(lambda *a, **k: informed.append(a)))
-    mode_calls = []
-    monkeypatch.setattr(p, "_ask_run_mode", lambda n: mode_calls.append(n))
+    confirms = []
+    monkeypatch.setattr(p, "_confirm_run", lambda n: confirms.append(n) or True)
 
     p.start_run_btn.click()          # queue file has no jobs at all
 
     assert spy == []
     assert len(informed) == 1
-    assert mode_calls == []           # never reached the mode dialog
+    assert confirms == []             # never reached the confirm dialog
 
 
-def test_start_run_unattended_fires_spawn_with_false(qtbot, tmp_path, monkeypatch):
+def test_start_run_confirmed_fires_spawn(qtbot, tmp_path, monkeypatch):
     qfile = _qfile(tmp_path)
     apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
                         path=qfile)
     apply_queue.enqueue(apply_queue.new_entry("2", company="Globex", title="B"),
                         path=qfile)
     spy = []
-    p = _panel(qtbot, qfile, on_start_run=lambda scoped: spy.append(scoped),
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
               password_exists=lambda: True)
-    monkeypatch.setattr(p, "_ask_run_mode", lambda n: "unattended")
+    monkeypatch.setattr(p, "_confirm_run", lambda n: True)
 
     p.start_run_btn.click()
 
-    assert spy == [False]             # blanket-bypass variant
+    assert spy == [True]
     note = p.status_label.text().lower()
     assert "started" in note
-    assert "unattended" in note
     assert "new terminal" in note
-
-
-def test_start_run_scoped_fires_spawn_with_true(qtbot, tmp_path, monkeypatch):
-    qfile = _qfile(tmp_path)
-    apply_queue.enqueue(apply_queue.new_entry("1", company="Acme", title="A"),
-                        path=qfile)
-    spy = []
-    p = _panel(qtbot, qfile, on_start_run=lambda scoped: spy.append(scoped),
-              password_exists=lambda: True)
-    monkeypatch.setattr(p, "_ask_run_mode", lambda n: "scoped")
-
-    p.start_run_btn.click()
-
-    assert spy == [True]              # safer allowlisted variant
-    assert "scoped" in p.status_label.text().lower()
 
 
 def test_start_run_cancel_is_noop_and_passes_cap(qtbot, tmp_path, monkeypatch):
@@ -915,9 +916,9 @@ def test_start_run_cancel_is_noop_and_passes_cap(qtbot, tmp_path, monkeypatch):
                         path=qfile)
     spy = []
     seen = []
-    p = _panel(qtbot, qfile, on_start_run=lambda scoped: spy.append(scoped),
+    p = _panel(qtbot, qfile, on_start_run=lambda: spy.append(True),
               password_exists=lambda: True)
-    monkeypatch.setattr(p, "_ask_run_mode", lambda n: seen.append(n) or None)
+    monkeypatch.setattr(p, "_confirm_run", lambda n: seen.append(n) or False)
 
     p.start_run_btn.click()
 
@@ -925,33 +926,47 @@ def test_start_run_cancel_is_noop_and_passes_cap(qtbot, tmp_path, monkeypatch):
     assert seen == [1]                # N = min(queued=1, batch cap) reaches the dialog
 
 
-def test_kickoff_argv_variants_carry_prompt_and_repo_root(qtbot, monkeypatch):
-    """Pure: no Popen anywhere. Both variants embed KICKOFF_PROMPT + the repo
-    root in the -EncodedCommand payload; scoped uses --allowedTools, unattended
-    uses --dangerously-skip-permissions."""
+def test_confirm_text_states_the_submit_gate(qtbot, tmp_path):
+    p = _panel(qtbot, _qfile(tmp_path))
+    text = p._confirm_text(3).lower()
+    assert "3 queued job" in text
+    assert "submits when" in text
+    assert "never submitted" not in text and "nothing is ever submitted" not in text
+    assert "auto_apply_submit" in text     # names the setting that turns the gate off
+
+
+def _decoded(argv):
+    """The PowerShell command inside a `-EncodedCommand` argv (pure: no Popen)."""
+    assert isinstance(argv, list) and all(isinstance(a, str) for a in argv)
+    for i, a in enumerate(argv):
+        if a.lower() in ("-encodedcommand", "/encodedcommand"):
+            import base64
+            return base64.b64decode(argv[i + 1]).decode("utf-16-le")
+    return " ".join(argv)
+
+
+def test_kickoff_and_login_argv_decode_to_their_commands(monkeypatch):
     called = []
     monkeypatch.setattr(aqp.subprocess, "Popen",
                         lambda *a, **k: called.append((a, k)))
-
-    def _payload(argv):
-        assert isinstance(argv, list)
-        assert all(isinstance(a, str) for a in argv)
-        for i, a in enumerate(argv):
-            if a.lower() in ("-encodedcommand", "/encodedcommand"):
-                import base64
-                return base64.b64decode(argv[i + 1]).decode("utf-16-le")
-        return " ".join(argv)
-
-    unattended = _payload(aqp._kickoff_argv())
-    scoped = _payload(aqp._kickoff_argv(scoped=True))
-
+    assert _decoded(aqp._kickoff_argv()) == KICKOFF_COMMAND
+    assert _decoded(aqp._login_argv()) == LOGIN_COMMAND
     assert called == []               # pure - never spawns anything
-    for hay in (unattended, scoped):
-        assert KICKOFF_PROMPT in hay
-        assert str(aqp.REPO_ROOT) in hay
-    assert "--dangerously-skip-permissions" in unattended
-    assert "--allowedTools" in scoped
-    assert "--dangerously-skip-permissions" not in scoped
+
+
+def test_spawn_helpers_open_a_new_console_with_the_inherited_environment(monkeypatch):
+    """`apply_run.py` is this project's own code and reads `.env` itself, and the
+    Settings tab's TYPESAFE_API_KEY row is marked `restart` because the child
+    inherits the dashboard's environment snapshot: no scrub, no env override."""
+    seen = []
+    monkeypatch.setattr(aqp.subprocess, "Popen",
+                        lambda *a, **k: seen.append((a, k)) or None)
+    aqp._spawn_kickoff()
+    aqp._spawn_login()
+    assert [_decoded(a[0]) for a, _k in seen] == [KICKOFF_COMMAND, LOGIN_COMMAND]
+    for _a, k in seen:
+        assert k.get("env") is None
+        assert k.get("creationflags") == getattr(aqp.subprocess, "CREATE_NEW_CONSOLE", 0)
 
 
 def test_panel_password_label_flips_with_password_exists(qtbot, tmp_path, monkeypatch):
@@ -1040,6 +1055,7 @@ def test_settings_schema_has_auto_apply_fields():
     cap = by_key["auto_apply_batch_cap"]
     assert (cap.type, cap.default, cap.min, cap.max) == ("int", 10, 1, 25)
     assert cap.section == "Auto-apply" and cap.target == "config"
+    assert "submits when" in cap.help and "never submitted" not in cap.help
     # defaults surface through load() even with no backing file on disk
     values = settings.load(targets={})
     assert values["auto_apply_batch_cap"] == 10
@@ -1047,30 +1063,6 @@ def test_settings_schema_has_auto_apply_fields():
     assert "auto_apply_batch_cap" in settings.validate({"auto_apply_batch_cap": 26})
     assert "auto_apply_batch_cap" in settings.validate({"auto_apply_batch_cap": 0})
     assert settings.validate({"auto_apply_batch_cap": 10}) == {}
-
-
-def test_the_drain_console_never_inherits_another_vendors_credentials(monkeypatch):
-    """local/app.py load_dotenv()s at startup, so this process's environment holds
-    the Bright Data token and the Gemini key pool. The drain console ends in
-    `claude`, and a bare Popen would hand both to an unrelated vendor's CLI -- and
-    to the agent it runs, which has file and Bash access -- purely by inheritance.
-    claude_cli._child_env() already strips them for the direct calls; the console
-    has to use the same list."""
-    import claude_cli
-    monkeypatch.setenv("BRIGHT_DATA_API_TOKEN", "bd-should-not-travel")
-    monkeypatch.setenv("GEMINI_API_KEYS", "g1,g2")
-    monkeypatch.setenv("ANTHROPIC_SOMETHING", "kept")
-    seen = {}
-    monkeypatch.setattr(aqp.subprocess, "Popen",
-                        lambda *a, **k: seen.update(k) or None)
-    aqp._spawn_kickoff()
-
-    env = seen["env"]
-    assert env is not None, "the drain console inherited the parent environment"
-    for name in claude_cli._SCRUBBED_ENV_VARS:
-        assert name not in env, f"{name} rode into the claude console"
-    assert env.get("ANTHROPIC_SOMETHING") == "kept"   # only credentials are stripped
-    assert "PATH" in env or "Path" in env             # ... and the rest survives
 
 
 # --- header layout at other interface scales (Phase 7) -----------------------

@@ -1,10 +1,11 @@
 """The "Auto-apply" tab: a live, read-only mirror of the batch auto-apply queue.
 
 The queue file itself (local/apply_queue.py) is the single source of
-truth shared with the agent CLI; this panel only *displays* it and offers the
-few human controls around it — Re-queue / Remove / Clear finished, opening a
-job's artifacts, the master-password state, and "Copy kickoff command" (the
-exact PowerShell line that starts the apply-agent drain session).
+truth shared with the drain CLI (local/apply_run.py); this panel only
+*displays* it and offers the few human controls around it: Re-queue / Remove /
+Clear finished, opening a job's artifacts, the master-password state, "Sign in
+to sites" (the one-time `apply_run.py login`), "Copy kickoff command" (the
+exact PowerShell line that starts the drain) and "Start auto-apply run".
 
 Freshness: reads are lock-free (`apply_queue.load`, never quarantine=True — the
 panel must never rename a file a locked writer owns). A QFileSystemWatcher
@@ -40,90 +41,67 @@ from qt.chrome import ChipBar, Pill
 from qt.delegates import STATUS_LABELS, STATUS_TAGS, TAG_ROLE, JobRowDelegate
 from qt.widgets import ElidedLabel
 
-# The repo root (this file lives in <root>/local/qt/) — the kickoff command
-# cd's here so `claude` picks up the repo's .claude/skills/auto-apply skill.
+# The repo root (this file lives in <root>/local/qt/): the console commands
+# cd here first so the relative `local/apply_run.py` resolves.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# the apply agent's skill mirrors this prompt verbatim — keep the two in sync.
-KICKOFF_PROMPT = "Use the auto-apply skill: drain the apply queue"
-
 # PowerShell-safe (5.1: `;` chains, no `&&`; quoted path survives spaces).
-# --model sonnet: runs the ORCHESTRATOR (this drain session) on Sonnet. The orchestrator only
-#   delegates — claim a job, dispatch a per-job subagent, collect its one-paragraph report, run
-#   the watchdogs; it never browses the web or pastes the master password itself (the per-job
-#   subagents do), so its prompt-injection surface is low and Sonnet is sufficient for the
-#   coordination while costing far less than Opus. The per-job subagents are independently
-#   pinned to claude-sonnet-5 by the skill (SKILL.md DRAIN LOOP step 3); this flag governs only
-#   the orchestrator — change the subagent model in the skill, not here.
-# --dangerously-skip-permissions: runs UNATTENDED — Claude Code never stops to ask the
-#   user to approve each browser/file/CLI action. The skill's own safety rails (never
-#   submit, park at review, CAPTCHA/SSN/payment stop, per-job domain allowlist,
-#   secret-safe master-password paste) live in the skill logic and stay in force.
-KICKOFF_COMMAND = (
-    f'cd "{REPO_ROOT}"; claude --model sonnet --dangerously-skip-permissions '
-    f'"{KICKOFF_PROMPT}"'
-)
+# The drain is this project's own code (local/apply_run.py): it claims each
+# queued job, drives a persistent Chromium profile through the application
+# with the Jev judge, and submits only when the confidence gate passes
+# (`auto_apply_submit` in Settings, `--no-submit` on the command line parks
+# every job at its review page instead). The auto-apply Claude skill is the
+# manual fallback and is no longer launched from here.
+KICKOFF_COMMAND = f'cd "{REPO_ROOT}"; python local/apply_run.py drain'
 
-# Safer alternative (the Start button's "Scoped" choice): same Sonnet drain, but instead
-# of bypassing ALL permission checks it pre-approves ONLY the tools the drain uses —
-# Bash scoped to `python …` (the two project CLIs), file read/write for the record,
-# Task to dispatch per-job subagents, and the browser MCP. Anything else (rm, curl, a
-# different MCP) still prompts, so the blast radius is far smaller than a blanket
-# bypass — at the cost of an occasional pause if the agent reaches outside the list.
-# The prompt is placed FIRST so the variadic --allowedTools can't swallow it.
-KICKOFF_COMMAND_SCOPED = (
-    f'cd "{REPO_ROOT}"; claude "{KICKOFF_PROMPT}" --model sonnet --allowedTools '
-    f'Read Glob Grep Write Edit Task "Bash(python:*)" "mcp__claude-in-chrome__*"'
-)
+# The one-time sign-in: opens the same persistent profile, headed, at
+# LinkedIn's login and the configured inbox, and waits for the window to close.
+LOGIN_COMMAND = f'cd "{REPO_ROOT}"; python local/apply_run.py login'
 
 
-def _kickoff_argv(scoped: bool = False) -> list[str]:
-    """The argv that opens a NEW PowerShell console running the drain command.
+def _console_argv(command: str) -> list[str]:
+    """The argv that opens a NEW PowerShell console running `command`.
 
-    Pure and testable — no subprocess call here. `scoped=False` launches the
-    unattended KICKOFF_COMMAND (--dangerously-skip-permissions); `scoped=True`
-    launches KICKOFF_COMMAND_SCOPED (--allowedTools, which pauses on anything
-    outside the list). Both already embed KICKOFF_PROMPT and the quoted
-    REPO_ROOT and contain their own double quotes (`cd "<root>"` and
-    `"<prompt>"`); base64 via -EncodedCommand sidesteps PowerShell 5.1's quoting
-    rules entirely (no re-tokenizing, no escaping) and round-trips cleanly for
-    the test to decode.
+    Pure and testable: no subprocess call here. The command embeds the quoted
+    REPO_ROOT (`cd "<root>"`), and base64 via -EncodedCommand sidesteps
+    PowerShell 5.1's quoting rules entirely (no re-tokenizing, no escaping) and
+    round-trips cleanly for the tests to decode.
     """
-    command = KICKOFF_COMMAND_SCOPED if scoped else KICKOFF_COMMAND
     encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
     return ["powershell", "-NoExit", "-EncodedCommand", encoded]
 
 
-def _drain_console_env() -> dict:
-    """`os.environ` with every non-Anthropic credential removed.
+def _kickoff_argv() -> list[str]:
+    """The console argv for KICKOFF_COMMAND (`apply_run.py drain`)."""
+    return _console_argv(KICKOFF_COMMAND)
 
-    The drain console ends in `claude`, and `local/app.py` calls `load_dotenv()`
-    at startup — so this process's environment holds BRIGHT_DATA_API_TOKEN and
-    GEMINI_API_KEYS, and a bare Popen would hand both to an unrelated vendor's
-    CLI (and to the agent it runs, which has file and Bash access) purely by
-    inheritance. `pipeline/claude_cli._child_env` already does exactly this scrub
-    for the direct `claude` calls; ask it rather than keeping a second list here,
-    so the two can never drift. Nothing in the scrub list is needed by `claude`,
-    which authenticates through its own stored login.
+
+def _login_argv() -> list[str]:
+    """The console argv for LOGIN_COMMAND (`apply_run.py login`)."""
+    return _console_argv(LOGIN_COMMAND)
+
+
+def _spawn_console(argv: list[str]) -> None:
+    """Launch `argv` in a brand-new, visible console.
+
+    The child inherits this process's environment on purpose: `apply_run.py`
+    is this project's own code, it loads `.env` itself, and the Settings tab's
+    TYPESAFE_API_KEY row is marked `restart` because the child sees the
+    dashboard's startup snapshot. The flag is guarded via getattr so importing
+    this module on a non-Windows box (CI, a dev's Mac) never raises at import
+    time.
     """
-    import sys
-    pipeline = str(REPO_ROOT / "pipeline")
-    if pipeline not in sys.path:
-        sys.path.insert(0, pipeline)
-    from claude_cli import _child_env    # the single owner of the scrub list
-    return _child_env()
+    subprocess.Popen(argv, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 
-def _spawn_kickoff(scoped: bool = False) -> None:
-    """Default on_start_run: launch the drain in a brand-new, visible console.
-    `scoped` selects the safer allowlisted variant over the blanket bypass.
+def _spawn_kickoff() -> None:
+    """Default on_start_run: the drain in a new console."""
+    _spawn_console(_kickoff_argv())
 
-    The flag is guarded via getattr so importing this module on a non-Windows
-    box (CI, a dev's Mac) never raises at import time.
-    """
-    subprocess.Popen(
-        _kickoff_argv(scoped), env=_drain_console_env(),
-        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+
+def _spawn_login() -> None:
+    """Default on_login: the one-time sign-in in a new console."""
+    _spawn_console(_login_argv())
 
 
 class _ShrinkableCaption(ElidedLabel):
@@ -367,10 +345,8 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                  submit_write: Callable | None = None,
                  on_set_password: Callable[[], None] | None = None,
                  password_exists: Callable[[], bool] | None = None,
-                 # takes `scoped`: True = the allowlisted variant, False = the
-                 # blanket permission bypass. _start_run always passes it, and
-                 # this is the seam that chooses between the two.
-                 on_start_run: Callable[[bool], None] | None = None,
+                 on_start_run: Callable[[], None] | None = None,
+                 on_login: Callable[[], None] | None = None,
                  on_mark_applied: Callable[[Dict[str, Any]], None] | None = None,
                  on_mark_seen: Callable[[Dict[str, Any]], None] | None = None,
                  on_answer_now: Callable[[], None] | None = None,
@@ -382,6 +358,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         # Late-bound default so a monkeypatched module seam takes effect.
         self._password_exists = password_exists or (lambda: _default_password_exists())
         self._on_start_run = on_start_run or _spawn_kickoff
+        self._on_login = on_login or _spawn_login
         self._on_mark_applied = on_mark_applied or (lambda _e: None)
         self._on_mark_seen = on_mark_seen or (lambda _e: None)
         # "Answer now" on the missing-answers callout — the main window wires
@@ -471,14 +448,31 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         actions.addWidget(cluster)
         actions.addStretch(1)
 
+        self.copy_cmd_btn = QtWidgets.QPushButton("Copy kickoff command")
+        self.copy_cmd_btn.setProperty("tier", "tertiary")
+        self.copy_cmd_btn.setToolTip(
+            "Copy the exact command the Start button runs (python "
+            "local/apply_run.py drain) to paste into a terminal of your own; add "
+            "--no-submit there to park every application at its review page.")
+        self.copy_cmd_btn.clicked.connect(self._copy_kickoff)
+        actions.addWidget(self.copy_cmd_btn)
+        self.login_btn = QtWidgets.QPushButton("Sign in to sites")
+        self.login_btn.setToolTip(
+            "One-time setup: opens the auto-apply browser profile at LinkedIn "
+            "and your inbox so you can sign in to both. Close the window when "
+            "you are done; the run reuses those sessions.")
+        self.login_btn.clicked.connect(self._sign_in)
+        actions.addWidget(self.login_btn)
         self.start_run_btn = QtWidgets.QPushButton("Start auto-apply run")
         self.start_run_btn.setProperty("accent", True)
         self.start_run_btn.setToolTip(
-            "Launch an auto-apply drain in a NEW terminal window: click once, "
-            "walk away. You pick how it runs: unattended (no approval prompts) "
-            "or scoped (safer: pre-approves only the tools it needs). Works "
-            "through up to batch_cap queued jobs; every application is PARKED at "
-            "its review page for your approval; nothing is ever submitted.")
+            "Launch the auto-apply drain in a NEW terminal window: click once, "
+            "walk away. It works through up to batch_cap queued jobs in its own "
+            "browser profile, filling each form from your apply sheet with the "
+            "Jev judge, and submits when every required field is filled and "
+            "verified with no CAPTCHA, payment or blocked question on the page; "
+            "anything less parks at the review page for you. Turn 'Submit when "
+            "verified' off in Settings to park every job.")
         self.start_run_btn.clicked.connect(self._start_run)
         actions.addWidget(self.start_run_btn)
         v.addLayout(actions)
@@ -830,38 +824,42 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         except Exception:  # noqa: BLE001 - config hiccups must never block the button
             return queued
 
-    def _ask_run_mode(self, n: int) -> Optional[str]:
-        """Ask which permission mode to launch, returning 'unattended', 'scoped',
-        or None (cancelled). Three explicit buttons on a QMessageBox — tests
-        monkeypatch this method to choose a mode without driving a live modal."""
+    def _confirm_text(self, n: int) -> str:
+        """The confirm dialog's body: how many jobs, and the submit gate."""
+        return (f"Start an auto-apply run in a new terminal? It works through up to "
+                f"{n} queued job(s) in its own browser window.\n\n"
+                f"Each application is filled from that job's apply sheet and "
+                f"checked by the Jev judge. The run submits when every required "
+                f"field is filled and verified and the page shows no CAPTCHA, "
+                f"payment or blocked question; otherwise it parks the job at its "
+                f"review page for you. Turn auto_apply_submit off in Settings to "
+                f"park every job.")
+
+    def _confirm_run(self, n: int) -> bool:
+        """Ask before launching; tests monkeypatch this method to answer
+        without driving a live modal."""
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("Start auto-apply run")
-        box.setText(
-            f"Start an auto-apply run in a new terminal? It works through up to "
-            f"{n} queued job(s), parks each at its review page; nothing is ever "
-            f"submitted.\n\n"
-            f"Unattended: no per-action approval prompts (walk away).\n"
-            f"Scoped (safer): pre-approves only the tools the drain needs; it "
-            f"pauses if it reaches for anything else.")
-        unattended_btn = box.addButton(
-            "Unattended", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
-        scoped_btn = box.addButton(
-            "Scoped (safer)", QtWidgets.QMessageBox.ButtonRole.ActionRole)
+        box.setText(self._confirm_text(n))
+        start_btn = box.addButton("Start", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         box.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(scoped_btn)
+        box.setDefaultButton(start_btn)
         box.exec()
-        clicked = box.clickedButton()
-        if clicked is unattended_btn:
-            return "unattended"
-        if clicked is scoped_btn:
-            return "scoped"
-        return None
+        return box.clickedButton() is start_btn
+
+    def _copy_kickoff(self) -> None:
+        QtWidgets.QApplication.clipboard().setText(KICKOFF_COMMAND)
+        self._set_note("Kickoff command copied to the clipboard.")
+
+    def _sign_in(self) -> None:
+        self._on_login()
+        self._set_note("Sign in to LinkedIn and your inbox in the new browser window, "
+                       "then close it.")
 
     def _start_run(self) -> None:
-        """Guards, in order: password set -> queue non-empty -> mode choice.
-        Only a chosen mode (unattended/scoped, not Cancel) calls the injected
-        on_start_run (default: _spawn_kickoff, a brand-new visible PowerShell
-        console), passing the scoped flag through to it."""
+        """Guards, in order: password set -> queue non-empty -> confirm.
+        Only a confirmed dialog calls the injected on_start_run (default:
+        _spawn_kickoff, a brand-new visible PowerShell console)."""
         try:
             has_password = bool(self._password_exists())
         except Exception:  # noqa: BLE001 - a keyring hiccup must never crash the panel
@@ -879,10 +877,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
                 "Queue is empty; queue jobs from the Jobs tab first.")
             return
         n = self._batch_cap(queued)
-        mode = self._ask_run_mode(n)
-        if mode is None:
+        if not self._confirm_run(n):
             return
-        scoped = mode == "scoped"
-        self._on_start_run(scoped)
-        which = "scoped (safer)" if scoped else "unattended"
-        self._set_note(f"Auto-apply run started ({which}) in a new terminal window.")
+        self._on_start_run()
+        self._set_note("Auto-apply run started in a new terminal window.")

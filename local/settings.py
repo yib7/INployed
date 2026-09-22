@@ -445,8 +445,9 @@ SETTINGS_SCHEMA: list[Field] = [
     Field("auto_apply_batch_cap", "Max jobs queued per batch", "int", 10,
           "Auto-apply", "config", min=1, max=25,
           help="At most this many jobs go into the auto-apply queue per 'Queue for "
-               "auto-apply' action. ~10 keeps a batch reviewable in one sitting (every "
-               "application is parked at its review page for you, never submitted)."),
+               "auto-apply' action, and the most one drain works through. ~10 keeps a "
+               "batch reviewable in one sitting: the run submits when 'Submit when "
+               "verified' passes and parks the rest at their review page for you."),
     # No auto_apply_inbox_url row: the single fallback URL duplicated the map
     # below, firing only when the signup domain missed it — and the shipped
     # DEFAULT_INBOX_MAP already covers the common providers, so an unmapped domain

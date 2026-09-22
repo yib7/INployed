@@ -1,8 +1,9 @@
 """The batch auto-apply queue: an atomic JSON store + the agent CLI.
 
 Two processes share this queue: the dashboard enqueues jobs while the
-tailor runs, and the apply agent drains it — `claim` one job, fill the
-application in Chrome, `finish` it parked at the review page (never submitted).
+tailor runs, and the drain (local/apply_run.py) works through it: `claim` one
+job, fill the application, `finish` it submitted when the confidence gate
+passes or parked at the review page when it does not.
 The store lives beside seen.db in %LOCALAPPDATA%\\linkedin_watcher\\
 (apply_queue.json; APPLY_QUEUE_PATH overrides, read at call time so tests stay
 hermetic).
@@ -21,10 +22,10 @@ precious.
 
 Entry lifecycle: tailoring -> queued -> in_progress -> ready_to_submit |
 submitted | needs_human | failed (the last four are terminal). ready_to_submit
-is parked-for-human-review (the drain agent's success state — it never submits);
-submitted means the application actually went in, set either by an authorized
-end-to-end autonomous submit or by a human who submitted a parked tab and
-re-finished the entry. Every entry always carries every field, so consumers
+is parked-for-human-review (the drain's outcome when the submit gate does not
+pass, and every outcome with auto_apply_submit off); submitted means the
+application actually went in, set either by the drain's gated submit or by a
+human who submitted a parked tab and re-finished the entry. Every entry always carries every field, so consumers
 never .get()-dance around missing keys.
 
 This module NEVER returns, prints, or stores a password and never touches
@@ -691,7 +692,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     _force_utf8_stdio()
     ap = argparse.ArgumentParser(
         prog="apply_queue",
-        description="Batch auto-apply queue (never submits an application).")
+        description="Batch auto-apply queue (the store and its CLI; the drain is apply_run.py).")
     sub = ap.add_subparsers(dest="verb", required=True)
 
     def add(name, **kw):

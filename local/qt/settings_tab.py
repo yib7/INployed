@@ -62,9 +62,10 @@ SECTION_HELP = {
                 "scoring silently."),
     "Resume": "What the resume tailor generates, and how the cover letter reads.",
     "Auto-apply": ("The batch auto-apply queue (Auto-apply tab): how many jobs one 'Queue for "
-                   "auto-apply' action may add, and which webmail inbox the agent may open for "
-                   "account-verification emails. Applications are parked at their review page, "
-                   "never submitted for you."),
+                   "auto-apply' action may add, which webmail inbox the run may open for "
+                   "account-verification emails, the Jev judge key, and the submit gate. The "
+                   "run submits when every required field is filled and verified; anything "
+                   "less is parked at its review page for you."),
     "Settings history": ("Every Save snapshots all your settings to a dated folder so you can "
                          "roll one back later with 'Restore from archive...' below. Snapshots "
                          "include your saved keys and live alongside your settings on this PC."),

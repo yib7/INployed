@@ -578,6 +578,32 @@ def test_default_signup_fills_the_candidates_name_fields_from_the_catalog(
     assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
 
 
+def test_off_host_subresources_on_the_sign_in_click_do_not_park_the_job(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    """A bot-check script and a webfont from a CDN carry no credentials; they
+    are aborted quietly and the login goes through."""
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    ats_accounts.record("127.0.0.1", "synthetic@example.com")
+    _enqueue(job_folder, fixture_url("login_subresource.html"))
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "left the allowed sites" not in record
+    assert "State: login_wall" in record
+
+
+def test_a_signup_that_parks_off_host_still_records_the_account(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    """The create-account click landed, so the account may already exist; the
+    ledger has to say so or the next run signs up again with the same email."""
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    _enqueue(job_folder, fixture_url("signup_cross_host.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert "left the allowed sites: localhost" in out.reason
+    assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
+
+
 def test_default_accounts_block_cross_host_credential_request_before_it_reaches_server(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     import conftest_browser

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create an account - Synthetic Careers</title>
+</head>
+<body>
+<h1>Create an account</h1>
+<p>Register to keep track of the jobs you saved. Choose a password and accept
+the terms to finish.</p>
+<form id="signup" method="get">
+  <label for="signup_email">Email</label>
+  <input id="signup_email" name="email" type="email" autocomplete="username">
+  <label for="signup_password">Password</label>
+  <input id="signup_password" name="password" type="password" autocomplete="new-password">
+  <label for="signup_confirm">Confirm password</label>
+  <input id="signup_confirm" name="password_confirmation" type="password" autocomplete="new-password">
+  <button type="submit" id="btn-create">Create account</button>
+</form>
+<script>
+  var destination = new URL(window.location.href);
+  destination.hostname = 'localhost';
+  destination.pathname = '/forms/credential_sink.html';
+  destination.search = '';
+  document.getElementById('signup').action = destination.href;
+</script>
+</body>
+</html>

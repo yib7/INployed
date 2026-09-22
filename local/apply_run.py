@@ -204,12 +204,19 @@ class _Accounts:
         blocked: list[str] = []
 
         def _guard(route, request) -> None:
+            """Nothing leaves the allowed hosts while the credentials are on
+            the page. A navigation or a request with a body could carry them,
+            so that one parks the job; a plain GET for a script, a font or a
+            beacon is aborted quietly, the way `apply_inbox.fetch_code` guards
+            the inbox tab. A sign-in page that pulls a bot-check script from a
+            CDN is ordinary and is no reason to stop."""
             target_host = _host(request.url)
-            if target_host and target_host not in self.run.allowed:
-                blocked.append(target_host)
-                route.abort()
+            if not target_host or target_host in self.run.allowed:
+                route.continue_()
                 return
-            route.continue_()
+            if request.is_navigation_request() or str(request.method).upper() != "GET":
+                blocked.append(target_host)
+            route.abort()
 
         try:
             answers = self.run._judge_page(digest)
@@ -249,6 +256,13 @@ class _Accounts:
                                           timeout_s=self._timeout() / 1000)
             finally:
                 page.unroute("**/*", _guard)
+            if signup and result.clicked:
+                # the click landed, so the account may already exist whatever
+                # the page did next; a ledger entry for an account that was
+                # never created costs one failed login, a missing one costs a
+                # second signup with the same address
+                ats_accounts.record(host, email)
+                signup = False
             if blocked:
                 raise _Parked("needs_human", f"left the allowed sites: {blocked[0]}")
             if not result.changed:

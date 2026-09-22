@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Sign in to continue your application</h1>
+<p>Use the account you created for Fabrikam Careers.</p>
+<div id="login">
+  <label for="login_email">Email</label><input id="login_email" name="email" type="email" autocomplete="username">
+  <label for="login_password">Password</label><input id="login_password" name="password" type="password" autocomplete="current-password">
+  <p><button type="button" id="btn-signin">Sign in</button></p>
+</div>
+<script>
+  // A real sign-in page pulls a bot-check script and a webfont from a CDN on
+  // another host. Neither carries the credentials; both are plain GETs.
+  document.getElementById('btn-signin').addEventListener('click', function () {
+    if (!document.getElementById('login_password').value) { return; }
+    var s = document.createElement('script');
+    s.src = 'http://localhost:9/recaptcha/api.js';
+    document.head.appendChild(s);
+    var f = document.createElement('link');
+    f.rel = 'stylesheet';
+    f.href = 'http://localhost:9/fonts/inter.css';
+    document.head.appendChild(f);
+    window.setTimeout(function () {
+      document.body.setAttribute('data-logged-in', '1');
+      window.location.href = 'ashby_steps.html';
+    }, 50);
+  });
+</script>
+</body>
+</html>

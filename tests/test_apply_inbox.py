@@ -109,6 +109,12 @@ def test_inbox_error_does_not_log_email_body(browser_page, fixtures_server, capl
     ("Welcome", "Copyright 2026 Fabrikam. All rights reserved.", []),
     ("Verify", "Enter the code\n\nAB12CD\n\nThe older one\nZZ99YY\nstops working.",
      ["AB12CD", "ZZ99YY"]),
+    # an all-letter code in lower case: alone on its own line, or labelled on one line
+    ("Your sign-in code", "Your sign-in code\n\nqwertyz\n\nIt expires in ten minutes.",
+     ["qwertyz"]),
+    ("Sign in", "Enter code: hunterz to continue.", ["hunterz"]),
+    # the same shape in prose, a line below the word code, stays out
+    ("Your code", "Here is the code you asked for.\nThanks.", []),
 ])
 def test_candidates_reads_the_subject_and_the_body(subject, body, expected):
     assert _inbox().candidates(body, subject) == expected

@@ -1,6 +1,7 @@
 """Read verification mail in a separate tab of the signed-in browser profile."""
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
@@ -145,20 +146,31 @@ def candidates(body: str, subject: str = "") -> list[str]:
         code = apply_verify.extract_code(remaining)
         if not code or code in found:
             break
-        if _code_shaped(code):
+        if _code_shaped(code, body, subject):
             found.append(code)
         remaining = remaining.replace(code, " ")
     return found
 
 
-def _code_shaped(token: str) -> bool:
-    """A token the judge is worth asking about: it carries a digit, or it is
-    written in capitals. A sentence word next to "code" ("Thanks", "Welcome")
-    reads as a candidate to the regex and is dropped here, so the pick question
-    stays short and the judge is not handed prose to choose between."""
-    if any(ch.isdigit() for ch in token):
+def _code_shaped(token: str, body: str = "", subject: str = "") -> bool:
+    """A token the judge is worth asking about.
+
+    A digit or capitals say "code" on their own. An all-letter token in lower
+    case is a code too when the message presents it as one: alone on its own
+    line in the body, or directly after the word "code" on a single line
+    ("Enter code: hunterz"). A sentence word a line below the word "code"
+    ("Thanks", "Welcome") matches the extractor's near-`code` pattern and is
+    dropped here, so the pick question stays short and carries no prose. The
+    subject is one line, so only the labelled form counts there."""
+    if any(ch.isdigit() for ch in token) or token.isupper():
         return True
-    return token.isupper()
+    quoted = re.escape(token)
+    if re.search(rf"(?m)^[ \t]*{quoted}[ \t]*$", body):
+        return True
+    # only spaces and tabs between the label and the token: a line break means
+    # the extractor reached across a sentence
+    labelled = rf"code[ \t]*(?:is|:|=)?[ \t]*{quoted}\b"
+    return bool(re.search(labelled, body, re.I) or re.search(labelled, subject, re.I))
 
 
 def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,

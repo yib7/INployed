@@ -60,6 +60,43 @@ def test_generic_ats_cannot_extend_allowlist_twice(monkeypatch):
     assert "unrelated.example" not in job.allowed
 
 
+class _RedirectingTab:
+    """A popup on LinkedIn's `/safety/go/` hop whose script moves on to
+    `dest` only once waited on, as the real one does a few seconds in."""
+
+    def __init__(self, dest):
+        self.url = "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fcareers.example"
+        self.dest = dest
+        self.waited = []
+
+    def wait_for_url(self, predicate, timeout):
+        self.waited.append(timeout)
+        if self.dest is None:
+            raise TimeoutError("still on the hop")
+        self.url = self.dest
+        assert predicate(self.url)
+
+
+def test_popup_on_the_linkedin_redirector_admits_the_destination(monkeypatch):
+    job = _job()
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
+    monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
+    tab = _RedirectingTab("https://careers-gtsx.icims.com/jobs/1605/job")
+    job._follow_popup(tab, source_url=job.page.url)
+    assert tab.waited, "the hop was not waited on"
+    assert job.page is tab and "careers-gtsx.icims.com" in job.allowed
+    job._check_host(job.page.url)       # the loop's next check passes
+
+
+def test_a_tab_that_stays_on_the_redirector_admits_nothing(monkeypatch):
+    job = _job()
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
+    monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
+    before = set(job.allowed)
+    job._follow_popup(_RedirectingTab(None), source_url=job.page.url)
+    assert job.allowed == before and not job.ats_transition_used
+
+
 def test_same_tab_linkedin_transition_admits_one_ats_host(monkeypatch):
     job = _job()
     source = job.page.url

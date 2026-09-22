@@ -958,6 +958,21 @@ def test_job_posting_apply_opens_a_popup_that_the_loop_follows(
     assert "ashby_steps.html" in record
 
 
+def test_linkedin_shaped_posting_follows_its_apply_link_through_the_redirect(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    # the page the 2026-09-22 live run parked on: the Apply entry is a plain
+    # link, the header search and the footer language picker are site chrome,
+    # and the new tab is a redirector whose script moves on to the ATS
+    _enqueue(job_folder, fixture_url("linkedin_posting.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "submitted", out
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "State: job_posting" in record
+    assert "Apply (apply_entry)" in record
+    assert "ashby_steps.html" in record
+    assert "Select language" not in record
+
+
 class _PostingJudge(jev.FakeJev):
     """The fake, with every page that carries fields judged `job_posting`."""
 
@@ -1314,6 +1329,48 @@ def test_hold_returns_when_every_page_is_closed(tmp_path):
                               sleep=_close_then_sleep, context=ctx)
     runner._hold(ctx)
     assert naps == [apply_run.HOLD_POLL_S]
+
+
+def test_hold_waits_inside_playwright_so_a_closed_window_is_seen(tmp_path):
+    # Playwright's sync API dispatches a page's close event only while one of
+    # its own calls runs; `time.sleep` blocks it, so a hold that sleeps never
+    # sees the user close the window (the 2026-09-22 drain sat on after it)
+    class Ctx:
+        def __init__(self):
+            self.pages = [1]
+            self.waits = []
+
+        def on(self, event, fn):
+            pass
+
+        def wait_for_event(self, event, timeout):
+            self.waits.append((event, timeout))
+            self.pages.clear()              # the dispatch that runs inside the call
+            raise TimeoutError("Timeout 1000ms exceeded")
+
+    def _sleep(s):
+        raise AssertionError("the hold slept outside Playwright")
+
+    ctx = Ctx()
+    apply_run.hold_until_closed(ctx, sleep=_sleep)
+    assert ctx.waits == [("close", apply_run.HOLD_POLL_S * 1000)]
+
+
+def test_hold_ends_when_a_real_page_closes_on_its_own(_browser):
+    ctx = _browser.new_context()
+    try:
+        page = ctx.new_page()
+        page.evaluate("setTimeout(() => window.close(), 100)")
+        naps = []
+
+        def _sleep(s):
+            naps.append(s)
+            if len(naps) > 5:
+                raise AssertionError("the hold never saw the page close")
+        apply_run.hold_until_closed(ctx, sleep=_sleep)
+        assert ctx.pages == []
+    finally:
+        ctx.close()
 
 
 # --- the CLI ----------------------------------------------------------------------------------

@@ -141,6 +141,16 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            DOM (apply_fill.open_listbox_options reads it live otherwise).
 #   buttons  button, [role=button], input[type=submit|button], a.btn,
 #            a[class*=button]; text from innerText, value, aria-label, title.
+#            A plain link joins them when its text or aria-label says "apply"
+#            and its text is short: LinkedIn's Apply entry is
+#            <a aria-label="Apply on company website">Apply</a> under hashed
+#            class names, and a similar job's card link carries "Easy Apply"
+#            inside a long text.
+#   chrome   a control inside the site's header, footer, nav or search
+#            landmark is skipped (a job board's search box, its footer
+#            language picker), unless that landmark sits inside a form or a
+#            dialog, where it is the form's own. Buttons are all kept: a
+#            wizard's Next can live in a footer outside its form.
 # The label of one radio or checkbox option, self-contained so `apply_fill` can
 # run the same rule on a live locator: label[for], aria-label, an enclosing
 # label (minus the control's own text), the text that follows it, else its
@@ -189,6 +199,12 @@ _EXTRACT_JS = r"""
   };
   const enabled = (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true'
     && !el.closest('fieldset:disabled');
+  const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
+    + '[role=navigation], [role=search]';
+  const inChrome = (el) => {
+    const c = el.closest(CHROME);
+    return !!c && !(c.parentElement && c.parentElement.closest('form, dialog, [role=dialog]'));
+  };
 
   const nthPath = (el) => {
     const parts = [];
@@ -337,7 +353,7 @@ _EXTRACT_JS = r"""
     if (lb) controlled.add(lb);
   }
   for (const el of document.querySelectorAll('input, select, textarea, [role=combobox], [role=listbox]')) {
-    if (!enabled(el)) continue;
+    if (!enabled(el) || inChrome(el)) continue;
     const role = el.getAttribute('role') || '';
     if (role !== 'combobox') {
       const widget = el.closest('[role=combobox]');
@@ -378,10 +394,15 @@ _EXTRACT_JS = r"""
 
   const buttons = [];
   const bsel = 'button, [role=button], input[type=submit], input[type=button], a.btn, a[class*=button]';
-  for (const el of document.querySelectorAll(bsel)) {
+  const APPLY = /\bapply\b/i;
+  const APPLY_LINK_MAX = 40;
+  const applyLink = (el, text) => text.length <= APPLY_LINK_MAX && !inChrome(el)
+    && APPLY.test(text + ' ' + norm(el.getAttribute('aria-label')));
+  for (const el of document.querySelectorAll(bsel + ', a[href]')) {
     if (!enabled(el) || !visible(el)) continue;
     if (el.closest('[role=combobox]')) continue;
     const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label')) || norm(el.getAttribute('title'));
+    if (!el.matches(bsel) && !applyLink(el, text)) continue;
     const typeAttr = (el.getAttribute('type') || '').toLowerCase();
     const submits = typeAttr === 'submit' || (el.tagName === 'BUTTON' && !typeAttr && !!el.form);
     let kind = '';

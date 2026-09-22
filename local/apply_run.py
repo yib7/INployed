@@ -74,6 +74,8 @@ HOLD_POLL_S = 1.0                  # while holding the window open
 FINISH_RETRY_S = 1.0               # before the one retry of a failed queue finish
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
+LINKEDIN_REDIRECTOR = "/safety/go"  # the hop an off-site Apply link goes through
+REDIRECT_TIMEOUT_S = 20            # for that hop's script to send the tab on
 VIEWPORT = {"width": 1400, "height": 1000}
 BROWSER_CHANNEL = "chrome"         # the installed Google Chrome; the bundled Chromium is the fallback
 RECORD_NAME = "apply_record.md"
@@ -387,6 +389,13 @@ def _host(url_or_netloc: str) -> str:
     return raw.split("/")[0].rsplit("@", 1)[-1].split(":")[0].lower()
 
 
+def _on_linkedin_redirector(url: str) -> bool:
+    """Is `url` LinkedIn's `/safety/go/` hop to an off-site Apply page?"""
+    parts = urlsplit(str(url or ""))
+    return ((parts.hostname or "").lower() in LINKEDIN_HOSTS
+            and parts.path.startswith(LINKEDIN_REDIRECTOR))
+
+
 def _is_password(row: dict) -> bool:
     """A recorded row that came from a password-shaped control
     (`apply_form.is_password_field`, the one definition the planner and the
@@ -594,7 +603,25 @@ def hold_until_closed(ctx, *, sleep: Callable[[float], None] = time.sleep,
                 break
         except Exception:       # noqa: BLE001  (the context is gone)
             break
-        sleep(HOLD_POLL_S)
+        if _wait_for_close(ctx, HOLD_POLL_S, sleep):
+            break
+
+
+def _wait_for_close(ctx, seconds: float, sleep: Callable[[float], None]) -> bool:
+    """Wait up to `seconds` inside a Playwright call; True when the context
+    closed. The sync API dispatches the browser's events (the user closing a
+    page, the context closing) only while one of its own calls runs, and
+    `time.sleep` blocks that: a hold that sleeps never sees `ctx.pages`
+    shrink. A context without `wait_for_event` (a test double) sleeps."""
+    wait = getattr(ctx, "wait_for_event", None)
+    if wait is None:
+        sleep(seconds)
+        return False
+    try:
+        wait("close", timeout=seconds * 1000)
+        return True
+    except Exception as e:      # noqa: BLE001  (Playwright's TimeoutError, or the context is gone)
+        return type(e).__name__ != "TimeoutError"
 
 
 # --- the runner -----------------------------------------------------------------------------
@@ -959,7 +986,7 @@ class _JobRun:
         except Exception as e:      # noqa: BLE001  (no popup within the timeout)
             self.log.debug("job %s: no popup after Apply (%s)", self.job_id, e)
         if popup is None:
-            apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+            self._await_destination(self.page)
             self._admit_ats_transition(self.page.url, source_url)
             self._check_host(self.page.url)
             return
@@ -971,11 +998,32 @@ class _JobRun:
         self._follow_popup(popup, source_url=source_url)
 
     def _follow_popup(self, popup, *, source_url: str | None = None) -> None:
-        self._admit_ats_transition(popup.url, source_url or self.page.url)
+        """Adopt the tab Apply opened once it has reached its destination:
+        its host is admitted and checked after the redirects, never at the
+        popup event, which on LinkedIn still shows the `/safety/go/` hop."""
+        source = source_url or self.page.url
+        self._await_destination(popup)
+        self._admit_ats_transition(popup.url, source)
         self._check_host(popup.url)
         self.page = popup
         self.last_sig = None
-        apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+
+    def _await_destination(self, page) -> None:
+        """Settle `page` after the Apply click. On LinkedIn's `/safety/go/`
+        hop, whose script sends the tab to the company's site a few seconds
+        after it boots, wait for the tab to leave it and settle again. A hop
+        that never moves on stays on LinkedIn and admits nothing."""
+        apply_fill.settle(page, CLICK_TIMEOUT_S)
+        if not _on_linkedin_redirector(page.url):
+            return
+        try:
+            page.wait_for_url(lambda u: not _on_linkedin_redirector(u),
+                              timeout=REDIRECT_TIMEOUT_S * 1000)
+        except Exception as e:      # noqa: BLE001  (the loop reads whatever the tab shows)
+            self.log.info("job %s: the LinkedIn redirect did not move on (%s)", self.job_id,
+                          type(e).__name__)
+            return
+        apply_fill.settle(page, CLICK_TIMEOUT_S)
 
     def _application_form(self, digest: apply_form.FormDigest, answers: dict,
                           plan: FillPlan, rec: dict) -> None:

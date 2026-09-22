@@ -261,3 +261,55 @@ def test_confirmation_page_has_no_fields(browser_page, fixture_url):
     d = apply_form.extract(browser_page)
     assert d.fields == [] and d.buttons == []
     assert "Your application has been received." in d.text
+
+
+# --- a LinkedIn posting: site chrome is no form, the Apply link is a button ----------
+
+@pytest.fixture
+def linkedin(browser_page, fixture_url):
+    browser_page.goto(fixture_url("linkedin_posting.html"))
+    return apply_form.extract(browser_page)
+
+
+def test_linkedin_header_search_and_footer_language_picker_are_not_fields(linkedin):
+    # the 2026-09-22 live run read these three as a form and judged the posting
+    # `application_form`, then parked with "no way forward on this page"
+    assert linkedin.fields == []
+
+
+def test_linkedin_apply_link_is_a_button_in_document_order(browser_page, linkedin):
+    texts = [b.text for b in linkedin.buttons]
+    apply = [b for b in linkedin.buttons if b.text == "Apply"]
+    assert len(apply) == 1 and apply[0].locator == (0, "#posting-apply")
+    assert texts.index("Me") < texts.index("Apply") < texts.index("Saved")
+    assert not any("Easy Apply" in t for t in texts)    # a similar job's card
+    assert apply_form.resolve(browser_page, apply[0].locator).count() == 1
+
+
+def test_a_form_or_dialog_keeps_the_controls_in_its_own_header_and_footer(browser_page):
+    browser_page.set_content("""
+      <body>
+        <form>
+          <header><label for="q">Job title</label><input id="q"></header>
+          <footer><label><input type="checkbox" name="agree"> I agree</label>
+            <button type="submit">Submit</button></footer>
+        </form>
+        <div role="dialog"><header><label for="nick">Preferred name</label>
+          <input id="nick"></header></div>
+        <footer><form><label for="news">Newsletter email</label>
+          <input id="news" type="email"></form></footer>
+      </body>""")
+    d = apply_form.extract(browser_page)
+    assert sorted(f.id_or_name for f in d.fields) == ["agree", "nick", "q"]
+
+
+def test_only_short_apply_links_outside_site_chrome_join_the_buttons(browser_page):
+    browser_page.set_content("""
+      <body><main>
+        <a href="/signup">Create an account</a>
+        <a href="/apply">Apply for this job</a>
+        <a href="/go" aria-label="Apply on company website"><span>Go</span></a>
+        <nav><a href="/jobs/apply">Apply</a></nav>
+      </main></body>""")
+    d = apply_form.extract(browser_page)
+    assert [b.text for b in d.buttons] == ["Apply for this job", "Go"]

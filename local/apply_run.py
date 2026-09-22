@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import urljoin, urlsplit
 
 HERE = Path(__file__).resolve().parent
@@ -430,6 +430,17 @@ def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
 def generated_count(pages: list[dict]) -> int:
     """Accepted generated answers across the job's page records."""
     return sum(1 for p in pages for g in p.get("generated", []) if g.get("ok"))
+
+
+def _drafts(plan: FillPlan) -> dict[int, str]:
+    """n -> the accepted draft, for every field a generator filled."""
+    return {pf.n: pf.value for pf in plan.fields
+            if pf.fact_key == "needs_generation" and pf.action == "fill"}
+
+
+def _same_text(a: str, b: str) -> bool:
+    """Equal after whitespace runs collapse (a textarea normalises line ends)."""
+    return " ".join(str(a).split()) == " ".join(str(b).split())
 
 
 def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
@@ -984,8 +995,9 @@ class _JobRun:
         if plan.park_reason:
             raise _Parked("needs_human", plan.park_reason)
         filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock)
-        verification = self._verify(filled)
-        verification = self._retry_failed(plan, filled, verification)
+        drafts = _drafts(plan)
+        verification = self._verify(filled, drafts)
+        verification = self._retry_failed(plan, filled, verification, drafts)
         self._record_fill(rec, digest, plan, filled, verification)
         still = [v.label for v in verification if not v.ok
                  and any(pf.n == v.n and pf.required for pf in plan.fields)]
@@ -1046,15 +1058,35 @@ class _JobRun:
         self.missing.append({"question": question, "context": context, "suggestion": ""})
         apply_queue.add_missing(self.job_id, question, context=context, path=self.r.queue_path)
 
-    def _verify(self, filled: list[apply_fill.Filled]) -> list[VerifyResult]:
+    def _verify(self, filled: list[apply_fill.Filled],
+                drafts: Mapping[int, str] | None = None) -> list[VerifyResult]:
+        """The judge checks every typed fact against the sheet. A generated
+        answer (`drafts`: n -> the accepted draft) is not on the sheet, and
+        the grounding gate was its check; what is left is that the box holds
+        the draft, which is a string comparison here, so no question carries
+        the draft. Results keep the fill order."""
         if not filled:
             return []
-        rows = [f.to_dict() for f in filled]
-        state, questions = apply_judge.verify_questions(rows, self.catalog.verification_excerpt())
-        return apply_judge.read_verification(rows, self.r.jev.judge(state, questions))
+        drafts = drafts or {}
+        by_n: dict[int, VerifyResult] = {}
+        rows = []
+        for f in filled:
+            if f.n in drafts:
+                ok = _same_text(f.value, drafts[f.n])
+                by_n[f.n] = VerifyResult(n=f.n, label=f.label, ok=ok,
+                                         p_correct=1.0 if ok else 0.0, p_placeholder=0.0)
+            else:
+                rows.append(f.to_dict())
+        if rows:
+            state, questions = apply_judge.verify_questions(
+                rows, self.catalog.verification_excerpt())
+            for v in apply_judge.read_verification(rows, self.r.jev.judge(state, questions)):
+                by_n[v.n] = v
+        return [by_n[f.n] for f in filled]
 
     def _retry_failed(self, plan: FillPlan, filled: list[apply_fill.Filled],
-                      verification: list[VerifyResult]) -> list[VerifyResult]:
+                      verification: list[VerifyResult],
+                      drafts: Mapping[int, str] | None = None) -> list[VerifyResult]:
         """A required field that failed verification is filled once more with
         the same value (a read-back mismatch is usually widget timing)."""
         required = {pf.n for pf in plan.fields if pf.required}
@@ -1065,7 +1097,7 @@ class _JobRun:
                       self.job_id, len(failed_ns))
         retry = FillPlan(fields=[pf for pf in plan.fields if pf.n in failed_ns])
         refilled = apply_fill.apply(self.page, retry, deadline=self.deadline, clock=self.r.clock)
-        again = {v.n: v for v in self._verify(refilled)}
+        again = {v.n: v for v in self._verify(refilled, drafts)}
         by_n = {f.n: f for f in refilled}
         for i, f in enumerate(filled):
             if f.n in by_n:

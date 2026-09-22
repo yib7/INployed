@@ -5,6 +5,7 @@ synthetic apply.md comes from `apply_data.build_markdown` over a synthetic
 master, as `test_apply_facts.py` does; no real store, profile or site is
 touched. Skips without Playwright or Chromium. No `asyncio.run()` here (see
 `conftest_browser`)."""
+import json
 import re
 import sys
 from pathlib import Path
@@ -357,6 +358,40 @@ def test_generation_on_uses_the_answergen_hook_and_fills_the_essay(
     record = Path(out.record_path).read_text(encoding="utf-8")
     assert "Describe a project you are proud of and your motivation for this role: Built the ingestion pipeline at Acme Corp." in record
     assert _entry()["missing_answers"] == []
+
+
+def test_a_generated_answer_is_verified_against_its_draft_in_code_and_never_by_the_sheet(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    """The live judge read "is `filled_value` the correct value according to
+    `sheet_excerpt`" at 0.05 to 0.20 for a generated essay, since the sheet
+    holds no essay: the grounding gate is that draft's check, and what is left
+    to verify is that the typed text is the draft, which is a string
+    comparison. No verify or placeholder question carries the draft."""
+    draft = "Built the ingestion pipeline at Acme Corp."
+    asked = []
+
+    class Judge(jev.FakeJev):
+        def judge(self, state, questions):
+            for qid, q in questions.items():
+                if qid.startswith(("verify_", "placeholder_")):
+                    asked.append(json.dumps({"state": state, "q": q}))
+            return super().judge(state, questions)
+
+    class Gen:
+        def answer(self, field, catalog, judge, *, budget):
+            return draft
+
+    _enqueue(job_folder, fixture_url("essay_required.html"))
+    runner = _runner(context, tmp_path)
+    runner.jev = Judge()
+    runner.answergen = Gen()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+    assert asked and not any(draft in blob for blob in asked)
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert ("  - Describe a project you are proud of and your motivation for this role: "
+            "ok (p_correct 1.00, p_placeholder 0.00)") in record, record
+    assert "  - First name: ok (p_correct 0.90" in record         # the rest still go to the judge
 
 
 # --- SP6: the real generator behind the hook, drafts mocked, FakeJev grounding ------------
@@ -1071,8 +1106,8 @@ def test_review_page_resolves_generation_then_fills_and_verifies_before_the_gate
                                           "Two years of ingestion pipelines at Acme Corp.")]
     verified = [VerifyResult(0, essay.label, True, 0.99, 0.01)]
     monkeypatch.setattr(apply_run.apply_fill, "apply", lambda *a, **kw: filled)
-    monkeypatch.setattr(run, "_verify", lambda actual: verified)
-    monkeypatch.setattr(run, "_retry_failed", lambda p, actual, checks: checks)
+    monkeypatch.setattr(run, "_verify", lambda actual, drafts=None: verified)
+    monkeypatch.setattr(run, "_retry_failed", lambda p, actual, checks, drafts=None: checks)
     gated = []
     monkeypatch.setattr(run, "_submit_gate",
                         lambda d, p, checks, r: gated.append((d, p, checks, r)))

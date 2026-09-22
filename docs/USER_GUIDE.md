@@ -521,8 +521,8 @@ through the queue in a new terminal window, one job at a time, in a browser prof
 its own. This is the power-user path; for one job at a time, the **Apply** flow above is
 the recommended way in.
 
-**What Jev is and what it decides.** The run is ordinary code driving a Chromium
-window (Playwright). Every judgment call inside it goes to Jev, TypeSafe's
+**What Jev is and what it decides.** The run is ordinary code driving a Google
+Chrome window (Playwright; the bundled Chromium stands in when Chrome is not installed). Every judgment call inside it goes to Jev, TypeSafe's
 "System One" model, which answers structured questions with a probability: what kind
 of page this is (the posting, an application form, a login wall, a code gate, a
 review page, a confirmation, a CAPTCHA), which of your facts each field asks for
@@ -541,11 +541,13 @@ marked untuned in `local/apply_judge.py` until the first live pass tunes them.
 1. Create a key at `console.typesafe.ai/keys` and put it in `.env` as
    `TYPESAFE_API_KEY=...`, or paste it into **Settings → Auto-apply → TypeSafe API
    key** (it is stored write-only; a rotated key needs a dashboard restart). `pip install
-   playwright typesafe-sdk` and `python -m playwright install chromium` if **Check
-   setup** says they are missing; `python local/apply_run.py doctor` prints the same
+   playwright typesafe-sdk` if **Check setup** says they are missing; the run uses your
+   installed Google Chrome, and `python -m playwright install chromium` gives it a fallback
+   browser when Chrome is absent; `python local/apply_run.py doctor` prints the same
    rows from a terminal.
-2. Click **Sign in to sites** (or run `python local/apply_run.py login`). It opens the
-   run's own browser profile at LinkedIn's login and your inbox in two tabs; sign in
+2. Click **Sign in to sites** (or run `python local/apply_run.py login`). It opens Chrome on the
+   run's own profile (a separate directory from your everyday Chrome profile, which Chrome
+   keeps closed to automation) at LinkedIn's login and your inbox in two tabs; sign in
    to both and close the window. The run reuses those sessions from then on: LinkedIn
    for the posting's external Apply button, the inbox for the emailed verification
    codes some portals send when they force an account.
@@ -571,7 +573,7 @@ The four settings under **Settings → Auto-apply**:
   apply sheet, and Jev checks each sentence against the sheet; a draft with an
   unsupported sentence is dropped and the field is left for you. At most three drafts
   per job. Off leaves every such field for you.
-- **Hide the browser window** (`auto_apply_headless`, off): on runs Chromium with no
+- **Hide the browser window** (`auto_apply_headless`, off): on runs Chrome with no
   window. Leave it off to watch the run and step in when it parks.
 - **Auto-apply judge** (`auto_apply_jev_mode`, `typesafe`): `fake` is a test-only judge
   that answers from word overlap; the drain refuses it (so does `replay`, the test

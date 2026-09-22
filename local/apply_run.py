@@ -75,6 +75,7 @@ FINISH_RETRY_S = 1.0               # before the one retry of a failed queue fini
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
 VIEWPORT = {"width": 1400, "height": 1000}
+BROWSER_CHANNEL = "chrome"         # the installed Google Chrome; the bundled Chromium is the fallback
 RECORD_NAME = "apply_record.md"
 HIDDEN = "<hidden>"
 
@@ -100,6 +101,26 @@ _PARK_STATES = {
     "error_or_dead": "error or dead page",
     "other": "unrecognised page",
 }
+
+
+def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
+    """Open the auto-apply profile in the installed Google Chrome, or in the
+    bundled Playwright Chromium when Chrome will not start.
+
+    The profile is its own directory, apart from the user's everyday Chrome
+    profile: Chrome refuses automation on its default profile and locks a
+    profile to one running browser. The logins made once through `login`
+    stay in this directory for every later run."""
+    log = log or logging.getLogger("apply_run")
+    try:
+        return pw.chromium.launch_persistent_context(
+            str(profile_dir), channel=BROWSER_CHANNEL, headless=headless, viewport=VIEWPORT)
+    except Exception as e:      # noqa: BLE001  (Chrome absent or broken: use the bundled build)
+        first = str(e).strip().splitlines()[0][:200] if str(e).strip() else ""
+        log.warning("Google Chrome did not start (%s: %s); using the bundled Chromium",
+                    type(e).__name__, first)
+    return pw.chromium.launch_persistent_context(
+        str(profile_dir), headless=headless, viewport=VIEWPORT)
 
 
 def default_profile_dir() -> Path:
@@ -622,9 +643,8 @@ class Runner:
         pw = sync_playwright().start()
         try:
             self.profile_dir.mkdir(parents=True, exist_ok=True)
-            ctx = pw.chromium.launch_persistent_context(
-                str(self.profile_dir), headless=bool(self.settings["auto_apply_headless"]),
-                viewport=VIEWPORT)
+            ctx = launch_profile(pw, self.profile_dir,
+                                 headless=bool(self.settings["auto_apply_headless"]), log=self.log)
         except Exception:
             pw.stop()
             raise
@@ -1366,11 +1386,14 @@ def doctor(profile_dir: Path | None = None, out=None) -> int:
         mode, has_key = "typesafe", bool(os.environ.get(jev.KEY_ENV, "").strip())
     sdk = setup_check.module_found("typesafe_sdk")
     playwright_found = setup_check.module_found("playwright")
-    chromium = playwright_found and setup_check.chromium_installed()
+    chrome = setup_check.chrome_installed()
+    browser = playwright_found and (chrome or setup_check.chromium_installed())
     rows = [("TypeSafe API key", has_key or mode != "typesafe"),
             ("typesafe_sdk", sdk or mode != "typesafe"),
             ("playwright", playwright_found),
-            ("chromium", chromium)]
+            ("browser: Google Chrome" if chrome else "chromium (Google Chrome not found)",
+             browser)]
+    chromium = browser
     for name, ok in rows:
         print(f"{'ok     ' if ok else 'MISSING'}  {name}", file=out)
     print(f"{'ok     ' if profile.is_dir() else 'absent '}  browser profile: {profile}"
@@ -1390,7 +1413,7 @@ def login(profile_dir: Path | None = None, sleep: Callable[[float], None] = time
     profile.mkdir(parents=True, exist_ok=True)
     inbox_url = str(apply_queue.build_context().get("inbox_url") or apply_queue.DEFAULT_INBOX_URL)
     with sync_playwright() as pw:
-        ctx = pw.chromium.launch_persistent_context(str(profile), headless=False, viewport=VIEWPORT)
+        ctx = launch_profile(pw, profile, headless=False)
         first = ctx.pages[0] if ctx.pages else ctx.new_page()
         first.goto(LINKEDIN_LOGIN_URL)
         ctx.new_page().goto(inbox_url)

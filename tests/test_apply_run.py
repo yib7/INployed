@@ -1395,6 +1395,7 @@ def test_doctor_prints_one_line_per_row_and_the_profile(tmp_path, capsys, monkey
     import setup_check
     monkeypatch.setattr(setup_check, "module_found", lambda name: True)
     monkeypatch.setattr(setup_check, "chromium_installed", lambda: True)
+    monkeypatch.setattr(setup_check, "chrome_installed", lambda: False)
     monkeypatch.setattr(settings, "load", lambda: {"auto_apply_jev_mode": "typesafe"})
     monkeypatch.setattr(settings, "secret_status", lambda: {"TYPESAFE_API_KEY": False})
     monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
@@ -1416,6 +1417,11 @@ def test_doctor_prints_one_line_per_row_and_the_profile(tmp_path, capsys, monkey
     out = capsys.readouterr().out
     assert "MISSING  chromium" in out and "playwright install chromium" in out
     assert "ok       browser profile" in out
+
+    monkeypatch.setattr(setup_check, "chrome_installed", lambda: True)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "not-a-real-key")
+    assert apply_run.doctor(profile) == 0
+    assert "ok       browser: Google Chrome" in capsys.readouterr().out
 
 
 def test_doctor_reads_the_key_from_the_saved_settings_too(tmp_path, capsys, monkeypatch):

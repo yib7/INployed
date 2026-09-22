@@ -211,6 +211,31 @@ def chromium_installed(cache_dirs: Iterable[Path] | None = None) -> bool:
     return False
 
 
+def chrome_install_paths() -> list[Path]:
+    """Where an installed Google Chrome executable lives, per platform."""
+    if sys.platform == "win32":
+        roots = [os.environ.get(k, "").strip()
+                 for k in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")]
+        return [Path(r) / "Google" / "Chrome" / "Application" / "chrome.exe" for r in roots if r]
+    if sys.platform == "darwin":
+        return [Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")]
+    return [Path("/opt/google/chrome/chrome"), Path("/usr/bin/google-chrome")]
+
+
+def chrome_installed(paths: Iterable[Path] | None = None) -> bool:
+    """Is Google Chrome installed? A file check only, safe on the UI thread.
+
+    The auto-apply run launches Chrome first (`apply_run.launch_profile`) and
+    falls back to the bundled Playwright Chromium, so either one is enough."""
+    for p in (list(paths) if paths is not None else chrome_install_paths()):
+        try:
+            if p.is_file():
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def auto_apply_problems() -> list[str]:
     """Key, SDK, Playwright and Chromium rows for the Jev-judged auto-apply run.
 
@@ -224,7 +249,7 @@ def auto_apply_problems() -> list[str]:
         has_key = settings.secret_status().get("TYPESAFE_API_KEY", False) or bool(
             os.environ.get("TYPESAFE_API_KEY", "").strip())
         playwright_found = module_found("playwright")
-        chromium_found = playwright_found and chromium_installed()
+        chromium_found = playwright_found and (chrome_installed() or chromium_installed())
         return [f"[Auto-apply] {w}" for w in auto_apply_warnings(
             has_key, jev_mode, module_found("typesafe_sdk"),
             playwright_found, chromium_found)]

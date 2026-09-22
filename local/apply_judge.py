@@ -29,10 +29,10 @@ arithmetic is asked of the model (counting and thresholds live here).
 `plan()` is meant to run twice per page: once over the first request's
 answers, then again over those answers merged with the second request's
 (`option_questions`), because an option pick for a model-mapped select is
-only meaningful once the fact is known. The first request's `field_{n}_option`
-is read only for a field `quick_map` knew (its instruction carried the value);
-a model-mapped select waits for `field_{n}_pick` from the second request, and
-until then it is `skip` and, when required, sets `park_reason`.
+only meaningful once the fact is known. The first request carries a
+`field_{n}_option` only for a field `quick_map` knew (its instruction carries
+the value); a model-mapped select waits for `field_{n}_pick` from the second
+request, and until then it is `skip` and, when required, sets `park_reason`.
 
 THRESHOLDS ARE UNTUNED until SP8 records real Jev answers over the fixtures.
 The defaults are the design table's; the constants are the only place to
@@ -157,15 +157,20 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
 
 # A login wall's sign-in button and a signup form's create-account button are
 # `advance` (spec 3.5): they move the flow forward without sending the
-# application.
+# application. `advance` and `submit` say what they are not for, because a
+# wizard's step button is often an HTML `type=submit` control (the state's
+# `kind_hint`) and the live judge split on that alone (SP8, 0.7 / 0.3).
 _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
     "advance": {
         "what": "The next step: the next form page, signing in, creating the account, "
                 "continuing with an email",
+        "not_for": "The final send of the finished application",
         "examples": ["Next", "Continue", "Save and continue", "Sign in", "Log in",
                      "Create account", "Continue with email"]},
     "submit": {
-        "what": "Sends the finished application",
+        "what": "Sends the finished application from its last page",
+        "not_for": "A step button that opens the next form page, whatever its HTML type: "
+                   "Continue, Next, Save and continue",
         "examples": ["Submit", "Submit application", "Send application"]},
     "back": {
         "what": "The previous step",
@@ -258,21 +263,15 @@ def _compact_field(f) -> dict[str, Any]:
     return obj
 
 
-def _option_question(i: int, options: list[str], candidate_answer: str,
-                     from_value: bool) -> dict[str, Any]:
-    """`from_value`: the instruction carries the fact value to match. Otherwise
-    the value is unknown yet and the question is speculative; `plan` never
-    reads that answer (see the module docstring)."""
+def _option_question(i: int, options: list[str], candidate_answer: str) -> dict[str, Any]:
+    """The pick among a field's options for a known fact value; the value
+    rides in the instruction so the question is self-contained."""
     criteria: dict[str, Any] = {o: None for o in options[:OPTIONS_CAP]}
     criteria["no_match"] = NO_MATCH_DESCRIPTION
-    if from_value:
-        instructions = {
-            "candidate_answer": candidate_answer,
-            "question": f"Which of these choices means the same as `candidate_answer`, "
-                        f"as an answer to the form field `fields[{i}].label`?"}
-    else:
-        instructions = (f"Which of these choices is the plain default answer to "
-                        f"`fields[{i}].label` when the catalog is silent on it?")
+    instructions = {
+        "candidate_answer": candidate_answer,
+        "question": f"Which of these choices means the same as `candidate_answer`, "
+                    f"as an answer to the form field `fields[{i}].label`?"}
     return {"type": "choice", "instructions": instructions, "criteria": criteria}
 
 
@@ -282,8 +281,8 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
     headline, the compact fields and buttons, and `facts`, the description of
     every source key a field can take (the catalog's facts and the specials;
     never a value). Questions: `page_state`, `field_{n}_source`, `field_{n}_option`
-    for every field with options, `button_{n}_role`, `asks_for_prohibited`,
-    `requires_account`, `has_captcha`."""
+    for a field with options whose fact `quick_map` knows, `button_{n}_role`,
+    `asks_for_prohibited`, `requires_account`, `has_captcha`."""
     job = job or {}
     text = (digest.text or "")[:PAGE_TEXT_CAP]
     state: dict[str, Any] = {
@@ -313,13 +312,15 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
             "criteria": _source_criteria(catalog_keys, f.type),
         }
         if f.options:
+            # only a field whose fact quick_map knows has a value to match
+            # here; a model-mapped field's pick is the second request's
+            # `field_{n}_pick`. Asking for a "default" pick with no value in
+            # hand was a coin toss the live judge answered at 0.00 confidence
+            # (SP8) and `plan` never read.
             key = quick_map(f.label, f.id_or_name, f.type)
             if key and catalog.has(key):
                 questions[f"field_{f.n}_option"] = _option_question(
-                    i, f.options, catalog.value(key), from_value=True)
-            else:
-                questions[f"field_{f.n}_option"] = _option_question(
-                    i, f.options, f.label, from_value=False)
+                    i, f.options, catalog.value(key))
     for i, b in enumerate(digest.buttons):
         questions[f"button_{b.n}_role"] = {
             "type": "choice",
@@ -521,8 +522,7 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan) -> tuple[dict, dic
             continue
         i = len(state["fields"])
         state["fields"].append(_compact_field(f))
-        questions[f"field_{f.n}_pick"] = _option_question(i, f.options, pf.value,
-                                                          from_value=True)
+        questions[f"field_{f.n}_pick"] = _option_question(i, f.options, pf.value)
     return state, questions
 
 

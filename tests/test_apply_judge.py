@@ -248,10 +248,13 @@ def test_page_questions_emit_every_question(catalog):
                                                  "signature_name", "today"} <= keys
             assert "signature_today" in keys and "cover_letter_text" in keys
             assert "resume_file" not in keys and "consent_attest" not in keys
-        if f.options:
+        key = apply_facts.quick_map(f.label, f.id_or_name, f.type)
+        if f.options and key and catalog.has(key):
             opt = q[f"field_{f.n}_option"]
             assert list(opt["criteria"]) == f.options + ["no_match"]
+            assert catalog.value(key) in json.dumps(opt["instructions"])
         else:
+            # a model-mapped select's pick waits for the second request
             assert f"field_{f.n}_option" not in q
     for i, b in enumerate(digest.buttons):
         role = q[f"button_{b.n}_role"]
@@ -360,7 +363,7 @@ def test_page_questions_name_fields_by_position_and_carry_n(catalog):
     position in `state.fields`, and the state entry carries `n` explicitly."""
     digest = FormDigest(url_host="x", title="t", text="",
                         fields=[_f(3, "First Name", ident="first_name"),
-                                _f(7, "Gender", "select", options=("Male", "Female"))],
+                                _f(7, "Country", "select", options=("United States", "Canada"))],
                         buttons=[Button(n=5, locator=(0, "#b"), text="Next")])
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
     assert [f["n"] for f in state["fields"]] == [3, 7]
@@ -370,6 +373,28 @@ def test_page_questions_name_fields_by_position_and_carry_n(catalog):
     assert "fields[1].label" in json.dumps(q["field_7_option"]["instructions"])
     assert "`buttons[0]`" in q["button_5_role"]["instructions"]
     assert not any(f"fields[{n}]" in json.dumps(q) for n in (3, 7))
+
+
+def test_button_roles_separate_a_wizard_continue_from_the_final_submit(catalog):
+    """A multi-step form's Continue is often an HTML `type=submit` control, and
+    the state says so in `kind_hint`. The live judge split 0.7 / 0.3 on it
+    (confidence 0.64, below the advance gate); the criteria now say what each
+    role is not for, so the HTML type alone cannot pull a step button to
+    `submit`. The fake keeps the same reading."""
+    for role in ("advance", "submit"):
+        assert apply_judge._BUTTON_CRITERIA[role]["not_for"]
+    digest = FormDigest(url_host="x", title="t", text="",
+                        fields=[_f(0, "First name", ident="first_name")],
+                        buttons=[Button(n=0, locator=(0, "#c"), text="Continue",
+                                        kind_hint="submit"),
+                                 Button(n=1, locator=(0, "#s"), text="Submit application",
+                                        kind_hint="submit"),
+                                 Button(n=2, locator=(0, "#b"), text="Back", kind_hint="button"),
+                                 Button(n=3, locator=(0, "#l"), text="Sign in",
+                                        kind_hint="submit")])
+    state, q = apply_judge.page_questions(digest, catalog, _JOB)
+    answers = jev.FakeJev().judge(state, q)
+    assert [answers[f"button_{n}_role"].choice for n in range(4)] ==         ["advance", "submit", "back", "advance"]
 
 
 def test_source_instruction_relates_the_escapes_to_facts(catalog):
@@ -390,7 +415,8 @@ def test_button_role_criteria_are_structured_and_advance_covers_sign_in(catalog)
     _, q = apply_judge.page_questions(digest, catalog, _JOB)
     crit = q["button_0_role"]["criteria"]
     for role in apply_judge.BUTTON_ROLES:
-        assert set(crit[role]) == {"what", "examples"}, role
+        keys = {"what", "examples"} | ({"not_for"} if role in ("advance", "submit") else set())
+        assert set(crit[role]) == keys, role
     advance = " | ".join(crit["advance"]["examples"]).lower()
     for text in ("sign in", "log in", "create account", "continue with email", "next"):
         assert text in advance, text
@@ -405,16 +431,16 @@ def test_page_questions_option_instruction_carries_the_quick_map_value(catalog):
                         fields=[_f(0, "Country", "select", options=("United States", "Canada")),
                                 _f(1, "Gender", "select", options=("Male", "Female"))])
     _, q = apply_judge.page_questions(digest, catalog, _JOB)
-    assert "United States" in json.dumps(q["field_0_option"]["instructions"])
-    # no quick_map hit: the label is named by its path, never a value
-    blob = json.dumps(q["field_1_option"]["instructions"])
-    assert "fields[1].label" in blob and "Decline" not in blob
+    blob = json.dumps(q["field_0_option"]["instructions"])
+    assert "United States" in blob and "fields[0].label" in blob
+    # no quick_map hit: no pick until the fact is known (`option_questions`)
+    assert "field_1_option" not in q
 
 
 def test_page_questions_cap_help_options_and_text(catalog):
     long_help = "h" * 500
     digest = FormDigest(url_host="x", title="t", text="z" * 10_000,
-                        fields=[_f(0, "Pick", "select", help=long_help,
+                        fields=[_f(0, "Country", "select", help=long_help,
                                    options=[f"opt{i}" for i in range(100)])])
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
     assert len(state["page"]["headline_text"]) == 600

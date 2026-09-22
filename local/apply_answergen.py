@@ -4,8 +4,8 @@ A field the judge maps to `needs_generation` (an open-ended prompt the sheet
 does not answer word for word) gets ONE draft from the flash-lite tier and
 ONE Jev grounding request. The draft prompt carries the sheet excerpt, the
 question, the field's character limit and the project's writing rules
-(`aiwriting.RULES_PROMPT`); its instruction is select and rephrase, never
-invent. The gate splits the draft into sentences and asks
+(`aiwriting.RULES_PROMPT`); its instruction is to select and rephrase from the
+sheet only. The gate splits the draft into sentences and asks
 `apply_judge.grounding_questions` whether every claim in each sentence is
 supported by the sheet; a sentence below `apply_judge.GROUNDING_MIN` drops
 the whole draft. The runner then leaves an optional field blank and flagged,
@@ -32,7 +32,7 @@ log = logging.getLogger("apply_answergen")
 
 TIER = "flash_lite"
 DEFAULT_CHAR_LIMIT = 1500       # when the field states no limit
-MIN_CHAR_LIMIT = 40             # a stated limit below this is a parse error, not a budget
+MIN_CHAR_LIMIT = 40             # a stated limit below this is treated as a parse error
 TEMPERATURE = 0.3
 
 SYSTEM_PROMPT = (

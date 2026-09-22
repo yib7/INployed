@@ -136,6 +136,19 @@ def test_a_stray_listbox_does_not_hide_the_gmail_rows(browser_page, fixtures_ser
         "Dinner on Friday", "Your Greenhouse security code", "Your statement is ready"]
 
 
+def test_a_subject_selector_drift_keeps_the_rows_that_carry_a_sender(browser_page,
+                                                                       fixtures_server):
+    """Outlook renamed its subject hook; the rows still name a sender, so they
+    are listed with an empty subject and the judge reads the preview."""
+    inbox = _inbox()
+    rows = inbox.list_messages(browser_page,
+                               fixtures_server + "/inbox/outlook_list_drift.html")
+    assert [r.n for r in rows] == [0, 1, 2, 3, 4, 5]
+    assert [r.subject for r in rows] == [""] * 6
+    assert rows[4].sender == "no-reply@greenhouse.io"
+    assert "MKPZ3QRA" in rows[4].preview
+
+
 @pytest.mark.parametrize("url,expected", [
     ("https://mail.google.com/mail/u/0/#inbox", "gmail"),
     ("https://outlook.office.com/mail/", "outlook"),

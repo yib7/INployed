@@ -65,9 +65,11 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
     """Read the newest visible rows from the provider's inbox order.
 
     The provider the inbox host names is tried first; the others follow, so a
-    webmail on its own domain still works. A row with no subject is skipped,
-    which is how a foreign `role=listbox` (Gmail's own label picker matches the
-    Outlook row selector) yields nothing and the next shape gets its turn."""
+    webmail on its own domain still works. A row with no subject and no sender
+    is skipped, which is how a foreign `role=listbox` (Gmail's own label picker
+    matches the Outlook row selector) yields nothing and the next shape gets
+    its turn; a row that names a sender is kept when the subject hook alone
+    has drifted."""
     page.goto(inbox_url, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
     named = provider_for(inbox_url)
     order = ([SELECTORS[named]] if named else []) + [s for n, s in SELECTORS.items()
@@ -97,9 +99,12 @@ def list_messages(page, inbox_url: str, limit: int = 15) -> list[Message]:
                 return matches.first.inner_text()
 
             subject = text("subject")
-            if not subject.strip():
+            sender = text("sender")
+            # a row with no subject and no sender is a foreign widget; a row
+            # that names a sender is mail even when the subject hook drifted
+            if not subject.strip() and not sender.strip():
                 continue
-            messages.append(Message(len(messages), text("sender"), subject,
+            messages.append(Message(len(messages), sender, subject,
                                     text("preview") or row.inner_text(),
                                     f'{selectors["row"]} >> nth={i}'))
         if messages:

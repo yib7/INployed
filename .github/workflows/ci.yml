@@ -49,8 +49,9 @@ jobs:
   # claims Linux for the headless pipeline scripts only -- that is what runs on the
   # production GCP VM -- and does not claim the Qt dashboard there. So this job runs
   # ruff plus the test files covering pipeline/, and the platform claim gets evidence
-  # matching its own scope rather than a broader green nothing in the docs actually
-  # promises. None of these test files imports Qt.
+  # matching its own scope. None of these test files imports Qt. The job also hosts
+  # the auto-apply browser tests (the second test step), because
+  # `playwright install --with-deps` is a one-liner on Ubuntu.
   #
   # The rule for this list: a test file belongs here if it covers a module under
   # pipeline/ (or a script the VM runs) and does not import Qt. Two Qt-free files are
@@ -81,6 +82,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      # The auto-apply browser tests (tests/conftest_browser.py) drive headless
+      # Chromium over local HTML fixtures. Playwright is optional in
+      # requirements.txt, so it is installed here, with the runner's system
+      # libraries, on this job only: the Windows job runs the same files and they
+      # skip there with "Chromium not installed", which is also the fallback here
+      # should this step ever fail to leave a launchable browser.
+      - name: Install Playwright and Chromium
+        run: |
+          python -m pip install playwright
+          python -m playwright install chromium --with-deps
+
       - name: Lint (ruff)
         run: python -m ruff check .
 
@@ -98,6 +110,20 @@ jobs:
             tests/test_scraper_append.py \
             tests/test_scraper_bounds.py \
             tests/test_vm_sync.py
+
+      # The browser-backed auto-apply tests, run where Chromium was just installed.
+      # `-rs` prints every skip with its reason, so a missing browser shows up in
+      # the log as a wall of "Chromium not installed" lines.
+      - name: Run auto-apply browser tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest -q -rs \
+            tests/test_apply_form.py \
+            tests/test_apply_fill.py \
+            tests/test_apply_run.py \
+            tests/test_apply_inbox.py \
+            tests/test_ats_accounts.py
 
   # Runs the README's "Getting started" steps VERBATIM on a clean runner. This job
   # exists because a fresh-clone breakage slipped through once: the documented

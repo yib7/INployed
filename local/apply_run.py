@@ -1009,7 +1009,7 @@ class _JobRun:
             if pf.action != "generate":
                 continue
             f = by_n.get(pf.n)
-            text, note = None, ""
+            text, note, record_note = None, "", ""
             if self.gen_budget <= 0:
                 note = "generation budget exhausted"
             elif f is not None:
@@ -1017,12 +1017,20 @@ class _JobRun:
                 self.gen_budget -= 1
                 text = self.r.answergen.answer(f, self.catalog, self.r.jev,
                                                budget=self.gen_budget + 1)
-                note = str(getattr(getattr(self.r.answergen, "last", None), "note", "") or "")
+                last = getattr(self.r.answergen, "last", None)
+                if last is not None:
+                    note = str(getattr(last, "note", "") or "")
+                elif not text:
+                    # a hook that keeps no attempt (NotConfigured, a bare injected
+                    # hook) made no draft to reject; the record says so and the
+                    # park reason stays the plain one
+                    record_note = "no generator"
             if text:
                 pf.action, pf.value = "fill", str(text)
                 rows.append({"label": pf.label, "ok": True, "note": note or "generated"})
                 continue
-            rows.append({"label": pf.label, "ok": False, "note": note or "no draft"})
+            rows.append({"label": pf.label, "ok": False,
+                         "note": note or record_note or "no draft"})
             pf.action = "skip"
             hint = (f.help or f.placeholder or f.type) if f is not None else ""
             plan.missing.append((pf.label, hint))

@@ -431,6 +431,24 @@ def test_at_most_three_drafts_per_job_and_generated_answers_are_marked(
     assert [m["question"] for m in _entry()["missing_answers"]] == [_ESSAYS_FOUR[3]]
 
 
+def test_a_hook_without_a_last_attempt_records_no_generator(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    class Gen:
+        def answer(self, field, catalog, judge, *, budget):
+            return None
+
+    _enqueue(job_folder, fixture_url("essay_required.html"))
+    runner = _runner(context, tmp_path)
+    runner.answergen = Gen()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert out.reason == ("required field without an answer: Describe a project you are proud "
+                          "of and your motivation for this role")
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert ("  - Describe a project you are proud of and your motivation for this role: "
+            "rejected (no generator)") in record
+
+
 def test_main_wires_the_generator_when_auto_apply_generate_is_on(hermetic_cli, monkeypatch):
     import apply_answergen
     monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())

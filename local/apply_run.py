@@ -153,10 +153,16 @@ class _Accounts:
             return False
         # Expose account-creation links as buttons to the same role judge.
         links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
-        if links.count() != 1:
-            return False
         try:
-            href = links.first.get_attribute("href")
+            count = links.count()
+            if not count:
+                return False
+            # a header link and a body link that point at the same page are one
+            # offer; two different destinations are a choice nobody made
+            hrefs = {links.nth(i).get_attribute("href") for i in range(count)}
+            if len(hrefs) != 1:
+                return False
+            href = hrefs.pop()
             if not href:
                 return False
             target = urljoin(page.url, href)
@@ -167,7 +173,7 @@ class _Accounts:
             plan = apply_judge.plan(link_digest, self.run.catalog, self.run._judge_page(link_digest))
             if plan.buttons.get("advance", (None, 0))[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
                 return False
-            page.goto(target, timeout=self._timeout())
+            page.goto(target, timeout=self._nav_timeout())
             self.run._check_host(page.url)
             fresh = apply_form.extract(page)
             self.run._check_frames(fresh)
@@ -183,7 +189,14 @@ class _Accounts:
         return self._fill(page, digest, host, email, True)
 
     def _timeout(self) -> int:
+        """Milliseconds for one action on the page, inside the job's clock."""
         return max(1, int(min(5, self.run.deadline - self.run.r.clock()) * 1000))
+
+    def _nav_timeout(self) -> int:
+        """Milliseconds for a page load, which takes longer than an action and
+        gets the loop's own click budget (`CLICK_TIMEOUT_S`)."""
+        return max(1, int(min(CLICK_TIMEOUT_S,
+                              self.run.deadline - self.run.r.clock()) * 1000))
 
     def _name_value(self, field) -> str:
         """The catalog's value for a name box on an account screen, else "".

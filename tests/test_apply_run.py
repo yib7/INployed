@@ -578,6 +578,16 @@ def test_default_signup_fills_the_candidates_name_fields_from_the_catalog(
     assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
 
 
+def test_two_signup_links_to_one_target_still_reach_the_signup_form(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    """A header link and a body link pointing at the same page are one offer."""
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    _enqueue(job_folder, fixture_url("login_two_signup_links.html"))
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
+
+
 def test_off_host_subresources_on_the_sign_in_click_do_not_park_the_job(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     """A bot-check script and a webfont from a CDN carry no credentials; they

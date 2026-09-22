@@ -13,9 +13,9 @@ browser or the network.
                                            fields whose fact the first answer
                                            chose (quick_map covers the rest)
     verify_questions(filled, sheet)        every typed value against the sheet
-    inbox_questions / code_pick_questions  the emailed-code path (from-site and
-                                           has-code Nouls per message, then the
-                                           code pick)
+    inbox_questions / code_pick_questions  the emailed-code path (from-site-or-ATS
+                                           and has-code Nouls per message, then
+                                           the code pick)
     grounding_questions(sentences, sheet)  a generated answer, sentence by sentence
 
     read_page_state, plan, read_verification, read_inbox, read_code_pick,
@@ -579,25 +579,51 @@ def read_verification(filled: list[Mapping[str, Any]],
 
 # --- the emailed code ----------------------------------------------------------------
 
-def inbox_questions(messages: list[Mapping[str, Any]], site: str) -> tuple[dict, dict]:
-    """Two Nouls per message, one yes/no each: `msg_{n}_from_site` (sent by or
-    on behalf of `site`) and `msg_{n}_has_code` (carries a verification or
-    security code). `read_inbox` combines them."""
+# The display name of each ATS system `apply_queue.infer_ats` knows, for the
+# from-site question: the code mail comes from the ATS's own domain, which the
+# form's host (a company careers site, a fixture server) does not name.
+ATS_NAMES: dict[str, str] = {
+    "linkedin": "LinkedIn", "workday": "Workday", "greenhouse": "Greenhouse",
+    "lever": "Lever", "icims": "iCIMS", "successfactors": "SAP SuccessFactors",
+    "taleo": "Taleo", "oracle": "Oracle Cloud", "brassring": "BrassRing", "adp": "ADP",
+    "ukg": "UKG", "dayforce": "Dayforce", "smartrecruiters": "SmartRecruiters",
+    "jobvite": "Jobvite", "ashby": "Ashby", "workable": "Workable",
+}
+
+
+def inbox_questions(messages: list[Mapping[str, Any]], site: str, *, ats: str = "",
+                    company: str = "") -> tuple[dict, dict]:
+    """Two Nouls per message, one yes/no each: `msg_{n}_from_site` (sent by
+    `site`, or by the applicant tracking service `ats` that handles
+    `company`'s applications, when the system is a known one) and
+    `msg_{n}_has_code` (carries a verification or security code).
+    `read_inbox` combines them. The site alone is the form's host, which
+    rarely sends the mail; the ATS name is what the sender address shows."""
     rows = [{"n": int(m["n"]), "sender": str(m.get("sender", "")),
              "subject": str(m.get("subject", "")), "preview": str(m.get("preview", ""))}
             for m in messages]
     state = {"site": site, "messages": rows}
+    ats_name = ATS_NAMES.get(str(ats or "").strip().lower(), "")
     questions: dict[str, Any] = {}
     for i, row in enumerate(rows):
         n = row["n"]
-        questions[f"msg_{n}_from_site"] = {
-            "type": "noul",
-            "instructions": {
+        if ats_name:
+            from_site: dict[str, Any] = {
+                "site_domain": site,
+                "applicant_tracking_service": ats_name,
+                "company": str(company or ""),
+                "question": f"Was `messages[{i}]` sent by `site_domain`, or by "
+                            "`applicant_tracking_service` (the applicant tracking service "
+                            "that handles `company`'s job applications), judging by the "
+                            "sender address and the message text?",
+            }
+        else:
+            from_site = {
                 "site_domain": site,
                 "question": f"Was `messages[{i}]` sent by `site_domain` or on its behalf, "
                             "judging by the sender address and the message text?",
-            },
-        }
+            }
+        questions[f"msg_{n}_from_site"] = {"type": "noul", "instructions": from_site}
         questions[f"msg_{n}_has_code"] = {
             "type": "noul",
             "instructions": f"Does `messages[{i}]` carry a verification code or a security "

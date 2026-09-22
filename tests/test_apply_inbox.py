@@ -1,5 +1,6 @@
 """Inbox DOM fixtures and synthetic codes; no external inbox or keyring."""
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -65,6 +66,28 @@ def test_open_message_waits_for_the_clicked_rows_body(browser_page, fixtures_ser
 
     assert "NEW-CODE-2468" in body
     assert "STALE-CODE-1357" not in body
+
+
+def test_fetch_code_hands_the_ats_and_company_to_the_from_site_question(browser_page,
+                                                                          fixtures_server):
+    """The site is the form's host; the mail comes from the ATS. Both names
+    reach the judge's from-site question."""
+    inbox = _inbox()
+    seen = []
+
+    class Capturing(jev.FakeJev):
+        def judge(self, state, questions):
+            seen.append(questions)
+            return super().judge(state, questions)
+
+    code = inbox.fetch_code(browser_page, "127.0.0.1",
+                            fixtures_server + "/inbox/outlook_list.html",
+                            jev=Capturing(), polls=1, ats="greenhouse", company="Fabrikam")
+    assert code == "MKPZ3QRA"
+    from_site = [q for qs in seen for qid, q in qs.items() if qid.endswith("_from_site")]
+    assert from_site
+    blob = json.dumps(from_site[0]["instructions"])
+    assert "Greenhouse" in blob and "Fabrikam" in blob and "127.0.0.1" in blob
 
 
 def test_no_code_polls_are_bounded(browser_page, fixtures_server):

@@ -826,7 +826,11 @@ def test_default_accounts_block_cross_host_credential_request_before_it_reaches_
 
 def test_default_inbox_after_submit_reaches_confirmation(
         context, fixture_url, fixtures_server, job_folder, catalog_builder, tmp_path, caplog):
+    """The fixture inbox carries Greenhouse's code mail among decoys (an Ashby
+    code, an order number); the job's ATS is Greenhouse, which is what the
+    from-site question asks about, since the form's host names no sender."""
     _enqueue(job_folder, fixture_url("submit_code.html"))
+    apply_queue.update("42", ats={"system": "greenhouse"})
     runner = _runner(context, tmp_path)
     runner._run_context = {**_RUN_CONTEXT, "inbox_url": fixtures_server + "/inbox/outlook_list.html"}
     with caplog.at_level("INFO"):
@@ -836,6 +840,23 @@ def test_default_inbox_after_submit_reaches_confirmation(
     record = Path(out.record_path).read_text(encoding="utf-8")
     assert "Security code: <hidden>" in record
     assert "MKPZ3QRA" not in record + caplog.text
+
+
+def test_default_inbox_hook_names_the_entrys_ats_and_company(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    seen = {}
+
+    def _fetch(page, site, inbox_url, **kw):
+        seen.update(site=site, inbox_url=inbox_url, **kw)
+        return None
+    monkeypatch.setattr(apply_run.apply_inbox, "fetch_code", _fetch)
+    _enqueue(job_folder, fixture_url("code_gate.html"))
+    apply_queue.update("42", ats={"system": "greenhouse"})
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "needs_human" and out.reason == "emailed code needed"
+    assert seen["site"] == "127.0.0.1"
+    assert seen["inbox_url"] == "https://mail.example.com/inbox"
+    assert seen["ats"] == "greenhouse" and seen["company"] == "Fabrikam"
 
 
 def test_code_fill_error_never_logs_or_records_code(

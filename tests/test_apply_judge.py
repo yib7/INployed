@@ -741,6 +741,42 @@ def test_inbox_questions_and_read_inbox():
     assert apply_judge.INBOX_MIN == 0.5
 
 
+def test_inbox_questions_name_the_ats_and_the_company():
+    """The runner's `site` is the form's host, which is not who sends the
+    code mail: the ATS does. The from-site question names the ATS (its
+    display name, from the queue entry's system) and the company, so the
+    judge can say yes to the ATS's mail and no to another ATS's decoy. An
+    unknown system asks the site-only question."""
+    messages = [{"n": 0, "sender": "no-reply@greenhouse.io",
+                 "subject": "Your Greenhouse security code",
+                 "preview": "Message sent by Greenhouse. Your security code is MKPZ3QRA."},
+                {"n": 1, "sender": "no-reply@ashbyhq.com",
+                 "subject": "Verify your email for Ashby",
+                 "preview": "Your Ashby verification code is Q7R2XK."}]
+    state, q = apply_judge.inbox_questions(messages, "127.0.0.1", ats="greenhouse",
+                                           company="Fabrikam")
+    blob = json.dumps(q["msg_0_from_site"]["instructions"])
+    assert "127.0.0.1" in blob and "Greenhouse" in blob and "Fabrikam" in blob
+    assert "code" not in blob.lower()
+    assert state["site"] == "127.0.0.1" and state["messages"] == messages
+    for spec in q.values():
+        _assert_clean_text({"x": spec})
+    answers = jev.FakeJev().judge(state, q)
+    assert answers["msg_0_from_site"].noul == 0.9 and answers["msg_0_has_code"].noul == 0.9
+    assert answers["msg_1_from_site"].noul == 0.1
+    assert apply_judge.read_inbox(answers, messages) == 0
+    # every known system has a display name; `other` and "" ask about the site alone
+    for system in ("greenhouse", "lever", "ashby", "workday", "icims", "smartrecruiters",
+                   "jobvite", "workable", "successfactors", "taleo", "oracle", "brassring",
+                   "adp", "ukg", "dayforce", "linkedin"):
+        assert apply_judge.ATS_NAMES[system]
+    for system in ("other", "", "unheard-of"):
+        _, q = apply_judge.inbox_questions(messages, "127.0.0.1", ats=system, company="Fabrikam")
+        blob = json.dumps(q["msg_0_from_site"]["instructions"])
+        assert "Fabrikam" not in blob and "applicant" not in blob
+        assert "127.0.0.1" in blob
+
+
 def _inbox(**p):
     return {qid: _noul(v) for qid, v in p.items()}
 

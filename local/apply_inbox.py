@@ -183,11 +183,14 @@ def _code_shaped(token: str, body: str = "", subject: str = "") -> bool:
 
 def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
                wait_s: float = 60, clock=time.monotonic, sleep=time.sleep,
-               deadline: float | None = None) -> str | None:
+               deadline: float | None = None, ats: str = "", company: str = "") -> str | None:
     """Judge message relevance and code candidates; never log mail or codes.
 
-    Polls share a three-minute budget and the caller's remaining job budget.
-    Navigation in the temporary tab stays on the configured inbox host.
+    `ats` (the queue entry's system) and `company` reach the from-site
+    question: the mail comes from the ATS's domain, and `site` is only the
+    form's host. Polls share a three-minute budget and the caller's remaining
+    job budget. Navigation in the temporary tab stays on the configured inbox
+    host.
     """
     parsed = urlsplit(inbox_url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or polls <= 0:
@@ -213,7 +216,8 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
             messages = list_messages(tab, inbox_url)
             rows = [asdict(message) for message in messages]
             if rows:
-                state, questions = apply_judge.inbox_questions(rows, site)
+                state, questions = apply_judge.inbox_questions(rows, site, ats=ats,
+                                                               company=company)
                 chosen = apply_judge.read_inbox(jev.judge(state, questions), rows)
                 message = next((m for m in messages if m.n == chosen), None)
                 if message:

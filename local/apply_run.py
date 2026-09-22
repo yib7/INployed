@@ -328,9 +328,12 @@ class _Inbox:
 
     def fetch_code(self, page, site: str, inbox_url: str) -> str | None:
         self.run._check_host(inbox_url)
+        entry = self.run.entry
         return apply_inbox.fetch_code(page, site, inbox_url, jev=self.run.r.jev,
                                       clock=self.run.r.clock, sleep=self.run.r.sleep,
-                                      deadline=self.run.deadline)
+                                      deadline=self.run.deadline,
+                                      ats=str((entry.get("ats") or {}).get("system") or ""),
+                                      company=str(entry.get("company") or ""))
 
 
 # --- outcomes and the record ----------------------------------------------------------

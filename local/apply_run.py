@@ -159,14 +159,14 @@ class _Accounts:
             if not count:
                 return False
             # a header link and a body link that point at the same page are one
-            # offer; two different destinations are a choice nobody made
-            hrefs = {links.nth(i).get_attribute("href") for i in range(count)}
-            if len(hrefs) != 1:
+            # offer; two different destinations are a choice nobody made. The
+            # hrefs are resolved against the page first, so an absolute link
+            # and a relative one to the same target count once.
+            hrefs = [links.nth(i).get_attribute("href") for i in range(count)]
+            targets = {urljoin(page.url, h) for h in hrefs if h}
+            if len(targets) != 1:
                 return False
-            href = hrefs.pop()
-            if not href:
-                return False
-            target = urljoin(page.url, href)
+            target = targets.pop()
             self.run._check_host(target)
             link_digest = apply_form.FormDigest(
                 url_host=host, title=digest.title, text=digest.text,
@@ -182,6 +182,10 @@ class _Accounts:
             if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
                 return False
             return self.signup(page, fresh, host)
+        except _Parked:
+            # the loop's own park (a host or frame check): the reason names
+            # what was refused and the loop ends the job with it
+            raise
         except Exception:  # noqa: BLE001  (account details stay out of errors)
             return False
 

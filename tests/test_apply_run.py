@@ -695,6 +695,29 @@ def test_two_signup_links_to_one_target_still_reach_the_signup_form(
     assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
 
 
+def test_an_absolute_and_a_relative_signup_link_to_one_target_are_one_offer(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    """The header link spells the page out in full and the body link is
+    relative; resolved against the page they are the same target."""
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    _enqueue(job_folder, fixture_url("login_signup_links_mixed.html"))
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
+
+
+def test_a_signup_link_that_leaves_the_allowed_sites_parks_with_that_reason(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    """The host check inside the login hook is the loop's own park; the hook
+    passes it on, so the reason names the host it refused to visit."""
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    _enqueue(job_folder, fixture_url("login_signup_off_host.html"))
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert out.reason == "left the allowed sites: localhost"
+    assert ats_accounts.lookup("127.0.0.1") is None
+
+
 def test_off_host_subresources_on_the_sign_in_click_do_not_park_the_job(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     """A bot-check script and a webfont from a CDN carry no credentials; they

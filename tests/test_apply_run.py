@@ -202,6 +202,18 @@ def test_a_quiet_submit_is_clicked_exactly_once_and_the_late_confirmation_is_rea
     assert "State: confirmation" in record
 
 
+def test_native_submit_continue_advances_before_final_submit(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("native_submit_steps.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "submitted", out
+    assert out.reason == "confirmation page"
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "Continue (advance)" in record
+    assert "Submit application (submit)" in record
+    assert "State: confirmation" in record
+
+
 def test_submit_click_is_never_retried(context, fixture_url, job_folder, catalog_builder,
                                        tmp_path, monkeypatch):
     monkeypatch.setattr(apply_run, "CLICK_TIMEOUT_S", 1)
@@ -551,6 +563,31 @@ def test_default_accounts_continue_and_keep_password_private(
     assert account["email"] == ("existing@example.com" if existing else "jane.doe@example.com")
 
 
+def test_default_accounts_block_cross_host_credential_request_before_it_reaches_server(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    import conftest_browser
+
+    received = []
+    original = conftest_browser._QuietHandler.do_GET
+
+    def _record(self):
+        if self.path.startswith("/forms/credential_sink.html"):
+            received.append(self.path)
+        return original(self)
+
+    monkeypatch.setattr(conftest_browser._QuietHandler, "do_GET", _record)
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    ats_accounts.record("127.0.0.1", "synthetic@example.com")
+    _enqueue(job_folder, fixture_url("login_cross_host.html"))
+
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+
+    assert out.status == "needs_human", out
+    assert received == []
+    page = next(p for p in context.pages if not p.is_closed())
+    assert "Credential request reached" not in page.content()
+
+
 def test_default_inbox_after_submit_reaches_confirmation(
         context, fixture_url, fixtures_server, job_folder, catalog_builder, tmp_path, caplog):
     _enqueue(job_folder, fixture_url("submit_code.html"))
@@ -739,8 +776,8 @@ def test_can_submit_submit_button():
 
 # --- the review page resolves generation before the gate ---------------------------------
 
-def test_review_page_resolves_generation_before_the_gate(
-        context, job_folder, tmp_path, catalog_builder):
+def test_review_page_resolves_generation_then_fills_and_verifies_before_the_gate(
+        context, job_folder, tmp_path, catalog_builder, monkeypatch):
     import apply_form
     e = _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
     run = apply_run._JobRun(_runner(context, tmp_path), context, e)
@@ -759,7 +796,7 @@ def test_review_page_resolves_generation_before_the_gate(
     rec = {"url": "https://boards.greenhouse.io/acme/review", "state": "review_page",
            "confidence": 0.9, "filled": [], "verification": [], "clicked": [], "flags": {}}
     with pytest.raises(apply_run._Parked) as info:
-        run._review_page(digest, plan, rec)
+        run._review_page(digest, {}, plan, rec)
     assert info.value.status == "needs_human"
     assert info.value.reason == "required field without an answer: Your motivation for this role"
     missing = _entry()["missing_answers"]
@@ -773,10 +810,44 @@ def test_review_page_resolves_generation_before_the_gate(
     plan.fields[0].action = "generate"
     plan.missing.clear()
     plan.park_reason = ""
-    with pytest.raises(apply_run._Parked) as info:
-        run._review_page(digest, plan, rec)
-    # resolved: the gate now fails on verification (nothing was typed on a review page)
-    assert info.value.reason == "required field not verified: Your motivation for this role"
+    filled = [apply_run.apply_fill.Filled(0, essay.label,
+                                          "Two years of ingestion pipelines at Acme Corp.")]
+    verified = [VerifyResult(0, essay.label, True, 0.99, 0.01)]
+    monkeypatch.setattr(apply_run.apply_fill, "apply", lambda *a, **kw: filled)
+    monkeypatch.setattr(run, "_verify", lambda actual: verified)
+    monkeypatch.setattr(run, "_retry_failed", lambda p, actual, checks: checks)
+    gated = []
+    monkeypatch.setattr(run, "_submit_gate",
+                        lambda d, p, checks, r: gated.append((d, p, checks, r)))
+
+    run._review_page(digest, {}, plan, rec)
+
+    assert gated == [(digest, plan, verified, rec)]
+    assert rec["filled"][0]["value"] == "Two years of ingestion pipelines at Acme Corp."
+    assert rec["verification"][0]["ok"] is True
+
+
+def test_runner_discovers_dynamic_listbox_options_before_planning(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("generic_listbox.html"))
+    seen = []
+
+    class InspectingJev(jev.FakeJev):
+        def judge(self, state, questions):
+            if "page_state" in questions:
+                country = next((f for f in state.get("fields", [])
+                                if f.get("id_or_name") == "country"), None)
+                if country is not None:
+                    seen.append(country.get("options", []))
+            return super().judge(state, questions)
+
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    runner.jev = InspectingJev()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert seen and seen[0] == ["United States", "Canada", "Other"]
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.get_attribute("#country", "data-value") == "United States"
 
 
 def test_verify_uses_complete_catalog_evidence(context, job_folder, tmp_path):
@@ -985,7 +1056,7 @@ def test_main_drain_exits_2_when_the_judge_is_unavailable(hermetic_cli, monkeypa
 
 def test_main_one_exits_2_when_the_job_is_not_queued(hermetic_cli, monkeypatch, capsys):
     monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
-    assert apply_run.main(["one", "nope", "--jev", "fake"]) == 2
+    assert apply_run.main(["one", "nope", "--jev", "typesafe"]) == 2
     assert "not queued" in capsys.readouterr().err
 
 
@@ -1003,14 +1074,14 @@ def test_main_drain_prints_the_summary_and_exits_0(hermetic_cli, monkeypatch, ca
                                       {"requests": 4, "input_tokens": 2000, "usd": 0.000084})]
     monkeypatch.setattr(apply_run, "Runner", R)
     assert apply_run.main(["drain", "--cap", "2", "--no-submit", "--headless",
-                           "--jev", "fake"]) == 0
+                           "--jev", "typesafe"]) == 0
     out = capsys.readouterr().out
     assert out.strip().endswith("drained 1: submitted 1, ready_to_submit 0, needs_human 0, "
                                 "failed 0; Jev 4 requests, 2000 tokens, $0.0001")
     assert seen["cap"] == 2
     assert seen["settings"]["auto_apply_submit"] is False
     assert seen["settings"]["auto_apply_headless"] is True
-    assert seen["settings"]["auto_apply_jev_mode"] == "fake"
+    assert seen["settings"]["auto_apply_jev_mode"] == "typesafe"
 
 
 def test_main_unexpected_error_exits_1(hermetic_cli, monkeypatch, capsys):
@@ -1023,7 +1094,7 @@ def test_main_unexpected_error_exits_1(hermetic_cli, monkeypatch, capsys):
         def drain(self, cap):
             raise RuntimeError("boom")
     monkeypatch.setattr(apply_run, "Runner", R)
-    assert apply_run.main(["drain", "--jev", "fake"]) == 1
+    assert apply_run.main(["drain", "--jev", "typesafe"]) == 1
     assert "RuntimeError: boom" in capsys.readouterr().err
 
 
@@ -1071,7 +1142,7 @@ def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, mon
                                                                 capsys):
     monkeypatch.setattr(apply_run, "load_settings",
                         lambda: {**apply_run.DEFAULT_SETTINGS, "auto_apply_batch_cap": 3,
-                                 "auto_apply_jev_mode": "fake", "auto_apply_submit": False})
+                                 "auto_apply_jev_mode": "typesafe", "auto_apply_submit": False})
     monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev.FakeJev())
     seen = {}
 
@@ -1086,7 +1157,7 @@ def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, mon
     assert apply_run.main(["drain"]) == 0
     assert seen["cap"] == 3
     assert seen["settings"]["auto_apply_submit"] is False
-    assert seen["settings"]["auto_apply_jev_mode"] == "fake"
+    assert seen["settings"]["auto_apply_jev_mode"] == "typesafe"
 
 
 def test_default_profile_dir_sits_under_localappdata(monkeypatch, tmp_path):

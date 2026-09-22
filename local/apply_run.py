@@ -16,7 +16,7 @@ the design (section 3.5):
 
     job_posting            click the Apply entry, follow a popup
     application_form       plan, fill, verify, then advance, or the submit gate
-    review_page            the submit gate
+    review_page            fill and verify editable controls, then submit gate
     login_wall / signup    fill the account email and hidden keyring password
     code_gate              read the emailed code in a separate inbox tab
     confirmation           finish submitted
@@ -73,7 +73,6 @@ HOLD_POLL_S = 1.0                  # while holding the window open
 FINISH_RETRY_S = 1.0               # before the one retry of a failed queue finish
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
-UNKNOWN_ATS = ("", "other", "linkedin")   # the popup after Apply names the real ATS
 VIEWPORT = {"width": 1400, "height": 1000}
 RECORD_NAME = "apply_record.md"
 HIDDEN = "<hidden>"
@@ -167,7 +166,9 @@ class _Accounts:
             if plan.buttons.get("advance", (None, 0))[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
                 return False
             page.goto(target, timeout=self._timeout())
+            self.run._check_host(page.url)
             fresh = apply_form.extract(page)
+            self.run._check_frames(fresh)
             state, confidence = apply_judge.read_page_state(self.run._judge_page(fresh))
             if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
                 return False
@@ -185,6 +186,16 @@ class _Accounts:
     def _fill(self, page, digest, host: str, email: str, signup: bool) -> bool:
         if not email or not ats_accounts.has_password() or self.run.r.clock() >= self.run.deadline:
             return False
+        blocked: list[str] = []
+
+        def _guard(route, request) -> None:
+            target_host = _host(request.url)
+            if target_host and target_host not in self.run.allowed:
+                blocked.append(target_host)
+                route.abort()
+                return
+            route.continue_()
+
         try:
             answers = self.run._judge_page(digest)
             plan = apply_judge.plan(digest, self.run.catalog, answers)
@@ -205,21 +216,32 @@ class _Accounts:
                     return False
             if not passwords or not emails:
                 return False
-            for loc in emails:
-                loc.fill(email, timeout=self._timeout())
-            for loc in passwords:
-                if not ats_accounts.fill_password(page, loc):
-                    return False
-            result = apply_fill.click(page, digest, advance[0], timeout_s=self._timeout() / 1000)
+            page.route("**/*", _guard)
+            try:
+                for loc in emails:
+                    loc.fill(email, timeout=self._timeout())
+                for loc in passwords:
+                    if not ats_accounts.fill_password(page, loc):
+                        return False
+                result = apply_fill.click(page, digest, advance[0],
+                                          timeout_s=self._timeout() / 1000)
+            finally:
+                page.unroute("**/*", _guard)
+            if blocked:
+                raise _Parked("needs_human", f"left the allowed sites: {blocked[0]}")
             if not result.changed:
                 return False
             self.run._check_host(page.url)
-            state, confidence = apply_judge.read_page_state(self.run._judge_page(apply_form.extract(page)))
+            fresh = apply_form.extract(page)
+            self.run._check_frames(fresh)
+            state, confidence = apply_judge.read_page_state(self.run._judge_page(fresh))
             if state not in ("application_form", "review_page", "code_gate") or confidence < apply_judge.PAGE_STATE_MIN_CONF:
                 return False
             if signup:
                 ats_accounts.record(host, email)
             return True
+        except _Parked:
+            raise
         except Exception:  # noqa: BLE001  (Playwright may include filled values)
             return False
 
@@ -282,10 +304,14 @@ def _is_password(row: dict) -> bool:
 
 
 def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
-    """The extractor's `kind_hint` is `submit` for a `type=submit` control or a
-    text with submit / apply / send / finish: a control that sends the form."""
+    """Whether the text describes a final application submission.
+
+    Native ``type=submit`` is only a form mechanic: multi-step wizards often
+    use it for Continue/Next. Explicit submit/apply/send/finish text remains
+    gated even if the judge labels that control as an advance.
+    """
     button = next((b for b in digest.buttons if b.n == n), None)
-    return bool(button) and button.kind_hint == "submit"
+    return bool(button) and bool(re.search(r"\b(submit|apply|send|finish)\b", button.text, re.I))
 
 
 def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
@@ -549,6 +575,8 @@ class _JobRun:
         self.gen_budget = GENERATE_MAX
         self.catalog: apply_facts.FactCatalog | None = None
         self.allowed: set[str] = set()
+        self.ats_host = ""
+        self.ats_transition_used = False
         self.last_sig: tuple | None = None
         self.usage_before = jev.usage()
         self.start = runner.clock()
@@ -572,6 +600,9 @@ class _JobRun:
         ats_host = _host(str((self.entry.get("ats") or {}).get("domain") or ""))
         if ats_host:
             self.allowed.add(ats_host)
+        if ats_host and ats_host not in LINKEDIN_HOSTS:
+            self.ats_host = ats_host
+            self.ats_transition_used = True
         inbox_host = _host(str(self.r.run_context().get("inbox_url") or ""))
         if inbox_host:
             self.allowed.add(inbox_host)
@@ -580,6 +611,53 @@ class _JobRun:
         host = _host(url)
         if host and host not in self.allowed:
             raise _Parked("needs_human", f"left the allowed sites: {host}")
+
+    def _check_frames(self, digest: apply_form.FormDigest) -> None:
+        """Validate every frame that contributed an actionable control."""
+        indices = {int(item.locator[0]) for item in (*digest.fields, *digest.buttons)}
+        frames = list(self.page.frames)
+        for idx in sorted(indices):
+            if not 0 <= idx < len(frames):
+                raise _Parked("needs_human",
+                              f"actionable frame {idx} is outside the allowed sites")
+            frame = frames[idx]
+            url = str(getattr(frame, "url", "") or "")
+            seen: set[int] = set()
+            while url in ("about:blank", "about:srcdoc") and id(frame) not in seen:
+                seen.add(id(frame))
+                frame = getattr(frame, "parent_frame", None)
+                if frame is None:
+                    url = str(self.page.url)
+                    break
+                url = str(getattr(frame, "url", "") or "")
+            self._check_host(url)
+
+    def _discover_listbox_options(self, digest: apply_form.FormDigest) -> None:
+        """Read choices rendered only after a listbox is opened, before planning."""
+        for control in digest.fields:
+            if control.type != "listbox" or control.options:
+                continue
+            try:
+                control.options = apply_fill.open_listbox_options(self.page, control)
+            except Exception as e:      # noqa: BLE001  (a widget may detach while opening)
+                self.log.info("job %s: listbox %r did not expose options: %s",
+                              self.job_id, control.label, e)
+
+    def _admit_ats_transition(self, url: str, source_url: str) -> None:
+        """Admit at most one LinkedIn-to-ATS destination, then freeze it."""
+        host = _host(url)
+        if not host or host in self.allowed:
+            return
+        if self.ats_transition_used or _host(source_url) not in LINKEDIN_HOSTS:
+            self._check_host(url)
+        inferred = apply_queue.infer_ats(url)
+        apply_queue.update(self.job_id, path=self.r.queue_path,
+                           ats={"domain": host, "system": inferred["system"]})
+        ats = self.entry.get("ats") or {}
+        self.entry["ats"] = {**ats, "domain": host, "system": inferred["system"]}
+        self.allowed.add(host)
+        self.ats_host = host
+        self.ats_transition_used = True
 
     # -- the run ----------------------------------------------------------------------------
 
@@ -641,6 +719,8 @@ class _JobRun:
                 raise _Parked("needs_human", "time budget exhausted")
             self._check_host(self.page.url)
             digest = apply_form.extract(self.page)
+            self._check_frames(digest)
+            self._discover_listbox_options(digest)
             answers = self._judge_page(digest)
             state, conf = apply_judge.read_page_state(answers)
             sig = (state, self.page.url, json.dumps(digest.to_dict(), sort_keys=True))
@@ -660,7 +740,7 @@ class _JobRun:
             elif state == "application_form":
                 self._application_form(digest, answers, plan, rec)
             elif state == "review_page":
-                self._review_page(digest, plan, rec)
+                self._review_page(digest, answers, plan, rec)
             elif state == "login_wall":
                 if not self.accounts.login(self.page, digest, digest.url_host):
                     raise _Parked("needs_human", "login wall", LOGIN_NOTE)
@@ -717,6 +797,7 @@ class _JobRun:
         button = next(b for b in digest.buttons if b.n == n)
         loc = apply_form.resolve(self.page, button.locator)
         self.pages[-1]["clicked"].append(f"{button.text} (apply_entry)")
+        source_url = self.page.url
         popup = None
         try:
             with self.page.expect_popup(timeout=POPUP_TIMEOUT_MS) as info:
@@ -726,56 +807,30 @@ class _JobRun:
             self.log.debug("job %s: no popup after Apply (%s)", self.job_id, e)
         if popup is None:
             apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+            self._admit_ats_transition(self.page.url, source_url)
+            self._check_host(self.page.url)
             return
         try:
             popup.wait_for_load_state("domcontentloaded", timeout=CLICK_TIMEOUT_S * 1000)
         except Exception:       # noqa: BLE001
             pass
         self.log.info("job %s: Apply opened %s", self.job_id, popup.url)
-        self._follow_popup(popup)
+        self._follow_popup(popup, source_url=source_url)
 
-    def _follow_popup(self, popup) -> None:
-        host = _host(popup.url)
-        ats = self.entry.get("ats") or {}
-        ats_host = _host(str(ats.get("domain") or ""))
-        if host and host not in self.allowed:
-            if str(ats.get("system") or "") in UNKNOWN_ATS or ats_host in ("",) + LINKEDIN_HOSTS:
-                inferred = apply_queue.infer_ats(popup.url)
-                apply_queue.update(self.job_id, path=self.r.queue_path,
-                                   ats={"domain": host, "system": inferred["system"]})
-                self.entry["ats"] = {**ats, "domain": host, "system": inferred["system"]}
-                self.allowed.add(host)
+    def _follow_popup(self, popup, *, source_url: str | None = None) -> None:
+        self._admit_ats_transition(popup.url, source_url or self.page.url)
+        self._check_host(popup.url)
         self.page = popup
         self.last_sig = None
         apply_fill.settle(self.page, CLICK_TIMEOUT_S)
 
     def _application_form(self, digest: apply_form.FormDigest, answers: dict,
                           plan: FillPlan, rec: dict) -> None:
-        s2, q2 = apply_judge.option_questions(digest, plan)
-        if q2:
-            answers.update(self.r.jev.judge(s2, q2))
-            plan = apply_judge.plan(digest, self.catalog, answers,
-                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]))
-            rec["flags"] = dict(plan.flags)
-        self._resolve_generation(digest, plan)
-        for question, context in plan.missing:
-            self._add_missing(question, context)
-        if plan.park_reason:
-            raise _Parked("needs_human", plan.park_reason)
-        filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock)
-        verification = self._verify(filled)
-        verification = self._retry_failed(plan, filled, verification)
-        self._record_fill(rec, digest, plan, filled, verification)
-        still = [v.label for v in verification if not v.ok
-                 and any(pf.n == v.n and pf.required for pf in plan.fields)]
-        if still:
-            raise _Parked("needs_human", "could not verify: " + ", ".join(still))
+        plan = self._complete_option_plan(digest, answers, plan, rec)
+        verification = self._fill_and_verify(digest, plan, rec)
         advance = plan.buttons.get("advance")
         submit = plan.buttons.get("submit")
         if advance is not None and _submit_shaped(digest, advance[0]):
-            # the DOM says this control sends the form (type=submit, or text with
-            # submit / apply / send / finish): whatever role the judge gave it, it
-            # is only ever clicked through the gate
             self.log.info("job %s: the advance button is submit-shaped; routing it "
                           "through the submit gate", self.job_id)
             if submit is None:
@@ -791,15 +846,39 @@ class _JobRun:
             return
         raise _Parked("needs_human", "no way forward on this page")
 
-    def _review_page(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict) -> None:
-        """A review page still resolves `generate` fields and records what is
-        missing before the gate, so an unresolved required essay parks."""
+    def _complete_option_plan(self, digest: apply_form.FormDigest, answers: dict,
+                              plan: FillPlan, rec: dict) -> FillPlan:
+        s2, q2 = apply_judge.option_questions(digest, plan)
+        if q2:
+            answers.update(self.r.jev.judge(s2, q2))
+            plan = apply_judge.plan(digest, self.catalog, answers,
+                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]))
+            rec["flags"] = dict(plan.flags)
+        return plan
+
+    def _fill_and_verify(self, digest: apply_form.FormDigest, plan: FillPlan,
+                         rec: dict) -> list[VerifyResult]:
         self._resolve_generation(digest, plan)
         for question, context in plan.missing:
             self._add_missing(question, context)
         if plan.park_reason:
             raise _Parked("needs_human", plan.park_reason)
-        self._submit_gate(digest, plan, [], rec)
+        filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock)
+        verification = self._verify(filled)
+        verification = self._retry_failed(plan, filled, verification)
+        self._record_fill(rec, digest, plan, filled, verification)
+        still = [v.label for v in verification if not v.ok
+                 and any(pf.n == v.n and pf.required for pf in plan.fields)]
+        if still:
+            raise _Parked("needs_human", "could not verify: " + ", ".join(still))
+        return verification
+
+    def _review_page(self, digest: apply_form.FormDigest, answers: dict,
+                     plan: FillPlan, rec: dict) -> None:
+        """Fill and verify editable review controls before the submit gate."""
+        plan = self._complete_option_plan(digest, answers, plan, rec)
+        verification = self._fill_and_verify(digest, plan, rec)
+        self._submit_gate(digest, plan, verification, rec)
 
     def _resolve_generation(self, digest: apply_form.FormDigest, plan: FillPlan) -> None:
         by_n = {f.n: f for f in digest.fields}
@@ -919,7 +998,7 @@ class _JobRun:
         self._after_submit()
 
     def _after_submit(self) -> None:
-        digest = apply_form.extract(self.page)
+        digest = self._post_submit_digest()
         answers = self._judge_page(digest)
         state, conf = apply_judge.read_page_state(answers)
         rec = self._new_page_record(state, conf)
@@ -930,13 +1009,27 @@ class _JobRun:
             plan = apply_judge.plan(digest, self.catalog, answers)
             rec["flags"] = dict(plan.flags)
             self._code_gate(digest, plan, rec)
-            digest = apply_form.extract(self.page)
+            digest = self._post_submit_digest()
             state, conf = apply_judge.read_page_state(self._judge_page(digest))
             self._new_page_record(state, conf)
             if state == "confirmation" and conf >= apply_judge.PAGE_STATE_MIN_CONF:
                 raise _Parked("submitted", "confirmation page after the emailed code")
         raise _Parked("submitted", f"submitted (unconfirmed): the page after submit reads "
                                    f"as {state} ({conf:.2f})")
+
+    def _post_submit_digest(self) -> apply_form.FormDigest:
+        """Validate a post-submit destination before reading or acting on it.
+
+        Once the submit click landed, a boundary violation is still a submitted
+        (unconfirmed) terminal outcome so the queue never resends the form.
+        """
+        try:
+            self._check_host(self.page.url)
+            digest = apply_form.extract(self.page)
+            self._check_frames(digest)
+            return digest
+        except _Parked as p:
+            raise _Parked("submitted", f"submitted (unconfirmed): {p.reason}") from None
 
     def _code_gate(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict) -> None:
         site = digest.url_host or _host(self.page.url)
@@ -955,10 +1048,27 @@ class _JobRun:
                               "value": HIDDEN,
                               "type": target.type, "id_or_name": target.id_or_name,
                               "upload": False, "hidden": True})
-        button = plan.buttons.get("advance") or plan.buttons.get("submit")
-        if button is None:
+        advance = plan.buttons.get("advance")
+        submit = plan.buttons.get("submit")
+        if advance is not None and advance[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
+            role, button, minimum = ("advance", advance,
+                                     apply_judge.BUTTON_ADVANCE_MIN_CONF)
+        elif submit is not None and submit[1] >= apply_judge.BUTTON_SUBMIT_MIN_CONF:
+            role, button, minimum = ("submit", submit,
+                                     apply_judge.BUTTON_SUBMIT_MIN_CONF)
+        elif advance is not None:
+            role, button, minimum = ("advance", advance,
+                                     apply_judge.BUTTON_ADVANCE_MIN_CONF)
+        elif submit is not None:
+            role, button, minimum = ("submit", submit,
+                                     apply_judge.BUTTON_SUBMIT_MIN_CONF)
+        else:
             raise _Parked("needs_human", "code entered; no button to continue", CODE_NOTE)
-        self._click(digest, button[0], "advance", rec)
+        if button[1] < minimum:
+            raise _Parked("needs_human",
+                          f"code entered; {role} button confidence {button[1]:.2f} "
+                          f"below {minimum:.2f}", CODE_NOTE)
+        self._click(digest, button[0], role, rec)
 
     # -- the end --------------------------------------------------------------------------------
 
@@ -1146,8 +1256,12 @@ def main(argv: list[str] | None = None) -> int:
             return doctor(profile)
         if args.verb == "login":
             return login(profile)
-        _load_env()
         cfg = _settings_from_args(args)
+        if cfg["auto_apply_jev_mode"] in ("fake", "replay"):
+            print("apply_run: fake and replay judges are fixture-only; use typesafe for a "
+                  "production queue", file=sys.stderr)
+            return 2
+        _load_env()
         try:
             judge = jev.get(cfg["auto_apply_jev_mode"])
         except (jev.JevUnavailable, ValueError) as e:

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Native submit wizard - Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  form[hidden], #received[hidden] { display: none; }
+  label { display: block; margin: 10px 0; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<form id="step-one">
+  <h2>About you</h2>
+  <label>First name * <input id="first_name" name="first_name" required></label>
+  <button type="submit">Continue</button>
+</form>
+<form id="step-two" hidden>
+  <h2>Contact</h2>
+  <label>Email * <input id="email" name="email" type="email" required></label>
+  <button type="submit">Submit application</button>
+</form>
+<section id="received" hidden>
+  <h2>Application received</h2>
+  <p>Thank you for applying.</p>
+</section>
+<script>
+  document.getElementById('step-one').addEventListener('submit', function (event) {
+    event.preventDefault();
+    event.currentTarget.hidden = true;
+    document.getElementById('step-two').hidden = false;
+  });
+  document.getElementById('step-two').addEventListener('submit', function (event) {
+    event.preventDefault();
+    event.currentTarget.hidden = true;
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('received').hidden = false;
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in - Synthetic Careers</title>
+</head>
+<body>
+<h1>Sign in to continue your application</h1>
+<form id="login" method="get">
+  <label for="login_email">Email</label>
+  <input id="login_email" name="email" type="email" autocomplete="username">
+  <label for="login_password">Password</label>
+  <input id="login_password" name="password" type="password" autocomplete="current-password">
+  <button type="submit" id="btn-signin">Sign in</button>
+</form>
+<script>
+  var destination = new URL(window.location.href);
+  destination.hostname = 'localhost';
+  destination.pathname = '/forms/credential_sink.html';
+  destination.search = '';
+  document.getElementById('login').action = destination.href;
+</script>
+</body>
+</html>

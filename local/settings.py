@@ -491,6 +491,13 @@ SETTINGS_SCHEMA: list[Field] = [
           help="Submit an application when every required field is filled from your "
                "answers, verified, and no CAPTCHA, payment, or blocked question appeared. "
                "Off: park at the review page for you."),
+    Field("auto_apply_generate", "Draft free-text answers", "bool", True,
+          "Auto-apply", "config",
+          help="Draft an answer for an open-ended question (your motivation, a project "
+               "you are proud of) from your apply sheet with one flash-lite model call, "
+               "then have the judge check every sentence against the sheet; a draft with "
+               "an unsupported sentence is dropped and the field is left for you. At most "
+               "3 drafts per job. Off: every such field is left for you."),
     Field("auto_apply_headless", "Hide the browser window", "bool", False,
           "Auto-apply", "config",
           help="Run the auto-apply Chromium with no visible window. Off (the default) "

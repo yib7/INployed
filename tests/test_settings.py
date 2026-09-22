@@ -1366,6 +1366,16 @@ def test_auto_apply_submit_is_a_config_bool_defaulting_on(tmp_path):
     assert "auto_apply_submit" in settings.validate({"auto_apply_submit": "yes"})
 
 
+def test_auto_apply_generate_is_a_config_bool_defaulting_on(tmp_path):
+    f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_generate"]
+    assert (f.type, f.default, f.section, f.target) == ("bool", True, "Auto-apply", "config")
+    assert "3" in f.help and "sheet" in f.help
+    assert settings.load(_targets(tmp_path))["auto_apply_generate"] is True
+    settings.save({"auto_apply_generate": False}, _targets(tmp_path))
+    assert settings.load(_targets(tmp_path))["auto_apply_generate"] is False
+    assert "auto_apply_generate" in settings.validate({"auto_apply_generate": "yes"})
+
+
 def test_auto_apply_headless_is_a_config_bool_defaulting_off(tmp_path):
     f = {f.key: f for f in settings.SETTINGS_SCHEMA}["auto_apply_headless"]
     assert (f.type, f.default, f.section, f.target) == ("bool", False, "Auto-apply", "config")
@@ -1377,6 +1387,6 @@ def test_auto_apply_headless_is_a_config_bool_defaulting_off(tmp_path):
 def test_the_new_auto_apply_fields_are_neither_advanced_nor_gated():
     by_key = {f.key: f for f in settings.SETTINGS_SCHEMA}
     for key in ("TYPESAFE_API_KEY", "auto_apply_jev_mode", "auto_apply_submit",
-                "auto_apply_headless"):
+                "auto_apply_headless", "auto_apply_generate"):
         assert by_key[key].advanced is False, key
         assert by_key[key].show_if is None, key

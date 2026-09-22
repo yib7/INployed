@@ -1218,3 +1218,37 @@ def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, mon
 def test_default_profile_dir_sits_under_localappdata(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     assert apply_run.default_profile_dir() == tmp_path / "linkedin_watcher" / "browser_profile"
+
+
+# --- the code box is the one the email is about, never a postal code ----------------------
+
+def test_the_emailed_code_never_lands_in_a_postal_code_box(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    class Inbox:
+        def fetch_code(self, page, site, inbox_url):
+            return "MKPZ3QRA"
+
+    _enqueue(job_folder, fixture_url("code_gate_postal.html"))
+    runner = _runner(context, tmp_path)
+    runner.inbox = Inbox()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out       # the gate accepted the code and moved on
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "Security code: <hidden>" in record
+    assert "Postal code" not in record
+
+
+@pytest.mark.parametrize("labels,expected", [
+    (["Postal code", "Security code"], "Security code"),
+    (["Zip code", "Verification code"], "Verification code"),
+    (["Promo code", "One-time code"], "One-time code"),
+    (["Country code", "OTP"], "OTP"),
+    (["Access code"], "Access code"),                   # nothing preferred: the code word wins
+])
+def test_code_field_pick_prefers_the_verification_box(labels, expected):
+    import apply_form
+    fields = [apply_form.Field(n=i, locator=(0, f"#f{i}"), label=label, type="text",
+                               required=False, id_or_name=f"f{i}")
+              for i, label in enumerate(labels)]
+    picked = apply_run._code_field(fields)
+    assert picked is not None and picked.label == expected

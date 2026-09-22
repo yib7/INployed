@@ -365,6 +365,35 @@ def _is_password(row: dict) -> bool:
                                         str(row.get("autocomplete", "")))
 
 
+_CODE_WORDS = re.compile(r"verification|security|one[- ]?time|otp|passcode|auth", re.I)
+_NOT_CODE_WORDS = re.compile(r"zip|postal|country|promo|coupon|discount|area\s*code", re.I)
+
+
+def _code_field(fields):
+    """The box the emailed code goes in.
+
+    A code gate can carry a postal code, a country code or a promo box as
+    well, and all of them read as "code". A field whose label or id names a
+    verification, security, one-time or OTP code wins; the plain "code" match
+    is the fallback, with the address and promo words excluded. `autocomplete`
+    `one-time-code` is the strongest signal the DOM offers."""
+    def blob(f):
+        return f"{f.label} {f.id_or_name}"
+
+    for f in fields:
+        if str(getattr(f, "autocomplete", "")).lower() == "one-time-code":
+            return f
+    for f in fields:
+        text = blob(f)
+        if _CODE_WORDS.search(text) and not _NOT_CODE_WORDS.search(text):
+            return f
+    for f in fields:
+        text = blob(f)
+        if "code" in text.lower() and not _NOT_CODE_WORDS.search(text):
+            return f
+    return None
+
+
 def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
     """Whether the text describes a final application submission.
 
@@ -1098,8 +1127,7 @@ class _JobRun:
         code = self.inbox.fetch_code(self.page, site, str(self.r.run_context().get("inbox_url") or ""))
         if not code:
             raise _Parked("needs_human", "emailed code needed", CODE_NOTE)
-        target = next((f for f in digest.fields
-                       if "code" in f"{f.label} {f.id_or_name}".lower()), None)
+        target = _code_field(digest.fields)
         if target is None:
             raise _Parked("needs_human", "code gate without a code box", CODE_NOTE)
         try:

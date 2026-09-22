@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Verify your email</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+  #error { color: #b00; display: none; }
+</style>
+</head>
+<body>
+<h1>Check your inbox</h1>
+<p>We emailed you a security code. Enter it below to finish your application.</p>
+<label for="postal">Postal code</label>
+<input id="postal" name="postal_code" type="text">
+<label for="code">Security code</label>
+<input id="code" name="code" type="text" autocomplete="one-time-code">
+<p><button type="button" id="btn-verify">Verify and continue</button></p>
+<p id="error">That code is not valid. Check the email and try again.</p>
+<script>
+  document.getElementById('btn-verify').addEventListener('click', function () {
+    var v = document.getElementById('code').value.trim();
+    if (v === 'MKPZ3QRA') {
+      window.location.href = 'confirmation.html';
+    } else {
+      document.getElementById('error').style.display = 'block';
+    }
+  });
+</script>
+</body>
+</html>

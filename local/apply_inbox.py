@@ -158,18 +158,21 @@ def _code_shaped(token: str, body: str = "", subject: str = "") -> bool:
     A digit or capitals say "code" on their own. An all-letter token in lower
     case is a code too when the message presents it as one: alone on its own
     line in the body, or directly after the word "code" on a single line
-    ("Enter code: hunterz"). A sentence word a line below the word "code"
-    ("Thanks", "Welcome") matches the extractor's near-`code` pattern and is
-    dropped here, so the pick question stays short and carries no prose. The
-    subject is one line, so only the labelled form counts there."""
+    ("Enter code: hunterz", "code is: hunterz"). A sentence word a line below
+    the word "code" ("Thanks", "Welcome") matches the extractor's near-`code`
+    pattern and is dropped here, so the pick question stays short and carries
+    no prose. A title-case word alone on its own line ("Regards",
+    "Unsubscribe", "Best") is a sign-off or a footer link, so the own-line form
+    takes lower case only. The subject is one line, so only the labelled form
+    counts there."""
     if any(ch.isdigit() for ch in token) or token.isupper():
         return True
     quoted = re.escape(token)
-    if re.search(rf"(?m)^[ \t]*{quoted}[ \t]*$", body):
+    if token.islower() and re.search(rf"(?m)^[ \t]*{quoted}[ \t]*$", body):
         return True
     # only spaces and tabs between the label and the token: a line break means
     # the extractor reached across a sentence
-    labelled = rf"code[ \t]*(?:is|:|=)?[ \t]*{quoted}\b"
+    labelled = rf"code[ \t]*(?:is)?[ \t]*[:=]?[ \t]*{quoted}\b"
     return bool(re.search(labelled, body, re.I) or re.search(labelled, subject, re.I))
 
 

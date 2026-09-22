@@ -115,6 +115,11 @@ def test_inbox_error_does_not_log_email_body(browser_page, fixtures_server, capl
     ("Sign in", "Enter code: hunterz to continue.", ["hunterz"]),
     # the same shape in prose, a line below the word code, stays out
     ("Your code", "Here is the code you asked for.\nThanks.", []),
+    # a sign-off or a footer word alone on its own line is prose in title case
+    ("Verify your email", "Your code is MKPZ3QRA\n\nRegards\n\nUnsubscribe\n", ["MKPZ3QRA"]),
+    ("Sign in", "Enter code: hunterz to continue.\n\nBest\nThe team\n", ["hunterz"]),
+    # the label may carry both "is" and a colon
+    ("Sign in", "Your code is: hunterz\nIt expires soon.", ["hunterz"]),
 ])
 def test_candidates_reads_the_subject_and_the_body(subject, body, expected):
     assert _inbox().candidates(body, subject) == expected

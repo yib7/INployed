@@ -20,6 +20,7 @@ without it and tests inject `llm_call` or monkeypatch `resume_tailor.llm.call`.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -50,7 +51,7 @@ _LIMIT_RE = re.compile(r"(\d{2,5})\s*(?:characters|chars)\b", re.I)
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 _LEAD_LABEL_RE = re.compile(r"^(?:answer|response|draft)\s*:\s*", re.I)
 _BULLET_RE = re.compile(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+")
-_EMPHASIS_RE = re.compile(r"(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1")
+_EMPHASIS_RE = re.compile(r"(?<!\w)(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1(?!\w)")
 _HEADING_RE = re.compile(r"(?m)^#{1,6}\s+")
 _BLANK_RUN_RE = re.compile(r"\n\s*\n(?:\s*\n)+")
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
@@ -124,9 +125,33 @@ def plain_text(raw: str) -> str:
     text = _EMPHASIS_RE.sub(r"\2", text)
     text = _LEAD_LABEL_RE.sub("", text.strip())
     text = _BLANK_RUN_RE.sub("\n\n", text).strip()
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'“”":
+    if text[:1] in ("{", "["):
+        text = _json_string(text)
+    if len(text) >= 2 and text[0] in _OPEN_QUOTES and text[-1] in _CLOSE_QUOTES:
         text = text[1:-1].strip()
     return text
+
+
+_OPEN_QUOTES = "\"'“‘"
+_CLOSE_QUOTES = "\"'”’"
+
+
+def _json_string(text: str) -> str:
+    """The first string value inside a JSON reply, else ""."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return ""
+    queue = [data]
+    while queue:
+        cur = queue.pop(0)
+        if isinstance(cur, str):
+            return cur.strip()
+        if isinstance(cur, dict):
+            queue.extend(cur.values())
+        elif isinstance(cur, list):
+            queue.extend(cur)
+    return ""
 
 
 def _fit(text: str, char_limit: int) -> str:

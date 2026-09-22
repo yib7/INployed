@@ -26,6 +26,7 @@ SELECTORS = {
     },
 }
 TIMEOUT_MS = 5_000
+CANDIDATES_CAP = 15          # code-shaped tokens read out of one message
 BODY_SELECTOR = ", ".join(s["body"] for s in SELECTORS.values())
 
 
@@ -89,16 +90,35 @@ def open_message(page, msg: Message) -> str:
     return "\n".join(bodies.all_inner_texts())
 
 
-def _candidates(body: str) -> list[str]:
-    candidates = []
-    remaining = body
-    for _ in range(15):
+def candidates(body: str, subject: str = "") -> list[str]:
+    """Every code-shaped token `apply_verify.extract_code` finds in the subject
+    and the body, strongest signal first and each one only once.
+
+    The subject counts because some providers put the code there and nowhere
+    else. A token is dropped from the text once it has been collected, so the
+    next pass reads the next-strongest one; `extract_code`'s own filters (the
+    stop words, bare years, an inline order number without a length hint) do
+    the rejecting, so nothing else has to repeat those rules."""
+    found: list[str] = []
+    remaining = f"{subject}\n{body}" if subject else body
+    for _ in range(CANDIDATES_CAP):
         code = apply_verify.extract_code(remaining)
-        if not code or code in candidates:
+        if not code or code in found:
             break
-        candidates.append(code)
-        remaining = remaining.replace(code, "")
-    return candidates
+        if _code_shaped(code):
+            found.append(code)
+        remaining = remaining.replace(code, " ")
+    return found
+
+
+def _code_shaped(token: str) -> bool:
+    """A token the judge is worth asking about: it carries a digit, or it is
+    written in capitals. A sentence word next to "code" ("Thanks", "Welcome")
+    reads as a candidate to the regex and is dropped here, so the pick question
+    stays short and the judge is not handed prose to choose between."""
+    if any(ch.isdigit() for ch in token):
+        return True
+    return token.isupper()
 
 
 def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
@@ -138,11 +158,11 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
                 message = next((m for m in messages if m.n == chosen), None)
                 if message:
                     body = open_message(tab, message)
-                    candidates = _candidates(body)
-                    if candidates:
-                        state, questions = apply_judge.code_pick_questions(candidates, body)
+                    picks = candidates(body, message.subject)
+                    if picks:
+                        state, questions = apply_judge.code_pick_questions(picks, body)
                         code = apply_judge.read_code_pick(jev.judge(state, questions))
-                        if code in candidates and clock() < end:
+                        if code in picks and clock() < end:
                             return code
             if attempt + 1 < min(polls, 3):
                 delay = min(max(0, wait_s), max(0, end - clock()))

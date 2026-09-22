@@ -83,3 +83,15 @@ def test_inbox_error_does_not_log_email_body(browser_page, fixtures_server, capl
                             jev=FailedJudge(), polls=1) is None
     assert "MKPZ3QRA" not in caplog.text
     assert len(browser_page.context.pages) == 1
+
+
+@pytest.mark.parametrize("subject,body,expected", [
+    ("Your security code", "Your security code is MKPZ3QRA\nThanks.", ["MKPZ3QRA"]),
+    ("Code: Q7R2XK", "Use it within ten minutes.", ["Q7R2XK"]),
+    ("Order receipt", "Your order number is 987654. Thank you for shopping.", []),
+    ("Welcome", "Copyright 2026 Fabrikam. All rights reserved.", []),
+    ("Verify", "Enter the code\n\nAB12CD\n\nThe older one\nZZ99YY\nstops working.",
+     ["AB12CD", "ZZ99YY"]),
+])
+def test_candidates_reads_the_subject_and_the_body(subject, body, expected):
+    assert _inbox().candidates(body, subject) == expected

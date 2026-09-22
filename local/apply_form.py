@@ -46,6 +46,29 @@ class Field:
     autocomplete: str = ""      # the control's autocomplete token, when it has one
 
 
+PASSWORD_WORDS = ("pass", "pwd", "secret")
+PASSWORD_AUTOCOMPLETE = ("current-password", "new-password")
+
+
+def is_password_field(type_: str, id_or_name: str = "", label: str = "",
+                      autocomplete: str = "") -> bool:
+    """A password-shaped control: an `other` control (the extractor's type for
+    a password input) whose id, name or label carries `pass`, `pwd` or
+    `secret`, or any control whose autocomplete token is `current-password` /
+    `new-password`.
+
+    One definition for the planner (which never puts a fact in such a field),
+    the accounts hook (the only writer) and the record (which hides it), so the
+    three cannot drift apart. `Passport number` is a text control and stays an
+    ordinary field."""
+    if str(autocomplete or "").lower() in PASSWORD_AUTOCOMPLETE:
+        return True
+    if str(type_ or "") != "other":
+        return False
+    blob = f"{id_or_name or ''} {label or ''}".lower()
+    return any(w in blob for w in PASSWORD_WORDS)
+
+
 @dataclass
 class Button:
     """One clickable control. `kind_hint` comes from the DOM (`submit`,

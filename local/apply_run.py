@@ -90,6 +90,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_generate": True,
 }
 _ACTED = ("fill", "select", "upload")     # the actions that put a value on the page
+# the only facts an account screen may be given, beyond the email and the password
+_ACCOUNT_FACT_KEYS = ("first_name", "last_name", "full_name")
 
 _PARK_STATES = {
     "captcha_or_bot_check": "captcha or bot check on the page",
@@ -183,6 +185,19 @@ class _Accounts:
     def _timeout(self) -> int:
         return max(1, int(min(5, self.run.deadline - self.run.r.clock()) * 1000))
 
+    def _name_value(self, field) -> str:
+        """The catalog's value for a name box on an account screen, else "".
+
+        An account form asks for little beyond the credentials, and the one
+        extra it does ask for is the candidate's name. `apply_facts.quick_map`
+        has to recognise the control outright (no judged mapping here), and
+        only the three identity name keys are ever used, so nothing else about
+        the candidate reaches a page that is not the application itself."""
+        key = apply_facts.quick_map(field.label, field.id_or_name, field.type)
+        if key not in _ACCOUNT_FACT_KEYS:
+            return ""
+        return self.run.catalog.value(key) if self.run.catalog else ""
+
     def _fill(self, page, digest, host: str, email: str, signup: bool) -> bool:
         if not email or not ats_accounts.has_password() or self.run.r.clock() >= self.run.deadline:
             return False
@@ -206,18 +221,25 @@ class _Accounts:
                 return False
             passwords = []
             emails = []
+            names: list[tuple[Any, str]] = []
             for field in digest.fields:
                 loc = apply_form.resolve(page, field.locator).first
                 if loc.get_attribute("type") == "password":
                     passwords.append(loc)
                 elif field.type == "email" or field.autocomplete == "username":
                     emails.append(loc)
-                elif field.required:
-                    return False
+                else:
+                    value = self._name_value(field)
+                    if value:
+                        names.append((loc, value))
+                    elif field.required:
+                        return False
             if not passwords or not emails:
                 return False
             page.route("**/*", _guard)
             try:
+                for loc, value in names:
+                    loc.fill(value, timeout=self._timeout())
                 for loc in emails:
                     loc.fill(email, timeout=self._timeout())
                 for loc in passwords:
@@ -287,20 +309,14 @@ def _host(url_or_netloc: str) -> str:
     return raw.split("/")[0].rsplit("@", 1)[-1].split(":")[0].lower()
 
 
-_PASSWORD_WORDS = ("pass", "pwd", "secret")
-_PASSWORD_AUTOCOMPLETE = ("current-password", "new-password")
-
-
 def _is_password(row: dict) -> bool:
-    """A password-shaped field: an `other` control (a password input) whose
-    id, name or label carries `pass`, `pwd` or `secret`, or any control whose
-    autocomplete token is `current-password` / `new-password`."""
-    if str(row.get("autocomplete", "")).lower() in _PASSWORD_AUTOCOMPLETE:
-        return True
-    if str(row.get("type", "")) != "other":
-        return False
-    blob = f"{row.get('id_or_name', '')} {row.get('label', '')}".lower()
-    return any(w in blob for w in _PASSWORD_WORDS)
+    """A recorded row that came from a password-shaped control
+    (`apply_form.is_password_field`, the one definition the planner and the
+    accounts hook read too): its value is written as `<hidden>`."""
+    return apply_form.is_password_field(str(row.get("type", "")),
+                                        str(row.get("id_or_name", "")),
+                                        str(row.get("label", "")),
+                                        str(row.get("autocomplete", "")))
 
 
 def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:

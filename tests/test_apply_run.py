@@ -563,6 +563,21 @@ def test_default_accounts_continue_and_keep_password_private(
     assert account["email"] == ("existing@example.com" if existing else "jane.doe@example.com")
 
 
+def test_default_signup_fills_the_candidates_name_fields_from_the_catalog(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog):
+    """A signup form that also asks for a name is filled from the fact catalog,
+    which is the only place a name may come from."""
+    secret = "synthetic-SP5-password"
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: secret)
+    _enqueue(job_folder, fixture_url("signup_with_names.html"))
+    with caplog.at_level("INFO"):
+        out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert secret not in record + caplog.text
+    assert ats_accounts.lookup("127.0.0.1")["email"] == "jane.doe@example.com"
+
+
 def test_default_accounts_block_cross_host_credential_request_before_it_reaches_server(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     import conftest_browser

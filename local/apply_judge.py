@@ -46,7 +46,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 from apply_facts import FactCatalog, quick_map
-from apply_form import FormDigest
+from apply_form import FormDigest, is_password_field
 from jev import Answer
 
 log = logging.getLogger("apply_judge")
@@ -454,7 +454,11 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
         pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=bool(f.required),
                           fact_key=fact_key, value="", option=None, confidence=conf,
                           action="skip", quick=bool(quick))
-        if fact_key == "needs_generation":
+        if is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
+            # the only writer of a password field is `ats_accounts.fill_password`
+            # through the accounts hook; no fact ever lands in one
+            fact_key, pf.fact_key = None, None
+        elif fact_key == "needs_generation":
             pf.action = "generate" if generation_enabled else "skip"
         elif fact_key == "consent_attest":
             pf.action, pf.option, pf.value = "select", "checked", "yes"

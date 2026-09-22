@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create an account - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Create an account</h1>
+<p>Register to keep track of the jobs you saved. Choose a password and accept
+the terms to finish.</p>
+<div id="signup">
+  <label for="signup_first">First name</label><input id="signup_first" name="first_name" type="text" required>
+  <label for="signup_last">Last name</label><input id="signup_last" name="last_name" type="text" required>
+  <label for="signup_email">Email</label><input id="signup_email" name="email" type="email" autocomplete="username" required>
+  <label for="signup_password">Password</label><input id="signup_password" name="password" type="password" autocomplete="new-password" required>
+  <label for="signup_confirm">Confirm password</label><input id="signup_confirm" name="password_confirmation" type="password" autocomplete="new-password" required>
+  <p><button type="button" id="btn-create">Create account</button></p>
+</div>
+<script>
+  document.getElementById('btn-create').addEventListener('click', function () {
+    var p = document.getElementById('signup_password').value;
+    if (!p || p !== document.getElementById('signup_confirm').value) { return; }
+    if (!document.getElementById('signup_first').value) { return; }
+    if (!document.getElementById('signup_last').value) { return; }
+    document.body.setAttribute('data-logged-in', '1');
+    window.location.href = 'ashby_steps.html';
+  });
+</script>
+</body>
+</html>

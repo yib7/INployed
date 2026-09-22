@@ -881,3 +881,23 @@ def test_fake_jev_flags_a_captcha_page_and_a_login_wall(catalog):
     answers = jev.FakeJev().judge(state, q)
     assert answers["requires_account"].noul == 0.9
     assert apply_judge.read_page_state(answers)[0] == "login_wall"
+
+
+def test_plan_never_puts_a_fact_in_a_password_field(catalog):
+    """Only `ats_accounts.fill_password` ever writes a password field, so the
+    plan leaves one alone whatever the mapping says, and a required one parks."""
+    fields = [_f(0, "Email", "email", required=True, ident="email"),
+              _f(1, "Password", "other", required=True, ident="signup_password"),
+              _f(2, "Confirm password", "other", required=True, ident="password_confirmation")]
+    digest = FormDigest(url_host="jobs.example.com", title="Create an account",
+                        text="Create an account to apply.", fields=fields,
+                        buttons=[Button(n=0, locator=(0, "#go"), text="Create account",
+                                        kind_hint="submit")])
+    answers = _page_answers(digest, {0: ("email", 0.99), 1: ("phone", 0.99),
+                                     2: ("phone", 0.99)})
+    plan = apply_judge.plan(digest, catalog, answers)
+    by_n = {pf.n: pf for pf in plan.fields}
+    assert by_n[0].action == "fill"
+    assert [by_n[1].action, by_n[2].action] == ["skip", "skip"]
+    assert [by_n[1].value, by_n[2].value] == ["", ""]
+    assert plan.park_reason == "required field without an answer: Password"

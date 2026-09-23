@@ -196,7 +196,7 @@ class Session:
         return (f"Jev replay cache miss in {record.test} (fixture `{FIXTURE}`, cache "
                 f"{self.cache_path}): {len(record.misses)} request(s) with question ids "
                 f"{ids}. Re-record with {serial_command('record')} (a key and a small "
-                f"spend; run it serially, never with -n/--numprocesses -- record and "
+                f"spend; run it serially, never with -n/--numprocesses: record and "
                 f"replay write a shared cache and outcomes file with no cross-process "
                 f"lock, see conftest_jev.pytest_configure), or run the one test with -k.")
 

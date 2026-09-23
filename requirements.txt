@@ -89,7 +89,7 @@ pytest-xdist==3.8.0    # parallel workers (-n auto): each worker is its own proc
                        # per process) are naturally per-worker with no extra wiring. Cuts the
                        # ~16-minute serial suite down on multi-core machines and CI runners alike.
                        # Carve-out: AUTO_APPLY_TEST_JEV=record/replay runs serially, never with
-                       # -n (conftest_jev.py refuses -- that mode's cache and outcomes file have
+                       # -n (conftest_jev.py refuses; that mode's cache and outcomes file have
                        # no cross-process lock).
 pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a thread dump,
                        # never burns runner hours (see the Run tests step in ci.yml).

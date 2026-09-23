@@ -1446,9 +1446,12 @@ def test_a_sign_up_read_as_the_form_does_not_count_as_the_filled_application(
         assert record.count("SUBMIT CLICKED") == 1
     else:
         # park mode takes no chance on an Apply after a page that took the
-        # password: it may be an application's review (the next test)
+        # password: it may be an application's review (the next test). SP3's
+        # container ruling: on a page read as a posting it is no submit
+        # either, so the job waits for the person with the reason
         assert "Apply now (apply_entry)" not in record, record
-        assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+        assert out.status == "needs_human", out
+        assert out.reason.startswith("the Apply button (Apply now) may open or start"), out
     # the page made an account (a new password and its confirmation)
     assert ats_accounts.lookup(_COMBINED_URL)["email"] == "jane.doe@example.com"
 
@@ -1502,7 +1505,10 @@ def test_park_mode_never_clicks_an_apply_after_a_page_with_a_password_box(
     out = runner.drain(cap=1)[0]
     page = next(p for p in context.pages if not p.is_closed())
     assert page.locator("body[data-submitted]").count() == 0, out
-    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+    # SP3's container ruling: an Apply on a fieldless page read as a posting
+    # is no submit, even after a filled page; the job waits for the person
+    assert out.status == "needs_human", out
+    assert out.reason.startswith("the Apply button (Apply) may open or start an application"), out
 
 
 @pytest.mark.parametrize("box, makes", [
@@ -1833,9 +1839,13 @@ def test_a_code_gate_before_any_submit_never_clicks_a_button_that_sends(
     assert run.page.locator("body[data-submitted]").count() == 0
 
 
-@pytest.mark.parametrize("sends, status", [(0.9, "ready_to_submit"), (0.1, "needs_human")])
+@pytest.mark.parametrize("sends, read, status", [
+    (0.9, "review_page", "ready_to_submit"), (0.1, "review_page", "needs_human"),
+    # the controller's ruling: a fieldless page's Apply after an earlier fill
+    # counts only on a page read as a review or a form
+    (0.9, "job_posting", "needs_human")])
 def test_a_posting_read_after_a_filled_form_goes_to_the_submit_gate(
-        context, job_folder, catalog_builder, tmp_path, sends, status):
+        context, job_folder, catalog_builder, tmp_path, sends, read, status):
     # SP3 (INV-01): its Apply is the submit only with the judge's word that
     # it sends the finished application (`button_{n}_sends`)
     run = _unit_run(context, tmp_path, job_folder, """
@@ -1843,7 +1853,9 @@ def test_a_posting_read_after_a_filled_form_goes_to_the_submit_gate(
         <button id="go" onclick="document.body.dataset.submitted = 1">Apply</button></body>""",
                     auto_apply_submit=False)
     run.form_filled = True
-    run._last_answers = {"button_0_sends": jev.Answer(kind="noul", noul=sends)}
+    run._last_answers = {"button_0_sends": jev.Answer(kind="noul", noul=sends),
+                         "page_state": jev.Answer(kind="choice", choice=read, confidence=0.9,
+                                                  probabilities={read: 0.9})}
     digest = apply_form.extract(run.page)
     plan = FillPlan(buttons={"apply_entry": (0, 0.95)})
     with pytest.raises(apply_run._Parked) as parked:

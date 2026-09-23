@@ -152,7 +152,7 @@ def _form(button: str, script: str, extra: str = "") -> str:
 <script>{script}</script></body></html>"""
 
 
-# === TERM-01: what the submit did =================================================================
+# === TERM-01: what the submit did ================================================================
 
 def test_the_server_answering_with_the_same_form_marked_invalid_sent_nothing(
         _browser, flow_server, tmp_path):
@@ -357,13 +357,14 @@ def test_a_refused_emailed_code_parks_and_never_reads_as_submitted(context, tmp_
     assert out.reason.startswith("the emailed code was not accepted"), out.reason
 
 
-# === TERM-02: a dispatched click that timed out stays clicked ========================================
+# === TERM-02: a dispatched click that timed out stays clicked ====================================
 
 def test_a_dispatched_click_whose_navigation_timed_out_has_landed(browser_page, flow_server,
                                                                   monkeypatch):
-    # a 1 s action timeout: the click still times out after its dispatch,
-    # with the post (answered after 8 s) in flight
+    # a 1 s action timeout and a 2.5 s answer: the click still times out
+    # after its dispatch, with the post in flight
     monkeypatch.setattr(apply_fill, "ACTION_TIMEOUT_MS", 1_000)
+    monkeypatch.setitem(flow_server.answers, "slow_post", (2.5, None))
     browser_page.goto(flow_server.url("slow_post.html"))
     for sel, value in (("#first_name", "Jane"), ("#last_name", "Doe"),
                        ("#email", "jane@example.com")):
@@ -387,7 +388,7 @@ def test_a_send_then_ready_to_submit_breaks_the_invariants():
     assert "READY-AFTER-SEND" in {b.split(":")[0] for b in h.invariant_breaks(out, rec, sends)}
 
 
-# === INV-01: an Apply entry is never the submit ======================================================
+# === INV-01: an Apply entry is never the submit ==================================================
 
 def test_a_job_alert_box_beside_the_posting_leaves_its_apply_the_entry(
         _browser, flow_server, tmp_path):
@@ -508,7 +509,7 @@ def test_an_apply_inside_a_form_of_controls_is_never_a_fieldless_entry(browser_p
         == (None, "")
 
 
-# === INV-02: the gate reads the page ==================================================================
+# === INV-02: the gate reads the page =============================================================
 
 def test_the_gate_reads_the_forms_validity_before_the_click(_browser, flow_server, tmp_path):
     r = _flow("native_required_submit", _browser, flow_server, tmp_path)
@@ -578,13 +579,26 @@ def test_a_checkbox_counts_whatever_its_height_until_its_token_is_set(
     assert bool(apply_form.unsolved_checkbox(browser_page)) is showing
     run = apply_run._JobRun.__new__(apply_run._JobRun)
     run.page = browser_page
-    assert run._human_check_showing() is showing
+    assert run._human_check_showing(checkbox=True) is showing
+    # the checkbox counts only where it blocks a send (the gate, the
+    # account step's click); the loop's own check reads a challenge alone
+    assert run._human_check_showing() is False
 
 
 def test_the_recaptcha_checkbox_flow_waits_for_the_person(_browser, flow_server, tmp_path):
     r = _flow("recaptcha_checkbox", _browser, flow_server, tmp_path)
     assert r.ok and not r.breaks, r
     assert not [a for a in r.actions if a.kind == "click" and a.in_gate]
+    # I3: the form is filled first; the checkbox stops only the send
+    assert len([a for a in r.actions if a.kind == "fill"]) >= 3, r.actions
+
+
+def test_park_mode_fills_the_form_and_leaves_the_checkbox_to_the_person(
+        _browser, flow_server, tmp_path):
+    r = _flow("recaptcha_checkbox_park", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.reason == "auto_apply_submit is off; " + apply_run.CHECKBOX_NOTE
+    assert len([a for a in r.actions if a.kind == "fill"]) >= 3, r.actions
 
 
 def _late_widget_page() -> str:
@@ -637,7 +651,7 @@ def test_datadome_and_perimeterx_are_bot_checks(url):
     assert apply_run._is_captcha_url(url)
 
 
-# === INV-04: every click reads the live control =========================================================
+# === INV-04: every click reads the live control ==================================================
 
 def test_a_footer_button_that_turns_into_submit_is_never_clicked_as_an_advance(
         context, flow_server, tmp_path, monkeypatch):
@@ -717,7 +731,7 @@ def test_an_entry_whose_live_text_reads_as_a_send_is_refused():
     assert apply_run.live_refusal("submit", "Next", {"text": "Submit"}) == ""
 
 
-# === INV-06: the code step ===============================================================================
+# === INV-06: the code step =======================================================================
 
 def _code_job(button_text, role, conf=0.9):
     context = Mock()
@@ -748,13 +762,29 @@ def test_a_submit_role_click_on_the_code_step_marks_the_job_clicked(monkeypatch)
     job, digest, plan = _code_job("Verify", "submit")
     locator = SimpleNamespace(first=SimpleNamespace(fill=lambda *a, **kw: None))
     monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: locator)
-    seen = []
-    monkeypatch.setattr(job, "_click", lambda *a, **kw: seen.append(job.submit_clicked))
+    # M9: only a click that landed marks the job
+    monkeypatch.setattr(job, "_click",
+                        lambda *a, **kw: apply_fill.ClickResult(clicked=True, changed=True))
     job._code_gate(digest, plan, {"filled": []})
-    assert seen == [True]
+    assert job.submit_clicked and job._code_sent
 
 
-# === the rest: the extractor's hints, the embed, the misreads ============================================
+@pytest.mark.parametrize("result", [apply_fill.ClickResult(clicked=False, changed=False),
+                                    apply_fill.ClickResult(False, False, refused="it changed")])
+def test_a_code_step_click_that_never_landed_leaves_the_job_unsent(monkeypatch, result):
+    job, digest, plan = _code_job("Verify", "submit")
+    locator = SimpleNamespace(first=SimpleNamespace(fill=lambda *a, **kw: None))
+    monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: locator)
+    monkeypatch.setattr(job, "_click", lambda *a, **kw: result)
+    if result.refused:
+        with pytest.raises(apply_run._Parked, match="changed before the click"):
+            job._code_gate(digest, plan, {"filled": []})
+    else:
+        job._code_gate(digest, plan, {"filled": []})
+    assert not job.submit_clicked and not job._code_sent
+
+
+# === the rest: the extractor's hints, the embed, the misreads ====================================
 
 def test_the_extractor_never_hints_submit_for_third_party_or_cancel_buttons(browser_page):
     browser_page.set_content("""<body><form><input name="q">
@@ -838,3 +868,425 @@ def test_other_states_are_never_read_as_a_confirmation_by_the_new_misread():
         reads = {jev.NoisyJev(_Scripted(truth), s).judge(*_request(title=f"R {i}"))[
             "page_state"].choice for s in range(1, 4) for i in range(30)}
         assert "confirmation" not in reads, truth
+
+
+# =================================================================================================
+# SP3 review round 1
+# =================================================================================================
+
+def _trace_decisions(trace_dir, what):
+    import json
+    rows = []
+    for p in sorted(Path(trace_dir).glob("page-*.json")):
+        rows += [e for e in json.loads(p.read_text(encoding="utf-8"))["events"]
+                 if e["kind"] == "decision" and e["what"] == what]
+    return rows
+
+
+def _trace_dir(tmp_path):
+    return sorted((tmp_path / "job" / "apply_trace").glob("attempt-*"))[-1]
+
+
+class _ReadAfterClickAs(jev.FakeJev):
+    """The fake, reading every page with no field whose headline carries
+    `WORDS` as `STATE` at 0.9."""
+    WORDS, STATE = "", ""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        text = str((state.get("page") or {}).get("headline_text") or "")
+        if "page_state" in out and self.WORDS in text:
+            out["page_state"] = jev.Answer(kind="choice", choice=self.STATE, confidence=0.9,
+                                           probabilities={self.STATE: 0.9, "other": 0.1})
+        return out
+
+
+def _reads(words, state):
+    return type("J", (_ReadAfterClickAs,), {"WORDS": words, "STATE": state})()
+
+
+# --- I1: after a request left, an emptied or reset form is never "not sent" -----------------------
+
+@pytest.mark.parametrize("name", ["postback_emptied", "ajax_reset"])
+def test_a_form_emptied_after_its_send_is_never_read_as_not_sent(
+        _browser, flow_server, tmp_path, name):
+    r = _flow(name, _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.sends == 1 and not r.reason.startswith(apply_run.NOT_SENT_REASON), r
+
+
+# --- I2: any post may be the send; LinkedIn and trackers never are -------------------------------
+
+def test_a_post_to_a_backend_on_another_domain_is_never_read_as_not_sent(context, tmp_path,
+                                                                         monkeypatch):
+    _quiet_click(monkeypatch)
+    backend = []
+    context.route("https://forms.backend.example/**", lambda route: backend.append(1)
+                  or route.fulfill(body="{}", content_type="application/json"))
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('https://forms.backend.example/submit', {method: 'POST', body: '{}'});
+      };""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert backend == [1]
+    assert out.status == "needs_human", out
+    assert out.reason.startswith(apply_run.CHECK_SENT_REASON + ": a request left for a host "
+                                                               "outside the application"), out
+
+
+def test_a_post_the_submit_opens_in_a_new_tab_counts_as_a_send(context, tmp_path, monkeypatch):
+    _quiet_click(monkeypatch)
+    posts = _Posts(context, {"/apply/42": """<!doctype html><html><body><h1>Analytics Engineer</h1>
+      <form id="f" method="post" action="/api/applications" target="_blank">
+      <label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+      <label for="last_name">Last name *</label><input id="last_name" name="last_name" required>
+      <label for="email">Email *</label><input id="email" name="email" type="email" required>
+      <button type="submit" id="go">Submit application</button></form></body></html>"""},
+                   answer="<body><p>Your details are with us.</p></body>")
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert posts.count == 1
+    assert out.status == "needs_human", out
+    assert out.reason.startswith(apply_run.CHECK_SENT_REASON), out
+    assert "POST https://careers.fabrikam.example/api/applications" in out.reason, out
+
+
+@pytest.mark.parametrize("host", ["https://px.ads.linkedin.com/wa/",
+                                  "https://www.google-analytics.com/g/collect"])
+def test_a_tag_or_analytics_post_is_never_a_send(context, tmp_path, host):
+    tags = []
+    context.route(host + "**", lambda route: tags.append(1) or route.fulfill(body=""))
+    _Posts(context, {"/apply/42": _form("Submit application", f"""
+      document.getElementById('go').onclick = function () {{
+        fetch('{host}', {{method: 'POST', body: 'x'}});
+        document.getElementById('app').outerHTML = '<p>Your profile</p>';
+      }};""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert tags == [1]
+    assert out.status == "needs_human", out
+    assert "no request was seen leaving" in out.reason, out
+
+
+# --- I3: the account step's click waits for the checkbox -------------------------------------------
+
+def test_the_account_steps_click_waits_for_an_unticked_checkbox(context, tmp_path, monkeypatch):
+    import ats_accounts
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: h.PASSWORD)
+    context.route("https://www.google.com/recaptcha/**", lambda route: route.fulfill(
+        body="<body>I'm not a robot</body>", content_type="text/html"))
+    _Posts(context, {"/apply/42": """<!doctype html><html><body><h1>Sign in to apply</h1>
+      <label for="email">Email</label><input id="email" name="email" type="email">
+      <label for="pw">Password</label><input id="pw" name="pw" type="password">
+      <iframe style="width:304px;height:78px"
+        src="https://www.google.com/recaptcha/api2/anchor?k=x&size=normal"></iframe>
+      <textarea name="g-recaptcha-response" style="display:none"></textarea>
+      <button type="button" id="go" onclick="document.body.dataset.signedIn = 1">Sign in</button>
+      </body></html>"""})
+    ats_accounts.record("careers.fabrikam.example", h.SIGNUP_EMAIL)
+    out, rec, _ = _drain(context, tmp_path, APPLY_URL)
+    assert out.status == "needs_human", out
+    assert out.reason == "a CAPTCHA check is on the account form", out
+    assert not [a for a in rec.actions if a.kind == "click"]
+
+
+# --- I4: after the click the confirmation is read first; a checkbox is no challenge then ----------
+
+def test_after_the_click_a_confirmation_wins_over_a_reset_checkbox(context, tmp_path):
+    # the person ticked the box before the send; the page resets the token
+    # and shows the received words
+    context.route("https://www.google.com/recaptcha/**", lambda route: route.fulfill(
+        body="<body>I'm not a robot</body>", content_type="text/html"))
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        document.getElementById('tok').value = '';
+        document.getElementById('app').insertAdjacentHTML('afterend',
+          '<h2>Thank you for applying</h2>');
+        document.body.dataset.submitted = 1;
+      };""", extra="""<iframe style="width:304px;height:78px"
+        src="https://www.google.com/recaptcha/api2/anchor?k=x&size=normal"></iframe>
+      <textarea id="tok" name="g-recaptcha-response" style="display:none">synthetic</textarea>""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert (out.status, out.reason) == ("submitted", "confirmation page"), out
+
+
+def test_every_park_after_the_click_asks_the_person_to_check_and_names_the_request(
+        context, flow_server, tmp_path):
+    out, _, _ = _drain(context, tmp_path, flow_server.url("server_validation.html"))
+    assert out.reason.startswith(apply_run.NOT_SENT_REASON + ": validation errors"), out
+    assert "a request left after the click: POST " in out.reason, out
+    assert apply_queue.load()["jobs"][-1]["tab_note"] == apply_run.CHECK_SENT_NOTE
+
+
+# --- I5: a code step's click alone needs received words ---------------------------------------------
+
+def test_a_sign_ups_email_verified_thanks_is_never_read_as_submitted(
+        _browser, flow_server, tmp_path):
+    r = _flow("email_verify_thanks", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.status == "needs_human"
+
+
+# --- I6: a review page after the click is no confirmation; a form after a send is checked ---------
+
+def test_a_review_page_after_the_click_read_as_a_confirmation_is_not_submitted(context, tmp_path):
+    _Posts(context, {"/apply/42": _form("Continue", """
+      document.getElementById('go').onclick = function () {
+        document.getElementById('app').outerHTML = '<h2>Review your application</h2>'
+          + '<p>Jane Doering, jane.doe@example.com</p>'
+          + '<button type="button" id="send">Submit application</button>';
+      };""").replace('id="go">Continue', 'id="go">Submit my details')})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, judge=_reads("Review your", "confirmation"))
+    assert out.status == "needs_human", out
+    assert out.reason.startswith(apply_run.CHECK_SENT_REASON), out
+
+
+def test_a_request_then_a_review_page_with_its_send_button_is_checked(context, tmp_path):
+    _Posts(context, {"/apply/42": _form("Submit my details", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/step', {method: 'POST', body: '{}'}).then(function () {
+          document.getElementById('app').outerHTML = '<h2>Review your application</h2>'
+            + '<button type="button" id="send">Submit application</button>';
+        });
+      };""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, judge=_reads("Review your", "review_page"))
+    assert out.status == "needs_human", out
+    assert "form with its own send button" in out.reason, out
+
+
+def test_a_sign_in_after_the_send_is_checked_never_submitted(context, tmp_path):
+    # a session that expired: the post answers with the sign-in page
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
+          location.href = '/login';
+        });
+      };"""), "/login": """<!doctype html><html><body><h1>Your session expired</h1>
+      <label for="u">Email</label><input id="u" name="u" type="email">
+      <label for="p">Password</label><input id="p" name="p" type="password">
+      <button type="button">Sign in</button></body></html>"""})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, judge=_reads("session expired",
+                                                                  "login_wall"))
+    assert out.status == "needs_human", out
+    assert "the session may have expired" in out.reason, out
+
+
+# --- the follow-ups: Turnstile -------------------------------------------------------------------
+
+_TURNSTILE = ('<iframe style="width:300px;height:65px" src="https://challenges.cloudflare.com/'
+              'cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv0/0/x/0xAAAA/light/fbE/'
+              '{size}/auto/"></iframe><input type="hidden" name="cf-turnstile-response" '
+              'value="{token}">')
+
+
+@pytest.mark.parametrize("size, token, found", [("normal", "", "turnstile"),
+                                                ("normal", "synthetic", ""),
+                                                ("invisible", "", "")])
+def test_a_turnstile_checkbox_counts_until_its_token_is_set(browser_page, size, token, found):
+    browser_page.set_content("<body>" + _TURNSTILE.format(size=size, token=token) + "</body>")
+    assert apply_form.unsolved_checkbox(browser_page) == found
+    assert apply_run._is_captcha_url("https://challenges.cloudflare.com/cdn-cgi/x")
+
+
+def test_headless_a_turnstile_gets_a_moment_to_tick_itself(context, tmp_path):
+    context.route("https://challenges.cloudflare.com/**", lambda route: route.fulfill(
+        body="<body>Verifying...</body>", content_type="text/html"))
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        document.getElementById('app').outerHTML = '<h2>Thank you for applying</h2>';
+      };""", extra=_TURNSTILE.format(size="normal", token=""))})
+    ticks = []
+
+    def _sleep(seconds):
+        # the managed widget ticks itself a moment later
+        for p in context.pages:
+            if not p.is_closed():
+                p.evaluate("document.querySelector('[name=cf-turnstile-response]').value = 'ok'")
+        ticks.append(seconds)
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, sleep=_sleep)
+    assert (out.status, out.reason) == ("submitted", "confirmation page"), out
+    assert ticks
+
+
+# --- M1: the live check and the click are one step --------------------------------------------------
+
+def test_a_button_that_turns_into_submit_at_the_click_is_stopped_there(browser_page):
+    browser_page.set_content("""<body><div id="bar"><button id="go">Continue</button></div>
+      <script>
+        var go = document.getElementById('go');
+        go.addEventListener('mousedown', function () { go.textContent = 'Submit'; });
+        go.addEventListener('click', function () {
+          if (go.textContent === 'Submit') document.body.dataset.submitted = 1; });
+      </script></body>""")
+    d = apply_form.extract(browser_page)
+    n = next(b.n for b in d.buttons if b.text == "Continue")
+    check = apply_run._JobRun._live_check(Mock(), "advance")
+    r = apply_fill.click(browser_page, d, n, timeout_s=1, check=check)
+    assert not r.clicked and "turned into 'Submit'" in r.refused, r
+    assert browser_page.evaluate("document.body.dataset.submitted") is None
+
+
+# --- M2: only a navigation or a send proves a dispatch --------------------------------------------
+
+def test_an_image_request_during_a_failed_click_is_no_dispatch(browser_page, monkeypatch):
+    from playwright.sync_api import ElementHandle, Locator
+    from playwright.sync_api import TimeoutError as PWTimeout
+    browser_page.set_content('<body><button id="go">Continue</button></body>')
+    d = apply_form.extract(browser_page)
+
+    def _fails(self, *a, **kw):
+        browser_page.evaluate("new Image().src = 'http://127.0.0.1:9/nothing.png?' + Date.now()")
+        browser_page.wait_for_timeout(200)
+        raise PWTimeout("Timeout 5000ms exceeded")
+    monkeypatch.setattr(ElementHandle, "click", _fails)
+    monkeypatch.setattr(Locator, "click", _fails)
+    r = apply_fill.click(browser_page, d, 0, timeout_s=1)
+    assert not r.clicked, r
+
+
+# --- M3 to M7: the scan, the form's controls, the validity scope -----------------------------------
+
+def test_a_shadow_header_search_is_chrome_to_the_scan(browser_page):
+    browser_page.set_content("""<body><header><x-search></x-search></header>
+      <main><x-field></x-field></main>
+      <script>
+        for (const [tag, label] of [['x-search', 'Search jobs'], ['x-field', 'Start date']]) {
+          customElements.define(tag, class extends HTMLElement { constructor() { super();
+            this.attachShadow({mode: 'open'}).innerHTML = '<input aria-label="' + label + '">'; } });
+        }
+      </script></body>""")
+    assert [r["label"] for r in apply_form.control_scan(browser_page)] == ["Start date"]
+
+
+def test_a_page_wide_forms_header_search_leaves_its_buttons_no_forms_own(browser_page):
+    browser_page.set_content("""<body><form action="/page">
+      <header><input name="q" aria-label="Search"></header>
+      <input type="hidden" name="state" value="x">
+      <h1>Role</h1><button type="button">Apply</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [b.in_form for b in d.buttons if b.text == "Apply"] == [False]
+
+
+def test_the_scan_filters_required_boxes_before_its_cap(browser_page):
+    boxes = "".join(f'<div role="textbox" contenteditable="true" aria-label="Note {i}"></div>'
+                    for i in range(45))
+    browser_page.set_content(f"<body>{boxes}<div role='textbox' contenteditable='true' "
+                             f"aria-required='true' aria-label='Required note'></div></body>")
+    rows = apply_form.control_scan(browser_page, required_only=True)
+    assert [r["label"] for r in rows] == ["Required note"]
+
+
+def test_a_wizard_footers_submit_reads_the_form_of_its_filled_fields(browser_page):
+    browser_page.set_content("""<body><form id="step"><input id="a" name="a" required>
+      <input id="b" name="b" aria-label="Last name" required></form>
+      <div class="footer"><button id="send" type="button">Submit</button></div></body>""")
+    browser_page.fill("#a", "Jane")
+    report = apply_form.validity_report(browser_page, (0, "#send"), [(0, "#a")])
+    assert [r["label"] for r in report["invalid"]] == ["Last name"]
+
+
+@pytest.mark.parametrize("novalidate, flagged", [(True, []), (False, ["hidden_pick"])])
+def test_a_novalidate_forms_hidden_required_box_is_the_sites_own(browser_page, novalidate,
+                                                                   flagged):
+    attr = " novalidate" if novalidate else ""
+    browser_page.set_content(f"""<body><form{attr}><input id="a" name="a" required value="x">
+      <input name="hidden_pick" required style="display:none">
+      <button id="send">Submit</button></form></body>""")
+    report = apply_form.validity_report(browser_page, (0, "#send"))
+    assert [r["label"] for r in report["invalid"]] == flagged
+
+
+# --- M8: a page that moved on during the gate's wait -------------------------------------------------
+
+def test_a_page_the_person_sent_during_the_gates_wait_is_read_after_the_submit(
+        context, flow_server, tmp_path):
+    context.route("https://www.google.com/recaptcha/**", lambda route: route.fulfill(
+        body="<body>I'm not a robot</body>", content_type="text/html"))
+
+    def _sleep(seconds):
+        # the person ticks the box and sends the form themselves
+        for p in context.pages:
+            if not p.is_closed():
+                p.evaluate("window.__tick(); document.getElementById('btn-submit').click()")
+    out, rec, _ = _drain(context, tmp_path, flow_server.url("recaptcha_checkbox.html"),
+                         sleep=_sleep, auto_apply_headless=False)
+    assert (out.status, out.reason) == ("submitted", "confirmation page"), out
+    assert not [a for a in rec.actions if a.kind == "click" and a.text == "Submit application"]
+
+
+# --- M10, M11 ------------------------------------------------------------------------------------------
+
+def test_received_words_read_through_typographic_apostrophes():
+    assert apply_run.new_confirmation("", "We’ve received your application.") == \
+        "we've received your application"
+
+
+def test_the_apply_noul_carries_its_true_and_false_criteria(tmp_path):
+    import apply_facts
+    folder = h.write_job_folder(tmp_path / "job")
+    catalog = apply_facts.build(folder)
+    digest = apply_form.FormDigest("jobs.example", "Apply", "", buttons=[
+        apply_form.Button(0, (0, "#a"), "Apply now")])
+    _, q = apply_judge.page_questions(digest, catalog, {})
+    assert set(q["button_0_sends"]["criteria"]) == {"true", "false"}
+
+
+# --- M12, M13: one rule for the form step's entry; never a form's own Apply ------------------------
+
+_ALERT_FORM_PAGE = """<!doctype html><html><body><h1>Analytics Engineer</h1>
+  <a class="btn" id="apply" href="/apply/42/form">Apply now</a>
+  <aside><form><label for="nick">Nickname</label><input id="nick" name="nick">
+  <button type="submit">Notify me</button></form></aside></body></html>"""
+
+
+class _AsFormNothingMapped(jev.FakeJev):
+    """The fake, reading the page as a form whose box maps to nothing."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out and "Analytics Engineer" in str(state.get("page")):
+            out["page_state"] = jev.Answer(kind="choice", choice="application_form",
+                                           confidence=0.9,
+                                           probabilities={"application_form": 0.9})
+        for qid in out:
+            if qid.endswith("_source"):
+                out[qid] = jev.Answer(kind="choice", choice="leave_blank", confidence=1.0,
+                                      probabilities={"leave_blank": 1.0})
+        return out
+
+
+def test_the_probe_and_the_run_take_the_same_form_step_entry(context, tmp_path, monkeypatch):
+    import io
+    _Posts(context, {"/apply/42": _ALERT_FORM_PAGE})
+    page = context.new_page()
+    page.goto(APPLY_URL)
+    out = io.StringIO()
+    apply_run._probe_page(page, 1, _AsFormNothingMapped(), out)
+    said = [line for line in out.getvalue().splitlines() if "the loop would" in line][0]
+    assert "click the Apply entry" in said and "'Apply now'" in said, said
+    page.close()
+    clicked = []
+
+    def _entry(self, rec, loc, text, **kw):
+        clicked.append(text)
+        raise apply_run._Parked("needs_human", "stop here")
+    monkeypatch.setattr(apply_run._JobRun, "_click_entry", _entry)
+    _drain(context, tmp_path, APPLY_URL, judge=_AsFormNothingMapped())
+    assert clicked == ["Apply now"]
+
+
+def test_a_form_step_never_clicks_its_own_apply_as_an_entry(browser_page):
+    browser_page.set_content("""<body><h1>Role</h1><div id="app">
+      <label for="f">First name</label><input id="f" name="f">
+      <button id="b" type="button">Apply</button></div></body>""")
+    d = apply_form.extract(browser_page)
+    plan = FillPlan(buttons={"apply_entry": (d.buttons[0].n, 0.9)})
+    assert apply_run.form_entry_choice(browser_page, d, plan, park_mode=False,
+                                       filled=False) is None
+
+
+# --- the container ruling: which rule let the Apply through ----------------------------------------
+
+def test_the_trace_names_the_rule_that_made_an_apply_the_submit(context, flow_server, tmp_path):
+    out, _, _ = _drain(context, tmp_path, flow_server.url("apply_now_form.html"))
+    assert (out.status, out.reason) == ("submitted", "confirmation page"), out
+    rows = _trace_decisions(_trace_dir(tmp_path), "apply_button_submit")
+    assert rows and "it sits with the fields this page filled" in rows[0]["why"], rows

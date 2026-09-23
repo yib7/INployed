@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Field Engineer - Blue Yonder Airlines</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+</style>
+</head>
+<body>
+<h1>Field Engineer</h1>
+<p>Blue Yonder Airlines, Denver, CO</p>
+<!-- The submit posts the answers by fetch (the flow server counts it), then
+     empties the form and says only "Sent." -->
+<form id="application">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <button type="button" id="btn-submit">Submit application</button>
+</form>
+<p id="status"></p>
+<script>
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    fetch('/submit/ajax_reset', {method: 'POST', body: '{}'}).then(function () {
+      document.getElementById('application').reset();
+      document.getElementById('status').textContent = 'Sent.';
+    });
+  });
+</script>
+</body>
+</html>

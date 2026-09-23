@@ -223,7 +223,8 @@ def test_a_clean_run_breaks_nothing():
     ("password_in_record", "PASSWORD-LEAK"),
     ("password_in_log", "PASSWORD-LEAK"),
     ("ready_after_send", "READY-AFTER-SEND"),
-    ("captcha_touch", "CAPTCHA-TOUCH")])
+    ("captcha_touch", "CAPTCHA-TOUCH"),
+    ("not_sent_after_send", "NOT-SENT-AFTER-SEND")])
 def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code):
     park = plant in ("park_send",)
     rec, sends = _clean(park=park)
@@ -262,6 +263,10 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
         # a click that dispatched, then timed out, read as never landed
         sends.events.append(h.Send("post", "/submit/slow_post", True))
         out = _Out("ready_to_submit", "submit did not register")
+    elif plant == "not_sent_after_send":
+        # a send the site accepted, then the run says nothing went through
+        sends.events.append(h.Send("post", "/submit/ajax_reset", True))
+        out = _Out("needs_human", apply_run.NOT_SENT_REASON + ": validation errors (x)")
     elif plant == "captcha_touch":
         rec.actions.append(h.Action("click", "https://www.google.com/recaptcha/api2/anchor?k=x",
                                     text="I'm not a robot"))
@@ -315,7 +320,7 @@ def test_a_confident_confirmation_misread_before_any_submit_is_caught(
     # contradicts (tests/test_apply_submit.py); a loop that took it for the
     # end again would be caught
     monkeypatch.setattr(apply_run, "confirmation_step",
-                        lambda digest, answers, conf, submit_clicked: (
+                        lambda digest, answers, conf, **kw: (
                             "submitted", "confirmation page", conf))
     r = h.run_flow(h.flow("ashby_wizard"), _FormAsConfirmation(), "misread", browser=_browser,
                    server=flow_server, workdir=tmp_path)
@@ -332,10 +337,18 @@ _RESULTS: dict[str, list] = {}
 def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
         _browser, flow_server, tmp_path, flow_name):
     f = h.flow(flow_name)
-    # a slow flow (an 8 s server answer) runs fewer seeds here; the script runs twenty
+    # a slow flow (a 6 s server answer) runs fewer seeds here; the script runs twenty
     seeds = h.SUITE_SEEDS[:f.suite_seeds] if f.suite_seeds is not None else h.SUITE_SEEDS
-    results = h.run_matrix([f], h.judges(seeds), browser=_browser,
-                           server=flow_server, workdir=tmp_path)
+    if f.judge_free:
+        # a run that asks the judge nothing is the same run under every judge
+        fake = h.run_matrix([f], h.judges((), fake=True), browser=_browser,
+                            server=flow_server, workdir=tmp_path)[0]
+        assert fake.judge_requests == 0, f"{flow_name} asked the judge: it is not judge_free"
+        results = [fake] + [dataclasses.replace(fake, judge=name)
+                            for name, _ in h.judges(seeds, fake=False)]
+    else:
+        results = h.run_matrix([f], h.judges(seeds), browser=_browser,
+                               server=flow_server, workdir=tmp_path)
     _RESULTS[flow_name] = results
     table = h.summary(results)
     assert all(not r.breaks for r in results), table
@@ -520,3 +533,11 @@ def test_the_recorder_sees_every_way_a_page_can_be_acted_on(_browser):
     rec.final = {"at_gate": True}
     codes = _codes(h.invariant_breaks(_Out(), rec, h.Sends(rec)))
     assert {"CLICK-OUTSIDE-GATE", "ENTER-OUTSIDE-GATE"} <= set(codes), codes
+
+
+def test_a_refused_post_then_not_sent_is_within_the_invariants():
+    # the server answered the post with its errors: nothing was accepted
+    rec, sends = _clean(park=False)
+    sends.events.append(h.Send("post", "/submit/server_validation", True, accepted=False))
+    out = _Out("needs_human", apply_run.NOT_SENT_REASON + ": validation errors (x)")
+    assert h.invariant_breaks(out, rec, sends) == []

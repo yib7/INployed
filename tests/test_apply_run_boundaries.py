@@ -213,7 +213,7 @@ def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
         "submit": (0, apply_run.apply_judge.BUTTON_SUBMIT_MIN_CONF)})
     locator = SimpleNamespace(first=SimpleNamespace(fill=lambda *a, **kw: None))
     monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: locator)
-    clicked = Mock()
+    clicked = Mock(return_value=apply_run.apply_fill.ClickResult(clicked=True, changed=True))
     monkeypatch.setattr(job, "_click", clicked)
 
     job._code_gate(digest, plan, {"filled": []})

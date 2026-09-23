@@ -234,6 +234,13 @@ _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
 
 NO_MATCH_DESCRIPTION = "nothing listed fits"
 
+# The subtle boundary of `button_{n}_sends` (the Jev guide: a Noul's
+# true / false criteria pin it down).
+_SENDS_CRITERIA = {
+    "true": "clicking it sends the finished application to the employer",
+    "false": "it opens, starts or continues the application, or leaves the page",
+}
+
 _APPLY_WORD = re.compile(r"\bapply\b", re.I)
 _OTHER_SEND_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
 
@@ -401,6 +408,7 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
                 "instructions": f"The text of `buttons[{i}]` says apply. Would clicking it send "
                                 "the finished application to the employer, as the last step "
                                 "of applying?",
+                "criteria": dict(_SENDS_CRITERIA),
             }
     questions["asks_for_prohibited"] = {
         "type": "noul",

@@ -372,8 +372,18 @@ _EXTRACT_JS = r"""
     + ':not([type=reset]):not([type=image]), select, textarea, [contenteditable=""], '
     + '[contenteditable=true], [role=textbox], [role=combobox], [role=listbox], [role=radio], '
     + '[role=checkbox], [role=switch], [role=spinbutton]';
-  const holdsControls = (form) => !!form && (!!form.querySelector(FILLABLE)
-    || Array.from(form.querySelectorAll('*')).some((n) => !!n.shadowRoot));
+  // a form holds a control a person fills: a visible one outside the site
+  // chrome (a page-wide form's header search does not count), or a
+  // visible custom control with a shadow root
+  const held = new Map();
+  const holdsControls = (form) => {
+    if (!form) return false;
+    if (!held.has(form)) {
+      held.set(form, Array.from(form.querySelectorAll('*')).some(
+        (n) => (n.matches(FILLABLE) || !!n.shadowRoot) && visible(n) && !n.closest(CHROME)));
+    }
+    return held.get(form);
+  };
   const NEVER_SUBMIT = /linkedin|indeed|general application|\bcancel\b|apply later|save for later/i;
 
   const nthPath = (el) => {
@@ -809,14 +819,19 @@ def same_scope(page, button_locator: tuple[int, str],
     return str(out.get("verdict") or "unclear"), str(out.get("why") or "")
 
 
-# The validity of the controls a submit sends (its form's elements, or
-# without a form every control of the frame outside a form, the site chrome
-# and a consent banner), read from `validity` (no `invalid` event fires), and
-# the visible error texts of the frame: [role=alert], an assertive live
-# region, and short boxes whose class names an error. An error text beside a
-# control (its box within two levels holds one) is a field's; the rest are
-# banners. Returns {invalid: [{label, message, reason}], errors: [{text, field}]}.
-_VALIDITY_JS = r"""(bcss) => {
+# The validity of the controls a submit sends, read from `validity` (no
+# `invalid` event fires): its form's elements; for a submit outside any form
+# (a wizard's footer), the forms that own the fields this page filled
+# (`fcss`) and the controls outside a form in the lowest box above the button
+# that holds one of them (the page when none); with no button, every control
+# of the frame outside a form. The site chrome and a consent banner are never
+# read; in a `novalidate` form (the site validates in its own script) a
+# hidden control is skipped. Then the visible error texts of the frame:
+# [role=alert], an assertive live region, and short boxes whose class names
+# an error. An error text beside a control (its box within two levels holds
+# one) is a field's; the rest are banners. Returns {invalid: [{label,
+# message, reason}], errors: [{text, field}]}.
+_VALIDITY_JS = r"""({bcss, fcss}) => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const visible = (el) => {
     const st = getComputedStyle(el);
@@ -828,6 +843,8 @@ _VALIDITY_JS = r"""(bcss) => {
     + '[role=navigation], [role=search]';
   const consent = (__CONSENT__)();
   const outside = (el) => consent.some((r) => r.contains(el)) || !!el.closest(CHROME);
+  const owner = (x) => x.form || x.closest('form');
+  const find = (css) => { try { return css ? document.querySelector(css) : null; } catch (e) { return null; } };
   const labelOf = (el) => {
     const byLabel = el.labels && el.labels.length ? norm(el.labels[0].innerText) : '';
     let by = '';
@@ -840,28 +857,45 @@ _VALIDITY_JS = r"""(bcss) => {
       || norm(el.getAttribute('placeholder')) || el.name || el.id || el.tagName.toLowerCase())
       .replace(/\s*\*$/, '').slice(0, 80);
   };
-  let btn = null;
-  if (bcss) { try { btn = document.querySelector(bcss); } catch (e) {} }
-  const form = btn ? (btn.form || btn.closest('form')) : null;
+  const btn = find(bcss);
+  const filled = (fcss || []).map(find).filter(Boolean);
+  const form = btn ? owner(btn) : null;
   let controls;
-  if (form) controls = Array.from(form.elements);
-  else controls = Array.from(document.querySelectorAll('input, select, textarea'))
-    .filter((el) => !el.form && !el.closest('form') && !outside(el));
+  let inScope;
+  if (form) {
+    controls = Array.from(form.elements);
+    inScope = (el) => form.contains(el);
+  } else if (btn) {
+    const forms = new Set(filled.map(owner).filter(Boolean));
+    let box = btn.parentElement;
+    while (box && filled.length && !filled.some((f) => box.contains(f))) box = box.parentElement;
+    if (!box || !filled.length) box = document.body;
+    const loose = Array.from(box.querySelectorAll('input, select, textarea'))
+      .filter((el) => !owner(el) && !outside(el));
+    controls = [...Array.from(forms).flatMap((f) => Array.from(f.elements)), ...loose];
+    inScope = (el) => Array.from(forms).some((f) => f.contains(el))
+      || (box.contains(el) && !owner(el) && !outside(el));
+  } else {
+    controls = Array.from(document.querySelectorAll('input, select, textarea'))
+      .filter((el) => !owner(el) && !outside(el));
+    inScope = (el) => !owner(el) && !outside(el);
+  }
   const REASONS = ['valueMissing', 'typeMismatch', 'patternMismatch', 'tooShort', 'tooLong',
                    'rangeUnderflow', 'rangeOverflow', 'stepMismatch', 'badInput', 'customError'];
   const invalid = [];
   const seen = new Set();
   for (const el of controls) {
     if (!el.willValidate || !el.validity || el.validity.valid) continue;
+    const f = owner(el);
+    if (f && f.noValidate && !visible(el)) continue;
     const key = el.type === 'radio' && el.name ? 'radio:' + el.name : el;
     if (seen.has(key)) continue;
     seen.add(key);
     invalid.push({label: labelOf(el), message: norm(el.validationMessage).slice(0, 160),
                   reason: REASONS.find((r) => el.validity[r]) || 'invalid'});
   }
-  const scope = form || document;
-  for (const el of scope.querySelectorAll('[aria-invalid=true]')) {
-    if (seen.has(el) || outside(el) || !visible(el)) continue;
+  for (const el of document.querySelectorAll('[aria-invalid=true]')) {
+    if (seen.has(el) || outside(el) || !visible(el) || !inScope(el)) continue;
     seen.add(el);
     const desc = el.getAttribute('aria-describedby') || el.getAttribute('aria-errormessage') || '';
     const msg = norm(desc.split(/\s+/).map((i) => { const n = document.getElementById(i);
@@ -894,13 +928,15 @@ _VALIDITY_JS = r"""(bcss) => {
 }""".replace("__CONSENT__", CONSENT_ROOTS_JS)
 
 
-def validity_report(page, button_locator: tuple[int, str] | None = None) -> dict[str, list]:
+def validity_report(page, button_locator: tuple[int, str] | None = None,
+                    field_locators: list[tuple[int, str]] | None = None) -> dict[str, list]:
     """The controls that would not validate and the visible error texts
-    (`_VALIDITY_JS`): with `button_locator`, that button's form in its frame
-    (every control of the frame outside a form when it has none); without,
-    every frame's controls outside a form and every frame's error texts.
-    {invalid: [{label, message, reason, frame}], errors: [{text, field,
-    frame}]}."""
+    (`_VALIDITY_JS`): with `button_locator`, that button's form in its frame,
+    or for a button outside any form the forms of `field_locators` (the
+    fields this page filled) and the controls outside a form beside them;
+    without, every frame's controls outside a form and every frame's error
+    texts. {invalid: [{label, message, reason, frame}], errors: [{text,
+    field, frame}]}."""
     out: dict[str, list] = {"invalid": [], "errors": []}
     targets = [(int(button_locator[0]), str(button_locator[1]))] if button_locator \
         else [(i, "") for i in range(len(frames(page)))]
@@ -908,8 +944,9 @@ def validity_report(page, button_locator: tuple[int, str] | None = None) -> dict
     for idx, css in targets:
         if not 0 <= idx < len(all_frames):
             continue
+        fcss = [str(loc[1]) for loc in field_locators or [] if int(loc[0]) == idx]
         try:
-            got = all_frames[idx].evaluate(_VALIDITY_JS, css or None)
+            got = all_frames[idx].evaluate(_VALIDITY_JS, {"bcss": css or None, "fcss": fcss})
         except Exception:       # noqa: BLE001  (a detached or cross-origin frame)
             continue
         for key in ("invalid", "errors"):
@@ -921,10 +958,12 @@ def validity_report(page, button_locator: tuple[int, str] | None = None) -> dict
 # (open shadow roots walked): a native control inside a shadow root, an ARIA
 # textbox / radio / checkbox / switch / spinbutton that is no native control,
 # a contenteditable box; outside the site chrome, a consent banner and a
-# combobox widget, visible only. Each with its label, whether it is required
-# (the attribute, aria-required, or a required radiogroup) and whether it is
-# empty (no value, nothing checked, no text).
-_SCAN_JS = r"""() => {
+# combobox widget (each read across shadow boundaries, so a shadow header's
+# search box is chrome too), visible only. Each with its label, whether it is
+# required (the attribute, aria-required, or a required radiogroup) and
+# whether it is empty (no value, nothing checked, no text). `requiredOnly`
+# keeps the required empty ones; at most 40 rows, cut after that filter.
+_SCAN_JS = r"""(requiredOnly) => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
     + '[role=navigation], [role=search]';
@@ -934,6 +973,16 @@ _SCAN_JS = r"""() => {
     if (st.display === 'none' || st.visibility === 'hidden') return false;
     const r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0;
+  };
+  // the parent across a shadow boundary: a shadow root's child goes up to its host
+  const up = (n) => n.parentElement || ((n.getRootNode && n.getRootNode().host) || null);
+  const closestComposed = (el, sel) => {
+    for (let n = el; n; n = up(n)) { if (n.nodeType === 1 && n.matches(sel)) return n; }
+    return null;
+  };
+  const insideComposed = (el, root) => {
+    for (let n = el; n; n = up(n)) { if (n === root) return true; }
+    return false;
   };
   const NATIVE = /^(INPUT|SELECT|TEXTAREA)$/;
   const SKIP = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
@@ -955,8 +1004,9 @@ _SCAN_JS = r"""() => {
       } else if (ROLES.test(role) && !NATIVE.test(el.tagName)) kind = role;
       else if (el.isContentEditable && el.hasAttribute('contenteditable')) kind = 'contenteditable';
       if (!kind) continue;
-      if (!shadow && (el.closest(CHROME) || consent.some((r) => r.contains(el))
-                      || (el.closest('[role=combobox]') && el.closest('[role=combobox]') !== el))) continue;
+      const box = closestComposed(el, '[role=combobox]');
+      if (closestComposed(el, CHROME) || consent.some((r) => insideComposed(el, r))
+          || (box && box !== el)) continue;
       if (!visible(el)) continue;
       let required = el.required === true || el.getAttribute('aria-required') === 'true';
       let empty;
@@ -971,14 +1021,14 @@ _SCAN_JS = r"""() => {
           empty = el.getAttribute('aria-checked') !== 'true';
         }
       } else if (kind === 'input' && el.type === 'radio') {
-        const root = el.getRootNode();
+        const rootNode = el.getRootNode();
         const key = el.name || labelOf(el);
-        const names = radioNames.get(root) || new Set();
-        radioNames.set(root, names);
+        const names = radioNames.get(rootNode) || new Set();
+        radioNames.set(rootNode, names);
         if (names.has(key)) continue;
         names.add(key);
         const mates = el.name
-          ? Array.from(root.querySelectorAll('input[type=radio]')).filter((r) => r.name === el.name)
+          ? Array.from(rootNode.querySelectorAll('input[type=radio]')).filter((r) => r.name === el.name)
           : [el];
         required = required || mates.some((r) => r.required);
         empty = !mates.some((r) => r.checked);
@@ -994,6 +1044,7 @@ _SCAN_JS = r"""() => {
       } else {
         empty = !norm(el.innerText);
       }
+      if (requiredOnly && !(required && empty)) continue;
       out.push({label: labelOf(el), kind: kind, required: !!required, empty: !!empty,
                 shadow: !!shadow});
     }
@@ -1003,16 +1054,18 @@ _SCAN_JS = r"""() => {
 }""".replace("__CONSENT__", CONSENT_ROOTS_JS)
 
 
-def control_scan(page, frame_indexes: list[int] | None = None) -> list[dict[str, Any]]:
+def control_scan(page, frame_indexes: list[int] | None = None, *,
+                 required_only: bool = False) -> list[dict[str, Any]]:
     """The controls the extractor leaves out (`_SCAN_JS`), in the given
     frames (every frame when None), each {label, kind, required, empty,
-    shadow, frame}."""
+    shadow, frame}; `required_only` keeps the required empty ones (the
+    filter runs before the 40-row cut)."""
     out: list[dict[str, Any]] = []
     for idx, frame in enumerate(frames(page)):
         if frame_indexes is not None and idx not in frame_indexes:
             continue
         try:
-            got = frame.evaluate(_SCAN_JS)
+            got = frame.evaluate(_SCAN_JS, bool(required_only))
         except Exception:       # noqa: BLE001  (a detached or cross-origin frame)
             continue
         out += [{**row, "frame": idx} for row in got or []]
@@ -1020,10 +1073,12 @@ def control_scan(page, frame_indexes: list[int] | None = None) -> list[dict[str,
 
 
 # The CAPTCHA widgets of a document by their frames' `src` (read before a
-# frame loads): reCAPTCHA (google.com/recaptcha, recaptcha.net) and
-# hCaptcha, visible or not, their size parameter, and whether each
-# response token of the document (`g-recaptcha-response`,
-# `h-captcha-response`) is set.
+# frame loads): reCAPTCHA (google.com/recaptcha, recaptcha.net), hCaptcha
+# and Cloudflare Turnstile (challenges.cloudflare.com), visible or not, their
+# size (reCAPTCHA's and hCaptcha's `size=` parameter, Turnstile's path
+# segment), and whether each response token of the document
+# (`g-recaptcha-response`, `h-captcha-response`, `cf-turnstile-response`) is
+# set.
 _CAPTCHA_WIDGETS_JS = r"""() => {
   const widgets = [];
   for (const f of document.querySelectorAll('iframe')) {
@@ -1034,16 +1089,25 @@ _CAPTCHA_WIDGETS_JS = r"""() => {
     const recaptcha = /(^|\.)recaptcha\.net$/.test(host)
       || (/(^|\.)google\.com$/.test(host) && path.startsWith('/recaptcha'));
     const hcaptcha = /(^|\.)hcaptcha\.com$/.test(host);
-    if (!recaptcha && !hcaptcha) continue;
+    const turnstile = host === 'challenges.cloudflare.com' && /turnstile/.test(path);
+    if (!recaptcha && !hcaptcha && !turnstile) continue;
     const st = getComputedStyle(f);
     const r = f.getBoundingClientRect();
     const shown = st.display !== 'none' && st.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-    const m = src.match(/[?&#]size=([a-z]+)/i);
-    widgets.push({provider: recaptcha ? 'recaptcha' : 'hcaptcha', visible: shown,
-                  size: m ? m[1].toLowerCase() : '', height: Math.round(r.height)});
+    let size = '';
+    if (turnstile) {
+      const m = path.match(/\/(normal|compact|flexible|invisible)(\/|$)/i);
+      size = m ? m[1].toLowerCase() : 'normal';
+    } else {
+      const m = src.match(/[?&#]size=([a-z]+)/i);
+      size = m ? m[1].toLowerCase() : '';
+    }
+    widgets.push({provider: recaptcha ? 'recaptcha' : hcaptcha ? 'hcaptcha' : 'turnstile',
+                  visible: shown, size: size, height: Math.round(r.height)});
   }
   const tokens = Array.from(document.querySelectorAll(
-    '[name="g-recaptcha-response"], [name="h-captcha-response"]')).map((t) => !!(t.value || '').trim());
+    '[name="g-recaptcha-response"], [name="h-captcha-response"], [name="cf-turnstile-response"]'))
+    .map((t) => !!(t.value || '').trim());
   return {widgets: widgets, tokens: tokens};
 }"""
 
@@ -1069,14 +1133,19 @@ def captcha_widgets(page) -> list[dict[str, Any]]:
     return out
 
 
+_CHECKBOX_SIZES = ("normal", "compact", "flexible")
+
+
 def unsolved_checkbox(page) -> str:
-    """A visible reCAPTCHA or hCaptcha checkbox (its frame's `size=normal`,
-    whatever its height: study G11) whose document holds an empty response
-    token, or none: the provider's name, else "". The invisible badge
-    (`size=invisible`) never counts."""
+    """A visible reCAPTCHA, hCaptcha or Turnstile checkbox (its frame's size
+    `normal`, whatever its height: study G11; Turnstile's compact and
+    flexible too) whose document holds an empty response token, or none:
+    the provider's name, else "". The invisible badge (`size=invisible`)
+    never counts."""
     for row in captcha_widgets(page):
         normal = [w for w in row.get("widgets") or [] if w.get("visible")
-                  and w.get("size") == "normal"]
+                  and (w.get("size") == "normal" or (w.get("provider") == "turnstile"
+                                                     and w.get("size") in _CHECKBOX_SIZES))]
         if not normal:
             continue
         tokens = row.get("tokens") or []

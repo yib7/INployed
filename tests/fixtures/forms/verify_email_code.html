@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Verify your email</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Check your inbox</h1>
+<p>We emailed you a security code to confirm your new candidate account.</p>
+<label for="code">Security code</label>
+<input id="code" name="code" type="text" autocomplete="one-time-code">
+<p><button type="button" id="btn-verify">Verify and continue</button></p>
+<script>
+  document.getElementById('btn-verify').addEventListener('click', function () {
+    window.location.href = 'email_verified.html';
+  });
+</script>
+</body>
+</html>

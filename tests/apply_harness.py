@@ -13,7 +13,9 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   to `/submit/<name>` is an application sent: it is counted and answered with
   a confirmation page (`body[data-confirmed]`), or with the flow's own answer
   (`FlowServer.answers`: `slow_post` after `SLOW_POST_S`, `server_validation`
-  with the same form marked invalid).
+  with the same form marked invalid, a post back to `postback_emptied.html`
+  with a note above the same form emptied). A post the server refuses
+  (`FlowServer.rejects`) is counted as a send it did not accept.
 - `Sends`: every send of one run, whatever shape it takes: the fixture's own
   marker (a script setting `body[data-submitted]`, reported through an init
   script and a binding), a request the flow names (the GET a submit button
@@ -28,6 +30,7 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   only with the confirmation marker showing, or "submitted (unconfirmed)"
   with a send counted; never `ready_to_submit` after a send (a click that
   dispatched and then timed out stays clicked: a review would send twice);
+  never "the submit did not go through" after a send the site accepted;
   no click whose live text reads as a submit outside the gate; nothing
   clicked, typed or ticked inside a bot-check provider's frame; no fill,
   tick, pick, upload or gate on a `*.linkedin.com` page; no click on an Easy
@@ -79,7 +82,7 @@ NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs t
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
 # one run below what the matrix measures. Later phases raise it to 0.95.
-SUCCESS_FLOOR = 0.88                      # SP3: 108 of 121 suite runs (0.893); SP2: 81 of 99
+SUCCESS_FLOOR = 0.88                      # SP3 fix round 1: 119 of 133 suite runs (0.895)
 # Under the fake judge every flow reaches its end but the known failing ones
 # (`Flow.known`), which the rates leave out.
 FAKE_SUCCESS_FLOOR = 1.0
@@ -273,11 +276,11 @@ CONFIRMATION_HTML = (
     "team will review it and reach out if there is a match.</p></body></html>")
 
 
-SLOW_POST_S = 8.0                   # the slow_post flow's server answers after this long
+SLOW_POST_S = 6.0                   # the slow_post flow's answer: past the 5 s action timeout
 
 
-def _validation_answer() -> str:
-    return (FIXTURES_DIR / "forms" / "server_validation_errors.html").read_text(encoding="utf-8")
+def _page(name: str) -> Callable[[], str]:
+    return lambda: (FIXTURES_DIR / "forms" / name).read_text(encoding="utf-8")
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
@@ -290,11 +293,15 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if length:
             self.rfile.read(length)          # the posted answers are never kept
-        name = self.path.split("?")[0].rstrip("/")
-        if not name.startswith("/submit/"):
+        path = self.path.split("?")[0].rstrip("/")
+        answers = self.server.flow_server.answers
+        if path.startswith("/submit/"):
+            name = path[len("/submit/"):]
+        elif path.startswith("/forms/") and path[len("/forms/"):] in answers:
+            name = path[len("/forms/"):]       # a form that posts back to its own page
+        else:
             self.send_error(404)
             return
-        name = name[len("/submit/"):]
         self.server.flow_server._posted(name)
         delay, answer = self.server.flow_server.answers.get(name, (0.0, None))
         if delay:
@@ -319,7 +326,9 @@ class FlowServer:
         # name -> (seconds before the answer, the page or a function giving it)
         self.answers: dict[str, tuple[float, Any]] = {
             "slow_post": (SLOW_POST_S, None),
-            "server_validation": (0.0, _validation_answer)}
+            "server_validation": (0.0, _page("server_validation_errors.html")),
+            "postback_emptied.html": (0.0, _page("postback_emptied_answer.html"))}
+        self.rejects: set[str] = {"server_validation"}      # posts answered with a refusal
         self._server = None
         self._thread = None
         self.base = ""
@@ -448,6 +457,22 @@ class ModalReadAsForm:
         return out
 
 
+class VerifiedReadAsConfirmation:
+    """A judge that reads an email-verified page as a confirmation at 0.90
+    (the I5 shape: "Your email is verified, thank you")."""
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        out = dict(self.inner.judge(state, questions))
+        text = str(((state or {}).get("page") or {}).get("headline_text") or "")
+        if "page_state" in out and "email is verified" in text:
+            out["page_state"] = jev.Answer(kind="choice", choice="confirmation", confidence=0.90,
+                                           probabilities={"confirmation": 0.90, "other": 0.10})
+        return out
+
+
 # local stand-ins for a bot-check provider's frames (the flows route the
 # provider's URL here; nothing reaches the provider)
 _CHECKBOX_STUB = ("<!doctype html><html><body><div role=\"checkbox\" aria-checked=\"false\">"
@@ -480,6 +505,11 @@ class Flow:
     wrap: Callable[[Any], Any] | None = None    # wraps every judge the flow runs under
     opens_no_page: bool = False     # the run must end before any page opens
     suite_seeds: int | None = None  # the suite runs this many noisy seeds (a slow flow: fewer)
+    # the run ends before the judge reads a page (LinkedIn's job page is
+    # decided by its handler alone): when the fake run asked the judge
+    # nothing, every noisy seed's run is that run, and the suite copies it
+    # (`judge_requests` 0 is checked); the script runs every seed
+    judge_free: bool = False
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
@@ -564,12 +594,15 @@ FLOWS: tuple[Flow, ...] = (
     # --- SP2: the entry (Easy Apply, the LinkedIn job page, settling, consent) ---
     Flow("linkedin_easy_apply", _LINKEDIN_JOB, True, "needs_human", _EASY_APPLY,
          routes=linkedin_job_routes("linkedin_easy_apply.html", "lever_single.html"),
+         judge_free=True,
          covers="a job page whose only Apply is Easy Apply (its aria-label) stops unclicked"),
     Flow("linkedin_easy_apply_modal", _LINKEDIN_JOB, True, "needs_human", _EASY_APPLY,
          routes=linkedin_job_routes("linkedin_easy_apply_modal.html", "lever_single.html"),
+         judge_free=True,
          covers="LinkedIn's own form open in a modal: nothing filled, the run stops"),
     Flow("linkedin_easy_apply_flag", _LINKEDIN_JOB, True, "needs_human", _EASY_APPLY,
          routes=linkedin_job_routes(), easy_apply=True, opens_no_page=True,
+         judge_free=True,
          covers="an Easy Apply queue entry ends before any page opens"),
     Flow("linkedin_posting_late", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
@@ -588,12 +621,15 @@ FLOWS: tuple[Flow, ...] = (
                 "0.30 still reaches the company's form"),
     Flow("linkedin_applied", _LINKEDIN_JOB, True, "needs_human", r"^already applied: ",
          routes=linkedin_job_routes("linkedin_applied.html", "lever_single.html"),
+         judge_free=True,
          covers="a job LinkedIn shows as applied is not applied to again"),
     Flow("linkedin_closed", _LINKEDIN_JOB, True, "needs_human", r"^closed: ",
          routes=linkedin_job_routes("linkedin_closed.html", "lever_single.html"),
+         judge_free=True,
          covers="a posting that no longer accepts applications"),
     Flow("linkedin_signed_out", _LINKEDIN_JOB, True, "needs_human", r"^LinkedIn is signed out",
          routes=linkedin_job_routes("linkedin_signed_out.html", "lever_single.html"),
+         judge_free=True,
          covers="a sign-in dialog and no offsite Apply: the user signs in to LinkedIn"),
     Flow("linkedin_safety_interstitial", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
@@ -658,9 +694,28 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", wrap=ModalReadAsForm,
          covers="Workday's start dialog read as a form: Apply Manually opens it, never the gate"),
     Flow("recaptcha_checkbox", "recaptcha_checkbox.html", True, "needs_human",
-         r"(?i)captcha", confirm="#received:visible",
+         r"^a CAPTCHA check is on the form before the submit", confirm="#received:visible",
          routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
-         covers="a 78 px reCAPTCHA checkbox with an empty token: the person ticks it"),
+         covers="a 78 px reCAPTCHA checkbox with an empty token: the form is filled, then the "
+                "person ticks it"),
+    # --- SP3 review round 1 ---
+    Flow("recaptcha_checkbox_park", "recaptcha_checkbox.html", False, "ready_to_submit",
+         r"^auto_apply_submit is off; a CAPTCHA checkbox is on the form",
+         confirm="#received:visible", gate="#btn-submit:visible",
+         routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
+         covers="park mode fills the form and stops at the gate; the person ticks the box"),
+    Flow("postback_emptied", "postback_emptied.html", True, "needs_human",
+         r"^check whether the application went through: a request left",
+         covers="the post back shows a note above the same form emptied: the send may have "
+                "gone, never read as not sent"),
+    Flow("ajax_reset", "ajax_reset.html", True, "needs_human",
+         r"^check whether the application went through: a request left",
+         covers="a fetch send, then the form reset: never read as not sent"),
+    Flow("email_verify_thanks", "verify_email_code.html", True, "needs_human",
+         r"^(check whether the application went through: after the emailed code"
+         r"|a confirmation page before any submit)",
+         inbox=True, ats={"system": "greenhouse"}, wrap=VerifiedReadAsConfirmation,
+         covers="a sign-up's email Verify, then a thanks for it: never read as submitted"),
 )
 
 
@@ -688,6 +743,7 @@ class Send:
     kind: str           # "dom" | "request" | "post"
     detail: str
     in_gate: bool
+    accepted: bool = True       # the site took it (a refused post is still a send)
 
 
 class Sends:
@@ -711,7 +767,7 @@ class Sends:
             context.route(glob, self._request)
         if server is not None:
             server.on_post = lambda name: self.events.append(
-                Send("post", f"/submit/{name}", self._in_gate()))
+                Send("post", f"/submit/{name}", self._in_gate(), name not in server.rejects))
 
     def uninstall(self, server: FlowServer | None = None) -> None:
         if server is not None:
@@ -1094,6 +1150,9 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
     if status == "ready_to_submit" and sends.count:
         breaks.append(f"READY-AFTER-SEND: ready_to_submit ({reason}) after {sends.count} "
                       "send(s): a review would send it again")
+    if reason.startswith(apply_run.NOT_SENT_REASON) and any(s.accepted for s in sends.events):
+        breaks.append(f"NOT-SENT-AFTER-SEND: {reason[:80]!r} after a send the site accepted: "
+                      "a retry would send it twice")
     for a in recorder.actions:
         if a.kind == "click" and not a.in_gate \
                 and submit_worded(a.text, park_mode=recorder.park_mode,
@@ -1143,7 +1202,7 @@ def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends) -> None:
 # job already applied to, a closed posting, and LinkedIn signed out (dead ends
 # the run cannot pass).
 _POLICY_PARKS = tuple(re.compile(p) for p in (
-    r"^auto_apply_submit is off$", r"^required field without an answer",
+    r"^auto_apply_submit is off(; |$)", r"^required field without an answer",
     r"^asks for .*which auto-apply never fills", r"^payment requested",
     r"(?i)captcha|bot check", r"^error or dead page",
     "^" + re.escape(apply_run.CLOSED_REASON), "^" + re.escape(apply_run.TAB_CLOSED_REASON),
@@ -1177,6 +1236,7 @@ class RunResult:
     trace: str = ""
     policy: bool | None = None      # `policy_park` of the end
     actions: list[Action] = field(default_factory=list, repr=False)  # what the run did
+    judge_requests: int = 0         # the requests the judge got
 
 
 def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True) -> list[tuple[str, Any]]:
@@ -1322,7 +1382,8 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
     return RunResult(f.name, judge_name, out.status, out.reason,
                      f.reached(out.status, out.reason, recorder.final), breaks, sends.count,
                      out.pages, seconds, str(traces[-1]) if traces else "",
-                     policy_park(out.status, out.reason), list(recorder.actions))
+                     policy_park(out.status, out.reason), list(recorder.actions),
+                     len(recorder.judge_requests))
 
 
 def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, browser,

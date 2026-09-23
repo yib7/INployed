@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review your details - Northwind Traders</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  #questions, #received { display: none; }
+</style>
+</head>
+<body>
+<!-- A wizard's middle step that reads like a review (READ-06): a summary of
+     what the resume filled in, with Next, not the final submit. The real
+     last step comes after it. -->
+<h1>Review your details</h1>
+<div id="summary">
+  <p>Please review the details below before you go on to the questions.</p>
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <button type="button" id="btn-back">Back</button>
+  <button type="button" id="btn-next">Next</button>
+</div>
+
+<div id="questions">
+  <h2>A few questions</h2>
+  <div class="field"><label for="phone">Phone *</label><input id="phone" name="phone" type="tel" required></div>
+  <button type="button" id="btn-submit">Submit application</button>
+</div>
+
+<section id="received">
+  <h2>Application received</h2>
+  <p>Thank you for applying. We will be in touch.</p>
+</section>
+
+<script>
+  function show(id) {
+    ['summary', 'questions', 'received'].forEach(function (k) {
+      document.getElementById(k).style.display = (k === id) ? 'block' : 'none';
+    });
+  }
+  document.getElementById('btn-next').addEventListener('click', function () {
+    if (!document.getElementById('first_name').value || !document.getElementById('email').value) { return; }
+    document.querySelector('h1').textContent = 'Northwind Traders application';
+    show('questions');
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    show('received');
+  });
+</script>
+</body>
+</html>

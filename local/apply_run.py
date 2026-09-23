@@ -1546,6 +1546,17 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
     return "stuck", None, why
 
 
+def review_route(digest: apply_form.FormDigest,
+                 plan: FillPlan) -> tuple[str, tuple[int, float] | None, str]:
+    """A page read as a review's way on (READ-06), as `form_route` gives it:
+    with no submit, its confident advance is clicked (a wizard's middle step
+    read as the review carries only Next); a submit, a submit-shaped advance
+    and a final-shaped one ("Confirm") go to the gate in either mode, since
+    on a review a last-step word is the send; "stuck" when there is
+    neither."""
+    return form_route(digest, plan, park_mode=True)
+
+
 def _entry_shaped(b: apply_form.Button | None) -> bool:
     """A button that may be clicked as an Apply entry: no form's own button
     (`Button.in_form`) and no Apply that sends a stored profile."""
@@ -1668,9 +1679,12 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
             return lead + f"fill the page, then the submit gate with {named(button[0])}"
         return lead + "fill the page, then park: no way forward on this page"
     if state == "review_page":
-        submit = plan.buttons.get("submit")
-        return lead + ("fill the page, then the submit gate with " + named(submit[0])
-                       if submit else "park: no submit button")
+        step, button, _ = review_route(digest, plan)
+        if step == "advance":
+            return lead + f"fill the page, then click the advance {named(button[0])}"
+        if step == "gate":
+            return lead + f"fill the page, then the submit gate with {named(button[0])}"
+        return lead + "fill the page, then park: no submit button"
     if state in ("login_wall", "signup_form"):
         return lead + ("the account step (the master password on the application's site)"
                        if _credential_form(digest) else "the account step")
@@ -3423,13 +3437,27 @@ class _JobRun:
 
     def _review_page(self, digest: apply_form.FormDigest, answers: dict,
                      plan: FillPlan, rec: dict) -> None:
-        """Fill and verify editable review controls before the submit gate.
-        Never on LinkedIn (`_no_form_on_linkedin`)."""
+        """Fill and verify editable review controls, then the review's way on
+        (`review_route`, READ-06): a confident advance with no submit is
+        clicked (a wizard's middle step read as the review), anything else
+        goes to the submit gate. Never on LinkedIn (`_no_form_on_linkedin`)."""
         self._no_form_on_linkedin("the review step")
         plan = self._complete_option_plan(digest, answers, plan, rec)
         with self._password_guard() as guard:
             verification = self._fill_and_verify(digest, plan, rec)
             self._fill_passwords(digest, plan, rec, guard)
+            step, button, why = review_route(digest, plan)
+            if step == "advance":
+                self._decide("review_advance", "read as a review page with a confident advance "
+                                               "and no submit button: a wizard step, its "
+                                               "advance is clicked",
+                             button=button[0], text=_button_text(digest, button[0]))
+                self._click(digest, button[0], "advance", rec, conf=button[1])
+                return
+            if step == "gate" and why:
+                self._decide("to_gate", why, button=button[0],
+                             text=_button_text(digest, button[0]))
+                plan.buttons["submit"] = button
             self._submit_gate(digest, plan, verification, rec)
 
     @contextmanager

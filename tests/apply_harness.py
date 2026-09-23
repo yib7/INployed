@@ -726,6 +726,11 @@ FLOWS: tuple[Flow, ...] = (
          r"|a confirmation page before any submit)",
          inbox=True, ats={"system": "greenhouse"}, wrap=VerifiedReadAsConfirmation,
          covers="a sign-up's email Verify, then a thanks for it: never read as submitted"),
+    # --- SP4: page reading that holds up ---
+    Flow("review_with_next", "review_with_next.html", False, "ready_to_submit", _PARKED,
+         confirm="#received:visible", gate="#btn-submit:visible",
+         covers="a wizard step that reads as a review with only Next: the Next is clicked, the "
+                "real last step reaches the gate"),
 )
 
 

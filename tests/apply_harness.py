@@ -11,7 +11,9 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   shows the park-mode run stopped at the submit, and how a send shows.
 - `FlowServer`: `tests/fixtures/` over http on a free localhost port. A POST
   to `/submit/<name>` is an application sent: it is counted and answered with
-  a confirmation page (`body[data-confirmed]`).
+  a confirmation page (`body[data-confirmed]`), or with the flow's own answer
+  (`FlowServer.answers`: `slow_post` after `SLOW_POST_S`, `server_validation`
+  with the same form marked invalid).
 - `Sends`: every send of one run, whatever shape it takes: the fixture's own
   marker (a script setting `body[data-submitted]`, reported through an init
   script and a binding), a request the flow names (the GET a submit button
@@ -24,12 +26,14 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
 - `invariant_breaks(outcome, recorder, sends)` / `assert_invariants(...)`:
   at most one send; park mode never sends; only the gate sends; `submitted`
   only with the confirmation marker showing, or "submitted (unconfirmed)"
-  with a send counted; no click whose live text reads as a submit outside the
-  gate; no fill, tick, pick, upload or gate on a `*.linkedin.com` page; no
-  click on an Easy Apply control (its text or aria-label); the master
-  password nowhere in the record, the trace, the queue or the logs. A flow
-  that must end before any page opens (`Flow.opens_no_page`) is checked for
-  that too.
+  with a send counted; never `ready_to_submit` after a send (a click that
+  dispatched and then timed out stays clicked: a review would send twice);
+  no click whose live text reads as a submit outside the gate; nothing
+  clicked, typed or ticked inside a bot-check provider's frame; no fill,
+  tick, pick, upload or gate on a `*.linkedin.com` page; no click on an Easy
+  Apply control (its text or aria-label); the master password nowhere in the
+  record, the trace, the queue or the logs. A flow that must end before any
+  page opens (`Flow.opens_no_page`) is checked for that too.
 - `run_flow` / `run_matrix` / `summary`: one flow under one judge, the whole
   registry under many, and the table with success rates.
 
@@ -75,7 +79,7 @@ NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs t
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
 # one run below what the matrix measures. Later phases raise it to 0.95.
-SUCCESS_FLOOR = 0.80                      # SP2 fix round 2: 78 of 96 suite runs (0.812); SP1: 30 of 45
+SUCCESS_FLOOR = 0.88                      # SP3: 108 of 121 suite runs (0.893); SP2: 81 of 99
 # Under the fake judge every flow reaches its end but the known failing ones
 # (`Flow.known`), which the rates leave out.
 FAKE_SUCCESS_FLOOR = 1.0
@@ -236,6 +240,11 @@ FAST_TIMING = {
     ("apply_run", "LINKEDIN_POLL_MS"): 100,
     ("apply_run", "LINKEDIN_EASY_RECHECK_S"): 1.0,
     ("apply_run", "CONSENT_WAIT_S"): 1.5,
+    # the post-submit read: the slow_post flow's answer comes 8 s after its
+    # click, inside the click's own waits and this one
+    ("apply_run", "POST_SUBMIT_WAIT_S"): 10.0,
+    ("apply_run", "POST_SUBMIT_POLL_S"): 0.2,
+    ("apply_run", "POST_SUBMIT_QUIET_S"): 0.3,
 }
 
 
@@ -264,6 +273,13 @@ CONFIRMATION_HTML = (
     "team will review it and reach out if there is a match.</p></body></html>")
 
 
+SLOW_POST_S = 8.0                   # the slow_post flow's server answers after this long
+
+
+def _validation_answer() -> str:
+    return (FIXTURES_DIR / "forms" / "server_validation_errors.html").read_text(encoding="utf-8")
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     server_version = "FlowServer"
 
@@ -278,8 +294,12 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         if not name.startswith("/submit/"):
             self.send_error(404)
             return
-        self.server.flow_server._posted(name[len("/submit/"):])
-        body = CONFIRMATION_HTML.encode("utf-8")
+        name = name[len("/submit/"):]
+        self.server.flow_server._posted(name)
+        delay, answer = self.server.flow_server.answers.get(name, (0.0, None))
+        if delay:
+            time.sleep(delay)                # counted on arrival, answered late
+        body = (answer() if callable(answer) else answer or CONFIRMATION_HTML).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -289,12 +309,17 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
 class FlowServer:
     """`tests/fixtures/` over http; `POST /submit/<name>` counts a send and
-    answers with `CONFIRMATION_HTML`."""
+    answers with `CONFIRMATION_HTML`, or with `answers[name]` (a delay and a
+    page)."""
 
     def __init__(self, root: Path = FIXTURES_DIR):
         self.root = Path(root)
         self.posts: dict[str, int] = {}
         self.on_post: Callable[[str], None] | None = None
+        # name -> (seconds before the answer, the page or a function giving it)
+        self.answers: dict[str, tuple[float, Any]] = {
+            "slow_post": (SLOW_POST_S, None),
+            "server_validation": (0.0, _validation_answer)}
         self._server = None
         self._thread = None
         self.base = ""
@@ -397,6 +422,40 @@ class LinkedInReadAsOther:
         return out
 
 
+class ModalReadAsForm:
+    """A judge that reads Workday's start dialog (a page with an "Apply
+    Manually" button) as an application form at 0.90 and "Apply Manually" as
+    the advance at 0.90 (the audit's INV-01 shape), and passes the rest to
+    the judge it wraps."""
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        out = dict(self.inner.judge(state, questions))
+        buttons = (state or {}).get("buttons") or []
+        if "page_state" not in out or not any(b.get("text") == "Apply Manually"
+                                              for b in buttons):
+            return out
+        out["page_state"] = jev.Answer(
+            kind="choice", choice="application_form", confidence=0.90,
+            probabilities={"application_form": 0.90, "job_posting": 0.10})
+        for b in buttons:
+            qid = f"button_{b['n']}_role"
+            if b.get("text") == "Apply Manually" and qid in out:
+                out[qid] = jev.Answer(kind="choice", choice="advance", confidence=0.90,
+                                      probabilities={"advance": 0.90, "apply_entry": 0.10})
+        return out
+
+
+# local stand-ins for a bot-check provider's frames (the flows route the
+# provider's URL here; nothing reaches the provider)
+_CHECKBOX_STUB = ("<!doctype html><html><body><div role=\"checkbox\" aria-checked=\"false\">"
+                  "I'm not a robot</div></body></html>")
+_CHALLENGE_STUB = ("<!doctype html><html><body><p>Select every image with a bus</p>"
+                   "<button type=\"button\">Verify</button></body></html>")
+
+
 @dataclass(frozen=True)
 class Flow:
     """One flow of the registry (see the module docstring)."""
@@ -420,6 +479,7 @@ class Flow:
     easy_apply: bool = False        # the queue entry's `is_easy_apply`
     wrap: Callable[[Any], Any] | None = None    # wraps every judge the flow runs under
     opens_no_page: bool = False     # the run must end before any page opens
+    suite_seeds: int | None = None  # the suite runs this many noisy seeds (a slow flow: fewer)
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
@@ -471,9 +531,7 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#received:visible", routes=_linkedin_routes,
          covers="LinkedIn's job page, its Apply link through the redirector, the form"),
     Flow("greenhouse_embed", "greenhouse_embed.html", True, "submitted", _SUBMITTED,
-         confirm="#thanks:visible", covers="a company page embedding the form in an iframe",
-         known="SP3: after the in-frame submit the embed's hidden file boxes still read as a "
-               "form, so the confirmation is recorded submitted (unconfirmed)"),
+         confirm="#thanks:visible", covers="a company page embedding the form in an iframe"),
     Flow("lever_single_park", "lever_single.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a one-page form in park mode"),
@@ -578,6 +636,31 @@ FLOWS: tuple[Flow, ...] = (
                                                     "lever_single.html")(base),
                               "https://careers.contoso.example/**": _OTHER_JOB},
          covers="a top card rendered late beside another job's card with a company-site Apply"),
+    # --- SP3: submit truth and the gate's invariants ---
+    Flow("native_required_submit", "native_required_submit.html", True, "needs_human",
+         r"^required field without an answer: Cover letter", confirm="#received:visible",
+         covers="a hidden required box behind a rich-text editor: the gate reads the form's "
+                "validity and stops before the click"),
+    Flow("server_validation", "server_validation.html", True, "needs_human",
+         r"^the submit did not go through: validation errors", confirm="#received:visible",
+         covers="the server answers the post with the same form marked invalid: nothing sent"),
+    Flow("submit_then_challenge", "submit_then_challenge.html", True, "needs_human",
+         r"^a CAPTCHA challenge appeared after the submit click", confirm="#received:visible",
+         routes=lambda base: {"https://hcaptcha.com/**": _CHALLENGE_STUB},
+         covers="the submit raises a bot-check challenge: the person solves it"),
+    Flow("slow_post", "slow_post.html", True, "submitted", _SUBMITTED,
+         confirm="body[data-confirmed]", suite_seeds=1,
+         covers="a form post answered after 8 s: the click stays clicked, the answer is read"),
+    Flow("posting_with_alert_box", "posting_with_alert_box.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible",
+         covers="a job-alert box beside the posting's Apply: the Apply is the entry"),
+    Flow("workday_start_modal", "workday_start_modal.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible", wrap=ModalReadAsForm,
+         covers="Workday's start dialog read as a form: Apply Manually opens it, never the gate"),
+    Flow("recaptcha_checkbox", "recaptcha_checkbox.html", True, "needs_human",
+         r"(?i)captcha", confirm="#received:visible",
+         routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
+         covers="a 78 px reCAPTCHA checkbox with an empty token: the person ticks it"),
 )
 
 
@@ -684,6 +767,7 @@ _TARGET_ACTIONS = {"click": "click", "dblclick": "click", "tap": "click", "fill"
                    "dispatch_event": "event"}
 _KEYBOARD_ACTIONS = {"press": "press", "down": "press", "type": "fill", "insert_text": "fill"}
 _ON_LINKEDIN_FORBIDDEN = ("fill", "tick", "pick", "upload", "gate")
+_CAPTCHA_TOUCH = ("click", "fill", "tick", "pick", "press", "event")   # never in a bot check
 
 
 def submit_worded(text: str, *, park_mode: bool, account_step: bool = False) -> bool:
@@ -1007,6 +1091,9 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
         if not ("unconfirmed" in reason and sends.count):
             breaks.append(f"FALSE-SUBMITTED: submitted without the confirmation marker "
                           f"({reason})")
+    if status == "ready_to_submit" and sends.count:
+        breaks.append(f"READY-AFTER-SEND: ready_to_submit ({reason}) after {sends.count} "
+                      "send(s): a review would send it again")
     for a in recorder.actions:
         if a.kind == "click" and not a.in_gate \
                 and submit_worded(a.text, park_mode=recorder.park_mode,
@@ -1024,6 +1111,8 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
                           f"{a.kind} on {a.host}")
         if a.kind == "click" and _EASY_APPLY_WORDS.search(f"{a.text} {a.aria}"):
             breaks.append(f"EASY-APPLY-CLICK: clicked {a.text or a.aria!r} on {a.host}")
+        if a.kind in _CAPTCHA_TOUCH and apply_run._is_captcha_url(a.url):
+            breaks.append(f"CAPTCHA-TOUCH: a {a.kind} inside the bot check on {a.host}")
         if a.kind == "fill" and a.type == "password" and recorder.app_hosts \
                 and a.host not in recorder.app_hosts:
             breaks.append(f"PASSWORD-OFF-SITE: a password box filled on {a.host}")

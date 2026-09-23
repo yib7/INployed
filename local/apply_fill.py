@@ -424,22 +424,77 @@ def settle(page, timeout_s: float = 20) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class ClickResult:
-    """`clicked`: the click itself landed (the element was found and Playwright
-    reported no error). `changed`: a navigation or a DOM change followed. A
-    landed click on a quiet page is `(True, False)`; one that never landed is
-    `(False, False)`. Truthiness is `changed`, the shape `click_button` returns."""
+    """`clicked`: the click itself landed (the element was found and the
+    click was dispatched to it; a click that dispatched and then timed out
+    waiting for the navigation it started counts, TERM-02). `changed`: a
+    navigation or a DOM change followed. A landed click on a quiet page is
+    `(True, False)`; one that never landed is `(False, False)`. `refused`:
+    the caller's live check (`click`'s `check`) stopped the click, and why;
+    nothing was clicked. `late`: the error a dispatched click raised
+    afterwards. Truthiness is `changed`, the shape `click_button` returns."""
     clicked: bool
     changed: bool
+    refused: str = ""
+    late: str = ""
 
     def __bool__(self) -> bool:
         return self.changed
 
 
-def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> ClickResult:
+def _norm(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+# A capture listener on the element's window notes that a click reached the
+# element (or a child of it), so a click whose navigation wait timed out is
+# known to have been dispatched.
+_ARM_JS = """el => {
+  const w = el.ownerDocument.defaultView;
+  if (w.__applyClickMark) w.removeEventListener('click', w.__applyClickMark, true);
+  w.__applyClickSeen = false;
+  w.__applyClickMark = (e) => { if (e.target === el || el.contains(e.target)) w.__applyClickSeen = true; };
+  w.addEventListener('click', w.__applyClickMark, true);
+  return true;
+}"""
+_SEEN_JS = "() => window.__applyClickSeen === true"
+_UNSEEN_JS = "() => { window.__applyClickSeen = false; }"
+
+
+def _dispatched(frame, url0: str, page, requests: list, error: BaseException) -> bool:
+    """Did a click that raised reach its element first? Its mark in the
+    element's window, a request the page made since, a new URL, or
+    Playwright's own words about the navigation it was waiting for."""
+    try:
+        if frame is not None and frame.evaluate(_SEEN_JS):
+            return True
+    except Exception:       # noqa: BLE001  (the document is mid-navigation, or gone)
+        pass
+    if requests:
+        return True
+    try:
+        if str(page.url) != url0:
+            return True
+    except Exception:       # noqa: BLE001
+        pass
+    text = str(error).lower()
+    return "navigation" in text or "navigating" in text
+
+
+def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
+          check: Callable[[str, dict], str] | None = None) -> ClickResult:
     """Click button `n` of `digest` and wait, up to `timeout_s`, for a
     navigation or a DOM change; the `ClickResult` says whether the click
     landed and whether anything changed (settled through `_settle` when it
-    did)."""
+    did).
+
+    `check(expected_text, live)` reads the live element just before the
+    click (`apply_form.live_text`: its text, aria-label, type) and returns
+    "" to go on or the reason to refuse (INV-04). A control whose live text
+    differs from the digest's is found again by that text in its frame
+    (`apply_form.find_by_text`) and checked again; when no single control
+    reads it, the click is refused. A click that raised after it was
+    dispatched (a form post whose navigation outlived the action timeout)
+    has landed: `late` carries the error."""
     button = next((b for b in digest.buttons if b.n == n), None)
     if button is None:
         log.info("apply_fill: no button %s in the digest", n)
@@ -453,18 +508,67 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20)
         log.info("apply_fill: button %s (%s) unreachable: %s", n, button.locator[1],
                  type(e).__name__)
         return ClickResult(clicked=False, changed=False)
+    if check is not None:
+        live = apply_form.live_text(loc)
+        if live:
+            why = check(button.text, live)
+            if not why and _norm(live.get("text")) != _norm(button.text):
+                found = apply_form.find_by_text(page, button.locator[0], button.text)
+                if len(found) == 1:
+                    loc = apply_form.resolve(page, (button.locator[0], found[0]))
+                    live = apply_form.live_text(loc)
+                    why = check(button.text, live) if live else ""
+                    log.info("apply_fill: button %s (%r) moved; found again at %s", n,
+                             button.text, found[0])
+                else:
+                    why = (f"the control there now reads {_norm(live.get('text'))[:60]!r}, and "
+                           f"{len(found)} controls read {_norm(button.text)[:60]!r}")
+            if why:
+                log.info("apply_fill: click on %r refused: %s", button.text, why)
+                return ClickResult(clicked=False, changed=False, refused=why)
     landed: list[bool] = []
+    late: list[str] = []
+    try:
+        frame = apply_form.frames(page)[int(button.locator[0])]
+    except Exception:       # noqa: BLE001  (a page double, a frame gone: the click finds out)
+        frame = None
+    requests: list[str] = []
+
+    def _on_request(request) -> None:
+        requests.append(str(getattr(request, "method", "")))
 
     def _act() -> None:
-        loc.first.click(timeout=ACTION_TIMEOUT_MS)
+        try:
+            if frame is not None:
+                frame.evaluate(_UNSEEN_JS)      # an earlier click's mark never counts
+            loc.first.evaluate(_ARM_JS, timeout=ACTION_TIMEOUT_MS)
+        except Exception:       # noqa: BLE001  (the click finds out)
+            pass
+        url0 = str(page.url)
+        page.on("request", _on_request)
+        try:
+            loc.first.click(timeout=ACTION_TIMEOUT_MS)
+        except Exception as e:      # noqa: BLE001  (Playwright's TimeoutError, among others)
+            if _dispatched(frame, url0, page, requests, e):
+                late.append(type(e).__name__)
+                landed.append(True)
+                log.info("apply_fill: the click on %r was dispatched, then %s", button.text,
+                         type(e).__name__)
+                return
+            raise
+        finally:
+            try:
+                page.remove_listener("request", _on_request)
+            except Exception:       # noqa: BLE001  (a page double)
+                pass
         landed.append(True)
 
     try:
         changed = _await_change(page, _act, timeout_s)
     except Exception as e:      # noqa: BLE001
         log.info("apply_fill: click on %r failed: %s", button.text, type(e).__name__)
-        return ClickResult(clicked=bool(landed), changed=False)
-    return ClickResult(clicked=True, changed=changed)
+        return ClickResult(clicked=bool(landed), changed=False, late=late[0] if late else "")
+    return ClickResult(clicked=True, changed=changed, late=late[0] if late else "")
 
 
 def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:

@@ -1833,18 +1833,22 @@ def test_a_code_gate_before_any_submit_never_clicks_a_button_that_sends(
     assert run.page.locator("body[data-submitted]").count() == 0
 
 
+@pytest.mark.parametrize("sends, status", [(0.9, "ready_to_submit"), (0.1, "needs_human")])
 def test_a_posting_read_after_a_filled_form_goes_to_the_submit_gate(
-        context, job_folder, catalog_builder, tmp_path):
+        context, job_folder, catalog_builder, tmp_path, sends, status):
+    # SP3 (INV-01): its Apply is the submit only with the judge's word that
+    # it sends the finished application (`button_{n}_sends`)
     run = _unit_run(context, tmp_path, job_folder, """
       <body><h1>Your application</h1>
         <button id="go" onclick="document.body.dataset.submitted = 1">Apply</button></body>""",
                     auto_apply_submit=False)
     run.form_filled = True
+    run._last_answers = {"button_0_sends": jev.Answer(kind="noul", noul=sends)}
     digest = apply_form.extract(run.page)
     plan = FillPlan(buttons={"apply_entry": (0, 0.95)})
     with pytest.raises(apply_run._Parked) as parked:
         run._job_posting(digest, {}, plan, run.pages[-1])
-    assert parked.value.status == "ready_to_submit"
+    assert parked.value.status == status, parked.value.reason
     assert run.page.locator("body[data-submitted]").count() == 0
 
 

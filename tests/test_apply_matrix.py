@@ -15,6 +15,7 @@
 
 Headless Chromium through the module-scoped test browser; the judge is the
 fake or the noisy one; no network but the local server and routed hosts."""
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -220,7 +221,9 @@ def test_a_clean_run_breaks_nothing():
     ("linkedin_upload", "LINKEDIN-UPLOAD"),
     ("linkedin_gate", "LINKEDIN-GATE"),
     ("password_in_record", "PASSWORD-LEAK"),
-    ("password_in_log", "PASSWORD-LEAK")])
+    ("password_in_log", "PASSWORD-LEAK"),
+    ("ready_after_send", "READY-AFTER-SEND"),
+    ("captcha_touch", "CAPTCHA-TOUCH")])
 def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code):
     park = plant in ("park_send",)
     rec, sends = _clean(park=park)
@@ -255,6 +258,13 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
         rec.files = [tmp_path]
     elif plant == "password_in_log":
         rec.logs.append(f"typed {h.PASSWORD}")
+    elif plant == "ready_after_send":
+        # a click that dispatched, then timed out, read as never landed
+        sends.events.append(h.Send("post", "/submit/slow_post", True))
+        out = _Out("ready_to_submit", "submit did not register")
+    elif plant == "captcha_touch":
+        rec.actions.append(h.Action("click", "https://www.google.com/recaptcha/api2/anchor?k=x",
+                                    text="I'm not a robot"))
     breaks = h.invariant_breaks(out, rec, sends)
     assert code in _codes(breaks), breaks
     with pytest.raises(AssertionError, match=code):
@@ -300,7 +310,13 @@ class _FormAsConfirmation(jev.FakeJev):
 
 
 def test_a_confident_confirmation_misread_before_any_submit_is_caught(
-        _browser, flow_server, tmp_path):
+        _browser, flow_server, tmp_path, monkeypatch):
+    # SP3: the loop reads a confirmation before any submit as the form it
+    # contradicts (tests/test_apply_submit.py); a loop that took it for the
+    # end again would be caught
+    monkeypatch.setattr(apply_run, "confirmation_step",
+                        lambda digest, answers, conf, submit_clicked: (
+                            "submitted", "confirmation page", conf))
     r = h.run_flow(h.flow("ashby_wizard"), _FormAsConfirmation(), "misread", browser=_browser,
                    server=flow_server, workdir=tmp_path)
     assert (r.status, r.reason) == ("submitted", "confirmation page"), r
@@ -316,7 +332,9 @@ _RESULTS: dict[str, list] = {}
 def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
         _browser, flow_server, tmp_path, flow_name):
     f = h.flow(flow_name)
-    results = h.run_matrix([f], h.judges(h.SUITE_SEEDS), browser=_browser,
+    # a slow flow (an 8 s server answer) runs fewer seeds here; the script runs twenty
+    seeds = h.SUITE_SEEDS[:f.suite_seeds] if f.suite_seeds is not None else h.SUITE_SEEDS
+    results = h.run_matrix([f], h.judges(seeds), browser=_browser,
                            server=flow_server, workdir=tmp_path)
     _RESULTS[flow_name] = results
     table = h.summary(results)
@@ -345,10 +363,12 @@ def test_the_success_floors_over_the_whole_registry():
 
 # --- M5: a known failing flow is reported, and kept out of the floors ------------------------------
 
-def test_a_known_flow_is_reported_and_left_out_of_the_floors():
-    known = [f for f in h.FLOWS if f.known]
-    assert [f.name for f in known] == ["greenhouse_embed"]
-    assert known[0].known.startswith("SP3")
+def test_a_known_flow_is_reported_and_left_out_of_the_floors(monkeypatch):
+    # SP3 fixed the last known flow (greenhouse_embed); the registry has none
+    assert [f.name for f in h.FLOWS if f.known] == []
+    flows = tuple(dataclasses.replace(f, known="SP3: planted") if f.name == "greenhouse_embed"
+                  else f for f in h.FLOWS)
+    monkeypatch.setattr(h, "FLOWS", flows)
     rows = [h.RunResult("greenhouse_embed", "fake", "submitted", "x", False, [], 1, 2, 0.1),
             h.RunResult("ashby_wizard", "fake", "submitted", "confirmation page", True, [], 1,
                         4, 0.1),

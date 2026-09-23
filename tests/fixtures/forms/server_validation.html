@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solutions Analyst - Litware</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+</style>
+</head>
+<body>
+<h1>Solutions Analyst</h1>
+<p>Litware, Chicago, IL</p>
+<!-- The server checks the answers: this one answers the post with the same
+     form, its email marked invalid (flow server: /submit/server_validation). -->
+<form id="application" method="post" action="/submit/server_validation">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="tel"></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+</body>
+</html>

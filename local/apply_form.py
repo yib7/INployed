@@ -72,11 +72,16 @@ def is_password_field(type_: str, id_or_name: str = "", label: str = "",
 @dataclass
 class Button:
     """One clickable control. `kind_hint` comes from the DOM (`submit`,
-    `button`, `link`, ...) and is only a hint; the judge decides the role."""
+    `button`, `link`, ...) and is only a hint; the judge decides the role.
+    `in_form`: the button's form holds a control a person fills (an input
+    other than hidden or a button, a select, a textarea, an editable box, a
+    custom control): an Apply there is the form's own button, never a
+    posting's entry (INV-03)."""
     n: int
     locator: tuple[int, str]
     text: str
     kind_hint: str = ""
+    in_form: bool = False
 
 
 @dataclass
@@ -103,7 +108,8 @@ class FormDigest:
                   for f in (raw.get("fields") or [])]
         buttons = [Button(n=int(b["n"]), locator=_locator(b.get("locator")),
                           text=str(b.get("text", "")),
-                          kind_hint=str(b.get("kind_hint", "") or ""))
+                          kind_hint=str(b.get("kind_hint", "") or ""),
+                          in_form=bool(b.get("in_form", False)))
                    for b in (raw.get("buttons") or [])]
         return cls(url_host=str(raw.get("url_host", "")), title=str(raw.get("title", "")),
                    text=str(raw.get("text", "")), fields=fields, buttons=buttons)
@@ -124,7 +130,10 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            textarea, [role=combobox], [role=listbox]; radios collapse into one
 #            entry per name group; a file input is kept even when hidden because
 #            set_input_files works on it and ATS pages hide it behind a styled
-#            button; an input inside a [role=combobox] is part of that widget.
+#            button, while its form (or, outside a form, a box within three
+#            levels above it) shows: a form hidden after its send (Greenhouse's
+#            embed shows its thanks in place) leaves no field behind; an input
+#            inside a [role=combobox] is part of that widget.
 #   locator  #id when the id is a plain CSS identifier and unique, else
 #            [name="..."] when unique, else a body-rooted nth-of-type path.
 #   label    label[for], aria-label, aria-labelledby, an enclosing label (minus
@@ -141,6 +150,11 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            DOM (apply_fill.open_listbox_options reads it live otherwise).
 #   buttons  button, [role=button], input[type=submit|button], a.btn,
 #            a[class*=button]; text from innerText, value, aria-label, title.
+#            `kind_hint` is `submit` for a submit control or a send word, never
+#            for "Apply with LinkedIn / Indeed", "Submit a general
+#            application", "Cancel", "Apply later" or "Save for later" (study
+#            G4); `in_form` when the button's form holds a control a person
+#            fills (`Button.in_form`).
 #            A plain link joins them when its text or aria-label says "apply"
 #            and its text is short: LinkedIn's Apply entry is
 #            <a aria-label="Apply on company website">Apply</a> under hashed
@@ -346,6 +360,21 @@ _EXTRACT_JS = r"""
   };
   const consent = (__CONSENT__)();
   const inConsent = (el) => consent.some((root) => root.contains(el));
+  // a hidden file box's form, or outside a form a box within three levels
+  // above it, still shows (a styled upload hides the input itself)
+  const boxShows = (el) => {
+    if (el.form) return visible(el.form);
+    let p = el.parentElement;
+    for (let i = 0; p && i < 3; i++, p = p.parentElement) { if (visible(p)) return true; }
+    return false;
+  };
+  const FILLABLE = 'input:not([type=hidden]):not([type=submit]):not([type=button])'
+    + ':not([type=reset]):not([type=image]), select, textarea, [contenteditable=""], '
+    + '[contenteditable=true], [role=textbox], [role=combobox], [role=listbox], [role=radio], '
+    + '[role=checkbox], [role=switch], [role=spinbutton]';
+  const holdsControls = (form) => !!form && (!!form.querySelector(FILLABLE)
+    || Array.from(form.querySelectorAll('*')).some((n) => !!n.shadowRoot));
+  const NEVER_SUBMIT = /linkedin|indeed|general application|\bcancel\b|apply later|save for later/i;
 
   const nthPath = (el) => {
     const parts = [];
@@ -506,6 +535,7 @@ _EXTRACT_JS = r"""
       const t = (el.getAttribute('type') || 'text').toLowerCase();
       if (SKIP_INPUT.has(t)) continue;
       if (t !== 'file' && !visible(el)) continue;
+      if (t === 'file' && !visible(el) && !boxShows(el)) continue;
       if (t === 'radio') {
         const name = el.getAttribute('name') || '';
         const key = name ? 'name:' + name : 'path:' + nthPath(el);
@@ -546,11 +576,15 @@ _EXTRACT_JS = r"""
     if (!el.matches(bsel) && !applyLink(el, text)) continue;
     const typeAttr = (el.getAttribute('type') || '').toLowerCase();
     const submits = typeAttr === 'submit' || (el.tagName === 'BUTTON' && !typeAttr && !!el.form);
+    const aria = norm(el.getAttribute('aria-label'));
     let kind = '';
-    if (submits || /\b(submit|apply|send|finish)\b/i.test(text)) kind = 'submit';
+    if (NEVER_SUBMIT.test(text + ' ' + aria)) kind = '';
+    else if (submits || /\b(submit|apply|send|finish)\b/i.test(text)) kind = 'submit';
     else if (/\b(next|continue)\b/i.test(text)) kind = 'advance';
-    else if (/\b(back|previous)\b/i.test(text)) kind = 'back';
-    buttons.push({ css: locatorFor(el), text: text, kind_hint: kind });
+    if (!kind && /\b(back|previous)\b/i.test(text)) kind = 'back';
+    const owner = el.form || el.closest('form');
+    buttons.push({ css: locatorFor(el), text: text, kind_hint: kind,
+                   in_form: holdsControls(owner) });
   }
 
   let text = document.body ? (document.body.innerText || '') : '';
@@ -617,7 +651,8 @@ def extract(page) -> FormDigest:
                 autocomplete=str(f.get("autocomplete") or "")))
         for b in raw.get("buttons") or []:
             buttons.append(Button(n=len(buttons), locator=(idx, str(b["css"])),
-                                  text=str(b["text"]), kind_hint=str(b.get("kind_hint") or "")))
+                                  text=str(b["text"]), kind_hint=str(b.get("kind_hint") or ""),
+                                  in_form=bool(b.get("in_form"))))
         if raw.get("text"):
             texts.append(str(raw["text"]))
     text = "\n".join(texts)[:PAGE_TEXT_CAP]
@@ -666,3 +701,385 @@ def resolve(page, locator: tuple[int, str]):
     if not 0 <= idx < len(all_frames):
         raise IndexError(f"frame {idx} is gone (page has {len(all_frames)})")
     return all_frames[idx].locator(css)
+
+
+# --- live reads of the page (the submit gate and every click, SP3) ------------------------
+
+# A control's text as the extractor reads a button's (innerText, an input's
+# value, aria-label, title), with its aria-label and type apart.
+LIVE_TEXT_JS = r"""el => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label'))
+    || norm(el.getAttribute('title'));
+  return {text: text.slice(0, 200), aria: norm(el.getAttribute('aria-label')).slice(0, 200),
+          type: (el.getAttribute('type') || '').toLowerCase(), tag: el.tagName.toLowerCase()};
+}"""
+
+# The same, for every visible control of the frame that reads `want` (the
+# digest's text): how a control that changed under a stored locator is found
+# again (INV-04).
+_FIND_BY_TEXT_JS = r"""(want) => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const locatorFor = __LOCATOR__;
+  const out = [];
+  const sel = 'button, [role=button], input[type=submit], input[type=button], a';
+  for (const el of document.querySelectorAll(sel)) {
+    const st = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    if (st.display === 'none' || st.visibility === 'hidden' || (r.width <= 0 && r.height <= 0)) continue;
+    const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label'))
+      || norm(el.getAttribute('title'));
+    if (text === want) out.push(locatorFor(el));
+  }
+  return out;
+}""".replace("__LOCATOR__", LOCATOR_FN_JS)
+
+
+def live_text(loc) -> dict[str, str]:
+    """The live element's {text, aria, type, tag} (`LIVE_TEXT_JS`), read just
+    before a click; {} when it cannot be read."""
+    try:
+        return dict(loc.first.evaluate(LIVE_TEXT_JS, timeout=2_000))
+    except Exception:       # noqa: BLE001  (gone, detached, or a page double)
+        return {}
+
+
+def find_by_text(page, frame_index: int, text: str) -> list[str]:
+    """The CSS of every visible control in frame `frame_index` whose text is
+    `text` (the way a control is found again when its stored locator now
+    names another control)."""
+    try:
+        return [str(c) for c in frames(page)[int(frame_index)].evaluate(
+            _FIND_BY_TEXT_JS, " ".join(str(text or "").split()))]
+    except Exception:       # noqa: BLE001  (a frame gone)
+        return []
+
+
+# Where a button sits beside the fields, as a verdict: "same" when its form
+# owner holds one of the fields, or, outside any form, when the lowest box
+# above it holding one of them is smaller than the page (not the body, not
+# `main`, holding no h1); "apart" when it has a form that holds none of
+# them and they all sit in other forms, or, outside any form, when every
+# field sits in another form that has a button of its own (a job-alert box
+# beside a posting's Apply); "unclear" otherwise (a page whose fields and
+# button share only the body). `fields` are CSS selectors in the button's
+# frame. Returns {verdict, why}.
+_SAME_SCOPE_JS = r"""([bcss, fcss]) => {
+  let btn = null;
+  try { btn = document.querySelector(bcss); } catch (e) {}
+  if (!btn) return {verdict: 'unclear', why: 'the button is gone'};
+  const fields = [];
+  for (const c of fcss) {
+    try { const f = document.querySelector(c); if (f) fields.push(f); } catch (e) {}
+  }
+  if (!fields.length) return {verdict: 'unclear', why: 'no field of this page in its frame'};
+  const owner = (x) => x.form || x.closest('form');
+  const bf = owner(btn);
+  const owners = fields.map(owner);
+  if (bf) {
+    if (owners.some((o) => o === bf)) return {verdict: 'same', why: 'the fields form'};
+    return owners.every((o) => !!o)
+      ? {verdict: 'apart', why: 'another form than the fields'}
+      : {verdict: 'unclear', why: 'a form without the fields'};
+  }
+  const BTN = 'button, input[type=submit], input[type=button], [role=button]';
+  if (owners.every((o) => !!o && !!o.querySelector(BTN))) {
+    return {verdict: 'apart', why: 'the fields sit in a form of their own, with its own button'};
+  }
+  let box = btn.parentElement;
+  while (box && !fields.some((f) => box.contains(f))) box = box.parentElement;
+  if (!box || box === document.body || box === document.documentElement
+      || box.matches('main, [role=main]') || box.querySelector('h1')) {
+    return {verdict: 'unclear', why: 'the page is the only box holding the button and the fields'};
+  }
+  return {verdict: 'same', why: 'the fields box (' + (box.id || box.tagName.toLowerCase()) + ')'};
+}"""
+
+
+def same_scope(page, button_locator: tuple[int, str],
+               field_locators: list[tuple[int, str]]) -> tuple[str, str]:
+    """("same" | "apart" | "unclear", why): does the button sit with these
+    fields (`_SAME_SCOPE_JS`)? Only fields in the button's frame count."""
+    idx = int(button_locator[0])
+    css = [str(loc[1]) for loc in field_locators if int(loc[0]) == idx]
+    try:
+        out = frames(page)[idx].evaluate(_SAME_SCOPE_JS, [str(button_locator[1]), css])
+    except Exception as e:      # noqa: BLE001  (a frame gone)
+        return "unclear", f"unreadable ({type(e).__name__})"
+    return str(out.get("verdict") or "unclear"), str(out.get("why") or "")
+
+
+# The validity of the controls a submit sends (its form's elements, or
+# without a form every control of the frame outside a form, the site chrome
+# and a consent banner), read from `validity` (no `invalid` event fires), and
+# the visible error texts of the frame: [role=alert], an assertive live
+# region, and short boxes whose class names an error. An error text beside a
+# control (its box within two levels holds one) is a field's; the rest are
+# banners. Returns {invalid: [{label, message, reason}], errors: [{text, field}]}.
+_VALIDITY_JS = r"""(bcss) => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const visible = (el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 || r.height > 0;
+  };
+  const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
+    + '[role=navigation], [role=search]';
+  const consent = (__CONSENT__)();
+  const outside = (el) => consent.some((r) => r.contains(el)) || !!el.closest(CHROME);
+  const labelOf = (el) => {
+    const byLabel = el.labels && el.labels.length ? norm(el.labels[0].innerText) : '';
+    let by = '';
+    const ids = el.getAttribute('aria-labelledby');
+    if (ids) by = norm(ids.split(/\s+/).map((i) => { const n = document.getElementById(i);
+      return n ? n.innerText : ''; }).join(' '));
+    const legend = el.closest('fieldset') && el.closest('fieldset').querySelector('legend');
+    return (byLabel || norm(el.getAttribute('aria-label')) || by
+      || (el.type === 'radio' && legend ? norm(legend.innerText) : '')
+      || norm(el.getAttribute('placeholder')) || el.name || el.id || el.tagName.toLowerCase())
+      .replace(/\s*\*$/, '').slice(0, 80);
+  };
+  let btn = null;
+  if (bcss) { try { btn = document.querySelector(bcss); } catch (e) {} }
+  const form = btn ? (btn.form || btn.closest('form')) : null;
+  let controls;
+  if (form) controls = Array.from(form.elements);
+  else controls = Array.from(document.querySelectorAll('input, select, textarea'))
+    .filter((el) => !el.form && !el.closest('form') && !outside(el));
+  const REASONS = ['valueMissing', 'typeMismatch', 'patternMismatch', 'tooShort', 'tooLong',
+                   'rangeUnderflow', 'rangeOverflow', 'stepMismatch', 'badInput', 'customError'];
+  const invalid = [];
+  const seen = new Set();
+  for (const el of controls) {
+    if (!el.willValidate || !el.validity || el.validity.valid) continue;
+    const key = el.type === 'radio' && el.name ? 'radio:' + el.name : el;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    invalid.push({label: labelOf(el), message: norm(el.validationMessage).slice(0, 160),
+                  reason: REASONS.find((r) => el.validity[r]) || 'invalid'});
+  }
+  const scope = form || document;
+  for (const el of scope.querySelectorAll('[aria-invalid=true]')) {
+    if (seen.has(el) || outside(el) || !visible(el)) continue;
+    seen.add(el);
+    const desc = el.getAttribute('aria-describedby') || el.getAttribute('aria-errormessage') || '';
+    const msg = norm(desc.split(/\s+/).map((i) => { const n = document.getElementById(i);
+      return n ? n.innerText : ''; }).join(' '));
+    invalid.push({label: labelOf(el), message: msg.slice(0, 160), reason: 'aria-invalid'});
+  }
+  const errors = [];
+  const texts = new Set();
+  const esel = '[role=alert], [aria-live=assertive], [class*=error i], [class*=invalid i], '
+    + '[class*=danger i]';
+  for (const el of document.querySelectorAll(esel)) {
+    if (outside(el) || !visible(el)) continue;
+    if (el.matches('input, select, textarea, button, form, body')) continue;
+    const text = norm(el.innerText);
+    if (!text || text.length > 240 || texts.has(text)) continue;
+    if (Array.from(texts).some((t) => t.includes(text) || text.includes(t))) continue;
+    texts.add(text);
+    // a field's box: within two levels above, a box holding one to six
+    // controls that is no page, form or main region
+    let field = false;
+    let p = el.parentElement;
+    for (let i = 0; p && i < 2 && !field; i++, p = p.parentElement) {
+      if (p.matches('body, html, form, main, [role=main]')) break;
+      const n = p.querySelectorAll('input:not([type=hidden]), select, textarea').length;
+      field = n >= 1 && n <= 6;
+    }
+    errors.push({text: text.slice(0, 200), field: field});
+  }
+  return {invalid: invalid.slice(0, 20), errors: errors.slice(0, 10)};
+}""".replace("__CONSENT__", CONSENT_ROOTS_JS)
+
+
+def validity_report(page, button_locator: tuple[int, str] | None = None) -> dict[str, list]:
+    """The controls that would not validate and the visible error texts
+    (`_VALIDITY_JS`): with `button_locator`, that button's form in its frame
+    (every control of the frame outside a form when it has none); without,
+    every frame's controls outside a form and every frame's error texts.
+    {invalid: [{label, message, reason, frame}], errors: [{text, field,
+    frame}]}."""
+    out: dict[str, list] = {"invalid": [], "errors": []}
+    targets = [(int(button_locator[0]), str(button_locator[1]))] if button_locator \
+        else [(i, "") for i in range(len(frames(page)))]
+    all_frames = frames(page)
+    for idx, css in targets:
+        if not 0 <= idx < len(all_frames):
+            continue
+        try:
+            got = all_frames[idx].evaluate(_VALIDITY_JS, css or None)
+        except Exception:       # noqa: BLE001  (a detached or cross-origin frame)
+            continue
+        for key in ("invalid", "errors"):
+            out[key] += [{**row, "frame": idx} for row in got.get(key) or []]
+    return out
+
+
+# The controls the extractor does not see as fields, in the composed tree
+# (open shadow roots walked): a native control inside a shadow root, an ARIA
+# textbox / radio / checkbox / switch / spinbutton that is no native control,
+# a contenteditable box; outside the site chrome, a consent banner and a
+# combobox widget, visible only. Each with its label, whether it is required
+# (the attribute, aria-required, or a required radiogroup) and whether it is
+# empty (no value, nothing checked, no text).
+_SCAN_JS = r"""() => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
+    + '[role=navigation], [role=search]';
+  const consent = (__CONSENT__)();
+  const visible = (el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 || r.height > 0;
+  };
+  const NATIVE = /^(INPUT|SELECT|TEXTAREA)$/;
+  const SKIP = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
+  const ROLES = /^(textbox|radio|checkbox|switch|spinbutton)$/;
+  const out = [];
+  const groups = new Set();
+  const radioNames = new Map();
+  const labelOf = (el) => norm(el.getAttribute('aria-label') || (el.labels && el.labels[0]
+    && el.labels[0].innerText) || el.getAttribute('placeholder') || el.getAttribute('name')
+    || el.id || el.tagName.toLowerCase()).slice(0, 80);
+  const walk = (root, shadow) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) walk(el.shadowRoot, true);
+      const role = el.getAttribute('role') || '';
+      let kind = '';
+      if (shadow && NATIVE.test(el.tagName)) {
+        if (el.tagName === 'INPUT' && SKIP.has((el.getAttribute('type') || 'text').toLowerCase())) continue;
+        kind = el.tagName.toLowerCase();
+      } else if (ROLES.test(role) && !NATIVE.test(el.tagName)) kind = role;
+      else if (el.isContentEditable && el.hasAttribute('contenteditable')) kind = 'contenteditable';
+      if (!kind) continue;
+      if (!shadow && (el.closest(CHROME) || consent.some((r) => r.contains(el))
+                      || (el.closest('[role=combobox]') && el.closest('[role=combobox]') !== el))) continue;
+      if (!visible(el)) continue;
+      let required = el.required === true || el.getAttribute('aria-required') === 'true';
+      let empty;
+      if (kind === 'radio') {
+        const group = el.closest('[role=radiogroup]');
+        if (group) {
+          if (groups.has(group)) continue;
+          groups.add(group);
+          required = required || group.getAttribute('aria-required') === 'true';
+          empty = !group.querySelector('[role=radio][aria-checked=true]');
+        } else {
+          empty = el.getAttribute('aria-checked') !== 'true';
+        }
+      } else if (kind === 'input' && el.type === 'radio') {
+        const root = el.getRootNode();
+        const key = el.name || labelOf(el);
+        const names = radioNames.get(root) || new Set();
+        radioNames.set(root, names);
+        if (names.has(key)) continue;
+        names.add(key);
+        const mates = el.name
+          ? Array.from(root.querySelectorAll('input[type=radio]')).filter((r) => r.name === el.name)
+          : [el];
+        required = required || mates.some((r) => r.required);
+        empty = !mates.some((r) => r.checked);
+      } else if (kind === 'checkbox' || kind === 'switch') {
+        empty = el.getAttribute('aria-checked') !== 'true';
+      } else if (kind === 'input' && el.type === 'checkbox') {
+        empty = !el.checked;
+      } else if (kind === 'spinbutton') {
+        empty = !el.getAttribute('aria-valuenow') && !norm(el.getAttribute('aria-valuetext'))
+          && !norm(el.innerText);
+      } else if (NATIVE.test(el.tagName)) {
+        empty = !norm(el.value);
+      } else {
+        empty = !norm(el.innerText);
+      }
+      out.push({label: labelOf(el), kind: kind, required: !!required, empty: !!empty,
+                shadow: !!shadow});
+    }
+  };
+  walk(document, false);
+  return out.slice(0, 40);
+}""".replace("__CONSENT__", CONSENT_ROOTS_JS)
+
+
+def control_scan(page, frame_indexes: list[int] | None = None) -> list[dict[str, Any]]:
+    """The controls the extractor leaves out (`_SCAN_JS`), in the given
+    frames (every frame when None), each {label, kind, required, empty,
+    shadow, frame}."""
+    out: list[dict[str, Any]] = []
+    for idx, frame in enumerate(frames(page)):
+        if frame_indexes is not None and idx not in frame_indexes:
+            continue
+        try:
+            got = frame.evaluate(_SCAN_JS)
+        except Exception:       # noqa: BLE001  (a detached or cross-origin frame)
+            continue
+        out += [{**row, "frame": idx} for row in got or []]
+    return out
+
+
+# The CAPTCHA widgets of a document by their frames' `src` (read before a
+# frame loads): reCAPTCHA (google.com/recaptcha, recaptcha.net) and
+# hCaptcha, visible or not, their size parameter, and whether each
+# response token of the document (`g-recaptcha-response`,
+# `h-captcha-response`) is set.
+_CAPTCHA_WIDGETS_JS = r"""() => {
+  const widgets = [];
+  for (const f of document.querySelectorAll('iframe')) {
+    const src = f.getAttribute('src') || '';
+    let host = '', path = '';
+    try { const u = new URL(src, location.href); host = u.hostname.toLowerCase(); path = u.pathname; }
+    catch (e) { continue; }
+    const recaptcha = /(^|\.)recaptcha\.net$/.test(host)
+      || (/(^|\.)google\.com$/.test(host) && path.startsWith('/recaptcha'));
+    const hcaptcha = /(^|\.)hcaptcha\.com$/.test(host);
+    if (!recaptcha && !hcaptcha) continue;
+    const st = getComputedStyle(f);
+    const r = f.getBoundingClientRect();
+    const shown = st.display !== 'none' && st.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+    const m = src.match(/[?&#]size=([a-z]+)/i);
+    widgets.push({provider: recaptcha ? 'recaptcha' : 'hcaptcha', visible: shown,
+                  size: m ? m[1].toLowerCase() : '', height: Math.round(r.height)});
+  }
+  const tokens = Array.from(document.querySelectorAll(
+    '[name="g-recaptcha-response"], [name="h-captcha-response"]')).map((t) => !!(t.value || '').trim());
+  return {widgets: widgets, tokens: tokens};
+}"""
+
+
+def captcha_widgets(page) -> list[dict[str, Any]]:
+    """Every frame document's CAPTCHA widgets (`_CAPTCHA_WIDGETS_JS`): one
+    row per document that has one, {widgets, tokens, frame}."""
+    out: list[dict[str, Any]] = []
+    try:
+        all_frames = frames(page)
+    except Exception:       # noqa: BLE001  (a page double)
+        return out
+    for idx, frame in enumerate(all_frames):
+        evaluate = getattr(frame, "evaluate", None)
+        if evaluate is None:
+            continue
+        try:
+            got = evaluate(_CAPTCHA_WIDGETS_JS)
+        except Exception:       # noqa: BLE001  (a detached or cross-origin frame)
+            continue
+        if isinstance(got, Mapping) and got.get("widgets"):
+            out.append({**got, "frame": idx})
+    return out
+
+
+def unsolved_checkbox(page) -> str:
+    """A visible reCAPTCHA or hCaptcha checkbox (its frame's `size=normal`,
+    whatever its height: study G11) whose document holds an empty response
+    token, or none: the provider's name, else "". The invisible badge
+    (`size=invisible`) never counts."""
+    for row in captcha_widgets(page):
+        normal = [w for w in row.get("widgets") or [] if w.get("visible")
+                  and w.get("size") == "normal"]
+        if not normal:
+            continue
+        tokens = row.get("tokens") or []
+        if not tokens or not all(tokens):
+            return str(normal[0].get("provider") or "captcha")
+    return ""

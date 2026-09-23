@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>QA Engineer - Proseware</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  #challenge { display: none; width: 400px; height: 520px; border: 1px solid #888; }
+  #received { display: none; }
+</style>
+</head>
+<body>
+<h1>QA Engineer</h1>
+<p>Proseware, Remote</p>
+<!-- The submit raises a bot-check challenge (a tall provider frame; the flow
+     routes its URL to a local stub). The application goes out only once the
+     challenge is solved: `window.__solve()` stands in for the person. -->
+<div id="application">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <button type="button" id="btn-submit">Submit application</button>
+</div>
+<iframe id="challenge" title="Security challenge"></iframe>
+<section id="received">
+  <h2>Application received</h2>
+  <p>Thank you for applying.</p>
+</section>
+<script>
+  window.__clicks = 0;
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    window.__clicks += 1;
+    var f = document.getElementById('challenge');
+    f.src = 'https://hcaptcha.com/challenge/stub?size=normal';
+    f.style.display = 'block';
+  });
+  window.__solve = function () {
+    var f = document.getElementById('challenge');
+    if (!f || f.style.display === 'none') return;
+    f.remove();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('received').style.display = 'block';
+  };
+</script>
+</body>
+</html>

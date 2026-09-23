@@ -55,14 +55,19 @@ log = logging.getLogger("apply_judge")
 # --- thresholds (tuned 2026-09-22 against the recorded live answers) ----------------
 
 PAGE_STATE_MIN_CONF = 0.40      # below it: park needs_human (the best guess wins above it)
-CONFIRMATION_MIN_CONF = 0.60    # a confirmation read before any submit click needs this
-                                # to count as submitted ("already applied", "thanks for
-                                # your interest" misread at 0.45 must not)
+CONFIRMATION_MIN_CONF = 0.60    # after the submit click, a confirmation read with no
+                                # received words on the page needs this to count as the
+                                # send's confirmation ("thanks for your interest" misread
+                                # at 0.45 must not); before any submit click a confirmation
+                                # read never counts as submitted
 FIELD_MAP_MIN_CONF = 0.70       # below it: optional -> blank + flagged; required -> park
 CONSENT_MIN_CONF = 0.85         # consent_attest needs this much: a tick cannot be taken back
 OPTION_MIN_CONF = 0.70          # the same rule for select / radio picks
 BUTTON_SUBMIT_MIN_CONF = 0.75   # a click on a submit-role button needs this
 BUTTON_ADVANCE_MIN_CONF = 0.50
+BUTTON_SENDS_MIN = 0.80         # an "Apply"-worded button is the submit only with this
+                                # `button_{n}_sends` Noul (and the DOM evidence the runner
+                                # reads): an Apply entry or "Apply Manually" opens a form
 VERIFY_MIN = 0.80               # every filled required field must verify above this
 PLACEHOLDER_MAX = 0.50          # and look like a placeholder no more than this
 GROUNDING_MIN = 0.70            # a generated sentence below it drops the draft
@@ -229,6 +234,22 @@ _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
 
 NO_MATCH_DESCRIPTION = "nothing listed fits"
 
+_APPLY_WORD = re.compile(r"\bapply\b", re.I)
+_OTHER_SEND_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
+
+
+def apply_worded(text: str) -> bool:
+    """A control whose only send word is "apply" ("Apply", "Apply now",
+    "Apply Manually"): a posting's entry and a form's final button read the
+    same, so the text alone never makes it the submit."""
+    return bool(_APPLY_WORD.search(text or "")) and not _OTHER_SEND_WORDS.search(text or "")
+
+
+def read_sends(answers: Mapping[str, Answer], n: int) -> float:
+    """The `button_{n}_sends` Noul: clicking the Apply-worded button `n`
+    sends the finished application (0.0 when it was not asked)."""
+    return _noul_of(answers, f"button_{n}_sends")
+
 # Which sources a control can take, by its type. A file input takes a file
 # and nothing else; a select / radio / listbox never takes a name, an email,
 # a URL or prose; `today` and `signature_name` reach a form through the
@@ -371,6 +392,16 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
             "instructions": f"Which role does the clickable control `buttons[{i}]` have?",
             "criteria": {role: dict(desc) for role, desc in _BUTTON_CRITERIA.items()},
         }
+        if apply_worded(b.text):
+            # "Apply" names a posting's entry, Workday's "Apply Manually" and a
+            # form's final button alike: the runner takes one as the submit
+            # only with this answer and the DOM evidence (`BUTTON_SENDS_MIN`)
+            questions[f"button_{b.n}_sends"] = {
+                "type": "noul",
+                "instructions": f"The text of `buttons[{i}]` says apply. Would clicking it send "
+                                "the finished application to the employer, as the last step "
+                                "of applying?",
+            }
     questions["asks_for_prohibited"] = {
         "type": "noul",
         "instructions": "Does `page` or any of `fields` ask for a social security number, "

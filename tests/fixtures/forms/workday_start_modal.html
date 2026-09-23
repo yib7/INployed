@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  #start { display: none; position: fixed; inset: 10% 20%; background: #fff;
+           border: 1px solid #555; padding: 24px; }
+  #start button { display: block; margin: 12px 0; }
+  #last { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, Austin, TX</p>
+<button type="button" id="apply">Apply</button>
+<h2>About the role</h2>
+<p>Own the analytics models and the dashboards the product team reads every morning.</p>
+<h2>Responsibilities</h2>
+<p>Design and maintain the warehouse models.</p>
+<h2>Qualifications</h2>
+<p>Three years with SQL and a modern warehouse.</p>
+<!-- The start dialog a Workday posting opens: three ways to begin, none of
+     which sends anything. "Apply Manually" opens the form. -->
+<div id="start" role="dialog" aria-modal="true" aria-labelledby="start-title">
+  <h2 id="start-title">Start Your Application</h2>
+  <button type="button" id="autofill">Autofill with Resume</button>
+  <button type="button" id="manual">Apply Manually</button>
+  <button type="button" id="use-last">Use My Last Application</button>
+  <p id="last">Sign in to use your last application.</p>
+</div>
+<script>
+  document.getElementById('apply').addEventListener('click', function () {
+    document.getElementById('apply').style.display = 'none';
+    document.getElementById('start').style.display = 'block';
+  });
+  document.getElementById('manual').addEventListener('click', function () {
+    location.href = 'lever_single.html';
+  });
+  document.getElementById('autofill').addEventListener('click', function () {
+    location.href = 'lever_single.html';
+  });
+  document.getElementById('use-last').addEventListener('click', function () {
+    document.getElementById('last').style.display = 'block';
+  });
+</script>
+</body>
+</html>

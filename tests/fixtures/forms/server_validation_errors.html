@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solutions Analyst - Litware</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  .error { color: #b00; }
+</style>
+</head>
+<body>
+<h1>Solutions Analyst</h1>
+<p>Litware, Chicago, IL</p>
+<!-- The server's answer to server_validation.html's post: the same form, the
+     answers kept, the email marked invalid with its message. Nothing was
+     accepted. -->
+<div class="error-summary" role="alert">Please correct the highlighted fields and submit again.</div>
+<form id="application" method="post" action="/submit/server_validation">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required value="Jane"></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required value="Doering"></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required value="jane.doe@example.com" aria-invalid="true" aria-describedby="email-error">
+    <span id="email-error" class="error">Enter an email address we can reach.</span></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="tel"></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+</body>
+</html>

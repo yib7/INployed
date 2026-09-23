@@ -363,11 +363,12 @@ def _join_slices(state: Any, slices: list[Any]) -> str:
 
 # The misreads the live judge could plausibly make, per page state. A swap goes
 # to one of these, never to an unrelated kind (a job posting is never read as a
-# payment page, a form never as a confirmation).
+# payment page). A form or a review read as a confirmation (`CONFIRM_MISREADS`)
+# is drawn apart, at its own chance and a confidence that can pass the gates.
 PAGE_STATE_NEIGHBOURS: dict[str, tuple[str, ...]] = {
     "job_posting": ("other", "application_form"),
-    "application_form": ("signup_form", "review_page"),
-    "review_page": ("application_form",),
+    "application_form": ("signup_form", "review_page", "confirmation"),
+    "review_page": ("application_form", "confirmation"),
     "signup_form": ("login_wall", "application_form"),
     "login_wall": ("signup_form",),
     "code_gate": ("login_wall",),
@@ -385,6 +386,13 @@ BUTTON_ROLE_NEIGHBOURS: frozenset[frozenset[str]] = frozenset(
                                  ("apply_entry", "other"), ("upload", "other"),
                                  ("back", "other")))
 _SWAPPED_CONF = (0.30, 0.60)    # the confidence a swapped page state is read at
+# A form or a review page read as a confirmation, before the submit or after
+# it (a validation page, a form that did not change): drawn apart from the
+# swaps, at a confidence from 0.40 to 0.80, above the page-state floor and
+# often above the confirmation floor, the read that must never end a job
+# `submitted` without a confirmation on the page.
+CONFIRM_MISREADS = frozenset(("application_form", "review_page"))
+_CONFIRM_MISREAD_CONF = (0.40, 0.80)
 _DROPPED_PREFIX = "field_"      # the answers a drop may remove
 
 
@@ -407,6 +415,10 @@ class NoisyJev:
     - `drop_p` (default 0.05): each field answer (`field_{n}_source`,
       `field_{n}_option`, `field_{n}_pick`) is dropped with this chance, as a
       misread that leaves the box without a mapping.
+    - `confirm_p` (default a third of `swap_p`, 0.05): a form or a review
+      page not swapped otherwise is read as a confirmation
+      (`CONFIRM_MISREADS`) at a confidence from 0.40 to 0.80, the true state
+      second.
 
     The live judge answers the same request the same way, so the noise is a
     function of (`seed`, the request): the same state and questions get the
@@ -418,7 +430,7 @@ class NoisyJev:
 
     def __init__(self, inner: Jev, seed: int, *, swap_p: float = 0.15,
                  conf_scale: float = 0.75, drop_p: float = 0.05,
-                 role_p: float | None = None):
+                 role_p: float | None = None, confirm_p: float | None = None):
         if not 0.0 < conf_scale <= 1.0:
             raise ValueError("conf_scale must be in (0, 1]")
         self.inner = inner
@@ -427,6 +439,7 @@ class NoisyJev:
         self.conf_scale = float(conf_scale)
         self.drop_p = float(drop_p)
         self.role_p = self.swap_p if role_p is None else float(role_p)
+        self.confirm_p = self.swap_p / 3 if confirm_p is None else float(confirm_p)
 
     def _rng(self, request_key: str, part: str):
         import random
@@ -458,7 +471,8 @@ class NoisyJev:
         names = list(a.probabilities) or [a.choice or "other"]
         truth = str(a.choice or "other")
         swap_draw, pick_draw, conf_draw = rng.random(), rng.random(), rng.random()
-        neighbours = PAGE_STATE_NEIGHBOURS.get(truth, ())
+        neighbours = tuple(n for n in PAGE_STATE_NEIGHBOURS.get(truth, ())
+                           if not (truth in CONFIRM_MISREADS and n == "confirmation"))
         if neighbours and swap_draw < self.swap_p:
             winner = neighbours[int(pick_draw * len(neighbours)) % len(neighbours)]
             low, high = _SWAPPED_CONF
@@ -469,6 +483,10 @@ class NoisyJev:
             conf = round(float(a.confidence if a.confidence is not None else 1.0)
                          * self._factor(rng), 4)
             second = neighbours[0] if neighbours else ""
+            if truth in CONFIRM_MISREADS and rng.random() < self.confirm_p:
+                winner, second = "confirmation", truth
+                low, high = _CONFIRM_MISREAD_CONF
+                conf = round(low + (high - low) * rng.random(), 4)
         return Answer(kind="choice", choice=winner,
                       probabilities=_spread(names, winner, conf, second),
                       confidence=conf)

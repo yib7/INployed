@@ -230,6 +230,104 @@ def test_outcomes_path_sits_beside_the_cache(tmp_path):
     assert jev_harness.outcomes_path(tmp_path / "x" / "cache.json") == tmp_path / "x" / "outcomes.jsonl"
 
 
+# --- the xdist guard on record/replay (SP3.5 review finding 1) ------------------------
+
+class _FakeOption:
+    def __init__(self, numprocesses=None):
+        self.numprocesses = numprocesses
+
+
+class _FakeConfig:
+    """Just enough of a real `pytest.Config` for `conftest_jev.pytest_configure`: a
+    real `Stash` (so `SESSION_KEY in config.stash` behaves exactly as it does for
+    pytest itself) and `option.numprocesses`. `workerinput` is set only when standing
+    in for a worker's own config -- a real worker's config always carries it (set by
+    `xdist/remote.py` before any hook runs there); a real controller's never does."""
+
+    def __init__(self, numprocesses=None, worker=False):
+        self.stash = pytest.Stash()
+        self.option = _FakeOption(numprocesses)
+        if worker:
+            self.workerinput = {"workerid": "gw0"}
+
+
+@pytest.fixture
+def cjev():
+    """The `conftest_jev` module, imported lazily (function scope, after collection)
+    so this never races pytest's own assertion-rewriting import of it as the
+    `conftest_jev` plugin (a module-level `import conftest_jev` here would run before
+    pytest processes this file's `pytest_plugins` and gets a "module already imported,
+    cannot be rewritten" warning)."""
+    import conftest_jev
+    return conftest_jev
+
+
+def test_configure_refuses_record_mode_on_an_xdist_worker(cjev, monkeypatch, tmp_path):
+    monkeypatch.setenv(jev_harness.MODE_ENV, "record")
+    monkeypatch.setenv(jev.KEY_ENV, "k-test")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    cfg = _FakeConfig(worker=True)    # this config's own workerinput: a real worker
+    with pytest.raises(pytest.UsageError) as exc:
+        cjev.pytest_configure(cfg)
+    assert jev_harness.serial_command("record") in str(exc.value)
+    assert not (tmp_path / "cache.json").exists()
+    assert not (tmp_path / "outcomes.jsonl").exists()
+
+
+def test_configure_refuses_replay_mode_on_the_xdist_controller(cjev, monkeypatch, tmp_path):
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    cfg = _FakeConfig(numprocesses=4)    # -n already resolved from "auto"; no workerinput
+    with pytest.raises(pytest.UsageError) as exc:
+        cjev.pytest_configure(cfg)
+    assert jev_harness.serial_command("replay") in str(exc.value)
+    assert not (tmp_path / "outcomes.jsonl").exists()
+
+
+def test_configure_ignores_xdist_in_fake_mode(cjev, monkeypatch, tmp_path):
+    monkeypatch.delenv(jev_harness.MODE_ENV, raising=False)
+    cfg = _FakeConfig(worker=True)
+    cjev.pytest_configure(cfg)    # must not raise: fake mode never touches the cache
+    assert cjev.SESSION_KEY in cfg.stash
+
+
+def test_configure_runs_record_mode_serially(cjev, monkeypatch, tmp_path):
+    monkeypatch.setenv(jev_harness.MODE_ENV, "record")
+    monkeypatch.setenv(jev.KEY_ENV, "k-test")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    cfg = _FakeConfig()           # no -n: neither a worker nor a busy controller
+    cjev.pytest_configure(cfg)    # must not raise
+    assert (tmp_path / "outcomes.jsonl").exists()
+
+
+def test_configure_runs_replay_mode_serially_with_n_explicitly_zero(cjev, monkeypatch, tmp_path):
+    """`-n 0` is xdist's own no-op spelling (same as omitting -n): numprocesses is 0,
+    not falsy-but-set, so the controller check must not fire on it."""
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    cfg = _FakeConfig(numprocesses=0)
+    cjev.pytest_configure(cfg)    # must not raise
+    assert (tmp_path / "outcomes.jsonl").exists()
+
+
+def test_configure_ignores_an_xdist_worker_env_var_inherited_by_a_nested_run(
+        cjev, monkeypatch, tmp_path):
+    """A `pytester.runpytest_inprocess(...)` call nested inside a real xdist worker
+    (as the tests below do) inherits that worker's `PYTEST_XDIST_WORKER[_COUNT]` env
+    vars -- same process, same `os.environ` -- even though the nested, single-process
+    pytest run it starts is never itself distributed. The guard must key off THIS
+    config (no `workerinput`, no `-n` of its own), not off an inherited env var, or
+    every `pytester`-based test below starts failing under `-n` (found by running
+    this file with `-n 2`, SP3.5 fix round 1)."""
+    monkeypatch.setenv(jev_harness.MODE_ENV, "replay")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw0")
+    monkeypatch.setenv("PYTEST_XDIST_WORKER_COUNT", "2")
+    cfg = _FakeConfig()            # this config itself: no workerinput, no -n
+    cjev.pytest_configure(cfg)     # must not raise
+    assert (tmp_path / "outcomes.jsonl").exists()
+
+
 # --- the fixture and hooks, through an inner pytest ------------------------------------
 
 _INNER = '''

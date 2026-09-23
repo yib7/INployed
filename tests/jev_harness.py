@@ -55,6 +55,14 @@ def mode_from(env: Mapping[str, str]) -> str:
     return raw
 
 
+def serial_command(mode: str) -> str:
+    """The one-process record/replay command. Never add -n/--numprocesses to
+    it: `record` and `replay` read-modify-write a shared repo-tree cache and
+    truncate/append a shared outcomes file with no cross-process lock, so
+    `conftest_jev.pytest_configure` refuses to run either mode under xdist."""
+    return f"{MODE_ENV}={mode} QT_QPA_PLATFORM=offscreen python -m pytest {RUNNER_TESTS} -q"
+
+
 def cache_path_from(env: Mapping[str, str]) -> Path:
     raw = (env.get(jev.CACHE_ENV) or "").strip()
     return Path(raw) if raw else REPO / jev.DEFAULT_CACHE
@@ -187,9 +195,10 @@ class Session:
         ids = sorted({q for m in record.misses for q in m["questions"]})
         return (f"Jev replay cache miss in {record.test} (fixture `{FIXTURE}`, cache "
                 f"{self.cache_path}): {len(record.misses)} request(s) with question ids "
-                f"{ids}. Re-record with {MODE_ENV}=record QT_QPA_PLATFORM=offscreen "
-                f"python -m pytest {RUNNER_TESTS} -q (a key and a small spend), or run "
-                f"the one test with -k.")
+                f"{ids}. Re-record with {serial_command('record')} (a key and a small "
+                f"spend; run it serially, never with -n/--numprocesses -- record and "
+                f"replay write a shared cache and outcomes file with no cross-process "
+                f"lock, see conftest_jev.pytest_configure), or run the one test with -k.")
 
 
 # --- the module-level factory the test helpers call ----------------------------------

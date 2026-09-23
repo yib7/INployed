@@ -32,12 +32,43 @@ import jev_harness
 SESSION_KEY = pytest.StashKey[jev_harness.Session]()
 
 
+def _xdist_active(config) -> bool:
+    """True on an xdist worker's own config (`config.workerinput` is set by
+    `xdist/remote.py` before any hook runs there) or on the controller about
+    to fork workers (`-n`/`--numprocesses` is already resolved from "auto" to
+    a positive count by the time `pytest_configure` fires, and only the
+    controller's own config lacks `workerinput`).
+
+    Deliberately NOT `os.environ.get("PYTEST_XDIST_WORKER")`: that var is set
+    on the whole WORKER PROCESS, so a `pytester.runpytest_inprocess(...)` call
+    nested inside a real worker (as `test_jev_harness.py`'s fixture/hook tests
+    do) inherits it even though that nested, single-process pytest run is
+    never itself distributed -- an env-var check raised a false UsageError
+    there, caught by running this file under `-n 2` (SP3.5 fix round 1).
+    `config.workerinput` is per-`Config`, not per-process, so the inner run's
+    own fresh `Config` never carries it."""
+    if hasattr(config, "workerinput"):
+        return True
+    numprocesses = getattr(config.option, "numprocesses", None)
+    return bool(numprocesses)
+
+
 def pytest_configure(config):
     if SESSION_KEY in config.stash:
         return
     session = jev_harness.Session.from_env()
     config.stash[SESSION_KEY] = session
     if session.soft:
+        # SP3.5 review finding 1: record/replay read-modify-write a shared
+        # repo-tree cache (jev.ReplayJev) and truncate/append a shared
+        # outcomes.jsonl with no cross-process lock, so every xdist worker
+        # races every other one. Refuse before any worker starts (this fires
+        # on the controller too, which stops the whole run before it forks).
+        if _xdist_active(config):
+            raise pytest.UsageError(
+                f"{jev_harness.MODE_ENV}={session.mode} writes a shared cache and outcomes "
+                f"file with no cross-process lock: record and replay run serially, never "
+                f"under -n/--numprocesses. Run: {jev_harness.serial_command(session.mode)}")
         session.writer.reset()
 
 

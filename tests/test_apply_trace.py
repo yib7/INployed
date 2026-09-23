@@ -176,7 +176,7 @@ def test_a_trace_that_cannot_write_never_ends_the_job(context, flow_server, tmp_
                                                       monkeypatch):
     def _broken(*a, **kw):
         raise OSError("disk full")
-    monkeypatch.setattr(apply_trace, "atomic_write_json", _broken)
+    monkeypatch.setattr(apply_trace, "write_json", _broken)
     folder = h.write_job_folder(tmp_path / "job")
     _enqueue(folder, flow_server.url("captcha.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
@@ -516,3 +516,313 @@ def test_a_window_closed_between_jobs_claims_nothing_more(_browser, flow_server,
     assert outcomes[0].reason.startswith("captcha or bot check")
     for jid in ("b", "c"):
         assert (_entry(jid)["status"], _entry(jid)["attempts"]) == ("queued", 0)
+
+
+# === review round 1 ===============================================================================
+
+# --- I1: a closed tab ends that job only ------------------------------------------------------------
+
+_POPUP_POSTING = (REPO / "tests" / "fixtures" / "forms" / "job_posting.html").read_text(
+    encoding="utf-8").replace('href="ashby_steps.html"',
+                              'href="https://careers.fabrikam.example/apply/form"')
+_SELF_CLOSING_FORM = """<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Apply for Analytics Engineer</h1>
+<label>First name * <input name="first" required></label>
+<button type="button" onclick="window.close()">Continue</button></body></html>"""
+
+
+def _careers(context, pages: dict):
+    """Serve `pages` (path -> html) on the application's fake host."""
+    def _handle(route):
+        path = "/" + route.request.url.split("careers.fabrikam.example/", 1)[1].split("?")[0]
+        route.fulfill(body=pages.get(path, "<body>gone</body>"), content_type="text/html")
+    context.route("https://careers.fabrikam.example/**", _handle)
+
+
+def test_a_popup_that_closes_itself_ends_that_job_and_the_drain_goes_on(
+        context, flow_server, tmp_path):
+    _careers(context, {"/jobs/a": _POPUP_POSTING, "/apply/form": _SELF_CLOSING_FORM})
+    _enqueue(h.write_job_folder(tmp_path / "job-a"), "https://careers.fabrikam.example/jobs/a",
+             jid="a")
+    _enqueue(h.write_job_folder(tmp_path / "job-b"), flow_server.url("captcha.html"), jid="b")
+    outcomes = _runner(context, tmp_path).drain(cap=10)
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "needs_human"),
+                                                        ("b", "needs_human")], outcomes
+    assert outcomes[0].reason.startswith(apply_run.TAB_CLOSED_REASON), outcomes[0]
+    assert outcomes[0].browser_closed is False
+    assert outcomes[1].reason.startswith("captcha or bot check")
+
+
+class _TabClosingJudge(jev.FakeJev):
+    """The fake, closing the job's own tab (the context's last page) on its
+    first page read."""
+
+    def __init__(self, context):
+        self.context = context
+        self.done = False
+
+    def judge(self, state, questions):
+        if "page_state" in questions and not self.done:
+            self.done = True
+            self.context.pages[-1].close()
+        return super().judge(state, questions)
+
+
+def test_a_closed_tab_with_the_window_open_ends_that_job_only(context, flow_server, tmp_path):
+    _three_jobs(tmp_path, flow_server.url("captcha.html"))
+    outcomes = _runner(context, tmp_path, _TabClosingJudge(context)).drain(cap=10)
+    assert [o.job_id for o in outcomes] == ["a", "b", "c"], outcomes
+    assert (outcomes[0].status, outcomes[0].browser_closed) == ("needs_human", False)
+    assert outcomes[0].reason.startswith(apply_run.TAB_CLOSED_REASON), outcomes[0]
+    assert all(o.reason.startswith("captcha or bot check") for o in outcomes[1:]), outcomes
+
+
+# --- I2: a typed code is masked in every screenshot --------------------------------------------------
+
+_CODE_BOX = ('<label for="verification-input">Verification code</label>'
+             '<input id="verification-input" name="verification" '
+             'style="position:absolute;left:0;top:0;width:400px;height:80px;font-size:40px">'
+             '<button type="button" style="position:absolute;left:0;top:120px">Verify</button>')
+_CODE_PAGE = ('<!doctype html><html><head><title>Verify your email</title></head>'
+              '<body style="margin:0"><h1 style="margin:0 0 0 500px">Check your inbox</h1>'
+              '<p style="margin-left:500px">Enter the code we emailed you.</p>'
+              '<div style="position:absolute;left:0;top:300px">' + _CODE_BOX + '</div>'
+              '</body></html>')
+_CODE_FRAME_PAGE = ('<!doctype html><html><head><title>Verify your email</title></head>'
+                    '<body style="margin:0"><h1 style="margin:0 0 0 500px">Check your inbox</h1>'
+                    '<p style="margin-left:500px">Enter the code we emailed you.</p>'
+                    '<iframe src="https://careers.fabrikam.example/codeframe" '
+                    'style="position:absolute;left:0;top:300px;width:600px;height:300px;'
+                    'border:0"></iframe></body></html>')
+_CODE_FRAME = ('<!doctype html><html><body style="margin:0">'
+               '<p style="position:absolute;left:450px">Security check</p>' + _CODE_BOX
+               + '</body></html>')
+_CODE = "MKPZ3QRA"
+
+
+class _CodeGateJudge(jev.FakeJev):
+    """The fake, reading any page with a verification box as the code gate."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out and any("Verification" in f.get("label", "")
+                                       for f in state.get("fields") or []):
+            out["page_state"] = jev.Answer(kind="choice", choice="code_gate",
+                                           probabilities={"code_gate": 1.0}, confidence=1.0)
+        return out
+
+
+@pytest.mark.parametrize("framed", [False, True])
+def test_a_typed_code_is_masked_in_the_screenshots_and_written_nowhere(
+        context, tmp_path, caplog, framed):
+    _careers(context, {"/verify": _CODE_FRAME_PAGE if framed else _CODE_PAGE,
+                       "/codeframe": _CODE_FRAME})
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, "https://careers.fabrikam.example/verify")
+    runner = _runner(context, tmp_path, _CodeGateJudge())
+
+    class _Inbox:
+        def fetch_code(self, page, site, inbox_url):
+            return _CODE
+    runner.inbox = _Inbox()
+    with caplog.at_level(logging.DEBUG):
+        out = runner.drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    page = next(p for p in context.pages if not p.is_closed())
+    box = page.frames[1 if framed else 0].locator("#verification-input")
+    assert box.input_value() == _CODE                     # the code is on the page
+    trace = folder / "apply_trace" / "attempt-1"
+    for path in [*trace.iterdir(), folder / "apply_record.md"]:
+        if path.suffix != ".jpg":
+            assert _CODE not in path.read_text(encoding="utf-8"), path.name
+    assert _CODE not in caplog.text
+    image = pytest.importorskip("PIL.Image")
+    with image.open(trace / "end.jpg") as img:
+        r, g, b = img.convert("RGB").getpixel((200, 340))     # the centre of the code box
+        assert r > 200 and g < 90 and b > 200, (r, g, b)
+
+
+def test_mask_locators_reach_into_frames(context, tmp_path):
+    _careers(context, {"/verify": _CODE_FRAME_PAGE, "/codeframe": _CODE_FRAME.replace(
+        'name="verification"', 'name="verification" type="password"')})
+    page = context.new_page()
+    page.goto("https://careers.fabrikam.example/verify")
+    page.frames[1].wait_for_selector("#verification-input")
+    assert sum(m.count() for m in apply_trace.mask_locators(page)) == 1
+
+
+# --- every park reason names its evidence ------------------------------------------------------------
+
+class _ReviewJudge(jev.FakeJev):
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out:
+            out["page_state"] = jev.Answer(kind="choice", choice="review_page",
+                                           probabilities={"review_page": 0.9}, confidence=0.9)
+        return out
+
+
+def test_no_submit_button_names_the_buttons_seen(context, tmp_path):
+    _careers(context, {"/review": "<body><h1>Review your application</h1>"
+                                  "<button type='button'>Back</button></body>"})
+    _enqueue(h.write_job_folder(tmp_path / "job"), "https://careers.fabrikam.example/review")
+    out = _runner(context, tmp_path, _ReviewJudge()).drain(cap=1)[0]
+    assert out.reason == "no submit button (buttons: Back back 1.00)", out
+
+
+@pytest.mark.parametrize("fixture, prefix", [("login_wall.html", "login wall"),
+                                             ("signup.html", "account signup needed")])
+def test_an_account_park_names_the_read_the_boxes_and_the_buttons(
+        context, flow_server, tmp_path, fixture, prefix):
+    _enqueue(h.write_job_folder(tmp_path / "job"), flow_server.url(fixture))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.reason.startswith(f"{prefix} (read as "), out
+    assert "master password stored: no" in out.reason
+    assert "boxes: " in out.reason and "buttons: " in out.reason
+
+
+def test_the_page_budget_names_the_last_pages(context, flow_server, tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_run.apply_judge, "MAX_PAGES", 2)
+    _enqueue(h.write_job_folder(tmp_path / "job"), flow_server.url("ashby_steps.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.reason == ("page budget exhausted (2 pages; last: application_form, "
+                          "application_form)"), out
+
+
+def test_the_time_budget_names_the_minutes_and_the_last_pages(context, flow_server, tmp_path):
+    ticks = iter([0.0, 0.0, 0.0, 0.0] + [apply_run.JOB_WALL_CLOCK_S + 1.0] * 400)
+    _enqueue(h.write_job_folder(tmp_path / "job"), flow_server.url("ashby_steps.html"))
+    runner = _runner(context, tmp_path)
+    runner.clock = lambda: next(ticks)
+    out = runner.drain(cap=1)[0]
+    assert re.fullmatch(r"time budget exhausted \(15 min; \d+ page\(s\)(; last: [a-z_, ]+)?\)",
+                        out.reason), out
+
+
+def test_evidence_is_capped(context, tmp_path):
+    buttons = "".join(f"<button type='button'>Button number {i} with a long label</button>"
+                      for i in range(30))
+    _careers(context, {"/review": f"<body><h1>Review your application</h1>{buttons}</body>"})
+    _enqueue(h.write_job_folder(tmp_path / "job"), "https://careers.fabrikam.example/review")
+    out = _runner(context, tmp_path, _ReviewJudge()).drain(cap=1)[0]
+    assert out.reason.startswith("no submit button (buttons: ")
+    assert len(out.reason) <= apply_run.EVIDENCE_CAP + 40, len(out.reason)
+
+
+# --- the probe prints the loop's step; only a plain Apply is followed --------------------------------
+
+@pytest.mark.parametrize("fixture, step", [
+    ("job_posting.html", "click the Apply entry [0] 'Apply now' (judged_apply_entry)"),
+    ("ashby_steps.html", "fill the page, then click the advance [0] 'Continue'"),
+    ("lever_single.html", "fill the page, then the submit gate with [0] 'Submit application'")])
+def test_probe_prints_the_step_the_loop_would_take(context, flow_server, fixture, step):
+    out = io.StringIO()
+    assert apply_run.probe(flow_server.url(fixture), judge=jev.FakeJev(), context=context,
+                           out=out, settle_s=1) == 0
+    assert f"  the loop would: {step}" in out.getvalue(), out.getvalue()
+
+
+def test_probe_prints_an_unsure_park_and_a_remapped_sign_in(context, flow_server):
+    out = io.StringIO()
+    judge = type("J", (_ReadAs,), {"STATE": "other", "CONF": 0.30})()
+    apply_run.probe(flow_server.url("job_posting.html"), judge=judge, context=context, out=out,
+                    settle_s=1)
+    assert ("  the loop would: park: unsure what this page is (other, 0.30); reads: other "
+            "0.30, job_posting 0.25, application_form 0.20") in out.getvalue(), out.getvalue()
+    out = io.StringIO()
+    judge = type("J", (_ReadAs,), {"STATE": "login_wall", "CONF": 0.90})()
+    apply_run.probe(flow_server.url("lever_single.html"), judge=judge, context=context, out=out,
+                    settle_s=1)
+    assert ("  the loop would: read as login_wall with no account boxes: it is the form; "
+            "fill the page, then the submit gate with [0] 'Submit application'"
+            in out.getvalue()), out.getvalue()
+
+
+@pytest.mark.parametrize("label", ["Quick apply", "Apply with LinkedIn", "1-click apply",
+                                   "Easy Apply"])
+def test_probe_follows_only_a_plain_apply(context, no_typing, label):
+    _careers(context, {"/jobs/1": f"<body><h1>Engineer</h1><p>The role.</p>"
+                                  f"<a class='btn' href='/apply'>{label}</a></body>"})
+    out = io.StringIO()
+    apply_run.probe("https://careers.fabrikam.example/jobs/1", follow_apply=True,
+                    context=context, out=out, settle_s=1)
+    assert "follow-apply: nothing clicked" in out.getvalue(), out.getvalue()
+    assert "page 2:" not in out.getvalue()
+
+
+# --- M3: a failed fill never logs its value ---------------------------------------------------------
+
+def test_a_failed_fill_logs_its_error_type_and_never_its_value(context, monkeypatch, caplog):
+    import apply_fill
+    page = context.new_page()
+    page.set_content('<body><label>Nickname <input id="nick"></label></body>')
+
+    def _raise(*a, **kw):
+        raise RuntimeError('Locator.fill: Timeout\nCall log:\n  - fill("SECRET-VALUE-42")')
+    monkeypatch.setattr(apply_fill, "_act", _raise)
+    plan = FillPlan(fields=[PlannedField(n=0, locator=(0, "#nick"), label="Nickname",
+                                         required=False, fact_key="first_name",
+                                         value="SECRET-VALUE-42", option=None, confidence=1.0,
+                                         action="fill")])
+    errors = []
+    with caplog.at_level(logging.DEBUG):
+        apply_fill.apply(page, plan, errors=errors)
+    assert "SECRET-VALUE-42" not in caplog.text
+    assert "RuntimeError" in caplog.text and "Nickname" in caplog.text
+    assert errors == [{"n": 0, "label": "Nickname", "action": "fill", "error": "RuntimeError"}]
+
+
+# --- M4: the record's links work where each copy sits ----------------------------------------------
+
+_LINK = re.compile(r"\]\(([^)]+)\)")
+
+
+def test_every_link_in_the_record_and_its_copies_resolves(context, flow_server, tmp_path):
+    folder = h.write_job_folder(tmp_path / "job")
+    (folder / "apply_record.md").write_text("# old\n\n- Status: failed\n- Reason: old\n",
+                                            encoding="utf-8")
+    _enqueue(folder, flow_server.url("captcha.html"))
+    _runner(context, tmp_path).drain(cap=1)
+    apply_queue.requeue("42")
+    _runner(context, tmp_path).drain(cap=1)
+    records = [folder / "apply_record.md",
+               *sorted((folder / "apply_trace").glob("attempt-*/apply_record.md"))]
+    assert len(records) == 3
+    for record in records:
+        links = _LINK.findall(record.read_text(encoding="utf-8"))
+        assert links, record
+        for link in links:
+            assert (record.parent / link).exists(), (record, link)
+
+
+# --- M8: an odd value in an event never turns the trace off -----------------------------------------
+
+def test_an_odd_value_in_an_event_is_written_as_text(tmp_path):
+    trace = apply_trace.Trace(tmp_path, attempt=1, job_id="42")
+    trace.start()
+    try:
+        trace.event("odd", things={3, 1}, where=Path("a") / "b", obj=object())
+        assert trace.enabled
+        run = json.loads((tmp_path / "apply_trace" / "attempt-1" / "run.json").read_text(
+            encoding="utf-8"))
+        odd = run["setup_events"][-1]
+        assert odd["kind"] == "odd" and isinstance(odd["things"], str)
+        assert odd["where"] in ("a/b", "a\\b")
+    finally:
+        trace.close()
+
+
+# --- M9: the sign-up page the login hook reads is a traced page ------------------------------------
+
+def test_the_sign_up_page_the_login_hook_follows_is_traced(context, flow_server, tmp_path,
+                                                          monkeypatch):
+    monkeypatch.setattr(apply_run.ats_accounts, "_get_master_password", lambda: h.PASSWORD)
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, flow_server.url("login_two_signup_links.html"))
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    pages = _pages(folder / "apply_trace" / "attempt-1")
+    assert [p["state"] for p in pages[:2]] == ["login_wall", "signup_form"]
+    assert pages[1]["url"].endswith("/forms/signup.html")
+    assert any(e["kind"] == "decision" and e["what"] == "signup_link"
+               for e in pages[0]["events"])

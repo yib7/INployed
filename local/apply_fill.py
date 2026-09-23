@@ -292,7 +292,9 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
             kind = _kind(loc)
             _act(page, pf, loc, kind)
         except Exception as e:      # noqa: BLE001  (the read-back reports the outcome)
-            _say(log, f"apply_fill: {pf.action} on {pf.label!r} ({pf.locator[1]}) failed: {e}")
+            # the type alone: a Playwright message quotes the call, value included
+            _say(log, f"apply_fill: {pf.action} on {pf.label!r} ({pf.locator[1]}) failed: "
+                      f"{type(e).__name__}")
             if errors is not None:
                 errors.append({"n": pf.n, "label": pf.label, "action": pf.action,
                                "error": type(e).__name__})
@@ -396,7 +398,8 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20)
             log.info("apply_fill: button %s (%s) is gone", n, button.locator[1])
             return ClickResult(clicked=False, changed=False)
     except Exception as e:      # noqa: BLE001  (a torn-down frame)
-        log.info("apply_fill: button %s (%s) unreachable: %s", n, button.locator[1], e)
+        log.info("apply_fill: button %s (%s) unreachable: %s", n, button.locator[1],
+                 type(e).__name__)
         return ClickResult(clicked=False, changed=False)
     landed: list[bool] = []
 
@@ -407,7 +410,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20)
     try:
         changed = _await_change(page, _act, timeout_s)
     except Exception as e:      # noqa: BLE001
-        log.info("apply_fill: click on %r failed: %s", button.text, e)
+        log.info("apply_fill: click on %r failed: %s", button.text, type(e).__name__)
         return ClickResult(clicked=bool(landed), changed=False)
     return ClickResult(clicked=True, changed=changed)
 
@@ -427,7 +430,7 @@ def wait_for_change(page, *, timeout_s: float = 20) -> bool:
     try:
         return _await_change(page, lambda: None, timeout_s)
     except Exception as e:      # noqa: BLE001
-        log.info("apply_fill: wait_for_change failed: %s", e)
+        log.info("apply_fill: wait_for_change failed: %s", type(e).__name__)
         return False
 
 

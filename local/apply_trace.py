@@ -20,10 +20,11 @@ count), so an earlier attempt's trace survives a re-queue. `page-<k>.json` is
 written as soon as the page is judged and again with every event, so a crash
 still leaves every page before it.
 
-What the trace never holds: a field's value (the digest carries labels,
-types and options; a fill event says which boxes took a value, not what it
-was), the master password or an emailed code. The screenshots show the page
-as a person would see it, with every password and code box masked.
+What the trace never holds: a field's value, the master password or an
+emailed code. The digest carries labels, types and options; a fill event
+says which boxes hold something. The screenshots show the page as a person
+would see it, with every password and code box masked, and every box the
+run typed the password or a code into (`extra_mask`).
 
 `Trace.off()` is the disabled trace: every call is a no-op, so a `_JobRun`
 built by a test without `run()` needs no folder. A trace that cannot write
@@ -34,12 +35,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from jsonutil import atomic_write_json
+from jsonutil import replace_with_retry
 
 log = logging.getLogger("apply_trace")
 
@@ -59,6 +61,31 @@ MASK_CSS = ("input[type=password], input[autocomplete=one-time-code], "
 LOGGERS = ("apply_run", "apply_fill", "apply_form", "apply_judge", "apply_inbox",
            "apply_answergen", "apply_verify", "ats_accounts", "jev", "apply_trace")
 _ATTEMPT_RE = re.compile(r"^attempt-(\d+)$")
+
+
+def _as_text(value: Any) -> Any:
+    """JSON for what `json` cannot write itself: a path or any other object as
+    its text, a set as a sorted list's text (cut to 200 characters)."""
+    if isinstance(value, (set, frozenset)):
+        value = sorted(value, key=str)
+    return str(value)[:200]
+
+
+def write_json(path: Path, data: Any) -> None:
+    """`data` as JSON at `path`, atomically (a same-folder temp file, then a
+    replace). A value `json` cannot write goes in as text, so one odd value
+    never turns the trace off."""
+    path = Path(path)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2, default=_as_text), encoding="utf-8")
+        replace_with_retry(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def attempt_dirs(folder: Path) -> list[tuple[int, Path]]:
@@ -290,11 +317,12 @@ class Trace:
             return ""
         return path.name
 
-    def finish(self, status: str, reason: str, page=None) -> None:
+    def finish(self, status: str, reason: str, page=None, *,
+               extra_mask: Iterable[Any] = ()) -> None:
         """The end: the last page's screenshot and `run.json`."""
         if not self.enabled:
             return
-        shot = self.screenshot(page, "end") if page is not None else ""
+        shot = self.screenshot(page, "end", extra_mask=extra_mask) if page is not None else ""
         self._write_run({"status": status, "reason": reason, "end_screenshot": shot,
                          "seconds": self._t()})
 
@@ -302,7 +330,7 @@ class Trace:
 
     def _write_page(self, entry: dict[str, Any]) -> None:
         try:
-            atomic_write_json(self.dir / f"page-{entry['n']}.json", entry)
+            write_json(self.dir / f"page-{entry['n']}.json", entry)
         except Exception as e:      # noqa: BLE001
             self._fail("writing a page", e)
 
@@ -319,6 +347,6 @@ class Trace:
                         "setup_events": list(self.setup)})
         current.update(extra)
         try:
-            atomic_write_json(path, current)
+            write_json(path, current)
         except Exception as e:      # noqa: BLE001
             self._fail("writing run.json", e)

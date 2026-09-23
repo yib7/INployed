@@ -542,7 +542,7 @@ def test_max_pages_exhaustion_parks(context, fixture_url, job_folder, catalog_bu
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
     assert out.status == "needs_human", out
-    assert out.reason == "page budget exhausted (1 pages)"
+    assert out.reason == "page budget exhausted (1 pages; last: application_form)"
     assert out.pages == 1
     page = next(p for p in context.pages if not p.is_closed())
     assert page.locator("body[data-submitted]").count() == 0
@@ -558,7 +558,7 @@ def test_wall_clock_exhaustion_parks(context, fixture_url, job_folder, catalog_b
                               run_context=_RUN_CONTEXT, clock=lambda: next(ticks),
                               sleep=_no_sleep)
     out = runner.drain(cap=1)[0]
-    assert out.status == "needs_human" and out.reason == "time budget exhausted"
+    assert out.status == "needs_human" and out.reason.startswith("time budget exhausted (")
 
 
 def test_wall_clock_passing_mid_fill_stops_the_fill_on_the_runner_clock(
@@ -586,7 +586,7 @@ def test_wall_clock_passing_mid_fill_stops_the_fill_on_the_runner_clock(
         out = runner.drain(cap=1)[0]
     finally:
         runner_apply.apply = orig
-    assert out.status == "needs_human" and out.reason == "time budget exhausted"
+    assert out.status == "needs_human" and out.reason.startswith("time budget exhausted (")
     page = next(p for p in context.pages if not p.is_closed())
     assert page.locator("#first_name").input_value() == ""          # the fill saw the clock
 
@@ -666,7 +666,7 @@ def test_login_wall_parks_with_the_login_note_by_default(
     _enqueue(job_folder, fixture_url("login_wall.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
     assert out.status == "needs_human", out
-    assert out.reason == "login wall"
+    assert out.reason.startswith("login wall (read as login_wall "), out
     entry = _entry()
     assert entry["tab_note"] == apply_run.LOGIN_NOTE == "log in manually, then Re-queue"
     record = Path(out.record_path).read_text(encoding="utf-8")
@@ -797,7 +797,7 @@ def test_a_password_screen_without_the_address_step_or_an_account_parks(
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
     _enqueue(job_folder, fixture_url("login_password_step.html"))
     out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
-    assert out.status == "needs_human" and out.reason == "login wall", out
+    assert out.status == "needs_human" and out.reason.startswith("login wall ("), out
 
 
 def test_a_signup_asking_for_an_ssn_parks_for_the_human_without_asking_for_it(

@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_form  # noqa: E402
 import apply_harness as h  # noqa: E402
+import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import jev  # noqa: E402
@@ -449,3 +450,85 @@ def test_a_step_opened_in_a_new_tab_is_the_next_page_and_nothing_is_clicked_twic
     assert len(nexts) == 1, nexts
     adopted = _decisions(Path(r.trace), "click_popup")
     assert adopted and "step=2" in adopted[0]["url"], adopted
+
+
+# --- what the judge reads first: study G9, G13, G14, G4 --------------------------------------------
+
+_MODAL_PAGE = """<!doctype html><html><head><title>Analyst - Fabrikam</title></head><body>
+<h1>Analyst</h1><p>Fabrikam, Austin. About the role: own the dashboards.</p>
+<button type="button" id="apply">Apply</button><button type="button">Share</button>
+<label for="q">Search jobs</label><input id="q">
+<div role="dialog" aria-modal="true" aria-labelledby="t"
+     style="position:fixed;inset:10% 20%;background:#fff;border:1px solid #555;padding:24px">
+  <h2 id="t">Start Your Application</h2>
+  <button type="button">Autofill with Resume</button>
+  <button type="button">Apply Manually</button>
+</div></body></html>"""
+
+
+def test_an_open_modal_is_the_page_its_text_first_and_its_controls_alone(browser_page):
+    # G9: Workday's "Start Your Application" dialog over the posting
+    browser_page.set_content(_MODAL_PAGE)
+    d = apply_form.extract(browser_page)
+    assert [b.text for b in d.buttons] == ["Autofill with Resume", "Apply Manually"], d.buttons
+    assert d.fields == []
+    assert d.dialog == "Start Your Application"
+    assert d.text.startswith("Start Your Application"), d.text[:80]
+    state, _ = apply_judge.read_questions(d)
+    assert state["page"]["dialog"] == "Start Your Application"
+
+
+def test_a_content_frame_is_read_before_the_host_pages_chrome(browser_page):
+    # G9: an iCIMS content frame, a Greenhouse embed
+    chrome = "Our company. " * 60
+    frame = ("<h1>Apply for Data Engineer</h1><label for=f>First name</label><input id=f>"
+             "<button type=button>Submit application</button>")
+    browser_page.set_content(f"<body><p>{chrome}</p><iframe style='width:900px;height:600px' "
+                             f"srcdoc=\"{frame}\"></iframe></body>")
+    browser_page.frames[1].wait_for_selector("#f")
+    d = apply_form.extract(browser_page)
+    assert d.text.startswith("Apply for Data Engineer"), d.text[:80]
+    assert [f.label for f in d.fields] == ["First name"]
+
+
+def test_a_workday_header_and_a_top_bar_are_chrome_and_an_icon_with_no_name_is_dropped(
+        browser_page):
+    # G4: a header's Sign In invites a login misread; an unnamed icon is noise
+    browser_page.set_content("""<body>
+      <div data-automation-id="headerContainer"><button type="button">Sign In</button>
+        <button type="button">Search for Jobs</button></div>
+      <div style="position:fixed;top:0;left:0;right:0;height:50px;background:#eee">
+        <label for="s">Keyword</label><input id="s"><button type="button">Menu</button></div>
+      <main style="margin-top:80px"><h1>Analyst</h1><p>About the role.</p>
+        <button type="button"><svg width="10" height="10"></svg></button>
+        <a class="btn" href="/apply">Apply</a></main></body>""")
+    d = apply_form.extract(browser_page)
+    chrome = {b.text: b.chrome for b in d.buttons}
+    assert chrome == {"Sign In": True, "Search for Jobs": True, "Menu": True, "Apply": False}, chrome
+    assert d.fields == []
+    state, _ = apply_judge.read_questions(d)
+    assert [b["text"] for b in state["buttons"]] == ["Apply"]
+    assert apply_judge.page_facts(d).apply_entries == 1
+
+
+def test_a_locator_finds_its_frame_by_url_when_an_earlier_frame_went_away(browser_page, fixture_url):
+    # G14: an ad frame detaching between the read and the act shifts the indexes
+    browser_page.goto(fixture_url("job_posting.html"))
+    browser_page.set_content(
+        "<body><iframe id=ad src='about:blank'></iframe>"
+        f"<iframe id=form src='{fixture_url('lever_single.html')}'></iframe></body>")
+    browser_page.frame_locator("#form").locator("input").first.wait_for()
+    d = apply_form.extract(browser_page)
+    field = next(f for f in d.fields if f.locator[0] == 2)
+    browser_page.evaluate("document.getElementById('ad').remove()")
+    loc = apply_form.resolve(browser_page, field.locator)
+    assert loc.count() == 1
+    assert loc.first.evaluate("el => el.ownerDocument.location.href").endswith("lever_single.html")
+
+
+def test_a_privacy_agreement_first_is_a_step_accepted_to_go_on(_browser, flow_server, tmp_path):
+    # G13: Taleo's "Privacy Agreement", I Accept and I Decline
+    r = _flow("privacy_gate", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    clicked = [a.text for a in r.actions if a.kind == "click"]
+    assert clicked[:1] == ["I Accept"] and "I Decline" not in clicked, clicked

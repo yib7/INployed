@@ -20,6 +20,7 @@ module stays importable without it.
 from __future__ import annotations
 
 import logging
+import weakref
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 from urllib.parse import urlparse
@@ -76,12 +77,16 @@ class Button:
     `in_form`: the button's form holds a control a person fills (an input
     other than hidden or a button, a select, a textarea, an editable box, a
     custom control): an Apply there is the form's own button, never a
-    posting's entry (INV-03)."""
+    posting's entry (INV-03). `chrome`: it sits in the site's header, nav or
+    search landmark, a Workday header, or a bar fixed to the top of the page
+    (study G4: a header's "Sign In" is no sign-in page)."""
     n: int
     locator: tuple[int, str]
     text: str
     kind_hint: str = ""
     in_form: bool = False
+    chrome: bool = False        # in the site's header, nav or top bar (study G4): kept for
+                                # the mapping, left out of the page read
 
 
 @dataclass
@@ -91,6 +96,7 @@ class FormDigest:
     text: str
     fields: list[Field] = field(default_factory=list)
     buttons: list[Button] = field(default_factory=list)
+    dialog: str = ""            # an open modal's title: its controls are the page's (G9)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -109,10 +115,12 @@ class FormDigest:
         buttons = [Button(n=int(b["n"]), locator=_locator(b.get("locator")),
                           text=str(b.get("text", "")),
                           kind_hint=str(b.get("kind_hint", "") or ""),
-                          in_form=bool(b.get("in_form", False)))
+                          in_form=bool(b.get("in_form", False)),
+                          chrome=bool(b.get("chrome", False)))
                    for b in (raw.get("buttons") or [])]
         return cls(url_host=str(raw.get("url_host", "")), title=str(raw.get("title", "")),
-                   text=str(raw.get("text", "")), fields=fields, buttons=buttons)
+                   text=str(raw.get("text", "")), fields=fields, buttons=buttons,
+                   dialog=str(raw.get("dialog", "") or ""))
 
 
 def _locator(raw: Any) -> tuple[int, str]:
@@ -175,6 +183,17 @@ def _locator(raw: Any) -> tuple[int, str]:
 #   consent  a cookie or consent banner (`CONSENT_ROOTS_JS`) is chrome as
 #            well: its fields and buttons are dropped and its text goes to
 #            the end (the study's G1: 11 ATSs, the banner text first on 3).
+#   modal    an open modal (`dialog[open]`, `aria-modal=true`, or a dialog
+#            covering over 40% of the viewport; never a consent banner) is
+#            the page while it is open (study G9: Workday's "Start Your
+#            Application", Teamtailor's form overlay): only its fields and
+#            buttons are kept, its text goes first, and its title is
+#            returned as `dialog`.
+#   top bar  a Workday header (`data-automation-id*=header`) and a bar fixed
+#            or sticky at the top of the page (study G4) are chrome like the
+#            landmarks: no field is kept there, and its buttons carry
+#            `chrome` (the page read leaves them out). A button with no
+#            text, value, aria-label or title is dropped.
 # The label of one radio or checkbox option, self-contained so `apply_fill` can
 # run the same rule on a live locator: label[for], aria-label, an enclosing
 # label (minus the control's own text), the text that follows it, else its
@@ -360,6 +379,48 @@ _EXTRACT_JS = r"""
   };
   const consent = (__CONSENT__)();
   const inConsent = (el) => consent.some((root) => root.contains(el));
+  // an open modal is the page while it is open (G9)
+  const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+  const covers = (el) => {
+    const r = el.getBoundingClientRect();
+    const w = Math.min(r.right, vw) - Math.max(r.left, 0);
+    const h = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+    return w > 0 && h > 0 && w * h > 0.4 * vw * vh;
+  };
+  const modal = Array.from(document.querySelectorAll(
+      'dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]')).find((el) =>
+    visible(el) && !inConsent(el) && !consent.some((root) => el.contains(root))
+    && (el.matches('dialog[open]') || el.getAttribute('aria-modal') === 'true' || covers(el)));
+  const outsideModal = (el) => !!modal && !modal.contains(el);
+  const modalTitle = (() => {
+    if (!modal) return '';
+    const by = modal.getAttribute('aria-labelledby');
+    if (by) {
+      const t = norm(by.split(/\s+/).map((id) => {
+        const n = document.getElementById(id); return n ? n.textContent : '';
+      }).join(' '));
+      if (t) return t;
+    }
+    const aria = norm(modal.getAttribute('aria-label'));
+    if (aria) return aria;
+    const h = modal.querySelector('h1, h2, h3, legend');
+    return h ? norm(h.textContent) : '';
+  })();
+  // a Workday header, a bar fixed or sticky at the top of the page (G4)
+  const topBar = (el) => {
+    if (el.closest('[data-automation-id*=header i]')
+        && !el.closest('form, dialog, [role=dialog]')) return true;
+    let cur = el.parentElement;
+    for (let i = 0; cur && cur !== document.body && i < 10; i++, cur = cur.parentElement) {
+      if (cur.matches('form, dialog, [role=dialog], [aria-modal=true]')) return false;
+      const pos = getComputedStyle(cur).position;
+      if (pos === 'fixed' || pos === 'sticky') {
+        const r = cur.getBoundingClientRect();
+        return r.top < 80 && r.height < 200;
+      }
+    }
+    return false;
+  };
   // a hidden file box's form, or outside a form a box within three levels
   // above it, still shows (a styled upload hides the input itself)
   const boxShows = (el) => {
@@ -533,7 +594,7 @@ _EXTRACT_JS = r"""
     if (lb) controlled.add(lb);
   }
   for (const el of document.querySelectorAll('input, select, textarea, [role=combobox], [role=listbox]')) {
-    if (!enabled(el) || inChrome(el) || inConsent(el)) continue;
+    if (!enabled(el) || inChrome(el) || inConsent(el) || outsideModal(el) || topBar(el)) continue;
     const role = el.getAttribute('role') || '';
     if (role !== 'combobox') {
       const widget = el.closest('[role=combobox]');
@@ -581,8 +642,9 @@ _EXTRACT_JS = r"""
     && APPLY.test(text + ' ' + norm(el.getAttribute('aria-label')));
   for (const el of document.querySelectorAll(bsel + ', a[href]')) {
     if (!enabled(el) || !visible(el)) continue;
-    if (el.closest('[role=combobox]') || inConsent(el)) continue;
+    if (el.closest('[role=combobox]') || inConsent(el) || outsideModal(el)) continue;
     const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label')) || norm(el.getAttribute('title'));
+    if (!text) continue;        // an icon with no name the judge could read (G4)
     if (!el.matches(bsel) && !applyLink(el, text)) continue;
     const typeAttr = (el.getAttribute('type') || '').toLowerCase();
     const submits = typeAttr === 'submit' || (el.tagName === 'BUTTON' && !typeAttr && !!el.form);
@@ -594,7 +656,7 @@ _EXTRACT_JS = r"""
     if (!kind && /\b(back|previous)\b/i.test(text)) kind = 'back';
     const owner = el.form || el.closest('form');
     buttons.push({ css: locatorFor(el), text: text, kind_hint: kind,
-                   in_form: holdsControls(owner) });
+                   in_form: holdsControls(owner), chrome: inChrome(el) || topBar(el) });
   }
 
   let text = document.body ? (document.body.innerText || '') : '';
@@ -619,11 +681,24 @@ _EXTRACT_JS = r"""
     if (t && text.includes(t)) { text = text.replace(t, ''); banners.push(t); }
   }
   if (banners.length) text = [text.trim(), ...banners].filter(Boolean).join('\n');
-  return { fields: out, buttons: buttons, text: text.slice(0, cap) };
+  if (modal) {
+    // the open modal's text first: it is what the page asks now (G9)
+    const own = (modal.innerText || '').trim();
+    if (own) text = [own, text.replace(own, '').trim()].filter(Boolean).join('\n');
+  }
+  return { fields: out, buttons: buttons, text: text.slice(0, cap), dialog: modalTitle.slice(0, 160),
+           modal: !!modal };
 }
 """.replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS).replace("__CONSENT__", CONSENT_ROOTS_JS)
 
 _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
+
+
+# The frame URLs of the last `extract` per page (study G14): a locator's frame
+# index can shift when an ad or tracker frame detaches between the read and
+# the act; `resolve` finds the frame by the URL it had at the read first.
+_FRAME_URLS: "weakref.WeakKeyDictionary[Any, list[str]]" = weakref.WeakKeyDictionary()
+CONTENT_FRAME_MIN = (600, 300)    # px: a child frame this big with fields is the content (G9)
 
 
 def frames(page) -> list:
@@ -644,8 +719,14 @@ def extract(page) -> FormDigest:
 
     fields: list[Field] = []
     buttons: list[Button] = []
-    texts: list[str] = []
-    for idx, frame in enumerate(frames(page)):
+    texts: list[tuple[int, str]] = []     # (order, text): a content frame's first (G9)
+    dialog = ""
+    all_frames = frames(page)
+    try:
+        _FRAME_URLS[page] = [str(getattr(f, "url", "") or "") for f in all_frames]
+    except TypeError:           # a page double that takes no weak reference
+        pass
+    for idx, frame in enumerate(all_frames):
         try:
             raw = frame.evaluate(_EXTRACT_JS, PAGE_TEXT_CAP)
         except Exception as e:      # noqa: BLE001  (a detached or cross-origin frame)
@@ -662,12 +743,26 @@ def extract(page) -> FormDigest:
         for b in raw.get("buttons") or []:
             buttons.append(Button(n=len(buttons), locator=(idx, str(b["css"])),
                                   text=str(b["text"]), kind_hint=str(b.get("kind_hint") or ""),
-                                  in_form=bool(b.get("in_form"))))
+                                  in_form=bool(b.get("in_form")), chrome=bool(b.get("chrome"))))
+        if raw.get("dialog") and not dialog:
+            dialog = str(raw["dialog"])
         if raw.get("text"):
-            texts.append(str(raw["text"]))
-    text = "\n".join(texts)[:PAGE_TEXT_CAP]
+            first = idx > 0 and raw.get("fields") and _content_frame(frame)
+            texts.append((0 if first else 1, str(raw["text"])))
+    text = "\n".join(t for _, t in sorted(texts, key=lambda row: row[0]))[:PAGE_TEXT_CAP]
     return FormDigest(url_host=urlparse(page.url).hostname or "", title=page.title(),
-                      text=text, fields=fields, buttons=buttons)
+                      text=text, fields=fields, buttons=buttons, dialog=dialog)
+
+
+def _content_frame(frame) -> bool:
+    """A child frame big enough to be the page's content (an iCIMS content
+    frame, a Greenhouse embed): at least `CONTENT_FRAME_MIN` on the page."""
+    try:
+        box = frame.frame_element().bounding_box()
+    except Exception:       # noqa: BLE001  (a detached frame)
+        return False
+    return bool(box) and box["width"] >= CONTENT_FRAME_MIN[0] \
+        and box["height"] >= CONTENT_FRAME_MIN[1]
 
 
 def consent_control(page, allow=None) -> tuple[int, dict] | None:
@@ -705,9 +800,23 @@ def page_texts(page) -> list[str]:
 
 def resolve(page, locator: tuple[int, str]):
     """A digest locator `(frame_index, css)` as a Playwright `Locator` on that
-    frame. Raises `IndexError` when the frame no longer exists."""
+    frame. The frame is found by the URL it had at the last `extract` first
+    (study G14: a frame that detached since shifts the indexes after it),
+    then by its index. Raises `IndexError` when the frame no longer
+    exists."""
     idx, css = int(locator[0]), str(locator[1])
     all_frames = frames(page)
+    try:
+        urls = _FRAME_URLS.get(page) or []
+    except TypeError:           # a page double that takes no weak reference
+        urls = []
+    if 0 < idx < len(urls) and urls[idx]:
+        want = urls[idx]
+        here = str(getattr(all_frames[idx], "url", "") or "") if idx < len(all_frames) else ""
+        if here != want:
+            moved = [f for f in all_frames[1:] if str(getattr(f, "url", "") or "") == want]
+            if moved:
+                return moved[0].locator(css)
     if not 0 <= idx < len(all_frames):
         raise IndexError(f"frame {idx} is gone (page has {len(all_frames)})")
     return all_frames[idx].locator(css)

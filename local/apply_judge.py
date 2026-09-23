@@ -687,7 +687,8 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
     code = code_field(digest.fields)
     passwords = [f for f in digest.fields if _password_kind(f)]
     kinds = [_password_kind(f) for f in passwords]
-    buttons = list(digest.buttons)
+    # the page's own buttons: never the site's header or top bar (study G4)
+    buttons = [b for b in digest.buttons if not getattr(b, "chrome", False)]
     # a send word other than a sign-in's ("Submit application", not "Send code")
     sends = [b for b in buttons if _SEND_ONLY_WORDS.search(b.text)
              and not _SIGN_IN_SEND.search(b.text)]
@@ -885,6 +886,8 @@ def read_questions(digest: FormDigest, url: str = "") -> tuple[dict, dict]:
     seen: set[str] = set()
     buttons = []
     for b in digest.buttons:
+        if getattr(b, "chrome", False):
+            continue                # the site's header and top bar (study G4)
         text = _cut(b.text)
         if text and text not in seen and len(buttons) < READ_LIST_CAP:
             seen.add(text)

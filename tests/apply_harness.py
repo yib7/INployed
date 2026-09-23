@@ -60,6 +60,7 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO / "local") not in sys.path:
     sys.path.insert(0, str(REPO / "local"))
 
+import apply_run  # noqa: E402
 import jev  # noqa: E402
 
 FIXTURES_DIR = REPO / "tests" / "fixtures"
@@ -71,11 +72,10 @@ NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs t
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
 # at the SP1 baseline. Later phases raise it to 0.95.
-SUCCESS_FLOOR = 0.60                      # SP1: 30 of 48 suite runs (0.625)
-# Under the fake judge every flow but `greenhouse_embed` reaches its end (SP1:
-# 15 of 16): after the in-frame submit the embed's hidden file boxes still
-# read as a form, so the confirmation is recorded "submitted (unconfirmed)".
-FAKE_SUCCESS_FLOOR = 0.93
+SUCCESS_FLOOR = 0.64                      # SP1 fix round 1: 30 of 45 suite runs (0.667)
+# Under the fake judge every flow reaches its end but the known failing ones
+# (`Flow.known`), which the rates leave out.
+FAKE_SUCCESS_FLOOR = 1.0
 
 _PDF = (b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
         b"2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
@@ -211,7 +211,7 @@ def hermetic(rundir: Path, *, password: bool = False):
 
 
 # The fixtures are static pages: a short quiet window reads them as well as the
-# production one, and a dead click or a missing popup costs seconds, not tens.
+# production one, and a dead click or a missing popup then costs a few seconds.
 FAST_TIMING = {
     ("apply_fill", "SETTLE_QUIET_S"): 0.1,        # a flow with a timer keeps its own (`Flow.settle_s`)
     ("apply_fill", "SETTLE_MAX_S"): 3.0,
@@ -368,9 +368,22 @@ class Flow:
     ats: dict[str, str] = field(default_factory=dict)
     settle_s: float | None = None   # the quiet window when a page moves on by a timer
     covers: str = ""                # what the flow exercises
+    # "<phase>: why": the fake judge does not reach the end yet; the matrix
+    # reports the flow apart and leaves it out of the rates the floors read
+    known: str = ""
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
+
+    def app_hosts(self, base: str) -> set[str]:
+        """Where the application lives, the only hosts the master password may
+        be typed on: the fixture server, and the start page's host off
+        LinkedIn."""
+        hosts = {_host(base)}
+        start = _host(self.start_url(base))
+        if not on_linkedin(self.start_url(base)):
+            hosts.add(start)
+        return hosts
 
     def reached(self, status: str, reason: str, final: dict) -> bool:
         """The run reached this flow's expected end."""
@@ -401,7 +414,9 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#received:visible", routes=_linkedin_routes,
          covers="LinkedIn's job page, its Apply link through the redirector, the form"),
     Flow("greenhouse_embed", "greenhouse_embed.html", True, "submitted", _SUBMITTED,
-         confirm="#thanks:visible", covers="a company page embedding the form in an iframe"),
+         confirm="#thanks:visible", covers="a company page embedding the form in an iframe",
+         known="SP3: after the in-frame submit the embed's hidden file boxes still read as a "
+               "form, so the confirmation is recorded submitted (unconfirmed)"),
     Flow("lever_single_park", "lever_single.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a one-page form in park mode"),
@@ -513,18 +528,37 @@ _LIVE_JS = r"""el => {
   text = (text || el.getAttribute('aria-label') || el.getAttribute('title') || '')
     .replace(/\s+/g, ' ').trim().slice(0, 160);
   return {text: text, role: el.getAttribute('role') || '', tag: tag, type: type,
+          form: !!(el.form || (el.closest && el.closest('form'))),
           url: String(el.ownerDocument.location.href)};
 }"""
+# The focused element of a page, for a key press or typed text without a target.
+_FOCUS_JS = "() => { const el = document.activeElement; " \
+            "if (!el || el === document.body) return {url: String(location.href)}; " \
+            "return (" + _LIVE_JS + ")(el); }"
 LIVE_TIMEOUT_MS = 1_000
-# A click whose live text reads as sending the application.
-SUBMIT_TEXT = re.compile(r"\bsubmit\b|\bsend\b.{0,20}\bapplication\b|\bfinish\b", re.I)
-_LOCATOR_ACTIONS = {"click": "click", "dblclick": "click", "tap": "click", "fill": "fill",
-                    "type": "fill", "press_sequentially": "fill", "check": "tick",
-                    "uncheck": "tick", "set_checked": "tick", "select_option": "pick",
-                    "set_input_files": "upload"}
-_FRAME_ACTIONS = {"click": "click", "fill": "fill", "type": "fill", "check": "tick",
-                  "select_option": "pick", "set_input_files": "upload"}
+# The loop's own send vocabulary (`apply_run.SUBMIT_WORDS`, `FINAL_WORDS`).
+SUBMIT_WORDS = apply_run.SUBMIT_WORDS
+FINAL_WORDS = apply_run.FINAL_WORDS
+_ENTER_KEYS = ("Enter", "NumpadEnter")
+_TARGET_ACTIONS = {"click": "click", "dblclick": "click", "tap": "click", "fill": "fill",
+                   "type": "fill", "press_sequentially": "fill", "press": "press",
+                   "check": "tick", "uncheck": "tick", "set_checked": "tick",
+                   "select_option": "pick", "set_input_files": "upload",
+                   "dispatch_event": "event"}
+_KEYBOARD_ACTIONS = {"press": "press", "down": "press", "type": "fill", "insert_text": "fill"}
 _ON_LINKEDIN_FORBIDDEN = ("fill", "tick", "pick", "upload", "gate")
+
+
+def submit_worded(text: str, *, park_mode: bool) -> bool:
+    """Does a control's live text read as sending the application, in the
+    loop's words? A send word other than "apply" (a bare "Apply" is the
+    posting's entry), or in park mode a last-step word on anything but an
+    account step (`apply_run._final_shaped`, `_sends_application`)."""
+    words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
+    if words - {"apply"}:
+        return True
+    return (park_mode and bool(FINAL_WORDS.search(text or ""))
+            and not apply_run._ACCOUNT_STEP_WORDS.search(text or ""))
 
 
 def _host(url: str) -> str:
@@ -539,7 +573,7 @@ def on_linkedin(url: str) -> bool:
 
 @dataclass
 class Action:
-    kind: str           # click | fill | tick | pick | upload | gate
+    kind: str           # click | fill | press | tick | pick | upload | event | gate
     url: str
     text: str = ""
     role: str = ""
@@ -547,6 +581,8 @@ class Action:
     type: str = ""
     in_gate: bool = False
     how: str = ""       # the Playwright call
+    key: str = ""       # a key press's key
+    form: bool = False  # the element (or the focused one) sits in a form
 
     @property
     def host(self) -> str:
@@ -567,53 +603,97 @@ class Recorder:
         self.final: dict[str, Any] = {}
         self.logs: list[str] = []
         self.files: list[Path] = []       # scanned for the password after the run
+        self.judge_requests: list[str] = []   # every request the judge got, as JSON
+        self.app_hosts: set[str] = set()  # where the master password may be typed
+        self._keyboards: dict[int, Any] = {}
 
-    def _live(self, loc) -> dict:
+    def _live(self, target) -> dict:
         try:
-            return dict(loc.evaluate(_LIVE_JS, timeout=LIVE_TIMEOUT_MS))
+            if hasattr(target, "page") and not hasattr(target, "as_element"):
+                return dict(target.evaluate(_LIVE_JS, timeout=LIVE_TIMEOUT_MS))
+            return dict(target.evaluate(_LIVE_JS))
         except Exception:       # noqa: BLE001  (a detached or ambiguous element)
-            try:
-                return {"url": str(loc.page.url)}
-            except Exception:   # noqa: BLE001
-                return {}
+            for owner in ("page", "owner_frame"):
+                try:
+                    found = getattr(target, owner)
+                    return {"url": str((found() if callable(found) else found).url)}
+                except Exception:   # noqa: BLE001
+                    continue
+            return {}
 
-    def _add(self, kind: str, how: str, info: dict) -> None:
+    def _add(self, kind: str, how: str, info: dict, key: str = "") -> None:
         self.actions.append(Action(kind=kind, how=how, url=str(info.get("url", "")),
                                    text=str(info.get("text", "")), role=str(info.get("role", "")),
                                    tag=str(info.get("tag", "")), type=str(info.get("type", "")),
-                                   in_gate=self.gate_depth > 0))
+                                   in_gate=self.gate_depth > 0, key=key,
+                                   form=bool(info.get("form", False))))
+
+    @staticmethod
+    def _kind(kind: str, name: str, args: tuple, kw: dict) -> str:
+        if kind == "event":
+            event = args[0] if args else kw.get("type", "")
+            return "click" if str(event).lower() == "click" else "event"
+        return kind
 
     @contextmanager
     def recording(self):
-        from playwright.sync_api import Frame, Locator
+        from playwright.sync_api import ElementHandle, Frame, Keyboard, Locator, Page
 
-        import apply_run
         p = Patches()
         rec = self
         try:
-            for name, kind in _LOCATOR_ACTIONS.items():
-                orig = getattr(Locator, name, None)
+            for cls, label in ((Locator, "Locator"), (ElementHandle, "ElementHandle")):
+                for name, kind in _TARGET_ACTIONS.items():
+                    orig = getattr(cls, name, None)
+                    if orig is None:
+                        continue
+
+                    def _on(target, *a, _orig=orig, _kind=kind, _name=name, _label=label, **kw):
+                        key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
+                        rec._add(rec._kind(_kind, _name, a, kw), f"{_label}.{_name}",
+                                 rec._live(target), key)
+                        return _orig(target, *a, **kw)
+                    p.setattr(cls, name, _on)
+            for cls, label in ((Frame, "Frame"), (Page, "Page")):
+                for name, kind in _TARGET_ACTIONS.items():
+                    orig = getattr(cls, name, None)
+                    if orig is None or name == "press_sequentially":
+                        continue
+
+                    def _sel(owner, selector, *a, _orig=orig, _kind=kind, _name=name,
+                             _label=label, **kw):
+                        try:
+                            info = rec._live(owner.locator(selector).first)
+                        except Exception:       # noqa: BLE001
+                            info = {}
+                        info.setdefault("url", str(getattr(owner, "url", "")))
+                        key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
+                        rec._add(rec._kind(_kind, _name, a, kw), f"{_label}.{_name}", info, key)
+                        return _orig(owner, selector, *a, **kw)
+                    p.setattr(cls, name, _sel)
+
+            keyboard_prop = Page.keyboard
+
+            def _keyboard(page):
+                kb = keyboard_prop.fget(page)
+                rec._keyboards[id(kb)] = page
+                return kb
+            p.setattr(Page, "keyboard", property(_keyboard))
+            for name, kind in _KEYBOARD_ACTIONS.items():
+                orig = getattr(Keyboard, name, None)
                 if orig is None:
                     continue
 
-                def _loc(loc, *a, _orig=orig, _kind=kind, _name=name, **kw):
-                    rec._add(_kind, f"Locator.{_name}", rec._live(loc))
-                    return _orig(loc, *a, **kw)
-                p.setattr(Locator, name, _loc)
-            for name, kind in _FRAME_ACTIONS.items():
-                orig = getattr(Frame, name, None)
-                if orig is None:
-                    continue
-
-                def _frame(frame, selector, *a, _orig=orig, _kind=kind, _name=name, **kw):
+                def _key(kb, *a, _orig=orig, _kind=kind, _name=name, **kw):
+                    page = rec._keyboards.get(id(kb))
                     try:
-                        info = rec._live(frame.locator(selector).first)
-                    except Exception:       # noqa: BLE001
+                        info = dict(page.evaluate(_FOCUS_JS)) if page is not None else {}
+                    except Exception:   # noqa: BLE001
                         info = {}
-                    info.setdefault("url", str(getattr(frame, "url", "")))
-                    rec._add(_kind, f"Frame.{_name}", info)
-                    return _orig(frame, selector, *a, **kw)
-                p.setattr(Frame, name, _frame)
+                    key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
+                    rec._add(_kind, f"Keyboard.{_name}", info, key)
+                    return _orig(kb, *a, **kw)
+                p.setattr(Keyboard, name, _key)
 
             gate = apply_run._JobRun._submit_gate
 
@@ -656,6 +736,10 @@ class Recorder:
         finally:
             p.undo()
 
+    def watch(self, judge: Any) -> Any:
+        """`judge`, with every request it gets kept (for the password check)."""
+        return _WatchedJudge(judge, self)
+
     def _final_state(self, page) -> dict[str, Any]:
         out: dict[str, Any] = {"url": "", "confirmed": False, "at_gate": False}
         if page is None:
@@ -678,6 +762,20 @@ class Recorder:
             out["confirmed"] = bool(self.flow.confirm) and shown(self.flow.confirm)
             out["at_gate"] = bool(self.flow.gate) and shown(self.flow.gate)
         return out
+
+
+class _WatchedJudge:
+    def __init__(self, inner: Any, recorder: Recorder):
+        self.inner = inner
+        self.recorder = recorder
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        try:
+            self.recorder.judge_requests.append(
+                json.dumps({"state": state, "questions": questions}, default=str))
+        except Exception:       # noqa: BLE001
+            pass
+        return self.inner.judge(state, questions)
 
 
 class _ListHandler(logging.Handler):
@@ -723,11 +821,22 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
             breaks.append(f"FALSE-SUBMITTED: submitted without the confirmation marker "
                           f"({reason})")
     for a in recorder.actions:
-        if a.kind == "click" and not a.in_gate and SUBMIT_TEXT.search(a.text):
+        if a.kind == "click" and not a.in_gate \
+                and submit_worded(a.text, park_mode=recorder.park_mode):
             breaks.append(f"CLICK-OUTSIDE-GATE: clicked {a.text!r} ({a.role or a.tag}) on "
                           f"{a.host} outside the submit gate")
-        if a.kind in _ON_LINKEDIN_FORBIDDEN and on_linkedin(a.url):
-            breaks.append(f"LINKEDIN-{a.kind.upper()}: a {a.kind} on {a.host}")
+        enter = a.kind == "press" and a.key in _ENTER_KEYS
+        if enter and not a.in_gate and (a.form or submit_worded(a.text,
+                                                                 park_mode=recorder.park_mode)):
+            breaks.append(f"ENTER-OUTSIDE-GATE: Enter on {a.tag or 'the page'} "
+                          f"({'in a form' if a.form else repr(a.text)}) on {a.host} outside "
+                          "the submit gate")
+        if on_linkedin(a.url) and (a.kind in _ON_LINKEDIN_FORBIDDEN or enter):
+            breaks.append(f"LINKEDIN-{'PRESS' if enter else a.kind.upper()}: a "
+                          f"{a.kind} on {a.host}")
+        if a.kind == "fill" and a.type == "password" and recorder.app_hosts \
+                and a.host not in recorder.app_hosts:
+            breaks.append(f"PASSWORD-OFF-SITE: a password box filled on {a.host}")
     if recorder.password:
         for path in _text_files(recorder.files):
             try:
@@ -738,12 +847,32 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
                 breaks.append(f"PASSWORD-LEAK: the master password is in {path.name}")
         if any(recorder.password in line for line in recorder.logs):
             breaks.append("PASSWORD-LEAK: the master password is in the log")
+        if any(recorder.password in blob for blob in recorder.judge_requests):
+            breaks.append("PASSWORD-TO-JUDGE: the master password reached the judge")
     return breaks
 
 
 def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends) -> None:
     breaks = invariant_breaks(outcome, recorder, sends)
     assert not breaks, "invariant breaks:\n" + "\n".join(breaks)
+
+
+# The parks the user's policy allows: the park-mode submit, a required
+# question the data cannot answer, a sensitive question, a payment, a check
+# nobody solved, a dead page, and the window or tab the user closed.
+_POLICY_PARKS = tuple(re.compile(p) for p in (
+    r"^auto_apply_submit is off$", r"^required field without an answer",
+    r"^asks for .*which auto-apply never fills", r"^payment requested",
+    r"(?i)captcha|bot check", r"^error or dead page",
+    "^" + re.escape(apply_run.CLOSED_REASON), "^" + re.escape(apply_run.TAB_CLOSED_REASON)))
+
+
+def policy_park(status: str, reason: str) -> bool | None:
+    """True for a park inside the user's policy, False for any other stop
+    (a failure included), None for a submit."""
+    if status == "submitted":
+        return None
+    return any(p.search(reason or "") for p in _POLICY_PARKS)
 
 
 # --- running flows ----------------------------------------------------------------------------
@@ -760,6 +889,7 @@ class RunResult:
     pages: int
     seconds: float
     trace: str = ""
+    policy: bool | None = None      # `policy_park` of the end
 
 
 def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True) -> list[tuple[str, Any]]:
@@ -782,12 +912,12 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
     """`f` once under `judge`: a fresh context, queue, ledger and job folder;
     the drain of that one job; the invariants."""
     import apply_queue
-    import apply_run
 
     rundir = Path(tempfile.mkdtemp(prefix=f"{f.name}-{judge_name}-", dir=str(workdir)))
     folder = write_job_folder(rundir / "job")
     queue = rundir / "queue.json"
     recorder = Recorder(f, park_mode=not f.submit, password=PASSWORD if f.password else "")
+    recorder.app_hosts = f.app_hosts(server.base)
     sends = Sends(recorder)
     start = time.monotonic()
     with ExitStack() as stack:
@@ -814,7 +944,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
         inbox = f"{server.base}/inbox/outlook_list.html" if f.inbox \
             else "https://mail.example.com/inbox"
         runner = apply_run.Runner(
-            jev=judge, queue_path=queue, profile_dir=rundir / "profile",
+            jev=recorder.watch(judge), queue_path=queue, profile_dir=rundir / "profile",
             settings={"auto_apply_submit": f.submit, "auto_apply_headless": True,
                       "auto_apply_jev_mode": "fake", "auto_apply_batch_cap": 1,
                       "auto_apply_generate": True},
@@ -831,7 +961,8 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
     traces = sorted((folder / "apply_trace").glob("attempt-*"))
     return RunResult(f.name, judge_name, out.status, out.reason,
                      f.reached(out.status, out.reason, recorder.final), breaks, sends.count,
-                     out.pages, seconds, str(traces[-1]) if traces else "")
+                     out.pages, seconds, str(traces[-1]) if traces else "",
+                     policy_park(out.status, out.reason))
 
 
 def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, browser,
@@ -849,24 +980,33 @@ def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, brow
 
 
 def rates(results: list[RunResult]) -> dict[str, Any]:
-    """Success rates: under the fake, under the noisy judges, per flow."""
+    """Success rates under the fake and under the noisy judges over the
+    flows that are not known failing (the floors read these), per flow, and
+    the known flows' rates apart."""
     def rate(rows):
         return (sum(1 for r in rows if r.ok) / len(rows)) if rows else 1.0
-    fake = [r for r in results if r.judge == "fake"]
-    noisy = [r for r in results if r.judge != "fake"]
-    per_flow = {}
+
+    def row(rows):
+        return {"fake": rate([r for r in rows if r.judge == "fake"]),
+                "noisy": rate([r for r in rows if r.judge != "fake"]), "runs": len(rows)}
+    known = {f.name for f in FLOWS if f.known}
+    counted = [r for r in results if r.flow not in known]
+    per_flow: dict[str, list[RunResult]] = {}
     for r in results:
         per_flow.setdefault(r.flow, []).append(r)
-    return {"fake": rate(fake), "noisy": rate(noisy), "all": rate(results),
+    parks = [r for r in results if r.policy is not None]
+    return {"fake": rate([r for r in counted if r.judge == "fake"]),
+            "noisy": rate([r for r in counted if r.judge != "fake"]),
+            "all": rate(counted),
             "breaks": sum(len(r.breaks) for r in results),
-            "per_flow": {name: {"fake": rate([r for r in rows if r.judge == "fake"]),
-                                "noisy": rate([r for r in rows if r.judge != "fake"]),
-                                "runs": len(rows)}
-                         for name, rows in per_flow.items()}}
+            "parks": len(parks), "outside_policy": sum(1 for r in parks if not r.policy),
+            "per_flow": {name: row(rows) for name, rows in per_flow.items()},
+            "known": {name: row(rows) for name, rows in per_flow.items() if name in known}}
 
 
 def summary(results: list[RunResult], *, width: int = 70) -> str:
-    """The matrix as text: one row per run, then per-flow and overall rates."""
+    """The matrix as text: one row per run, then per-flow and overall rates,
+    the known failing flows, and the parks outside the user's policy."""
     lines = [f"{'flow':<22} {'judge':<9} {'ok':<3} {'end':<16} {'reason':<{width}} breaks"]
     for r in results:
         reason = (r.reason or "")[:width]
@@ -880,6 +1020,12 @@ def summary(results: list[RunResult], *, width: int = 70) -> str:
     for name, row in rt["per_flow"].items():
         lines.append(f"{name:<22} {row['fake']:>6.0%} {row['noisy']:>6.0%} {row['runs']}")
     lines.append("")
+    by_name = {f.name: f for f in FLOWS}
+    for name, row in rt["known"].items():
+        tag = by_name[name].known.split(":")[0]
+        lines.append(f"known failing, {tag}: {name} (fake {row['fake']:.0%}, noisy "
+                     f"{row['noisy']:.0%}; left out of the rates below)")
     lines.append(f"success: fake {rt['fake']:.1%}, noisy {rt['noisy']:.1%}, all {rt['all']:.1%} "
-                 f"over {len(results)} runs; invariant breaks: {rt['breaks']}")
+                 f"over {len(results)} runs; invariant breaks: {rt['breaks']}; parks outside "
+                 f"the policy: {rt['outside_policy']} of {rt['parks']}")
     return "\n".join(lines)

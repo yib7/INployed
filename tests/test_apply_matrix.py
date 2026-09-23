@@ -7,9 +7,10 @@
   stays quiet on a clean run; end to end, a loop sabotaged to click its
   submit outside the gate and a judge that reads a form as a confirmation
   are both caught.
-- The matrix: every registered flow under `FakeJev` and the first three
-  noisy seeds (the script runs twenty), zero invariant breaks, and the
-  success rates at or above the pinned floors (`apply_harness.SUCCESS_FLOOR`,
+- The matrix: one test per registered flow under `FakeJev` and the first
+  three noisy seeds (the script runs twenty), zero invariant breaks, the
+  fake judge reaching every flow's end but a known one's; then the success
+  rates at or above the pinned floors (`apply_harness.SUCCESS_FLOOR`,
   `FAKE_SUCCESS_FLOOR`), which later phases raise.
 
 Headless Chromium through the module-scoped test browser; the judge is the
@@ -306,15 +307,196 @@ def test_a_confident_confirmation_misread_before_any_submit_is_caught(
     assert _codes(r.breaks) == ["FALSE-SUBMITTED"], r.breaks
 
 
-# --- the matrix -------------------------------------------------------------------------------------
+# --- the matrix, one test per flow (M6) --------------------------------------------------------------
 
-def test_the_flow_matrix_holds_every_invariant_and_the_success_floors(
-        _browser, flow_server, tmp_path):
-    results = h.run_matrix(h.FLOWS, h.judges(h.SUITE_SEEDS), browser=_browser,
+_RESULTS: dict[str, list] = {}
+
+
+@pytest.mark.parametrize("flow_name", [f.name for f in h.FLOWS])
+def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
+        _browser, flow_server, tmp_path, flow_name):
+    f = h.flow(flow_name)
+    results = h.run_matrix([f], h.judges(h.SUITE_SEEDS), browser=_browser,
                            server=flow_server, workdir=tmp_path)
+    _RESULTS[flow_name] = results
+    table = h.summary(results)
+    assert all(not r.breaks for r in results), table
+    fake = next(r for r in results if r.judge == "fake")
+    if f.known:
+        assert not fake.ok, (f"{flow_name} reaches its end now; clear its known flag "
+                             f"({f.known})\n{table}")
+    else:
+        assert fake.ok, table
+
+
+def test_the_success_floors_over_the_whole_registry():
+    if set(_RESULTS) != {f.name for f in h.FLOWS}:
+        pytest.skip("the per-flow matrix tests did not all run")
+    results = [r for name in _RESULTS for r in _RESULTS[name]]
     table = h.summary(results)
     rates = h.rates(results)
     assert len(h.FLOWS) >= 12
     assert rates["breaks"] == 0, table
     assert rates["fake"] >= h.FAKE_SUCCESS_FLOOR, table
     assert rates["noisy"] >= h.SUCCESS_FLOOR, table
+
+
+# === review round 1 ===============================================================================
+
+# --- M5: a known failing flow is reported, and kept out of the floors ------------------------------
+
+def test_a_known_flow_is_reported_and_left_out_of_the_floors():
+    known = [f for f in h.FLOWS if f.known]
+    assert [f.name for f in known] == ["greenhouse_embed"]
+    assert known[0].known.startswith("SP3")
+    rows = [h.RunResult("greenhouse_embed", "fake", "submitted", "x", False, [], 1, 2, 0.1),
+            h.RunResult("ashby_wizard", "fake", "submitted", "confirmation page", True, [], 1,
+                        4, 0.1),
+            h.RunResult("ashby_wizard", "noisy-1", "needs_human", "x", False, [], 0, 2, 0.1)]
+    rates = h.rates(rows)
+    assert (rates["fake"], rates["noisy"]) == (1.0, 0.0)
+    assert rates["known"] == {"greenhouse_embed": {"fake": 0.0, "noisy": 1.0, "runs": 1}}
+    assert "known failing, SP3: greenhouse_embed" in h.summary(rows)
+
+
+# --- M10: the noisy distribution keeps its winner on top ---------------------------------------------
+
+def test_a_scaled_two_option_answer_keeps_its_winner_most_probable():
+    class _Half:
+        def judge(self, state, questions):
+            return {"q": jev.Answer(kind="choice", choice="yes",
+                                    probabilities={"yes": 0.5, "no": 0.5}, confidence=0.5)}
+    for seed in range(1, 30):
+        a = jev.NoisyJev(_Half(), seed, conf_scale=0.6).judge({}, {"q": {"type": "choice"}})["q"]
+        assert a.confidence < 0.5
+        assert a.probabilities["yes"] > a.probabilities["no"], a
+        assert abs(sum(a.probabilities.values()) - 1.0) < 1e-3, a
+
+
+# --- M1: the harness reads submit and final words with the loop's own vocabulary --------------------
+
+def test_the_harness_uses_the_loops_submit_and_final_words():
+    assert h.SUBMIT_WORDS is apply_run.SUBMIT_WORDS
+    assert h.FINAL_WORDS is apply_run.FINAL_WORDS
+
+
+@pytest.mark.parametrize("text, park, breaks", [
+    ("Submit application", False, True),
+    ("Send application", False, True),
+    ("Finish", False, True),
+    ("Complete application", True, True),        # a final word in park mode
+    ("Confirm and continue", True, True),
+    ("Complete application", False, False),      # submit mode: "Complete profile" is a step
+    ("Complete registration", True, False),      # an account step
+    ("Apply now", True, False),                  # the posting's entry
+    ("Continue", True, False)])
+def test_click_outside_the_gate_follows_the_loops_words(text, park, breaks):
+    rec, sends = _clean(park=park)
+    rec.actions.append(h.Action("click", "http://127.0.0.1/a", text=text, tag="button"))
+    out = _Out() if park else _Out("needs_human", "login wall")
+    assert ("CLICK-OUTSIDE-GATE" in _codes(h.invariant_breaks(out, rec, sends))) is breaks
+
+
+# --- test gaps: LinkedIn tick and pick; the new invariants ------------------------------------------
+
+@pytest.mark.parametrize("plant, code", [
+    ("linkedin_tick", "LINKEDIN-TICK"),
+    ("linkedin_pick", "LINKEDIN-PICK"),
+    ("linkedin_typing", "LINKEDIN-FILL"),
+    ("enter_in_a_form", "ENTER-OUTSIDE-GATE"),
+    ("password_to_judge", "PASSWORD-TO-JUDGE"),
+    ("password_off_site", "PASSWORD-OFF-SITE")])
+def test_the_round_one_invariant_checks_fail_on_their_planted_breach(plant, code):
+    rec, sends = _clean()
+    rec.app_hosts = {"127.0.0.1"}
+    if plant == "linkedin_tick":
+        rec.actions.append(h.Action("tick", "https://www.linkedin.com/jobs/view/1/"))
+    elif plant == "linkedin_pick":
+        rec.actions.append(h.Action("pick", "https://www.linkedin.com/jobs/view/1/"))
+    elif plant == "linkedin_typing":
+        rec.actions.append(h.Action("fill", "https://www.linkedin.com/jobs/view/1/",
+                                    how="Keyboard.type"))
+    elif plant == "enter_in_a_form":
+        rec.actions.append(h.Action("press", "http://127.0.0.1/a", key="Enter", tag="input",
+                                    form=True))
+    elif plant == "password_to_judge":
+        rec.judge_requests.append('{"fields": [{"value": "%s"}]}' % h.PASSWORD)
+    elif plant == "password_off_site":
+        rec.actions.append(h.Action("fill", "https://evil.example.net/login", tag="input",
+                                    type="password"))
+    breaks = h.invariant_breaks(_Out(), rec, sends)
+    assert code in _codes(breaks), breaks
+
+
+def test_enter_and_escape_that_send_nothing_break_nothing():
+    rec, sends = _clean()
+    rec.app_hosts = {"127.0.0.1"}
+    rec.actions += [h.Action("press", "http://127.0.0.1/a", key="Escape", tag="input", form=True),
+                    h.Action("press", "http://127.0.0.1/a", key="Enter", tag="input",
+                             form=True, in_gate=True),
+                    h.Action("fill", "http://127.0.0.1/a", tag="input", type="password")]
+    assert h.invariant_breaks(_Out(), rec, sends) == []
+
+
+@pytest.mark.parametrize("status, reason, policy", [
+    ("ready_to_submit", "auto_apply_submit is off", True),
+    ("needs_human", "required field without an answer: Salary", True),
+    ("needs_human", "asks for Social Security Number, which auto-apply never fills; finish it "
+                    "by hand", True),
+    ("needs_human", "payment requested (asks_for_prohibited p=0.90)", True),
+    ("needs_human", "captcha or bot check on the page (has_captcha p=0.90)", True),
+    ("needs_human", "error or dead page", True),
+    ("needs_human", "the browser window was closed", True),
+    ("needs_human", "no submit button (buttons: Back back 1.00)", False),
+    ("needs_human", "unsure what this page is (other, 0.30)", False),
+    ("ready_to_submit", "submit did not register", False),
+    ("submitted", "confirmation page", None),
+    ("failed", "TimeoutError: x", False)])
+def test_policy_parks_are_told_apart_from_the_rest(status, reason, policy):
+    assert h.policy_park(status, reason) is policy
+
+
+def test_the_summary_counts_the_parks_outside_the_policy():
+    rows = [h.RunResult("a", "fake", "needs_human", "no submit button", False, [], 0, 1, 0.1,
+                        policy=False),
+            h.RunResult("b", "fake", "needs_human", "error or dead page", True, [], 0, 1, 0.1,
+                        policy=True)]
+    assert "parks outside the policy: 1 of 2" in h.summary(rows)
+
+
+# --- M2: the recorder sees keys, page and element-handle clicks, dispatched events -------------------
+
+def test_the_recorder_sees_every_way_a_page_can_be_acted_on(_browser):
+    ctx = _browser.new_context()
+    try:
+        page = ctx.new_page()
+        page.set_content("""<body><form onsubmit="return false"><input id="i" name="q"><button id="b" type="button">
+            Submit application</button></form></body>""")
+        rec = h.Recorder(h.flow("ashby_wizard"))
+        with rec.recording():
+            page.click("#b")
+            page.query_selector("#b").click()
+            page.locator("#b").dispatch_event("click")
+            page.locator("#i").press("Enter")
+            page.focus("#i")
+            page.keyboard.press("Enter")
+            page.keyboard.type("abc")
+            page.keyboard.insert_text("def")
+            page.fill("#i", "xyz")
+        seen = [(a.kind, a.how, a.key, a.form) for a in rec.actions]
+    finally:
+        ctx.close()
+    assert seen == [("click", "Page.click", "", True),
+                    ("click", "ElementHandle.click", "", True),
+                    ("click", "Locator.dispatch_event", "", True),
+                    ("press", "Locator.press", "Enter", True),
+                    ("press", "Keyboard.press", "Enter", True),
+                    ("fill", "Keyboard.type", "", True),
+                    ("fill", "Keyboard.insert_text", "", True),
+                    ("fill", "Page.fill", "", True)], seen
+    assert all(a.text == "Submit application" for a in rec.actions[:3])
+    assert all("abc" not in str(vars(a)) and "xyz" not in str(vars(a)) for a in rec.actions)
+    rec.park_mode = True
+    rec.final = {"at_gate": True}
+    codes = _codes(h.invariant_breaks(_Out(), rec, h.Sends(rec)))
+    assert {"CLICK-OUTSIDE-GATE", "ENTER-OUTSIDE-GATE"} <= set(codes), codes

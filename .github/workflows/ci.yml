@@ -113,7 +113,10 @@ jobs:
 
       # The browser-backed auto-apply tests, run where Chromium was just installed.
       # `-rs` prints every skip with its reason, so a missing browser shows up in
-      # the log as a wall of "Chromium not installed" lines.
+      # the log as a wall of "Chromium not installed" lines. test_apply_trace.py
+      # and test_apply_matrix.py are the per-job trace and the flow matrix (every
+      # fixture flow under the fake judge and three noisy seeds, one test per
+      # flow; about a minute).
       - name: Run auto-apply browser tests
         env:
           QT_QPA_PLATFORM: offscreen
@@ -123,7 +126,9 @@ jobs:
             tests/test_apply_fill.py \
             tests/test_apply_run.py \
             tests/test_apply_inbox.py \
-            tests/test_ats_accounts.py
+            tests/test_ats_accounts.py \
+            tests/test_apply_trace.py \
+            tests/test_apply_matrix.py
 
   # Runs the README's "Getting started" steps VERBATIM on a clean runner. This job
   # exists because a fresh-clone breakage slipped through once: the documented

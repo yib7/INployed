@@ -511,9 +511,11 @@ class NoisyJev:
 
 
 def _spread(names: list[str], winner: str, conf: float, second: str) -> dict[str, float]:
-    """A distribution with `winner` at `conf`: `second` (when named) takes the
-    most of the rest short of the winner, the other options share what is
-    left, so the winner stays the most probable option."""
+    """A distribution led by `winner` at `conf` or more: `second` (when named)
+    takes the most of the rest short of the winner, the other options share
+    what is left, each at most 0.9 of the winner's share, and whatever no
+    option may take goes to the winner. The winner is always the most
+    probable option and the probabilities sum to one."""
     names = list(dict.fromkeys([*names, winner] + ([second] if second else [])))
     probs = {n: 0.0 for n in names}
     probs[winner] = conf
@@ -524,11 +526,11 @@ def _spread(names: list[str], winner: str, conf: float, second: str) -> dict[str
         rest -= probs[second]
         others = [n for n in others if n != second]
     if others:
-        share = rest / len(others)
+        share = min(rest / len(others), conf * 0.9)
         for n in others:
             probs[n] = share
-    else:
-        probs[winner] += rest
+        rest -= share * len(others)
+    probs[winner] += rest
     return {n: round(p, 4) for n, p in probs.items()}
 
 

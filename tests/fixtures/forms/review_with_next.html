@@ -16,16 +16,19 @@
      last step comes after it. -->
 <h1>Review your details</h1>
 <div id="summary">
-  <p>Please review the details below before you go on to the questions.</p>
-  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
-  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <p>Please review the details we read from your resume before you go on to the questions.</p>
+  <dl>
+    <dt>Name</dt><dd>From your resume</dd>
+    <dt>Email</dt><dd>From your resume</dd>
+  </dl>
   <button type="button" id="btn-back">Back</button>
   <button type="button" id="btn-next">Next</button>
 </div>
 
 <div id="questions">
   <h2>A few questions</h2>
-  <div class="field"><label for="phone">Phone *</label><input id="phone" name="phone" type="tel" required></div>
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
   <button type="button" id="btn-submit">Submit application</button>
 </div>
 
@@ -41,7 +44,6 @@
     });
   }
   document.getElementById('btn-next').addEventListener('click', function () {
-    if (!document.getElementById('first_name').value || !document.getElementById('email').value) { return; }
     document.querySelector('h1').textContent = 'Northwind Traders application';
     show('questions');
   });

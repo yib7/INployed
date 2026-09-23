@@ -414,6 +414,27 @@ def _no_routes(base: str) -> dict[str, str]:
     return {}
 
 
+def read_as(out: dict, state: str, conf: float, probabilities: dict | None = None, *,
+            nouls: str = "coherent") -> dict:
+    """A test judge's scripted reading of a page as `state` at `conf` (SP4:
+    the page read is a Choice and Nouls). `nouls`: "coherent" reads the
+    Nouls with it (`state`'s yes, every other kind's no), as a judge that
+    took the page for `state` would; "neutral" sets them to 0.5 (no word
+    either way); "keep" leaves the wrapped judge's. Only the answers the
+    request asked are set; `out` is returned."""
+    if "page_state" in out:
+        out["page_state"] = jev.Answer(kind="choice", choice=state, confidence=conf,
+                                       probabilities=dict(probabilities or {state: conf}))
+    if nouls == "keep":
+        return out
+    for kind, qids in jev.PAGE_KIND_NOULS.items():
+        for qid in qids:
+            if qid in out:
+                p = 0.5 if nouls == "neutral" else (0.9 if kind == state else 0.1)
+                out[qid] = jev.Answer(kind="noul", noul=p)
+    return out
+
+
 class LinkedInReadAsOther:
     """A judge that reads every LinkedIn page as `other` at 0.30 (the GTS
     park of 2026-09-22) and passes the rest to the judge it wraps."""
@@ -432,35 +453,50 @@ class LinkedInReadAsOther:
         return out
 
 
+def _button_texts(state: Any) -> list[tuple[Any, str]]:
+    """(n, text) of a request's buttons (the page read's and the mapping's)."""
+    return [(b.get("n"), str(b.get("text") or "")) for b in (state or {}).get("buttons") or []]
+
+
+def _noul(p: float) -> Any:
+    return jev.Answer(kind="noul", noul=p)
+
+
 class ModalReadAsForm:
     """A judge that reads Workday's start dialog (a page with an "Apply
-    Manually" button) as an application form at 0.90 and "Apply Manually" as
-    the advance at 0.90 (the audit's INV-01 shape), and passes the rest to
-    the judge it wraps."""
+    Manually" button) as an application form at 0.90, its Nouls with it (a
+    form's details yes, a posting's no), and "Apply Manually" as the advance
+    at 0.90 (the audit's INV-01 shape), and passes the rest to the judge it
+    wraps."""
 
     def __init__(self, inner: Any):
         self.inner = inner
 
     def judge(self, state: Any, questions: dict) -> dict:
         out = dict(self.inner.judge(state, questions))
-        buttons = (state or {}).get("buttons") or []
-        if "page_state" not in out or not any(b.get("text") == "Apply Manually"
-                                              for b in buttons):
+        buttons = _button_texts(state)
+        if not any(text == "Apply Manually" for _, text in buttons):
             return out
-        out["page_state"] = jev.Answer(
-            kind="choice", choice="application_form", confidence=0.90,
-            probabilities={"application_form": 0.90, "job_posting": 0.10})
-        for b in buttons:
-            qid = f"button_{b['n']}_role"
-            if b.get("text") == "Apply Manually" and qid in out:
+        if "page_state" in out:
+            out["page_state"] = jev.Answer(
+                kind="choice", choice="application_form", confidence=0.90,
+                probabilities={"application_form": 0.90, "job_posting": 0.10})
+            for qid, p in (("page_applicant_details", 0.9), ("page_job_description", 0.1),
+                           ("page_apply_entry", 0.1)):
+                if qid in out:
+                    out[qid] = _noul(p)
+        for n, text in buttons:
+            qid = f"button_{n}_role"
+            if text == "Apply Manually" and qid in out:
                 out[qid] = jev.Answer(kind="choice", choice="advance", confidence=0.90,
                                       probabilities={"advance": 0.90, "apply_entry": 0.10})
         return out
 
 
 class VerifiedReadAsConfirmation:
-    """A judge that reads an email-verified page as a confirmation at 0.90
-    (the I5 shape: "Your email is verified, thank you")."""
+    """A judge that reads an email-verified page as a confirmation at 0.90,
+    its received Noul yes (the I5 shape: "Your email is verified, thank
+    you")."""
 
     def __init__(self, inner: Any):
         self.inner = inner
@@ -471,6 +507,8 @@ class VerifiedReadAsConfirmation:
         if "page_state" in out and "email is verified" in text:
             out["page_state"] = jev.Answer(kind="choice", choice="confirmation", confidence=0.90,
                                            probabilities={"confirmation": 0.90, "other": 0.10})
+            if "page_received" in out:
+                out["page_received"] = _noul(0.9)
         return out
 
 
@@ -1224,7 +1262,11 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     "^" + re.escape(apply_run.EASY_APPLY_REASON) + "$",
     "^" + re.escape(apply_run.apply_linkedin.APPLIED_REASON),
     "^" + re.escape(apply_run.apply_linkedin.CLOSED_REASON),
-    "^" + re.escape(apply_run.apply_linkedin.SIGNED_OUT_REASON)))
+    "^" + re.escape(apply_run.apply_linkedin.SIGNED_OUT_REASON),
+    # the site's own dead ends (SP4): a job it says was applied to before, a
+    # posting it says is closed
+    "^" + re.escape(apply_run.ALREADY_APPLIED_REASON),
+    "^" + re.escape(apply_run.CLOSED_POSTING_REASON)))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

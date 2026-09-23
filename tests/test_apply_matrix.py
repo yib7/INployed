@@ -125,16 +125,20 @@ def test_a_swapped_page_state_is_a_neighbour_read_between_0_30_and_0_60(truth):
 
 
 def test_confidences_are_scaled_within_the_floor_and_nouls_are_left_alone():
+    # a Noul outside the page read (a verification, a flag of the mapping) is
+    # left alone; the page read's own Nouls are misread (SP4, test_apply_read)
     judge = jev.NoisyJev(_Scripted(), 2, swap_p=0.0, conf_scale=0.75, drop_p=0.0)
     seen = []
     for i in range(30):
-        out = judge.judge(*_request(title=f"Form {i}"))
+        state, questions = _request(title=f"Form {i}")
+        questions["verify_0"] = {"type": "noul", "instructions": "A value?"}
+        out = judge.judge(state, questions)
         for qid, a in out.items():
             if a.kind == "choice":
                 assert 0.75 <= a.confidence <= 1.0, (qid, a)
                 assert a.probabilities[a.choice] == max(a.probabilities.values())
                 seen.append(a.confidence)
-            else:
+            elif qid not in jev.READ_NOULS:
                 assert a.noul == 0.1
     assert min(seen) < 0.9 < max(seen)
 
@@ -307,10 +311,7 @@ class _FormAsConfirmation(jev.FakeJev):
         out = super().judge(state, questions)
         a = out.get("page_state")
         if a is not None and a.choice == "application_form" and state.get("fields"):
-            out["page_state"] = jev.Answer(kind="choice", choice="confirmation",
-                                           probabilities={"confirmation": 0.9,
-                                                          "application_form": 0.1},
-                                           confidence=0.9)
+            h.read_as(out, "confirmation", 0.9, {"confirmation": 0.9, "application_form": 0.1})
         return out
 
 
@@ -370,6 +371,19 @@ def test_the_success_floors_over_the_whole_registry():
     assert rates["breaks"] == 0, table
     assert rates["fake"] >= h.FAKE_SUCCESS_FLOOR, table
     assert rates["noisy"] >= h.SUCCESS_FLOOR, table
+
+
+def test_no_flow_parks_unsure_or_not_advancing_unless_it_is_designed_to():
+    # SP4's checkpoint, a property over every flow under the fake and the
+    # pinned noisy seeds: a page is never left unread ("unsure what this page
+    # is") and a moving page never reads as stuck ("page did not advance")
+    # but where a flow is built to end so
+    if set(_RESULTS) != {f.name for f in h.FLOWS}:
+        pytest.skip("the per-flow matrix tests did not all run")
+    stuck = ("unsure what this page is", "page did not advance")
+    wrong = [(r.flow, r.judge, r.reason) for name, rows in _RESULTS.items() for r in rows
+             if not r.ok and (r.reason or "").startswith(stuck)]
+    assert not wrong, wrong
 
 
 # === review round 1 ===============================================================================

@@ -24,6 +24,7 @@ import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
+import apply_harness as h  # noqa: E402
 import jev_harness  # noqa: E402
 from apply_judge import FillPlan, PlannedField, VerifyResult  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
@@ -1085,22 +1086,23 @@ def test_linkedin_shaped_posting_follows_its_apply_link_through_the_redirect(
 
 class _PageStateJudge(jev.FakeJev):
     """The fake, with the page state of every page on `HOST` read as `STATE`
-    at `CONF`: a live misread, scripted."""
+    at `CONF`, its Nouls as `NOULS` says (`apply_harness.read_as`): a live
+    misread, scripted."""
     HOST = ""
     STATE = ""
     CONF = 0.0
+    NOULS = "coherent"
 
     def judge(self, state, questions):
         out = super().judge(state, questions)
         if "page_state" in out and state["page"]["url_host"] == self.HOST:
-            out["page_state"] = jev.Answer(kind="choice", choice=self.STATE,
-                                           probabilities={self.STATE: self.CONF},
-                                           confidence=self.CONF)
+            h.read_as(out, self.STATE, self.CONF, nouls=self.NOULS)
         return out
 
 
-def _page_state_judge(host, state, conf):
-    return type("Judge", (_PageStateJudge,), {"HOST": host, "STATE": state, "CONF": conf})()
+def _page_state_judge(host, state, conf, nouls="coherent"):
+    return type("Judge", (_PageStateJudge,), {"HOST": host, "STATE": state, "CONF": conf,
+                                              "NOULS": nouls})()
 
 
 _LINKEDIN_JOB = "https://www.linkedin.com/jobs/view/4438751519/"
@@ -1156,34 +1158,50 @@ def test_a_linkedin_posting_the_judge_reads_as_signed_out_or_closed_still_goes_o
 
 
 class _UnsureJudge(jev.FakeJev):
-    """The fake, with every application form read at 0.33."""
+    """The fake, with every application form read at 0.33 and its Nouls
+    saying nothing either way."""
 
     def judge(self, state, questions):
         out = super().judge(state, questions)
         a = out.get("page_state")
         if a is not None and a.choice == "application_form":
-            out["page_state"] = jev.Answer(kind="choice", choice=a.choice,
-                                           probabilities={a.choice: 0.33}, confidence=0.33)
+            h.read_as(out, a.choice, 0.33, nouls="neutral")
         return out
 
 
 def test_an_unsure_read_of_a_form_is_acted_on_through_the_forms_own_gates(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
+    # SP4: the judge's 0.33 is one voice of the read; the page's boxes read
+    # it as the form, and the form's own gates decide the rest
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     runner = _runner(context, tmp_path)
     runner.jev = _UnsureJudge()
     out = runner.drain(cap=1)[0]
     assert out.status == "submitted", out
-    assert "State: application_form (0.33)" in Path(out.record_path).read_text(encoding="utf-8")
+    assert "State: application_form (" in Path(out.record_path).read_text(encoding="utf-8")
+    trace = sorted((job_folder / "apply_trace").glob("attempt-*"))[-1]
+    first = json.loads((trace / "page-1.json").read_text(encoding="utf-8"))
+    assert first["answers"]["page_state_judged"]["confidence"] == 0.33
+    assert first["state"] == "application_form"
+
+
+# A page whose structure places it nowhere (no box, no Apply, no Next): the
+# judge's read alone decides it
+_NOWHERE = ("<!doctype html><html><head><title>Life at Fabrikam</title></head><body>"
+            "<h1>Life at Fabrikam</h1><p>" + "Our teams build analytics for retail partners "
+            "across three continents, and we care about growth and learning. " * 3
+            + "</p><button type='button'>Menu</button></body></html>")
 
 
 @pytest.mark.parametrize("state", ["other", "captcha_or_bot_check", "confirmation"])
 def test_an_unsure_read_the_run_cannot_act_on_parks(
-        context, fixture_url, job_folder, catalog_builder, tmp_path, state):
-    url = fixture_url("job_posting.html")
+        context, job_folder, catalog_builder, tmp_path, state):
+    context.route("https://careers.fabrikam.example/**",
+                  lambda route: route.fulfill(body=_NOWHERE, content_type="text/html"))
+    url = "https://careers.fabrikam.example/life"
     _enqueue(job_folder, url)
     runner = _runner(context, tmp_path, auto_apply_headless=False)
-    runner.jev = _page_state_judge(apply_run._host(url), state, 0.30)
+    runner.jev = _page_state_judge(apply_run._host(url), state, 0.30, nouls="neutral")
     out = runner.drain(cap=1)[0]
     assert out.status == "needs_human", out
     assert out.reason.startswith(f"unsure what this page is ({state}, 0.30); reads: "), out
@@ -1197,9 +1215,7 @@ class _FormAsAccountJudge(jev.FakeJev):
     def judge(self, state, questions):
         out = super().judge(state, questions)
         if "page_state" in out and state.get("fields"):
-            out["page_state"] = jev.Answer(kind="choice", choice=self.STATE,
-                                           probabilities={self.STATE: self.CONF},
-                                           confidence=self.CONF)
+            h.read_as(out, self.STATE, self.CONF)
         return out
 
 
@@ -2032,7 +2048,8 @@ def test_runner_discovers_dynamic_listbox_options_before_planning(
 
     class InspectingJev(jev.FakeJev):
         def judge(self, state, questions):
-            if "page_state" in questions:
+            if any(q.startswith("field_") for q in questions):
+                # the mapping (SP4: asked after the page read) carries the options
                 country = next((f for f in state.get("fields", [])
                                 if f.get("id_or_name") == "country"), None)
                 if country is not None:

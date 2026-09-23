@@ -182,6 +182,11 @@ NOT_SENT_REASON = "the submit did not go through"
 CHECK_SENT_REASON = "check whether the application went through"
 CHECK_SENT_NOTE = "check whether the application went through, then Mark applied or Re-queue"
 CHECKBOX_NOTE = "a CAPTCHA checkbox is on the form: tick it, then submit"
+# The site's own dead ends (SP4): a job it says was applied to before
+# (TERM-04's ATS part), a posting that takes no more applications (READ-08).
+ALREADY_APPLIED_REASON = "already applied: the site says this job was applied to before"
+ALREADY_APPLIED_NOTE = "the site shows this job as applied; Mark applied if you sent it"
+CLOSED_POSTING_REASON = "closed: the posting no longer takes applications"
 CLOSED_REASON = "the browser window was closed"
 TAB_CLOSED_REASON = "the job's tab was closed"
 EVIDENCE_CAP = 300                 # characters of evidence a park reason carries
@@ -210,20 +215,21 @@ _PARK_STATES = {
 # check, payment, error or unrecognised page parks.
 _UNSURE_ACTS = frozenset(("job_posting", "application_form", "review_page",
                           "login_wall", "signup_form", "code_gate"))
+# The kinds an unsure read may also take from the page's structure alone
+# (`unsure_step`): a bot check the run waits on, a closed posting it parks on.
+_STRUCTURE_ENDS = frozenset(("captcha_or_bot_check", "error_or_dead"))
 # The steps that put a value on a page or send it: none of them runs on
 # LinkedIn, where a form is Easy Apply's (the user applies there in person).
 _LINKEDIN_FORM_STATES = frozenset(("application_form", "review_page", "code_gate"))
+# The pages the run acts on, and so maps (`_JobRun._map`): the field and
+# button questions are asked only there (SP4).
+_MAPPED_STATES = frozenset(("job_posting", "application_form", "review_page", "login_wall",
+                            "signup_form", "code_gate"))
 # An Apply that sends a stored profile from another site instead of opening
-# the company's form: Easy Apply (LinkedIn's, or a board's "Easy apply"),
-# "Apply with LinkedIn / Indeed / Glassdoor / ZipRecruiter ...", and a
-# one-click apply, which sends at once. Never an Apply entry the run clicks. A
-# "Quick apply" on the application's own site opens its short form and is an
-# entry like any other; the controls of a LinkedIn or a job board's frame
-# never reach the choice (`_JobRun._drop_foreign_controls`).
-_PROFILE_APPLY = re.compile(
-    r"easy\s*apply|apply\s+(with|using|via|through)\s+(your\s+)?"
-    r"(linkedin|indeed|glassdoor|ziprecruiter|seek|xing|google|facebook|monster|dice)"
-    r"|(1|one)[\s-]*click\s+apply", re.I)
+# the company's form (`apply_judge.PROFILE_APPLY`): never an Apply entry the
+# run clicks; the controls of a LinkedIn or a job board's frame never reach
+# the choice (`_JobRun._drop_foreign_controls`).
+_PROFILE_APPLY = apply_judge.PROFILE_APPLY
 # What the page after a submit click on an account page ("Create account and
 # apply") may read as when the click only made the account and opened the
 # application (`_JobRun._after_submit`): the job then waits for the user,
@@ -235,17 +241,12 @@ _OPENED_BY_ACCOUNT = frozenset(("application_form", "login_wall", "signup_form")
 # every click against the same words.
 SUBMIT_WORDS = re.compile(r"\b(submit|apply|send|finish)\b", re.I)
 FINAL_WORDS = re.compile(r"\b(complete|confirm|finali[sz]e|done)\b", re.I)
-# The words a page shows once an application was received: with the judge's
-# read, the deterministic half of a confirmation after the submit click, and
-# only when they were not on the page before it ("thanks for your interest"
-# is a posting's greeting too, so it is left out).
-CONFIRMATION_WORDS = re.compile(
-    r"thank(?:s| you) for (?:applying|your application|submitting)"
-    r"|application (?:has been |was |is )?(?:received|submitted|sent|complete)"
-    r"|we(?:'ve| have) received your application"
-    r"|successfully (?:applied|submitted)|you(?:'ve| have) (?:successfully )?applied", re.I)
-# typographic apostrophes read as the plain one before the words are matched
-_APOSTROPHES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'", "\uff07": "'"})
+# The words a page shows once an application was received
+# (`apply_judge.CONFIRMATION_WORDS`): with the judge's read, the deterministic
+# half of a confirmation after the submit click, and only when they were not
+# on the page before it.
+CONFIRMATION_WORDS = apply_judge.CONFIRMATION_WORDS
+confirmation_words = apply_judge.confirmation_words
 # The only Apply entry `probe --follow-apply` clicks: "Apply", "Apply now",
 # "Apply for this job", "Apply on company website". A quick, one-click or
 # third-party apply may send a stored profile at once.
@@ -325,8 +326,7 @@ def _is_email_box(field) -> bool:
 
 _PASSWORD_NAME = re.compile(r"pass\s*word|passwd|\bpwd\b", re.I)
 # A password box's words when it makes the password rather than signs in with it.
-_NEW_PASSWORD = re.compile(r"\b(create|new|choose|set|confirm|re-?enter|repeat|verify)\b"
-                           r"|new[_-]?pass|confirm[_-]?pass", re.I)
+_NEW_PASSWORD = apply_judge.NEW_PASSWORD
 _CODE_PASSWORD = re.compile(r"one[\s_-]*time|\botp\b|verification\s*code|temporary|pass\s*code",
                             re.I)
 
@@ -672,13 +672,6 @@ class SendWatch:
         return (self.sent or self.possible or self.unplaced_sends() or [""])[0]
 
 
-def confirmation_words(text: str) -> set[str]:
-    """The received phrases (`CONFIRMATION_WORDS`) a page's text shows,
-    lowercased, typographic apostrophes read as plain ones."""
-    plain = str(text or "").translate(_APOSTROPHES)
-    return {" ".join(m.group(0).lower().split()) for m in CONFIRMATION_WORDS.finditer(plain)}
-
-
 def new_confirmation(before: str, after: str) -> str:
     """A received phrase the page shows now and did not show before the
     submit click, or ""."""
@@ -758,7 +751,9 @@ class _Accounts:
             link_digest = apply_form.FormDigest(
                 url_host=host, title=digest.title, text=digest.text,
                 buttons=[apply_form.Button(0, (0, "a"), links.first.inner_text(), "")])
-            plan = apply_judge.plan(link_digest, self.run.catalog, self.run._judge_page(link_digest))
+            plan = apply_judge.plan(link_digest, self.run.catalog,
+                                    self.run._map(link_digest, {}, "job_posting", discover=False,
+                                                  own_page=False))
             advance_conf = plan.buttons.get("advance", (None, 0))[1]
             self.run._decide("signup_link", "the sign-in page's one create-account link",
                              target=target, advance=advance_conf)
@@ -772,8 +767,23 @@ class _Accounts:
             self.run._decide_next("settled", f"settled {_settled_ms(info)} ms after the "
                                              "create-account link")
             fresh = self.run._drop_foreign_controls(apply_form.extract(page))
-            answers = self.run._judge_page(fresh)
+            # the loop's own read (NAV-03): the judge with the page's
+            # structure (a box that makes a password is a sign-up), an unsure
+            # read taken once more after a settle, then the structure alone
+            answers = self.run._read(fresh)
             state, confidence = apply_judge.read_page_state(answers)
+            if confidence < apply_judge.PAGE_STATE_MIN_CONF:
+                fresh, answers, state, confidence = self.run._reread(fresh, answers, state,
+                                                                     confidence)
+            if confidence < apply_judge.PAGE_STATE_MIN_CONF \
+                    and apply_judge.structural_kind(self.run._facts) == "signup_form":
+                self.run._decide_next("structural_fallback", f"unsure of the page the "
+                                                             f"create-account link led to "
+                                                             f"({state}, {confidence:.2f}); a box "
+                                                             f"makes the password: a sign-up",
+                                      to="signup_form")
+                state = "signup_form"
+                confidence = apply_judge.PAGE_STATE_MIN_CONF
             # the page the link led to is a page of the job: the record and
             # the trace carry it, and the sign-up's step is written on it
             self.run._new_page_record(state, confidence, digest=fresh, answers=answers)
@@ -853,7 +863,8 @@ class _Accounts:
         frames = apply_form.frames(page)
         guard = _NavGuard(self.run, page)
         try:
-            answers = self.run._judge_page(digest)
+            answers = self.run._map(digest, {}, "signup_form" if signup else "login_wall",
+                                    discover=False)
             plan = apply_judge.plan(digest, self.run.catalog, answers)
             rec = self.run.pages[-1] if self.run.pages else {"flags": {}}
             plan = self.run._complete_option_plan(digest, answers, plan, rec)
@@ -1219,38 +1230,9 @@ def _is_password(row: dict) -> bool:
                                         str(row.get("autocomplete", "")))
 
 
-# the qualifier has to sit on the word "code": a Social Security Number box or
-# a work authorization box carries the qualifier and is no place for the code
-_CODE_WORDS = re.compile(
-    r"(?:verification|security|one[- ]?time|auth\w*)[ _-]*code|\botp\b|passcode", re.I)
-_NOT_CODE_WORDS = re.compile(
-    r"zip|post\s*code|postal|country|promo|coupon|discount|referral|invite|area\s*code", re.I)
-
-
-def _code_field(fields):
-    """The box the emailed code goes in.
-
-    A code gate can carry a postal code, a country code, a referral or a
-    promo box as well, and all of them read as "code". A field whose label or
-    id names a verification, security, one-time, auth or OTP code wins; the
-    plain "code" match is the fallback, with the address, referral and promo
-    words excluded. `autocomplete` `one-time-code` is the strongest signal the
-    DOM offers."""
-    def blob(f):
-        return f"{f.label} {f.id_or_name}"
-
-    for f in fields:
-        if str(getattr(f, "autocomplete", "")).lower() == "one-time-code":
-            return f
-    for f in fields:
-        text = blob(f)
-        if _CODE_WORDS.search(text) and not _NOT_CODE_WORDS.search(text):
-            return f
-    for f in fields:
-        text = blob(f)
-        if "code" in text.lower() and not _NOT_CODE_WORDS.search(text):
-            return f
-    return None
+# The box the emailed code goes in (`apply_judge.code_field`: a verification,
+# security, one-time or OTP code box first, never a postal or promo code).
+_code_field = apply_judge.code_field
 
 
 def _button_text(digest: apply_form.FormDigest, n: int) -> str:
@@ -1407,12 +1389,58 @@ def remaps_to_form(state: str, digest: apply_form.FormDigest, url: str) -> bool:
 
 def unsure_acts(state: str, digest: apply_form.FormDigest) -> bool:
     """May a read below `PAGE_STATE_MIN_CONF` go on as its guess? Only one of
-    `_UNSURE_ACTS`, and a code gate only with its code box."""
-    return state in _UNSURE_ACTS and not (state == "code_gate"
-                                          and _code_field(digest.fields) is None)
+    `_UNSURE_ACTS`, a code gate only with its code box, a sign-in or sign-up
+    only on a screen of account boxes (`_credential_form`) or of form boxes
+    (the form, `remaps_to_form`)."""
+    if state not in _UNSURE_ACTS:
+        return False
+    if state == "code_gate":
+        return _code_field(digest.fields) is not None
+    if state in ("login_wall", "signup_form"):
+        return bool(digest.fields)
+    return True
+
+
+def other_step(facts: apply_judge.PageFacts, digest: apply_form.FormDigest) -> str | None:
+    """A page read as `other` (none of the listed kinds) at or above the
+    floor: the kind its structure settles (`apply_judge.structural_kind`,
+    strict) when the loop acts on it or waits on it, else None (it parks
+    as unrecognised)."""
+    kind = apply_judge.structural_kind(facts, strict=True)
+    if kind is not None and (unsure_acts(kind, digest) or kind == "captcha_or_bot_check"):
+        return kind
+    return None
+
+
+def unsure_step(state: str, digest: apply_form.FormDigest,
+                facts: apply_judge.PageFacts) -> tuple[str | None, str]:
+    """What a read still under the floor after its second look does: the
+    kind the page's structure settles (`apply_judge.structural_kind`,
+    strict: a code box, a box that makes a password, application boxes, an
+    Apply entry with no box, a bot check, a closed posting), "structure";
+    else its guess when the loop may act on it (`unsure_acts`) and the
+    structure does not rule it out, "guess"; else the kind the structure
+    leans to, "structure"; else (None, "") and the job parks. A kind is taken
+    only when the loop acts on it, waits on it (a bot check) or parks on it
+    (a closed posting)."""
+    def takes(kind: str | None) -> bool:
+        return kind is not None and (unsure_acts(kind, digest) or kind in _STRUCTURE_ENDS)
+
+    settled = apply_judge.structural_kind(facts, strict=True)
+    if takes(settled):
+        return settled, "guess" if settled == state else "structure"
+    lean = apply_judge.structural_kind(facts)
+    ruled_out = (lean is not None and lean != state
+                 and apply_judge.structure_against(facts, state))
+    if unsure_acts(state, digest) and not ruled_out:
+        return state, "guess"
+    if takes(lean):
+        return lean, "structure"
+    return None, ""
 
 
 _SEND_ONLY_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
+_NEXT_WORDS = re.compile(r"\b(next|continue)\b", re.I)
 
 
 def _runner_up(answers: Mapping[str, Any], exclude: str) -> tuple[str, float]:
@@ -1420,7 +1448,8 @@ def _runner_up(answers: Mapping[str, Any], exclude: str) -> tuple[str, float]:
     probability."""
     a = answers.get("page_state") if answers else None
     probs = dict(getattr(a, "probabilities", None) or {})
-    rows = sorted(((float(p), str(s)) for s, p in probs.items() if s != exclude), reverse=True)
+    rows = sorted(((float(p), str(s)) for s, p in probs.items()
+                   if s != exclude and float(p or 0.0) > 0), reverse=True)
     return (rows[0][1], rows[0][0]) if rows else ("", 0.0)
 
 
@@ -1443,6 +1472,9 @@ def confirmation_step(digest: apply_form.FormDigest, answers: Mapping[str, Any],
     before)."""
     words = confirmation_words(digest.text)
     form = bool(digest.fields) or any(_SEND_ONLY_WORDS.search(b.text) for b in digest.buttons)
+    # before any submit, a Next or a Continue asks for more too (SP4: a
+    # wizard's summary step read as a confirmation)
+    step_button = any(_NEXT_WORDS.search(b.text) for b in digest.buttons)
     if submit_clicked:
         if words or (conf >= apply_judge.CONFIRMATION_MIN_CONF and not form):
             return "submitted", "confirmation page", conf
@@ -1455,7 +1487,7 @@ def confirmation_step(digest: apply_form.FormDigest, answers: Mapping[str, Any],
         return "park", (f"{CHECK_SENT_REASON}: after the emailed code the page reads as "
                         f"confirmation ({conf:.2f}) with no received words (an email "
                         f"verification thanks the same way)"), conf
-    if form and not words:
+    if (form or step_button) and not words:
         second, p = _runner_up(answers, "confirmation")
         if second in _UNSURE_ACTS and not (second == "code_gate"
                                            and _code_field(digest.fields) is None):
@@ -1473,8 +1505,10 @@ def posting_entry_choice(digest: apply_form.FormDigest, plan: FillPlan, *,
     `Button.in_form`, INV-03; or, on a page with form fields or controls the
     extractor leaves out (`unclassified`), a submit-worded button that sits
     with them, INV-01: one `apart` from them, a job-alert box beside the
-    posting's Apply, is the entry), else the fieldless text match; (None,
-    "") when neither."""
+    posting's Apply, is the entry), else the fieldless text match, else on a
+    page with fields an Apply-worded control `apart` from them (READ-09: the
+    judge took the alert box's button for the entry); (None, "") when
+    none."""
     entry = plan.buttons.get("apply_entry")
     if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF \
             and not _PROFILE_APPLY.search(_button_text(digest, entry[0])):
@@ -1485,7 +1519,11 @@ def posting_entry_choice(digest: apply_form.FormDigest, plan: FillPlan, *,
         if not own:
             return entry[0], "judged_apply_entry"
     n = fieldless_apply_choice(digest, unclassified=unclassified)
-    return (n, "fieldless_text") if n is not None else (None, "")
+    if n is not None:
+        return n, "fieldless_text"
+    n = next((b.n for b in digest.buttons if b.n in apart and not b.in_form
+              and apply_judge.entry_worded(b.text)), None)
+    return (n, "apart_text") if n is not None else (None, "")
 
 
 _FORM_KINDS = frozenset(("input", "select", "textarea", "textbox", "contenteditable", "spinbutton",
@@ -1495,26 +1533,32 @@ _FORM_KINDS = frozenset(("input", "select", "textarea", "textbox", "contentedita
 def posting_context(page, digest: apply_form.FormDigest,
                     plan: FillPlan) -> tuple[set[int], int, list[dict[str, Any]]]:
     """What a posting's entry choice reads from the live page (INV-01,
-    INV-03): the judged Apply entry when it is submit-worded on a page with
-    form fields and sits apart from them (`apply_form.same_scope`), the
-    number of form controls the extractor leaves out (`apply_form.control_scan`:
-    a shadow-DOM or ARIA textbox), and those controls."""
+    INV-03): the Apply-worded controls outside any form (the judged Apply
+    entry when it is submit-worded, and every control that reads as an
+    entry, `apply_judge.entry_worded`) that sit apart from the page's form
+    fields (`apply_form.same_scope`), the number of form controls the
+    extractor leaves out (`apply_form.control_scan`: a shadow-DOM or ARIA
+    textbox), and those controls."""
     apart: set[int] = set()
     try:
         scan = [r for r in apply_form.control_scan(page) if r.get("kind") in _FORM_KINDS]
     except Exception:       # noqa: BLE001  (a page double)
         scan = []
+    if not digest.fields:
+        return apart, len(scan), scan
     entry = plan.buttons.get("apply_entry")
-    if entry is not None and digest.fields and _submit_shaped(digest, entry[0]):
-        button = next((b for b in digest.buttons if b.n == entry[0]), None)
-        if button is not None and not button.in_form:
-            try:
-                verdict, _ = apply_form.same_scope(page, button.locator,
-                                                   [f.locator for f in digest.fields])
-            except Exception:       # noqa: BLE001
-                verdict = "unclear"
-            if verdict == "apart":
-                apart.add(button.n)
+    wanted = {entry[0]} if entry is not None and _submit_shaped(digest, entry[0]) else set()
+    wanted |= {b.n for b in digest.buttons if apply_judge.entry_worded(b.text)}
+    for button in digest.buttons:
+        if button.n not in wanted or button.in_form:
+            continue
+        try:
+            verdict, _ = apply_form.same_scope(page, button.locator,
+                                               [f.locator for f in digest.fields])
+        except Exception:       # noqa: BLE001
+            verdict = "unclear"
+        if verdict == "apart":
+            apart.add(button.n)
     return apart, len(scan), scan
 
 
@@ -1617,22 +1661,29 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
               linkedin: apply_linkedin.Decision | None = None,
               answers: Mapping[str, Any] | None = None,
               apart: frozenset[int] | set[int] = frozenset(), unclassified: int = 0,
-              form_entry: int | None = None) -> str:
+              form_entry: int | None = None,
+              facts: apply_judge.PageFacts | None = None) -> str:
     """What the loop does with a fresh page, in words (`probe` prints it),
     from the loop's own decision helpers: the LinkedIn handler
-    (`linkedin_step`, on the page's `linkedin` decision), the remap of a
-    sign-in read of form boxes, a confirmation read before any submit
+    (`linkedin_step`, on the page's `linkedin` decision), a job the site says
+    was applied to (`apply_judge.already_applied`), the remap of a sign-in
+    read of form boxes, a confirmation read before any submit
     (`confirmation_step`, over the judge's `answers`), a form step on
-    LinkedIn, the unsure-read rule, the posting's entry (with the live
-    page's `apart` and `unclassified`, `posting_context`), a form step's
-    Apply entry (`form_entry`, the shared `form_entry_choice`), the form's
-    route to an advance or the submit gate."""
+    LinkedIn, the unsure-read rule (`unsure_step`, over the page's `facts`),
+    the posting's entry (with the live page's `apart` and `unclassified`,
+    `posting_context`), a form step's Apply entry (`form_entry`, the shared
+    `form_entry_choice`), the form's route to an advance or the submit gate,
+    a closed posting's park."""
     def named(n):
         return f"[{n}] {_button_text(digest, n)!r}"
 
     handled = linkedin_step(url, linkedin)
     if handled is not None:
         return handled
+    facts = facts if facts is not None else apply_judge.page_facts(digest, url)
+    applied = apply_judge.already_applied(answers or {}, facts, state)
+    if applied:
+        return f"park: {ALREADY_APPLIED_REASON} ({applied})"
     unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
     lead = ""
     if remaps_to_form(state, digest, url):
@@ -1641,21 +1692,35 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
     if state == "confirmation":
         step, detail, then = confirmation_step(digest, answers or {}, conf, submit_clicked=False)
         if step == "park" and unsure:
-            suffix = f"; reads: {reads}" if reads else ""
-            return lead + f"park: unsure what this page is ({state}, {conf:.2f}){suffix}"
-        if step != "go_on":
+            pass                # the unsure rule below decides, as the loop's does
+        elif step != "go_on":
             return lead + (f"park: {detail}" if step == "park" else "finish: submitted")
-        lead += f"read as confirmation on a form: going on as {detail}; "
-        state, conf = detail, then
-        unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
+        else:
+            lead += f"read as confirmation on a form: going on as {detail}; "
+            state, conf = detail, then
+            unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
     on_linkedin = apply_linkedin.is_linkedin(url)
     if on_linkedin and state in _LINKEDIN_FORM_STATES:
         return lead + f"park: {EASY_APPLY_REASON}"
-    if unsure and not unsure_acts(state, digest):
-        suffix = f"; reads: {reads}" if reads else ""
-        return lead + f"park: unsure what this page is ({state}, {conf:.2f}){suffix}"
     if unsure:
-        lead += f"go on with the unsure read ({state}, {conf:.2f}); "
+        step, how = unsure_step(state, digest, facts)
+        if step is None:
+            suffix = f"; reads: {reads}" if reads else ""
+            return lead + f"park: unsure what this page is ({state}, {conf:.2f}){suffix}"
+        if how == "structure":
+            lead += f"unsure ({state}, {conf:.2f}), its structure reads {step}; "
+            state = step
+            if on_linkedin and state in _LINKEDIN_FORM_STATES:
+                return lead + f"park: {EASY_APPLY_REASON}"
+        else:
+            lead += f"go on with the unsure read ({state}, {conf:.2f}); "
+    elif state == "other":
+        settled = other_step(facts, digest)
+        if settled is not None:
+            lead += f"read as other ({conf:.2f}), its structure reads {settled}; "
+            state = settled
+            if on_linkedin and state in _LINKEDIN_FORM_STATES:
+                return lead + f"park: {EASY_APPLY_REASON}"
     if state == "job_posting" and on_linkedin:
         if digest.fields and posting_entry_choice(digest, plan)[0] is None:
             return lead + f"park: {EASY_APPLY_REASON}"
@@ -1692,6 +1757,9 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
         return lead + "the code step (the emailed code from the inbox)"
     if state == "captcha_or_bot_check":
         return lead + "wait for the person to solve the check"
+    closed = apply_judge.closed_posting(answers or {}, facts, state)
+    if closed:
+        return lead + f"park: {CLOSED_POSTING_REASON} ({closed})"
     return lead + f"park: {_PARK_STATES.get(state, state)}"
 
 
@@ -1699,15 +1767,15 @@ def fieldless_apply_choice(digest: apply_form.FormDigest, *,
                            unclassified: int = 0) -> int | None:
     """A posting without form fields (none extracted, and no form control
     the extractor leaves out, `unclassified`: INV-03): its first control
-    whose text says apply, and not an Apply that sends a stored profile
-    (`_PROFILE_APPLY`: Easy Apply, "Apply with LinkedIn / Indeed", a
-    one-click apply) or a form's own button (`Button.in_form`), the loop's fallback
-    when no confident `apply_entry` was judged."""
+    that reads as an Apply entry (`apply_judge.entry_worded`, READ-09: the
+    word apply, never "Applying tips", "Apply filters", an Apply that sends
+    a stored profile or a send word) and is no form's own button
+    (`Button.in_form`), the loop's fallback when no confident `apply_entry`
+    was judged."""
     if digest.fields or unclassified:
         return None
     return next((b.n for b in digest.buttons
-                 if "apply" in b.text.lower() and not _PROFILE_APPLY.search(b.text)
-                 and not b.in_form), None)
+                 if apply_judge.entry_worded(b.text) and not b.in_form), None)
 
 
 class LateWatch:
@@ -2311,6 +2379,7 @@ class _JobRun:
         self.trace = apply_trace.Trace.off()
         self.browser_closed = False
         self._last_answers: Mapping[str, Any] = {}   # the page read the loop acts on
+        self._facts = apply_judge.PageFacts()        # the last read page's structure
         self._last_dropped: dict[int, str] = {}      # frames `_drop_foreign_controls` left out
         self._last_click: tuple[str, str] | None = None     # (text, role) of the last click
         # (page, frame, locator) of every box the master password or an
@@ -2367,8 +2436,13 @@ class _JobRun:
             pass
 
     def _reads(self, answers: Mapping[str, Any] | None = None) -> str:
-        """The page state's most probable reads, as a park reason's evidence."""
-        return apply_trace.page_state_reads(self._last_answers if answers is None else answers)
+        """The judge's most probable reads of the page state (its own pick,
+        before the read combined it with the Nouls and the structure), as a
+        park reason's evidence."""
+        answers = self._last_answers if answers is None else answers
+        judged = answers.get("page_state_judged") if answers else None
+        return apply_trace.page_state_reads({"page_state": judged} if judged is not None
+                                            else answers)
 
     def _buttons_seen(self, digest: apply_form.FormDigest) -> str:
         """Each button of the page with the role and confidence the judge gave
@@ -2704,13 +2778,13 @@ class _JobRun:
             if self._linkedin_step(digest):
                 continue
             marker = self._page_marker()        # the page as judged: a bot check that
-            if not self._on_linkedin():         # clears itself shows as a change
-                self._discover_listbox_options(digest)
-            answers = self._judge_page(digest)
+                                                # clears itself shows as a change
+            answers = self._read(digest)
             state, conf = apply_judge.read_page_state(answers)
             if conf < apply_judge.PAGE_STATE_MIN_CONF:
                 digest, answers, state, conf = self._reread(digest, answers, state, conf)
                 marker = self._page_marker()
+            facts = self._facts
             sig = (state, self.page.url, json.dumps(digest.to_dict(), sort_keys=True))
             rec = self._new_page_record(state, conf, digest=digest, answers=answers,
                                         timings={"extract_s": round(t1 - t0, 3),
@@ -2723,11 +2797,15 @@ class _JobRun:
                 raise _Parked("needs_human", f"page did not advance (read as {state} "
                                              f"{conf:.2f} again{after})")
             self.last_sig = sig
-            plan = apply_judge.plan(digest, self.catalog, answers,
-                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]))
-            rec["flags"] = dict(plan.flags)
-            self._trace("plan", plan=apply_trace.plan_json(plan))
             unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
+            applied = apply_judge.already_applied(answers, facts, state)
+            if applied and not self.submit_clicked and not self._code_sent:
+                # TERM-04's ATS part: a job the site says was applied to
+                # before is never applied to again
+                self._decide("already_applied", applied)
+                raise _Parked("needs_human", f"{ALREADY_APPLIED_REASON} ({_cap(applied, 160)}; "
+                                             f"{_cap(digest.url_host or _host(self.page.url), 60)})",
+                              ALREADY_APPLIED_NOTE)
             if remaps_to_form(state, digest, str(self.page.url)):
                 # a page of form boxes is the form, whatever it was read as:
                 # the account step would type the facts in and click its button.
@@ -2759,7 +2837,31 @@ class _JobRun:
             if state in _LINKEDIN_FORM_STATES:
                 self._no_form_on_linkedin(f"read as {state} ({conf:.2f})")
             if unsure:
-                self._check_unsure(digest, state, conf)
+                state = self._check_unsure(digest, state, conf)
+                if state in _LINKEDIN_FORM_STATES:
+                    self._no_form_on_linkedin(f"read by its structure as {state}")
+            elif state == "other":
+                settled = other_step(facts, digest)
+                if settled is not None:
+                    # `other` is none of the listed kinds; a page whose
+                    # structure settles one of them is that one
+                    self._decide("structure_over_other", f"read as other ({conf:.2f}); its "
+                                                         f"structure reads it as {settled}",
+                                 facts=facts.to_dict(), to=settled)
+                    state = settled
+                    if state in _LINKEDIN_FORM_STATES:
+                        self._no_form_on_linkedin(f"read by its structure as {state}")
+            if state == "application_form" and _email_first(digest):
+                # the address screen of a two-step sign-in taken as a form:
+                # its site takes the password screen after it all the same
+                sites = getattr(self.accounts, "email_sites", None)
+                if sites is not None:
+                    sites.add(_site(digest.url_host or _host(self.page.url)))
+            self._map(digest, answers, state)
+            plan = apply_judge.plan(digest, self.catalog, answers,
+                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]))
+            rec["flags"] = dict(plan.flags)
+            self._trace("plan", plan=apply_trace.plan_json(plan))
             if state == "job_posting":
                 self._job_posting(digest, answers, plan, rec)
             elif state == "application_form":
@@ -2775,9 +2877,15 @@ class _JobRun:
                     f"{_PARK_STATES[state]} (has_captcha p={plan.flags.get('has_captcha', 0.0):.2f})",
                     before=marker)
             else:
+                closed = apply_judge.closed_posting(answers, facts, state)
+                if closed:
+                    # READ-08: a closed posting has its own reason
+                    raise _Parked("needs_human", f"{CLOSED_POSTING_REASON} ({_cap(closed, 160)})",
+                                  apply_linkedin.CLOSED_NOTE)
                 reason = _PARK_STATES.get(state, state)
                 if state == "payment_request":
-                    reason += f" (asks_for_prohibited p={plan.flags.get('asks_for_prohibited', 0.0):.2f})"
+                    reason += (f" (page_payment p="
+                               f"{apply_judge._noul_of(answers, 'page_payment'):.2f})")
                 elif state == "other":
                     reason += self._reads_suffix()
                 raise _Parked("needs_human", reason)
@@ -2840,9 +2948,7 @@ class _JobRun:
         info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
         self._check_host(self.page.url)     # the page may have moved on while it settled
         digest = self._read_digest()
-        if not self._on_linkedin():
-            self._discover_listbox_options(digest)
-        answers = self._judge_page(digest)
+        answers = self._read(digest)
         state, conf = apply_judge.read_page_state(answers)
         self._decide_next("reread_unsure", f"a read below the page-state floor ({first}); "
                                            + settled_words(info, "and read once more"),
@@ -3110,9 +3216,60 @@ class _JobRun:
         self.log.info("job %s: the check is done; going on", self.job_id)
         apply_fill.settle(self.page, CLICK_TIMEOUT_S)
 
-    def _judge_page(self, digest: apply_form.FormDigest) -> dict:
-        state, questions = apply_judge.page_questions(digest, self.catalog, self.entry)
-        return dict(self.r.jev.judge(state, questions))
+    def _read(self, digest: apply_form.FormDigest) -> dict:
+        """The page read (SP4): its own small request
+        (`apply_judge.read_questions`) combined with the page's structure
+        (`apply_judge.page_facts`, `apply_judge.read_page`). The answers carry
+        the combined read as `page_state`, the judge's own pick as
+        `page_state_judged`, and every Noul; a read that differs from the
+        judge's pick says why in the page's trace."""
+        url = str(getattr(self.page, "url", "") or "")
+        facts = apply_judge.page_facts(digest, url, captcha_frame=self._human_check_showing())
+        state, questions = apply_judge.read_questions(digest, url)
+        raw = dict(self.r.jev.judge(state, questions))
+        read = apply_judge.read_page(raw, facts)
+        answers: dict[str, Any] = {k: v for k, v in raw.items() if k in questions}
+        if "page_state" in answers:
+            answers["page_state_judged"] = answers["page_state"]
+        answers["page_state"] = apply_judge.read_answer(read)
+        self._facts = facts
+        if read.why:
+            self._decide_next("read_combined", read.why,
+                              judged=f"{read.judged} {read.judged_conf:.2f}",
+                              read=f"{read.state} {read.conf:.2f}", facts=facts.to_dict())
+        return answers
+
+    def _map(self, digest: apply_form.FormDigest, answers: dict, state: str, *,
+             discover: bool = True, own_page: bool = True) -> dict:
+        """The page's mapping (`apply_judge.page_questions`), asked only on a
+        page the run acts on (`_MAPPED_STATES`): the fields' facts and the
+        buttons' roles on a form, an account or a code screen and on a
+        posting with fields, the buttons' roles alone on a posting with none.
+        Merged into `answers` in place (only its own questions' answers) and
+        into the page's trace (`own_page`; a digest of something else, a
+        sign-in's create-account link, is traced as an event). `discover`:
+        open the page's listboxes first to read their options (never on
+        LinkedIn)."""
+        if state not in _MAPPED_STATES:
+            return answers
+        with_fields = state != "job_posting" or bool(digest.fields)
+        if with_fields and discover and not self._on_linkedin():
+            self._discover_listbox_options(digest)
+        s, q = apply_judge.page_questions(digest, self.catalog, self.entry, fields=with_fields)
+        if q:
+            got = {k: v for k, v in self.r.jev.judge(s, q).items() if k in q}
+            answers.update(got)
+            if own_page:
+                self.trace.add_answers(got)
+            else:
+                self._trace("mapping", state=state, answers=apply_trace.answers_json(got))
+        return answers
+
+    def _judge_page(self, digest: apply_form.FormDigest, *, discover: bool = False) -> dict:
+        """The page read and, on a page the run acts on, its mapping."""
+        answers = self._read(digest)
+        state, _ = apply_judge.read_page_state(answers)
+        return self._map(digest, answers, state, discover=discover)
 
     def _new_page_record(self, state: str, conf: float, *,
                          digest: apply_form.FormDigest | None = None,
@@ -3135,19 +3292,32 @@ class _JobRun:
                                   extra_mask=self._secret_masks(self.page))
         return rec
 
-    def _check_unsure(self, digest: apply_form.FormDigest, state: str, conf: float) -> None:
-        """A read below `PAGE_STATE_MIN_CONF` goes on as its guess when that is
-        one of `_UNSURE_ACTS` and the page has that step's boxes (a code gate
-        its code box; a sign-in read of form boxes is already the form, and
-        the account step takes a screen of account boxes alone). Anything
-        else parks."""
-        if not unsure_acts(state, digest):
+    def _check_unsure(self, digest: apply_form.FormDigest, state: str, conf: float) -> str:
+        """A read still below `PAGE_STATE_MIN_CONF` after its second look
+        (`unsure_step`): it goes on as its guess when that is one of
+        `_UNSURE_ACTS` and the page has that step's boxes (a code gate its
+        code box; a sign-in read of form boxes is already the form, and the
+        account step takes a screen of account boxes alone); else as the kind
+        the page's structure gives (`apply_judge.structural_kind`: a code
+        box, an account screen, application boxes, an Apply entry with no
+        box); else it parks with the read's distribution. Returns the state
+        the loop acts on."""
+        step, how = unsure_step(state, digest, self._facts)
+        if step is None:
             raise _Parked("needs_human", f"unsure what this page is ({state}, {conf:.2f})"
                                          + self._reads_suffix())
+        if how == "structure":
+            self.log.info("job %s: unsure of the page (%s, %.2f); its structure reads %s",
+                          self.job_id, state, conf, step)
+            self._decide("structural_fallback", f"unsure of the page ({state}, {conf:.2f}); "
+                                                f"its structure reads it as {step}",
+                         reads=self._reads(), facts=self._facts.to_dict(), to=step)
+            return step
         self.log.info("job %s: unsure of the page (%s, %.2f); going on with that read",
                       self.job_id, state, conf)
         self._decide("unsure_goes_on", f"unsure of the page ({state}, {conf:.2f}); going on "
                                        "with that read", reads=self._reads())
+        return state
 
     def _on_linkedin(self) -> bool:
         page = self.page
@@ -4118,7 +4288,11 @@ class _JobRun:
             sure = conf >= apply_judge.PAGE_STATE_MIN_CONF and judged == seen
             if account and state in _OPENED_BY_ACCOUNT and sure:
                 raise self._maybe_only_the_account(state, conf)
-            if state == "code_gate" and sure:
+            # a code screen the read is unsure of is the code screen when its
+            # structure settles it (a code box, no password box)
+            code_screen = state == "code_gate" and judged == seen and (
+                sure or apply_judge.structural_kind(self._facts, strict=True) == "code_gate")
+            if code_screen:
                 if code_entered:
                     raise _Parked("needs_human", f"the emailed code was not accepted (the "
                                                  f"code screen came back, {conf:.2f}); "
@@ -4581,11 +4755,26 @@ def _probe_page(page, n: int, judge: Any, out, *,
     plan = None
     if judge is not None:
         catalog = _probe_catalog()
-        state, questions = apply_judge.page_questions(digest, catalog, {})
-        answers = dict(judge.judge(state, questions))
-        read, conf = apply_judge.read_page_state(answers)
+        # the run's own read (`_JobRun._read`): the read request combined
+        # with the page's structure, then the mapping (`_JobRun._map`)
+        facts = apply_judge.page_facts(digest, str(page.url))
+        state, questions = apply_judge.read_questions(digest, str(page.url))
+        raw = dict(judge.judge(state, questions))
+        combined = apply_judge.read_page(raw, facts)
+        answers = {k: v for k, v in raw.items() if k in questions}
+        if "page_state" in answers:
+            answers["page_state_judged"] = answers["page_state"]
+        answers["page_state"] = apply_judge.read_answer(combined)
+        read, conf = combined.state, combined.conf
+        with_fields = bool(digest.fields) or read != "job_posting"
+        s2, q2 = apply_judge.page_questions(digest, catalog, {}, fields=with_fields)
+        if q2:
+            answers.update({k: v for k, v in judge.judge(s2, q2).items() if k in q2})
         print(f"  judge: page_state {read} {conf:.2f} "
-              f"({apply_trace.page_state_reads(answers, top=5)})", file=out)
+              f"({apply_trace.page_state_reads(answers, top=5)}; the judge read "
+              f"{combined.judged} {combined.judged_conf:.2f})", file=out)
+        if combined.why:
+            print(f"  judge: {combined.why}", file=out)
         for b in digest.buttons:
             role, rconf = apply_judge._choice_of(answers, f"button_{b.n}_role")
             print(f"  judge: button [{b.n}] {role} {rconf:.2f}", file=out)
@@ -4594,10 +4783,12 @@ def _probe_page(page, n: int, judge: Any, out, *,
         entry = form_entry_choice(page, digest, plan, park_mode=park_mode,
                                   filled=plan_fills(plan))
         step = loop_step(str(page.url), digest, plan, read, conf,
-                         apply_trace.page_state_reads(answers), park_mode=park_mode,
+                         apply_trace.page_state_reads(
+                             {"page_state": answers.get("page_state_judged")}),
+                         park_mode=park_mode,
                          linkedin=linkedin, answers=answers, apart=apart,
                          unclassified=unclassified,
-                         form_entry=entry.n if entry is not None else None)
+                         form_entry=entry.n if entry is not None else None, facts=facts)
     print(f"  linkedin handler: {linkedin_line}", file=out)
     n_fl = fieldless_apply_choice(digest)
     print("  fieldless posting: " + (f"would click [{n_fl}] {_button_text(digest, n_fl)!r}"

@@ -5,10 +5,17 @@ Builders return `(state, questions)` in the HTTP shape `jev.Jev.judge` takes;
 readers turn the `Answer`s back into code paths. Nothing here touches a
 browser or the network.
 
-    page_questions(digest, catalog, job)   one request per page: page state,
-                                           field -> fact map, option picks,
-                                           button roles, prohibited / account /
-                                           captcha flags
+    read_questions(digest, url)            the page read, first per page: a
+                                           trimmed state (host, path shape,
+                                           title, the text's head, a field
+                                           census, button texts, a dialog) and
+                                           the `page_state` Choice plus one
+                                           Noul per signal; `read_page`
+                                           combines them with `page_facts`
+    page_questions(digest, catalog, job)   the page's mapping, on a page the
+                                           run acts on: field -> fact map,
+                                           option picks, button roles, the
+                                           prohibited flag
     option_questions(digest, plan)         the second request: option picks for
                                            fields whose fact the first answer
                                            chose (quick_map covers the rest)
@@ -18,8 +25,8 @@ browser or the network.
                                            the code pick)
     grounding_questions(sentences, sheet)  a generated answer, sentence by sentence
 
-    read_page_state, plan, read_verification, read_inbox, read_code_pick,
-    read_grounding                         the readers
+    read_page, read_page_state, plan, read_verification, read_inbox,
+    read_code_pick, read_grounding         the readers
 
 Question ids are never sent to the model, so every `instructions` carries the
 full question; state parts are named with backticked paths; every Choice has
@@ -46,9 +53,11 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from urllib.parse import urlsplit
+
 from apply_facts import FactCatalog, quick_map
 from apply_form import FormDigest, is_password_field
-from jev import Answer
+from jev import PAGE_KIND_NOULS, Answer
 
 log = logging.getLogger("apply_judge")
 
@@ -116,6 +125,35 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 
 HEADLINE_CHARS = 1200           # of the page text sent as `page.headline_text` (600
                                 # until 2026-09-22: LinkedIn's posting began past it)
+
+# The page read (SP4): its own small request, first on every page. Code
+# combines its answers with the page's structure (`page_facts`) into the read
+# (`read_page`): a kind's evidence is the judge's probability for it times
+# `READ_CHOICE_WEIGHT`, plus its Nouls (the mean of (noul - 0.5) x 2 over the
+# kind's Nouls, so a sure no counts against it), plus what the page's boxes,
+# buttons, words and URL say (`STRUCT_*`). The read is the kind with the most
+# evidence. Its confidence starts from the judge's own (its confidence when the
+# read is its pick, else its probability for the kind), rises by
+# `READ_SUPPORT_WEIGHT` per unit of the Nouls' and the structure's word for
+# the kind, falls by `READ_AGAINST_WEIGHT` per unit of their word against it
+# and by `READ_SUPPORT_WEIGHT` per unit they give the strongest other kind:
+# with no Noul and no structure speaking it is the judge's own. A judge sure of
+# its read (0.75 and up) outweighs any one structural fact with a Noul
+# against it; a misread at 0.30 to 0.60 gives way to the true kind's Nouls and
+# structure. Not yet tuned against live answers (SP8).
+READ_HEAD_CHARS = 1000          # of the page text sent as `page.head`
+READ_LIST_CAP = 12              # field labels and button texts listed in the read
+READ_TEXT_CAP = 80              # characters per label or button text in the read
+READ_CHOICE_WEIGHT = 2.0
+READ_SUPPORT_WEIGHT = 0.25
+READ_AGAINST_WEIGHT = 0.5
+STRUCT_DECISIVE = 1.0           # a code box, a new-password box, a file box, received words
+STRUCT_SUPPORT = 0.5
+STRUCT_HINT = 0.3               # the URL's shape
+STRUCT_AGAINST = -1.0           # the page cannot be the kind (a sign-in with no box)
+STRUCT_RULED_OUT = -2.0         # a confirmation beside a form with no received words
+                                # (SP3's rule: never the send's confirmation)
+READ_NOUL_MIN = 0.50            # a read Noul at or above it says yes
 HELP_CAP = 200                  # per-field help text sent
 OPTIONS_CAP = 40                # per-field options sent
 
@@ -133,10 +171,12 @@ ACTIONS = ("fill", "select", "upload", "generate", "skip")
 _PAGE_STATE_CRITERIA: dict[str, dict[str, Any]] = {
     "application_form": {
         "what": "A job application form: controls for the candidate's name, email, resume "
-                "upload or screening questions, with a way to continue or submit",
+                "upload or screening questions, with a way to continue or submit; also the "
+                "application's privacy agreement or data consent step, accepted to go on",
         "not_for": "The job description before the Apply button; a sign-in screen",
         "examples": ["Apply for Software Engineer: First Name, Last Name, Email, Resume",
-                     "Application step 2 of 3: work authorization questions"]},
+                     "Application step 2 of 3: work authorization questions",
+                     "Privacy Agreement: I Accept, I Decline"]},
     "login_wall": {
         "what": "A sign-in screen asking for an existing account's email and password",
         "not_for": "Creating a new account; the application form itself",
@@ -209,10 +249,10 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
 _BUTTON_CRITERIA: dict[str, dict[str, Any]] = {
     "advance": {
         "what": "The next step: the next form page, signing in, creating the account, "
-                "continuing with an email",
+                "continuing with an email, accepting the application's privacy agreement",
         "not_for": "The final send of the finished application",
         "examples": ["Next", "Continue", "Save and continue", "Sign in", "Log in",
-                     "Create account", "Continue with email"]},
+                     "Create account", "Continue with email", "I Accept"]},
     "submit": {
         "what": "Sends the finished application from its last page",
         "not_for": "A step button that opens the next form page: Continue, Next, "
@@ -345,13 +385,16 @@ def _option_question(i: int, options: list[str], candidate_answer: str) -> dict[
 
 
 def page_questions(digest: FormDigest, catalog: FactCatalog,
-                   job: Mapping[str, Any] | None = None) -> tuple[dict, dict]:
-    """The one request per page. State: the job, the page's host / title /
-    headline, the compact fields and buttons, and `facts`, the description of
-    every source key a field can take (the catalog's facts and the specials;
-    never a value). Questions: `page_state`, `field_{n}_source`, `field_{n}_option`
-    for a field with options whose fact `quick_map` knows, `button_{n}_role`,
-    `asks_for_prohibited`, `requires_account`, `has_captcha`."""
+                   job: Mapping[str, Any] | None = None, *,
+                   fields: bool = True) -> tuple[dict, dict]:
+    """The page's mapping, asked once the read (`read_questions`) says the
+    run acts on the page. State: the job, the page's host / title / headline,
+    the compact fields and buttons, and `facts`, the description of every
+    source key a field can take (the catalog's facts and the specials; never
+    a value). Questions: `field_{n}_source`, `field_{n}_option` for a field
+    with options whose fact `quick_map` knows, `button_{n}_role`,
+    `button_{n}_sends` for an Apply-worded button, `asks_for_prohibited`.
+    With `fields` False (a posting with no field) the buttons alone."""
     job = job or {}
     text = (digest.text or "")[:PAGE_TEXT_CAP]
     state: dict[str, Any] = {
@@ -359,23 +402,18 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
                 "title": str(job.get("job_title") or job.get("title") or "")},
         "page": {"url_host": digest.url_host, "title": digest.title,
                  "headline_text": text[:HEADLINE_CHARS]},
-        "fields": [_compact_field(f) for f in digest.fields],
+        "fields": [_compact_field(f) for f in digest.fields] if fields else [],
         # the text only: the extractor's `kind_hint` is a regex guess ("Apply
         # now" and a wizard's Continue both read `submit`) and the live judge
         # took the word at face value (SP8: apply_entry 0.55 / submit 0.45,
         # advance 0.72 / submit 0.28); `apply_run._submit_shaped` guards on text
         "buttons": [{"n": b.n, "text": b.text} for b in digest.buttons],
-        "facts": _facts_map(catalog),
     }
-    questions: dict[str, Any] = {
-        "page_state": {
-            "type": "choice",
-            "instructions": "Which kind of screen is `page`, given its `fields` and `buttons`?",
-            "criteria": _PAGE_STATE_CRITERIA,
-        },
-    }
+    if fields:
+        state["facts"] = _facts_map(catalog)
+    questions: dict[str, Any] = {}
     catalog_keys = list(catalog.to_criteria())
-    for i, f in enumerate(digest.fields):
+    for i, f in enumerate(digest.fields if fields else ()):
         questions[f"field_{f.n}_source"] = {
             "type": "choice",
             "instructions": f"Which key of `facts` describes what `fields[{i}]` asks for? "
@@ -410,23 +448,658 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
                                 "of applying?",
                 "criteria": dict(_SENDS_CRITERIA),
             }
-    questions["asks_for_prohibited"] = {
-        "type": "noul",
-        "instructions": "Does `page` or any of `fields` ask for a social security number, "
-                        "a birthdate, banking or payment details, or a government "
-                        "identification document?",
-    }
-    questions["requires_account"] = {
-        "type": "noul",
-        "instructions": "Does `page` require the candidate to sign in or create an account "
-                        "before applying?",
-    }
-    questions["has_captcha"] = {
-        "type": "noul",
-        "instructions": "Does `page` show a CAPTCHA, a reCAPTCHA or hCaptcha challenge, or a "
-                        "robot or human verification check?",
-    }
+    if fields:
+        questions["asks_for_prohibited"] = {
+            "type": "noul",
+            "instructions": "Does `page` or any of `fields` ask for a social security number, "
+                            "a birthdate, banking or payment details, or a government "
+                            "identification document?",
+        }
     return state, questions
+
+
+# --- the page read (SP4) -----------------------------------------------------------
+
+# The words a page shows once an application was received: with the judge's
+# read, the deterministic half of a confirmation (after the submit click only
+# when they were not on the page before it). "thanks for your interest" is a
+# posting's greeting too, so it is left out.
+CONFIRMATION_WORDS = re.compile(
+    r"thank(?:s| you) for (?:applying|your application|submitting)"
+    r"|application (?:has been |was |is )?(?:received|submitted|sent|complete)"
+    r"|we(?:'ve| have) received your application"
+    r"|successfully (?:applied|submitted)|you(?:'ve| have) (?:successfully )?applied", re.I)
+# typographic apostrophes read as the plain one before any words are matched
+_APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "＇": "'"})
+# A job applied to before (TERM-04), a posting that takes no more applications
+# (READ-08), a review of the answers, an error page, a bot check.
+ALREADY_APPLIED_WORDS = re.compile(
+    r"already (?:applied|submitted (?:an|your) application|have an application)"
+    r"|you(?:'ve| have) (?:previously|already) applied"
+    r"|application (?:is )?already on file|you applied (?:for|to) this", re.I)
+CLOSED_WORDS = re.compile(
+    r"no longer (?:accepting|taking) applications|no longer (?:available|open|active|posted)"
+    r"|(?:position|job|role|posting|requisition) (?:has been|is|was) (?:filled|closed|expired"
+    r"|removed)|(?:this|the) (?:job|position|posting) (?:has )?expired"
+    r"|job (?:not found|no longer exists)|page (?:not found|doesn't exist|does not exist)", re.I)
+# a job description's headings: the posting's own words
+DESCRIPTION_WORDS = re.compile(
+    r"\b(responsibilities|qualifications|requirements|about the (?:role|job|position|team)"
+    r"|what you(?:'ll| will) do|who you are|job description|job summary)\b", re.I)
+REVIEW_WORDS = re.compile(
+    r"review (?:your|the) (?:application|answers|details|information)|please review"
+    r"|review and submit|review before submitting", re.I)
+ERROR_WORDS = re.compile(
+    r"something went wrong|an (?:unexpected )?error (?:has )?occurred|(?:internal )?server error"
+    r"|access denied", re.I)
+CAPTCHA_WORDS = re.compile(
+    r"captcha|not a robot|verify (?:that )?you(?:'re| are) (?:a )?human|are you (?:a )?human"
+    r"|human verification", re.I)
+# An Apply that sends a stored profile from another site instead of opening
+# the company's form: Easy Apply (LinkedIn's, or a board's "Easy apply"),
+# "Apply with LinkedIn / Indeed / Glassdoor / ZipRecruiter ...", and a
+# one-click apply, which sends at once. Never an Apply entry the run clicks. A
+# "Quick apply" on the application's own site opens its short form and is an
+# entry like any other.
+PROFILE_APPLY = re.compile(
+    r"easy\s*apply|apply\s+(with|using|via|through)\s+(your\s+)?"
+    r"(linkedin|indeed|glassdoor|ziprecruiter|seek|xing|google|facebook|monster|dice)"
+    r"|(1|one)[\s-]*click\s+apply", re.I)
+_APPLY_ENTRY_WORDS = re.compile(r"\bapply\b|\bi'?m interested\b|\bstart (?:your |an |the )?"
+                                r"application\b", re.I)
+_SEND_ONLY_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
+# a sign-in's own send words: "Sign in", "Send code", "Send me a link"
+_SIGN_IN_SEND = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
+                           r"|\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
+                           r"(code|link)\b", re.I)
+_ADVANCE_WORDS = re.compile(r"\b(next|continue)\b", re.I)
+# the qualifier has to sit on the word "code": a Social Security Number box or
+# a work authorization box carries the qualifier and is no place for the code
+CODE_WORDS = re.compile(
+    r"(?:verification|security|one[- ]?time|auth\w*)[ _-]*code|\botp\b|passcode", re.I)
+NOT_CODE_WORDS = re.compile(
+    r"zip|post\s*code|postal|country|promo|coupon|discount|referral|invite|area\s*code", re.I)
+# A password box's words when it makes the password rather than signs in with it.
+NEW_PASSWORD = re.compile(r"\b(create|new|choose|set|confirm|re-?enter|repeat|verify)\b"
+                          r"|new[_-]?pass|confirm[_-]?pass", re.I)
+# A box no application asks: a job board's search or sort, a job-alert or
+# newsletter sign-up beside the posting (study G3), a sign-in's remember-me.
+_NOT_APPLICATION = re.compile(r"search|keyword|(?<![a-z])alerts?(?![a-z])|subscri|newsletter"
+                              r"|sort\s*by|filter|remember me|keep me signed|stay signed"
+                              r"|show password", re.I)
+_CARD_BOX = re.compile(r"card\s*number|credit\s*card|debit\s*card|\bcvv\b|\bcvc\b"
+                       r"|expir(?:y|ation)\s*date", re.I)
+# The URL shapes of the pages the run meets (known ATS paths and the plain
+# words sites use), first match wins: a hint, never the read on its own.
+_URL_SHAPES: tuple[tuple[str, re.Pattern], ...] = tuple(
+    (kind, re.compile(pattern, re.I)) for kind, pattern in (
+        ("confirmation", r"/(thanks|thank-?you|confirmation|confirmed|success|submitted"
+                         r"|application-?submitted)(/|$)"),
+        ("signup_form", r"/(register|registration|sign-?up|create-?account|createaccount)(/|$)"),
+        ("login_wall", r"/(login|log-?in|sign-?in|sso)(/|$)"),
+        ("application_form", r"/(apply|application|apply-?now|applymanually|apply-?manually)"
+                             r"(/|$)"),
+        ("job_posting", r"/(jobs?|careers?|positions?|openings?|postings?|job-?details?"
+                        r"|vacanc(y|ies))/[^/]+")))
+
+
+def confirmation_words(text: str) -> set[str]:
+    """The received phrases (`CONFIRMATION_WORDS`) a page's text shows,
+    lowercased, typographic apostrophes read as plain ones."""
+    plain = str(text or "").translate(_APOSTROPHES)
+    return {" ".join(m.group(0).lower().split()) for m in CONFIRMATION_WORDS.finditer(plain)}
+
+
+_NOT_ENTRY = re.compile(r"\bapplied\b|\bapply\s+(filters?|changes|coupon|promo|discount)\b"
+                        r"|\bhow\s+to\s+apply\b|\bapplication\s+status\b", re.I)
+
+
+def entry_worded(text: str) -> bool:
+    """Does a control's text read as a posting's Apply entry (READ-09): the
+    word "apply" ("Apply", "Apply now", "Apply for this job"), "I'm
+    interested" (SmartRecruiters) or "Start application"; never "Applying
+    tips" or "Apply filters", "Applied", a profile Apply (`PROFILE_APPLY`)
+    or a send word ("Submit application")."""
+    text = str(text or "").translate(_APOSTROPHES)
+    return (bool(_APPLY_ENTRY_WORDS.search(text)) and not _NOT_ENTRY.search(text)
+            and not PROFILE_APPLY.search(text) and not _SEND_ONLY_WORDS.search(text))
+
+
+def _first_words(pattern: re.Pattern, text: str) -> str:
+    m = pattern.search(str(text or "").translate(_APOSTROPHES))
+    return " ".join(m.group(0).split()) if m else ""
+
+
+def code_field(fields):
+    """The box the emailed code goes in.
+
+    A code gate can carry a postal code, a country code, a referral or a
+    promo box as well, and all of them read as "code". A field whose label or
+    id names a verification, security, one-time, auth or OTP code wins; the
+    plain "code" match is the fallback, with the address, referral and promo
+    words excluded. `autocomplete` `one-time-code` is the strongest signal the
+    DOM offers."""
+    def blob(f):
+        return f"{f.label} {f.id_or_name}"
+
+    for f in fields:
+        if str(getattr(f, "autocomplete", "")).lower() == "one-time-code":
+            return f
+    for f in fields:
+        text = blob(f)
+        if CODE_WORDS.search(text) and not NOT_CODE_WORDS.search(text):
+            return f
+    for f in fields:
+        text = blob(f)
+        if "code" in text.lower() and not NOT_CODE_WORDS.search(text):
+            return f
+    return None
+
+
+_HEX_TOKEN = re.compile(r"[0-9a-fA-F-]+")
+
+
+def path_shape(url: str) -> str:
+    """The URL's path with its ids masked (a run of three digits or more
+    `<n>`, a long hex or UUID token `<id>`); no query (a GET form puts
+    answers there) and no fragment."""
+    path = urlsplit(str(url or "")).path or "/"
+    out = []
+    for seg in path.split("/"):
+        if seg.isdigit():
+            seg = "<n>"
+        elif len(seg) >= 16 and _HEX_TOKEN.fullmatch(seg) and any(c.isdigit() for c in seg):
+            seg = "<id>"
+        else:
+            seg = re.sub(r"\d{3,}", "<n>", seg)
+        out.append(seg)
+    return "/".join(out)[:120]
+
+
+def url_kind(url: str) -> str:
+    """The page kind the URL's path suggests (`_URL_SHAPES`), or ""."""
+    path = urlsplit(str(url or "")).path or ""
+    for kind, pattern in _URL_SHAPES:
+        if pattern.search(path):
+            return kind
+    return ""
+
+
+@dataclass(frozen=True)
+class PageFacts:
+    """What the page's structure says, read by code from the digest
+    (`page_facts`): the boxes by kind, the buttons by their words, the phrases
+    the text shows, the URL's shape."""
+    app_fields: int = 0         # boxes an application asks (no password, code, search box)
+    files: int = 0
+    passwords: int = 0
+    new_password: bool = False  # a box that makes a password (autocomplete, confirm)
+    current_password: bool = False
+    email_first: bool = False   # an address box and nothing else but checkboxes
+    code_box: bool = False
+    card_box: bool = False
+    apply_entries: int = 0      # Apply-worded controls outside any form, no profile Apply
+    send_buttons: int = 0
+    advance_buttons: int = 0
+    received: str = ""          # the phrases the text shows (the first of each kind)
+    already_applied: str = ""
+    closed: str = ""
+    review: str = ""
+    description: str = ""       # a job description's heading words
+    error: str = ""
+    captcha: str = ""           # a bot-check phrase, or "a bot-check frame" the runner saw
+    url_kind: str = ""
+    text_chars: int = 0
+    dialog: str = ""            # an open modal dialog's title (the extractor's)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v}
+
+
+def _password_kind(f) -> str:
+    """"new password", "current password" or "password" for a password box,
+    else ""."""
+    if not is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
+        return ""
+    auto = str(f.autocomplete or "").lower()
+    if auto == "new-password" or NEW_PASSWORD.search(f"{f.label} {f.id_or_name}"):
+        return "new password"
+    return "current password" if auto == "current-password" else "password"
+
+
+_CENSUS_TYPES = {"text": "text", "email": "email", "tel": "phone", "url": "link",
+                 "number": "number", "date": "date", "textarea": "long text",
+                 "select": "choice", "radio": "choice", "listbox": "choice",
+                 "checkbox": "checkbox", "file": "file upload"}
+
+
+def census_kind(f, code) -> str:
+    """A field's kind in the read's census: its password kind, "code" for the
+    code box, else its type in plain words."""
+    if code is not None and f is code:
+        return "code"
+    return _password_kind(f) or _CENSUS_TYPES.get(f.type, "other")
+
+
+def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False) -> PageFacts:
+    """The page's structure (`PageFacts`) from its digest and URL;
+    `captcha_frame`: the runner saw a bot-check provider's challenge frame."""
+    code = code_field(digest.fields)
+    passwords = [f for f in digest.fields if _password_kind(f)]
+    kinds = [_password_kind(f) for f in passwords]
+    buttons = list(digest.buttons)
+    # a send word other than a sign-in's ("Submit application", not "Send code")
+    sends = [b for b in buttons if _SEND_ONLY_WORDS.search(b.text)
+             and not _SIGN_IN_SEND.search(b.text)]
+    # the boxes of the page's own step: no job-alert, search or sort box
+    # beside a posting, no remember-me
+    own = [f for f in digest.fields
+           if not _NOT_APPLICATION.search(f"{f.label} {f.id_or_name} {f.placeholder}")]
+    non_check = [f for f in own if f.type != "checkbox"]
+    # the address screen of a two-step sign-in: an address box and nothing
+    # else but checkboxes, with no button that sends an application (a form's
+    # last step can ask for the email alone)
+    email_first = bool(non_check) and not sends and all(
+        f.type == "email" or str(f.autocomplete or "") in ("username", "email") for f in non_check)
+    app = 0
+    for f in digest.fields:
+        blob = f"{f.label} {f.id_or_name} {f.placeholder}"
+        if f is code or _password_kind(f) or _NOT_APPLICATION.search(blob):
+            continue
+        if f.type == "checkbox" and CAPTCHA_WORDS.search(blob):
+            continue
+        if f.type == "email" and (passwords or email_first):
+            continue            # a sign-in's address
+        app += 1
+    text = f"{digest.title}\n{digest.text or ''}"
+    entries = [b for b in buttons if entry_worded(b.text) and not b.in_form]
+    received = sorted(confirmation_words(text))
+    return PageFacts(
+        app_fields=app, files=sum(1 for f in digest.fields if f.type == "file"),
+        passwords=len(passwords), new_password="new password" in kinds,
+        current_password="current password" in kinds, email_first=email_first and not passwords,
+        code_box=code is not None,
+        card_box=any(_CARD_BOX.search(f"{f.label} {f.id_or_name} {f.autocomplete}")
+                     for f in digest.fields),
+        apply_entries=len(entries),
+        send_buttons=len(sends),
+        advance_buttons=sum(1 for b in buttons if _ADVANCE_WORDS.search(b.text)),
+        received=received[0] if received else "",
+        already_applied=_first_words(ALREADY_APPLIED_WORDS, text),
+        closed=_first_words(CLOSED_WORDS, text), review=_first_words(REVIEW_WORDS, text),
+        description=_first_words(DESCRIPTION_WORDS, text),
+        error=_first_words(ERROR_WORDS, text),
+        captcha="a bot-check frame" if captcha_frame else _first_words(CAPTCHA_WORDS, text),
+        url_kind=url_kind(url), text_chars=len((digest.text or "").strip()),
+        dialog=str(getattr(digest, "dialog", "") or ""))
+
+
+# The read's Nouls: one signal each, phrased so a high value means yes, with
+# structured true / false criteria (the Jev guide's shape for a subtle
+# boundary: what counts, and examples). Each names the state parts it reads.
+# The page kind each speaks for is `jev.PAGE_KIND_NOULS`.
+_READ_NOULS: dict[str, tuple[str, tuple[str, list[str]], tuple[str, list[str]]]] = {
+    "page_job_description": (
+        "Does `page` show a job description: what the role does, its requirements or its "
+        "qualifications?",
+        ("the posting describes the job", [
+            "responsibilities", "qualifications", "requirements", "about the role",
+            "about the job", "about this role", "what you'll do", "what you will do",
+            "job description", "who you are", "what we're looking for", "the role",
+            "job summary", "about the position", "benefits"]),
+        ("a form, a sign-in or a message with no description of the job", [
+            "sign in", "create an account", "thank you for applying", "security code",
+            "review your application"])),
+    "page_apply_entry": (
+        "Does `buttons` hold an Apply button or link that starts an application for this "
+        "job?",
+        ("a control that opens the application", [
+            "apply", "apply now", "apply for this job", "apply for this position",
+            "apply on company website", "i'm interested", "start application",
+            "start your application"]),
+        ("a control that sends a finished form, or a third-party quick apply", [
+            "submit application", "submit", "easy apply", "apply with linkedin",
+            "apply with indeed", "applied"])),
+    "page_applicant_details": (
+        "Do `fields` ask for the applicant's details: a name, contact details, a resume or "
+        "answers to screening questions?",
+        ("the boxes of a job application", [
+            "first name", "last name", "full name", "name", "phone", "resume", "cv",
+            "cover letter", "linkedin", "website", "portfolio", "authorized to work",
+            "work authorization", "sponsorship", "years of experience", "address", "city",
+            "file upload", "long text", "choice"]),
+        ("the boxes of a sign-in, a code check, a payment or a search", [
+            "password", "current password", "new password", "code", "card number",
+            "keywords", "search"])),
+    "page_sign_in": (
+        "Do `page`, `fields` and `buttons` ask the visitor to sign in to an account that "
+        "already exists?",
+        ("a sign-in screen", [
+            "sign in", "log in", "login", "forgot password", "forgot your password",
+            "current password", "welcome back", "sign in to continue"]),
+        ("a screen that creates a new account, or an application form", [
+            "create an account", "create account", "create your account", "new password",
+            "confirm password", "register", "sign up", "file upload"])),
+    "page_create_account": (
+        "Do `page`, `fields` and `buttons` ask the visitor to create a new account or "
+        "register?",
+        ("a sign-up screen", [
+            "create an account", "create account", "create your account", "new password",
+            "confirm password", "choose a password", "register", "sign up", "join"]),
+        ("a sign-in to an account that exists", [
+            "forgot password", "forgot your password", "current password", "welcome back"])),
+    "page_received": (
+        "Does `page` say that an application was received or submitted?",
+        ("a thank-you or success message for a sent application", [
+            "thank you for applying", "thanks for applying", "application received",
+            "application has been received", "application has been submitted",
+            "application was submitted", "we have received your application",
+            "we've received your application", "successfully submitted",
+            "successfully applied", "application complete"]),
+        ("a form that still waits for its send", [
+            "submit application", "review your application", "required"])),
+    "page_already_applied": (
+        "Does `page` say that the visitor already applied to this job before?",
+        ("a note that an application is already on file", [
+            "already applied", "you have already applied", "you've already applied",
+            "you previously applied", "already submitted an application",
+            "application already on file"]),
+        ("a thank-you for the application just sent", ["thank you for applying"])),
+    "page_closed": (
+        "Does `page` say that the job is closed, filled or no longer available?",
+        ("a posting that takes no more applications", [
+            "no longer accepting applications", "no longer available", "no longer open",
+            "position has been filled", "job has been filled", "job is closed",
+            "posting has expired", "job has expired", "job not found", "page not found",
+            "does not exist", "doesn't exist"]),
+        ("an open posting", ["apply now", "apply for this job"])),
+    "page_code": (
+        "Do `page` and `fields` ask for a verification or security code that was sent to the "
+        "visitor?",
+        ("a screen for an emailed or texted code", [
+            "security code", "verification code", "one-time code", "one time code",
+            "enter the code", "code we sent", "we emailed you", "we sent you", "passcode",
+            "otp"]),
+        ("a box for another kind of code", [
+            "postal code", "zip code", "promo code", "referral code", "country code"])),
+    "page_payment": (
+        "Do `page` and `fields` ask for a payment, a fee or card details?",
+        ("a payment screen", [
+            "card number", "credit card", "debit card", "cvv", "cvc", "expiration date",
+            "application fee", "pay now", "payment"]),
+        ("a question about pay on an application", [
+            "salary", "compensation", "expected pay", "desired pay"])),
+    "page_review": (
+        "Does `page` show a summary of the applicant's answers to check before the final "
+        "submit?",
+        ("a review step", [
+            "review your application", "review and submit", "please review",
+            "review before submitting", "review your answers", "summary of your application"]),
+        ("a form that still asks for answers", ["required"])),
+    "page_error": (
+        "Does `page` show an error: something went wrong, a server error or an access "
+        "error?",
+        ("an error page", [
+            "something went wrong", "an error occurred", "error occurred", "server error",
+            "internal error", "access denied", "try again later", "unexpected error"]),
+        ("a working page", [])),
+    "has_captcha": (
+        "Do `page` and `fields` show a CAPTCHA, a reCAPTCHA or hCaptcha challenge, or a robot "
+        "or human verification check?",
+        ("a bot check the visitor must pass", [
+            "captcha", "recaptcha", "hcaptcha", "not a robot", "i'm not a robot",
+            "verify you are human", "are you human", "human verification"]),
+        ("a page with no challenge", [])),
+}
+
+
+def _read_noul(qid: str) -> dict[str, Any]:
+    instructions, (yes_what, yes_examples), (no_what, no_examples) = _READ_NOULS[qid]
+    return {"type": "noul", "instructions": instructions,
+            "criteria": {"true": {"what": yes_what, "examples": list(yes_examples)},
+                         "false": {"what": no_what, "examples": list(no_examples)}}}
+
+
+READ_NOUL_IDS = tuple(_READ_NOULS)
+
+
+def _cut(text: str, cap: int = READ_TEXT_CAP) -> str:
+    return " ".join(str(text or "").split())[:cap]
+
+
+def read_questions(digest: FormDigest, url: str = "") -> tuple[dict, dict]:
+    """The page read's request (Jev guide sections 3, 7, 13: a trimmed state,
+    atomic questions). State: `page` (host, path shape, title, the text's
+    head, an open dialog's title), `fields` (the first `READ_LIST_CAP`, each
+    its label and kind), `field_kinds` (every field counted by kind) and
+    `buttons` (their texts, each once). Questions: the `page_state` Choice
+    and one Noul per signal (`READ_NOUL_IDS`)."""
+    code = code_field(digest.fields)
+    counts: dict[str, int] = {}
+    census = []
+    for f in digest.fields:
+        k = census_kind(f, code)
+        counts[k] = counts.get(k, 0) + 1
+        if len(census) < READ_LIST_CAP:
+            census.append({"n": f.n, "label": _cut(f.label), "kind": k})
+    seen: set[str] = set()
+    buttons = []
+    for b in digest.buttons:
+        text = _cut(b.text)
+        if text and text not in seen and len(buttons) < READ_LIST_CAP:
+            seen.add(text)
+            buttons.append({"n": b.n, "text": text})
+    page: dict[str, Any] = {"url_host": digest.url_host, "path": path_shape(url),
+                            "title": _cut(digest.title, 160),
+                            "headline_text": (digest.text or "")[:READ_HEAD_CHARS]}
+    dialog = _cut(getattr(digest, "dialog", "") or "", 160)
+    if dialog:
+        page["dialog"] = dialog
+    state: dict[str, Any] = {
+        "page": page,
+        "fields": census,
+        "field_kinds": counts,
+        "buttons": buttons,
+    }
+    questions: dict[str, Any] = {
+        "page_state": {
+            "type": "choice",
+            "instructions": "Which kind of screen is `page`, given its `fields` and `buttons`?",
+            "criteria": _PAGE_STATE_CRITERIA,
+        },
+    }
+    for qid in READ_NOUL_IDS:
+        questions[qid] = _read_noul(qid)
+    return state, questions
+
+
+def _structure(f: PageFacts) -> dict[str, float]:
+    """What the page's structure says for or against each kind."""
+    s = {k: 0.0 for k in PAGE_STATES}
+    if f.received and not f.app_fields and not f.send_buttons:
+        s["confirmation"] += STRUCT_DECISIVE
+    elif not f.received and (f.app_fields or f.send_buttons or f.passwords or f.code_box):
+        s["confirmation"] += STRUCT_RULED_OUT
+    elif not f.received and (f.advance_buttons or f.apply_entries):
+        s["confirmation"] += STRUCT_AGAINST     # a page with a way on asks for more
+    if f.code_box and not f.passwords:
+        s["code_gate"] += STRUCT_DECISIVE
+    elif not f.code_box:
+        s["code_gate"] += STRUCT_AGAINST
+    if f.new_password and not f.files:
+        s["signup_form"] += STRUCT_DECISIVE
+        s["login_wall"] -= STRUCT_SUPPORT
+    elif f.current_password:
+        s["login_wall"] += STRUCT_SUPPORT
+        s["signup_form"] -= STRUCT_SUPPORT
+    if (not f.passwords and not f.email_first) or (f.send_buttons and not f.passwords):
+        # no account box, or a button that sends an application with no
+        # password box beside it: no sign-in or sign-up
+        s["login_wall"] += STRUCT_AGAINST
+        s["signup_form"] += STRUCT_AGAINST
+    if f.files:
+        s["application_form"] += STRUCT_DECISIVE
+    elif f.app_fields >= 2 or (f.app_fields and (f.send_buttons or f.advance_buttons)):
+        s["application_form"] += STRUCT_SUPPORT
+    elif f.passwords and not f.app_fields:
+        s["application_form"] += STRUCT_AGAINST     # an account's boxes alone
+    if f.apply_entries and not f.app_fields and not f.files and not f.passwords:
+        s["job_posting"] += STRUCT_SUPPORT
+        if f.description or f.text_chars >= 1000:
+            s["job_posting"] += STRUCT_SUPPORT
+        # an Apply to open and no application box (a job alert's is none):
+        # no form step yet
+        s["application_form"] += STRUCT_AGAINST
+    if f.review:
+        s["review_page"] += STRUCT_SUPPORT
+    if f.captcha == "a bot-check frame" or (f.captcha and not f.app_fields):
+        s["captcha_or_bot_check"] += STRUCT_DECISIVE
+    if f.closed:
+        s["error_or_dead"] += STRUCT_DECISIVE
+    elif f.error:
+        s["error_or_dead"] += STRUCT_SUPPORT
+    if f.card_box:
+        s["payment_request"] += STRUCT_DECISIVE
+    if f.url_kind in s:
+        s[f.url_kind] += STRUCT_HINT
+    return s
+
+
+@dataclass
+class PageRead:
+    """The page read (`read_page`): the kind the loop acts on and how sure it
+    is, the evidence per kind as a distribution, the judge's own pick, and
+    why the read differs from it when it does."""
+    state: str
+    conf: float
+    probabilities: dict[str, float]
+    judged: str
+    judged_conf: float
+    evidence: dict[str, float] = field(default_factory=dict)
+    why: str = ""
+
+
+def read_page(answers: Mapping[str, Answer], facts: PageFacts) -> PageRead:
+    """Combine the read's answers with the page's structure (see the
+    constants above `READ_HEAD_CHARS`). With no answer at all the read is
+    the structure's alone."""
+    judged, judged_conf = read_page_state(answers)
+    a = answers.get("page_state")
+    probs = {str(k): float(v or 0.0) for k, v in (getattr(a, "probabilities", None) or {}).items()}
+    if a is not None and a.choice is not None and not probs:
+        probs = {str(a.choice): float(a.confidence or 0.0)}
+    struct = _structure(facts)
+    evidence: dict[str, float] = {}
+    others: dict[str, float] = {}       # what the Nouls and the structure say, per kind
+    for kind in PAGE_STATES:
+        said = struct.get(kind, 0.0)
+        nouls = [answers[q].noul for q in PAGE_KIND_NOULS.get(kind, ())
+                 if q in answers and answers[q].noul is not None]
+        if nouls:
+            said += sum((float(n) - READ_NOUL_MIN) * 2 for n in nouls) / len(nouls)
+        others[kind] = said
+        evidence[kind] = round(READ_CHOICE_WEIGHT * probs.get(kind, 0.0) + said, 4)
+    positive = {k: v for k, v in evidence.items() if v > 0}
+    total = sum(positive.values())
+    if not total:
+        return PageRead(judged if a is not None else "other", 0.0, {}, judged, judged_conf,
+                        evidence, "no kind has evidence for it")
+    shares = {k: round(positive.get(k, 0.0) / total, 4)
+              for k in sorted(PAGE_STATES, key=lambda k: -evidence[k])}
+    # the judge's pick wins a tie
+    best = max(shares, key=lambda k: (shares[k], k == judged))
+    why = ""
+    if best != judged:
+        sides = [f"{k} {struct[k]:+.1f}" for k in (best, judged) if struct.get(k)]
+        why = (f"the judge read {judged} {judged_conf:.2f}; the Nouls and the page's structure "
+               f"read {best}" + (f" (structure: {', '.join(sides)})" if sides else ""))
+    base = judged_conf if best == judged else probs.get(best, 0.0)
+    rival = max([others[k] for k in PAGE_STATES if k != best] + [0.0])
+    said = others[best]
+    conf = (base + READ_SUPPORT_WEIGHT * max(0.0, said) + READ_AGAINST_WEIGHT * min(0.0, said)
+            - READ_SUPPORT_WEIGHT * rival)
+    conf = round(min(1.0, max(0.0, conf)), 4)
+    return PageRead(best, conf, shares, judged, judged_conf, evidence, why)
+
+
+def read_answer(read: PageRead) -> Answer:
+    """The combined read as the `page_state` answer the loop reads
+    (`read_page_state`, the trace, a park's evidence)."""
+    probs = dict(read.probabilities) or {read.state: read.conf}
+    return Answer(kind="choice", choice=read.state, probabilities=probs, confidence=read.conf)
+
+
+def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
+    """The page kind the structure alone gives, for a read that stayed under
+    the floor after its second look (the unsure fallback): a bot-check frame,
+    or a bot-check's words with no application box, is the check; a closed
+    posting's words a dead end; a code box with no password box the code
+    step; a password box with no file box an account screen (a sign-up when
+    a box makes the password, a sign-in when the box is the current
+    password); an address screen with nothing else a sign-in's first step;
+    application boxes a form; an Apply entry with no application box a
+    posting; a page whose only way on is a Next or a Continue a step of the
+    application; else None. `strict`: only a kind the structure settles (a
+    lone password box with no autocomplete, a page with a Next alone and a
+    single application box settle nothing)."""
+    if facts.captcha == "a bot-check frame" or (facts.captcha and not facts.app_fields):
+        return "captcha_or_bot_check"
+    if facts.closed and not facts.app_fields and not facts.files:
+        return "error_or_dead"
+    if facts.code_box and not facts.passwords:
+        return "code_gate"
+    if facts.passwords and not facts.files:
+        if facts.new_password:
+            return "signup_form"
+        if facts.current_password or not strict:
+            return "login_wall"
+        return None
+    if facts.apply_entries and not facts.app_fields and not facts.files:
+        return "job_posting"
+    if facts.email_first:
+        return "login_wall"
+    if facts.files or facts.app_fields >= 2:
+        return "application_form"
+    if facts.app_fields:
+        return None if strict else "application_form"
+    if facts.advance_buttons and not facts.send_buttons and not strict:
+        return "application_form"
+    return None
+
+
+def structure_against(facts: PageFacts, state: str) -> bool:
+    """Does the page's structure rule out `state` (a sign-in with no account
+    box, a code step with no code box, a confirmation beside a form)?"""
+    return _structure(facts).get(state, 0.0) < 0
+
+
+def already_applied(answers: Mapping[str, Answer], facts: PageFacts, state: str) -> str:
+    """The evidence that the job was applied to before (TERM-04, READ-07), or
+    "": the page's words, or the judge's `page_already_applied` on a page
+    read as a confirmation with nothing to fill or click on (a page the run
+    parks on before any submit all the same: a flipped Noul never stops a
+    page the run would act on)."""
+    if facts.already_applied:
+        return f"the page says {facts.already_applied!r}"
+    p = _noul_of(answers, "page_already_applied")
+    if (p >= READ_NOUL_MIN and state == "confirmation" and not facts.app_fields
+            and not facts.files and not facts.send_buttons and not facts.advance_buttons
+            and not facts.apply_entries):
+        return f"read as already applied ({p:.2f})"
+    return ""
+
+
+def closed_posting(answers: Mapping[str, Answer], facts: PageFacts, state: str) -> str:
+    """The evidence that a page the run parks on (`error_or_dead`, `other`)
+    is a closed posting (READ-08), or "": the page's words, or on a page read
+    as an error or a dead end the judge's `page_closed`."""
+    if state not in ("error_or_dead", "other"):
+        return ""
+    if facts.closed:
+        return f"the page says {facts.closed!r}"
+    p = _noul_of(answers, "page_closed")
+    return (f"read as closed ({p:.2f})" if state == "error_or_dead" and p >= READ_NOUL_MIN
+            else "")
 
 
 # --- the plan ----------------------------------------------------------------------
@@ -629,6 +1302,10 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
 
     out.flags = {qid: _noul_of(answers, qid)
                  for qid in ("asks_for_prohibited", "requires_account", "has_captcha")}
+    if "requires_account" not in answers:
+        # the page read asks the sign-in and the sign-up apart (SP4)
+        out.flags["requires_account"] = max(_noul_of(answers, "page_sign_in"),
+                                            _noul_of(answers, "page_create_account"))
     out.park_reason = sensitive_reason_ or required_reason
     return out
 

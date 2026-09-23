@@ -1584,8 +1584,7 @@ class _ReadsByHeadline(jev.FakeJev):
         text = str((state.get("page") or {}).get("headline_text") or "")
         for words, read in self.READS.items():
             if "page_state" in out and words in text:
-                out["page_state"] = jev.Answer(kind="choice", choice=read, confidence=0.9,
-                                               probabilities={read: 0.9, "other": 0.1})
+                h.read_as(out, read, 0.9, {read: 0.9, "other": 0.1})
         return out
 
 
@@ -1614,7 +1613,7 @@ def test_a_page_the_judge_never_read_is_read_once_more(context, tmp_path, monkey
                                                        "Review your": "review_page"}})()
     out, _, _ = _drain(context, tmp_path, APPLY_URL, judge=judge)
     assert out.status == "needs_human", out
-    assert "a form with its own send button (review_page 0.90)" in out.reason, out
+    assert "a form with its own send button (review_page " in out.reason, out
     rows = _trace_decisions(_trace_dir(tmp_path), "after_submit")
     assert any("the last read was stale" in r["why"] for r in rows), rows
 

@@ -252,32 +252,44 @@ def test_write_record_without_a_trace_keeps_the_record_it_replaces(tmp_path):
 # --- DIAG-03: park reasons that carry their evidence --------------------------------------------
 
 class _ReadAs(jev.FakeJev):
-    """The fake, with every page read as `STATE` at `CONF` (the rest spread)."""
+    """The fake, with every page read as `STATE` at `CONF` (the rest spread),
+    its Nouls as `NOULS` says (`apply_harness.read_as`)."""
     STATE = ""
     CONF = 0.0
+    NOULS = "coherent"
 
     def judge(self, state, questions):
         out = super().judge(state, questions)
         if "page_state" in out:
             probs = {self.STATE: self.CONF, "job_posting": 0.25, "application_form": 0.20}
-            out["page_state"] = jev.Answer(kind="choice", choice=self.STATE,
-                                           probabilities=probs, confidence=self.CONF)
+            h.read_as(out, self.STATE, self.CONF, probs, nouls=self.NOULS)
         return out
 
 
-def test_an_unsure_park_names_the_page_state_distribution(context, flow_server, tmp_path):
+# A page whose structure places it nowhere (no box, no Apply, no Next): the
+# judge's read alone decides it (SP4: the structure reads a posting or a form
+# itself, and an unsure read of one goes on as that)
+_NOWHERE = ("<!doctype html><html><head><title>Life at Fabrikam</title></head><body>"
+            "<h1>Life at Fabrikam</h1><p>" + "Our teams build analytics for retail partners "
+            "across three continents, and we care about growth and learning. " * 3
+            + "</p><button type='button'>Menu</button></body></html>")
+
+
+def test_an_unsure_park_names_the_page_state_distribution(context, tmp_path):
     folder = h.write_job_folder(tmp_path / "job")
-    _enqueue(folder, flow_server.url("job_posting.html"))
-    judge = type("J", (_ReadAs,), {"STATE": "other", "CONF": 0.30})()
+    _careers(context, {"/life": _NOWHERE})
+    _enqueue(folder, "https://careers.fabrikam.example/life")
+    judge = type("J", (_ReadAs,), {"STATE": "other", "CONF": 0.30, "NOULS": "neutral"})()
     out = _runner(context, tmp_path, judge).drain(cap=1)[0]
     assert out.reason == ("unsure what this page is (other, 0.30); reads: other 0.30, "
                           "job_posting 0.25, application_form 0.20"), out
 
 
-def test_an_unrecognised_page_names_the_read(context, flow_server, tmp_path):
+def test_an_unrecognised_page_names_the_read(context, tmp_path):
     folder = h.write_job_folder(tmp_path / "job")
-    _enqueue(folder, flow_server.url("job_posting.html"))
-    judge = type("J", (_ReadAs,), {"STATE": "other", "CONF": 0.55})()
+    _careers(context, {"/life": _NOWHERE})
+    _enqueue(folder, "https://careers.fabrikam.example/life")
+    judge = type("J", (_ReadAs,), {"STATE": "other", "CONF": 0.55, "NOULS": "neutral"})()
     out = _runner(context, tmp_path, judge).drain(cap=1)[0]
     assert out.reason == ("unrecognised page; reads: other 0.55, job_posting 0.25, "
                           "application_form 0.20"), out
@@ -737,9 +749,10 @@ def test_probe_prints_the_step_the_loop_would_take(context, flow_server, fixture
 
 def test_probe_prints_an_unsure_park_and_a_remapped_sign_in(context, flow_server):
     out = io.StringIO()
-    judge = type("J", (_ReadAs,), {"STATE": "other", "CONF": 0.30})()
-    apply_run.probe(flow_server.url("job_posting.html"), judge=judge, context=context, out=out,
-                    settle_s=1)
+    _careers(context, {"/life": _NOWHERE})
+    judge = type("J", (_ReadAs,), {"STATE": "other", "CONF": 0.30, "NOULS": "neutral"})()
+    apply_run.probe("https://careers.fabrikam.example/life", judge=judge, context=context,
+                    out=out, settle_s=1)
     assert ("  the loop would: park: unsure what this page is (other, 0.30); reads: other "
             "0.30, job_posting 0.25, application_form 0.20") in out.getvalue(), out.getvalue()
     out = io.StringIO()

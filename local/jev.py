@@ -213,6 +213,12 @@ class FakeJev:
     - Noul: 0.9 when at least two distinct instruction content words (four or
       more letters, stopwords excluded) appear in the state text, else 0.1.
       `probabilities` is empty and `confidence` is None, as in the API.
+    - Noul, structured criteria: when `criteria.true` is an object carrying
+      `examples`, the state text is searched for each example phrase of
+      `criteria.true` and of `criteria.false` (whole words, case-insensitive,
+      typographic apostrophes read as plain ones); 0.9 when more `true`
+      phrases than `false` phrases are found, else 0.1. The page read's
+      Nouls (`apply_judge.read_questions`) are written this way.
     - Score: the level whose text overlaps the instruction plus state words
       most (a tie keeps the lower level); `score` is that level's index as a
       float, `probabilities` puts 1.0 on it (keyed by the index as a string)
@@ -227,7 +233,9 @@ class FakeJev:
             state_text = _join_slices(state, slices)
             context = _words(instr_text) | _words(state_text)
             if kind == "noul":
-                out[qid] = self._noul(instr_text, state_text)
+                examples = _noul_examples(q.get("criteria"))
+                out[qid] = (self._noul_phrases(examples, state_text) if examples is not None
+                            else self._noul(instr_text, state_text))
             elif kind == "choice":
                 criteria = q.get("criteria") or {}
                 tables = [t for t in slices
@@ -247,6 +255,14 @@ class FakeJev:
         content = {w for w in _words(instr_text) if len(w) >= _NOUL_MIN_WORD}
         hits = content & _words(state_text)
         return Answer(kind="noul", noul=0.9 if len(hits) >= 2 else 0.1)
+
+    @staticmethod
+    def _noul_phrases(examples: tuple[list[str], list[str]], state_text: str) -> Answer:
+        yes, no = examples
+        text = _plain(state_text)
+        hits = sum(1 for e in yes if _phrase_in(e, text))
+        misses = sum(1 for e in no if _phrase_in(e, text))
+        return Answer(kind="noul", noul=0.9 if hits > misses else 0.1)
 
     @staticmethod
     def _choice(criteria: Mapping[str, Any], context: set[str],
@@ -281,6 +297,35 @@ class FakeJev:
                       probabilities={str(i): (1.0 if i == idx else 0.0)
                                      for i in range(len(criteria))},
                       confidence=1.0)
+
+
+_APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "＇": "'"})
+
+
+def _plain(text: str) -> str:
+    return " ".join(str(text or "").translate(_APOSTROPHES).lower().split())
+
+
+def _phrase_in(phrase: str, text: str) -> bool:
+    """`phrase` in `text` as whole words (both already lowercased)."""
+    want = _plain(phrase)
+    if not want:
+        return False
+    return re.search(r"(?<![a-z0-9])" + re.escape(want) + r"(?![a-z0-9])", text) is not None
+
+
+def _noul_examples(criteria: Any) -> tuple[list[str], list[str]] | None:
+    """(the `true` example phrases, the `false` ones) of a Noul's structured
+    criteria, or None when `criteria.true` carries no `examples`."""
+    if not isinstance(criteria, Mapping):
+        return None
+    yes = criteria.get("true")
+    if not isinstance(yes, Mapping) or "examples" not in yes:
+        return None
+    no = criteria.get("false")
+    no_examples = no.get("examples") if isinstance(no, Mapping) else None
+    return ([str(e) for e in yes.get("examples") or []],
+            [str(e) for e in no_examples or []])
 
 
 def _split_desc(value: Any) -> tuple[str, str]:
@@ -385,7 +430,32 @@ BUTTON_ROLE_NEIGHBOURS: frozenset[frozenset[str]] = frozenset(
     frozenset(pair) for pair in (("advance", "apply_entry"), ("advance", "other"),
                                  ("apply_entry", "other"), ("upload", "other"),
                                  ("back", "other")))
+# The page read's Nouls (`apply_judge.read_questions`), by the page kind each
+# speaks for; `page_already_applied` speaks for none (its own park reason).
+# `NoisyJev` misreads them with the page state: a misread page state takes its
+# Nouls along (`coherent_p`), and each is flipped on its own besides.
+PAGE_KIND_NOULS: dict[str, tuple[str, ...]] = {
+    "job_posting": ("page_job_description", "page_apply_entry"),
+    "application_form": ("page_applicant_details",),
+    "login_wall": ("page_sign_in",),
+    "signup_form": ("page_create_account",),
+    "review_page": ("page_review",),
+    "confirmation": ("page_received",),
+    "code_gate": ("page_code",),
+    "captcha_or_bot_check": ("has_captcha",),
+    "payment_request": ("page_payment",),
+    "error_or_dead": ("page_closed", "page_error"),
+}
+READ_NOULS: frozenset[str] = frozenset(
+    q for qs in PAGE_KIND_NOULS.values() for q in qs) | {"page_already_applied"}
 _SWAPPED_CONF = (0.30, 0.60)    # the confidence a swapped page state is read at
+# A flipped read Noul lands on the wrong side of 0.5 with room to spare: a yes
+# read from 0.10 to 0.40, a no from 0.60 to 0.90. A coherent misread's Nouls:
+# the misread kind's yes from 0.60 to 0.85, the true kind's no from 0.15 to 0.40.
+_FLIPPED_YES = (0.10, 0.40)
+_FLIPPED_NO = (0.60, 0.90)
+_COHERENT_YES = (0.60, 0.85)
+_COHERENT_NO = (0.15, 0.40)
 # A form or a review page read as a confirmation, before the submit or after
 # it (a validation page, a form that did not change): drawn apart from the
 # swaps, at a confidence from 0.40 to 0.80, above the page-state floor and
@@ -419,6 +489,15 @@ class NoisyJev:
       page not swapped otherwise is read as a confirmation
       (`CONFIRM_MISREADS`) at a confidence from 0.40 to 0.80, the true state
       second.
+    - The page read's Nouls (`READ_NOULS`): when the page state was misread
+      (a swap or a confirmation misread), with chance `coherent_p` (default
+      0.5, drawn per Noul) the misread kind's Nouls read yes (0.60 to 0.85)
+      and the true kind's read no (0.15 to 0.40), as a judge that took the
+      page for the other kind would answer; otherwise each is flipped with
+      chance `noul_p` (default `swap_p`) to the wrong side of 0.5 (a yes read
+      from 0.10 to 0.40, a no from 0.60 to 0.90), and one not flipped is
+      pulled toward 0.5 by a factor drawn from [conf_scale, 1.0]. The other
+      Nouls (a verification, a flag, a button's `sends`) are left alone.
 
     The live judge answers the same request the same way, so the noise is a
     function of (`seed`, the request): the same state and questions get the
@@ -430,7 +509,8 @@ class NoisyJev:
 
     def __init__(self, inner: Jev, seed: int, *, swap_p: float = 0.15,
                  conf_scale: float = 0.75, drop_p: float = 0.05,
-                 role_p: float | None = None, confirm_p: float | None = None):
+                 role_p: float | None = None, confirm_p: float | None = None,
+                 noul_p: float | None = None, coherent_p: float = 0.5):
         if not 0.0 < conf_scale <= 1.0:
             raise ValueError("conf_scale must be in (0, 1]")
         self.inner = inner
@@ -440,6 +520,8 @@ class NoisyJev:
         self.drop_p = float(drop_p)
         self.role_p = self.swap_p if role_p is None else float(role_p)
         self.confirm_p = self.swap_p / 3 if confirm_p is None else float(confirm_p)
+        self.noul_p = self.swap_p if noul_p is None else float(noul_p)
+        self.coherent_p = float(coherent_p)
 
     def _rng(self, request_key: str, part: str):
         import random
@@ -450,19 +532,46 @@ class NoisyJev:
         answers = dict(self.inner.judge(state, questions))
         key = ReplayJev.key_for(state, questions)
         out: dict[str, Answer] = {}
+        # the page state first: a misread takes the read's Nouls along
+        truth = misread = ""
+        page = answers.get("page_state")
+        if page is not None and page.kind == "choice":
+            out["page_state"] = self._page_state(page, self._rng(key, "page_state"))
+            truth = str(page.choice or "other")
+            if out["page_state"].choice != truth:
+                misread = str(out["page_state"].choice)
         for qid in sorted(answers):
+            if qid in out:
+                continue
             a = answers[qid]
             rng = self._rng(key, qid)
             if qid.startswith(_DROPPED_PREFIX) and rng.random() < self.drop_p:
                 continue
-            if qid == "page_state" and a.kind == "choice":
-                out[qid] = self._page_state(a, rng)
+            if a.kind == "noul" and qid in READ_NOULS:
+                out[qid] = self._read_noul(qid, a, rng, truth, misread)
             elif a.kind in ("choice", "score"):
                 out[qid] = self._scaled(a, rng)
             else:
                 out[qid] = a
         self._exchange_roles(out, self._rng(key, "roles"))
         return {qid: out[qid] for qid in answers if qid in out}
+
+    def _read_noul(self, qid: str, a: Answer, rng, truth: str, misread: str) -> Answer:
+        """A page-read Noul as a misreading judge answers it (see the class
+        docstring): along with a misread page state, flipped on its own, or
+        pulled toward 0.5."""
+        value = float(a.noul if a.noul is not None else 0.5)
+        coherent, flip, draw, scale = rng.random(), rng.random(), rng.random(), rng.random()
+        if misread and coherent < self.coherent_p:
+            if qid in PAGE_KIND_NOULS.get(misread, ()):
+                return Answer(kind="noul", noul=round(_between(_COHERENT_YES, draw), 4))
+            if qid in PAGE_KIND_NOULS.get(truth, ()):
+                return Answer(kind="noul", noul=round(_between(_COHERENT_NO, draw), 4))
+        if flip < self.noul_p:
+            span = _FLIPPED_YES if value >= 0.5 else _FLIPPED_NO
+            return Answer(kind="noul", noul=round(_between(span, draw), 4))
+        factor = self.conf_scale + (1.0 - self.conf_scale) * scale
+        return Answer(kind="noul", noul=round(0.5 + (value - 0.5) * factor, 4))
 
     def _factor(self, rng) -> float:
         return rng.uniform(self.conf_scale, 1.0)
@@ -526,6 +635,11 @@ class NoisyJev:
                         probabilities=_spread(list(ay.probabilities) or [ax.choice],
                                               str(ax.choice), float(ay.confidence or 0.0), ""),
                         confidence=ay.confidence)
+
+
+def _between(span: tuple[float, float], draw: float) -> float:
+    low, high = span
+    return low + (high - low) * draw
 
 
 def _spread(names: list[str], winner: str, conf: float, second: str) -> dict[str, float]:

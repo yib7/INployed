@@ -215,10 +215,9 @@ def test_page_questions_state_shape(catalog):
 def test_page_questions_emit_every_question(catalog):
     digest = _greenhouse()
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
-    assert q["page_state"]["type"] == "choice"
-    assert set(q["page_state"]["criteria"]) == set(apply_judge.PAGE_STATES)
-    for opt in apply_judge.PAGE_STATES:
-        assert set(q["page_state"]["criteria"][opt]) == {"what", "not_for", "examples"}
+    # SP4: the page state and the page's signals are the read's own request
+    # (`read_questions`); the mapping asks the fields and the buttons
+    assert "page_state" not in q and "has_captcha" not in q and "requires_account" not in q
     for i, f in enumerate(digest.fields):
         src = q[f"field_{f.n}_source"]
         assert src["type"] == "choice"
@@ -261,8 +260,7 @@ def test_page_questions_emit_every_question(catalog):
         role = q[f"button_{b.n}_role"]
         assert set(role["criteria"]) == set(apply_judge.BUTTON_ROLES)
         assert f"buttons[{i}]" in json.dumps(role["instructions"])
-    for qid in ("asks_for_prohibited", "requires_account", "has_captcha"):
-        assert q[qid]["type"] == "noul"
+    assert q["asks_for_prohibited"]["type"] == "noul"
     # every id is a real question the model sees in full (ids are never sent)
     assert all("instructions" in v for v in q.values())
 
@@ -893,9 +891,14 @@ def test_grounding_questions_and_read_grounding():
 def test_fake_jev_end_to_end_over_the_greenhouse_digest(catalog):
     digest = _greenhouse()
     fake = jev.FakeJev()
+    rs, rq = apply_judge.read_questions(digest, "https://boards.greenhouse.io/acme/jobs/1")
+    read = apply_judge.read_page(fake.judge(rs, rq),
+                                 apply_judge.page_facts(digest,
+                                                        "https://boards.greenhouse.io/acme/jobs/1"))
+    assert (read.state, read.conf) == ("application_form", 1.0)
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
     answers = fake.judge(state, q)
-    assert apply_judge.read_page_state(answers) == ("application_form", 1.0)
+    answers.update(fake.judge(rs, rq))
 
     first = apply_judge.plan(digest, catalog, answers)
     # the option picks for the model-mapped selects are only known after the
@@ -963,20 +966,25 @@ def test_fake_jev_flags_a_captcha_page_and_a_login_wall(catalog):
     captcha = FormDigest(url_host="jobs.example.com", title="Verify you are human",
                          text="reCAPTCHA: please complete the robot check to continue.",
                          fields=[], buttons=[])
-    state, q = apply_judge.page_questions(captcha, catalog, _JOB)
-    p = apply_judge.plan(captcha, catalog, jev.FakeJev().judge(state, q))
+    state, q = apply_judge.read_questions(captcha)
+    answers = jev.FakeJev().judge(state, q)
+    p = apply_judge.plan(captcha, catalog, answers)
     assert p.flags["has_captcha"] == 0.9
     assert p.park_reason == ""          # the flag is recorded; the page state parks
+    read = apply_judge.read_page(answers, apply_judge.page_facts(captcha))
+    assert read.state == "captcha_or_bot_check"
 
     login = FormDigest(url_host="jobs.example.com", title="Sign in to your account",
                        text="Sign in with your existing account email and password.",
                        fields=[_f(0, "Email", "email", required=True),
                                _f(1, "Password", "other", required=True)],
                        buttons=[Button(n=0, locator=(0, "#s"), text="Sign in")])
-    state, q = apply_judge.page_questions(login, catalog, _JOB)
+    state, q = apply_judge.read_questions(login)
     answers = jev.FakeJev().judge(state, q)
-    assert answers["requires_account"].noul == 0.9
-    assert apply_judge.read_page_state(answers)[0] == "login_wall"
+    assert answers["page_sign_in"].noul == 0.9
+    assert apply_judge.plan(login, catalog, answers).flags["requires_account"] == 0.9
+    read = apply_judge.read_page(answers, apply_judge.page_facts(login))
+    assert read.state == "login_wall"
 
 
 def test_plan_never_puts_a_fact_in_a_password_field(catalog):

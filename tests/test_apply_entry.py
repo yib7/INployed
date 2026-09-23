@@ -541,9 +541,7 @@ class _FirstReadUnsure(jev.FakeJev):
         if "page_state" in out:
             self.page_reads += 1
             if self.page_reads == 1:
-                out["page_state"] = jev.Answer(
-                    kind="choice", choice="other", confidence=0.30,
-                    probabilities={"other": 0.30, "job_posting": 0.25})
+                h.read_as(out, "other", 0.30, {"other": 0.30, "job_posting": 0.25})
         return out
 
 
@@ -863,8 +861,7 @@ class _ReadsByTitle(jev.FakeJev):
         title = state["page"]["title"]
         if "page_state" in out:
             choice = "login_wall" if title.startswith("Sign in") else "job_posting"
-            out["page_state"] = jev.Answer(kind="choice", choice=choice, confidence=0.9,
-                                           probabilities={choice: 0.9})
+            h.read_as(out, choice, 0.9)
         return out
 
 
@@ -874,7 +871,7 @@ def test_a_login_wall_park_names_the_sign_up_page_with_its_own_evidence(
     _serve(context, {"/login": _LOGIN, "/register": _REGISTER})
     out, _ = _drain(context, tmp_path, f"{CAREERS}/login", _ReadsByTitle())
     assert out.reason.startswith(f"login wall (the create-account link led to {CAREERS}/register:"
-                                 " read as job_posting 0.90;"), out.reason
+                                 " read as job_posting "), out.reason
     assert "boxes: Keywords" in out.reason and "Search jobs" in out.reason
     assert "Password" not in out.reason          # the sign-in page's boxes are not its evidence
 
@@ -973,9 +970,7 @@ class _ReadAs(jev.FakeJev):
     def judge(self, state, questions):
         out = super().judge(state, questions)
         if "page_state" in out:
-            out["page_state"] = jev.Answer(kind="choice", choice=self.STATE, confidence=self.CONF,
-                                           probabilities={self.STATE: self.CONF,
-                                                          "job_posting": 0.2})
+            h.read_as(out, self.STATE, self.CONF, {self.STATE: self.CONF, "job_posting": 0.2})
         return out
 
 
@@ -999,7 +994,13 @@ def _read_as(state, conf):
     ("linkedin:linkedin_applied.html", None, False),
     ("linkedin:linkedin_closed.html", None, False),
     ("linkedin-other:form", ("application_form", 0.95), False),
-    ("linkedin-other:posting", ("job_posting", 0.95), False)])
+    ("linkedin-other:posting", ("job_posting", 0.95), False),
+    # SP4: the read combined with the structure, the unsure fallback, `other`
+    ("captcha.html", ("other", 0.55), False),
+    ("signup.html", ("login_wall", 0.55), False),
+    ("job_posting.html", ("other", 0.9), False),
+    ("code_gate.html", ("login_wall", 0.35), False),
+    ("review_with_next.html", None, True)])
 def test_loop_step_says_what_the_loop_does(context, flow_server, tmp_path, monkeypatch,
                                            where, judge, park_mode):
     judge_obj = _read_as(*judge) if judge else jev.FakeJev()

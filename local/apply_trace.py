@@ -292,6 +292,14 @@ class Trace:
         self.pages.append(entry)
         self._write_page(entry)
 
+    def add_answers(self, answers: Mapping[str, Any]) -> None:
+        """More answers for the current page: its mapping, asked after the
+        page read (SP4), joins the read's answers in `page-<n>.json`."""
+        if not self.enabled or not self.pages:
+            return
+        self.pages[-1]["answers"].update(answers_json(answers))
+        self._write_page(self.pages[-1])
+
     def event(self, kind: str, **data: Any) -> None:
         """One step of the run on the current page (or before the first one):
         a plan, a fill, a click and its result, a decision and why, a park."""

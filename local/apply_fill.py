@@ -266,13 +266,16 @@ def _read_back(loc, kind: dict[str, str] | None) -> str:
 
 def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
           deadline: float | None = None,
-          clock: Callable[[], float] = time.monotonic) -> list[Filled]:
+          clock: Callable[[], float] = time.monotonic,
+          errors: list | None = None) -> list[Filled]:
     """Perform every `fill` / `select` / `upload` in `plan` and return the
     read-back value of each acted field. `skip` and `generate` are not acted
     on and do not appear in the result. `deadline` is an instant on `clock`
     (`time.monotonic` by default; the runner passes its own); once it has
     passed the remaining fields are left alone and the list so far comes back
-    (the job's wall clock belongs to the caller)."""
+    (the job's wall clock belongs to the caller). A failed action lands in
+    `errors` as `{n, label, action, error}` with the error's type name only
+    (a Playwright message can quote the value)."""
     out: list[Filled] = []
     for pf in plan.fields:
         if pf.action not in ("fill", "select", "upload"):
@@ -290,6 +293,9 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
             _act(page, pf, loc, kind)
         except Exception as e:      # noqa: BLE001  (the read-back reports the outcome)
             _say(log, f"apply_fill: {pf.action} on {pf.label!r} ({pf.locator[1]}) failed: {e}")
+            if errors is not None:
+                errors.append({"n": pf.n, "label": pf.label, "action": pf.action,
+                               "error": type(e).__name__})
         value = _read_back(loc, kind) if loc is not None else ""
         out.append(Filled(n=pf.n, label=pf.label, value=value))
     return out

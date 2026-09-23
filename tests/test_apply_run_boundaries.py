@@ -225,7 +225,8 @@ def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
 
     clicked.assert_called_once_with(digest, 0, "submit", {"filled": [{
         "n": 0, "label": "Security code", "value": apply_run.HIDDEN,
-        "type": "text", "id_or_name": "code", "upload": False, "hidden": True}]})
+        "type": "text", "id_or_name": "code", "upload": False, "hidden": True}]},
+        conf=apply_run.apply_judge.BUTTON_SUBMIT_MIN_CONF)
 
 
 # --- the relaxed rules (2026-09-22): sites, the password's sites, the human check ---------

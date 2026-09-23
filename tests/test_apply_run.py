@@ -1153,8 +1153,8 @@ def test_an_unsure_read_the_run_cannot_act_on_parks(
     runner = _runner(context, tmp_path, auto_apply_headless=False)
     runner.jev = _page_state_judge(apply_run._host(url), state, 0.30)
     out = runner.drain(cap=1)[0]
-    assert (out.status, out.reason) == (
-        "needs_human", f"unsure what this page is ({state}, 0.30)"), out
+    assert out.status == "needs_human", out
+    assert out.reason.startswith(f"unsure what this page is ({state}, 0.30); reads: "), out
 
 
 class _FormAsAccountJudge(jev.FakeJev):

@@ -183,14 +183,16 @@ def _code_shaped(token: str, body: str = "", subject: str = "") -> bool:
 
 def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
                wait_s: float = 60, clock=time.monotonic, sleep=time.sleep,
-               deadline: float | None = None, ats: str = "", company: str = "") -> str | None:
+               deadline: float | None = None, ats: str = "", company: str = "",
+               errors: list | None = None) -> str | None:
     """Judge message relevance and code candidates; never log mail or codes.
 
     `ats` (the queue entry's system) and `company` reach the from-site
     question: the mail comes from the ATS's domain, and `site` is only the
     form's host. Polls share a three-minute budget and the caller's remaining
     job budget. Navigation in the temporary tab stays on the configured inbox
-    host.
+    host. An error that ends the polls is appended to `errors` by its type
+    name alone (its message may quote the mail).
     """
     parsed = urlsplit(inbox_url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or polls <= 0:
@@ -232,7 +234,9 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
                 delay = min(max(0, wait_s), max(0, end - clock()))
                 if delay:
                     sleep(delay)
-    except Exception:  # noqa: BLE001  (browser and judge errors may include private mail)
+    except Exception as e:  # noqa: BLE001  (browser and judge errors may include private mail)
+        if errors is not None:
+            errors.append(type(e).__name__)
         return None
     finally:
         if tab is not None:

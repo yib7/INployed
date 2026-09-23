@@ -16,7 +16,8 @@ DOM, so the answer never rests on a page-state read:
   `currentJobId`), whatever tracking parameters the URL carries.
 - `read(page)`: one JS pass over the main frame (`View`): the offsite Apply
   controls and the Easy Apply ones outside any dialog, the site's chrome,
-  list items and the right rail,
+  list items and the right rail (a top card's Apply laid out in a list
+  counts when its aria-label names the company's website),
   a dialog that holds form fields (LinkedIn's own Easy Apply form), a sign-in
   surface (a sign-in dialog or a visible password box), and the top card's
   "Applied" and "No longer accepting applications" marks (list cards and the
@@ -187,9 +188,13 @@ def decide(view: View) -> Decision:
 # "Apply on company website" (text) or an aria-label naming the company's
 # website; Easy Apply by its words in the text or the aria-label ("Easy Apply
 # to <title> at <company>"). A control longer than 40 characters is a card
-# (a similar job's link carries "Easy Apply" inside a long text), and one in
-# a list item or the right rail belongs to another job or to the search's
-# filters (the two-pane view's "Easy Apply" filter pill).
+# (a similar job's link carries "Easy Apply" inside a long text). An Easy
+# Apply in a list item or the right rail belongs to another job or to the
+# search's filters (the two-pane view's "Easy Apply" filter pill); so does a
+# plain "Apply" there. The top card's own Apply comes first; one in a list
+# item (a top card that lays its actions out as a list) counts when its
+# aria-label names the company's website and the page shows no other Apply or
+# Easy Apply; the rail's never.
 _READ_JS = r"""
 () => {
   const locatorFor = __LOCATOR__;
@@ -204,6 +209,7 @@ _READ_JS = r"""
   const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
     + '[role=navigation], [role=search]';
   const CARD = 'li, aside, [role=listitem], [role=complementary]';
+  const RAIL = 'aside, [role=complementary]';
   const PLAIN = /^apply(\s+(now|here|online|for\s+this\s+(job|position|role)|on\s+(the\s+)?company(['’]s)?\s+(website|site)))?$/i;
   const COMPANY = /\bapply\b.*\bcompany(['’]s)?\s+(website|site)\b/i;
   const EASY = /easy\s*apply/i;
@@ -212,18 +218,28 @@ _READ_JS = r"""
   const h1 = Array.from(document.querySelectorAll('h1')).find(visible);
   out.title = h1 ? norm(h1.innerText).slice(0, 120) : '';
   const sel = 'a[href], button, [role=button], input[type=button], input[type=submit]';
+  const listed = [];
   for (const el of document.querySelectorAll(sel)) {
     if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
-    if (el.closest(DIALOG) || el.closest(CHROME) || el.closest(CARD)) continue;
+    if (el.closest(DIALOG) || el.closest(CHROME)) continue;
     const text = norm(el.innerText) || norm(el.value);
     const aria = norm(el.getAttribute('aria-label'));
     if (text.length > 40) continue;
     const words = text + ' ' + aria;
     const c = {css: locatorFor(el), text: text, aria: aria.slice(0, 160),
                href: el.getAttribute('href') || '', target: el.getAttribute('target') || ''};
-    if (EASY.test(words)) { out.easy.push(c); continue; }
-    if (PLAIN.test(text) || COMPANY.test(aria) || (!text && PLAIN.test(aria))) out.offsite.push(c);
+    const inCard = !!el.closest(CARD);
+    if (EASY.test(words)) { if (!inCard) out.easy.push(c); continue; }
+    if (!inCard) {
+      if (PLAIN.test(text) || COMPANY.test(aria) || (!text && PLAIN.test(aria))) out.offsite.push(c);
+    } else if (COMPANY.test(aria) && !el.closest(RAIL)) {
+      listed.push(c);
+    }
   }
+  // a top card that lays its actions out as a list: its offsite Apply names
+  // the company's website in its aria-label; taken only when the top card
+  // shows no Apply of its own and no Easy Apply (never the rail's)
+  if (!out.offsite.length && !out.easy.length) out.offsite = listed;
   const SIGNIN = /\b(sign\s*in|log\s*in|join\s+(now|linkedin)|welcome back)\b/i;
   for (const d of document.querySelectorAll(DIALOG)) {
     if (!visible(d)) continue;

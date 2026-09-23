@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._a1 { display: inline-block; padding: 6px 14px; border-radius: 16px; background: #0a66c2; color: #fff; }
+  ._acts { list-style: none; padding: 0; display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<!-- A LinkedIn job page whose top card lays its actions out as a list: the
+     offsite Apply sits in a list item. The right rail lists similar jobs,
+     each with a short Apply of its own that leads to another job. -->
+<div>
+  <header>
+    <nav><a href="/feed/">Home</a> <button type="button">Me</button></nav>
+  </header>
+  <main id="workspace">
+    <section>
+      <h1>Analytics Engineer</h1>
+      <p>Fabrikam, New York, NY</p>
+      <ul class="_acts">
+        <li><a class="_a1 _b2" id="posting-apply" aria-label="Apply on company website"
+               href="linkedin_redirect.html" target="_blank" rel="opener">Apply</a></li>
+        <li><button type="button">Save</button></li>
+      </ul>
+      <h2>About the job</h2>
+      <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+      <p>Design and maintain the warehouse models, and partner with product managers on metrics.</p>
+    </section>
+  </main>
+  <aside>
+    <h2>Similar jobs</h2>
+    <ul>
+      <li><p>Data Analyst, Contoso</p>
+        <a href="/jobs/view/111/" aria-label="Apply to Data Analyst on company website">Apply</a></li>
+      <li><p>BI Developer, Northwind</p><a href="/jobs/view/222/">Apply</a></li>
+    </ul>
+  </aside>
+</div>
+</body>
+</html>

@@ -1275,9 +1275,12 @@ _LINKEDIN_WIDGET = ("<body><button>Apply with LinkedIn</button>"
                     "<label>Email <input type='email' name='email'></label></body>")
 
 
-def test_a_linkedin_frame_on_a_company_page_loses_its_controls(context, tmp_path):
-    _serve(context, {"/jobs/42": _WITH_LINKEDIN_FRAME})
-    context.route("https://www.linkedin.com/**",
+@pytest.mark.parametrize("board", ["https://www.linkedin.com", "https://www.indeed.com"])
+def test_a_linkedin_frame_on_a_company_page_loses_its_controls(context, tmp_path, board):
+    # a job board's frame (LinkedIn's, Indeed's) on the company's page: its
+    # "Apply with ..." and its boxes are never the run's to use
+    _serve(context, {"/jobs/42": _WITH_LINKEDIN_FRAME.replace("https://www.linkedin.com", board)})
+    context.route(f"{board}/**",
                   lambda route: route.fulfill(body=_LINKEDIN_WIDGET, content_type="text/html"))
     run = _page_run(context, tmp_path, f"{CAREERS}/jobs/42")
     run.page.frames[1].wait_for_selector("button")
@@ -1287,7 +1290,8 @@ def test_a_linkedin_frame_on_a_company_page_loses_its_controls(context, tmp_path
 
 
 @pytest.mark.parametrize("label", ["Apply with LinkedIn", "Apply using Indeed",
-                                   "Quick apply", "1-click apply", "Easy Apply"])
+                                   "Apply with Glassdoor", "Apply with ZipRecruiter",
+                                   "1-click apply", "Easy Apply"])
 def test_no_entry_choice_picks_an_apply_that_sends_a_stored_profile(label):
     d = apply_form.FormDigest("jobs.example", "Job", "About the role", buttons=[
         apply_form.Button(0, (0, "#p"), label, "")])
@@ -1535,3 +1539,125 @@ def test_a_screenshot_on_a_page_whose_load_never_fires_is_skipped_quickly(contex
         assert time.monotonic() - start < 5.0
     finally:
         trace.close()
+
+
+# === SP2 review round 2 ==============================================================================
+
+# --- N-1: the late-tab watch never closes the tab the run is on -------------------------------------
+
+@pytest.mark.parametrize("seed", [None, 1, 2, 3])
+def test_a_same_tab_apply_whose_interstitial_opens_a_tab_reaches_the_form(
+        _browser, flow_server, tmp_path, seed):
+    judge = jev.FakeJev() if seed is None else jev.NoisyJev(jev.FakeJev(), seed)
+    r = _flow("linkedin_interstitial_tab", _browser, flow_server, tmp_path, judge,
+              "fake" if seed is None else f"noisy-{seed}")
+    assert r.ok and not r.breaks, r
+    assert not _decisions(r.trace, "late_popup_closed")
+
+
+def test_the_late_tab_step_never_closes_the_current_or_a_closed_tab(context, tmp_path):
+    _serve(context, {"/jobs/42": _POSTING})
+    run = _page_run(context, tmp_path, f"{CAREERS}/jobs/42")
+    gone = context.new_page()
+    gone.close()
+    other = context.new_page()
+    watch = apply_run.LateWatch(run.page, "navigation", f"{CAREERS}/jobs/42")
+    watch.popups = [run.page, gone, other]
+    run._late_watch = watch
+    run._take_late_popup()
+    assert not run.page.is_closed()             # the page the run is on stays
+    assert other.is_closed()                    # a stray after a navigation is closed
+    assert run._late_watch is None
+
+
+def test_the_late_tab_watch_ends_before_the_continues_tab_is_followed(context, tmp_path,
+                                                                      monkeypatch):
+    # the same-tab Apply's destination opened a tab of its own (the safety
+    # reminder's Continue): the run follows it, and the watch that saw it
+    # open is over before that
+    _serve(context, {"/jobs/42": _POSTING})
+    run = _page_run(context, tmp_path, f"{CAREERS}/jobs/42")
+    tab = context.new_page()
+    seen = {}
+    monkeypatch.setattr(apply_run, "click_entry", lambda page, loc, **kw: (None, "navigation", 5))
+    monkeypatch.setattr(run, "_await_destination", lambda page: (tab, {"settled_ms": 0}))
+
+    def _follow(popup, *, source_url=None):
+        seen["watch"] = run._late_watch
+        run.page = popup
+    monkeypatch.setattr(run, "_follow_popup", _follow)
+    run._new_page_record("job_posting", 1.0)
+    run._click_entry(run.pages[-1], object(), "Apply", how="linkedin_handler")
+    assert seen == {"watch": None} and run.page is tab
+
+
+# --- N-2: the top card's Apply in a list; the rail never steals the click ------------------------------
+
+def test_a_top_card_apply_in_a_list_item_reaches_the_form(_browser, flow_server, tmp_path):
+    r = _flow("linkedin_apply_in_list", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    li = [(a.kind, a.text) for a in r.actions if h.on_linkedin(a.url)]
+    assert li == [("click", "Apply")], li
+
+
+@pytest.mark.parametrize("html, want", [
+    # the rail comes first in the page and names the company's website: the
+    # top card's own Apply is taken all the same
+    ('<aside><ul><li><a href="/r1" aria-label="Apply to X on company website">Apply</a></li>'
+     '</ul><a href="/r2">Apply</a></aside>'
+     '<main><h1>E</h1><a href="/top" aria-label="Apply on company website">Apply</a></main>',
+     ["/top"]),
+    # the top card's Apply in a list item, the rail's beside it
+    ('<aside><a href="/r1" aria-label="Apply to X on company website">Apply</a></aside>'
+     '<main><h1>E</h1><ul><li><a href="/top" aria-label="Apply on company website">Apply</a>'
+     '</li></ul></main>', ["/top"]),
+    # a list item's plain "Apply" is another job's
+    ('<main><h1>E</h1><ul><li><a href="/other">Apply</a></li></ul></main>', []),
+    # the top card shows Easy Apply: a listed Apply is never taken over it
+    ('<main><h1>E</h1><button>Easy Apply</button><ul><li><a href="/other" '
+     'aria-label="Apply to X on company website">Apply</a></li></ul></main>', [])])
+def test_the_offsite_apply_is_the_top_cards_and_never_the_rails(context, html, want):
+    page = context.new_page()
+    page.set_content(html)
+    view = apply_linkedin.read(page)
+    assert [c.href for c in view.offsite] == want, view
+
+
+# --- N-3: a "Quick apply" on the application's own site is an entry --------------------------------------
+
+@pytest.mark.parametrize("label", ["Quick apply", "Quick Apply now"])
+def test_a_quick_apply_on_the_companys_own_site_is_an_entry(label):
+    d = apply_form.FormDigest("careers.fabrikam.example", "Job", "About the role", buttons=[
+        apply_form.Button(0, (0, "#q"), label, "")])
+    assert apply_run.fieldless_apply_choice(d) == 0
+    assert apply_run.posting_entry_choice(d, FillPlan(buttons={"apply_entry": (0, 0.95)})) == \
+        (0, "judged_apply_entry")
+
+
+class _FirstIsPosting(jev.FakeJev):
+    """The fake, reading the first page as the job posting (the fake's word
+    match reads a "Quick apply" posting as a sign-up)."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out:
+            self.reads += 1
+            if self.reads == 1:
+                out["page_state"] = jev.Answer(kind="choice", choice="job_posting",
+                                               probabilities={"job_posting": 1.0},
+                                               confidence=1.0)
+        return out
+
+
+def test_a_quick_apply_posting_on_the_companys_site_opens_its_form(context, tmp_path):
+    _serve(context, {"/jobs/42": _POSTING.replace(
+        '<a class="btn" id="apply" href="ashby_steps.html" target="_blank" rel="opener">Apply now'
+        '</a>', '<a class="btn" id="apply" href="/apply/quick">Quick apply</a>'),
+        "/apply/quick": (FORMS / "lever_single.html").read_text(encoding="utf-8")})
+    out, rec = _drain(context, tmp_path, f"{CAREERS}/jobs/42", _FirstIsPosting(),
+                      auto_apply_submit=False)
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+    assert [a.text for a in rec.actions if a.kind == "click"][:1] == ["Quick apply"]

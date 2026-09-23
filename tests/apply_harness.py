@@ -75,7 +75,7 @@ NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs t
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
 # one run below what the matrix measures. Later phases raise it to 0.95.
-SUCCESS_FLOOR = 0.78                      # SP2 fix round: 72 of 90 suite runs (0.800); SP1: 30 of 45
+SUCCESS_FLOOR = 0.80                      # SP2 fix round 2: 78 of 96 suite runs (0.812); SP1: 30 of 45
 # Under the fake judge every flow reaches its end but the known failing ones
 # (`Flow.known`), which the rates leave out.
 FAKE_SUCCESS_FLOOR = 1.0
@@ -345,15 +345,16 @@ _COMBINED = """<!doctype html><html><head><title>Apply</title></head><body>
 
 
 def linkedin_job_routes(page: str = "linkedin_posting.html", target: str = "ashby_steps.html",
-                        *, hop: str = "linkedin_redirect.html",
-                        host: str = "www.linkedin.com") -> Callable[[str], dict[str, str]]:
+                        *, hop: str = "linkedin_redirect.html", host: str = "www.linkedin.com",
+                        same_tab: bool = False) -> Callable[[str], dict[str, str]]:
     """Routes (a function of the server's base URL; no network) for a
     LinkedIn job page fixture `page` served on `host`, its Apply link going
-    through the `/safety/go/` hop to the fixture `target`. The hop is the
-    redirector, whose script sends the tab on after a moment as LinkedIn's
-    does (0.4 s here, 1.5 s in the fixture: the run waits either way), or the
-    safety interstitial, whose Continue link leads on. The hop's route is
-    registered last, so it wins for its own URLs."""
+    through the `/safety/go/` hop to the fixture `target` (in the job page's
+    own tab with `same_tab`). The hop is the redirector, whose script sends
+    the tab on after a moment as LinkedIn's does (0.4 s here, 1.5 s in the
+    fixture: the run waits either way), or the safety interstitial, whose
+    Continue link leads on. The hop's route is registered last, so it wins
+    for its own URLs."""
     def _routes(base: str) -> dict[str, str]:
         forms = FIXTURES_DIR / "forms"
         to = f"{base}/forms/{target}"
@@ -361,6 +362,8 @@ def linkedin_job_routes(page: str = "linkedin_posting.html", target: str = "ashb
         posting = (forms / page).read_text(encoding="utf-8").replace(
             'href="linkedin_redirect.html"', f'href="{hop_url}"').replace(
             "window.open('linkedin_redirect.html'", f"window.open('{hop_url}'")
+        if same_tab:
+            posting = posting.replace(' target="_blank" rel="opener"', "")
         hop_page = (forms / hop).read_text(encoding="utf-8").replace(
             "location.replace('ashby_steps.html'); }, 1500)",
             f"location.replace('{to}'); }}, 400)").replace(
@@ -551,6 +554,16 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible",
          routes=linkedin_job_routes("linkedin_posting_button.html", "lever_single.html"),
          covers="a signed-in page whose offsite Apply is a button opening a tab by script"),
+    # --- SP2 review round 2 ---
+    Flow("linkedin_interstitial_tab", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_posting.html", "lever_single.html",
+                                    hop="linkedin_safety_interstitial_tab.html", same_tab=True),
+         covers="a same-tab Apply onto the safety reminder, whose Continue opens a new tab"),
+    Flow("linkedin_apply_in_list", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_apply_in_list.html", "lever_single.html"),
+         covers="a top card's Apply in a list item, a rail of other jobs' Apply beside it"),
 )
 
 

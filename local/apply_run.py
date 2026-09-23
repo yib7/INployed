@@ -187,13 +187,17 @@ _UNSURE_ACTS = frozenset(("job_posting", "application_form", "review_page",
 # The steps that put a value on a page or send it: none of them runs on
 # LinkedIn, where a form is Easy Apply's (the user applies there in person).
 _LINKEDIN_FORM_STATES = frozenset(("application_form", "review_page", "code_gate"))
-# An Apply that sends a stored profile instead of opening the company's form:
-# Easy Apply (LinkedIn's, or a board's "Easy apply"), "Apply with LinkedIn /
-# Indeed", quick or one-click apply. Never an Apply entry the run clicks.
+# An Apply that sends a stored profile from another site instead of opening
+# the company's form: Easy Apply (LinkedIn's, or a board's "Easy apply"),
+# "Apply with LinkedIn / Indeed / Glassdoor / ZipRecruiter ...", and a
+# one-click apply, which sends at once. Never an Apply entry the run clicks. A
+# "Quick apply" on the application's own site opens its short form and is an
+# entry like any other; the controls of a LinkedIn or a job board's frame
+# never reach the choice (`_JobRun._drop_foreign_controls`).
 _PROFILE_APPLY = re.compile(
     r"easy\s*apply|apply\s+(with|using|via|through)\s+(your\s+)?"
-    r"(linkedin|indeed|seek|xing|google|facebook|glassdoor)"
-    r"|quick\s*apply|(1|one)[\s-]*click\s+apply", re.I)
+    r"(linkedin|indeed|glassdoor|ziprecruiter|seek|xing|google|facebook|monster|dice)"
+    r"|(1|one)[\s-]*click\s+apply", re.I)
 # What the page after a submit click on an account page ("Create account and
 # apply") may read as when the click only made the account and opened the
 # application (`_JobRun._after_submit`): the job then waits for the user,
@@ -908,6 +912,13 @@ def open_page(page, url: str, *, timeout_ms: int | None = None,
     rows.append({"what": "settled", "why": settled_words(info, "after the first load"),
                  **(info if isinstance(info, Mapping) else {})})
     return rows
+
+
+def _page_closed(page) -> bool:
+    try:
+        return bool(page.is_closed())
+    except Exception:       # noqa: BLE001  (a page double)
+        return False
 
 
 def _snapshot_or_none(page) -> Any:
@@ -2626,6 +2637,10 @@ class _JobRun:
             self._trace("apply_entry", n=n, text=text, how=how, popup=False, signal=signal,
                         waited_ms=waited, destination=str(dest.url), **info)
             if dest is not self.page:
+                # the interstitial's Continue opened the destination's tab: it
+                # is followed here, and the late-tab watch (which saw it open
+                # too) ends before it could take it for a stray
+                self._stop_late_watch()
                 self._follow_popup(dest, source_url=source_url)
                 return
             self._admit_ats_transition(self.page.url, source_url)
@@ -2676,12 +2691,21 @@ class _JobRun:
         waiting (M-7): when the click left the tab where it was (a DOM change
         or nothing), the new tab is the application and is adopted; when the
         tab itself navigated, the late one is a stray and is closed. Either
-        way the trace says so; the watch ends here, before the next read."""
+        way the trace says so; the watch ends here, before the next read.
+        The page the run is on, and a tab already closed, are never among
+        them (a tab the run followed some other way, the interstitial's)."""
         watch = self._stop_late_watch()
-        if watch is None or not watch.popups:
+        if watch is None:
             return
-        popup = watch.popups[0]
-        extra = [p for p in watch.popups[1:] if p is not popup]
+        tabs = []
+        for p in watch.popups:
+            if p is self.page or _page_closed(p) or any(p is t for t in tabs):
+                continue
+            tabs.append(p)
+        if not tabs:
+            return
+        popup = tabs[0]
+        extra = tabs[1:]
         if watch.signal in ("dom", "none") and watch.page is self.page:
             self._decide_next("late_popup", f"the Apply's tab opened after the click's wait "
                                             f"({watch.signal}); it is the destination",

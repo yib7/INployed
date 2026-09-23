@@ -532,3 +532,27 @@ def test_a_privacy_agreement_first_is_a_step_accepted_to_go_on(_browser, flow_se
     assert r.ok and not r.breaks, r
     clicked = [a.text for a in r.actions if a.kind == "click"]
     assert clicked[:1] == ["I Accept"] and "I Decline" not in clicked, clicked
+
+
+# --- NAV-04 / READ-02: a loading skeleton is no read of the page ------------------------------------
+
+class _SkeletonAsSignUp(jev.FakeJev):
+    """The fake, reading any page that says it is loading as a sign-up at
+    0.78, its Nouls with it (the noisy-6 misread of the skeleton)."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        text = str((state.get("page") or {}).get("headline_text") or "")
+        if "page_state" in out and "Loading your application" in text:
+            h.read_as(out, "signup_form", 0.78)
+        return out
+
+
+def test_a_loading_skeleton_is_waited_out_before_the_page_is_read(_browser, flow_server,
+                                                                   tmp_path):
+    r = _flow("skeleton_then_form", _browser, flow_server, tmp_path, _SkeletonAsSignUp(),
+              "skeleton-as-signup")
+    assert r.ok and not r.breaks, r
+    waited = _decisions(Path(r.trace), "reread_after_settle")
+    assert waited and waited[0]["why"].startswith("a loading placeholder"), waited
+    assert waited[0]["still_loading"] is False

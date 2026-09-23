@@ -821,6 +821,10 @@ FLOWS: tuple[Flow, ...] = (
     Flow("popup_step", "popup_step.html", True, "submitted", _SUBMITTED,
          confirm="#received:visible",
          covers="a Next and a submit that each open a new tab: the thank-you tab is read"),
+    Flow("skeleton_then_form", "skeleton_then_form.html", False, "ready_to_submit", _PARKED,
+         confirm="#received:visible", gate="#btn-submit:visible",
+         covers="a loading skeleton (aria-busy, a Cancel) for 3.5 s, then the form: the "
+                "skeleton is never read as the page"),
     Flow("privacy_gate", "privacy_gate.html", False, "ready_to_submit", _PARKED,
          confirm="#received:visible", gate="#btn-submit:visible",
          covers="a privacy agreement as the first screen: its I Accept is the step's advance"),

@@ -3065,19 +3065,34 @@ class _JobRun:
         for row in open_page(self.page, url):
             self._decide_next(**row)
 
+    def _loading(self, digest: apply_form.FormDigest) -> bool:
+        """A page with no field whose loading placeholder still shows in the
+        viewport (an `aria-busy` region, a skeleton: `apply_fill`'s readiness
+        read): a skeleton is no read of the page (NAV-04, READ-02)."""
+        if digest.fields:
+            return False
+        try:
+            return bool(apply_fill._ready_snapshot(self.page)[1])
+        except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
+            return False
+
     def _read_digest(self) -> apply_form.FormDigest:
         """The page's digest, read once more while it is still empty
         (`_empty_read`: no button, or no field and under `EMPTY_TEXT_MIN`
-        characters): a settle, then a read every `EMPTY_READ_POLL_S` until it
-        is not empty, it has held the same for `EMPTY_READ_STABLE_S` (a short
-        page that is done), or `EMPTY_READ_MAX_S` has passed (G5: content
-        arrives 0.3 to 1.7 s after `load` on SPA postings). The host is
-        checked before every read again."""
+        characters) or still loading (`_loading`: a skeleton or an
+        `aria-busy` region and no field): a settle, then a read every
+        `EMPTY_READ_POLL_S` until it is neither, an empty read has held the
+        same for `EMPTY_READ_STABLE_S` (a short page that is done; a page
+        still showing its placeholder is not done), or `EMPTY_READ_MAX_S` has
+        passed (G5: content arrives 0.3 to 1.7 s after `load` on SPA
+        postings). The host is checked before every read again."""
         digest = self._drop_foreign_controls(apply_form.extract(self.page))
-        if not _empty_read(digest):
+        loading = self._loading(digest)
+        if not _empty_read(digest) and not loading:
             return digest
         first = (f"{len(digest.fields)} field(s), {len(digest.buttons)} button(s), "
                  f"{len((digest.text or '').strip())} characters")
+        what = "a loading placeholder" if loading else "an empty read"
         start = time.monotonic()
         last = json.dumps(digest.to_dict(), sort_keys=True)
         stable_since = start
@@ -3088,17 +3103,20 @@ class _JobRun:
             self._check_host(self.page.url)
             digest = self._drop_foreign_controls(apply_form.extract(self.page))
             now = time.monotonic()
-            if not _empty_read(digest):
+            loading = self._loading(digest)
+            if not _empty_read(digest) and not loading:
                 break
             seen = json.dumps(digest.to_dict(), sort_keys=True)
             if seen != last:
                 last, stable_since = seen, now
-            if now - start >= EMPTY_READ_MAX_S or now - stable_since >= EMPTY_READ_STABLE_S:
+            if now - start >= EMPTY_READ_MAX_S or (
+                    not loading and now - stable_since >= EMPTY_READ_STABLE_S):
                 break
             self.page.wait_for_timeout(int(EMPTY_READ_POLL_S * 1000))
-        self._decide_next("reread_after_settle", f"an empty read ({first}); "
+        self._decide_next("reread_after_settle", f"{what} ({first}); "
                                                  + settled_words(info, "and read again"),
-                          still_empty=_empty_read(digest), capped=_settle_capped(info),
+                          still_empty=_empty_read(digest), still_loading=loading,
+                          capped=_settle_capped(info),
                           waited_ms=int((time.monotonic() - start) * 1000))
         return digest
 

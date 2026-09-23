@@ -143,12 +143,14 @@ class View:
     applied: str = ""
     closed: str = ""
     title: str = ""
+    offsite_listed: bool = False    # the offsite Apply is a list item's beside the title
 
     def to_dict(self) -> dict[str, Any]:
         return {"offsite": [c.label for c in self.offsite], "easy": [c.label for c in self.easy],
                 "form_dialog": self.form_dialog, "signin_dialog": self.signin_dialog,
                 "password_box": self.password_box, "applied": self.applied,
-                "closed": self.closed, "title": self.title}
+                "closed": self.closed, "title": self.title,
+                "offsite_listed": self.offsite_listed}
 
 
 @dataclass
@@ -157,10 +159,13 @@ class Decision:
     #                                 | signed_out | none
     why: str
     control: Control | None = None
+    # an offsite Apply found in a list item: the handler reads the page again
+    # after a settle before it clicks it (the top card may still be rendering)
+    tentative: bool = False
 
     @property
     def final(self) -> bool:
-        return self.kind in FINAL_KINDS
+        return self.kind in FINAL_KINDS and not self.tentative
 
 
 def decide(view: View) -> Decision:
@@ -174,6 +179,10 @@ def decide(view: View) -> Decision:
         return Decision("closed", f"the top card says {view.closed!r}")
     if view.offsite:
         c = view.offsite[0]
+        if view.offsite_listed:
+            return Decision("offsite", f"the top card's offsite Apply {c.label!r}, in a list "
+                                       f"beside the title {view.title!r}", c,
+                            tentative=True)
         return Decision("offsite", f"the top card's offsite Apply {c.label!r}", c)
     if view.easy:
         c = view.easy[0]
@@ -214,9 +223,28 @@ _READ_JS = r"""
   const COMPANY = /\bapply\b.*\bcompany(['’]s)?\s+(website|site)\b/i;
   const EASY = /easy\s*apply/i;
   const out = {offsite: [], easy: [], form_dialog: 0, signin_dialog: false,
-               password_box: false, applied: '', closed: '', title: ''};
-  const h1 = Array.from(document.querySelectorAll('h1')).find(visible);
+               password_box: false, applied: '', closed: '', title: '', listed: false};
+  // the job's title: the first visible h1 outside dialogs, chrome, lists and the rail
+  const h1 = Array.from(document.querySelectorAll('h1')).find(
+    (h) => visible(h) && !h.closest(DIALOG) && !h.closest(CHROME) && !h.closest(CARD));
   out.title = h1 ? norm(h1.innerText).slice(0, 120) : '';
+  // a list item's control belongs to the top card when it and the title share a
+  // container at most three levels above the title, below the page's main
+  // column, and its list item carries nothing but its controls (a job card
+  // carries its own title and company)
+  const inTopCard = (el, text) => {
+    if (!h1) return false;
+    let box = h1.parentElement;
+    for (let i = 0; box && i < 3; i += 1, box = box.parentElement) {
+      if (box === document.body || box.matches('main, [role=main]')) return false;
+      if (box.contains(el)) {
+        const item = el.closest('li, [role=listitem]');
+        if (!item || item.querySelector('h1, h2, h3, h4, h5, h6')) return false;
+        return norm(item.innerText).length - text.length <= 20;
+      }
+    }
+    return false;
+  };
   const sel = 'a[href], button, [role=button], input[type=button], input[type=submit]';
   const listed = [];
   for (const el of document.querySelectorAll(sel)) {
@@ -232,14 +260,18 @@ _READ_JS = r"""
     if (EASY.test(words)) { if (!inCard) out.easy.push(c); continue; }
     if (!inCard) {
       if (PLAIN.test(text) || COMPANY.test(aria) || (!text && PLAIN.test(aria))) out.offsite.push(c);
-    } else if (COMPANY.test(aria) && !el.closest(RAIL)) {
+    } else if (COMPANY.test(aria) && !el.closest(RAIL) && inTopCard(el, text)) {
       listed.push(c);
     }
   }
   // a top card that lays its actions out as a list: its offsite Apply names
-  // the company's website in its aria-label; taken only when the top card
-  // shows no Apply of its own and no Easy Apply (never the rail's)
-  if (!out.offsite.length && !out.easy.length) out.offsite = listed;
+  // the company's website in its aria-label and sits beside the job's title;
+  // taken only when the page shows no other Apply and no Easy Apply (never
+  // the rail's), and marked so the handler reads the page again first
+  if (!out.offsite.length && !out.easy.length && listed.length) {
+    out.offsite = listed;
+    out.listed = true;
+  }
   const SIGNIN = /\b(sign\s*in|log\s*in|join\s+(now|linkedin)|welcome back)\b/i;
   for (const d of document.querySelectorAll(DIALOG)) {
     if (!visible(d)) continue;
@@ -300,19 +332,46 @@ def _control(raw: dict) -> Control:
                    target=str(raw.get("target") or ""))
 
 
-def read(page) -> View:
-    """The page's `View` (an empty one when the page cannot be read)."""
+_WORD = re.compile(r"[a-z0-9]+")
+_COMMON = frozenset(("and", "the", "for", "with", "job", "jobs", "senior", "junior", "lead",
+                     "remote", "hybrid", "inc", "llc", "ltd", "corp", "company"))
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in _WORD.findall(str(text or "").lower()) if len(w) >= 3} - _COMMON
+
+
+def same_job(title: str, job_title: str = "", company: str = "") -> bool:
+    """Does the page's title name the queued job, loosely: a word of three
+    letters or more (common ones left out) that the queued title or company
+    also has? Without a queued title or company there is nothing to hold
+    it to, and it passes."""
+    wanted = _words(job_title) | _words(company)
+    if not wanted:
+        return True
+    return bool(_words(title) & wanted)
+
+
+def read(page, *, job_title: str = "", company: str = "") -> View:
+    """The page's `View` (an empty one when the page cannot be read). A list
+    item's offsite Apply is kept only when the page's title names the queued
+    job (`same_job`, with the entry's `job_title` and `company`)."""
     try:
         raw = page.main_frame.evaluate(_READ_JS)
     except Exception:       # noqa: BLE001  (a page mid-navigation reads as nothing yet)
         return View()
-    return View(offsite=[_control(c) for c in raw.get("offsite") or []],
+    title = str(raw.get("title") or "")
+    offsite = [_control(c) for c in raw.get("offsite") or []]
+    listed = bool(raw.get("listed"))
+    if listed and not (title and same_job(title, job_title, company)):
+        offsite, listed = [], False
+    return View(offsite=offsite, offsite_listed=listed,
                 easy=[_control(c) for c in raw.get("easy") or []],
                 form_dialog=int(raw.get("form_dialog") or 0),
                 signin_dialog=bool(raw.get("signin_dialog")),
                 password_box=bool(raw.get("password_box")),
                 applied=str(raw.get("applied") or ""), closed=str(raw.get("closed") or ""),
-                title=str(raw.get("title") or ""))
+                title=title)
 
 
 def continue_control(page) -> Control | None:

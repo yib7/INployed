@@ -1048,28 +1048,42 @@ def linkedin_step(url: str, decision: apply_linkedin.Decision | None) -> str | N
     return f"park: {apply_linkedin.NO_APPLY_REASON}"
 
 
-def linkedin_view(page, *, wait_s: float) -> tuple[apply_linkedin.View, int]:
+def linkedin_view(page, *, wait_s: float, job_title: str = "",
+                  company: str = "") -> tuple[apply_linkedin.View, int]:
     """The LinkedIn page's `View`, read again every `LINKEDIN_POLL_MS` for up
     to `wait_s` until it decides something waiting cannot change (a top card
     rendered late, 2.5 s after `load` in the fixture); (the view, the ms
-    waited). An Easy Apply read is final only once it holds after
-    `LINKEDIN_EASY_RECHECK_S` and a settle: in the two-pane view a control
-    of the list or the filters can show before the job's own pane renders
-    its offsite Apply."""
+    waited). An Easy Apply read, and an offsite Apply found in a list item
+    (`Decision.tentative`), count only once they hold after
+    `LINKEDIN_EASY_RECHECK_S` and a settle: a list's or a filter's control
+    can show before the job's own top card renders. `job_title` and
+    `company` are the queued job's (`apply_linkedin.read`)."""
     start = time.monotonic()
-    view = apply_linkedin.read(page)
-    easy_checked = wait_s <= 0
+
+    def _read() -> apply_linkedin.View:
+        return apply_linkedin.read(page, job_title=job_title, company=company)
+
+    def _recheck() -> apply_linkedin.View:
+        page.wait_for_timeout(int(LINKEDIN_EASY_RECHECK_S * 1000))
+        apply_fill.settle(page, CLICK_TIMEOUT_S)
+        return _read()
+
+    view = _read()
+    checked = wait_s <= 0
     while time.monotonic() - start < wait_s:
         d = apply_linkedin.decide(view)
-        if d.final and (d.kind != "easy_apply" or easy_checked):
+        unsure = d.kind == "easy_apply" or d.tentative
+        if (d.final or d.tentative) and (checked or not unsure):
             break
-        if d.kind == "easy_apply":
-            easy_checked = True
-            page.wait_for_timeout(int(LINKEDIN_EASY_RECHECK_S * 1000))
-            apply_fill.settle(page, CLICK_TIMEOUT_S)
+        if unsure:
+            checked = True
+            view = _recheck()
         else:
             page.wait_for_timeout(LINKEDIN_POLL_MS)
-        view = apply_linkedin.read(page)
+            view = _read()
+    d = apply_linkedin.decide(view)
+    if not checked and (d.kind == "easy_apply" or d.tentative):
+        view = _recheck()       # the wait ran out on a read that is held once more
     return view, int((time.monotonic() - start) * 1000)
 
 
@@ -2364,7 +2378,9 @@ class _JobRun:
             self._check_host(self.page.url)
             self.last_sig = None
             return True
-        view, waited = linkedin_view(self.page, wait_s=LINKEDIN_READY_S if kind == "job" else 0)
+        view, waited = linkedin_view(self.page, wait_s=LINKEDIN_READY_S if kind == "job" else 0,
+                                     job_title=str(self.entry.get("title") or ""),
+                                     company=str(self.entry.get("company") or ""))
         d = apply_linkedin.decide(view)
         if kind == "other" and d.kind not in ("form_dialog", "signed_out"):
             self._decide_next("linkedin_handler", "a LinkedIn page other than a job page, "

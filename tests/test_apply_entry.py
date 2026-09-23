@@ -1607,10 +1607,10 @@ def test_a_top_card_apply_in_a_list_item_reaches_the_form(_browser, flow_server,
      '</ul><a href="/r2">Apply</a></aside>'
      '<main><h1>E</h1><a href="/top" aria-label="Apply on company website">Apply</a></main>',
      ["/top"]),
-    # the top card's Apply in a list item, the rail's beside it
+    # the top card's Apply in a list item beside the title, the rail's beside it
     ('<aside><a href="/r1" aria-label="Apply to X on company website">Apply</a></aside>'
-     '<main><h1>E</h1><ul><li><a href="/top" aria-label="Apply on company website">Apply</a>'
-     '</li></ul></main>', ["/top"]),
+     '<main><section><h1>E</h1><ul><li><a href="/top" aria-label="Apply on company website">'
+     'Apply</a></li></ul></section></main>', ["/top"]),
     # a list item's plain "Apply" is another job's
     ('<main><h1>E</h1><ul><li><a href="/other">Apply</a></li></ul></main>', []),
     # the top card shows Easy Apply: a listed Apply is never taken over it
@@ -1620,6 +1620,56 @@ def test_the_offsite_apply_is_the_top_cards_and_never_the_rails(context, html, w
     page = context.new_page()
     page.set_content(html)
     view = apply_linkedin.read(page)
+    assert [c.href for c in view.offsite] == want, view
+
+
+# --- P-1 (round 3): a listed Apply is the top card's only beside the job's title -------------------------
+
+def test_a_late_top_card_beside_another_jobs_card_ends_on_its_own_apply(_browser, flow_server,
+                                                                        tmp_path):
+    r = _flow("linkedin_more_jobs_late", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert not [a for a in r.actions if "contoso" in a.host], r.actions
+    decision = _decisions(r.trace, "linkedin_handler")[0]
+    assert decision["found"] == "offsite" and decision["view"]["title"] == "Analytics Engineer"
+    assert decision["view"]["offsite_listed"] is False and decision["waited_ms"] >= 2000
+
+
+def test_a_listed_only_read_is_never_final():
+    listed = apply_linkedin.View(offsite=[_C("#a", "Apply", aria="Apply on company website")],
+                                 offsite_listed=True, title="Analytics Engineer")
+    d = apply_linkedin.decide(listed)
+    assert (d.kind, d.tentative, d.final) == ("offsite", True, False)
+    top = apply_linkedin.View(offsite=[_C("#a", "Apply")], title="Analytics Engineer")
+    assert apply_linkedin.decide(top).final
+
+
+_CARD = ('<li><p>Data Analyst, Contoso, New York</p><a href="/other" '
+         'aria-label="Apply to Data Analyst on company website">Apply</a></li>')
+
+
+@pytest.mark.parametrize("html, job, want", [
+    # no title yet (the top card has not rendered): another job's card is no Apply
+    (f'<main><section id="top"></section><section><ul>{_CARD}</ul></section></main>',
+     ("Analytics Engineer", "Fabrikam"), []),
+    # the title and the card share only the main column: another job's card
+    (f'<main><section><h1>Analytics Engineer</h1></section><section><ul>{_CARD}</ul>'
+     '</section></main>', ("Analytics Engineer", "Fabrikam"), []),
+    # a card beside the title that carries its own title and company is a job card
+    (f'<main><section><h1>Analytics Engineer</h1><ul>{_CARD}</ul></section></main>',
+     ("Analytics Engineer", "Fabrikam"), []),
+    # the top card's own listed Apply, the title the queued job's
+    ('<main><section><h1>Analytics Engineer</h1><ul><li><a href="/top" '
+     'aria-label="Apply on company website">Apply</a></li></ul></section></main>',
+     ("Analytics Engineer", "Fabrikam"), ["/top"]),
+    # the same page for a different queued job: not taken
+    ('<main><section><h1>Analytics Engineer</h1><ul><li><a href="/top" '
+     'aria-label="Apply on company website">Apply</a></li></ul></section></main>',
+     ("Sales Director", "Contoso"), [])])
+def test_a_listed_apply_must_sit_beside_the_queued_jobs_title(context, html, job, want):
+    page = context.new_page()
+    page.set_content(html)
+    view = apply_linkedin.read(page, job_title=job[0], company=job[1])
     assert [c.href for c in view.offsite] == want, view
 
 

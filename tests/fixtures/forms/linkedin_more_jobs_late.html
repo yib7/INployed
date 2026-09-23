@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._a1 { display: inline-block; padding: 6px 14px; border-radius: 16px; background: #0a66c2; color: #fff; }
+</style>
+</head>
+<body>
+<!-- A LinkedIn job page whose top card renders 2.5 s after `load`, beside a
+     "More jobs for you" list in the main column that is there from the start.
+     The list's card has an Apply naming the company's website in its
+     aria-label: that is another job at another company, and must never be
+     taken for this job's Apply while the top card is still empty. -->
+<div>
+  <header>
+    <nav><a href="/feed/">Home</a> <button type="button">Me</button></nav>
+  </header>
+  <main id="workspace">
+    <section id="top-card"></section>
+    <section>
+      <h2>About the job</h2>
+      <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+      <p>Design and maintain the warehouse models, and partner with product managers on metrics.</p>
+    </section>
+    <section>
+      <h2>More jobs for you</h2>
+      <ul>
+        <li><p>Data Analyst, Contoso, New York</p>
+          <a class="_a1" aria-label="Apply to Data Analyst on company website"
+             href="https://careers.contoso.example/jobs/999" target="_blank" rel="opener">Apply</a></li>
+      </ul>
+    </section>
+  </main>
+</div>
+<script>
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      document.getElementById('top-card').innerHTML =
+        '<h1>Analytics Engineer</h1><p>Fabrikam, New York, NY</p>' +
+        '<p><a class="_a1 _b2" id="posting-apply" aria-label="Apply on company website" ' +
+        'href="linkedin_redirect.html" target="_blank" rel="opener">Apply</a> ' +
+        '<button type="button">Save</button></p>';
+    }, 2500);
+  });
+</script>
+</body>
+</html>

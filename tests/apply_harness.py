@@ -445,6 +445,13 @@ class Flow:
         return True
 
 
+# another company's job, where a run that took another job's Apply would land
+_OTHER_JOB = """<!doctype html><html><head><title>Data Analyst at Contoso</title></head><body>
+<h1>Data Analyst</h1><p>Contoso, New York</p>
+<label>Full name * <input name="name" required></label>
+<button type="button" onclick="document.body.dataset.wrongJob = 1">Submit application</button>
+</body></html>"""
+
 _SUBMITTED = r"^confirmation page"
 _PARKED = r"^auto_apply_submit is off$"
 _EASY_APPLY = "^" + re.escape(apply_run.EASY_APPLY_REASON) + "$"
@@ -564,6 +571,13 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible",
          routes=linkedin_job_routes("linkedin_apply_in_list.html", "lever_single.html"),
          covers="a top card's Apply in a list item, a rail of other jobs' Apply beside it"),
+    # --- SP2 review round 3 ---
+    Flow("linkedin_more_jobs_late", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=lambda base: {**linkedin_job_routes("linkedin_more_jobs_late.html",
+                                                    "lever_single.html")(base),
+                              "https://careers.contoso.example/**": _OTHER_JOB},
+         covers="a top card rendered late beside another job's card with a company-site Apply"),
 )
 
 

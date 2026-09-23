@@ -13,6 +13,10 @@ shape:
 - `ReplayJev(inner, cache_path)` replays a recorded answer for a request it has
   seen and records through `inner` on a miss, so a committed cache can stand in
   for the live model.
+- `NoisyJev(inner, seed)` bends another judge's answers the way a real misread
+  would (a neighbouring page state, lower confidences, two buttons' roles
+  exchanged, a field mapping dropped), the same way for the same request. The
+  flow matrix and the invariant harness run on it; nothing in production does.
 
 `get(mode)` is the factory the runner and the dashboard call. Raw question
 dicts in the HTTP shape (`{"type": ..., "instructions": ..., "criteria": ...}`)
@@ -353,6 +357,179 @@ def _join_slices(state: Any, slices: list[Any]) -> str:
     if slices:
         return " ".join(_as_text(v) for v in slices)
     return _as_text(state)[:_WHOLE_STATE_CAP]
+
+
+# --- the noisy judge (tests and diagnostics only) -------------------------------------
+
+# The misreads the live judge could plausibly make, per page state. A swap goes
+# to one of these, never to an unrelated kind (a job posting is never read as a
+# payment page, a form never as a confirmation).
+PAGE_STATE_NEIGHBOURS: dict[str, tuple[str, ...]] = {
+    "job_posting": ("other", "application_form"),
+    "application_form": ("signup_form", "review_page"),
+    "review_page": ("application_form",),
+    "signup_form": ("login_wall", "application_form"),
+    "login_wall": ("signup_form",),
+    "code_gate": ("login_wall",),
+    "confirmation": ("other",),
+    "other": ("job_posting", "confirmation"),
+    "captcha_or_bot_check": ("other",),
+    "error_or_dead": ("other",),
+    "payment_request": ("other",),
+}
+# Button roles a misread can exchange between two buttons of one page. `submit`
+# is the final role and never moves; `back` and `advance` never trade places
+# (no reading of a wizard's footer takes Back for Continue).
+BUTTON_ROLE_NEIGHBOURS: frozenset[frozenset[str]] = frozenset(
+    frozenset(pair) for pair in (("advance", "apply_entry"), ("advance", "other"),
+                                 ("apply_entry", "other"), ("upload", "other"),
+                                 ("back", "other")))
+_SWAPPED_CONF = (0.30, 0.60)    # the confidence a swapped page state is read at
+_DROPPED_PREFIX = "field_"      # the answers a drop may remove
+
+
+class NoisyJev:
+    """A judge that misreads the way a real one might, for the flow matrix
+    and the invariant harness. Never a production judge: `jev.get` has no
+    mode for it and `apply_run drain` refuses anything but the live judge.
+
+    It wraps `inner` (a `FakeJev` or a `ReplayJev`) and bends its answers:
+
+    - `swap_p` (default 0.15): per request, the page state is read as a
+      plausible neighbour (`PAGE_STATE_NEIGHBOURS`) at a confidence between
+      0.30 and 0.60, with the true state second in the distribution. The same
+      chance, drawn apart, exchanges the roles of two buttons whose roles are
+      neighbours (`BUTTON_ROLE_NEIGHBOURS`); a `submit` role never moves.
+    - `conf_scale` (default 0.75): every choice and score confidence is
+      multiplied by a factor drawn from [conf_scale, 1.0]; the winner keeps
+      that much probability and the rest spreads over the other options. A
+      Noul (a verification, a flag) is left alone: it carries no confidence.
+    - `drop_p` (default 0.05): each field answer (`field_{n}_source`,
+      `field_{n}_option`, `field_{n}_pick`) is dropped with this chance, as a
+      misread that leaves the box without a mapping.
+
+    The live judge answers the same request the same way, so the noise is a
+    function of (`seed`, the request): the same state and questions get the
+    same answers every time, and a re-read of a changed page gets fresh noise.
+    The defaults put about one page in seven on a neighbour's reading, keep
+    every confident answer above 0.75 of its value, and leave most pages'
+    field mappings whole: enough to find the steps that trust one read, while
+    a loop that checks what it reads can still finish."""
+
+    def __init__(self, inner: Jev, seed: int, *, swap_p: float = 0.15,
+                 conf_scale: float = 0.75, drop_p: float = 0.05,
+                 role_p: float | None = None):
+        if not 0.0 < conf_scale <= 1.0:
+            raise ValueError("conf_scale must be in (0, 1]")
+        self.inner = inner
+        self.seed = int(seed)
+        self.swap_p = float(swap_p)
+        self.conf_scale = float(conf_scale)
+        self.drop_p = float(drop_p)
+        self.role_p = self.swap_p if role_p is None else float(role_p)
+
+    def _rng(self, request_key: str, part: str):
+        import random
+        digest = hashlib.sha256(f"{self.seed}:{request_key}:{part}".encode()).hexdigest()
+        return random.Random(int(digest[:16], 16))
+
+    def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
+        answers = dict(self.inner.judge(state, questions))
+        key = ReplayJev.key_for(state, questions)
+        out: dict[str, Answer] = {}
+        for qid in sorted(answers):
+            a = answers[qid]
+            rng = self._rng(key, qid)
+            if qid.startswith(_DROPPED_PREFIX) and rng.random() < self.drop_p:
+                continue
+            if qid == "page_state" and a.kind == "choice":
+                out[qid] = self._page_state(a, rng)
+            elif a.kind in ("choice", "score"):
+                out[qid] = self._scaled(a, rng)
+            else:
+                out[qid] = a
+        self._exchange_roles(out, self._rng(key, "roles"))
+        return {qid: out[qid] for qid in answers if qid in out}
+
+    def _factor(self, rng) -> float:
+        return rng.uniform(self.conf_scale, 1.0)
+
+    def _page_state(self, a: Answer, rng) -> Answer:
+        names = list(a.probabilities) or [a.choice or "other"]
+        truth = str(a.choice or "other")
+        swap_draw, pick_draw, conf_draw = rng.random(), rng.random(), rng.random()
+        neighbours = PAGE_STATE_NEIGHBOURS.get(truth, ())
+        if neighbours and swap_draw < self.swap_p:
+            winner = neighbours[int(pick_draw * len(neighbours)) % len(neighbours)]
+            low, high = _SWAPPED_CONF
+            conf = round(low + (high - low) * conf_draw, 4)
+            second = truth
+        else:
+            winner = truth
+            conf = round(float(a.confidence if a.confidence is not None else 1.0)
+                         * self._factor(rng), 4)
+            second = neighbours[0] if neighbours else ""
+        return Answer(kind="choice", choice=winner,
+                      probabilities=_spread(names, winner, conf, second),
+                      confidence=conf)
+
+    def _scaled(self, a: Answer, rng) -> Answer:
+        conf = round(float(a.confidence if a.confidence is not None else 1.0)
+                     * self._factor(rng), 4)
+        if a.kind == "score":
+            return Answer(kind="score", score=a.score, probabilities=dict(a.probabilities),
+                          confidence=conf)
+        names = list(a.probabilities) or [a.choice]
+        return Answer(kind="choice", choice=a.choice,
+                      probabilities=_spread(names, str(a.choice), conf, ""),
+                      confidence=conf)
+
+    def _exchange_roles(self, out: dict[str, Answer], rng) -> None:
+        """Exchange the roles of one pair of buttons whose roles are
+        neighbours, with chance `role_p`; the pair is drawn from the page's
+        eligible pairs."""
+        if rng.random() >= self.role_p:
+            return
+        roles = {qid: a for qid, a in out.items()
+                 if qid.startswith("button_") and qid.endswith("_role")
+                 and a.kind == "choice" and a.choice and a.choice != "submit"}
+        ids = sorted(roles)
+        pairs = [(x, y) for i, x in enumerate(ids) for y in ids[i + 1:]
+                 if frozenset((roles[x].choice, roles[y].choice)) in BUTTON_ROLE_NEIGHBOURS]
+        if not pairs:
+            return
+        x, y = pairs[int(rng.random() * len(pairs)) % len(pairs)]
+        ax, ay = roles[x], roles[y]
+        out[x] = Answer(kind="choice", choice=ay.choice,
+                        probabilities=_spread(list(ax.probabilities) or [ay.choice],
+                                              str(ay.choice), float(ax.confidence or 0.0), ""),
+                        confidence=ax.confidence)
+        out[y] = Answer(kind="choice", choice=ax.choice,
+                        probabilities=_spread(list(ay.probabilities) or [ax.choice],
+                                              str(ax.choice), float(ay.confidence or 0.0), ""),
+                        confidence=ay.confidence)
+
+
+def _spread(names: list[str], winner: str, conf: float, second: str) -> dict[str, float]:
+    """A distribution with `winner` at `conf`: `second` (when named) takes the
+    most of the rest short of the winner, the other options share what is
+    left, so the winner stays the most probable option."""
+    names = list(dict.fromkeys([*names, winner] + ([second] if second else [])))
+    probs = {n: 0.0 for n in names}
+    probs[winner] = conf
+    rest = max(0.0, 1.0 - conf)
+    others = [n for n in names if n != winner]
+    if second and second != winner:
+        probs[second] = min(rest, conf * 0.9)
+        rest -= probs[second]
+        others = [n for n in others if n != second]
+    if others:
+        share = rest / len(others)
+        for n in others:
+            probs[n] = share
+    else:
+        probs[winner] += rest
+    return {n: round(p, 4) for n, p in probs.items()}
 
 
 # --- the replay cache ---------------------------------------------------------------

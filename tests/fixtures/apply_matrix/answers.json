@@ -1,0 +1,107 @@
+[
+  {
+    "id": "work_authorized",
+    "question": "Are you legally authorized to work in the US?",
+    "answer": "true",
+    "kind": "fixed",
+    "status": "active"
+  },
+  {
+    "id": "requires_sponsorship",
+    "question": "Will you now or in the future require visa sponsorship?",
+    "answer": "false",
+    "kind": "fixed",
+    "status": "active"
+  },
+  {
+    "id": "years_experience",
+    "question": "How many years of relevant experience do you have?",
+    "answer": "2",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "willing_to_relocate",
+    "question": "Are you willing to relocate?",
+    "answer": "true",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "authorization_statement",
+    "question": "Work-authorization statement (free text).",
+    "answer": "Authorized to work in the United States; no visa sponsorship required.",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "gender",
+    "question": "Gender (EEO self-identification).",
+    "answer": "Decline to self-identify",
+    "kind": "fixed",
+    "status": "active"
+  },
+  {
+    "id": "race_ethnicity",
+    "question": "Race / ethnicity (EEO self-identification).",
+    "answer": "Decline to self-identify",
+    "kind": "fixed",
+    "status": "active"
+  },
+  {
+    "id": "veteran_status",
+    "question": "Veteran status (EEO self-identification).",
+    "answer": "I am not a veteran",
+    "kind": "fixed",
+    "status": "active"
+  },
+  {
+    "id": "disability_status",
+    "question": "Disability status (EEO self-identification).",
+    "answer": "No, I do not have a disability",
+    "kind": "fixed",
+    "status": "active"
+  },
+  {
+    "id": "how_did_you_hear",
+    "question": "How did you hear about us?",
+    "answer": "LinkedIn",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "address_street",
+    "question": "Street address (line 1).",
+    "answer": "123 Main Street",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "address_city",
+    "question": "City.",
+    "answer": "Anytown",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "address_state",
+    "question": "State / province.",
+    "answer": "California",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "address_zip",
+    "question": "ZIP / postal code.",
+    "answer": "12345",
+    "kind": "open-ended",
+    "status": "active"
+  },
+  {
+    "id": "address_country",
+    "question": "Country.",
+    "answer": "United States",
+    "kind": "open-ended",
+    "status": "active"
+  }
+]

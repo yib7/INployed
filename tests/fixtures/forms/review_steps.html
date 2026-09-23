@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Engineer - Tailspin Toys</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  #review, #received { display: none; }
+</style>
+</head>
+<body>
+<h1>Data Engineer</h1>
+<p>Tailspin Toys, Denver, CO</p>
+
+<div id="details">
+  <h2>Your details</h2>
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <button type="button" id="btn-review">Continue</button>
+</div>
+
+<div id="review">
+  <h2>Review your application</h2>
+  <p>Please review your answers before submitting.</p>
+  <dl>
+    <dt>First name</dt><dd id="r-first"></dd>
+    <dt>Last name</dt><dd id="r-last"></dd>
+    <dt>Email</dt><dd id="r-email"></dd>
+  </dl>
+  <button type="button" id="btn-edit">Edit</button>
+  <button type="button" id="btn-submit">Submit application</button>
+</div>
+
+<section id="received">
+  <h2>Application received</h2>
+  <p>Thank you for applying. We will be in touch.</p>
+</section>
+
+<script>
+  function show(id) {
+    ['details', 'review', 'received'].forEach(function (k) {
+      document.getElementById(k).style.display = (k === id) ? 'block' : 'none';
+    });
+  }
+  document.getElementById('btn-review').addEventListener('click', function () {
+    document.getElementById('r-first').textContent = document.getElementById('first_name').value;
+    document.getElementById('r-last').textContent = document.getElementById('last_name').value;
+    document.getElementById('r-email').textContent = document.getElementById('email').value;
+    show('review');
+  });
+  document.getElementById('btn-edit').addEventListener('click', function () { show('details'); });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    show('received');
+  });
+</script>
+</body>
+</html>

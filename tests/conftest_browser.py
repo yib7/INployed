@@ -16,6 +16,8 @@ unloaded). Fixtures:
 - `browser_page` (function): a fresh page in a fresh context of one headless
   Chromium per test module. Skips with "Chromium not installed" when the
   launch fails and via `importorskip` when Playwright itself is absent.
+- `flow_server` (session): `apply_harness.FlowServer`, the fixtures served
+  with a counted `POST /submit/<name>` (the flow matrix and its invariants).
 
 The browser is module-scoped because Playwright's sync API keeps an asyncio
 loop running on the main thread for as long as the `sync_playwright()`
@@ -55,6 +57,17 @@ def fixtures_server():
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture(scope="session")
+def flow_server():
+    import apply_harness
+    server = apply_harness.FlowServer()
+    server.start()
+    try:
+        yield server
+    finally:
+        server.stop()
 
 
 @pytest.fixture(scope="session")

@@ -497,6 +497,26 @@ def test_the_summary_counts_the_parks_outside_the_policy():
     assert "parks outside the policy: 1 of 2" in h.summary(rows)
 
 
+def test_a_flows_designed_end_off_the_policy_list_is_counted_apart_from_the_misses():
+    # SP3 checkpoint: six flows end off the policy list by design (the server's
+    # validation answer, the "check whether" ends); only the misses count as
+    # parks outside the policy
+    check = apply_run.CHECK_SENT_REASON + ": a request left"
+    rows = [h.RunResult("ajax_reset", "fake", "needs_human", check, True, [], 1, 1, 0.1,
+                        policy=False),
+            h.RunResult("ajax_reset", "noisy-1", "needs_human", check, True, [], 1, 1, 0.1,
+                        policy=False),
+            h.RunResult("ashby_wizard", "noisy-2", "needs_human", "no submit button", False, [],
+                        0, 1, 0.1, policy=False),
+            h.RunResult("captcha", "fake", "needs_human", "captcha or bot check", True, [], 0, 1,
+                        0.1, policy=True)]
+    rt = h.rates(rows)
+    assert (rt["outside_policy"], rt["designed"], rt["parks"]) == (1, 2, 4)
+    text = h.summary(rows)
+    assert "parks outside the policy: 1 of 4" in text, text
+    assert "designed ends off the policy list: 2" in text, text
+
+
 # --- M2: the recorder sees keys, page and element-handle clicks, dispatched events -------------------
 
 def test_the_recorder_sees_every_way_a_page_can_be_acted_on(_browser):

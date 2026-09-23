@@ -1426,18 +1426,25 @@ def rates(results: list[RunResult]) -> dict[str, Any]:
     for r in results:
         per_flow.setdefault(r.flow, []).append(r)
     parks = [r for r in results if r.policy is not None]
+    # a flow designed to end off the policy list (the server's validation
+    # answer, a "check whether" end) reaching that end is no miss: it is
+    # counted apart, and the policy count shows only the misses
     return {"fake": rate([r for r in counted if r.judge == "fake"]),
             "noisy": rate([r for r in counted if r.judge != "fake"]),
             "all": rate(counted),
             "breaks": sum(len(r.breaks) for r in results),
-            "parks": len(parks), "outside_policy": sum(1 for r in parks if not r.policy),
+            "parks": len(parks),
+            "outside_policy": sum(1 for r in parks if not r.policy and not r.ok),
+            "designed": sum(1 for r in parks if not r.policy and r.ok),
             "per_flow": {name: row(rows) for name, rows in per_flow.items()},
             "known": {name: row(rows) for name, rows in per_flow.items() if name in known}}
 
 
 def summary(results: list[RunResult], *, width: int = 70) -> str:
     """The matrix as text: one row per run, then per-flow and overall rates,
-    the known failing flows, and the parks outside the user's policy."""
+    the known failing flows, the parks outside the user's policy that missed
+    their flow's end, and apart from them the runs that reached a designed
+    end off the policy list."""
     lines = [f"{'flow':<22} {'judge':<9} {'ok':<3} {'end':<16} {'reason':<{width}} breaks"]
     for r in results:
         reason = (r.reason or "")[:width]
@@ -1458,5 +1465,6 @@ def summary(results: list[RunResult], *, width: int = 70) -> str:
                      f"{row['noisy']:.0%}; left out of the rates below)")
     lines.append(f"success: fake {rt['fake']:.1%}, noisy {rt['noisy']:.1%}, all {rt['all']:.1%} "
                  f"over {len(results)} runs; invariant breaks: {rt['breaks']}; parks outside "
-                 f"the policy: {rt['outside_policy']} of {rt['parks']}")
+                 f"the policy: {rt['outside_policy']} of {rt['parks']}; designed ends off the "
+                 f"policy list: {rt['designed']}")
     return "\n".join(lines)

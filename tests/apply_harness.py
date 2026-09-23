@@ -381,18 +381,20 @@ _COMBINED = """<!doctype html><html><head><title>Apply</title></head><body>
 
 def linkedin_job_routes(page: str = "linkedin_posting.html", target: str = "ashby_steps.html",
                         *, hop: str = "linkedin_redirect.html", host: str = "www.linkedin.com",
-                        same_tab: bool = False) -> Callable[[str], dict[str, str]]:
+                        same_tab: bool = False,
+                        dest: Callable[[str], str] | None = None) -> Callable[[str], dict[str, str]]:
     """Routes (a function of the server's base URL; no network) for a
     LinkedIn job page fixture `page` served on `host`, its Apply link going
     through the `/safety/go/` hop to the fixture `target` (in the job page's
-    own tab with `same_tab`). The hop is the redirector, whose script sends
+    own tab with `same_tab`), or to `dest(base)` when given (a routed host:
+    a tracker, a job board). The hop is the redirector, whose script sends
     the tab on after a moment as LinkedIn's does (0.4 s here, 1.5 s in the
     fixture: the run waits either way), or the safety interstitial, whose
     Continue link leads on. The hop's route is registered last, so it wins
     for its own URLs."""
     def _routes(base: str) -> dict[str, str]:
         forms = FIXTURES_DIR / "forms"
-        to = f"{base}/forms/{target}"
+        to = dest(base) if dest is not None else f"{base}/forms/{target}"
         hop_url = f"https://{host}/safety/go/?url={to}"
         posting = (forms / page).read_text(encoding="utf-8").replace(
             'href="linkedin_redirect.html"', f'href="{hop_url}"').replace(
@@ -408,6 +410,35 @@ def linkedin_job_routes(page: str = "linkedin_posting.html", target: str = "ashb
 
 
 _linkedin_routes = linkedin_job_routes()
+
+# SP4: an ad tracker and a job board between LinkedIn's Apply and the form
+_TRACKER_URL = "https://click.appcast.io/t/4438751519"
+_BOARD_URL = "https://www.dice.com/job-detail/4438751519"
+
+
+def tracker_routes(base: str) -> dict[str, str]:
+    """LinkedIn's Apply through its hop to an ad tracker whose script sends
+    the tab to the company's form (`lever_single.html`) 3 s later."""
+    page = (FIXTURES_DIR / "forms" / "tracker_redirect.html").read_text(encoding="utf-8")
+    routes = linkedin_job_routes("linkedin_posting.html", dest=lambda b: _TRACKER_URL)(base)
+    routes["https://click.appcast.io/**"] = page.replace("__TARGET__",
+                                                        f"{base}/forms/lever_single.html")
+    return routes
+
+
+def board_routes(base: str, *, company_link: bool = True) -> dict[str, str]:
+    """LinkedIn's Apply through its hop to a job board's copy of the posting,
+    whose "Apply on company site" leads to the company's form
+    (`lever_single.html`); without `company_link` the board's own Apply is
+    all it offers."""
+    page = (FIXTURES_DIR / "forms" / "aggregator.html").read_text(encoding="utf-8").replace(
+        "__COMPANY__", f"{base}/forms/lever_single.html")
+    if not company_link:
+        page = page.replace('<a class="btn" href="' + f"{base}/forms/lever_single.html"
+                            + '" id="company-site">Apply on company site</a>', "")
+    routes = linkedin_job_routes("linkedin_posting.html", dest=lambda b: _BOARD_URL)(base)
+    routes["https://www.dice.com/**"] = page
+    return routes
 
 
 def _no_routes(base: str) -> dict[str, str]:
@@ -772,6 +803,21 @@ FLOWS: tuple[Flow, ...] = (
     Flow("ticker_page", "ticker_page.html", True, "needs_human", r"^page did not advance",
          covers="a clock and a posted-ago note that change every second, a Continue that brings "
                 "the same step back: read as not advancing, never as new pages"),
+    Flow("tracker_redirect", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", routes=tracker_routes,
+         covers="an ad tracker's hop after LinkedIn's Apply, sending the tab on 3 s later: "
+                "waited out, never the destination"),
+    Flow("aggregator_company_site", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", routes=board_routes,
+         covers="a job board's copy of the posting: its link to the company's site is followed "
+                "once, the board is never filled"),
+    Flow("aggregator_board_only", _LINKEDIN_JOB, True, "needs_human",
+         r"^aggregator posting on www\.dice\.com: no link to the company's site",
+         routes=lambda base: board_routes(base, company_link=False),
+         covers="a job board's posting whose only Apply is the board's own: parks at once"),
+    Flow("mailto_apply", "mailto_apply.html", True, "needs_human",
+         r"^apply by email to jobs@contoso\.example$",
+         covers="an Apply that is an email address: parks with the address, nothing clicked"),
 )
 
 
@@ -1269,7 +1315,11 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # the site's own dead ends (SP4): a job it says was applied to before, a
     # posting it says is closed
     "^" + re.escape(apply_run.ALREADY_APPLIED_REASON),
-    "^" + re.escape(apply_run.CLOSED_POSTING_REASON)))
+    "^" + re.escape(apply_run.CLOSED_POSTING_REASON),
+    # a posting the run cannot apply to itself: a job board's with no link to
+    # the company's site, an Apply that is an email address
+    "^" + re.escape(apply_run.AGGREGATOR_REASON) + " on ",
+    "^" + re.escape(apply_run.MAILTO_REASON) + " to "))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

@@ -371,3 +371,68 @@ def test_the_signature_ignores_times_counts_and_the_judges_read():
     c = apply_run.page_signature("https://x.example/apply?step=2",
                                  digest("Step two: tell us about your experience"))
     assert c != a
+
+
+# --- NAV-07, NAV-08, NAV-09, ALLOW-01, ALLOW-02: trackers, job boards, email ----------------------
+
+def _entry_ats():
+    return next(e for e in apply_queue.load()["jobs"] if e["job_posting_id"] == "42").get("ats")
+
+
+def test_an_ad_trackers_hop_is_waited_out_and_never_the_destination(
+        _browser, flow_server, tmp_path):
+    r = _flow("tracker_redirect", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    hops = _decisions(Path(r.trace), "tracker_hops")
+    assert hops and hops[0]["trackers"] == ["click.appcast.io"], hops
+    assert not any("appcast" in a.url for a in r.actions if a.kind in ("fill", "click")), r.actions
+
+
+def test_a_job_boards_link_to_the_company_site_is_followed_once(_browser, flow_server, tmp_path):
+    r = _flow("aggregator_company_site", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    on_board = [a for a in r.actions if "dice.com" in a.url]
+    assert [a.text for a in on_board if a.kind == "click"] == ["Apply on company site"], on_board
+    assert not [a for a in on_board if a.kind != "click"], on_board
+
+
+def test_a_job_board_with_no_link_to_the_company_site_parks_at_once(
+        _browser, flow_server, tmp_path):
+    r = _flow("aggregator_board_only", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.policy is True
+    assert not [a for a in r.actions if "dice.com" in a.url], r.actions
+
+
+def test_an_apply_that_is_an_email_address_parks_with_the_address(
+        _browser, flow_server, tmp_path):
+    r = _flow("mailto_apply", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.policy is True and r.pages == 1
+    assert not [a for a in r.actions if a.kind == "click"], r.actions
+
+
+def _job_run(context, tmp_path, url="https://www.linkedin.com/jobs/view/1/"):
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, url)
+    entry = next(e for e in apply_queue.load()["jobs"] if e["job_posting_id"] == "42")
+    run = apply_run._JobRun(_runner(context, tmp_path), context, entry)
+    run._prepare()
+    return run
+
+
+@pytest.mark.parametrize("host", ["www.dice.com", "click.appcast.io", "www.indeed.com"])
+def test_the_master_password_never_goes_to_a_job_board_or_a_tracker(context, tmp_path, host):
+    # ALLOW-02: even once admitted as where LinkedIn's Apply led
+    run = _job_run(context, tmp_path)
+    run.allowed.add(host)
+    run.ats_hosts.add(host)
+    assert run._password_ok(host) is False
+
+
+@pytest.mark.parametrize("host", ["acme.jobs2web.com", "acme.careers-page.com",
+                                  "jobs.dover.com", "apply.jazz.co", "acme.wellfound.com"])
+def test_the_missing_platforms_are_application_sites(context, tmp_path, host):
+    # ALLOW-01
+    run = _job_run(context, tmp_path)
+    assert run._allowed_site(host) and run._password_ok(host)

@@ -149,7 +149,30 @@ ATS_SITES = frozenset((
     "rippling.com", "paylocity.com", "paycomonline.net", "avature.net", "eightfold.ai",
     "gem.com", "comeet.com", "personio.de", "personio.com", "csod.com",
     "clearcompany.com", "hrmdirect.com", "applicantpro.com", "isolvedhire.com",
-    "phenompeople.com", "trinethire.com"))
+    "phenompeople.com", "trinethire.com",
+    # ALLOW-01 (the audit's list, SP4)
+    "jobs2web.com", "selectminds.com", "saashr.com", "pageuppeople.com", "silkroad.com",
+    "hirebridge.com", "zohorecruit.com", "bullhornstaffing.com", "jobdiva.com", "ceipal.com",
+    "paycor.com", "recruitingbypaycor.com", "freshteam.com", "hireology.com", "careerplug.com",
+    "catsone.com", "applicantstack.com", "trakstar.com", "careers-page.com", "jobscore.com",
+    "peopleadmin.com", "governmentjobs.com", "jazz.co", "harri.com", "fountain.com",
+    "gusto.com", "dover.com", "wellfound.com"))
+# Programmatic-ad trackers and link shorteners between a posting's Apply and
+# the careers site (NAV-07): a hop to wait out, never the destination, never
+# a place for the master password.
+TRACKER_SITES = frozenset((
+    "appcast.io", "joveo.com", "pandologic.com", "recruitics.com", "grnh.se", "lnkd.in",
+    "bit.ly", "tinyurl.com", "ow.ly", "buff.ly", "rebrand.ly", "clickcast.cloud",
+    "jobadx.com", "talentify.io", "cvtrack.com", "jobs2careers.com"))
+# Job boards and aggregators (NAV-08): a posting there is followed once to
+# the company's own site through its "Apply on company site" control, and
+# never signed in on or filled.
+AGGREGATOR_SITES = frozenset((
+    "dice.com", "lensa.com", "jobright.ai", "talent.com", "ziprecruiter.com", "indeed.com",
+    "jooble.org", "glassdoor.com", "builtin.com", "jobot.com", "welcometothejungle.com",
+    "hiring.cafe", "simplyhired.com", "careerbuilder.com", "monster.com", "snagajob.com",
+    "adzuna.com", "jobleads.com", "theladders.com"))
+TRACKER_HOPS_MAX = 3               # tracker hops waited out after one entry click
 # Bot-check providers. Their frames' controls are never filled or clicked: a
 # challenge is the user's to solve in the visible window. DataDome
 # (`captcha-delivery.com`) and PerimeterX serve full-page checks (study G11).
@@ -187,6 +210,12 @@ CHECKBOX_NOTE = "a CAPTCHA checkbox is on the form: tick it, then submit"
 ALREADY_APPLIED_REASON = "already applied: the site says this job was applied to before"
 ALREADY_APPLIED_NOTE = "the site shows this job as applied; Mark applied if you sent it"
 CLOSED_POSTING_REASON = "closed: the posting no longer takes applications"
+# A posting the run cannot apply to itself (SP4): an aggregator's with no link
+# to the company's site (NAV-08), an Apply that is an email address (NAV-09).
+AGGREGATOR_REASON = "aggregator posting"
+AGGREGATOR_NOTE = "a job board's posting: apply on the company's own site"
+MAILTO_REASON = "apply by email"
+MAILTO_NOTE = "the posting asks for an email application: send it yourself"
 CLOSED_REASON = "the browser window was closed"
 TAB_CLOSED_REASON = "the job's tab was closed"
 EVIDENCE_CAP = 300                 # characters of evidence a park reason carries
@@ -1131,6 +1160,32 @@ def _is_captcha_url(url: str) -> bool:
     return _site(host) == "google.com" and parts.path.startswith("/recaptcha")
 
 
+def _tracker(url_or_host: str) -> bool:
+    """A programmatic-ad tracker or a link shortener (`TRACKER_SITES`)."""
+    return bool(_host(url_or_host)) and _site(url_or_host) in TRACKER_SITES
+
+
+def _aggregator(url_or_host: str) -> bool:
+    """A job board or aggregator (`AGGREGATOR_SITES`)."""
+    return bool(_host(url_or_host)) and _site(url_or_host) in AGGREGATOR_SITES
+
+
+# The control on an aggregator's posting that leads to the company's own site
+_COMPANY_SITE = re.compile(
+    r"\bapply\s+(?:on|at|via|through)\s+(?:the\s+)?(?:company|employer)(?:'s|s)?\s+"
+    r"(?:site|website|page)\b|\b(?:continue|go)\s+to\s+(?:the\s+)?(?:company|employer)"
+    r"(?:'s|s)?\s+(?:site|website)\b|\bvisit\s+(?:the\s+)?(?:company|employer)(?:'s|s)?\s+"
+    r"(?:site|website)\b|\bapply\s+externally\b", re.I)
+
+
+def company_site_control(digest: apply_form.FormDigest) -> apply_form.Button | None:
+    """The control of an aggregator's posting that says it leads to the
+    company's own site ("Apply on company site", "Continue to the employer's
+    website"), never a form's own button; None when there is none."""
+    return next((b for b in digest.buttons if _COMPANY_SITE.search(
+        str(b.text or "").translate(apply_judge._APOSTROPHES)) and not b.in_form), None)
+
+
 def _on_linkedin_redirector(url: str) -> bool:
     """Is `url` LinkedIn's `/safety/go/` hop to an off-site Apply page (on
     any LinkedIn host)?"""
@@ -1832,6 +1887,22 @@ class LateWatch:
                 pass
 
 
+_MAILTO_JS = ("el => { const a = el.closest('a[href]'); "
+              "return a ? (a.getAttribute('href') || '') : ''; }")
+
+
+def mailto_address(loc) -> str:
+    """The address an Apply control mails to (`mailto:` on it or its link),
+    without the query; "" when it is no email link (NAV-09)."""
+    try:
+        href = str(loc.first.evaluate(_MAILTO_JS, timeout=apply_fill.ACTION_TIMEOUT_MS) or "")
+    except Exception:       # noqa: BLE001  (a page double, a detached element)
+        return ""
+    if not href.lower().startswith("mailto:"):
+        return ""
+    return _cap(href[len("mailto:"):].split("?", 1)[0], 120)
+
+
 def click_entry(page, loc, *, timeout_ms: int | None = None) -> tuple[Any, str, int]:
     """Click an Apply entry and wait for what it does, whichever comes
     first: a new tab (the popup), a same-tab navigation, or a same-tab DOM
@@ -1908,7 +1979,7 @@ def await_destination(page, log: logging.Logger | None = None,
     info: dict[str, Any] = {"settled_ms": _settled_ms(first), "capped": _settle_capped(first),
                             "continue": ""}
     if not _on_linkedin_redirector(page.url):
-        return page, info
+        return page, _past_trackers(page, info, logger, job_id)
     cont = apply_linkedin.continue_control(page)
     if cont is not None:
         info["continue"] = cont.label
@@ -1933,7 +2004,30 @@ def await_destination(page, log: logging.Logger | None = None,
     again = apply_fill.settle(page, CLICK_TIMEOUT_S)
     info["settled_ms"] += _settled_ms(again)
     info["capped"] = info["capped"] or _settle_capped(again)
-    return page, info
+    return page, _past_trackers(page, info, logger, job_id)
+
+
+def _past_trackers(page, info: dict[str, Any], logger: logging.Logger,
+                   job_id: str) -> dict[str, Any]:
+    """Wait out an ad tracker's or a link shortener's hop (NAV-07: Appcast,
+    Joveo, `grnh.se`, `bit.ly` send the tab on by script, a few seconds
+    later): up to `TRACKER_HOPS_MAX` hops of `REDIRECT_TIMEOUT_S` each, a
+    settle after each. The hops land in `info["trackers"]`; a hop that never
+    moves on leaves the page on it."""
+    hops: list[str] = []
+    while _tracker(page.url) and len(hops) < TRACKER_HOPS_MAX:
+        hops.append(_host(page.url))
+        try:
+            page.wait_for_url(lambda u: not _tracker(u), timeout=REDIRECT_TIMEOUT_S * 1000)
+        except Exception as e:      # noqa: BLE001  (the loop parks on a hop that stays)
+            logger.info("job %s: the tracker hop %s did not move on (%s)", job_id, hops[-1],
+                        type(e).__name__)
+            break
+        again = apply_fill.settle(page, CLICK_TIMEOUT_S)
+        info["settled_ms"] = info.get("settled_ms", 0) + _settled_ms(again)
+    if hops:
+        info["trackers"] = hops
+    return info
 
 
 def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
@@ -2390,6 +2484,8 @@ class _JobRun:
         self.ats_host = ""
         self.ats_hosts: set[str] = set()       # every admitted ATS host; matched by site
         self.ats_transition_used = False
+        self._aggregator_host = ""        # a job board LinkedIn's Apply led to (NAV-08)
+        self._aggregator_left = False     # its company-site link was followed
         self.last_sig: tuple | None = None
         self.usage_before = jev.usage()
         self.start = runner.clock()
@@ -2570,6 +2666,8 @@ class _JobRun:
             return False
         if site == _site(str(self.r.run_context().get("inbox_url") or "")):
             return False
+        if site in TRACKER_SITES or site in AGGREGATOR_SITES:
+            return False            # ALLOW-02: a job board or a tracker is never the application
         return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
 
     def _frame_url(self, frames: list, idx: int) -> str:
@@ -2632,13 +2730,31 @@ class _JobRun:
         host = _host(url)
         if not host or host in LINKEDIN_HOSTS or _site(host) == _site(LINKEDIN_HOSTS[0]):
             return
+        if _tracker(host):
+            # a hop that never moved on (NAV-07): never the destination
+            raise _Parked("needs_human", f"the tracker hop ({host}) did not move on to the "
+                                         f"company's site")
         if any(_site(host) == _site(h) for h in self.ats_hosts):
             return
         if _site(host) not in ATS_SITES:
             if host in self.allowed:
                 return
-            if self.ats_transition_used or not apply_linkedin.is_linkedin(source_url):
+            from_linkedin = not self.ats_transition_used and apply_linkedin.is_linkedin(source_url)
+            from_board = (self._aggregator_host and not self._aggregator_left
+                          and _host(source_url) == self._aggregator_host)
+            if _aggregator(host) and from_linkedin:
+                # a job board LinkedIn's Apply led to (NAV-08): the tab may
+                # stay there and follow its company-site link once; nothing
+                # is ever filled or signed in on it (`_password_ok`)
+                self.allowed.add(host)
+                self._aggregator_host = host
+                self.ats_transition_used = True
+                self._decide_next("aggregator", f"LinkedIn's Apply led to a job board ({host})")
+                return
+            if not (from_linkedin or from_board):
                 self._check_host(url)
+            if from_board:
+                self._aggregator_left = True
         inferred = apply_queue.infer_ats(url)
         apply_queue.update(self.job_id, path=self.r.queue_path,
                            ats={"domain": host, "system": inferred["system"]})
@@ -2799,6 +2915,8 @@ class _JobRun:
             digest = self._read_digest()
             t1 = time.monotonic()
             if self._linkedin_step(digest):
+                continue
+            if self._aggregator_step(digest):
                 continue
             marker = self._page_marker()        # the page as judged: a bot check that
                                                 # clears itself shows as a change
@@ -3113,6 +3231,34 @@ class _JobRun:
         self._click_entry(rec, loc, control.label, how="linkedin_handler")
         return True
 
+    def _aggregator_step(self, digest: apply_form.FormDigest) -> bool:
+        """A job board's posting (NAV-08): its company-site control
+        (`company_site_control`) is clicked once as the entry, and the page
+        it leads to is the application's (`_admit_ats_transition`); a board's
+        posting without one parks at once, never filled or signed in on.
+        False off a board, or once its link was followed."""
+        host = _host(str(self.page.url or ""))
+        if not _aggregator(host) or self._aggregator_left:
+            return False
+        rec = self._new_page_record("job_posting", 1.0, digest=digest, answers={})
+        control = company_site_control(digest)
+        if control is None:
+            self._decide("aggregator", f"a job board's posting ({host}) with no link to the "
+                                       "company's site")
+            raise _Parked("needs_human", f"{AGGREGATOR_REASON} on {host}: no link to the "
+                                         f"company's site (buttons: "
+                                         f"{_cap(', '.join(b.text for b in digest.buttons), 120)})",
+                          AGGREGATOR_NOTE)
+        self._decide("aggregator", f"a job board's posting ({host}): its link to the company's "
+                                   f"site is the entry", text=control.text)
+        self._click_entry(rec, apply_form.resolve(self.page, control.locator), control.text,
+                          how="aggregator_company_site", n=control.n)
+        if not self._aggregator_left and _aggregator(self.page.url):
+            raise _Parked("needs_human", f"{AGGREGATOR_REASON} on {host}: its link to the "
+                                         f"company's site ({_cap(control.text, 60)}) stayed on "
+                                         f"the board", AGGREGATOR_NOTE)
+        return True
+
     def _no_form_on_linkedin(self, why: str) -> None:
         """Nothing is filled, ticked, picked, uploaded or sent on LinkedIn: a
         form step there is Easy Apply's, and the job parks with its reason;
@@ -3412,6 +3558,13 @@ class _JobRun:
         why = live_refusal("apply_entry", text, live) if live else ""
         if why:
             self._refused_click("apply_entry", text, why)
+        address = mailto_address(loc)
+        if address:
+            # NAV-09: the Apply opens an email to the employer; nothing to
+            # click through (it would read as a page that did not advance)
+            self._decide("mailto", f"the Apply ({_cap(text, 60)}) is an email address",
+                         address=address)
+            raise _Parked("needs_human", f"{MAILTO_REASON} to {address}", MAILTO_NOTE)
         rec["clicked"].append(f"{text} (apply_entry)")
         self._last_click = (text, "apply_entry")
         source_url = self.page.url
@@ -3455,7 +3608,10 @@ class _JobRun:
             if popup is not self.page:
                 self.trace.nav(str(getattr(popup, "url", "")))  # its first load came before the watch
                 self._watch(popup)
-            dest, _info = self._await_destination(popup)
+            dest, info = self._await_destination(popup)
+            if info.get("trackers"):
+                self._decide_next("tracker_hops", "waited out an ad tracker's hop to the "
+                                                  "company's site", trackers=info["trackers"])
             if dest is popup:
                 break
             popup = dest

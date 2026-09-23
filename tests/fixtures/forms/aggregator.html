@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam - Job Board</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .btn { display: inline-block; padding: 8px 16px; background: #246; color: #fff; margin-right: 8px; }
+</style>
+</head>
+<body>
+<!-- NAV-08: a job board's copy of the posting. Its own Apply wants the
+     board's account; the link to the company's site is the way on. The
+     flows serve it on a board's host and write the company's URL in. -->
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, Austin, TX. Posted by a partner.</p>
+<p>
+  <a class="btn" href="#board-apply" id="board-apply">Apply now</a>
+  <a class="btn" href="__COMPANY__" id="company-site">Apply on company site</a>
+</p>
+<h2>About the role</h2>
+<p>Own the analytics models and the dashboards the product team reads every morning.</p>
+<h2>Qualifications</h2>
+<p>Three years with SQL and a modern warehouse.</p>
+<div id="board-login" style="display:none">
+  <h2>Sign in to the job board</h2>
+  <label for="bemail">Email</label><input id="bemail" type="email">
+  <label for="bpw">Password</label><input id="bpw" type="password" autocomplete="current-password">
+  <button type="button">Sign in</button>
+</div>
+<script>
+  document.getElementById('board-apply').addEventListener('click', function (e) {
+    e.preventDefault();
+    document.getElementById('board-login').style.display = 'block';
+  });
+</script>
+</body>
+</html>

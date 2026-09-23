@@ -436,3 +436,16 @@ def test_the_missing_platforms_are_application_sites(context, tmp_path, host):
     # ALLOW-01
     run = _job_run(context, tmp_path)
     assert run._allowed_site(host) and run._password_ok(host)
+
+
+# --- NAV-05: a click that opens its next page in a new tab ----------------------------------------
+
+@pytest.mark.parametrize("name", ["popup_step_park", "popup_step"])
+def test_a_step_opened_in_a_new_tab_is_the_next_page_and_nothing_is_clicked_twice(
+        _browser, flow_server, tmp_path, name):
+    r = _flow(name, _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    nexts = [a for a in r.actions if a.kind == "click" and a.text == "Next"]
+    assert len(nexts) == 1, nexts
+    adopted = _decisions(Path(r.trace), "click_popup")
+    assert adopted and "step=2" in adopted[0]["url"], adopted

@@ -1887,6 +1887,28 @@ class LateWatch:
                 pass
 
 
+@contextmanager
+def _popups(page):
+    """The tabs `page` opens while the block runs (NAV-05), in order."""
+    opened: list = []
+
+    def _add(p) -> None:
+        opened.append(p)
+    try:
+        page.on("popup", _add)
+        listening = True
+    except Exception:       # noqa: BLE001  (a page double)
+        listening = False
+    try:
+        yield opened
+    finally:
+        if listening:
+            try:
+                page.remove_listener("popup", _add)
+            except Exception:   # noqa: BLE001  (the page is gone)
+                pass
+
+
 _MAILTO_JS = ("el => { const a = el.closest('a[href]'); "
               "return a ? (a.getAttribute('href') || '') : ''; }")
 
@@ -4067,12 +4089,20 @@ class _JobRun:
         self._last_click = (text, role)
         timeout = max(1.0, min(CLICK_TIMEOUT_S, self.deadline - self.r.clock()))
         check = self._live_check(role)
-        result = apply_fill.click(self.page, digest, n, timeout_s=timeout, check=check)
+        with _popups(self.page) as opened:
+            result = apply_fill.click(self.page, digest, n, timeout_s=timeout, check=check)
         self._trace("click", n=n, text=text, role=role, confidence=conf,
                     clicked=result.clicked, changed=result.changed, url=str(self.page.url),
-                    refused=result.refused, late=result.late)
+                    refused=result.refused, late=result.late, popups=len(opened))
         if result.refused and role != "submit":
             self._refused_click(role, text, result.refused)
+        if opened and not result.refused and (role == "submit" or not result.changed):
+            # NAV-05: the click opened its next page in a new tab and left this
+            # one as it was: the tab is the next page, and nothing is clicked
+            # again; a submit's tab is read only when it is the thank-you
+            # (the page the submit was made on keeps its own evidence)
+            if self._adopt_click_popup(opened[0], text, role):
+                return apply_fill.ClickResult(clicked=True, changed=True, late=result.late)
         if role == "submit":
             if result.clicked and not result.changed:
                 self.log.info("job %s: the submit click changed nothing; waiting up to %s s",
@@ -4100,6 +4130,42 @@ class _JobRun:
             raise _Parked("needs_human", f"the {role} button ({text}) did nothing "
                                          f"({judged}clicked twice){ticked}")
         return result
+
+    def _adopt_click_popup(self, popup, text: str, role: str) -> bool:
+        """A click that opened a new tab (NAV-05): True when the tab is now
+        the page. An advance's tab is the next page, followed like an Apply
+        entry's (`_follow_popup`: its host admitted and checked). A submit's
+        tab is the page the post-submit read reads (`_after_submit`, whose
+        host check is its own) only when it shows received words; any other
+        tab (a help page, an answer that says nothing, a browser error page)
+        leaves the page the submit was made on, and what left, to decide."""
+        try:
+            popup.wait_for_load_state("domcontentloaded", timeout=CLICK_TIMEOUT_S * 1000)
+        except Exception:       # noqa: BLE001  (the tab is read as it is)
+            pass
+        url = str(getattr(popup, "url", ""))
+        if role == "submit":
+            try:
+                received = confirmation_words(apply_fill.page_text(popup))
+            except Exception:   # noqa: BLE001  (a tab mid-navigation, a closed tab)
+                received = set()
+            if not received:
+                self._decide("click_popup", f"the submit click ({_cap(text, 60)}) opened a new "
+                                            f"tab that shows no received words; the page the "
+                                            f"submit was made on is read", url=_cap(url, 160))
+                return False
+            self._decide("click_popup", f"the submit click ({_cap(text, 60)}) opened a new tab "
+                                        f"that shows {sorted(received)[0]!r}; it is read as the "
+                                        f"page after the submit", url=_cap(url, 160))
+            self.trace.nav(url)
+            self._watch(popup)
+            self.page = popup
+            return True
+        self._decide("click_popup", f"the {role} click ({_cap(text, 60)}) opened a new tab and "
+                                    f"left the page as it was; the tab is the next page",
+                     url=_cap(url, 160))
+        self._follow_popup(popup, source_url=str(self.page.url))
+        return True
 
     def _live_check(self, role: str, *, account: bool = False) -> Callable[[str, dict], str]:
         """`apply_fill.click`'s check for a click in `role`: `live_refusal`

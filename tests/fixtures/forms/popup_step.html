@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Tailwind Traders</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+  section { display: none; }
+</style>
+</head>
+<body>
+<!-- NAV-05: a wizard whose Next opens the next step in a new tab, and whose
+     submit opens the thank-you in another; the page the click was made on
+     stays as it was. `?step=` picks the step. -->
+<h1>Tailwind Traders: Data Engineer</h1>
+<section id="step1">
+  <label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required>
+  <p><button type="button" id="btn-next">Next</button></p>
+</section>
+<section id="step2">
+  <label for="email">Email *</label><input id="email" name="email" type="email" required>
+  <p><button type="button" id="btn-submit">Submit application</button></p>
+</section>
+<section id="thanks">
+  <h2 id="received">Application received</h2>
+  <p>Thank you for applying. We will be in touch.</p>
+</section>
+<script>
+  var step = new URLSearchParams(location.search).get('step') || '1';
+  var id = step === 'thanks' ? 'thanks' : 'step' + step;
+  document.getElementById(id).style.display = 'block';
+  document.getElementById('btn-next').addEventListener('click', function () {
+    if (!document.getElementById('first_name').value) { return; }
+    window.open(location.pathname + '?step=2', '_blank');
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    if (!document.getElementById('email').value) { return; }
+    document.body.setAttribute('data-submitted', '1');
+    window.open(location.pathname + '?step=thanks', '_blank');
+  });
+</script>
+</body>
+</html>

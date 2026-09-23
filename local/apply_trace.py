@@ -50,7 +50,9 @@ TRACE_DIR = "apply_trace"
 LOG_NAME = "job.log"
 RUN_NAME = "run.json"
 JPEG_QUALITY = 60
-SCREENSHOT_TIMEOUT_MS = 10_000
+# a screenshot waits for the page's `load`, which a stalled image can hold off
+# for good: past this it is skipped (a `screenshot_failed` event)
+SCREENSHOT_TIMEOUT_MS = 3_000
 TOP_PROBABILITIES = 3              # per answer, beside the page state's full distribution
 # The boxes a screenshot masks: every password input, the one-time-code
 # autocomplete, and any box whose name or id says code, OTP or passcode.

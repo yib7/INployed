@@ -97,12 +97,17 @@ def _browser():
     pytest.importorskip("playwright")
     from playwright.sync_api import sync_playwright
 
+    import apply_harness
+
     previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", _UNSET)
     real = _installed_browsers_path()
     if real:
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = real
     try:
-        with sync_playwright() as pw:
+        # every context any test makes while this browser lives is offline:
+        # only the local fixture servers and the test's own routed hosts
+        # answer (`apply_harness.offline_contexts`)
+        with sync_playwright() as pw, apply_harness.offline_contexts():
             try:
                 browser = pw.chromium.launch(headless=True)
             except Exception as e:    # noqa: BLE001  (Playwright raises its own Error class)

@@ -881,13 +881,16 @@ def test_a_login_wall_park_names_the_sign_up_page_with_its_own_evidence(
 
 # --- N2: the harness exempts sign-in words as the loop does ------------------------------------------
 
-@pytest.mark.parametrize("text, park, worded", [
-    ("Send code", False, False), ("Send me a link", True, False),
-    ("Sign in to apply", False, False), ("Send verification code", False, False),
-    ("Send application", False, True), ("Submit application", True, True),
-    ("Finish", False, True)])
-def test_the_harness_exempts_sign_in_words_as_the_loop_does(text, park, worded):
-    assert h.submit_worded(text, park_mode=park) is worded
+@pytest.mark.parametrize("text, park, account, worded", [
+    # the account step's own exemption (`_sends_application(account_only=True)`)
+    ("Send code", False, True, False), ("Send me a link", True, True, False),
+    ("Sign in to apply", False, True, False), ("Send verification code", False, True, False),
+    ("Send application", False, True, True), ("Submit application", True, True, True),
+    # anywhere else the loop routes a send word to the gate (M-6)
+    ("Send code", False, False, True), ("Send me a link", True, False, True),
+    ("Finish", False, False, True), ("Continue", True, False, False)])
+def test_the_harness_exempts_sign_in_words_as_the_loop_does(text, park, account, worded):
+    assert h.submit_worded(text, park_mode=park, account_step=account) is worded
 
 
 # --- N3: CI reads the masked screenshots back ---------------------------------------------------------
@@ -1053,3 +1056,482 @@ def test_the_trace_writes_a_dataclass_or_a_valued_object_by_its_type_alone(tmp_p
     assert row["field"] == "<PlannedField>" and row["box"] == "<_Box>"
     assert row["many"] == ["<PlannedField>"] and row["both"] == "['a', 'b']"
     assert "jane.secret" not in text and "hunter2" not in text
+
+
+# === SP2 review round 1 ==============================================================================
+
+def _page_run(context, tmp_path, url):
+    """A prepared `_JobRun` whose page is at `url` (the caller routes it)."""
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, url)
+    run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
+    run._prepare()
+    run.page = context.new_page()
+    run.page.goto(url)
+    return run
+
+
+class _HostsSeen(jev.FakeJev):
+    """The fake, keeping every page host a page request carried."""
+
+    def __init__(self):
+        self.hosts = []
+
+    def judge(self, state, questions):
+        if "page_state" in questions:
+            self.hosts.append(state["page"]["url_host"])
+        return super().judge(state, questions)
+
+
+_POSTING = (FORMS / "job_posting.html").read_text(encoding="utf-8")
+_ELSEWHERE = "https://elsewhere.example"
+
+
+# --- I-1: a consent wrapper with no size of its own ------------------------------------------------
+
+def test_a_sizeless_consent_wrapper_is_found_and_its_banner_declined(context, flow_server):
+    page = context.new_page()
+    page.goto(flow_server.url("consent_wrapper.html"))
+    assert page.locator("#onetrust-consent-sdk").bounding_box()["height"] == 0
+    found = apply_form.consent_control(page)
+    assert found and (found[1]["kind"], found[1]["text"]) == ("reject", "Reject All"), found
+
+
+def test_the_wrapper_flow_declines_the_banner_and_reaches_the_form(_browser, flow_server,
+                                                                   tmp_path):
+    r = _flow("consent_wrapper", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    clicks = [a.text for a in r.actions if a.kind == "click"]
+    assert clicks[0] == "Reject All" and "Accept All Cookies" not in clicks, clicks
+
+
+# --- I-2: consent roots never swallow the application's own content ---------------------------------
+
+def test_a_section_named_trusted_is_no_consent_banner(context):
+    page = context.new_page()
+    # the vendor name TRUSTe counts as a whole word only: "trusted" is no banner
+    page.set_content('<main><h1>Analytics Engineer</h1><p>Own the analytics models.</p></main>'
+                     '<div class="trusted-by-section">Trusted by teams worldwide.'
+                     '<button>Apply now</button></div>')
+    assert [b.text for b in apply_form.extract(page).buttons] == ["Apply now"]
+
+
+def test_a_sign_in_dialog_that_mentions_cookies_keeps_its_boxes_and_is_not_closed(context):
+    page = context.new_page()
+    page.set_content('<main><h1>Careers</h1></main><div role="dialog" aria-modal="true" '
+                     'style="position:fixed;top:40px;left:40px;background:#fff">'
+                     '<p>Sign in to continue. We use cookies to keep you signed in.</p>'
+                     '<label>Email <input type="email" name="email"></label>'
+                     '<label>Password <input type="password" name="pw"></label>'
+                     '<button type="button">Sign in</button>'
+                     '<button type="button" aria-label="Close">x</button></div>')
+    d = apply_form.extract(page)
+    assert [f.type for f in d.fields] == ["email", "other"]
+    assert [b.text for b in d.buttons] == ["Sign in", "x"]
+    assert apply_form.consent_control(page) is None
+
+
+def test_a_consent_block_inside_the_form_keeps_its_checkbox_and_its_decline(context):
+    page = context.new_page()
+    page.set_content('<form><h1>Apply for Analytics Engineer</h1>'
+                     '<label>Email * <input type="email" name="email" required></label>'
+                     '<div class="consent-block"><p>We store your data and use cookies to run '
+                     'the application.</p><label><input type="checkbox" name="agree" required> '
+                     'I agree</label><button type="button">Decline</button></div>'
+                     '<button type="submit">Submit application</button></form>')
+    d = apply_form.extract(page)
+    assert [f.type for f in d.fields] == ["email", "checkbox"]
+    assert [b.text for b in d.buttons] == ["Decline", "Submit application"]
+    assert apply_form.consent_control(page) is None
+
+
+# --- I-3: every browser context of the suite is offline ---------------------------------------------
+
+# a documentation address (RFC 5737, never routed on the internet): without
+# the guard the request fails on its own, never reaching a site
+_NOT_LOCAL = "http://192.0.2.1/"
+
+
+def _refuses(page) -> str:
+    try:
+        page.goto(_NOT_LOCAL, timeout=4_000)
+    except Exception as e:      # noqa: BLE001  (Playwright's Error)
+        return str(e)
+    return "loaded"
+
+
+@pytest.mark.parametrize("how", ["browser_page", "new_context", "new_page", "second_browser",
+                                 "test_context"])
+def test_every_browser_context_refuses_a_non_local_url(request, _browser, how):
+    made = []
+    if how == "browser_page":
+        page = request.getfixturevalue("browser_page")
+    elif how == "new_context":
+        made.append(_browser.new_context())
+        page = made[-1].new_page()
+    elif how == "new_page":
+        page = _browser.new_page()
+        made.append(page.context)
+    elif how == "second_browser":
+        other = _browser.browser_type.launch(headless=True)
+        made.append(other)
+        page = other.new_context().new_page()
+    else:
+        page = request.getfixturevalue("context").new_page()
+    try:
+        assert "ERR_BLOCKED_BY_CLIENT" in _refuses(page)
+    finally:
+        for thing in made:
+            thing.close()
+
+
+def test_the_local_fixture_server_still_answers_through_the_guard(browser_page, flow_server):
+    browser_page.goto(flow_server.url("job_posting.html"))
+    assert browser_page.locator("h1").inner_text() == "Analytics Engineer"
+
+
+# --- I-4: the LinkedIn click guard counts by job ---------------------------------------------------
+
+@pytest.mark.parametrize("url, job", [
+    ("https://www.linkedin.com/jobs/view/4438751519/", "4438751519"),
+    ("https://www.linkedin.com/jobs/view/4438751519/?trk=abc&refId=9", "4438751519"),
+    ("https://www.linkedin.com/jobs/view/analytics-engineer-at-fabrikam-4438751519", "4438751519"),
+    ("https://www.linkedin.com/comm/jobs/view/4438751519/?trackingId=x", "4438751519"),
+    ("https://www.linkedin.com/jobs/search/?currentJobId=4438751519&start=25", "4438751519"),
+    ("https://www.linkedin.com/jobs/view/externalApply/4438751519?url=x", ""),
+    ("https://www.linkedin.com/feed/", "")])
+def test_the_job_a_linkedin_url_shows(url, job):
+    assert apply_linkedin.job_id(url) == job
+
+
+def test_linkedins_external_apply_hop_is_no_job_page():
+    url = "https://www.linkedin.com/jobs/view/externalApply/4438751519?url=https%3A%2F%2Fx"
+    assert apply_linkedin.url_kind(url) == "other"
+
+
+_TRACKED = (FORMS / "linkedin_posting.html").read_text(encoding="utf-8").replace(
+    'href="linkedin_redirect.html" target="_blank" rel="opener"',
+    'href="#" onclick="location.search = \'?trk=\' + Date.now(); return false"')
+
+
+def test_an_apply_whose_url_changes_per_click_parks_after_the_second_click(context, tmp_path):
+    # the same job, a new tracking parameter per click: the old URL-keyed
+    # count started again on every page and clicked to the page budget
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=_TRACKED, content_type="text/html"))
+    out, rec = _drain(context, tmp_path, LINKEDIN_JOB)
+    assert out.reason == ("the offsite Apply (Apply) did not open the company's site (clicked "
+                          "twice)"), out
+    assert [a.text for a in rec.actions if a.kind == "click"] == ["Apply"]
+
+
+_NEXT_JOB = (FORMS / "linkedin_posting.html").read_text(encoding="utf-8").replace(
+    'href="linkedin_redirect.html" target="_blank" rel="opener"',
+    'href="#" onclick="location.href = \'/jobs/view/\' + '
+    '(parseInt(location.pathname.split(\'/\')[3]) + 1) + \'/\'; return false"')
+
+
+def test_the_handler_clicks_at_most_its_cap_per_job(context, tmp_path, monkeypatch):
+    # every click leads to another job's page: the per-job cap ends it
+    monkeypatch.setattr(apply_run, "LINKEDIN_CLICKS_MAX", 3)
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=_NEXT_JOB, content_type="text/html"))
+    out, rec = _drain(context, tmp_path, "https://www.linkedin.com/jobs/view/100/")
+    assert out.reason == ("the offsite Apply (Apply) did not open the company's site (3 LinkedIn "
+                          "Apply clicks in this job)"), out
+    assert [a.text for a in rec.actions if a.kind == "click"] == ["Apply"] * 3
+
+
+# --- M-1: the two-pane view ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("html, offsite, easy", [
+    ('<main><h1>E</h1><ul><li><button aria-label="Easy Apply filter.">Easy Apply</button></li>'
+     '</ul></main>', 0, 0),
+    ('<main><h1>E</h1><aside><button>Easy Apply</button><a href="/x">Apply</a></aside></main>',
+     0, 0),
+    ('<main><h1>E</h1><ul><li><button>Easy Apply</button></li></ul>'
+     '<a href="/x" aria-label="Apply on company website">Apply</a></main>', 1, 0)])
+def test_list_and_rail_controls_are_other_jobs(context, html, offsite, easy):
+    page = context.new_page()
+    page.set_content(html)
+    view = apply_linkedin.read(page)
+    assert (len(view.offsite), len(view.easy)) == (offsite, easy), view
+
+
+def test_the_two_pane_view_reads_the_jobs_own_pane(_browser, flow_server, tmp_path):
+    r = _flow("linkedin_two_pane", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    decision = _decisions(r.trace, "linkedin_handler")[0]
+    assert decision["found"] == "offsite", decision
+
+
+# --- M-2: LinkedIn frames on a company's page; profile Applies ---------------------------------------
+
+_WITH_LINKEDIN_FRAME = ("<body><h1>Analytics Engineer</h1><p>About the role.</p>"
+                        "<a class='btn' href='/apply/form'>Apply now</a>"
+                        "<iframe src='https://www.linkedin.com/apply-widget/42' "
+                        "style='width:400px;height:200px'></iframe></body>")
+_LINKEDIN_WIDGET = ("<body><button>Apply with LinkedIn</button>"
+                    "<label>Email <input type='email' name='email'></label></body>")
+
+
+def test_a_linkedin_frame_on_a_company_page_loses_its_controls(context, tmp_path):
+    _serve(context, {"/jobs/42": _WITH_LINKEDIN_FRAME})
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=_LINKEDIN_WIDGET, content_type="text/html"))
+    run = _page_run(context, tmp_path, f"{CAREERS}/jobs/42")
+    run.page.frames[1].wait_for_selector("button")
+    digest = run._drop_foreign_controls(apply_form.extract(run.page))
+    assert [b.text for b in digest.buttons] == ["Apply now"]
+    assert digest.fields == []
+
+
+@pytest.mark.parametrize("label", ["Apply with LinkedIn", "Apply using Indeed",
+                                   "Quick apply", "1-click apply", "Easy Apply"])
+def test_no_entry_choice_picks_an_apply_that_sends_a_stored_profile(label):
+    d = apply_form.FormDigest("jobs.example", "Job", "About the role", buttons=[
+        apply_form.Button(0, (0, "#p"), label, "")])
+    assert apply_run.fieldless_apply_choice(d) is None
+    assert apply_run.posting_entry_choice(d, FillPlan(buttons={"apply_entry": (0, 0.95)})) == \
+        (None, "")
+
+
+# --- M-3: the consent pre-step's frames and links ------------------------------------------------------
+
+@pytest.mark.parametrize("control, found", [
+    ('<a href="/privacy/cookies">Reject cookies</a>', None),
+    ('<a href="#">Reject all</a>', ("reject", "Reject all")),
+    ('<a href="javascript:void(0)">Reject all</a>', ("reject", "Reject all")),
+    ('<a role="button" href="/settings">Decline</a>', None)])
+def test_a_consent_link_is_clicked_only_when_it_goes_nowhere(context, control, found):
+    page = context.new_page()
+    page.set_content('<main><h1>Engineer</h1></main><div id="cookie-bar" style="position:fixed;'
+                     f'bottom:0">We use cookies. {control}</div>')
+    got = apply_form.consent_control(page)
+    assert ((got[1]["kind"], got[1]["text"]) if got else None) == found, got
+
+
+_BANNER_PAGE = ("<body><div id='cookie-banner' style='position:fixed;top:0'>We use cookies."
+                "<button id='no'>Reject all</button></div></body>")
+
+
+@pytest.mark.parametrize("frame_url", [
+    "https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html",
+    "https://ads.example.net/frame"])
+def test_the_consent_pre_step_never_clicks_in_a_bot_check_or_foreign_frame(
+        context, tmp_path, frame_url):
+    host = frame_url.split("/")[2]
+    _serve(context, {"/jobs/42": f"<body><h1>Engineer</h1><p>About the role.</p>"
+                                 f"<iframe src='{frame_url}' style='width:600px;height:300px'>"
+                                 f"</iframe></body>"})
+    context.route(f"https://{host}/**",
+                  lambda route: route.fulfill(body=_BANNER_PAGE, content_type="text/html"))
+    run = _page_run(context, tmp_path, f"{CAREERS}/jobs/42")
+    run.page.frames[1].wait_for_selector("#no")
+    rec = h.Recorder(None)
+    with rec.recording():
+        run._dismiss_consent()
+    assert rec.actions == [] and run._consent_clicks == 0
+
+
+# --- M-4: a form whose footer renders late ------------------------------------------------------------
+
+_LATE_FOOTER = """<body><form onsubmit="return false"><h1>Apply for Analytics Engineer</h1>
+<label>Full name * <input name="name" required></label>
+<label>Email * <input type="email" name="email" required></label></form>
+<script>
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      document.querySelector('form').insertAdjacentHTML('beforeend',
+        '<button type="button" id="btn-submit" onclick="document.body.dataset.submitted = 1">' +
+        'Submit application</button>');
+    }, 600);
+  });
+</script></body>"""
+
+
+def test_a_form_whose_footer_renders_late_is_read_once_it_renders(context, tmp_path):
+    _serve(context, {"/apply/42": _LATE_FOOTER})
+    out, _ = _drain(context, tmp_path, f"{CAREERS}/apply/42", auto_apply_submit=False)
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+
+
+# --- M-5: the host is checked after every new settle ---------------------------------------------------
+
+def _elsewhere(context):
+    context.route(f"{_ELSEWHERE}/**",
+                  lambda route: route.fulfill(body=_POSTING, content_type="text/html"))
+
+
+def test_a_consent_click_that_leaves_the_site_parks_before_any_read(context, tmp_path,
+                                                                   monkeypatch):
+    # an off-site page loses its controls and reads as empty, whose re-read
+    # checks the host too: that path stands down, so this check alone is tested
+    monkeypatch.setattr(apply_run, "_empty_read", lambda digest: False)
+    _elsewhere(context)
+    _serve(context, {"/jobs/42": _POSTING.replace(
+        "</body>", "<div id='cookie-bar' style='position:fixed;bottom:0'>We use cookies."
+                   f"<button onclick=\"location.href='{_ELSEWHERE}/landing'\">Reject all</button>"
+                   "</div></body>")})
+    judge = _HostsSeen()
+    out, _ = _drain(context, tmp_path, f"{CAREERS}/jobs/42", judge)
+    assert out.reason == "left the allowed sites: elsewhere.example", out
+    assert "elsewhere.example" not in judge.hosts
+
+
+def test_an_empty_page_that_moves_off_the_site_is_never_read(context, tmp_path):
+    _elsewhere(context)
+    _serve(context, {"/jobs/42": "<body><div id='app'></div><script>setTimeout(() => "
+                                 f"location.replace('{_ELSEWHERE}/landing'), 400)</script></body>"})
+    judge = _HostsSeen()
+    out, _ = _drain(context, tmp_path, f"{CAREERS}/jobs/42", judge)
+    assert out.reason == "left the allowed sites: elsewhere.example", out
+    assert judge.hosts == []
+
+
+class _UnsureThenAway(_HostsSeen):
+    """Reads the first page as `other` at 0.30 and sends that page off the
+    site as it answers (a page that moves on while it is re-read)."""
+
+    def __init__(self, context):
+        super().__init__()
+        self.context = context
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out and len(self.hosts) == 1:
+            # the page has left by the time the unsure read is taken again
+            self.context.pages[-1].goto(f"{_ELSEWHERE}/landing")
+            out["page_state"] = jev.Answer(kind="choice", choice="other", confidence=0.30,
+                                           probabilities={"other": 0.30, "job_posting": 0.25})
+        return out
+
+
+def test_an_unsure_page_that_moves_off_the_site_is_never_read_again(context, tmp_path,
+                                                                    monkeypatch):
+    # as above: the empty-read path's own host check stands down
+    monkeypatch.setattr(apply_run, "_empty_read", lambda digest: False)
+    _elsewhere(context)
+    _serve(context, {"/jobs/42": _POSTING})
+    judge = _UnsureThenAway(context)
+    out, _ = _drain(context, tmp_path, f"{CAREERS}/jobs/42", judge)
+    assert out.reason == "left the allowed sites: elsewhere.example", out
+    assert judge.hosts == ["careers.fabrikam.example"]
+
+
+# --- M-6: the harness's sign-in exemption is the account step's alone ----------------------------------
+
+def test_a_send_code_click_breaks_the_invariants_only_outside_the_account_step():
+    class _Out:
+        status, reason = "needs_human", "login wall"
+    for in_account, breaks in ((True, False), (False, True)):
+        rec = h.Recorder(h.flow("login_wall_park"))
+        rec.actions.append(h.Action("click", f"{CAREERS}/login", text="Send code", tag="button",
+                                    in_account=in_account))
+        codes = _codes(h.invariant_breaks(_Out(), rec, h.Sends(rec)))
+        assert ("CLICK-OUTSIDE-GATE" in codes) is breaks, (in_account, codes)
+
+
+def test_the_recorder_marks_the_account_steps_clicks(_browser, flow_server, tmp_path):
+    r = _flow("login_wall_park", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    clicks = [a for a in r.actions if a.kind == "click"]
+    account = [a.text for a in clicks if a.in_account]
+    assert account == ["Create account"], [(a.text, a.in_account) for a in clicks]
+    assert all(not a.in_account for a in clicks if a.text == "Continue")
+
+
+# --- M-7: a tab the Apply opens late ----------------------------------------------------------------------
+
+_LATE_TAB = _POSTING.replace(
+    '<a class="btn" id="apply" href="ashby_steps.html" target="_blank" rel="opener">Apply now</a>',
+    '<button type="button" class="btn" id="apply" onclick="this.textContent = \'Opening the '
+    'application...\'; setTimeout(() => window.open(\'/apply/form\'), 700)">Apply now</button>')
+
+
+def test_a_tab_the_apply_opens_late_is_adopted(context, tmp_path, monkeypatch):
+    # the click changes the page at once and opens the tab 0.7 s later, past
+    # the entry race's grace; the settle's quiet window outlasts it
+    monkeypatch.setattr(apply_fill, "SETTLE_QUIET_S", 1.0)
+    _serve(context, {"/jobs/42": _LATE_TAB,
+                     "/apply/form": (FORMS / "lever_single.html").read_text(encoding="utf-8")})
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, f"{CAREERS}/jobs/42")
+    rec = h.Recorder(None, park_mode=True)
+    with rec.recording():
+        out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+    clicks = [a.text for a in rec.actions if a.kind == "click"]
+    assert clicks.count("Apply now") == 1, clicks
+    assert _decisions(folder / "apply_trace" / "attempt-1", "late_popup")
+
+
+# --- M-8: a signed-in page whose offsite Apply is a window.open button -----------------------------------
+
+def test_an_offsite_apply_button_that_opens_a_tab_by_script(_browser, flow_server, tmp_path):
+    r = _flow("linkedin_button_popup", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    entry = next(e for p in _pages(r.trace) for e in p["events"] if e["kind"] == "apply_entry")
+    assert entry["popup"] is True and entry["signal"] == "popup", entry
+
+
+# --- M-9: the probe opens a page the run's way --------------------------------------------------------
+
+def test_the_probe_reads_a_page_whose_load_never_fires(context, monkeypatch):
+    monkeypatch.setattr(apply_run, "PROBE_GOTO_MS", 3_000)
+    _serve(context, {"/apply/42": _HANGING})
+    context.route(f"{CAREERS}/slow.png", lambda route: None)
+    out = io.StringIO()
+    code = apply_run.probe(f"{CAREERS}/apply/42", context=context, out=out, settle_s=1)
+    assert code == 0, out.getvalue()
+    assert f"page 1: {CAREERS}/apply/42" in out.getvalue()
+    assert "  load: settled" in out.getvalue()
+
+
+# --- M-10: a LinkedIn form after the company's form -------------------------------------------------------
+
+_TO_LINKEDIN = """<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Apply for Analytics Engineer</h1>
+<label>First name * <input name="first" required></label>
+<label>Last name * <input name="last" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<button type="button" onclick="location.href='https://www.linkedin.com/jobs/search/?keywords=x'">Continue</button>
+</body></html>"""
+
+
+def test_a_linkedin_form_after_the_companys_form_says_the_application_went_back(
+        context, tmp_path):
+    _serve(context, {"/apply/42": _TO_LINKEDIN})
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=_LINKEDIN_FORM, content_type="text/html"))
+    out, rec = _drain(context, tmp_path, f"{CAREERS}/apply/42")
+    assert out.reason.startswith(apply_run.LINKEDIN_RETURN_REASON + " ("), out
+    assert [a for a in rec.actions if h.on_linkedin(a.url)] == []
+
+
+# --- the review's notes: a capped settle shows in the trace; screenshots do not stall -----------------
+
+def test_a_settle_released_at_its_cap_says_so_in_the_trace(context, tmp_path, monkeypatch):
+    monkeypatch.setattr(apply_fill, "SETTLE_MAX_S", 0.5)
+    _serve(context, {"/jobs/42": _POSTING.replace(
+        "<h1>", "<div aria-busy='true' style='height:30px'>Loading more</div><h1>")})
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, f"{CAREERS}/jobs/42")
+    _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)
+    settled = _decisions(folder / "apply_trace" / "attempt-1", "settled")[0]
+    assert settled["capped"] is True and ", capped" in settled["why"], settled
+
+
+def test_a_screenshot_on_a_page_whose_load_never_fires_is_skipped_quickly(context, tmp_path):
+    _serve(context, {"/apply/42": _HANGING})
+    context.route(f"{CAREERS}/slow.png", lambda route: None)
+    page = context.new_page()
+    page.goto(f"{CAREERS}/apply/42", wait_until="domcontentloaded")
+    trace = apply_trace.Trace(tmp_path, attempt=1, job_id="42")
+    trace.start()
+    try:
+        start = time.monotonic()
+        assert trace.screenshot(page, "page-1") == ""
+        assert time.monotonic() - start < 5.0
+    finally:
+        trace.close()

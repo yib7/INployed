@@ -193,27 +193,40 @@ RADIO_OPTION_LABEL_JS = r"""(el) => {
 }"""
 
 # The cookie and consent banners of a document, outermost first: an element
-# whose id or class names a consent vendor or a cookie banner (onetrust,
-# cookie, cc-banner, privacy-banner, cookiebot, usercentrics, truste, didomi,
-# osano, termly, iubenda); one whose id or class says only consent or gdpr, or
-# a dialog or a fixed or sticky element, when its first 300 characters
-# mention cookies (a form's own "I consent to..." block does not). A box that
-# holds the page's main content, its h1 or a file input is never one, and
-# neither is the body, a form or a control.
+# whose id, class or Workday `data-automation-id` names a consent vendor or a
+# cookie banner (onetrust, cookie, cc-banner, privacy-banner, cookiebot,
+# usercentrics, TRUSTe or TrustArc as whole words, didomi, osano, termly,
+# iubenda); one whose names say only consent, gdpr or legalNotice (Workday's
+# banner), or a dialog or a fixed or sticky element, when its first 300
+# characters mention cookies (a form's own "I consent
+# to..." block does not). The application's own content is never one: no box
+# inside a form, none holding a text, email, password or phone box or a
+# textarea (a sign-in dialog that mentions cookies), the page's main content,
+# its h1 or a file input; neither is the body, a control or a style or script
+# element. A banner is found whether or not its own box has a size (OneTrust's
+# wrapper has none: its banner inside is fixed); its controls are checked
+# for visibility one by one.
 CONSENT_ROOTS_JS = r"""() => {
-  const STRONG = /onetrust|cookie|cc-banner|privacy-banner|cookiebot|usercentrics|truste|didomi|osano|termly|iubenda/i;
-  const WEAK = /consent|gdpr/i;
+  const STRONG = /onetrust|cookie|cc-banner|privacy-banner|cookiebot|usercentrics|\btruste\b|trustarc|didomi|osano|termly|iubenda/i;
+  const WEAK = /consent|gdpr|legalnotice/i;
   const COOKIE = /cookie/i;
   const DIALOG = 'dialog, [role=dialog], [role=alertdialog], [aria-modal=true]';
+  const TYPING = 'input:not([type]), input[type=text], input[type=email], input[type=password], '
+    + 'input[type=tel], textarea';
   const head = (el) => (el.innerText || el.textContent || '').slice(0, 300);
-  const names = (el) => (el.id || '') + ' ' + (el.getAttribute('class') || '');
+  const names = (el) => (el.id || '') + ' ' + (el.getAttribute('class') || '') + ' '
+    + (el.getAttribute('data-automation-id') || '');
   const blocked = (el) => el === document.body || el === document.documentElement
-    || el.matches('main, [role=main], form, input, select, textarea, button, label, option, a')
-    || !!el.querySelector('main, [role=main], h1, input[type=file]');
+    || el.matches('main, [role=main], form, input, select, textarea, button, label, option, a, '
+                  + 'style, script, noscript, template, link, meta')
+    || !!el.closest('form')
+    || !!el.querySelector('main, [role=main], h1, input[type=file], ' + TYPING);
   const found = new Set();
   const query = ['onetrust', 'cookie', 'consent', 'gdpr', 'cc-banner', 'privacy-banner',
-                 'cookiebot', 'usercentrics', 'truste', 'didomi', 'osano', 'termly', 'iubenda']
-    .map((w) => '[id*=' + w + ' i], [class*=' + w + ' i]').join(', ') + ', ' + DIALOG;
+                 'cookiebot', 'usercentrics', 'truste', 'trustarc', 'didomi', 'osano', 'termly',
+                 'iubenda']
+    .map((w) => '[id*=' + w + ' i], [class*=' + w + ' i]').join(', ')
+    + ', [data-automation-id*=cookie i], [data-automation-id=legalNotice], ' + DIALOG;
   for (const el of document.querySelectorAll(query)) found.add(el);
   const fixed = (el, depth) => {
     for (const c of el.children) {
@@ -240,11 +253,13 @@ CONSENT_ROOTS_JS = r"""() => {
   return hits.filter((el) => !hits.some((o) => o !== el && o.contains(el)));
 }"""
 
-# The control the loop may click on a visible consent banner: the first whose
-# text (innerText, an input's value, else its aria-label or title) reads as
-# reject, decline, refuse, deny or necessary / essential only, else the first
-# close or dismiss control; never one whose text or aria-label says accept,
-# allow or agree. Returns {css, text, kind, banner} or null.
+# The control the loop may click on a consent banner: a visible button,
+# `[role=button]` or `input[type=button|submit]` (a link only when it goes
+# nowhere: no href, `#` or `javascript:`), the first whose text (innerText,
+# an input's value, else its aria-label or title) reads as reject, decline,
+# refuse, deny or necessary / essential only, else the first close or
+# dismiss control; never one whose text or aria-label says accept, allow or
+# agree. Returns {css, text, kind, banner} or null.
 _CONSENT_CONTROL_JS = r"""() => {
   const consentRoots = __CONSENT__;
   const locatorFor = __LOCATOR__;
@@ -260,12 +275,16 @@ _CONSENT_CONTROL_JS = r"""() => {
   const CLOSE_ARIA = /\b(close|dismiss)\b/i;
   const ACCEPT = /accept|allow|agree/i;
   let close = null;
+  const goesNowhere = (el) => {
+    const href = (el.getAttribute('href') || '').trim();
+    return !href || href === '#' || /^javascript:/i.test(href);
+  };
   for (const root of consentRoots()) {
-    if (!visible(root)) continue;
     const banner = norm((root.id || '') + ' ' + (root.getAttribute('class') || '')).slice(0, 80);
-    const sel = 'button, [role=button], input[type=button], input[type=submit], a[href]';
+    const sel = 'button, [role=button], input[type=button], input[type=submit], a';
     for (const el of root.querySelectorAll(sel)) {
       if (!visible(el) || el.disabled) continue;
+      if (el.tagName === 'A' && !goesNowhere(el)) continue;
       const text = norm(el.innerText) || norm(el.value);
       const aria = norm(el.getAttribute('aria-label')) || norm(el.getAttribute('title'));
       const label = text || aria;
@@ -606,12 +625,16 @@ def extract(page) -> FormDigest:
                       text=text, fields=fields, buttons=buttons)
 
 
-def consent_control(page) -> tuple[int, dict] | None:
+def consent_control(page, allow=None) -> tuple[int, dict] | None:
     """(frame index, {css, text, kind, banner}) of the control the loop may
     click to dismiss a visible cookie or consent banner: its reject,
     decline or necessary-only control, else its close (`_CONSENT_CONTROL_JS`);
-    None when no banner shows or it offers neither."""
+    None when no banner shows or it offers neither. `allow(index, frame)`
+    says which frames may be looked in (the runner's: the page's own frames
+    on the allowed sites, never a bot check's)."""
     for idx, frame in enumerate(frames(page)):
+        if allow is not None and not allow(idx, frame):
+            continue
         try:
             found = frame.evaluate(_CONSENT_CONTROL_JS)
         except Exception:       # noqa: BLE001  (a detached or cross-origin frame)

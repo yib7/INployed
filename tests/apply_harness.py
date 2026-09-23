@@ -75,7 +75,7 @@ NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs t
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
 # one run below what the matrix measures. Later phases raise it to 0.95.
-SUCCESS_FLOOR = 0.77                      # SP2: 64 of 81 suite runs (0.790); SP1: 30 of 45
+SUCCESS_FLOOR = 0.78                      # SP2 fix round: 72 of 90 suite runs (0.800); SP1: 30 of 45
 # Under the fake judge every flow reaches its end but the known failing ones
 # (`Flow.known`), which the rates leave out.
 FAKE_SUCCESS_FLOOR = 1.0
@@ -234,6 +234,8 @@ FAST_TIMING = {
     ("apply_run", "EMPTY_READ_POLL_S"): 0.1,
     ("apply_run", "LINKEDIN_READY_S"): 5.0,
     ("apply_run", "LINKEDIN_POLL_MS"): 100,
+    ("apply_run", "LINKEDIN_EASY_RECHECK_S"): 1.0,
+    ("apply_run", "CONSENT_WAIT_S"): 1.5,
 }
 
 
@@ -355,8 +357,10 @@ def linkedin_job_routes(page: str = "linkedin_posting.html", target: str = "ashb
     def _routes(base: str) -> dict[str, str]:
         forms = FIXTURES_DIR / "forms"
         to = f"{base}/forms/{target}"
+        hop_url = f"https://{host}/safety/go/?url={to}"
         posting = (forms / page).read_text(encoding="utf-8").replace(
-            'href="linkedin_redirect.html"', f'href="https://{host}/safety/go/?url={to}"')
+            'href="linkedin_redirect.html"', f'href="{hop_url}"').replace(
+            "window.open('linkedin_redirect.html'", f"window.open('{hop_url}'")
         hop_page = (forms / hop).read_text(encoding="utf-8").replace(
             "location.replace('ashby_steps.html'); }, 1500)",
             f"location.replace('{to}'); }}, 400)").replace(
@@ -534,6 +538,19 @@ FLOWS: tuple[Flow, ...] = (
     Flow("consent_overlay", "consent_overlay.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a cookie dialog over the posting, declined through its input button"),
+    # --- SP2 review round 1 ---
+    Flow("consent_wrapper", "consent_wrapper.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a consent vendor's sizeless wrapper holding a fixed banner and a page filter"),
+    Flow("linkedin_two_pane", "https://www.linkedin.com/jobs/search/?currentJobId=4438751519"
+         "&keywords=analytics", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_two_pane.html", "lever_single.html"),
+         covers="the two-pane view: Easy Apply pills and cards, the job's pane rendered late"),
+    Flow("linkedin_button_popup", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_posting_button.html", "lever_single.html"),
+         covers="a signed-in page whose offsite Apply is a button opening a tab by script"),
 )
 
 
@@ -642,15 +659,17 @@ _KEYBOARD_ACTIONS = {"press": "press", "down": "press", "type": "fill", "insert_
 _ON_LINKEDIN_FORBIDDEN = ("fill", "tick", "pick", "upload", "gate")
 
 
-def submit_worded(text: str, *, park_mode: bool) -> bool:
+def submit_worded(text: str, *, park_mode: bool, account_step: bool = False) -> bool:
     """Does a control's live text read as sending the application, in the
     loop's words? A send word other than "apply" (a bare "Apply" is the
-    posting's entry), unless the text names a sign-in or a code or link sent
-    for one ("Sign in to apply", "Send code", "Send me a link": the account
-    step's exemption, `apply_run._sends_application`); or in park mode a
-    last-step word on anything but an account step (`apply_run._final_shaped`)."""
+    posting's entry), unless the click is the account step's and the text
+    names a sign-in or a code or link sent for one ("Sign in to apply", "Send
+    code", "Send me a link": the account step's own exemption,
+    `apply_run._sends_application`; everywhere else the loop routes those
+    words to the submit gate); or in park mode a last-step word on anything
+    but an account step (`apply_run._final_shaped`)."""
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
-    if words - {"apply"} and not apply_run._SIGN_IN_WORDS.search(text or ""):
+    if words - {"apply"} and not (account_step and apply_run._SIGN_IN_WORDS.search(text or "")):
         return True
     return (park_mode and bool(FINAL_WORDS.search(text or ""))
             and not apply_run._ACCOUNT_STEP_WORDS.search(text or ""))
@@ -682,6 +701,7 @@ class Action:
     key: str = ""       # a key press's key
     form: bool = False  # the element (or the focused one) sits in a form
     aria: str = ""      # the element's aria-label
+    in_account: bool = False    # made by the account step (`_Accounts._fill`)
 
     @property
     def host(self) -> str:
@@ -699,6 +719,7 @@ class Recorder:
         self.password = password
         self.actions: list[Action] = []
         self.gate_depth = 0
+        self.account_depth = 0
         self.final: dict[str, Any] = {}
         self.logs: list[str] = []
         self.files: list[Path] = []       # scanned for the password after the run
@@ -726,7 +747,8 @@ class Recorder:
                                    tag=str(info.get("tag", "")), type=str(info.get("type", "")),
                                    in_gate=self.gate_depth > 0, key=key,
                                    form=bool(info.get("form", False)),
-                                   aria=str(info.get("aria", ""))))
+                                   aria=str(info.get("aria", "")),
+                                   in_account=self.account_depth > 0))
 
     @staticmethod
     def focused(page) -> dict:
@@ -840,6 +862,16 @@ class Recorder:
                     rec.gate_depth -= 1
             p.setattr(apply_run._JobRun, "_submit_gate", _gate)
 
+            account_fill = apply_run._Accounts._fill
+
+            def _account(accounts, *a, **kw):
+                rec.account_depth += 1
+                try:
+                    return account_fill(accounts, *a, **kw)
+                finally:
+                    rec.account_depth -= 1
+            p.setattr(apply_run._Accounts, "_fill", _account)
+
             finish = apply_run._JobRun._finish
 
             def _finish(job, *a, **kw):
@@ -950,7 +982,8 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
                           f"({reason})")
     for a in recorder.actions:
         if a.kind == "click" and not a.in_gate \
-                and submit_worded(a.text, park_mode=recorder.park_mode):
+                and submit_worded(a.text, park_mode=recorder.park_mode,
+                                  account_step=a.in_account):
             breaks.append(f"CLICK-OUTSIDE-GATE: clicked {a.text!r} ({a.role or a.tag}) on "
                           f"{a.host} outside the submit gate")
         enter = a.kind == "press" and a.key in _ENTER_KEYS
@@ -1040,17 +1073,64 @@ def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True) -> list[tup
 _LOCAL_HOSTS = ("127.0.0.1", "localhost")
 
 
+_OFFLINE_MARK = "_apply_harness_offline"
+
+
 def offline(context) -> None:
     """Keep a test context off the network: a request to anything but the
     local fixture server is aborted, unless a route registered after this one
     (a flow's fake host, LinkedIn's fixture) answers it first. Register it
-    before the flow's routes: Playwright tries the latest route first."""
+    before the flow's routes: Playwright tries the latest route first. A
+    context that has the guard is left as it is."""
+    if getattr(context, _OFFLINE_MARK, False):
+        return
+
     def _guard(route) -> None:
         if _host(route.request.url) in _LOCAL_HOSTS:
             route.continue_()
         else:
             route.abort("blockedbyclient")
     context.route("**/*", _guard)
+    try:
+        setattr(context, _OFFLINE_MARK, True)
+    except Exception:       # noqa: BLE001  (a context that takes no attribute gets a second guard)
+        pass
+
+
+@contextmanager
+def offline_contexts():
+    """Every browser context made while this is on gets the `offline` guard
+    at birth, whoever makes it: `Browser.new_context`, `Browser.new_page`'s
+    own context, and `BrowserType.launch_persistent_context`. The browser
+    tests' conftest turns it on for each module's browser, so a route a
+    test forgot, or a fix reverted during a RED proof, cannot reach a real
+    site."""
+    from playwright.sync_api import Browser, BrowserType
+    p = Patches()
+    new_context, new_page = Browser.new_context, Browser.new_page
+    persistent = BrowserType.launch_persistent_context
+
+    def _new_context(self, *a, **kw):
+        ctx = new_context(self, *a, **kw)
+        offline(ctx)
+        return ctx
+
+    def _new_page(self, *a, **kw):
+        page = new_page(self, *a, **kw)
+        offline(page.context)
+        return page
+
+    def _persistent(self, *a, **kw):
+        ctx = persistent(self, *a, **kw)
+        offline(ctx)
+        return ctx
+    try:
+        p.setattr(Browser, "new_context", _new_context)
+        p.setattr(Browser, "new_page", _new_page)
+        p.setattr(BrowserType, "launch_persistent_context", _persistent)
+        yield
+    finally:
+        p.undo()
 
 
 def _fulfiller(body: str) -> Callable[[Any], None]:

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jobs search</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._a1 { display: inline-block; padding: 6px 14px; border-radius: 16px; background: #0a66c2; color: #fff; }
+  ._cols { display: flex; gap: 24px; }
+  ._list { width: 40%; }
+  ._pane { width: 60%; }
+</style>
+</head>
+<body>
+<!-- LinkedIn's two-pane job search (`/jobs/search/?currentJobId=<id>`): the
+     filter pills (Easy Apply among them, in list items), the result list
+     whose cards show Easy Apply and Applied, a promoted card whose Easy
+     Apply button sits outside any list, and the chosen job's pane, which
+     renders 600 ms after `load` with the offsite Apply. -->
+<div>
+  <header>
+    <nav><a href="/feed/">Home</a> <button type="button">Me</button></nav>
+  </header>
+  <main id="workspace">
+    <ul aria-label="Search filters">
+      <li><button type="button" aria-label="Easy Apply filter.">Easy Apply</button></li>
+      <li><button type="button">Date posted</button></li>
+      <li><button type="button">Remote</button></li>
+    </ul>
+    <div class="_cols">
+      <section class="_list">
+        <h2>Analytics jobs in New York</h2>
+        <ul>
+          <li><a href="/jobs/view/111/">Data Analyst, Contoso, New York (Hybrid)</a> <span>Easy Apply</span></li>
+          <li><a href="/jobs/view/222/">BI Developer, Northwind, New York (On-site)</a> <span>Applied</span></li>
+          <li><a href="/jobs/view/4438751519/">Analytics Engineer, Fabrikam, New York (On-site)</a> <span>Promoted</span></li>
+        </ul>
+        <div>
+          <p>Promoted: Reporting Analyst at Litware</p>
+          <button type="button">Easy Apply</button>
+        </div>
+      </section>
+      <section class="_pane" id="pane"></section>
+    </div>
+  </main>
+</div>
+<script>
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      document.getElementById('pane').innerHTML =
+        '<h1>Analytics Engineer</h1><p>Fabrikam, New York, NY</p>' +
+        '<p><a class="_a1" aria-label="Apply to Analytics Engineer on company website" ' +
+        'href="linkedin_redirect.html" target="_blank" rel="opener">Apply</a> ' +
+        '<button type="button">Save</button></p>' +
+        '<h2>About the job</h2><p>Own the analytics models and the dashboards the product ' +
+        'team reads every morning.</p>';
+    }, 600);
+  });
+</script>
+</body>
+</html>

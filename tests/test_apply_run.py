@@ -75,6 +75,17 @@ def _bank():
 
 
 @pytest.fixture(autouse=True)
+def _fast_timing():
+    """The fixtures are static pages: the harness's short settle and click
+    windows (`apply_harness.FAST_TIMING`) read them as well as the
+    production ones. A test whose page moves on by a timer sets its own
+    quiet window."""
+    import apply_harness
+    with apply_harness.fast_timing():
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _hermetic(tmp_path, monkeypatch, jev_judge):
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: None)
     monkeypatch.setenv("ATS_ACCOUNTS_PATH", str(tmp_path / "accounts.json"))
@@ -114,6 +125,14 @@ def context(_browser):
         yield ctx
     finally:
         ctx.close()
+
+
+def test_this_modules_browser_context_is_offline(context):
+    # every context of the browser tests has the offline guard (the
+    # conftest's `offline_contexts`); 192.0.2.1 is a documentation address
+    page = context.new_page()
+    with pytest.raises(Exception, match="ERR_BLOCKED_BY_CLIENT"):
+        page.goto("http://192.0.2.1/", timeout=4_000)
 
 
 def _enqueue(job_folder, url, jid="42", **kw):
@@ -1047,10 +1066,13 @@ def test_job_posting_apply_opens_a_popup_that_the_loop_follows(
 
 
 def test_linkedin_shaped_posting_follows_its_apply_link_through_the_redirect(
-        context, fixture_url, job_folder, catalog_builder, tmp_path):
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     # the page the 2026-09-22 live run parked on: the Apply entry is a plain
     # link, the header search and the footer language picker are site chrome,
-    # and the new tab is a redirector whose script moves on to the ATS
+    # and the new tab is a redirector whose script moves on to the ATS. Served
+    # off LinkedIn, the redirector moves on by its 1.5 s timer alone: the
+    # settle keeps a quiet window longer than that
+    monkeypatch.setattr(apply_run.apply_fill, "SETTLE_QUIET_S", 2.0)
     _enqueue(job_folder, fixture_url("linkedin_posting.html"))
     out = _runner(context, tmp_path).drain(cap=1)[0]
     assert out.status == "submitted", out
@@ -1086,12 +1108,19 @@ _LINKEDIN_JOB = "https://www.linkedin.com/jobs/view/4438751519/"
 
 def _serve_linkedin_posting(context, fixture_url):
     """The LinkedIn-shaped posting at a LinkedIn job URL (a route; no network),
-    its Apply link pointed at the fixture redirector."""
-    body = Path(__file__).parent.joinpath("fixtures", "forms", "linkedin_posting.html").read_text(
-        encoding="utf-8").replace('href="linkedin_redirect.html"',
-                                  f'href="{fixture_url("linkedin_redirect.html")}"')
+    its Apply link going through LinkedIn's `/safety/go/` hop (the fixture
+    redirector, routed) to the fixture form, as the live page's does."""
+    forms = Path(__file__).parent.joinpath("fixtures", "forms")
+    target = fixture_url("ashby_steps.html")
+    body = (forms / "linkedin_posting.html").read_text(encoding="utf-8").replace(
+        'href="linkedin_redirect.html"',
+        f'href="https://www.linkedin.com/safety/go/?url={target}"')
+    hop = (forms / "linkedin_redirect.html").read_text(encoding="utf-8").replace(
+        "location.replace('ashby_steps.html'); }, 1500)", f"location.replace('{target}'); }}, 400)")
     context.route("https://www.linkedin.com/**",
                   lambda route: route.fulfill(body=body, content_type="text/html"))
+    context.route("https://www.linkedin.com/safety/go/**",
+                  lambda route: route.fulfill(body=hop, content_type="text/html"))
 
 
 @pytest.mark.parametrize("state, conf", [("application_form", 0.33), ("review_page", 0.90),

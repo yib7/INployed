@@ -486,9 +486,22 @@ def wait_for_change(page, *, timeout_s: float = 20) -> bool:
         return False
 
 
-def _await_change(page, act: Callable[[], Any], timeout_s: float) -> bool:
+def act_and_settle(page, act: Callable[[], Any], *, timeout_s: float = 20) -> dict[str, Any]:
+    """`act()` (a click the caller makes itself, the consent banner's), then
+    `_await_change`'s wait: up to `timeout_s` for a navigation or a DOM
+    change, then the settle, so a navigation the act started has landed
+    before the caller reads the page. Returns the settle's timing plus
+    `changed`."""
+    info: dict[str, Any] = {}
+    changed = _await_change(page, act, timeout_s, info_out=info)
+    return {"ms": 0, "capped": False, "busy": False, **info, "changed": changed}
+
+
+def _await_change(page, act: Callable[[], Any], timeout_s: float, *,
+                  info_out: dict | None = None) -> bool:
     """Snapshot, `act()`, then poll for a navigation or a DOM change until
-    `timeout_s`; settle and return True on a change, False on a quiet page."""
+    `timeout_s`; settle and return True on a change, False on a quiet page.
+    `info_out` receives the settle's timing."""
     before = _snapshot(page)
     url0 = page.url
     navigated: list[str] = []
@@ -504,7 +517,9 @@ def _await_change(page, act: Callable[[], Any], timeout_s: float) -> bool:
         deadline = time.monotonic() + timeout_s
         while True:
             if navigated or page.url != url0 or _snapshot(page) != before:
-                _settle(page, timeout_s, navigated=navigated)
+                info = _settle(page, timeout_s, navigated=navigated)
+                if info_out is not None:
+                    info_out.update(info)
                 return True
             if time.monotonic() >= deadline:
                 return False

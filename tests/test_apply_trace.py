@@ -46,6 +46,14 @@ def context(_browser):
         ctx.close()
 
 
+def test_this_modules_browser_context_is_offline(context):
+    # every context of the browser tests has the offline guard (the
+    # conftest's `offline_contexts`); 192.0.2.1 is a documentation address
+    page = context.new_page()
+    with pytest.raises(Exception, match="ERR_BLOCKED_BY_CLIENT"):
+        page.goto("http://192.0.2.1/", timeout=4_000)
+
+
 def _enqueue(folder, url, jid="42", queue=None):
     apply_queue.enqueue(apply_queue.new_entry(jid, company="Fabrikam", title="Analytics Engineer",
                                               apply_url=url), path=queue)

@@ -16,6 +16,15 @@ def _judge_selector(jev_judge):
     """Every runner here takes the harness judge (fake unless AUTO_APPLY_TEST_JEV says otherwise)."""
 
 
+@pytest.fixture(autouse=True)
+def _fast_timing():
+    """The harness's short settle and click windows (`apply_harness.FAST_TIMING`):
+    nothing here waits on a real page's timer."""
+    import apply_harness
+    with apply_harness.fast_timing():
+        yield
+
+
 def _job():
     context = Mock()
     runner = apply_run.Runner(jev=jev_harness.judge(), context=context, run_context={},

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  a.btn { display: inline-block; padding: 8px 16px; border: 1px solid #333; }
+  #onetrust-consent-sdk { height: 0; }
+  .onetrust-pc-dark-filter { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 999; }
+  #onetrust-banner-sdk { position: fixed; left: 0; right: 0; bottom: 0; background: #fff;
+                         padding: 16px; z-index: 1000; }
+</style>
+</head>
+<body>
+<!-- The shape a consent vendor's banner has on many career sites: an outer
+     wrapper with no size of its own, holding a dark filter over the whole
+     page and a fixed banner. The filter takes the Apply click until the
+     banner is declined. -->
+<main>
+  <h1>Analytics Engineer</h1>
+  <p>Fabrikam, New York, NY</p>
+  <h2>About the role</h2>
+  <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+  <h2>Responsibilities</h2>
+  <ul>
+    <li>Design and maintain the warehouse models.</li>
+    <li>Partner with product managers on metrics.</li>
+  </ul>
+  <h2>Qualifications</h2>
+  <ul>
+    <li>Three years with SQL and a modern warehouse.</li>
+    <li>Experience with dbt or a similar tool.</li>
+  </ul>
+  <p><a class="btn" id="apply" href="lever_single.html">Apply now</a></p>
+</main>
+<div id="onetrust-consent-sdk">
+  <div class="onetrust-pc-dark-filter"></div>
+  <div id="onetrust-banner-sdk" role="region" aria-label="Cookie banner">
+    <p>We use cookies to run this site and, with your consent, to understand how it is used.</p>
+    <button type="button" id="onetrust-accept-btn-handler"
+            onclick="document.body.dataset.cookiesAccepted = 1; document.getElementById('onetrust-consent-sdk').remove()">Accept All Cookies</button>
+    <button type="button" id="onetrust-reject-all-handler"
+            onclick="document.getElementById('onetrust-consent-sdk').remove()">Reject All</button>
+  </div>
+</div>
+</body>
+</html>

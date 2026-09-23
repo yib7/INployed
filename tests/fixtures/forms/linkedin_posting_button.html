@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._a1 { display: inline-block; padding: 6px 14px; border-radius: 16px; background: #0a66c2; color: #fff; border: 0; }
+  ._ov { position: fixed; right: 16px; bottom: 0; width: 280px; background: #fff; border: 1px solid #ccc; padding: 8px; }
+</style>
+</head>
+<body>
+<!-- A LinkedIn job page as a signed-in member sees it: the header with the
+     member's menu and notifications, the messaging overlay, and a top card
+     whose offsite Apply is a button that opens the company's site in a new
+     tab from its script. -->
+<div>
+  <header>
+    <div role="search"><input type="text" aria-label="Search by title, skill, or company"></div>
+    <nav><a href="/feed/">Home</a> <a href="/mynetwork/">My Network</a>
+      <a href="/notifications/">Notifications</a> <button type="button">Me</button></nav>
+  </header>
+  <main id="workspace">
+    <section>
+      <h1>Analytics Engineer</h1>
+      <p>Fabrikam, New York, NY</p>
+      <p><button type="button" class="_a1" id="posting-apply"
+                 aria-label="Apply to Analytics Engineer on company website"
+                 onclick="window.open('linkedin_redirect.html', '_blank')">Apply</button>
+         <button type="button">Save</button></p>
+      <h2>About the job</h2>
+      <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+      <ul>
+        <li>Design and maintain the warehouse models.</li>
+        <li>Partner with product managers on metrics.</li>
+        <li>Three years with SQL and a modern warehouse.</li>
+      </ul>
+    </section>
+  </main>
+  <aside class="_ov">
+    <p>Messaging</p>
+    <input type="search" aria-label="Search messages">
+  </aside>
+</div>
+</body>
+</html>

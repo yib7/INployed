@@ -8,11 +8,15 @@ DOM, so the answer never rests on a page-state read:
 - `url_kind(url)`: "redirector" (`/safety/go/`, the hop an offsite Apply goes
   through), "signed_out" (the login page, a checkpoint, the authwall, the
   sign-up page), "job" (`/jobs/view/<id>`, the email-alert `/comm/jobs/view/`
-  and the two-pane `?currentJobId=<id>` views), "other" for the rest of
+  and the two-pane `?currentJobId=<id>` views; `/jobs/view/externalApply/` is
+  LinkedIn's hop to the company's site, no job page), "other" for the rest of
   LinkedIn, "" off LinkedIn (`is_linkedin`: linkedin.com and every
   `*.linkedin.com` host, the country subdomains too).
+- `job_id(url)`: the job a job page shows (its `/jobs/view/<id>` or
+  `currentJobId`), whatever tracking parameters the URL carries.
 - `read(page)`: one JS pass over the main frame (`View`): the offsite Apply
-  controls and the Easy Apply ones outside any dialog and the site's chrome,
+  controls and the Easy Apply ones outside any dialog, the site's chrome,
+  list items and the right rail,
   a dialog that holds form fields (LinkedIn's own Easy Apply form), a sign-in
   surface (a sign-in dialog or a visible password box), and the top card's
   "Applied" and "No longer accepting applications" marks (list cards and the
@@ -52,7 +56,9 @@ NO_APPLY_REASON = "no offsite Apply on the LinkedIn page"
 
 _SIGNED_OUT_PATHS = ("/login", "/uas/login", "/checkpoint", "/authwall", "/signup", "/reg")
 _REDIRECTOR = "/safety/go"
-_JOB_PATH = re.compile(r"^/(comm/)?jobs/view/[^/]+")
+# a job page; `/jobs/view/externalApply/<id>` is LinkedIn's hop to the company's site
+_JOB_PATH = re.compile(r"^/(comm/)?jobs/view/(?!externalApply(/|$))([^/?#]+)")
+_JOB_ID = re.compile(r"(\d{5,})$")
 
 # What the kinds of `decide` are, and which of them end the wait for a late
 # top card.
@@ -83,6 +89,22 @@ def url_kind(url: str) -> str:
     if path.startswith("/jobs/") and parse_qs(parts.query).get("currentJobId"):
         return "job"
     return "other"
+
+
+def job_id(url: str) -> str:
+    """The LinkedIn job a job page shows: the `/jobs/view/<id>` segment (a
+    slug's trailing number) or the two-pane view's `currentJobId`; "" when
+    the URL names none. Tracking parameters and slugs do not change it."""
+    parts = urlsplit(str(url or ""))
+    current = parse_qs(parts.query).get("currentJobId")
+    if current and current[0].strip():
+        return current[0].strip()
+    m = _JOB_PATH.match(parts.path or "")
+    if not m:
+        return ""
+    segment = m.group(3)
+    num = _JOB_ID.search(segment)
+    return num.group(1) if num else segment
 
 
 def signed_out_evidence(url: str) -> str:
@@ -165,7 +187,9 @@ def decide(view: View) -> Decision:
 # "Apply on company website" (text) or an aria-label naming the company's
 # website; Easy Apply by its words in the text or the aria-label ("Easy Apply
 # to <title> at <company>"). A control longer than 40 characters is a card
-# (a similar job's link carries "Easy Apply" inside a long text).
+# (a similar job's link carries "Easy Apply" inside a long text), and one in
+# a list item or the right rail belongs to another job or to the search's
+# filters (the two-pane view's "Easy Apply" filter pill).
 _READ_JS = r"""
 () => {
   const locatorFor = __LOCATOR__;
@@ -190,7 +214,7 @@ _READ_JS = r"""
   const sel = 'a[href], button, [role=button], input[type=button], input[type=submit]';
   for (const el of document.querySelectorAll(sel)) {
     if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
-    if (el.closest(DIALOG) || el.closest(CHROME)) continue;
+    if (el.closest(DIALOG) || el.closest(CHROME) || el.closest(CARD)) continue;
     const text = norm(el.innerText) || norm(el.value);
     const aria = norm(el.getAttribute('aria-label'));
     if (text.length > 40) continue;

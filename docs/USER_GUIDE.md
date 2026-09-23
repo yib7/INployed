@@ -401,8 +401,9 @@ yourself (see `scripts/run_scraper.sh`); unset, `ping_hc` is a no-op.
 
 Your credentials never cross providers: the Gemini and Bright Data secrets are
 stripped from the environment before the `claude` CLI is launched, the ATS master
-password lives in the Windows Credential Manager and only ever exits to the
-clipboard, and nothing is written to the repo. Secrets stay in your git-ignored
+password lives in the Windows Credential Manager and leaves it only to be typed into
+a password field on an application's site or copied to the clipboard when you ask,
+and nothing is written to the repo. Secrets stay in your git-ignored
 `.env`. The one credential that leaves this PC is the one you hand to **Set on VM**,
 and it goes to your own VM so its cron runs can authenticate.
 
@@ -554,9 +555,12 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
 3. Set the **master password** (the **Set…** button on the tab). It lives in the
    Windows Credential Manager. When a portal forces an account, the run signs up with
    your email and that password, records only the email and the method in a small
-   ledger, and on a later visit to the same portal signs in with it. The password is
-   typed into a real password field only, it is compared by length only after the
-   fill, and it never reaches a file, a log, the record or Jev.
+   ledger, and on a later visit to the same portal signs in with it. An application
+   form with a password box of its own (an account made inside the form) gets the same
+   password, and the job still stops at the submit step when submitting is off. The
+   password is typed on the application's own site only, into a real password field,
+   it is compared by length only after the fill, and it never reaches a file, a log,
+   the record or Jev. Keep it a password you use for job applications only.
 
 **When the run stops.** The run submits an application when every required field was
 filled from your answers and read back correctly and Jev picks out the submit button.
@@ -574,16 +578,19 @@ It stops only in these cases, with the window left open and the queue row saying
   payment, a dead page or an unknown page. A doubtful read of a posting, a form, a review
   page, a sign-in or a sign-up is acted on, and so is a doubtful code screen with a code
   box. That step's own checks still apply.
-- A page read as the application form has a password box (an account created inside the
-  form): you finish it by hand, and you are never asked to save a password as an answer.
+- An application form needs a password and no master password is set. An optional
+  password box is left blank.
 - A CAPTCHA challenge opens. The run never solves one. With the window visible it waits
   up to five minutes for you to solve it, then carries on; hidden, or unsolved, the job
   stops.
 
 A page of form boxes read as a sign-in or sign-up is treated as the form. A LinkedIn job
-page with an Apply button, no form and no submit button counts as the posting until a
-form has been filled, unless Jev is sure it shows LinkedIn signed out, a sign-up, a
-closed posting, a check, a payment or a confirmation.
+page with an Apply button, no form and no submit button counts as the posting until the
+application's answers have gone on a page, unless Jev is sure it shows LinkedIn signed
+out, a sign-up, a closed posting, a check, a payment or a confirmation. A page of a
+sign-up's own boxes and a password makes an account; filling it does not count as filling
+the application, though with submitting off an Apply button after it still goes to the
+submit step, in case it is the application's last page.
 
 Sign-in screens are handled on the application's own site only: the address and the
 password on one screen, or the address first and the password or the create-account form
@@ -591,8 +598,20 @@ on the next (iCIMS, Workday). Other boxes on a sign-up form are filled from your
 Only the submit step sends an application. The sign-in and code steps act only on a screen
 of account boxes (a password box or a lone email box, and no resume box) or a code box, and
 they never click a button that reads as sending one ("Submit application", "Apply",
-"Complete application", "Create account and apply"). On a screen of the address and the
-password alone, "Sign in to apply" and "Send code" are sign-in buttons.
+"Complete application", "Create account and apply"). A sign-up screen that also asks what
+only an application asks (a profile link, work authorization, a written answer) is the
+form: it is filled and checked, the password included, and its send-shaped button goes to
+the submit step. When submitting is on and the page after that click is a form or a
+sign-in instead of a confirmation, the job stops for you to check: the click may have
+sent the application or only made the account, and the run cannot tell which. With a
+sign-up's own boxes alone (the
+address, the password, a name, a phone, the terms), such a button stops the job for you to
+sign in, since the run cannot tell there whether it starts the application or sends it. On
+a screen of the address and the password alone, "Sign in to apply" and "Send code" are
+sign-in buttons. The master password goes only into a box named a password (never a
+passcode, a one-time code, an ID number or a security answer) whose form stays on the
+application's sites; if the page tries to post it anywhere else, the run blocks the post
+and the job stops with nothing sent.
 Controls inside another site's frame (a CAPTCHA widget, a chat or cookie widget) are
 never clicked or filled, and the run goes on without them. You finish a stopped job by
 hand and **Mark applied** or **Re-queue** it. The four settings under **Settings →

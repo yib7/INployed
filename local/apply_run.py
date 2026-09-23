@@ -15,7 +15,8 @@ and an eight-minute wall clock: `apply_form.extract` -> one Jev request
 the design (section 3.5):
 
     job_posting            click the Apply entry, follow a popup
-    application_form       plan, fill, verify, then advance, or the submit gate
+    application_form       plan, fill, verify, type the keyring password into a
+                           password box, then advance, or the submit gate
     review_page            fill and verify editable controls, then submit gate
     login_wall / signup    fill the account email and hidden keyring password
     code_gate              read the emailed code in a separate inbox tab
@@ -42,6 +43,7 @@ import os
 import re
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -146,6 +148,11 @@ _UNSURE_ACTS = frozenset(("job_posting", "application_form", "review_page",
 _LINKEDIN_POSTING_KEEPS = frozenset(("login_wall", "signup_form", "confirmation",
                                      "error_or_dead", "captcha_or_bot_check",
                                      "payment_request"))
+# What the page after a submit click on an account page ("Create account and
+# apply") may read as when the click only made the account and opened the
+# application (`_JobRun._after_submit`): the job then waits for the user,
+# since a sent application's page can look the same.
+_OPENED_BY_ACCOUNT = frozenset(("application_form", "login_wall", "signup_form"))
 _APPLY_WORD = re.compile(r"\bapply\b", re.I)
 _SUBMIT_WORD = re.compile(r"\bsubmit\b", re.I)
 
@@ -214,6 +221,37 @@ def _is_email_box(field) -> bool:
                 and apply_facts.quick_map(field.label, field.id_or_name, field.type) == "email"))
 
 
+_PASSWORD_NAME = re.compile(r"pass\s*word|passwd|\bpwd\b", re.I)
+# A password box's words when it makes the password rather than signs in with it.
+_NEW_PASSWORD = re.compile(r"\b(create|new|choose|set|confirm|re-?enter|repeat|verify)\b"
+                           r"|new[_-]?pass|confirm[_-]?pass", re.I)
+_CODE_PASSWORD = re.compile(r"one[\s_-]*time|\botp\b|verification\s*code|temporary|pass\s*code",
+                            re.I)
+
+
+def _not_an_account_password(field) -> bool:
+    """A masked box on an account screen that is no place for the master
+    password: a sensitive question (`apply_judge.is_sensitive_field`) or a
+    one-time or verification code. The screen's other masked boxes are its
+    passwords, labelled or not."""
+    text = f"{field.label or ''} {field.id_or_name or ''}"
+    return (apply_judge.is_sensitive_field(field.label, field.id_or_name)
+            or bool(_CODE_PASSWORD.search(text)))
+
+
+def _names_password(field) -> bool:
+    """A box the master password may go into on a form: its autocomplete is
+    a password's, or its label or id says password and not a one-time or
+    verification one. A masked passcode, security answer or ID number is a
+    password-shaped box too (`apply_form.is_password_field` matches `pass`
+    and `secret`), and none of them takes it."""
+    if _not_an_account_password(field):
+        return False
+    if str(field.autocomplete or "").lower() in apply_form.PASSWORD_AUTOCOMPLETE:
+        return True
+    return bool(_PASSWORD_NAME.search(f"{field.label or ''} {field.id_or_name or ''}"))
+
+
 def _email_first(digest) -> bool:
     """The first screen of a two-step sign-in: an address box and nothing
     else but checkboxes (remember me, the terms)."""
@@ -226,6 +264,34 @@ def _email_first(digest) -> bool:
     return has_email
 
 
+# What a sign-up screen asks besides the address and the password: the name,
+# the phone, the address, the terms. A screen that asks anything else carries
+# the application (`_Accounts._fill`).
+_ACCOUNT_FACTS = frozenset((
+    "full_name", "first_name", "last_name", "email", "phone", "location",
+    "address_street", "address_city", "address_state", "address_zip", "address_country",
+    "consent_attest"))
+
+
+def _password_boxes(digest) -> list:
+    return [f for f in digest.fields
+            if apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete)]
+
+
+def _fills_the_application(digest, plan: FillPlan, filled) -> bool:
+    """Did this page's fill put the application's own answers on it? A page
+    with a password box whose boxes a sign-up asks for (a name, the address,
+    a phone: `_ACCOUNT_FACTS`) makes an account; an application is filled
+    only once a page carries something else (a resume, a profile link, a
+    written answer). A page without a password box counts whatever it held."""
+    if not filled:
+        return False
+    if not _password_boxes(digest):
+        return True
+    done = {f.n for f in filled}
+    return any(pf.n in done and pf.fact_key not in _ACCOUNT_FACTS for pf in plan.fields)
+
+
 def _credential_form(digest) -> bool:
     """A sign-in or sign-up screen by its boxes: a password box, or the
     address box of a two-step sign-in, and no file box (an account screen
@@ -234,8 +300,73 @@ def _credential_form(digest) -> bool:
     a screen of this shape reaches `_Accounts`' typing and clicking."""
     if any(f.type == "file" for f in digest.fields):
         return False
-    return (any(apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete)
-                for f in digest.fields) or _email_first(digest))
+    return bool(_password_boxes(digest)) or _email_first(digest)
+
+
+class _NavGuard:
+    """While the credentials are on the page, the page and the frames that
+    hold them (`frames`, by id) may not navigate off the application's sites:
+    a form that posts there is stopped and the host lands in `blocked`. Every
+    other request goes through (a fetch, a popup, another frame), so the
+    site's own bot check, sign-in API and scripts work as they would for a
+    person; the password is only ever typed on the application's site
+    (`_password_ok`), which is the protection that matters. `before` names
+    the page as it was when the guard went on (a stopped navigation leaves
+    the tab on a browser error page)."""
+
+    def __init__(self, run, page):
+        self.run = run
+        self.page = page
+        self.frames: set[int] = set()   # the page's main frame joins at `start`
+        self.blocked: list[str] = []
+        self.posted = False             # a stopped navigation carried a form post
+        self.before = ""
+        self._on = False
+
+    def _route(self, route, request) -> None:
+        target_host = _host(request.url)
+        try:
+            frame_id = id(request.frame)
+        except Exception:       # noqa: BLE001  (a service-worker request has no frame)
+            frame_id = None
+        if (target_host and request.is_navigation_request() and frame_id in self.frames
+                and not self.run._allowed_site(target_host)):
+            self.blocked.append(target_host)
+            self.posted = self.posted or request.method.upper() == "POST"
+            route.abort()
+            return
+        route.fallback()        # on to any other handler, then the network
+
+    def start(self) -> None:
+        if not self._on:
+            self.frames.add(id(self.page.main_frame))
+            try:
+                self.before = f"{self.page.url} | {self.page.title()}"
+            except Exception:       # noqa: BLE001  (a page mid-navigation has no title yet)
+                self.before = str(self.page.url)
+            self.page.route("**/*", self._route)
+            self._on = True
+
+    def stop(self) -> None:
+        if self._on:
+            self._on = False
+            try:
+                self.page.unroute("**/*", self._route)
+            except Exception:       # noqa: BLE001  (the page is gone, and its routes with it)
+                pass
+
+
+class _AsForm(Exception):
+    """Raised by the account step, before anything is typed, for an account
+    screen that carries the application (a question only an application
+    asks, or a written answer): the loop hands the screen to the form step,
+    whose submit gate is the only sender."""
+
+    def __init__(self, digest, answers: dict, plan: FillPlan):
+        super().__init__("account screen that sends the application")
+        self.digest = digest
+        self.answers = answers
+        self.plan = plan
 
 
 class _Accounts:
@@ -302,9 +433,10 @@ class _Accounts:
             if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
                 return False
             return self.signup(page, fresh, fresh.url_host or _host(page.url))
-        except _Parked:
+        except (_Parked, _AsForm):
             # the loop's own park (a host check, an unanswerable box): the
-            # reason names what was refused and the loop ends the job with it
+            # reason names what was refused and the loop ends the job with
+            # it; a sign-up that sends the application goes to the form step
             raise
         except Exception:  # noqa: BLE001  (account details stay out of errors)
             return False
@@ -360,30 +492,8 @@ class _Accounts:
         self.steps[site] = self.steps.get(site, 0) + 1
         if self.steps[site] > self.MAX_STEPS_PER_SITE:
             return False
-        blocked: list[str] = []
         frames = apply_form.frames(page)
-        guarded: set[int] = {id(page.main_frame)}
-
-        def _guard(route, request) -> None:
-            """While the credentials are on the page, the page and the frames
-            that hold them may not navigate off the application's sites: a
-            sign-in form that posts there parks the job. Every other request
-            goes through (a fetch, a popup, another frame), so the site's own
-            bot check, sign-in API and scripts work as they would for a
-            person; the password is only ever typed on the application's
-            site (`_password_ok`), which is the protection that matters."""
-            target_host = _host(request.url)
-            try:
-                frame_id = id(request.frame)
-            except Exception:       # noqa: BLE001  (a service-worker request has no frame)
-                frame_id = None
-            if (target_host and request.is_navigation_request() and frame_id in guarded
-                    and not self.run._allowed_site(target_host)):
-                blocked.append(target_host)
-                route.abort()
-                return
-            route.continue_()
-
+        guard = _NavGuard(self.run, page)
         try:
             answers = self.run._judge_page(digest)
             plan = apply_judge.plan(digest, self.run.catalog, answers)
@@ -395,23 +505,32 @@ class _Accounts:
             if advance is None or advance[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
                 return False
             by_n = {pf.n: pf for pf in plan.fields}
-            passwords, emails, others = [], [], []
+            passwords, emails, others, drafts = [], [], [], []
             password_hosts = {_host(page.url)}
             for field in digest.fields:
                 loc = apply_form.resolve(page, field.locator).first
                 idx = int(field.locator[0])
-                if loc.get_attribute("type") == "password":
+                if (loc.get_attribute("type") or "").lower() == "password":
+                    if _not_an_account_password(field):
+                        # a masked SSN, ID number or one-time code on the
+                        # screen: the master password never goes there
+                        if field.required:
+                            raise _Parked("needs_human", apply_judge.sensitive_reason(
+                                field.label or "a masked box"))
+                        continue
                     passwords.append(loc)
                     if 0 <= idx < len(frames):
-                        guarded.add(id(frames[idx]))
+                        guard.frames.add(id(frames[idx]))
                         password_hosts.add(_host(self.run._frame_url(frames, idx)))
                 elif _is_email_box(field):
                     emails.append(loc)
                     if 0 <= idx < len(frames):
-                        guarded.add(id(frames[idx]))
+                        guard.frames.add(id(frames[idx]))
                 else:
                     pf = by_n.get(field.n)
-                    if pf is not None and pf.action in ("fill", "select", "upload") \
+                    if pf is not None and pf.action == "generate":
+                        drafts.append(pf)
+                    elif pf is not None and pf.action in ("fill", "select", "upload") \
                             and (pf.value or pf.option):
                         others.append(pf)
                     elif field.required and apply_judge.is_sensitive_field(field.label,
@@ -424,8 +543,23 @@ class _Accounts:
                                       f"required field without an answer: {field.label}")
             if not passwords and not emails:
                 return False
-            if _sends_application(digest, advance[0], account_only=not others):
-                # nothing is typed: the click would send the application past the gate
+            # A screen that asks what only an application asks (a profile
+            # link, work authorization, a written answer) is the form: the
+            # form step writes and verifies the answers, types the password,
+            # and clicks its way on or stops at the submit gate.
+            carries = bool(drafts) or any(pf.fact_key not in _ACCOUNT_FACTS for pf in others)
+            sends = _sends_application(digest, advance[0], account_only=not others)
+            if carries:
+                if sends:
+                    # the button is the page's submit, never an advance to click
+                    plan.buttons.setdefault("submit", advance)
+                raise _AsForm(digest, answers, plan)
+            if sends:
+                # nothing is typed: the click would send the application past
+                # the gate. With the boxes of a sign-up alone (a name, a phone,
+                # the terms) the gate cannot tell a button that starts the
+                # application from one that sends it (a wrong "submitted" loses
+                # the job), so the human signs in.
                 text = next((b.text for b in digest.buttons if b.n == advance[0]), "")
                 raise _Parked("needs_human", f"the sign-in's button reads as sending the "
                                              f"application ({text})", LOGIN_NOTE)
@@ -445,7 +579,7 @@ class _Accounts:
                 if (site, kind) in self.password_typed:
                     raise _Parked("needs_human", f"the {kind} on {host} did not take the "
                                                  "master password", LOGIN_NOTE)
-            page.route("**/*", _guard)
+            guard.start()
             try:
                 for loc in emails:
                     try:
@@ -468,15 +602,15 @@ class _Accounts:
                 result = apply_fill.click(page, digest, advance[0],
                                           timeout_s=self._timeout() / 1000)
             finally:
-                page.unroute("**/*", _guard)
+                guard.stop()
             if signup and passwords and result.clicked:
                 # the click landed, so the account may already exist whatever
                 # the page did next; a ledger entry for an account that was
                 # never created costs one failed login, a missing one costs a
                 # second signup with the same address
                 ats_accounts.record(host, email)
-            if blocked:
-                raise _Parked("needs_human", f"left the allowed sites: {blocked[0]}", before)
+            if guard.blocked:
+                raise _Parked("needs_human", f"left the allowed sites: {guard.blocked[0]}", before)
             if emails:
                 self.email_sites.add(site)
             if not result.changed:
@@ -488,7 +622,7 @@ class _Accounts:
             # form, a code gate, or the same screen with an error (which the
             # per-site step cap ends)
             return True
-        except _Parked:
+        except (_Parked, _AsForm):
             raise
         except Exception:  # noqa: BLE001  (Playwright may include filled values)
             return False
@@ -760,14 +894,18 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
     failing reason): the setting, the plan's park reason, a required field
     without an answer (any action other than fill / select / upload), a
     required field unverified, the submit button's confidence. The
-    prohibited and captcha flags are recorded only (`apply_judge`'s rule)."""
+    prohibited and captcha flags are recorded only (`apply_judge`'s rule).
+    A password box still marked `PASSWORD_ACTION` holds the master password:
+    `_JobRun._fill_passwords` typed it and checked its length in the page,
+    and a required box it could not fill parked the job before the gate. The
+    judge never sees it, so it has no verification row."""
     if not settings.get("auto_apply_submit", True):
         return False, "auto_apply_submit is off"
     if plan.park_reason:
         return False, plan.park_reason
     by_n = {v.n: v for v in verification}
     for pf in plan.fields:
-        if not pf.required:
+        if not pf.required or pf.action == apply_judge.PASSWORD_ACTION:
             continue
         if pf.action not in _ACTED:
             # a skip, or a `generate` nobody resolved: the field holds nothing
@@ -952,7 +1090,10 @@ class _JobRun:
         self.pages: list[dict] = []
         self.missing: list[dict] = []
         self.submit_clicked = False
-        self.form_filled = False      # an application page got a value (`_fill_and_verify`)
+        self.form_filled = False      # the application's answers went on a page (`_fills_the_application`)
+        self.form_password_sites: set[str] = set()  # sites whose form took the password
+        self.form_had_password = False  # a form page carried a password box, typed or not
+        self.handed_off = False         # the page at the gate came from the account step
         self.gen_budget = GENERATE_MAX
         self.catalog: apply_facts.FactCatalog | None = None
         self.allowed: set[str] = set()
@@ -1219,18 +1360,31 @@ class _JobRun:
     def _account_step(self, state: str, digest: apply_form.FormDigest) -> None:
         """A sign-in or sign-up screen goes to the accounts hook when the
         master password may be typed on its site (`_password_ok`); LinkedIn
-        signed out, or a sign-in on some other site, parks for the human."""
+        signed out, or a sign-in on some other site, parks for the human. A
+        screen the hook hands back (`_AsForm`: it carries the application)
+        goes to the form step, and its submit is judged as a sign-up's
+        (`_after_submit`'s `handoff`)."""
         host = digest.url_host or _host(self.page.url)
         if not self._password_ok(host):
             if _site(host) == _site(LINKEDIN_HOSTS[0]):
                 raise _Parked("needs_human", "LinkedIn is signed out", LINKEDIN_LOGIN_NOTE)
             raise _Parked("needs_human", f"a sign-in on {host}, outside the application site",
                           LOGIN_NOTE)
-        if state == "login_wall":
-            if not self.accounts.login(self.page, digest, host):
-                raise _Parked("needs_human", "login wall", LOGIN_NOTE)
-        elif not self.accounts.signup(self.page, digest, host):
-            raise _Parked("needs_human", "account signup needed", LOGIN_NOTE)
+        try:
+            if state == "login_wall":
+                if not self.accounts.login(self.page, digest, host):
+                    raise _Parked("needs_human", "login wall", LOGIN_NOTE)
+            elif not self.accounts.signup(self.page, digest, host):
+                raise _Parked("needs_human", "account signup needed", LOGIN_NOTE)
+        except _AsForm as form:
+            self.log.info("job %s: the account screen carries the application; it is the "
+                          "form", self.job_id)
+            self.handed_off = True
+            try:
+                self._application_form(form.digest, form.answers, form.plan, self.pages[-1],
+                                       completed=True)
+            finally:
+                self.handed_off = False
 
     def _human_check_showing(self) -> bool:
         """Is a bot-check challenge open on the page: a frame from a CAPTCHA
@@ -1351,8 +1505,13 @@ class _JobRun:
         form's own Apply button is a submit, and clicking it before the fill
         would send an empty form). A fieldless posting keeps the text match.
         After a form was filled, an Apply button sends that form: the page
-        goes the form's way, to the submit gate."""
-        if self.form_filled and apply_n is None:
+        goes the form's way, to the submit gate. In park mode so does one
+        after a form page with a password box, typed or left blank: a page of
+        a sign-up's boxes does not count as the filled application
+        (`_fills_the_application`), and the Apply after it may be the review
+        of an application that asked for no more."""
+        park_mode = not self.r.settings.get("auto_apply_submit", True)
+        if apply_n is None and (self.form_filled or (park_mode and self.form_had_password)):
             self.log.info("job %s: a posting read after a filled form; treating it as the "
                           "form's next page", self.job_id)
             self._application_form(digest, answers, plan, rec)
@@ -1427,9 +1586,21 @@ class _JobRun:
         apply_fill.settle(page, CLICK_TIMEOUT_S)
 
     def _application_form(self, digest: apply_form.FormDigest, answers: dict,
-                          plan: FillPlan, rec: dict) -> None:
-        plan = self._complete_option_plan(digest, answers, plan, rec)
-        verification = self._fill_and_verify(digest, plan, rec)
+                          plan: FillPlan, rec: dict, *, completed: bool = False) -> None:
+        """Fill and verify the page, then click its advance or go to the
+        submit gate. `completed`: the plan already has its option picks."""
+        if not completed:
+            plan = self._complete_option_plan(digest, answers, plan, rec)
+        with self._password_guard() as guard:
+            verification = self._fill_and_verify(digest, plan, rec)
+            self._fill_passwords(digest, plan, rec, guard)
+            self._form_buttons(digest, plan, verification, rec)
+
+    def _form_buttons(self, digest: apply_form.FormDigest, plan: FillPlan,
+                      verification: list[VerifyResult], rec: dict) -> None:
+        """The filled page's way on: a submit role, a submit-shaped advance
+        (a final-shaped one in park mode) or a form's own Apply goes to the
+        submit gate; otherwise a confident advance is clicked."""
         advance = plan.buttons.get("advance")
         submit = plan.buttons.get("submit")
         park_mode = not self.r.settings.get("auto_apply_submit", True)
@@ -1476,7 +1647,7 @@ class _JobRun:
         if plan.park_reason:
             raise _Parked("needs_human", plan.park_reason)
         filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock)
-        if filled:
+        if _fills_the_application(digest, plan, filled):
             self.form_filled = True
         drafts = _drafts(plan)
         verification = self._verify(filled, drafts)
@@ -1492,8 +1663,138 @@ class _JobRun:
                      plan: FillPlan, rec: dict) -> None:
         """Fill and verify editable review controls before the submit gate."""
         plan = self._complete_option_plan(digest, answers, plan, rec)
-        verification = self._fill_and_verify(digest, plan, rec)
-        self._submit_gate(digest, plan, verification, rec)
+        with self._password_guard() as guard:
+            verification = self._fill_and_verify(digest, plan, rec)
+            self._fill_passwords(digest, plan, rec, guard)
+            self._submit_gate(digest, plan, verification, rec)
+
+    @contextmanager
+    def _password_guard(self):
+        """The navigation guard (`_NavGuard`) for one form page. It is armed
+        when `_fill_passwords` types the master password and removed when the
+        page's step ends (a click, the submit gate, a park), before the
+        window is left to the user. A navigation it stopped before any submit
+        parks the job with the host it was headed for, and so does a form
+        post it stopped after the submit click: that post was the send, and
+        nothing went out. Any other navigation stopped after the submit click
+        keeps the job submitted (a send may have gone out before the page
+        moved on, and a second one must not) and says so."""
+        guard = _NavGuard(self, self.page)
+        try:
+            yield guard
+        except _Parked as p:
+            if guard.blocked and self.submit_clicked and guard.posted:
+                self.submit_clicked = False
+                raise _Parked("needs_human", f"the form posts to {guard.blocked[0]}, outside "
+                                             f"the allowed sites; the run stopped it and "
+                                             f"nothing was sent", guard.before) from None
+            if guard.blocked and not self.submit_clicked:
+                raise _Parked("needs_human", f"left the allowed sites: {guard.blocked[0]}",
+                              guard.before) from None
+            if guard.blocked and p.status == "submitted":
+                raise _Parked("submitted", f"submitted (unconfirmed): after the submit click "
+                                           f"the run stopped the page going to "
+                                           f"{guard.blocked[0]}; check that the application "
+                                           f"went through", guard.before) from None
+            raise
+        finally:
+            guard.stop()
+        if guard.blocked and guard.posted:
+            self.submit_clicked = False
+            raise _Parked("needs_human", f"the form posts to {guard.blocked[0]}, outside the "
+                                         f"allowed sites; the run stopped it and nothing was "
+                                         f"sent", guard.before)
+        if guard.blocked and not self.submit_clicked:
+            raise _Parked("needs_human", f"left the allowed sites: {guard.blocked[0]}",
+                          guard.before)
+
+    def _fill_passwords(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict,
+                        guard: _NavGuard) -> None:
+        """The master password in the page's password boxes
+        (`apply_judge.PASSWORD_ACTION`): an account made inside the
+        application. The password is for job applications only (the user's
+        rule, 2026-09-22), so it goes into a form as it does into a sign-up,
+        and the submit gate still decides the send. It is typed last, once
+        the other boxes are filled and verified, with `guard` armed, and only
+        into a box that is a real password input, is named a password (not a
+        passcode, a passport number or a security answer), sits on the
+        application's site (`_password_ok` for the page and the box's frame)
+        and belongs to no form that posts off the allowed sites. It never
+        reaches the judge or the record. A required box that cannot take it
+        parks the job; an optional one is left blank. It is typed on one form
+        page per site: a second page asking for it parks, as the account
+        step's second password screen does. A page that makes an account (a
+        new-password box by its autocomplete or its label, or a second box to
+        confirm it) puts it in the
+        ledger under the host of the box's frame, unless one is there: once
+        the page is sent, by the run or by the user, it exists."""
+        boxes = [pf for pf in plan.fields if pf.action == apply_judge.PASSWORD_ACTION]
+        if not boxes:
+            return
+        self.form_had_password = True
+        host = digest.url_host or _host(self.page.url)
+        if _site(host) in self.form_password_sites:
+            # a second form page asking for the password on the same site is
+            # the first one rejected (a wrong password): typing it again only
+            # moves the account toward a lockout
+            raise _Parked("needs_human", f"the form on {host} asked for the master password "
+                                         "again", LOGIN_NOTE)
+        fields = {f.n: f for f in digest.fields}
+        frames = apply_form.frames(self.page)
+        stored = ats_accounts.has_password()
+        account_host = ""
+        typed: list = []
+        for pf in boxes:
+            f = fields.get(pf.n)
+            idx = int(pf.locator[0])
+            box_host = _host(self._frame_url(frames, idx)) if 0 <= idx < len(frames) else ""
+            outside = sorted(h for h in {_host(self.page.url), box_host or _host(self.page.url)}
+                             if not self._password_ok(h))
+            loc, kind, posts_to = None, "", ""
+            try:
+                loc = apply_form.resolve(self.page, pf.locator).first
+                kind, action = loc.evaluate(
+                    "el => [el.type || '', el.form && el.form.getAttribute('action') "
+                    "? el.form.action : '']", timeout=5_000)
+                if urlsplit(str(action or "")).scheme in ("http", "https"):
+                    posts_to = _host(action)    # a `javascript:` action is no destination
+            except Exception:       # noqa: BLE001  (a box or frame that went away takes nothing)
+                loc = None
+            if not stored:
+                why = "the form asks for a password and no master password is stored"
+            elif outside:
+                why = f"a password box on {outside[0]}, outside the application site"
+            elif loc is None:
+                why = f"the password box ({pf.label}) went away"
+            elif str(kind).lower() != "password" or f is None or not _names_password(f):
+                why = f"{pf.label or 'a masked box'} is not a password box for an account"
+            elif posts_to and not self._allowed_site(posts_to):
+                why = f"the password box's form posts to {posts_to}, outside the allowed sites"
+            else:
+                if 0 <= idx < len(frames):
+                    guard.frames.add(id(frames[idx]))
+                guard.start()
+                if ats_accounts.fill_password(self.page, loc):
+                    account_host = account_host or box_host or host
+                    typed.append(f)
+                    rec["filled"].append({"n": pf.n, "label": pf.label, "value": "",
+                                          "type": "other", "id_or_name": "account_password",
+                                          "upload": False, "hidden": True})
+                    continue
+                why = f"the password box ({pf.label}) did not take the master password"
+            if pf.required:
+                raise _Parked("needs_human", why)
+            pf.action = "skip"
+        if account_host:
+            self.form_password_sites.add(_site(host))
+            # a page that makes an account asks for a new password or its
+            # confirmation; a sign-in read as the form makes none
+            makes = len(typed) > 1 or any(
+                str(f.autocomplete or "").lower() == "new-password"
+                or _NEW_PASSWORD.search(f"{f.label or ''} {f.id_or_name or ''}") for f in typed)
+            email = self.catalog.value("email")
+            if makes and email and not ats_accounts.lookup(account_host):
+                ats_accounts.record(account_host, email)
 
     def _resolve_generation(self, digest: apply_form.FormDigest, plan: FillPlan,
                             rec: dict | None = None) -> None:
@@ -1658,9 +1959,29 @@ class _JobRun:
             raise _Parked("ready_to_submit", "submit did not register", SUBMIT_FAILED_NOTE)
         self.log.info("job %s: SUBMIT CLICKED", self.job_id)
         rec["clicked"].append("SUBMIT CLICKED")
-        self._after_submit()
+        text = next((b.text for b in digest.buttons if b.n == submit_n), "")
+        typed = [pf for pf in plan.fields if pf.action == apply_judge.PASSWORD_ACTION]
+        # an account page: the master password went in, and the page needed
+        # it (a required box) or its button names the account; an optional
+        # save-your-profile password on an application is no account page
+        account = bool(typed) and (any(pf.required for pf in typed)
+                                   or bool(_ACCOUNT_STEP_WORDS.search(text)
+                                           or _SIGN_IN_WORDS.search(text)))
+        self._after_submit(account=account, handoff=self.handed_off)
 
-    def _after_submit(self) -> None:
+    def _after_submit(self, *, account: bool = False, handoff: bool = False) -> None:
+        """Read the page after the submit click: a confirmation (or a code
+        gate, then a confirmation) finishes the job submitted, and anything
+        else submitted and unconfirmed, so the queue never sends it twice.
+
+        `account`: the page was an account page (a "Create account and
+        apply"). A confident form, sign-in or sign-up after that click
+        (`_OPENED_BY_ACCOUNT`) may be the application the account opened, or
+        a sent one's page reset for the signed-in user: the run can tell
+        neither "submitted" nor "go on and send", so the job waits for the
+        user with the page open. `handoff`: the page came from the account
+        step (`_AsForm`), whose screen is a sign-up first; anything after it
+        but a confirmation waits for the user the same way."""
         digest = self._post_submit_digest()
         answers = self._judge_page(digest)
         state, conf = apply_judge.read_page_state(answers)
@@ -1668,7 +1989,10 @@ class _JobRun:
         self.log.info("job %s after submit: %s (%.2f)", self.job_id, state, conf)
         if state == "confirmation" and conf >= apply_judge.PAGE_STATE_MIN_CONF:
             raise _Parked("submitted", "confirmation page")
-        if state == "code_gate" and conf >= apply_judge.PAGE_STATE_MIN_CONF:
+        sure = conf >= apply_judge.PAGE_STATE_MIN_CONF
+        if account and state in _OPENED_BY_ACCOUNT and sure:
+            raise self._maybe_only_the_account(state, conf)
+        if state == "code_gate" and sure:
             plan = apply_judge.plan(digest, self.catalog, answers)
             rec["flags"] = dict(plan.flags)
             self._code_gate(digest, plan, rec)
@@ -1677,8 +2001,17 @@ class _JobRun:
             self._new_page_record(state, conf)
             if state == "confirmation" and conf >= apply_judge.PAGE_STATE_MIN_CONF:
                 raise _Parked("submitted", "confirmation page after the emailed code")
+        if handoff:
+            raise self._maybe_only_the_account(state, conf)
         raise _Parked("submitted", f"submitted (unconfirmed): the page after submit reads "
                                    f"as {state} ({conf:.2f})")
+
+    @staticmethod
+    def _maybe_only_the_account(state: str, conf: float) -> _Parked:
+        return _Parked("needs_human", f"after the account page's submit the page reads as "
+                                      f"{state} ({conf:.2f}): the click may only have made "
+                                      f"the account; check whether the application went "
+                                      f"through, then Re-queue or Mark applied")
 
     def _post_submit_digest(self) -> apply_form.FormDigest:
         """Validate a post-submit destination before reading or acting on it.

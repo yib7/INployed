@@ -286,6 +286,71 @@ def test_linkedin_apply_link_is_a_button_in_document_order(browser_page, linkedi
     assert apply_form.resolve(browser_page, apply[0].locator).count() == 1
 
 
+def test_the_page_text_leads_with_the_main_landmark(linkedin):
+    # the judge reads the text's first characters; on the 2026-09-22 run
+    # LinkedIn's skip links, header and upsell took 597 of its 600 and the
+    # posting read as a form
+    assert linkedin.text.startswith("Analytics Engineer")
+    assert linkedin.text.count("Own the analytics models") == 1
+    assert linkedin.text.rstrip().endswith("Home Me")      # the rest follows, nothing dropped
+
+
+def test_a_banner_above_main_keeps_its_place_and_the_site_chrome_moves_last(browser_page):
+    browser_page.set_content("""
+      <body><header><nav>Home Jobs Messaging</nav></header>
+        <div>This job is no longer accepting applications</div>
+        <main><h1>Analyst</h1><p>About the job</p></main>
+        <footer>Privacy</footer></body>""")
+    lines = apply_form.extract(browser_page).text.splitlines()
+    assert lines[0] == "This job is no longer accepting applications"
+    assert lines[1] == "Analyst"
+    assert lines[-1] == "Home Jobs Messaging" and "Privacy" in lines
+
+
+def test_linkedins_real_page_prefix_leaves_the_posting_inside_the_headline(browser_page):
+    # the text above "About the job" on the 2026-09-22 page: skip links, the
+    # header, the upsell and the top card, 597 characters
+    browser_page.set_content("""
+      <body><div>0 notifications<br>Skip to main content<br>Skip to primary content<br>
+        Skip to aside<br>Skip to footer</div>
+      <header><nav>Home<br>My Network<br>Jobs<br>Messaging<br>21<br>Notifications<br>
+        <button>Me</button><br><button>For Business</button></nav>
+        <p><a href="#">Reactivate Premium: 50% Off</a></p></header>
+      <main><p>GTS</p><p>Quantitative Trader - Overnight Session / Asia Trading, ETF Team</p>
+        <p>New York, NY - Reposted 2 days ago - Over 100 people clicked apply</p>
+        <p>Promoted by hirer - Responses managed off LinkedIn</p>
+        <div>Remote<br>Full-time<br><a aria-label="Apply on company website" href="#">Apply</a><br>
+          <button>Saved</button><br>Use AI to assess how you fit</div>
+        <p>Get AI-powered advice on this job and more exclusive features with Premium.
+          Reactivate Premium: 50% Off</p>
+        <p><button>Show match details</button></p><p><button>Tailor my resume</button></p>
+        <p><button>Help me stand out</button></p>
+        <h2>About the job</h2><p>The ETF trading group is seeking a Quantitative Trader.</p>
+      </main></body>""")
+    body = browser_page.evaluate("document.body.innerText")
+    assert "About the job" not in body[:600]           # what the judge saw before
+    text = apply_form.extract(browser_page).text
+    assert "About the job" in text[:600]         # the header moved last, on its own
+    assert "The ETF trading group" in text[:apply_judge.HEADLINE_CHARS]
+    assert text.rstrip().endswith("Reactivate Premium: 50% Off")
+
+
+def test_site_chrome_below_main_never_cuts_text_out_of_a_banner(browser_page):
+    browser_page.set_content("""
+      <body><div>Privacy notice: this posting closes Friday</div>
+        <main><h1>Analyst</h1></main><footer>Privacy</footer></body>""")
+    lines = apply_form.extract(browser_page).text.splitlines()
+    assert lines[:3] == ["Privacy notice: this posting closes Friday", "Analyst", "Privacy"]
+
+
+def test_without_a_visible_main_the_text_keeps_page_order(browser_page):
+    browser_page.set_content("""
+      <body><header>Site menu</header><main hidden>Old step</main>
+        <p>Apply for Analyst</p></body>""")
+    d = apply_form.extract(browser_page)
+    assert d.text.startswith("Site menu") and "Old step" not in d.text
+
+
 def test_a_form_or_dialog_keeps_the_controls_in_its_own_header_and_footer(browser_page):
     browser_page.set_content("""
       <body>

@@ -109,7 +109,8 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 #   INBOX_MIN 0.50             the ATS's code mail from_site 0.85 / has_code 0.98; the
 #                              decoys 0.06 to 0.12 (another ATS's code mail 0.12).
 
-HEADLINE_CHARS = 600            # of the page text sent as `page.headline_text`
+HEADLINE_CHARS = 1200           # of the page text sent as `page.headline_text` (600
+                                # until 2026-09-22: LinkedIn's posting began past it)
 HELP_CAP = 200                  # per-field help text sent
 OPTIONS_CAP = 40                # per-field options sent
 
@@ -465,6 +466,14 @@ def sensitive_reason(label: str) -> str:
     return f"asks for {label}, which auto-apply never fills; finish it by hand"
 
 
+# A required password box on a page handled as the application form: an
+# account created inside the form. The master password is typed only on a
+# screen of account boxes alone (`apply_run._credential_form`), and no answer
+# is asked of the user, since the plan never types one.
+PASSWORD_IN_FORM_REASON = ("a password box on a page read as the application form; "
+                           "finish it by hand")
+
+
 _DATE_TOKENS = frozenset(("date", "dated", "today"))
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -556,7 +565,11 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                 else:
                     pf.option = opt
         out.fields.append(pf)
-        if pf.action == "skip" and is_sensitive_field(f.label, f.id_or_name):
+        if pf.action == "skip" and is_password_field(f.type, f.id_or_name, f.label,
+                                                     f.autocomplete):
+            if f.required and not sensitive_reason_:
+                sensitive_reason_ = PASSWORD_IN_FORM_REASON
+        elif pf.action == "skip" and is_sensitive_field(f.label, f.id_or_name):
             # no answer is asked for: one would never be used (the loop the
             # SP8 review found), and the user is not nudged to store an SSN
             if f.required and not sensitive_reason_:

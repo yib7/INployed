@@ -771,6 +771,27 @@ def test_a_two_step_sign_in_types_the_address_then_the_password(
     assert record.count("State: login_wall") == 2
 
 
+def test_an_address_screen_with_another_box_goes_as_the_form_and_the_password_follows(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # the third review: a country picker beside the address makes the screen
+    # the form (the account step takes account boxes alone); the password
+    # screen after it still signs in
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    body = Path(__file__).parent.joinpath("fixtures", "forms", "login_email_first.html").read_text(
+        encoding="utf-8").replace(
+        '<p><button type="button" id="btn-next">',
+        '<label for="country">Country</label><select id="country"><option value="">Select'
+        '</option><option>United States</option><option>Canada</option></select>'
+        '<p><button type="button" id="btn-next">')
+    url = fixture_url("login_email_first_country.html")
+    context.route(url, lambda route: route.fulfill(body=body, content_type="text/html"))
+    _enqueue(job_folder, url)
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "Password: <hidden>" in record and "Sign in (advance)" in record
+
+
 def test_a_password_screen_without_the_address_step_or_an_account_parks(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
     monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
@@ -1038,6 +1059,277 @@ def test_linkedin_shaped_posting_follows_its_apply_link_through_the_redirect(
     assert "Apply (apply_entry)" in record
     assert "ashby_steps.html" in record
     assert "Select language" not in record
+
+
+class _PageStateJudge(jev.FakeJev):
+    """The fake, with the page state of every page on `HOST` read as `STATE`
+    at `CONF`: a live misread, scripted."""
+    HOST = ""
+    STATE = ""
+    CONF = 0.0
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out and state["page"]["url_host"] == self.HOST:
+            out["page_state"] = jev.Answer(kind="choice", choice=self.STATE,
+                                           probabilities={self.STATE: self.CONF},
+                                           confidence=self.CONF)
+        return out
+
+
+def _page_state_judge(host, state, conf):
+    return type("Judge", (_PageStateJudge,), {"HOST": host, "STATE": state, "CONF": conf})()
+
+
+_LINKEDIN_JOB = "https://www.linkedin.com/jobs/view/4438751519/"
+
+
+def _serve_linkedin_posting(context, fixture_url):
+    """The LinkedIn-shaped posting at a LinkedIn job URL (a route; no network),
+    its Apply link pointed at the fixture redirector."""
+    body = Path(__file__).parent.joinpath("fixtures", "forms", "linkedin_posting.html").read_text(
+        encoding="utf-8").replace('href="linkedin_redirect.html"',
+                                  f'href="{fixture_url("linkedin_redirect.html")}"')
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=body, content_type="text/html"))
+
+
+@pytest.mark.parametrize("state, conf", [("application_form", 0.33), ("review_page", 0.90),
+                                         ("other", 0.20), ("job_posting", 0.10)])
+def test_a_linkedin_posting_is_the_posting_whatever_the_judge_reads(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, state, conf):
+    # the 2026-09-22 run parked GTS on "unsure what this page is (application_form,
+    # 0.33)": LinkedIn's header and upsells filled the judge's view of the page
+    _serve_linkedin_posting(context, fixture_url)
+    _enqueue(job_folder, _LINKEDIN_JOB)
+    runner = _runner(context, tmp_path)
+    runner.jev = _page_state_judge("www.linkedin.com", state, conf)
+    out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "Apply (apply_entry)" in record
+    assert "ashby_steps.html" in record
+
+
+@pytest.mark.parametrize("state, reason", [("login_wall", "LinkedIn is signed out"),
+                                           ("error_or_dead", "error or dead page")])
+def test_a_linkedin_posting_the_judge_reads_as_signed_out_or_closed_parks(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, state, reason):
+    _serve_linkedin_posting(context, fixture_url)
+    _enqueue(job_folder, _LINKEDIN_JOB)
+    runner = _runner(context, tmp_path)
+    runner.jev = _page_state_judge("www.linkedin.com", state, 0.90)
+    out = runner.drain(cap=1)[0]
+    assert (out.status, out.reason) == ("needs_human", reason), out
+
+
+class _UnsureJudge(jev.FakeJev):
+    """The fake, with every application form read at 0.33."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        a = out.get("page_state")
+        if a is not None and a.choice == "application_form":
+            out["page_state"] = jev.Answer(kind="choice", choice=a.choice,
+                                           probabilities={a.choice: 0.33}, confidence=0.33)
+        return out
+
+
+def test_an_unsure_read_of_a_form_is_acted_on_through_the_forms_own_gates(
+        context, fixture_url, job_folder, catalog_builder, tmp_path):
+    _enqueue(job_folder, fixture_url("ashby_steps.html"))
+    runner = _runner(context, tmp_path)
+    runner.jev = _UnsureJudge()
+    out = runner.drain(cap=1)[0]
+    assert out.status == "submitted", out
+    assert "State: application_form (0.33)" in Path(out.record_path).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("state", ["other", "captcha_or_bot_check", "confirmation"])
+def test_an_unsure_read_the_run_cannot_act_on_parks(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, state):
+    url = fixture_url("job_posting.html")
+    _enqueue(job_folder, url)
+    runner = _runner(context, tmp_path, auto_apply_headless=False)
+    runner.jev = _page_state_judge(apply_run._host(url), state, 0.30)
+    out = runner.drain(cap=1)[0]
+    assert (out.status, out.reason) == (
+        "needs_human", f"unsure what this page is ({state}, 0.30)"), out
+
+
+class _FormAsAccountJudge(jev.FakeJev):
+    """The fake, with every page that carries fields read as `STATE` at `CONF`."""
+    STATE = ""
+    CONF = 0.0
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        if "page_state" in out and state.get("fields"):
+            out["page_state"] = jev.Answer(kind="choice", choice=self.STATE,
+                                           probabilities={self.STATE: self.CONF},
+                                           confidence=self.CONF)
+        return out
+
+
+@pytest.mark.parametrize("submit_on", [False, True])
+@pytest.mark.parametrize("state, conf", [("login_wall", 0.30), ("signup_form", 0.30),
+                                         ("login_wall", 0.90), ("signup_form", 0.90)])
+def test_an_application_form_read_as_a_sign_in_is_never_sent_by_the_account_step(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch,
+        state, conf, submit_on):
+    # the review of the unsure-read change: the account step filled a one-page
+    # form it took for a sign-in and clicked its "Submit application" in park
+    # mode. A page of form boxes is the form, whatever it is read as: its own
+    # gate parks it or sends it.
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    _enqueue(job_folder, fixture_url("lever_single.html"))
+    runner = _runner(context, tmp_path, auto_apply_submit=submit_on)
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": state, "CONF": conf})()
+    out = runner.drain(cap=1)[0]
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert "(advance)" not in record
+    if submit_on:
+        assert out.status == "submitted", out
+        assert "SUBMIT CLICKED" in record
+        return
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("body[data-submitted]").count() == 0
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+
+
+_COMBINED = """<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Create your candidate account and apply</h1>
+<label>First name * <input name="first" required></label>
+<label>Last name * <input name="last" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<label>Phone <input type="tel" name="phone"></label>
+__RESUME__
+<label>Password * <input type="password" name="pw" autocomplete="new-password" required></label>
+<button type="button" onclick="document.body.dataset.submitted = 1">__BUTTON__</button>
+</body></html>"""
+
+
+@pytest.mark.parametrize("submit_on", [False, True])
+@pytest.mark.parametrize("button, resume, conf, reason", [
+    # a resume box makes the page the form, whose password box is the human's
+    ("Create account and apply", True, 0.90, "PASSWORD"),
+    ("Register and submit application", True, 0.90, "PASSWORD"),
+    ("Create account and apply", True, 0.30, "PASSWORD"),
+    ("Create account", True, 0.90, "PASSWORD"),
+    # account boxes alone: the sign-up step refuses a button that also applies
+    ("Create account and apply", False, 0.90, "reads as sending the application"),
+    ("Sign in and apply", False, 0.90, "reads as sending the application"),
+    ("Sign in and apply", False, 0.30, "reads as sending the application"),
+    ("Complete application", False, 0.90, "reads as sending the application")])
+def test_a_sign_up_inside_the_application_form_is_never_sent_by_the_account_step(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch, submit_on, button,
+        resume, conf, reason):
+    # the second review: one page that creates the account and sends the
+    # application (a resume box, a password box, "Create account and apply")
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    typed = []
+    monkeypatch.setattr(ats_accounts, "fill_password", lambda *a: typed.append(a) or True)
+    body = _COMBINED.replace("__BUTTON__", button).replace(
+        "__RESUME__", '<label>Resume * <input type="file" name="resume" required></label>'
+        if resume else "")
+    context.route("https://careers.fabrikam.example/**",
+                  lambda route: route.fulfill(body=body, content_type="text/html"))
+    _enqueue(job_folder, "https://careers.fabrikam.example/apply/42")
+    runner = _runner(context, tmp_path, auto_apply_submit=submit_on)
+    runner.jev = type("Judge", (_FormAsAccountJudge,), {"STATE": "signup_form", "CONF": conf})()
+    out = runner.drain(cap=1)[0]
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.locator("body[data-submitted]").count() == 0, out
+    assert out.status == "needs_human", out
+    assert (apply_judge.PASSWORD_IN_FORM_REASON if reason == "PASSWORD" else reason) \
+        in out.reason, out
+    assert typed == []
+    assert all(m["question"] != "Password" for m in _entry()["missing_answers"])
+
+
+def test_sends_application_reads_the_button_text():
+    texts = ["Submit application", "Apply", "Send", "Create account and apply",
+             "Register and submit", "Sign in to apply", "Sign in", "Next",
+             "Verify and continue", "Send code", "Send me a link", "Create account"]
+    digest = apply_form.FormDigest(url_host="x", title="t", text="", buttons=[
+        apply_form.Button(n, (0, f"#b{n}"), text, "") for n, text in enumerate(texts)])
+    assert [apply_run._sends_application(digest, n) for n in range(len(texts))] == [
+        True, True, True, True, True, False, False, False, False, False, False, False]
+    # with boxes beyond the address and the password, a sign-in word no longer excuses it
+    assert apply_run._sends_application(digest, texts.index("Sign in to apply"),
+                                        account_only=False)
+    # a last step's word sends too, unless it names the account itself
+    finals = apply_form.FormDigest(url_host="x", title="t", text="", buttons=[
+        apply_form.Button(n, (0, f"#f{n}"), text, "") for n, text in enumerate(
+            ["Complete application", "Confirm", "Complete registration", "Done",
+             "Complete profile"])])
+    assert [apply_run._sends_application(finals, n) for n in range(5)] == [
+        True, True, False, True, False]
+
+
+def _unit_run(context, tmp_path, job_folder, html, **settings):
+    """A `_JobRun` on `html` (set_content), prepared, with one page record."""
+    _enqueue(job_folder, "https://careers.fabrikam.example/jobs/42")
+    run = apply_run._JobRun(_runner(context, tmp_path, **settings), context, _entry())
+    run._prepare()
+    run.page = context.new_page()
+    run.page.set_content(html)
+    run._new_page_record("x", 1.0)
+    return run
+
+
+def test_a_code_gate_before_any_submit_never_clicks_a_button_that_sends(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    run = _unit_run(context, tmp_path, job_folder, """
+      <body><label for="code">Verification code</label><input id="code">
+        <button id="go" onclick="document.body.dataset.submitted = 1">Submit application</button>
+      </body>""")
+    monkeypatch.setattr(run.inbox, "fetch_code", lambda *a: "123456")
+    digest = apply_form.extract(run.page)
+    plan = FillPlan(buttons={"submit": (0, 0.95)})
+    with pytest.raises(apply_run._Parked, match="would send the application"):
+        run._code_gate(digest, plan, run.pages[-1])
+    assert run.page.locator("body[data-submitted]").count() == 0
+
+
+def test_a_posting_read_after_a_filled_form_goes_to_the_submit_gate(
+        context, job_folder, catalog_builder, tmp_path):
+    run = _unit_run(context, tmp_path, job_folder, """
+      <body><h1>Your application</h1>
+        <button id="go" onclick="document.body.dataset.submitted = 1">Apply</button></body>""",
+                    auto_apply_submit=False)
+    run.form_filled = True
+    digest = apply_form.extract(run.page)
+    plan = FillPlan(buttons={"apply_entry": (0, 0.95)})
+    with pytest.raises(apply_run._Parked) as parked:
+        run._job_posting(digest, {}, plan, run.pages[-1])
+    assert parked.value.status == "ready_to_submit"
+    assert run.page.locator("body[data-submitted]").count() == 0
+
+
+def _linkedin_digest(texts, fields=()):
+    return apply_form.FormDigest(
+        url_host="www.linkedin.com", title="t", text="", fields=list(fields),
+        buttons=[apply_form.Button(n, (0, f"#b{n}"), t, "") for n, t in enumerate(texts)])
+
+
+@pytest.mark.parametrize("url, texts, filled, fields, expected", [
+    (_LINKEDIN_JOB, ["Me", "Apply", "Saved"], False, (), 1),
+    (_LINKEDIN_JOB, ["Me", "Easy Apply filter", "Apply"], False, (), 2),   # the judged entry wins
+    ("https://www.linkedin.com/jobs/search/?keywords=x", ["Easy Apply", "Apply"], False, (), None),
+    (_LINKEDIN_JOB, ["Apply", "Submit application"], False, (), None),
+    (_LINKEDIN_JOB, ["Apply"], True, (), None),
+    ("https://careers.fabrikam.example/jobs/view/1", ["Apply"], False, (), None),
+    (_LINKEDIN_JOB, ["Apply"], False, ("field",), None),
+])
+def test_linkedin_apply_finds_only_a_job_pages_own_apply(url, texts, filled, fields, expected):
+    from types import SimpleNamespace
+    run = SimpleNamespace(page=SimpleNamespace(url=url), submit_clicked=False, form_filled=filled)
+    run._on_linkedin = lambda: apply_run._JobRun._on_linkedin(run)
+    digest = _linkedin_digest(texts, [apply_form.Field(0, (0, "#f"), "Name", "text", False)]
+                              if fields else ())
+    plan = FillPlan(buttons={"apply_entry": (2, 0.9)} if len(texts) > 2 else {})
+    assert apply_run._JobRun._linkedin_apply(run, digest, plan) == expected
 
 
 class _PostingJudge(jev.FakeJev):

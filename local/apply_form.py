@@ -151,6 +151,13 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            language picker), unless that landmark sits inside a form or a
 #            dialog, where it is the form's own. Buttons are all kept: a
 #            wizard's Next can live in a footer outside its form.
+#   text     the body's innerText with the site chrome above the first visible
+#            main landmark (a header, nav or search outside any form or
+#            dialog) moved to the end: what else sits above main (a "no
+#            longer accepting applications" banner) stays in front of it. The
+#            judge reads the first characters (`apply_judge.HEADLINE_CHARS`),
+#            and LinkedIn's skip links, header and upsell filled 597 of 600 of
+#            them on the 2026-09-22 run, so its posting read as a form.
 # The label of one radio or checkbox option, self-contained so `apply_fill` can
 # run the same rule on a live locator: label[for], aria-label, an enclosing
 # label (minus the control's own text), the text that follows it, else its
@@ -412,7 +419,22 @@ _EXTRACT_JS = r"""
     buttons.push({ css: locatorFor(el), text: text, kind_hint: kind });
   }
 
-  const text = document.body ? (document.body.innerText || '') : '';
+  let text = document.body ? (document.body.innerText || '') : '';
+  const main = Array.from(document.querySelectorAll('main, [role=main]')).find(visible);
+  const lead = main ? (main.innerText || '').trim() : '';
+  const at = lead ? text.indexOf(lead) : -1;
+  if (at >= 0) {
+    let above = text.slice(0, at);
+    const moved = [];
+    for (const el of document.querySelectorAll(CHROME)) {
+      if (!inChrome(el) || (el.parentElement && el.parentElement.closest(CHROME))) continue;
+      if (!(el.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      const t = (el.innerText || '').trim();
+      if (t && above.includes(t)) { above = above.replace(t, ''); moved.push(t); }
+    }
+    text = [above.trim(), lead, text.slice(at + lead.length).trim(), ...moved]
+      .filter(Boolean).join('\n');
+  }
   return { fields: out, buttons: buttons, text: text.slice(0, cap) };
 }
 """.replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS)

@@ -447,7 +447,8 @@ def test_page_questions_cap_help_options_and_text(catalog):
                         fields=[_f(0, "Country", "select", help=long_help,
                                    options=[f"opt{i}" for i in range(100)])])
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
-    assert len(state["page"]["headline_text"]) == 600
+    # 1,200 since 2026-09-22: LinkedIn's posting text began past character 600
+    assert len(state["page"]["headline_text"]) == apply_judge.HEADLINE_CHARS == 1200
     assert len(state["fields"][0]["help"]) == 200
     assert len(state["fields"][0]["options"]) == 40
     assert len(q["field_0_option"]["criteria"]) == 41
@@ -995,4 +996,7 @@ def test_plan_never_puts_a_fact_in_a_password_field(catalog):
     assert by_n[0].action == "fill"
     assert [by_n[1].action, by_n[2].action] == ["skip", "skip"]
     assert [by_n[1].value, by_n[2].value] == ["", ""]
-    assert plan.park_reason == "required field without an answer: Password"
+    # no answer is asked for (one would never be typed there) and the form is
+    # finished by hand: an account's password box inside an application form
+    assert plan.park_reason == apply_judge.PASSWORD_IN_FORM_REASON
+    assert plan.missing == []

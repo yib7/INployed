@@ -133,6 +133,21 @@ _PARK_STATES = {
     "error_or_dead": "error or dead page",
     "other": "unrecognised page",
 }
+# A page read below `apply_judge.PAGE_STATE_MIN_CONF` is still acted on as one
+# of these (`_JobRun._check_unsure`): each step has gates of its own (the Apply
+# entry's confidence, the fill plan's, the submit gate, the accounts hook's
+# site check and `_credential_form`), so a wrong guess stops at one of them or
+# moves the run on (the user's rule, 2026-09-22). An unsure confirmation, bot
+# check, payment, error or unrecognised page parks.
+_UNSURE_ACTS = frozenset(("job_posting", "application_form", "review_page",
+                          "login_wall", "signup_form", "code_gate"))
+# What a LinkedIn job page may still be read as over `_linkedin_apply`: signed
+# out, a closed posting, and the other reads that park.
+_LINKEDIN_POSTING_KEEPS = frozenset(("login_wall", "signup_form", "confirmation",
+                                     "error_or_dead", "captcha_or_bot_check",
+                                     "payment_request"))
+_APPLY_WORD = re.compile(r"\bapply\b", re.I)
+_SUBMIT_WORD = re.compile(r"\bsubmit\b", re.I)
 
 
 def launch_profile(pw, profile_dir: Path, *, headless: bool, log=None):
@@ -199,6 +214,30 @@ def _is_email_box(field) -> bool:
                 and apply_facts.quick_map(field.label, field.id_or_name, field.type) == "email"))
 
 
+def _email_first(digest) -> bool:
+    """The first screen of a two-step sign-in: an address box and nothing
+    else but checkboxes (remember me, the terms)."""
+    has_email = False
+    for f in digest.fields:
+        if _is_email_box(f):
+            has_email = True
+        elif f.type != "checkbox":
+            return False
+    return has_email
+
+
+def _credential_form(digest) -> bool:
+    """A sign-in or sign-up screen by its boxes: a password box, or the
+    address box of a two-step sign-in, and no file box (an account screen
+    never takes a resume; one that does is the application form creating an
+    account). A page of other boxes is a form, whatever it was read as; only
+    a screen of this shape reaches `_Accounts`' typing and clicking."""
+    if any(f.type == "file" for f in digest.fields):
+        return False
+    return (any(apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete)
+                for f in digest.fields) or _email_first(digest))
+
+
 class _Accounts:
     """Account transitions for one job; secrets bypass the generic filler.
 
@@ -230,7 +269,7 @@ class _Accounts:
             return self._fill(page, digest, host, str(account.get("email") or ""), False)
         if not ats_accounts.has_password():
             return False
-        if self._email_first(page, digest) or _site(host) in self.email_sites:
+        if _email_first(digest) or _site(host) in self.email_sites:
             # the address screen of a two-step sign-in, or the password screen
             # after it: the next screen says whether the account exists
             return self._fill(page, digest, host, self._signup_email(), False)
@@ -276,18 +315,6 @@ class _Accounts:
     def _signup_email(self) -> str:
         return str(self.run.r.run_context().get("signup_email") or "")
 
-    @staticmethod
-    def _email_first(page, digest) -> bool:
-        """An address box and no password box: the first screen of a two-step
-        sign-in."""
-        has_email = has_password = False
-        for f in digest.fields:
-            if _is_email_box(f):
-                has_email = True
-            elif apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
-                has_password = True
-        return has_email and not has_password
-
     def _timeout(self) -> int:
         """Milliseconds for one action on the page, inside the job's clock."""
         return max(1, int(min(5, self.run.deadline - self.run.r.clock()) * 1000))
@@ -324,6 +351,10 @@ class _Accounts:
 
     def _fill(self, page, digest, host: str, email: str, signup: bool) -> bool:
         if not email or not ats_accounts.has_password() or self.run.r.clock() >= self.run.deadline:
+            return False
+        if not _credential_form(digest):
+            # a page of other boxes is a form whatever it was read as: typing
+            # the facts into it and clicking its button would send it
             return False
         site = _site(host)
         self.steps[site] = self.steps.get(site, 0) + 1
@@ -393,6 +424,11 @@ class _Accounts:
                                       f"required field without an answer: {field.label}")
             if not passwords and not emails:
                 return False
+            if _sends_application(digest, advance[0], account_only=not others):
+                # nothing is typed: the click would send the application past the gate
+                text = next((b.text for b in digest.buttons if b.n == advance[0]), "")
+                raise _Parked("needs_human", f"the sign-in's button reads as sending the "
+                                             f"application ({text})", LOGIN_NOTE)
             if passwords and not emails and not signup \
                     and site not in self.email_sites and not ats_accounts.lookup(host):
                 return False
@@ -599,6 +635,29 @@ def _final_shaped(digest: apply_form.FormDigest, n: int) -> bool:
     button = next((b for b in digest.buttons if b.n == n), None)
     return bool(button) and bool(re.search(r"\b(complete|confirm|finali[sz]e|done)\b",
                                            button.text, re.I))
+
+
+_SIGN_IN_WORDS = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
+                            r"|\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
+                            r"(code|link)\b", re.I)
+_ACCOUNT_STEP_WORDS = re.compile(r"\b(registration|register|sign[\s-]*up|account|profile)\b",
+                                 re.I)
+
+
+def _sends_application(digest: apply_form.FormDigest, n: int, *,
+                       account_only: bool = True) -> bool:
+    """A button the account step may not click: its text reads as sending the
+    application (`_submit_shaped`), unless it names a sign-in on a screen of
+    the address and the password alone (`account_only`: "Sign in to apply"
+    signs in, "Send code" mails one), or as a last step (`_final_shaped`)
+    unless it names the account ("Complete registration"). "Create account
+    and apply" counts as a send: the sign-up may carry the application. Only
+    the submit gate sends an application."""
+    button = next((b for b in digest.buttons if b.n == n), None)
+    text = button.text if button else ""
+    if _submit_shaped(digest, n):
+        return not (account_only and _SIGN_IN_WORDS.search(text))
+    return _final_shaped(digest, n) and not _ACCOUNT_STEP_WORDS.search(text)
 
 
 def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
@@ -893,6 +952,7 @@ class _JobRun:
         self.pages: list[dict] = []
         self.missing: list[dict] = []
         self.submit_clicked = False
+        self.form_filled = False      # an application page got a value (`_fill_and_verify`)
         self.gen_budget = GENERATE_MAX
         self.catalog: apply_facts.FactCatalog | None = None
         self.allowed: set[str] = set()
@@ -1105,11 +1165,30 @@ class _JobRun:
             if sig == self.last_sig:
                 raise _Parked("needs_human", "page did not advance")
             self.last_sig = sig
-            if conf < apply_judge.PAGE_STATE_MIN_CONF:
-                raise _Parked("needs_human", f"unsure what this page is ({state}, {conf:.2f})")
             plan = apply_judge.plan(digest, self.catalog, answers,
                                     generation_enabled=bool(self.r.settings["auto_apply_generate"]))
             rec["flags"] = dict(plan.flags)
+            unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
+            apply_n = self._linkedin_apply(digest, plan)
+            if apply_n is not None and (unsure or state not in _LINKEDIN_POSTING_KEEPS):
+                if state != "job_posting" or unsure:
+                    self.log.info("job %s: a LinkedIn job page read as %s (%.2f); it is the "
+                                  "posting", self.job_id, state, conf)
+                self._job_posting(digest, answers, plan, rec, apply_n=apply_n)
+                continue
+            if state in ("login_wall", "signup_form") and digest.fields \
+                    and not _credential_form(digest) and not self._on_linkedin():
+                # a page of form boxes is the form, whatever it was read as:
+                # the account step would type the facts in and click its button.
+                # An address screen with another box (a country) goes this way
+                # too, so its site takes the password screen after it.
+                self.log.info("job %s: read as %s (%.2f) with no account boxes; it is the "
+                              "form", self.job_id, state, conf)
+                state = "application_form"
+                if any(_is_email_box(f) for f in digest.fields):
+                    self.accounts.email_sites.add(_site(digest.url_host or _host(self.page.url)))
+            if unsure:
+                self._check_unsure(digest, state, conf)
             if state == "job_posting":
                 self._job_posting(digest, answers, plan, rec)
             elif state == "application_form":
@@ -1229,16 +1308,58 @@ class _JobRun:
         self.pages.append(rec)
         return rec
 
+    def _check_unsure(self, digest: apply_form.FormDigest, state: str, conf: float) -> None:
+        """A read below `PAGE_STATE_MIN_CONF` goes on as its guess when that is
+        one of `_UNSURE_ACTS` and the page has that step's boxes (a code gate
+        its code box; a sign-in read of form boxes is already the form, and
+        the account step takes a screen of account boxes alone). Anything
+        else parks."""
+        if state not in _UNSURE_ACTS or (state == "code_gate"
+                                         and _code_field(digest.fields) is None):
+            raise _Parked("needs_human", f"unsure what this page is ({state}, {conf:.2f})")
+        self.log.info("job %s: unsure of the page (%s, %.2f); going on with that read",
+                      self.job_id, state, conf)
+
+    def _on_linkedin(self) -> bool:
+        return _host(str(self.page.url or "")) in LINKEDIN_HOSTS
+
+    def _linkedin_apply(self, digest: apply_form.FormDigest, plan: FillPlan) -> int | None:
+        """The Apply control of a LinkedIn job page, else None: a `/jobs/view/`
+        page on LinkedIn with no form field and no submit button, before any
+        form was filled or submitted. The judge's confident `apply_entry` wins
+        when its text says apply, else the first control that does. Every
+        queued job starts on one, and its site chrome and upsells have misread
+        as a form (2026-09-22)."""
+        parts = urlsplit(str(self.page.url or ""))
+        if (self.submit_clicked or self.form_filled or digest.fields
+                or not self._on_linkedin() or not parts.path.startswith("/jobs/view/")
+                or any(_SUBMIT_WORD.search(b.text) for b in digest.buttons)):
+            return None
+        says_apply = [b.n for b in digest.buttons if _APPLY_WORD.search(b.text)]
+        entry = plan.buttons.get("apply_entry")
+        if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF \
+                and entry[0] in says_apply:
+            return entry[0]
+        return says_apply[0] if says_apply else None
+
     def _job_posting(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan,
-                     rec: dict) -> None:
-        """Click the posting's Apply entry. A page that carries form fields
+                     rec: dict, *, apply_n: int | None = None) -> None:
+        """Click the posting's Apply entry: `apply_n` when the caller found
+        it (`_linkedin_apply`). Otherwise a page that carries form fields
         is only clicked through a confident `apply_entry` role whose text is
         not submit-shaped; otherwise it is treated as the application form (a
         form's own Apply button is a submit, and clicking it before the fill
-        would send an empty form). A fieldless posting keeps the text match."""
-        n = None
+        would send an empty form). A fieldless posting keeps the text match.
+        After a form was filled, an Apply button sends that form: the page
+        goes the form's way, to the submit gate."""
+        if self.form_filled and apply_n is None:
+            self.log.info("job %s: a posting read after a filled form; treating it as the "
+                          "form's next page", self.job_id)
+            self._application_form(digest, answers, plan, rec)
+            return
+        n = apply_n
         entry = plan.buttons.get("apply_entry")
-        if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
+        if n is None and entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
             if not (digest.fields and _submit_shaped(digest, entry[0])):
                 n = entry[0]
         if n is None and not digest.fields:
@@ -1355,6 +1476,8 @@ class _JobRun:
         if plan.park_reason:
             raise _Parked("needs_human", plan.park_reason)
         filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock)
+        if filled:
+            self.form_filled = True
         drafts = _drafts(plan)
         verification = self._verify(filled, drafts)
         verification = self._retry_failed(plan, filled, verification, drafts)
@@ -1605,6 +1728,11 @@ class _JobRun:
             raise _Parked("needs_human",
                           f"code entered; {role} button confidence {button[1]:.2f} "
                           f"below {minimum:.2f}", CODE_NOTE)
+        if not self.submit_clicked and _submit_shaped(digest, button[0]):
+            # before the submit gate has let the application go, a code box
+            # beside a "Submit application" is the form's last step
+            raise _Parked("needs_human", "code entered; its button would send the "
+                                         "application", CODE_NOTE)
         self._click(digest, button[0], role, rec)
 
     # -- the end --------------------------------------------------------------------------------

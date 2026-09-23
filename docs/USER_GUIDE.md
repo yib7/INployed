@@ -570,13 +570,29 @@ It stops only in these cases, with the window left open and the queue row saying
   an ID number. You finish that application by hand; an optional one is left blank.
 - The page cannot be passed: a payment request, a closed or dead posting, a page that
   does not move after its button, a sign-in it cannot complete, or LinkedIn signed out.
+- Jev cannot tell what the page is, and its best guess is a confirmation, a bot check, a
+  payment, a dead page or an unknown page. A doubtful read of a posting, a form, a review
+  page, a sign-in or a sign-up is acted on, and so is a doubtful code screen with a code
+  box. That step's own checks still apply.
+- A page read as the application form has a password box (an account created inside the
+  form): you finish it by hand, and you are never asked to save a password as an answer.
 - A CAPTCHA challenge opens. The run never solves one. With the window visible it waits
   up to five minutes for you to solve it, then carries on; hidden, or unsolved, the job
   stops.
 
+A page of form boxes read as a sign-in or sign-up is treated as the form. A LinkedIn job
+page with an Apply button, no form and no submit button counts as the posting until a
+form has been filled, unless Jev is sure it shows LinkedIn signed out, a sign-up, a
+closed posting, a check, a payment or a confirmation.
+
 Sign-in screens are handled on the application's own site only: the address and the
 password on one screen, or the address first and the password or the create-account form
 on the next (iCIMS, Workday). Other boxes on a sign-up form are filled from your data.
+Only the submit step sends an application. The sign-in and code steps act only on a screen
+of account boxes (a password box or a lone email box, and no resume box) or a code box, and
+they never click a button that reads as sending one ("Submit application", "Apply",
+"Complete application", "Create account and apply"). On a screen of the address and the
+password alone, "Sign in to apply" and "Send code" are sign-in buttons.
 Controls inside another site's frame (a CAPTCHA widget, a chat or cookie widget) are
 never clicked or filled, and the run goes on without them. You finish a stopped job by
 hand and **Mark applied** or **Re-queue** it. The four settings under **Settings →

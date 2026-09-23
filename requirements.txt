@@ -84,6 +84,10 @@ requests==2.34.2
 # dev / tests (python -m pytest tests/ -v)
 pytest==9.1.1
 pytest-qt==4.5.0       # qtbot fixtures for the Qt UI tests (offscreen, no display)
+pytest-xdist==3.8.0    # parallel workers (-n auto): each worker is its own process, so the
+                       # conftest.py LOCALAPPDATA/output redirects (module-level, evaluated once
+                       # per process) are naturally per-worker with no extra wiring. Cuts the
+                       # ~16-minute serial suite down on multi-core machines and CI runners alike.
 pytest-timeout==2.4.0  # per-test timeout in CI: a hung test fails fast with a thread dump,
                        # never burns runner hours (see the Run tests step in ci.yml).
                        # Held at 2.4.0 deliberately: 2.5.0 is the newer version number but its

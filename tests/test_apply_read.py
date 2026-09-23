@@ -345,3 +345,29 @@ def test_a_posting_the_judge_reads_as_other_is_the_posting_its_structure_settles
     assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
     moved = _decisions(folder / "apply_trace" / "attempt-1", "structure_over_other")
     assert moved and moved[0]["to"] == "job_posting", moved
+
+
+# --- READ-04: a structural "did not advance" signature --------------------------------------------
+
+def test_a_step_that_comes_back_the_same_does_not_advance_whatever_its_ticker_says(
+        _browser, flow_server, tmp_path):
+    r = _flow("ticker_page", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.pages == 2, r
+    assert r.reason.endswith("again after Continue (advance))"), r
+
+
+def test_the_signature_ignores_times_counts_and_the_judges_read():
+    def digest(text):
+        return apply_form.FormDigest(url_host="x", title="Apply", text=text,
+                                     fields=[apply_form.Field(0, (0, "#e"), "Email", "email",
+                                                              True)],
+                                     buttons=[apply_form.Button(0, (0, "#c"), "Continue")])
+    a = apply_run.page_signature("https://x.example/apply?step=1",
+                                 digest("Last saved 09:00:01; posted 3 minutes ago. 12 openings"))
+    b = apply_run.page_signature("https://x.example/apply?step=1",
+                                 digest("Last saved 09:00:07 PM; posted 4 minutes ago. 13 openings"))
+    assert a == b
+    c = apply_run.page_signature("https://x.example/apply?step=2",
+                                 digest("Step two: tell us about your experience"))
+    assert c != a

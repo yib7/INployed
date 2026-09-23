@@ -769,6 +769,9 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#received:visible", gate="#btn-submit:visible",
          covers="a wizard step that reads as a review with only Next: the Next is clicked, the "
                 "real last step reaches the gate"),
+    Flow("ticker_page", "ticker_page.html", True, "needs_human", r"^page did not advance",
+         covers="a clock and a posted-ago note that change every second, a Continue that brings "
+                "the same step back: read as not advancing, never as new pages"),
 )
 
 

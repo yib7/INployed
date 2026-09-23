@@ -679,6 +679,29 @@ def new_confirmation(before: str, after: str) -> str:
     return fresh[0] if fresh else ""
 
 
+# Text that changes while a page stands still (READ-04): a relative time
+# ("posted 3 minutes ago"), a clock, a count; left out of `page_signature`.
+_VOLATILE_TEXT = re.compile(
+    r"\b\d+\s*(?:s|sec|second|min|minute|h|hr|hour|d|day|week|month|year)s?\s+ago\b"
+    r"|\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?|\d+", re.I)
+SIGNATURE_TEXT_CHARS = 400         # of the steadied text `page_signature` keeps
+
+
+def page_signature(url: str, digest: apply_form.FormDigest) -> tuple:
+    """The page as it stands, for "did not advance" (READ-04): its host and
+    path, its title, its fields (label, type, required), its button texts,
+    and the head of its text with times, clocks and numbers taken out.
+    Never the judge's read (a read that flips on the same page is the same
+    page) and never a ticker, a timestamp or a counter."""
+    parts = urlsplit(str(url or ""))
+    text = " ".join(_VOLATILE_TEXT.sub(" ", digest.text or "").split())
+    return (parts.hostname or "", parts.path, " ".join((digest.title or "").split()),
+            tuple((" ".join((f.label or "").split()), f.type, bool(f.required))
+                  for f in digest.fields),
+            tuple(" ".join((b.text or "").split()) for b in digest.buttons),
+            text[:SIGNATURE_TEXT_CHARS])
+
+
 def _fields_sig(digest: apply_form.FormDigest) -> tuple:
     """The page's form as the run saw it: each field's label and type."""
     return tuple((" ".join((f.label or "").split()), f.type) for f in digest.fields)
@@ -2785,7 +2808,7 @@ class _JobRun:
                 digest, answers, state, conf = self._reread(digest, answers, state, conf)
                 marker = self._page_marker()
             facts = self._facts
-            sig = (state, self.page.url, json.dumps(digest.to_dict(), sort_keys=True))
+            sig = page_signature(str(self.page.url), digest)
             rec = self._new_page_record(state, conf, digest=digest, answers=answers,
                                         timings={"extract_s": round(t1 - t0, 3),
                                                  "judge_s": round(time.monotonic() - t1, 3)})

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Contoso Analytics</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+  .ticker { color: #555; font-size: 12px; }
+</style>
+</head>
+<body>
+<!-- READ-04: a form whose clock and "posted" note change every second, and
+     whose Continue brings the same step back (the site took nothing). The
+     page's text never repeats; its structure does. -->
+<h1>Apply for Data Analyst</h1>
+<p class="ticker">Last saved <span id="clock">09:00:00</span>; posted <span id="ago">3</span> minutes ago</p>
+<div id="step">
+  <label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required>
+  <label for="email">Email *</label><input id="email" name="email" type="email" required>
+  <p><button type="button" id="btn-continue">Continue</button></p>
+</div>
+<script>
+  // a tick every 50 ms, so no two reads of the page see the same text
+  var tick = 0;
+  setInterval(function () {
+    tick += 1;
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    document.getElementById('clock').textContent = '09:' + pad(Math.floor(tick / 60) % 60) + ':' + pad(tick % 60);
+    document.getElementById('ago').textContent = String(3 + tick % 7);
+  }, 50);
+  var step = document.getElementById('step').innerHTML;
+  function wire() {
+    document.getElementById('btn-continue').addEventListener('click', function () {
+      // the same step comes back, emptied, as a server that took nothing would
+      document.getElementById('step').innerHTML = step;
+      wire();
+    });
+  }
+  wire();
+</script>
+</body>
+</html>

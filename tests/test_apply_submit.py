@@ -1626,3 +1626,148 @@ def test_a_page_the_judge_never_read_is_read_once_more(context, tmp_path, monkey
                                  "https://www.facebook.com/tr/", "https://bat.bing.com/action/0"])
 def test_ad_and_chat_posts_are_trackers(url):
     assert apply_run._tracking(url)
+
+
+
+# =================================================================================================
+# SP3 review round 3
+# =================================================================================================
+
+# --- U1: a post to a new tab whose answer redirects still counts ------------------------------------
+
+def test_a_post_to_a_new_tab_that_redirects_still_counts_as_a_send(context, tmp_path, monkeypatch):
+    _quiet_click(monkeypatch)
+    posts = []
+    page = """<!doctype html><html><body><h1>Analytics Engineer</h1>
+      <form id="f" method="post" action="/api/applications" target="_blank">
+      <label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+      <label for="last_name">Last name *</label><input id="last_name" name="last_name" required>
+      <label for="email">Email *</label><input id="email" name="email" type="email" required>
+      <button type="submit" id="go">Submit application</button></form></body></html>"""
+
+    def _handle(route):
+        request = route.request
+        if request.method == "POST":
+            posts.append(1)
+            route.fulfill(status=303, headers={"Location": f"{CAREERS}/thanks"}, body="")
+        elif request.url.endswith("/thanks"):
+            route.fulfill(body="<body><p>Your details are with us.</p></body>",
+                          content_type="text/html")
+        else:
+            route.fulfill(body=page, content_type="text/html")
+    context.route(f"{CAREERS}/**", _handle)
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert posts == [1]
+    assert out.status == "needs_human", out
+    assert out.reason.startswith(apply_run.CHECK_SENT_REASON + ": a request left from a new tab "
+                                 "or a worker"), out
+    assert "POST https://careers.fabrikam.example/api/applications" in out.reason, out
+    assert apply_queue.load()["jobs"][-1]["tab_note"] == apply_run.CHECK_SENT_NOTE
+
+
+def test_a_held_send_no_tab_claimed_is_a_possible_send_when_the_watch_stops():
+    watch = apply_run.SendWatch(Mock(), Mock())
+    watch._unplaced = [("https://a.example/x", "possible", "POST https://a.example/x"),
+                       ("https://a.example/y", "sent", "GET https://a.example/y")]
+    assert watch.any() and watch.first() == "POST https://a.example/x"
+    watch._on = True
+    watch.stop()
+    assert watch.possible == ["POST https://a.example/x"] and watch.sent == []
+
+
+# --- m1: a warning notice stays an error text --------------------------------------------------------
+
+def test_a_warning_notice_is_an_error_text(browser_page):
+    browser_page.set_content("""<body><form>
+      <label for="e">Email</label><input id="e" name="e" type="email">
+      <div role="alert" class="notice notice-warning">Please enter a valid email.</div>
+      <button type="submit">Submit</button></form></body>""")
+    assert [e["text"] for e in apply_form.validity_report(browser_page)["errors"]] == [
+        "Please enter a valid email."]
+
+
+# --- m2: the fresh read gets the confirmation test ---------------------------------------------------
+
+def test_a_stale_last_read_that_is_a_confirmation_reads_as_submitted(context, tmp_path,
+                                                                     monkeypatch):
+    monkeypatch.setattr(apply_run, "POST_SUBMIT_READS", 1)
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
+          var n = 0;
+          var tick = setInterval(function () {
+            document.body.innerHTML = '<h1>Processing</h1><p>' + '.'.repeat(++n) + '</p>';
+          }, 50);
+          setTimeout(function () {
+            clearInterval(tick);
+            document.body.innerHTML = '<h1>All set</h1><p>We will be in touch.</p>';
+          }, 4500);
+        });
+      };""")})
+    judge = type("J", (_ReadsByHeadline,), {"READS": {"Processing": "other",
+                                                       "All set": "confirmation"}})()
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, judge=judge)
+    assert (out.status, out.reason) == ("submitted", "confirmation page"), out
+
+
+# --- m3: Cloudflare's beacons ------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url, tracking", [
+    ("https://careers.fabrikam.example/cdn-cgi/rum?x=1", True),
+    ("https://careers.fabrikam.example/cdn-cgi/challenge-platform/h/b/jsd/r/abc", True),
+    ("https://static.cloudflareinsights.com/beacon.min.js", True),
+    ("https://careers.fabrikam.example/api/applications", False)])
+def test_cloudflare_beacons_are_trackers(url, tracking):
+    assert apply_run._tracking(url) is tracking
+
+
+# --- m4: the password box's value is never read back -------------------------------------------------
+
+def test_the_password_box_is_never_read_back_even_as_text(context, tmp_path, monkeypatch):
+    import ats_accounts
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: h.PASSWORD)
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      var pw = document.getElementById('pw');
+      pw.addEventListener('input', function () { pw.type = 'text'; });   // a shown password
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'});
+      };""", extra='<label for="pw">Create a password *</label>'
+                   '<input id="pw" name="pw" type="password" autocomplete="new-password" '
+                   'required>')})
+    real = apply_form.box_values
+    seen = []
+
+    def _values(page, locators):
+        out = real(page, locators)
+        seen.extend(out)
+        return out
+    monkeypatch.setattr(apply_form, "box_values", _values)
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert seen, out                          # the baseline read the boxes
+    assert h.PASSWORD not in seen, out
+    assert "jane.doe@example.com" in seen, out
+
+
+# --- m5: the person's send during the wait is named as such ------------------------------------------
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_a_send_during_the_wait_is_named_as_one(context, tmp_path, reset):
+    context.route("https://www.google.com/recaptcha/**", lambda route: route.fulfill(
+        body="<body>I'm not a robot</body>", content_type="text/html"))
+    _Posts(context, {"/apply/42": _AJAX_CHECKBOX})
+    calls = []
+
+    def _sleep(seconds):
+        for p in context.pages:
+            if p.is_closed():
+                continue
+            if not calls:
+                p.evaluate("window.__tick(); document.getElementById('go').click()")
+                p.wait_for_timeout(200)
+            if reset:
+                p.evaluate("document.getElementById('tok').value = ''")
+        calls.append(seconds)
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, sleep=_sleep, auto_apply_headless=False)
+    assert out.status == "needs_human", out
+    assert "a request left during the" in out.reason, out
+    assert "after the submit click" not in out.reason and "after the click" not in out.reason, out

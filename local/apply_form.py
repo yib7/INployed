@@ -828,7 +828,8 @@ def same_scope(page, button_locator: tuple[int, str],
 # read; in a `novalidate` form (the site validates in its own script) a
 # hidden control is skipped. Then the visible error texts of the frame:
 # [role=alert], an assertive live region, and short boxes whose class names
-# an error (a success or info note is none). An error text beside a control
+# an error (a success note, `alert-success`, `alert-info` or a `success`
+# class, is none). An error text beside a control
 # (its box within two levels holds one) is a field's; the rest are banners;
 # `tied` when a control names it (`aria-describedby`, `aria-errormessage`).
 # Without a button, the forms of the filled fields (`fcss`) when there are
@@ -913,7 +914,7 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
   const texts = new Set();
   const esel = '[role=alert], [aria-live=assertive], [class*=error i], [class*=invalid i], '
     + '[class*=danger i]';
-  const SUCCESS = /\b(success|succeeded|info|notice)\b|alert-(success|info)/i;
+  const SUCCESS = /alert-success|alert-info|\bsuccess\b/i;
   const namedBy = (el) => !!el.id && Array.from(document.querySelectorAll(
     '[aria-describedby], [aria-errormessage]')).some((c) => (
       (c.getAttribute('aria-describedby') || '') + ' ' + (c.getAttribute('aria-errormessage') || ''))

@@ -476,15 +476,17 @@ _TRACKING_SITES = frozenset((
     "adsrvr.org", "adnxs.com", "rubiconproject.com", "pubmatic.com", "casalemedia.com",
     "criteo.net", "scorecardresearch.com", "intercom.io", "intercomcdn.com", "drift.com",
     "driftt.com", "crisp.chat", "tawk.to", "livechatinc.com", "olark.com", "zdassets.com",
-    "sc-static.net", "t.co"))
+    "sc-static.net", "t.co", "cloudflareinsights.com"))
 # Google's own tag and ad paths; a form on docs.google.com is a real send
 _GOOGLE_TRACKING = ("/ccm/", "/pagead/", "/ads/", "/g/collect", "/j/collect", "/recaptcha")
+# Cloudflare's beacon and challenge paths, served on the site's own host
+_CLOUDFLARE_PATHS = ("/cdn-cgi/rum", "/cdn-cgi/challenge-platform/")
 
 
 def _tracking(url: str) -> bool:
     parts = urlsplit(str(url or ""))
     site = _site(parts.hostname or "")
-    if site in _TRACKING_SITES:
+    if site in _TRACKING_SITES or parts.path.startswith(_CLOUDFLARE_PATHS):
         return True
     return site == "google.com" and parts.path.startswith(_GOOGLE_TRACKING)
 
@@ -504,7 +506,12 @@ class SendWatch:
     earlier job's parked tab, the inbox tab and a tab the person uses never
     do. A tab's first request comes before its page is known (Playwright
     gives no frame for it): it is held (`_unplaced`) and counted when the
-    job's page reports that tab, at the same URL. A bot-check provider, an
+    job's page reports that tab, at the same URL. A held POST, PUT or PATCH
+    never matched (the tab's first answer redirected, or was an error page,
+    so the tab reports another URL; or a service worker sent it) counts as a
+    possible send (`unplaced_sends`, in `any` and `first`, and moved to
+    `possible` when the watch stops): only a brand-new tab or a worker makes
+    such a request, and it may have been the send. A bot-check provider, an
     analytics, ad, chat or consent host (`_tracking`), LinkedIn (its Insight
     Tag posts from company pages) and the inbox's host (unless the job's page
     is served from it) never count. Each row
@@ -647,13 +654,22 @@ class SendWatch:
             except Exception:   # noqa: BLE001  (the page is gone)
                 pass
         self._targets = []
+        # a held send no tab claimed may have been the send (U1)
+        self.possible += [r for r in self.unplaced_sends() if r not in self.possible]
+        self._unplaced = []
+
+    def unplaced_sends(self) -> list[str]:
+        """The held POST, PUT or PATCH rows no tab of the job's page claimed
+        (U1)."""
+        return [row for _, _, row in self._unplaced
+                if row.split(" ", 1)[0] in self._SEND_METHODS]
 
     def any(self) -> bool:
         """Something that may have been the send left."""
-        return bool(self.sent or self.possible)
+        return bool(self.sent or self.possible or self.unplaced_sends())
 
     def first(self) -> str:
-        return (self.sent or self.possible or [""])[0]
+        return (self.sent or self.possible or self.unplaced_sends() or [""])[0]
 
 
 def confirmation_words(text: str) -> set[str]:
@@ -2286,6 +2302,7 @@ class _JobRun:
         # (page, frame, locator) of every box the master password or an
         # emailed code went into: every later screenshot masks them
         self._secret_boxes: list[tuple[Any, Any, Any]] = []
+        self._secret_locators: set[tuple[int, str]] = set()     # the same boxes' digest locators
         # decisions taken before the page they belong to is recorded (a
         # settle, a consent banner, a re-read): `_new_page_record` writes them
         self._pending: list[dict[str, Any]] = []
@@ -2298,6 +2315,7 @@ class _JobRun:
         self._filled_any = False        # a value went on a page of this job (the account step too)
         self._code_sent = False         # the code step clicked on (a code can finish a send)
         self._send_watch: SendWatch | None = None     # the requests after the submit click
+        self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
         self._before_submit: dict[str, Any] | None = None   # the page just before it
         self._submit_at: tuple[int, str] | None = None      # the submit button's locator
 
@@ -2371,6 +2389,7 @@ class _JobRun:
         into (a digest locator on the current page), for the screenshots'
         masks: the label-found code box and a box inside a frame are masked
         whatever their names say."""
+        self._secret_locators.add((int(locator[0]), str(locator[1])))
         try:
             frame = apply_form.frames(self.page)[int(locator[0])]
             self._secret_boxes.append((self.page, frame, frame.locator(str(locator[1]))))
@@ -3858,7 +3877,7 @@ class _JobRun:
                                            "CAPTCHA check; it is read as after a submit",
                              sent=watch.first())
                 rec["clicked"].append("the page moved on during the CAPTCHA wait")
-                self._after_submit(handoff=self.handed_off)
+                self._after_submit(handoff=self.handed_off, during_wait=True)
                 return
         self.log.info("job %s: clicking submit", self.job_id)
         self.submit_clicked = True    # set before the click so a crash after it reads as unconfirmed (no resend)
@@ -3920,13 +3939,21 @@ class _JobRun:
         except Exception:       # noqa: BLE001
             errors = set()
         try:
-            values = apply_form.box_values(self.page, self._filled_here)
+            values = apply_form.box_values(self.page, self._typed_boxes())
         except Exception:       # noqa: BLE001  (a page double)
             values = []
         # the boxes' values stay in memory for the post-submit read; they are
         # never written to the trace or the record
         return {"url": str(self.page.url), "fields": _fields_sig(digest), "text": text,
                 "errors": errors, "values": values}
+
+    def _typed_boxes(self) -> list[tuple[int, str]]:
+        """The boxes this page's fill typed into, less the ones that took the
+        master password or an emailed code (`_keep_secret_box`): their
+        values are never read back, whatever type the box shows now (m4)."""
+        secret = getattr(self, "_secret_locators", set())
+        return [loc for loc in self._filled_here
+                if (int(loc[0]), str(loc[1])) not in secret]
 
     def _holds_typed(self, before: Mapping[str, Any]) -> bool:
         """Does the form still hold what the run typed: at least half of the
@@ -3936,14 +3963,15 @@ class _JobRun:
         none (R1)."""
         was = list(before.get("values") or [])
         try:
-            now = apply_form.box_values(self.page, self._filled_here)
+            now = apply_form.box_values(self.page, self._typed_boxes())
         except Exception:       # noqa: BLE001
             return False
         pairs = [(a, b) for a, b in zip(was, now) if a]
         kept = sum(1 for a, b in pairs if a == b)
         return bool(pairs) and kept >= max(1, (len(pairs) + 1) // 2)
 
-    def _after_submit(self, *, account: bool = False, handoff: bool = False) -> None:
+    def _after_submit(self, *, account: bool = False, handoff: bool = False,
+                      during_wait: bool = False) -> None:
         """Read what the submit click did before deciding (TERM-01), again
         every `POST_SUBMIT_POLL_S` while a request it sent is in flight or
         the page still moves, up to `POST_SUBMIT_WAIT_S`. Per look, in order:
@@ -3977,15 +4005,19 @@ class _JobRun:
         neither "submitted" nor "go on and send", so the job waits for the
         user with the page open. `handoff`: the page came from the account
         step (`_AsForm`), whose screen is a sign-up first; anything after it
-        but a confirmation waits for the user the same way."""
+        but a confirmation waits for the user the same way. `during_wait`:
+        the page moved on while the run waited for the CAPTCHA check (the
+        person may have sent it), so the reasons say so."""
         watch = self._send_watch or SendWatch(self, self.page)
         before = self._before_submit or {}
+        self._sent_when = "during the CAPTCHA wait" if during_wait else "after the submit click"
         try:
             self._read_after_submit(watch, before, account, handoff)
         except _Parked as p:
             if p.status != "needs_human":
                 raise
-            raise self._send_evidence(p, watch) from None
+            raise self._send_evidence(p, watch, when="during the wait" if during_wait
+                                      else "after the click") from None
         finally:
             watch.stop()
 
@@ -4026,16 +4058,8 @@ class _JobRun:
                 rec = self._new_page_record(state, conf, digest=digest, answers=answers)
                 judged = seen
                 self.log.info("job %s after submit: %s (%.2f)", self.job_id, state, conf)
-            send_button = any(_SEND_ONLY_WORDS.search(b.text) for b in digest.buttons)
-            if marker or (state == "confirmation" and judged == seen
-                          and conf >= apply_judge.CONFIRMATION_MIN_CONF
-                          and not digest.fields and not send_button):
-                why = (f"the page shows {marker!r}, which it did not before the click"
-                       if marker else f"read as confirmation ({conf:.2f}) with no form field "
-                                      f"and no send button")
-                self._decide("after_submit", f"confirmation: {why}", sent=watch.first())
-                raise _Parked("submitted", "confirmation page after the emailed code"
-                              if code_entered else "confirmation page")
+            self._confirmed(marker, state, conf, digest, watch, code_entered,
+                            judged=judged == seen)
             if self._human_check_showing():
                 self._decide("after_submit", "a CAPTCHA challenge showed after the submit "
                                              "click; the person solves it", sent=watch.first())
@@ -4100,7 +4124,26 @@ class _JobRun:
             self._new_page_record(state, conf, digest=digest, answers=answers)
             self._decide("after_submit", f"the last read was stale; read once more "
                                          f"({state} {conf:.2f})")
+            self._confirmed("", state, conf, digest, watch, code_entered, judged=True)
         self._inconclusive(state, conf, digest, watch, before, handoff)
+
+    def _confirmed(self, marker: str, state: str, conf: float, digest: apply_form.FormDigest,
+                   watch: SendWatch, code_entered: bool, *, judged: bool) -> None:
+        """The confirmation test of a post-submit look: received words new
+        since the click (`marker`), or the judge's confirmation of this very
+        page (`judged`) at `CONFIRMATION_MIN_CONF` with no form field and no
+        send button. Raises `submitted`."""
+        send_button = any(_SEND_ONLY_WORDS.search(b.text) for b in digest.buttons)
+        if not (marker or (state == "confirmation" and judged
+                           and conf >= apply_judge.CONFIRMATION_MIN_CONF
+                           and not digest.fields and not send_button)):
+            return
+        why = (f"the page shows {marker!r}, which it did not before the click"
+               if marker else f"read as confirmation ({conf:.2f}) with no form field "
+                              f"and no send button")
+        self._decide("after_submit", f"confirmation: {why}", sent=watch.first())
+        raise _Parked("submitted", "confirmation page after the emailed code"
+                      if code_entered else "confirmation page")
 
     def _page_text(self) -> str:
         try:
@@ -4171,6 +4214,7 @@ class _JobRun:
                 and tuple(before.get("fields") or ()) == _fields_sig(digest))
         read = f"{state} {conf:.2f}"
         sure = conf >= apply_judge.PAGE_STATE_MIN_CONF
+        when = self._sent_when
         if handoff:
             raise self._maybe_only_the_account(state, conf)
         if not watch.any():
@@ -4183,33 +4227,31 @@ class _JobRun:
                                              f"{read})")
             self._decide("after_submit", "the page changed and no request was seen leaving",
                          read=read)
-            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: the page changed after the "
-                                         f"submit click and reads as {read}; no request was "
-                                         f"seen leaving")
-        self._decide("send_observed", f"a request left after the submit click "
-                                      f"({watch.first()})", read=read, same_form=same,
-                     application_site=bool(watch.sent))
+            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: the page changed {when} and "
+                                         f"reads as {read}; no request was seen leaving")
+        first = _cap(watch.first(), 120)
+        self._decide("send_observed", f"a request left {when} ({watch.first()})", read=read,
+                     same_form=same, application_site=bool(watch.sent))
         if not watch.sent:
-            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left for a host "
-                                         f"outside the application's sites "
-                                         f"({_cap(watch.first(), 120)}) and the page reads as "
-                                         f"{read}")
+            where = ("from a new tab or a worker the run could not tie to the job's page"
+                     if watch.first() in watch.unplaced_sends()
+                     else "for a host outside the application's sites")
+            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left {where} "
+                                         f"({first}) and the page reads as {read}")
         if same:
-            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left after the submit "
-                                         f"click ({_cap(watch.first(), 120)}) and the page "
-                                         f"reads as the form again ({read})")
+            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left {when} ({first}) "
+                                         f"and the page reads as the form again ({read})")
         if sure and state in ("login_wall", "signup_form") and _credential_form(digest):
-            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: after the submit click the page "
-                                         f"asks to sign in ({read}); the session may have "
-                                         f"expired before the send")
+            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: {when} the page asks to sign in "
+                                         f"({read}); the session may have expired before the "
+                                         f"send")
         if sure and state in ("application_form", "review_page") and any(
                 _SEND_ONLY_WORDS.search(b.text) for b in digest.buttons):
-            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left after the submit "
-                                         f"click ({_cap(watch.first(), 120)}) and the page is a "
-                                         f"form with its own send button ({read})")
-        raise _Parked("submitted", f"submitted (unconfirmed): a request left after the submit "
-                                   f"click ({_cap(watch.first(), 120)}); the page after reads "
-                                   f"as {read}")
+            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left {when} ({first}) "
+                                         f"and the page is a form with its own send button "
+                                         f"({read})")
+        raise _Parked("submitted", f"submitted (unconfirmed): a request left {when} ({first}); "
+                                   f"the page after reads as {read}")
 
     @staticmethod
     def _maybe_only_the_account(state: str, conf: float) -> _Parked:

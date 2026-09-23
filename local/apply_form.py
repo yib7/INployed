@@ -158,6 +158,9 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            judge reads the first characters (`apply_judge.HEADLINE_CHARS`),
 #            and LinkedIn's skip links, header and upsell filled 597 of 600 of
 #            them on the 2026-09-22 run, so its posting read as a form.
+#   consent  a cookie or consent banner (`CONSENT_ROOTS_JS`) is chrome as
+#            well: its fields and buttons are dropped and its text goes to
+#            the end (the study's G1: 11 ATSs, the banner text first on 3).
 # The label of one radio or checkbox option, self-contained so `apply_fill` can
 # run the same rule on a live locator: label[for], aria-label, an enclosing
 # label (minus the control's own text), the text that follows it, else its
@@ -189,6 +192,116 @@ RADIO_OPTION_LABEL_JS = r"""(el) => {
   return norm(el.value);
 }"""
 
+# The cookie and consent banners of a document, outermost first: an element
+# whose id or class names a consent vendor or a cookie banner (onetrust,
+# cookie, cc-banner, privacy-banner, cookiebot, usercentrics, truste, didomi,
+# osano, termly, iubenda); one whose id or class says only consent or gdpr, or
+# a dialog or a fixed or sticky element, when its first 300 characters
+# mention cookies (a form's own "I consent to..." block does not). A box that
+# holds the page's main content, its h1 or a file input is never one, and
+# neither is the body, a form or a control.
+CONSENT_ROOTS_JS = r"""() => {
+  const STRONG = /onetrust|cookie|cc-banner|privacy-banner|cookiebot|usercentrics|truste|didomi|osano|termly|iubenda/i;
+  const WEAK = /consent|gdpr/i;
+  const COOKIE = /cookie/i;
+  const DIALOG = 'dialog, [role=dialog], [role=alertdialog], [aria-modal=true]';
+  const head = (el) => (el.innerText || el.textContent || '').slice(0, 300);
+  const names = (el) => (el.id || '') + ' ' + (el.getAttribute('class') || '');
+  const blocked = (el) => el === document.body || el === document.documentElement
+    || el.matches('main, [role=main], form, input, select, textarea, button, label, option, a')
+    || !!el.querySelector('main, [role=main], h1, input[type=file]');
+  const found = new Set();
+  const query = ['onetrust', 'cookie', 'consent', 'gdpr', 'cc-banner', 'privacy-banner',
+                 'cookiebot', 'usercentrics', 'truste', 'didomi', 'osano', 'termly', 'iubenda']
+    .map((w) => '[id*=' + w + ' i], [class*=' + w + ' i]').join(', ') + ', ' + DIALOG;
+  for (const el of document.querySelectorAll(query)) found.add(el);
+  const fixed = (el, depth) => {
+    for (const c of el.children) {
+      const pos = getComputedStyle(c).position;
+      if (pos === 'fixed' || pos === 'sticky') found.add(c);
+      if (depth < 3) fixed(c, depth + 1);
+    }
+  };
+  if (document.body) fixed(document.body, 0);
+  const hits = [];
+  for (const el of found) {
+    if (blocked(el)) continue;
+    const s = names(el);
+    let hit = false;
+    if (STRONG.test(s)) hit = true;
+    else if (WEAK.test(s)) hit = COOKIE.test(head(el));
+    else {
+      const floating = el.matches(DIALOG)
+        || ['fixed', 'sticky'].includes(getComputedStyle(el).position);
+      hit = floating && COOKIE.test(head(el));
+    }
+    if (hit) hits.push(el);
+  }
+  return hits.filter((el) => !hits.some((o) => o !== el && o.contains(el)));
+}"""
+
+# The control the loop may click on a visible consent banner: the first whose
+# text (innerText, an input's value, else its aria-label or title) reads as
+# reject, decline, refuse, deny or necessary / essential only, else the first
+# close or dismiss control; never one whose text or aria-label says accept,
+# allow or agree. Returns {css, text, kind, banner} or null.
+_CONSENT_CONTROL_JS = r"""() => {
+  const consentRoots = __CONSENT__;
+  const locatorFor = __LOCATOR__;
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const visible = (el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const REJECT = /^(reject|decline|refuse|deny)\b|\b(necessary|essential) only\b|\bonly (strictly )?(necessary|essential)\b|\b(necessary|essential) cookies only\b/i;
+  const CLOSE = /^(close|dismiss|×|✕|x)$/i;
+  const CLOSE_ARIA = /\b(close|dismiss)\b/i;
+  const ACCEPT = /accept|allow|agree/i;
+  let close = null;
+  for (const root of consentRoots()) {
+    if (!visible(root)) continue;
+    const banner = norm((root.id || '') + ' ' + (root.getAttribute('class') || '')).slice(0, 80);
+    const sel = 'button, [role=button], input[type=button], input[type=submit], a[href]';
+    for (const el of root.querySelectorAll(sel)) {
+      if (!visible(el) || el.disabled) continue;
+      const text = norm(el.innerText) || norm(el.value);
+      const aria = norm(el.getAttribute('aria-label')) || norm(el.getAttribute('title'));
+      const label = text || aria;
+      if (!label || ACCEPT.test(label) || ACCEPT.test(aria)) continue;
+      if (REJECT.test(label)) {
+        return {css: locatorFor(el), text: label.slice(0, 80), kind: 'reject', banner: banner};
+      }
+      if (!close && (CLOSE.test(label) || CLOSE_ARIA.test(aria))) {
+        close = {css: locatorFor(el), text: label.slice(0, 80), kind: 'close', banner: banner};
+      }
+    }
+  }
+  return close;
+}"""
+
+# The locator of an element: `#id` when unique, else a body-rooted
+# nth-of-type path.
+LOCATOR_FN_JS = r"""(el) => {
+  const cssIdent = /^-?[_a-zA-Z][_a-zA-Z0-9-]*$/;
+  if (el.id && cssIdent.test(el.id) && document.querySelectorAll('#' + el.id).length === 1) {
+    return '#' + el.id;
+  }
+  const parts = [];
+  let cur = el;
+  while (cur && cur !== document.body && cur.nodeType === 1) {
+    let i = 1, sib = cur;
+    while ((sib = sib.previousElementSibling)) { if (sib.tagName === cur.tagName) i++; }
+    parts.unshift(cur.tagName.toLowerCase() + ':nth-of-type(' + i + ')');
+    cur = cur.parentElement;
+  }
+  return 'body > ' + parts.join(' > ');
+}"""
+
+_CONSENT_CONTROL_JS = _CONSENT_CONTROL_JS.replace("__CONSENT__", CONSENT_ROOTS_JS).replace(
+    "__LOCATOR__", LOCATOR_FN_JS)
+
 _EXTRACT_JS = r"""
 (cap) => {
   const CONTROL = /^(INPUT|SELECT|TEXTAREA|BUTTON)$/;
@@ -212,6 +325,8 @@ _EXTRACT_JS = r"""
     const c = el.closest(CHROME);
     return !!c && !(c.parentElement && c.parentElement.closest('form, dialog, [role=dialog]'));
   };
+  const consent = (__CONSENT__)();
+  const inConsent = (el) => consent.some((root) => root.contains(el));
 
   const nthPath = (el) => {
     const parts = [];
@@ -360,7 +475,7 @@ _EXTRACT_JS = r"""
     if (lb) controlled.add(lb);
   }
   for (const el of document.querySelectorAll('input, select, textarea, [role=combobox], [role=listbox]')) {
-    if (!enabled(el) || inChrome(el)) continue;
+    if (!enabled(el) || inChrome(el) || inConsent(el)) continue;
     const role = el.getAttribute('role') || '';
     if (role !== 'combobox') {
       const widget = el.closest('[role=combobox]');
@@ -407,7 +522,7 @@ _EXTRACT_JS = r"""
     && APPLY.test(text + ' ' + norm(el.getAttribute('aria-label')));
   for (const el of document.querySelectorAll(bsel + ', a[href]')) {
     if (!enabled(el) || !visible(el)) continue;
-    if (el.closest('[role=combobox]')) continue;
+    if (el.closest('[role=combobox]') || inConsent(el)) continue;
     const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label')) || norm(el.getAttribute('title'));
     if (!el.matches(bsel) && !applyLink(el, text)) continue;
     const typeAttr = (el.getAttribute('type') || '').toLowerCase();
@@ -435,9 +550,15 @@ _EXTRACT_JS = r"""
     text = [above.trim(), lead, text.slice(at + lead.length).trim(), ...moved]
       .filter(Boolean).join('\n');
   }
+  const banners = [];
+  for (const root of consent) {
+    const t = (root.innerText || '').trim();
+    if (t && text.includes(t)) { text = text.replace(t, ''); banners.push(t); }
+  }
+  if (banners.length) text = [text.trim(), ...banners].filter(Boolean).join('\n');
   return { fields: out, buttons: buttons, text: text.slice(0, cap) };
 }
-""".replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS)
+""".replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS).replace("__CONSENT__", CONSENT_ROOTS_JS)
 
 _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
 
@@ -483,6 +604,21 @@ def extract(page) -> FormDigest:
     text = "\n".join(texts)[:PAGE_TEXT_CAP]
     return FormDigest(url_host=urlparse(page.url).hostname or "", title=page.title(),
                       text=text, fields=fields, buttons=buttons)
+
+
+def consent_control(page) -> tuple[int, dict] | None:
+    """(frame index, {css, text, kind, banner}) of the control the loop may
+    click to dismiss a visible cookie or consent banner: its reject,
+    decline or necessary-only control, else its close (`_CONSENT_CONTROL_JS`);
+    None when no banner shows or it offers neither."""
+    for idx, frame in enumerate(frames(page)):
+        try:
+            found = frame.evaluate(_CONSENT_CONTROL_JS)
+        except Exception:       # noqa: BLE001  (a detached or cross-origin frame)
+            continue
+        if found:
+            return idx, dict(found)
+    return None
 
 
 def page_texts(page) -> list[str]:

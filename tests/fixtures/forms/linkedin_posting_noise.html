@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._a1 { display: inline-block; padding: 6px 14px; border-radius: 16px; background: #0a66c2; color: #fff; }
+  ._sw { width: 40px; height: 20px; }
+  ._ov { position: fixed; right: 16px; bottom: 0; width: 280px; background: #fff; border: 1px solid #ccc; padding: 8px; }
+  ._hide { display: none; }
+</style>
+</head>
+<body>
+<!-- A LinkedIn job page wide enough to show the stray controls a real run's
+     window sees: a job-alert switch with a visible checkbox, a "Submit
+     feedback" button, the messaging overlay with its search box, another
+     job's card in the right rail marked Applied, and the guest sign-in form
+     hidden in the markup. None of them is the application: the top card's
+     offsite Apply is. -->
+<div>
+  <header>
+    <div role="search"><input type="text" aria-label="Search by title, skill, or company"></div>
+    <nav><a href="/feed/">Home</a> <button type="button">Me</button></nav>
+  </header>
+  <main id="workspace">
+    <section>
+      <h1>Analytics Engineer</h1>
+      <p>Fabrikam, New York, NY</p>
+      <p><a class="_a1 _b2" id="posting-apply" aria-label="Apply on company website"
+            href="linkedin_redirect.html" target="_blank" rel="opener">Apply</a>
+         <button type="button">Save</button></p>
+      <div>
+        <label for="alert-switch">Set alert for similar jobs</label>
+        <input type="checkbox" role="switch" id="alert-switch" class="_sw">
+      </div>
+      <h2>About the job</h2>
+      <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+      <ul>
+        <li>Design and maintain the warehouse models.</li>
+        <li>Partner with product managers on metrics.</li>
+        <li>Three years with SQL and a modern warehouse.</li>
+      </ul>
+      <div>
+        <p>Was this job description helpful?</p>
+        <label>Tell us more <textarea name="feedback" rows="2"></textarea></label>
+        <button type="submit">Submit feedback</button>
+      </div>
+    </section>
+    <form class="_hide" action="/uas/login-submit" method="post">
+      <input type="email" name="session_key" aria-label="Email or phone">
+      <input type="password" name="session_password" aria-label="Password">
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+  <aside>
+    <h2>People also viewed</h2>
+    <ul>
+      <li><a href="/jobs/view/111/">Data Analyst, Contoso</a><span>Applied</span></li>
+      <li><a href="/jobs/view/222/">BI Developer, Northwind</a><span>Promoted</span></li>
+    </ul>
+  </aside>
+  <aside class="_ov" id="msg-overlay">
+    <p>Messaging</p>
+    <input type="search" placeholder="Search messages" aria-label="Search messages">
+    <button type="button">New message</button>
+  </aside>
+</div>
+</body>
+</html>

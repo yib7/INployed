@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._m1 { position: fixed; top: 60px; left: 50%; width: 420px; margin-left: -210px;
+         background: #fff; border: 1px solid #888; padding: 16px; z-index: 10; }
+  ._m1 label { display: block; margin: 8px 0; }
+</style>
+</head>
+<body>
+<!-- A LinkedIn job page seen signed out: a sign-in dialog over the page and
+     no offsite Apply, only a button that asks to sign in first. The run
+     stops and asks the user to sign in to LinkedIn. -->
+<div>
+  <header>
+    <nav><a href="/feed/">Home</a> <a href="/login">Sign in</a></nav>
+  </header>
+  <main id="workspace">
+    <section>
+      <h1>Analytics Engineer</h1>
+      <p>Fabrikam, New York, NY</p>
+      <p><button type="button">Sign in to apply</button></p>
+      <h2>About the job</h2>
+      <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+    </section>
+  </main>
+  <div role="dialog" aria-modal="true" class="_m1">
+    <h2>Welcome back</h2>
+    <label>Email or phone <input type="text" name="session_key"></label>
+    <label>Password <input type="password" name="session_password"></label>
+    <button type="button">Sign in</button>
+  </div>
+</div>
+</body>
+</html>

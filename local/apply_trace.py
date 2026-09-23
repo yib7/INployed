@@ -33,6 +33,7 @@ a job.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -65,9 +66,15 @@ _ATTEMPT_RE = re.compile(r"^attempt-(\d+)$")
 
 def _as_text(value: Any) -> Any:
     """JSON for what `json` cannot write itself: a path or any other object as
-    its text, a set as a sorted list's text (cut to 200 characters)."""
+    its text, a set as a sorted list's text (cut to 200 characters). A
+    dataclass, or any object with a `value` attribute (a `PlannedField`, a
+    `Filled`), is written as its type's name alone: its text would carry the
+    value it holds, and the trace never holds a field's value."""
+    if dataclasses.is_dataclass(value) or hasattr(value, "value"):
+        return f"<{type(value).__name__}>"
     if isinstance(value, (set, frozenset)):
-        value = sorted(value, key=str)
+        value = [v if v is None or isinstance(v, (str, int, float, bool)) else _as_text(v)
+                 for v in sorted(value, key=str)]
     return str(value)[:200]
 
 

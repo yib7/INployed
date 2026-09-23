@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  a.btn { display: inline-block; padding: 8px 16px; border: 1px solid #333; }
+  #cookie-consent { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 1000; }
+  #cookie-consent .panel { position: absolute; left: 50%; top: 30%; width: 460px;
+                           margin-left: -230px; background: #fff; padding: 16px; }
+</style>
+</head>
+<body>
+<!-- A posting under a cookie dialog that covers the whole page (the shape
+     that took the Apply click on two real career sites until it was
+     declined). The decline control is an input of type button, whose text
+     is its value; the dialog also offers Accept, which the run never clicks. -->
+<div id="cookie-consent" role="dialog" aria-modal="true" aria-label="Cookie preferences">
+  <div class="panel">
+    <h2>This site uses cookies</h2>
+    <p>We use cookies to run the site and, with your consent, to measure how it is used.</p>
+    <button type="button" id="accept-all"
+            onclick="document.body.dataset.cookiesAccepted = 1; document.getElementById('cookie-consent').remove()">Accept all cookies</button>
+    <input type="button" id="reject" value="Reject non-essential"
+           onclick="document.getElementById('cookie-consent').remove()">
+  </div>
+</div>
+<main>
+  <h1>Analytics Engineer</h1>
+  <p>Fabrikam, New York, NY</p>
+  <h2>About the role</h2>
+  <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+  <h2>Responsibilities</h2>
+  <ul>
+    <li>Design and maintain the warehouse models.</li>
+    <li>Partner with product managers on metrics.</li>
+  </ul>
+  <h2>Qualifications</h2>
+  <ul>
+    <li>Three years with SQL and a modern warehouse.</li>
+    <li>Experience with dbt or a similar tool.</li>
+  </ul>
+  <p><a class="btn" id="apply" href="lever_single.html">Apply now</a></p>
+</main>
+</body>
+</html>

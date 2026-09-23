@@ -71,6 +71,8 @@ requests==2.34.2
 #   * Pillow — maintainers only: regenerates the desktop icon
 #     (python local/assets/make_icon.py) and composes the README media
 #     (scripts/build_demo_media.py, build_social_preview.py, build_walkthrough.py).
+#     The auto-apply trace tests read their masked screenshots with it and skip
+#     those pixel checks without it; CI installs it in the browser test step.
 #   * imageio-ffmpeg (maintainers only): supplies the ffmpeg binary that
 #     scripts/build_walkthrough.py encodes the README tour with. Imported
 #     lazily, inside the encode step, so every other script here runs without it.

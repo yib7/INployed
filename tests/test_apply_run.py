@@ -1111,16 +1111,19 @@ def test_a_linkedin_posting_is_the_posting_whatever_the_judge_reads(
     assert "ashby_steps.html" in record
 
 
-@pytest.mark.parametrize("state, reason", [("login_wall", "LinkedIn is signed out"),
-                                           ("error_or_dead", "error or dead page")])
-def test_a_linkedin_posting_the_judge_reads_as_signed_out_or_closed_parks(
-        context, fixture_url, job_folder, catalog_builder, tmp_path, state, reason):
+@pytest.mark.parametrize("state", ["login_wall", "error_or_dead"])
+def test_a_linkedin_posting_the_judge_reads_as_signed_out_or_closed_still_goes_on(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, state):
+    # SP2: a LinkedIn job page is read without the judge; its own marks
+    # (signed out, closed, applied) park it (tests/test_apply_entry.py), and
+    # a confident misread no longer does
     _serve_linkedin_posting(context, fixture_url)
     _enqueue(job_folder, _LINKEDIN_JOB)
     runner = _runner(context, tmp_path)
     runner.jev = _page_state_judge("www.linkedin.com", state, 0.90)
     out = runner.drain(cap=1)[0]
-    assert (out.status, out.reason) == ("needs_human", reason), out
+    assert out.status == "submitted", out
+    assert "ashby_steps.html" in Path(out.record_path).read_text(encoding="utf-8")
 
 
 class _UnsureJudge(jev.FakeJev):
@@ -1816,29 +1819,9 @@ def test_a_posting_read_after_a_filled_form_goes_to_the_submit_gate(
     assert run.page.locator("body[data-submitted]").count() == 0
 
 
-def _linkedin_digest(texts, fields=()):
-    return apply_form.FormDigest(
-        url_host="www.linkedin.com", title="t", text="", fields=list(fields),
-        buttons=[apply_form.Button(n, (0, f"#b{n}"), t, "") for n, t in enumerate(texts)])
-
-
-@pytest.mark.parametrize("url, texts, filled, fields, expected", [
-    (_LINKEDIN_JOB, ["Me", "Apply", "Saved"], False, (), 1),
-    (_LINKEDIN_JOB, ["Me", "Easy Apply filter", "Apply"], False, (), 2),   # the judged entry wins
-    ("https://www.linkedin.com/jobs/search/?keywords=x", ["Easy Apply", "Apply"], False, (), None),
-    (_LINKEDIN_JOB, ["Apply", "Submit application"], False, (), None),
-    (_LINKEDIN_JOB, ["Apply"], True, (), None),
-    ("https://careers.fabrikam.example/jobs/view/1", ["Apply"], False, (), None),
-    (_LINKEDIN_JOB, ["Apply"], False, ("field",), None),
-])
-def test_linkedin_apply_finds_only_a_job_pages_own_apply(url, texts, filled, fields, expected):
-    from types import SimpleNamespace
-    run = SimpleNamespace(page=SimpleNamespace(url=url), submit_clicked=False, form_filled=filled)
-    run._on_linkedin = lambda: apply_run._JobRun._on_linkedin(run)
-    digest = _linkedin_digest(texts, [apply_form.Field(0, (0, "#f"), "Name", "text", False)]
-                              if fields else ())
-    plan = FillPlan(buttons={"apply_entry": (2, 0.9)} if len(texts) > 2 else {})
-    assert apply_run._JobRun._linkedin_apply(run, digest, plan) == expected
+# The digest-based LinkedIn shortcut (`_linkedin_apply`) is gone: a LinkedIn
+# job page is read by `apply_linkedin` whatever fields or buttons sit beside
+# its Apply (tests/test_apply_entry.py).
 
 
 class _PostingJudge(jev.FakeJev):

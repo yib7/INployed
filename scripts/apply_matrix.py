@@ -89,8 +89,8 @@ def main(argv: list[str] | None = None) -> int:
               f"{h.FAKE_SUCCESS_FLOOR:.1%}; {len(flows)} flows x {len(judge_list)} judges in "
               f"{time.monotonic() - started:.0f}s")
         if args.json:
-            Path(args.json).write_text(json.dumps([asdict(r) for r in results], indent=2),
-                                       encoding="utf-8")
+            rows = [{k: v for k, v in asdict(r).items() if k != "actions"} for r in results]
+            Path(args.json).write_text(json.dumps(rows, indent=2), encoding="utf-8")
         return 1 if rt["breaks"] else 0
 
 

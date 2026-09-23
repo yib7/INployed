@@ -104,6 +104,35 @@ _SNAPSHOT_JS = """() => {
   return [document.body ? document.body.outerHTML.length : 0, ids];
 }"""
 
+# The settle's view of a frame: the snapshot, the visible text's length, and
+# whether a loading placeholder shows in the viewport (an `aria-busy=true`
+# region, a skeleton or shimmer block). A placeholder below the fold, which
+# only loads on scroll, does not count.
+_READY_JS = """() => {
+  const visible = (el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 || r.height > 0;
+  };
+  const ids = Array.from(document.querySelectorAll('input, select, textarea, [role=combobox], button'))
+    .filter(visible).map(e => e.id || e.getAttribute('name') || e.tagName).join('|');
+  const body = document.body;
+  const vh = window.innerHeight || 0;
+  let busy = 0;
+  const sel = '[aria-busy=true], [class*=skeleton i], [class*=shimmer i], '
+    + '[class*=placeholder-glow], [class*=placeholder-wave]';
+  for (const el of document.querySelectorAll(sel)) {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) === 0) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0 || r.bottom <= 0 || r.top >= vh) continue;
+    busy = 1;
+    break;
+  }
+  return [body ? body.outerHTML.length : 0, ids, body ? (body.innerText || '').length : 0, busy];
+}"""
+
 
 def _say(log_fn: Callable[[str], Any] | None, msg: str) -> None:
     if log_fn is not None:
@@ -330,20 +359,41 @@ def _load(page, state: str, timeout_ms: int) -> None:
         pass
 
 
-def _settle(page, timeout_s: float, *, navigated: list | None = None) -> None:
+def _ready_snapshot(page) -> tuple[tuple, bool]:
+    """(every frame's snapshot with its text length, a loading placeholder
+    shows in some frame's viewport)."""
+    out, busy = [], False
+    for frame in apply_form.frames(page):
+        try:
+            outer, ids, text, placeholder = frame.evaluate(_READY_JS)
+        except Exception:       # noqa: BLE001  (a frame mid-navigation)
+            out.append(("gone",))
+            continue
+        out.append((outer, ids, text))
+        busy = busy or bool(placeholder)
+    return tuple(out), busy
+
+
+def _settle(page, timeout_s: float, *, navigated: list | None = None) -> dict[str, Any]:
     """After a change: wait for `domcontentloaded` and a best-effort
     `networkidle`, then return once the page has been quiet for
-    SETTLE_QUIET_S: no snapshot change, no torn-down frame, no navigation.
-    A navigation that lands inside the window (a spinner shown on click, the
+    SETTLE_QUIET_S: no snapshot change (the body's length, its visible
+    controls, its visible text's length), no torn-down frame, no navigation,
+    and no loading placeholder (`aria-busy`, a skeleton) in the viewport. A
+    navigation that lands inside the window (a spinner shown on click, the
     redirect a second later) re-runs the load waits and restarts the quiet
     count, so the caller's next `extract` reads the destination page. A page
-    that keeps moving is released after SETTLE_MAX_S."""
+    that keeps moving, or keeps a placeholder up, is released after
+    SETTLE_MAX_S. Returns how long it took (`ms`), whether the cap released
+    it (`capped`) and whether a placeholder showed (`busy`)."""
+    start = time.monotonic()
     nav = navigated if navigated is not None else []
     seen = len(nav)
     url_seen = page.url
     _load(page, "domcontentloaded", int(timeout_s * 1000))
     _load(page, "networkidle", NETWORK_IDLE_MS)
     last = None
+    busy_seen = False
     quiet_since = time.monotonic()
     hard_stop = quiet_since + SETTLE_MAX_S
     while True:
@@ -353,21 +403,23 @@ def _settle(page, timeout_s: float, *, navigated: list | None = None) -> None:
             _load(page, "networkidle", NETWORK_IDLE_MS)
             last = None
             quiet_since = time.monotonic()
-        snap = _snapshot(page)
-        if snap != last or ("gone",) in snap:
+        snap, busy = _ready_snapshot(page)
+        busy_seen = busy_seen or busy
+        if snap != last or ("gone",) in snap or busy:
             last = snap
             quiet_since = time.monotonic()
         now = time.monotonic()
-        if now - quiet_since >= SETTLE_QUIET_S or now >= hard_stop:
-            return
+        quiet = now - quiet_since >= SETTLE_QUIET_S
+        if quiet or now >= hard_stop:
+            return {"ms": int((now - start) * 1000), "capped": not quiet, "busy": busy_seen}
         page.wait_for_timeout(100)
 
 
-def settle(page, timeout_s: float = 20) -> None:
-    """Wait for `page` to load and hold still after a click the caller made
-    itself (the runner clicks a posting's Apply button inside
-    `page.expect_popup`, so it cannot go through `click_button`)."""
-    _settle(page, timeout_s)
+def settle(page, timeout_s: float = 20) -> dict[str, Any]:
+    """Wait for `page` to load and hold still (see `_settle`) after a
+    navigation or a click the caller made itself (the runner's first `goto`,
+    a posting's Apply, a popup it follows). Returns `_settle`'s timing."""
+    return _settle(page, timeout_s)
 
 
 @dataclass(frozen=True)

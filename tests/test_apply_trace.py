@@ -99,10 +99,12 @@ def test_every_judged_page_leaves_its_json_and_screenshot_and_no_value(
     assert first["answers"]["button_0_role"]["choice"] == "advance"
     assert first["answers"]["button_0_role"]["confidence"] == 1.0
     assert "noul" in first["answers"]["has_captcha"]
-    # the plan without the values it types, then what the page's step did
-    kinds = [e["kind"] for e in first["events"]]
-    assert kinds[0] == "plan"
-    plan = first["events"][0]["plan"]
+    # the first load's settle is the page's first decision (SP2), then the
+    # plan without the values it types, then what the page's step did
+    assert first["events"][0]["kind"] == "decision" and first["events"][0]["what"] == "settled"
+    steps = [e for e in first["events"] if e["kind"] != "decision"]
+    assert steps[0]["kind"] == "plan"
+    plan = steps[0]["plan"]
     assert {f["label"]: f["action"] for f in plan["fields"]}["First name"] == "fill"
     assert all("value" not in f for f in plan["fields"])
     fill = next(e for e in first["events"] if e["kind"] == "fill")
@@ -134,8 +136,10 @@ def test_the_trace_follows_the_popup_and_records_the_linkedin_shortcut(
                    server=flow_server, workdir=tmp_path)
     assert r.ok and not r.breaks, r
     pages = _pages(Path(r.trace))
-    decision = next(e for e in pages[0]["events"] if e["kind"] == "decision")
-    assert decision["what"] == "linkedin_shortcut" and decision["text"] == "Apply"
+    decision = next(e for e in pages[0]["events"]
+                    if e["kind"] == "decision" and e["what"] == "linkedin_handler")
+    assert decision["found"] == "offsite" and decision["view"]["offsite"] == ["Apply"]
+    assert pages[0]["page_state"] is None           # the handler asked no judge
     entry = next(e for e in pages[0]["events"] if e["kind"] == "apply_entry")
     assert entry["text"] == "Apply" and entry["popup"] is True
     assert entry["destination"].endswith("/forms/ashby_steps.html")
@@ -392,7 +396,7 @@ def test_probe_reads_a_posting_follows_only_its_apply_and_changes_nothing(
     assert "page 1: " + flow_server.url("job_posting.html") in text
     assert "  button [0] 'Apply now'" in text
     assert "  fieldless posting: would click [0] 'Apply now'" in text
-    assert "  linkedin shortcut: not taken (not on LinkedIn)" in text
+    assert "  linkedin handler: not on LinkedIn" in text
     assert re.search(r"  judge: page_state job_posting 1\.00 \(job_posting 1\.00", text), text
     assert "follow-apply: clicked [0] 'Apply now'; a new tab at " in text
     assert "page 2: " + flow_server.url("ashby_steps.html") in text
@@ -413,7 +417,8 @@ def test_probe_takes_the_linkedin_shortcut_on_a_linkedin_job_page(
                            out=out, settle_s=1)
     text = out.getvalue()
     assert code == 0, text
-    assert re.search(r"  linkedin shortcut: would click \[\d+\] 'Apply'", text), text
+    assert "  linkedin handler: click the offsite Apply 'Apply' (the LinkedIn handler); " \
+           "the top card's offsite Apply 'Apply'" in text, text
     assert "judge:" not in text                              # no judge asked without --judge
     assert no_typing == []
 

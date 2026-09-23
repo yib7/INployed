@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._e1 { display: inline-block; width: 120px; height: 32px; border-radius: 16px; background: #0a66c2; }
+</style>
+</head>
+<body>
+<!-- A LinkedIn job page whose only apply control is Easy Apply: an icon
+     button that names it in its aria-label alone. The run must stop with the
+     Easy Apply reason and click nothing. The similar job's card also says
+     Easy Apply, inside a long link text. -->
+<div>
+  <header>
+    <div role="search"><input type="text" aria-label="Search by title, skill, or company"></div>
+    <nav><a href="/feed/">Home</a> <button type="button">Me</button></nav>
+  </header>
+  <main id="workspace">
+    <section>
+      <h1>Analytics Engineer</h1>
+      <p>Fabrikam, New York, NY</p>
+      <p><button type="button" id="ez" class="_e1"
+                 aria-label="Easy Apply to Analytics Engineer at Fabrikam"
+                 onclick="document.body.dataset.easyApplied = 1"><svg width="16" height="16"
+                 aria-hidden="true"><rect width="16" height="16"></rect></svg></button>
+         <button type="button">Save</button></p>
+      <h2>About the job</h2>
+      <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+      <ul>
+        <li>Design and maintain the warehouse models.</li>
+        <li>Partner with product managers on metrics.</li>
+        <li>Three years with SQL and a modern warehouse.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Similar jobs</h2>
+      <a id="similar-card" href="job_posting.html">Data Engineer Contoso New York, United States (On-site) Easy Apply</a>
+    </section>
+  </main>
+</div>
+</body>
+</html>

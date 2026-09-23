@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer at Fabrikam</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  ._a1 { display: inline-block; padding: 6px 14px; border-radius: 16px; background: #0a66c2; color: #fff; }
+</style>
+</head>
+<body>
+<!-- A LinkedIn job page whose top card (the title and the Apply link)
+     renders 2.5 s after `load`, as the client-rendered page does on a slow
+     connection. The description is there from the start. A read taken at
+     `load` sees no Apply at all. -->
+<div>
+  <header>
+    <div role="search"><input type="text" aria-label="Search by title, skill, or company"></div>
+    <nav><a href="/feed/">Home</a> <button type="button">Me</button></nav>
+  </header>
+  <main id="workspace">
+    <section id="top-card"></section>
+    <section>
+      <h2>About the job</h2>
+      <h3>About the role</h3>
+      <p>Own the analytics models and the dashboards the product team reads every morning.</p>
+      <h2>Responsibilities</h2>
+      <ul>
+        <li>Design and maintain the warehouse models.</li>
+        <li>Partner with product managers on metrics.</li>
+      </ul>
+      <h2>Qualifications</h2>
+      <ul>
+        <li>Three years with SQL and a modern warehouse.</li>
+        <li>Experience with dbt or a similar tool.</li>
+      </ul>
+    </section>
+  </main>
+</div>
+<script>
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      document.getElementById('top-card').innerHTML =
+        '<h1>Analytics Engineer</h1><p>Fabrikam, New York, NY</p>' +
+        '<p><a class="_a1 _b2" id="posting-apply" aria-label="Apply on company website" ' +
+        'href="linkedin_redirect.html" target="_blank" rel="opener">Apply</a> ' +
+        '<button type="button">Save</button></p>';
+    }, 2500);
+  });
+</script>
+</body>
+</html>

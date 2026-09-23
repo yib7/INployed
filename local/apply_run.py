@@ -10,11 +10,19 @@ write `apply_record.md`, finish the queue entry.
     python local/apply_run.py probe <url> [--follow-apply] [--judge] [--headed]
                                          read one page as the run would; changes nothing
 
-Per job (`Runner.run_job`): the fact catalog from the job folder's apply.md
-(`apply_facts.build`), then one page at a time up to `apply_judge.MAX_PAGES`
-and the job's wall clock (`JOB_WALL_CLOCK_S`): `apply_form.extract` -> one Jev request
-(`apply_judge.page_questions`) -> `read_page_state` -> the state table from
-the design (section 3.5):
+Per job (`Runner.run_job`): an Easy Apply entry (`is_easy_apply`) ends at
+once, `needs_human` with `EASY_APPLY_REASON`, and no page is opened. Else the
+fact catalog from the job folder's apply.md (`apply_facts.build`), the first
+load (to `domcontentloaded`, settled), then one page at a time up to
+`apply_judge.MAX_PAGES` and the job's wall clock (`JOB_WALL_CLOCK_S`): a
+visible cookie or consent banner dismissed by its reject control (never its
+accept), the page read once it holds still (`_read_digest` reads an empty
+page again), LinkedIn's pages decided without the judge (`apply_linkedin`: a
+job page's offsite Apply is clicked; Easy Apply, already applied, closed and
+signed out park; nothing is ever filled on LinkedIn), and every other page
+through `apply_form.extract` -> one Jev request (`apply_judge.page_questions`)
+-> `read_page_state` (a read under the floor is taken once more after a
+settle) -> the state table from the design (section 3.5):
 
     job_posting            click the Apply entry, follow a popup
     application_form       plan, fill, verify, type the keyring password into a
@@ -70,6 +78,7 @@ import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_inbox  # noqa: E402
+import apply_linkedin  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_trace  # noqa: E402
 import ats_accounts  # noqa: E402
@@ -81,13 +90,23 @@ log = logging.getLogger("apply_run")
 JOB_WALL_CLOCK_S = 15 * 60         # per job, on the injectable clock (a solved CAPTCHA's wait is added back)
 GENERATE_MAX = 3                   # generated answers per job (spec 3.7)
 POPUP_TIMEOUT_MS = 5_000           # for the Apply entry to open a new tab
+POPUP_GRACE_S = 0.5                # after a same-tab DOM change, for a popup that follows it
+ENTRY_POLL_MS = 100                # the entry click's watch for a popup, a navigation or a change
+GOTO_TIMEOUT_MS = 45_000           # the first load, to `domcontentloaded`
+GOTO_RETRY_S = 2.0                 # before the one retry of a first load that failed on the network
+EMPTY_TEXT_MIN = 200               # a fieldless read with less visible text is read again
+EMPTY_READ_MAX_S = 10.0            # an empty read is re-read after a settle for up to this long
+EMPTY_READ_STABLE_S = 3.0          # or until the page has held the same empty read this long
+EMPTY_READ_POLL_S = 0.5
+LINKEDIN_READY_S = 12.0            # for a LinkedIn job page's top card to render
+LINKEDIN_POLL_MS = 250
+CONSENT_MAX = 3                    # consent banners dismissed per job
 CLICK_TIMEOUT_S = 20               # click_button's wait for a change
 SUBMIT_SETTLE_S = 10               # after a quiet submit click: wait this long for the page
 HOLD_POLL_S = 1.0                  # while holding the window open
 FINISH_RETRY_S = 1.0               # before the one retry of a failed queue finish
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
-LINKEDIN_REDIRECTOR = "/safety/go"  # the hop an off-site Apply link goes through
 REDIRECT_TIMEOUT_S = 20            # for that hop's script to send the tab on
 HUMAN_CHECK_WAIT_S = 5 * 60        # for the user to solve a CAPTCHA in the visible window
 HUMAN_CHECK_POLL_S = 2.0
@@ -128,6 +147,8 @@ HIDDEN = "<hidden>"
 
 LOGIN_NOTE = "log in manually, then Re-queue"
 LINKEDIN_LOGIN_NOTE = "run `python local/apply_run.py login`, sign in to LinkedIn, then Re-queue"
+EASY_APPLY_REASON = apply_linkedin.EASY_APPLY_REASON
+EASY_APPLY_NOTE = apply_linkedin.EASY_APPLY_NOTE
 CODE_NOTE = "enter the emailed code manually, then Re-queue"
 REVIEW_NOTE = "review and submit"
 SUBMIT_FAILED_NOTE = "submit did not register; review and submit"
@@ -159,18 +180,17 @@ _PARK_STATES = {
 # check, payment, error or unrecognised page parks.
 _UNSURE_ACTS = frozenset(("job_posting", "application_form", "review_page",
                           "login_wall", "signup_form", "code_gate"))
-# What a LinkedIn job page may still be read as over `_linkedin_apply`: signed
-# out, a closed posting, and the other reads that park.
-_LINKEDIN_POSTING_KEEPS = frozenset(("login_wall", "signup_form", "confirmation",
-                                     "error_or_dead", "captcha_or_bot_check",
-                                     "payment_request"))
+# The steps that put a value on a page or send it: none of them runs on
+# LinkedIn, where a form is Easy Apply's (the user applies there in person).
+_LINKEDIN_FORM_STATES = frozenset(("application_form", "review_page", "code_gate"))
+# An Easy Apply control (LinkedIn's, or a board's "Easy apply" that sends a
+# stored profile): never an Apply entry the run clicks.
+_EASY_APPLY = re.compile(r"easy\s*apply", re.I)
 # What the page after a submit click on an account page ("Create account and
 # apply") may read as when the click only made the account and opened the
 # application (`_JobRun._after_submit`): the job then waits for the user,
 # since a sent application's page can look the same.
 _OPENED_BY_ACCOUNT = frozenset(("application_form", "login_wall", "signup_form"))
-_APPLY_WORD = re.compile(r"\bapply\b", re.I)
-_SUBMIT_WORD = re.compile(r"\bsubmit\b", re.I)
 # The loop's send vocabulary: a button whose text has one of `SUBMIT_WORDS`
 # reads as sending the application (`_submit_shaped`), and one with a
 # `FINAL_WORDS` word as a last step (`_final_shaped`). The flow harness checks
@@ -464,15 +484,30 @@ class _Accounts:
                 return False
             page.goto(target, timeout=self._nav_timeout())
             self.run._check_host(page.url)
+            # the sign-up page renders like any other: it is read once it
+            # holds still (NAV-03)
+            info = apply_fill.settle(page, CLICK_TIMEOUT_S)
+            self.run._decide_next("settled", f"settled {_settled_ms(info)} ms after the "
+                                             "create-account link")
             fresh = self.run._drop_foreign_controls(apply_form.extract(page))
             answers = self.run._judge_page(fresh)
             state, confidence = apply_judge.read_page_state(answers)
             # the page the link led to is a page of the job: the record and
             # the trace carry it, and the sign-up's step is written on it
             self.run._new_page_record(state, confidence, digest=fresh, answers=answers)
+            # a park from here names the sign-up page and its own evidence: its
+            # read, boxes and buttons (the stored answers are its answers now)
             if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
-                return False
-            return self.signup(page, fresh, fresh.url_host or _host(page.url))
+                raise _Parked("needs_human", f"login wall (the create-account link led to "
+                                             f"{_cap(page.url, 120)}: "
+                                             f"{self.run._account_evidence(state, fresh)})",
+                              LOGIN_NOTE)
+            if not self.signup(page, fresh, fresh.url_host or _host(page.url)):
+                raise _Parked("needs_human", f"account signup needed (the create-account link "
+                                             f"led to {_cap(page.url, 120)}: "
+                                             f"{self.run._account_evidence(state, fresh)})",
+                              LOGIN_NOTE)
+            return True
         except (_Parked, _AsForm):
             # the loop's own park (a host check, an unanswerable box): the
             # reason names what was refused and the loop ends the job with
@@ -770,10 +805,46 @@ def _is_captcha_url(url: str) -> bool:
 
 
 def _on_linkedin_redirector(url: str) -> bool:
-    """Is `url` LinkedIn's `/safety/go/` hop to an off-site Apply page?"""
-    parts = urlsplit(str(url or ""))
-    return ((parts.hostname or "").lower() in LINKEDIN_HOSTS
-            and parts.path.startswith(LINKEDIN_REDIRECTOR))
+    """Is `url` LinkedIn's `/safety/go/` hop to an off-site Apply page (on
+    any LinkedIn host)?"""
+    return apply_linkedin.url_kind(url) == "redirector"
+
+
+def _easy_apply(entry: Mapping[str, Any]) -> bool:
+    """Is the queue entry an Easy Apply job? A legacy entry may carry the
+    flag as text."""
+    flag = entry.get("is_easy_apply")
+    return flag is True or str(flag or "").strip().lower() in ("true", "1", "yes")
+
+
+def _empty_read(digest: apply_form.FormDigest) -> bool:
+    """A read taken before the page rendered: no form field, and no button
+    or under `EMPTY_TEXT_MIN` characters of visible text (study G5: 0
+    characters and 0 controls at `load` on five ATSs). A page that shows form
+    fields has rendered, however short it is: a sign-in box and its button
+    make a whole page."""
+    if digest.fields:
+        return False
+    return not digest.buttons or len((digest.text or "").strip()) < EMPTY_TEXT_MIN
+
+
+def _dropped_load(e: BaseException) -> bool:
+    """A load the network dropped: Playwright's `net::ERR_...`, or Chromium
+    swapping the page for its own error page mid-load."""
+    text = str(e)
+    return "net::ERR_" in text or "chrome-error://" in text
+
+
+def _settled_ms(info: Any) -> int:
+    """The milliseconds `apply_fill.settle` reported (0 from a stand-in)."""
+    return int(info.get("ms", 0)) if isinstance(info, Mapping) else 0
+
+
+def _snapshot_or_none(page) -> Any:
+    try:
+        return apply_fill._snapshot(page)
+    except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
+        return None
 
 
 def _is_password(row: dict) -> bool:
@@ -868,39 +939,52 @@ def _sends_application(digest: apply_form.FormDigest, n: int, *,
     return _final_shaped(digest, n) and not _ACCOUNT_STEP_WORDS.search(text)
 
 
-def linkedin_apply_choice(url: str, digest: apply_form.FormDigest, plan: FillPlan | None, *,
-                          busy: bool = False) -> tuple[int | None, str]:
-    """(the Apply control of a LinkedIn job page, why), or (None, why not):
-    a `/jobs/view/` page on LinkedIn with no form field and no submit button,
-    before any form was filled or submitted (`busy`). The judge's confident
-    `apply_entry` wins when its text says apply, else the first control that
-    does. Every queued job starts on one, and its site chrome and upsells
-    have misread as a form (2026-09-22). The run and `probe` share it."""
-    if busy:
-        return None, "a form was filled or sent in this job"
-    if _host(url) not in LINKEDIN_HOSTS:
-        return None, "not on LinkedIn"
-    if not urlsplit(str(url or "")).path.startswith("/jobs/view/"):
-        return None, "not a /jobs/view/ page"
-    if digest.fields:
-        return None, f"the page has {len(digest.fields)} form field(s)"
-    if any(_SUBMIT_WORD.search(b.text) for b in digest.buttons):
-        return None, "a button says submit"
-    says_apply = [b.n for b in digest.buttons if _APPLY_WORD.search(b.text)]
-    entry = plan.buttons.get("apply_entry") if plan is not None else None
-    if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF \
-            and entry[0] in says_apply:
-        return entry[0], "the judged apply_entry"
-    if says_apply:
-        return says_apply[0], "the first control that says apply"
-    return None, "no control says apply"
+def linkedin_step(url: str, decision: apply_linkedin.Decision | None) -> str | None:
+    """What the LinkedIn handler does with a page (`_JobRun._linkedin_step`),
+    in words, or None when the page goes on to the judge (off LinkedIn, or a
+    LinkedIn page other than a job page with nothing for the handler)."""
+    kind = apply_linkedin.url_kind(url)
+    if not kind:
+        return None
+    if kind == "signed_out":
+        return (f"park: {apply_linkedin.SIGNED_OUT_REASON} "
+                f"({apply_linkedin.signed_out_evidence(url)})")
+    if kind == "redirector":
+        return "follow the LinkedIn redirect to the company's site"
+    d = decision or apply_linkedin.Decision("none", "not read")
+    if kind == "other" and d.kind not in ("form_dialog", "signed_out"):
+        return None
+    if d.kind in ("form_dialog", "easy_apply"):
+        return f"park: {EASY_APPLY_REASON}"
+    if d.kind == "applied":
+        return f"park: {apply_linkedin.APPLIED_REASON}"
+    if d.kind == "closed":
+        return f"park: {apply_linkedin.CLOSED_REASON}"
+    if d.kind == "signed_out":
+        return f"park: {apply_linkedin.SIGNED_OUT_REASON} ({d.why})"
+    if d.kind == "offsite":
+        return f"click the offsite Apply {d.control.label!r} (the LinkedIn handler)"
+    return f"park: {apply_linkedin.NO_APPLY_REASON}"
+
+
+def linkedin_view(page, *, wait_s: float) -> tuple[apply_linkedin.View, int]:
+    """The LinkedIn page's `View`, read again every `LINKEDIN_POLL_MS` for up
+    to `wait_s` until it decides something waiting cannot change (a top card
+    rendered late, 2.5 s after `load` in the fixture); (the view, the ms
+    waited)."""
+    start = time.monotonic()
+    view = apply_linkedin.read(page)
+    while not apply_linkedin.decide(view).final and time.monotonic() - start < wait_s:
+        page.wait_for_timeout(LINKEDIN_POLL_MS)
+        view = apply_linkedin.read(page)
+    return view, int((time.monotonic() - start) * 1000)
 
 
 def remaps_to_form(state: str, digest: apply_form.FormDigest, url: str) -> bool:
     """A sign-in or sign-up read of a page of form boxes (off LinkedIn) is the
     form: the account step would type the facts in and click its button."""
     return (state in ("login_wall", "signup_form") and bool(digest.fields)
-            and not _credential_form(digest) and _host(url) not in LINKEDIN_HOSTS)
+            and not _credential_form(digest) and not apply_linkedin.is_linkedin(url))
 
 
 def unsure_acts(state: str, digest: apply_form.FormDigest) -> bool:
@@ -912,10 +996,11 @@ def unsure_acts(state: str, digest: apply_form.FormDigest) -> bool:
 
 def posting_entry_choice(digest: apply_form.FormDigest, plan: FillPlan) -> tuple[int | None, str]:
     """(the posting's Apply entry, how it was chosen): the judge's confident
-    `apply_entry` (unless it is a form's submit-worded button), else the
-    fieldless text match; (None, "") when neither."""
+    `apply_entry` (unless it is a form's submit-worded button or an Easy
+    Apply), else the fieldless text match; (None, "") when neither."""
     entry = plan.buttons.get("apply_entry")
-    if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
+    if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF \
+            and not _EASY_APPLY.search(_button_text(digest, entry[0])):
         if not (digest.fields and _submit_shaped(digest, entry[0])):
             return entry[0], "judged_apply_entry"
     n = fieldless_apply_choice(digest)
@@ -951,27 +1036,37 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
 
 
 def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: str,
-              conf: float, reads: str = "", *, park_mode: bool = False) -> str:
+              conf: float, reads: str = "", *, park_mode: bool = False,
+              linkedin: apply_linkedin.Decision | None = None) -> str:
     """What the loop does with a fresh page, in words (`probe` prints it),
-    from the loop's own decision helpers: the LinkedIn shortcut, the remap
-    of a sign-in read of form boxes, the unsure-read rule, the posting's
-    entry, the form's route to an advance or the submit gate."""
+    from the loop's own decision helpers: the LinkedIn handler
+    (`linkedin_step`, on the page's `linkedin` decision), the remap of a
+    sign-in read of form boxes, a form step on LinkedIn, the unsure-read
+    rule, the posting's entry, the form's route to an advance or the submit
+    gate."""
     def named(n):
         return f"[{n}] {_button_text(digest, n)!r}"
 
-    n_li, _ = linkedin_apply_choice(url, digest, plan)
+    handled = linkedin_step(url, linkedin)
+    if handled is not None:
+        return handled
     unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
-    if n_li is not None and (unsure or state not in _LINKEDIN_POSTING_KEEPS):
-        return f"click the Apply entry {named(n_li)} (the LinkedIn shortcut)"
     lead = ""
     if remaps_to_form(state, digest, url):
         lead = f"read as {state} with no account boxes: it is the form; "
         state = "application_form"
+    on_linkedin = apply_linkedin.is_linkedin(url)
+    if on_linkedin and state in _LINKEDIN_FORM_STATES:
+        return lead + f"park: {EASY_APPLY_REASON}"
     if unsure and not unsure_acts(state, digest):
         suffix = f"; reads: {reads}" if reads else ""
         return lead + f"park: unsure what this page is ({state}, {conf:.2f}){suffix}"
     if unsure:
         lead += f"go on with the unsure read ({state}, {conf:.2f}); "
+    if state == "job_posting" and on_linkedin:
+        if digest.fields and posting_entry_choice(digest, plan)[0] is None:
+            return lead + f"park: {EASY_APPLY_REASON}"
+        return lead + f"park: {apply_linkedin.NO_APPLY_REASON}"
     if state == "job_posting":
         n, how = posting_entry_choice(digest, plan)
         if n is not None:
@@ -1007,29 +1102,112 @@ def loop_step(url: str, digest: apply_form.FormDigest, plan: FillPlan, state: st
 
 def fieldless_apply_choice(digest: apply_form.FormDigest) -> int | None:
     """A posting without form fields: its first control whose text says
-    apply (the loop's fallback when no confident `apply_entry` was judged)."""
+    apply and not Easy Apply (the loop's fallback when no confident
+    `apply_entry` was judged)."""
     if digest.fields:
         return None
-    return next((b.n for b in digest.buttons if "apply" in b.text.lower()), None)
+    return next((b.n for b in digest.buttons
+                 if "apply" in b.text.lower() and not _EASY_APPLY.search(b.text)), None)
 
 
-def await_destination(page, log: logging.Logger | None = None, job_id: str = "") -> None:
+def click_entry(page, loc, *, timeout_ms: int | None = None) -> tuple[Any, str, int]:
+    """Click an Apply entry and wait for what it does, whichever comes
+    first: a new tab (the popup), a same-tab navigation, or a same-tab DOM
+    change (study G15: none of 24 real entry clicks opened a popup, and a
+    fixed popup wait cost 5 s on each). A link that opens a new tab
+    (`target=_blank`) waits the whole window for its popup; a DOM change
+    gets `POPUP_GRACE_S` more for a popup that follows it. Returns (the popup
+    or None, "popup" | "navigation" | "dom" | "none" | "failed: <error>", the
+    ms waited). A click that raised sent nothing on its way: "failed"."""
+    window_s = (POPUP_TIMEOUT_MS if timeout_ms is None else int(timeout_ms)) / 1000
+    popups: list = []
+
+    def _on_popup(p) -> None:
+        popups.append(p)
+
+    try:
+        page.on("popup", _on_popup)
+    except Exception:       # noqa: BLE001  (a page double)
+        pass
+    start = time.monotonic()
+    try:
+        try:
+            new_tab = bool(loc.first.evaluate(
+                "el => { const a = el.closest('a[href]'); return !!a && a.target === '_blank'; }",
+                timeout=apply_fill.ACTION_TIMEOUT_MS))
+        except Exception:   # noqa: BLE001  (the element is read again by the click)
+            new_tab = False
+        before = _snapshot_or_none(page)
+        url0 = str(page.url)
+        try:
+            loc.first.click(timeout=apply_fill.ACTION_TIMEOUT_MS)
+        except Exception as e:  # noqa: BLE001  (an overlay took the click, the element went)
+            if _closed_error(e):
+                raise
+            return None, f"failed: {type(e).__name__}", int((time.monotonic() - start) * 1000)
+        changed_at = None
+        while True:
+            now = time.monotonic()
+            if popups:
+                signal = "popup"
+                break
+            if str(page.url) != url0:
+                signal = "navigation"
+                break
+            if changed_at is None and _snapshot_or_none(page) != before:
+                changed_at = now
+            if changed_at is not None and not new_tab and now - changed_at >= POPUP_GRACE_S:
+                signal = "dom"
+                break
+            if now - start >= window_s:
+                signal = "dom" if changed_at is not None else "none"
+                break
+            page.wait_for_timeout(ENTRY_POLL_MS)
+        return (popups[0] if popups else None), signal, int((time.monotonic() - start) * 1000)
+    finally:
+        try:
+            page.remove_listener("popup", _on_popup)
+        except Exception:   # noqa: BLE001
+            pass
+
+
+def await_destination(page, log: logging.Logger | None = None,
+                      job_id: str = "") -> tuple[Any, dict[str, Any]]:
     """Settle `page` after an Apply click. On LinkedIn's `/safety/go/` hop,
     whose script sends the tab to the company's site a few seconds after it
-    boots, wait for the tab to leave it and settle again. A hop that never
-    moves on stays on LinkedIn and admits nothing."""
+    boots, wait for the tab to leave it and settle again; the job-search
+    safety interstitial, which waits for a click instead, gets its visible
+    "Continue" clicked (a tab that opens is the destination). A hop that
+    never moves on stays on LinkedIn and admits nothing. Returns (the page
+    the destination is on, {"settled_ms", "continue"})."""
     logger = log or logging.getLogger("apply_run")
-    apply_fill.settle(page, CLICK_TIMEOUT_S)
+    info: dict[str, Any] = {"settled_ms": _settled_ms(apply_fill.settle(page, CLICK_TIMEOUT_S)),
+                            "continue": ""}
     if not _on_linkedin_redirector(page.url):
-        return
-    try:
-        page.wait_for_url(lambda u: not _on_linkedin_redirector(u),
-                          timeout=REDIRECT_TIMEOUT_S * 1000)
-    except Exception as e:      # noqa: BLE001  (the loop reads whatever the tab shows)
-        logger.info("job %s: the LinkedIn redirect did not move on (%s)", job_id,
-                    type(e).__name__)
-        return
-    apply_fill.settle(page, CLICK_TIMEOUT_S)
+        return page, info
+    cont = apply_linkedin.continue_control(page)
+    if cont is not None:
+        info["continue"] = cont.label
+        logger.info("job %s: the LinkedIn interstitial waits for %r; clicking it", job_id,
+                    cont.label)
+        popup, signal, _ = click_entry(page, page.main_frame.locator(cont.css))
+        info["continue_signal"] = signal
+        if popup is not None:
+            try:
+                popup.wait_for_load_state("domcontentloaded", timeout=CLICK_TIMEOUT_S * 1000)
+            except Exception:   # noqa: BLE001
+                pass
+            return popup, info
+    if _on_linkedin_redirector(page.url):
+        try:
+            page.wait_for_url(lambda u: not _on_linkedin_redirector(u),
+                              timeout=REDIRECT_TIMEOUT_S * 1000)
+        except Exception as e:      # noqa: BLE001  (the loop reads whatever the tab shows)
+            logger.info("job %s: the LinkedIn redirect did not move on (%s)", job_id,
+                        type(e).__name__)
+            return page, info
+    info["settled_ms"] += _settled_ms(apply_fill.settle(page, CLICK_TIMEOUT_S))
+    return page, info
 
 
 def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
@@ -1474,6 +1652,11 @@ class _JobRun:
         # (page, frame, locator) of every box the master password or an
         # emailed code went into: every later screenshot masks them
         self._secret_boxes: list[tuple[Any, Any, Any]] = []
+        # decisions taken before the page they belong to is recorded (a
+        # settle, a consent banner, a re-read): `_new_page_record` writes them
+        self._pending: list[dict[str, Any]] = []
+        self._consent_clicks = 0
+        self._linkedin_clicks: dict[str, int] = {}    # a LinkedIn job page's URL -> Apply clicks
 
     # -- the trace --------------------------------------------------------------------------
 
@@ -1485,6 +1668,17 @@ class _JobRun:
         """A decision the loop took and why: a shortcut, a remap, a guess
         acted on, a route to the submit gate."""
         self.trace.event("decision", what=what, why=why, **evidence)
+
+    def _decide_next(self, what: str, why: str, **evidence: Any) -> None:
+        """A decision about the page about to be read (a settle, a consent
+        banner, a re-read): it joins that page's trace once the page is
+        recorded (`_new_page_record`), or the run's at the end."""
+        self._pending.append({"what": what, "why": why, **evidence})
+
+    def _flush_decisions(self) -> None:
+        pending, self._pending = self._pending, []
+        for row in pending:
+            self.trace.event("decision", **row)
 
     def _watch(self, page) -> None:
         """Keep `page`'s main-frame navigations (redirects included) in the
@@ -1566,7 +1760,7 @@ class _JobRun:
         ats_host = _host(str((self.entry.get("ats") or {}).get("domain") or ""))
         if ats_host:
             self.allowed.add(ats_host)
-        if ats_host and ats_host not in LINKEDIN_HOSTS:
+        if ats_host and not apply_linkedin.is_linkedin(ats_host):
             self.ats_host = ats_host
             self.ats_hosts.add(ats_host)
             self.ats_transition_used = True
@@ -1575,13 +1769,15 @@ class _JobRun:
             self.allowed.add(inbox_host)
 
     def _allowed_site(self, host: str) -> bool:
-        """LinkedIn and the inbox by their exact hosts (their domains carry
-        other people's content: `docs.google.com`, `forms.office.com`, a
-        Google sign-in frame); the admitted ATS by its whole site
-        (`login.icims.com` next to `careers-gtsx.icims.com`); a known ATS
-        platform (`ATS_SITES`) anywhere."""
+        """LinkedIn (any `*.linkedin.com` host, the country subdomains too:
+        NAV-10) and the inbox by its exact host (its domain carries other
+        people's content: `docs.google.com`, `forms.office.com`, a Google
+        sign-in frame); the admitted ATS by its whole site (`login.icims.com`
+        next to `careers-gtsx.icims.com`); a known ATS platform
+        (`ATS_SITES`) anywhere. The master password never goes to LinkedIn
+        (`_password_ok`)."""
         host = _host(host)
-        if host in self.allowed:
+        if host in self.allowed or apply_linkedin.is_linkedin(host):
             return True
         site = _site(host)
         return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
@@ -1665,7 +1861,7 @@ class _JobRun:
         if _site(host) not in ATS_SITES:
             if host in self.allowed:
                 return
-            if self.ats_transition_used or _host(source_url) not in LINKEDIN_HOSTS:
+            if self.ats_transition_used or not apply_linkedin.is_linkedin(source_url):
                 self._check_host(url)
         inferred = apply_queue.infer_ats(url)
         apply_queue.update(self.job_id, path=self.r.queue_path,
@@ -1724,13 +1920,18 @@ class _JobRun:
             try:
                 self._start_trace()
                 self.log.info("job %s: start (%s)", self.job_id, self.entry.get("apply_url", ""))
+                if _easy_apply(self.entry):
+                    # the user applies to an Easy Apply job on LinkedIn in
+                    # person: no page is opened, nothing is read or clicked
+                    self._decide("easy_apply", "the queue entry is an Easy Apply job")
+                    raise _Parked("needs_human", EASY_APPLY_REASON, EASY_APPLY_NOTE)
                 url = self._prepare()
                 self._trace("start", url=url, submit=bool(self.r.settings.get("auto_apply_submit",
                                                                               True)))
                 self._check_host(url)
                 self.page = self.ctx.new_page()
                 self._watch(self.page)
-                self.page.goto(url)
+                self._open(url)
                 self._loop()
                 raise _Parked("needs_human",
                               f"page budget exhausted ({apply_judge.MAX_PAGES} pages"
@@ -1790,6 +1991,11 @@ class _JobRun:
         return self._finish("needs_human", f"{TAB_CLOSED_REASON} ({_cap(evidence, 120)})")
 
     def _loop(self) -> None:
+        """One page per turn: the consent banner out of the way, a read that
+        waits for the page to render (`_read_digest`), LinkedIn's pages by
+        the handler (`_linkedin_step`, no judge), every other page judged
+        (an unsure read taken once more after a settle, `_reread`) and
+        handled by its state."""
         for page_no in range(apply_judge.MAX_PAGES):
             if self.r.clock() >= self.deadline:
                 raise _Parked("needs_human", f"time budget exhausted "
@@ -1798,13 +2004,20 @@ class _JobRun:
             self._check_host(self.page.url)
             if self._human_check_showing():
                 self._wait_for_human_check("a CAPTCHA challenge is showing")
+            self._dismiss_consent()
             t0 = time.monotonic()
-            digest = self._drop_foreign_controls(apply_form.extract(self.page))
+            digest = self._read_digest()
             t1 = time.monotonic()
+            if self._linkedin_step(digest):
+                continue
             marker = self._page_marker()        # the page as judged: a bot check that
-            self._discover_listbox_options(digest)  # clears itself shows as a change
+            if not self._on_linkedin():         # clears itself shows as a change
+                self._discover_listbox_options(digest)
             answers = self._judge_page(digest)
             state, conf = apply_judge.read_page_state(answers)
+            if conf < apply_judge.PAGE_STATE_MIN_CONF:
+                digest, answers, state, conf = self._reread(digest, answers, state, conf)
+                marker = self._page_marker()
             sig = (state, self.page.url, json.dumps(digest.to_dict(), sort_keys=True))
             rec = self._new_page_record(state, conf, digest=digest, answers=answers,
                                         timings={"extract_s": round(t1 - t0, 3),
@@ -1822,16 +2035,6 @@ class _JobRun:
             rec["flags"] = dict(plan.flags)
             self._trace("plan", plan=apply_trace.plan_json(plan))
             unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
-            apply_n = self._linkedin_apply(digest, plan)
-            if apply_n is not None and (unsure or state not in _LINKEDIN_POSTING_KEEPS):
-                if state != "job_posting" or unsure:
-                    self.log.info("job %s: a LinkedIn job page read as %s (%.2f); it is the "
-                                  "posting", self.job_id, state, conf)
-                self._decide("linkedin_shortcut", f"a LinkedIn job page read as {state} "
-                                                  f"({conf:.2f}); it is the posting",
-                             button=apply_n, text=_button_text(digest, apply_n))
-                self._job_posting(digest, answers, plan, rec, apply_n=apply_n)
-                continue
             if remaps_to_form(state, digest, str(self.page.url)):
                 # a page of form boxes is the form, whatever it was read as:
                 # the account step would type the facts in and click its button.
@@ -1844,6 +2047,8 @@ class _JobRun:
                 state = "application_form"
                 if any(_is_email_box(f) for f in digest.fields):
                     self.accounts.email_sites.add(_site(digest.url_host or _host(self.page.url)))
+            if state in _LINKEDIN_FORM_STATES:
+                self._no_form_on_linkedin(f"read as {state} ({conf:.2f})")
             if unsure:
                 self._check_unsure(digest, state, conf)
             if state == "job_posting":
@@ -1877,6 +2082,213 @@ class _JobRun:
         reads = self._reads()
         return f"; reads: {reads}" if reads else ""
 
+    # -- reading a page ------------------------------------------------------------------
+
+    def _open(self, url: str) -> None:
+        """The first load (NAV-01, NAV-02): to `domcontentloaded` (a page
+        whose `load` never fires, a stalled image or a script, is read all
+        the same), one retry after `GOTO_RETRY_S` of a load the network
+        dropped (`_dropped_load`), a timeout with a page on the screen read
+        as it is; then the page settles before its first read."""
+        for attempt in (1, 2):
+            try:
+                self.page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+                break
+            except Exception as e:      # noqa: BLE001  (Playwright's Error and TimeoutError)
+                if _closed_error(e):
+                    raise
+                if type(e).__name__ == "TimeoutError" and self._page_has_content():
+                    self._decide_next("goto_timeout", "the first load timed out with a page "
+                                                      "on the screen; reading it as it is")
+                    break
+                if attempt == 2 or not _dropped_load(e):
+                    raise
+                self._decide_next("goto_retry", f"the first load failed on the network "
+                                                 f"({type(e).__name__}); one retry",
+                                  error=_cap(str(e).splitlines()[0] if str(e) else "", 120))
+                # a Playwright wait: Chromium's own error page finishes loading
+                # meanwhile, so the retry is not cut short by it
+                self.page.wait_for_timeout(int(GOTO_RETRY_S * 1000))
+        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        self._decide_next("settled", f"settled {_settled_ms(info)} ms after the first load",
+                          **(info if isinstance(info, Mapping) else {}))
+
+    def _page_has_content(self) -> bool:
+        try:
+            return bool(self.page.evaluate(
+                "() => !!document.body && (document.body.innerText || '').trim().length > 0"))
+        except Exception:       # noqa: BLE001
+            return False
+
+    def _read_digest(self) -> apply_form.FormDigest:
+        """The page's digest, read once more while it is still empty
+        (`_empty_read`: no field and no button, or under `EMPTY_TEXT_MIN`
+        characters): a settle, then a read every `EMPTY_READ_POLL_S` until it
+        is not empty, it has held the same for `EMPTY_READ_STABLE_S` (a short
+        page that is done), or `EMPTY_READ_MAX_S` has passed (G5: content
+        arrives 0.3 to 1.7 s after `load` on SPA postings)."""
+        digest = self._drop_foreign_controls(apply_form.extract(self.page))
+        if not _empty_read(digest):
+            return digest
+        first = (f"{len(digest.fields)} field(s), {len(digest.buttons)} button(s), "
+                 f"{len((digest.text or '').strip())} characters")
+        start = time.monotonic()
+        last = json.dumps(digest.to_dict(), sort_keys=True)
+        stable_since = start
+        apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        while True:
+            digest = self._drop_foreign_controls(apply_form.extract(self.page))
+            now = time.monotonic()
+            if not _empty_read(digest):
+                break
+            seen = json.dumps(digest.to_dict(), sort_keys=True)
+            if seen != last:
+                last, stable_since = seen, now
+            if now - start >= EMPTY_READ_MAX_S or now - stable_since >= EMPTY_READ_STABLE_S:
+                break
+            self.page.wait_for_timeout(int(EMPTY_READ_POLL_S * 1000))
+        self._decide_next("reread_after_settle", f"an empty read ({first}); settled and read "
+                                                 "again",
+                          still_empty=_empty_read(digest),
+                          waited_ms=int((time.monotonic() - start) * 1000))
+        return digest
+
+    def _reread(self, digest: apply_form.FormDigest, answers: dict, state: str,
+                conf: float) -> tuple[apply_form.FormDigest, dict, str, float]:
+        """A read below `PAGE_STATE_MIN_CONF`, taken once more after a
+        further settle: a fresh extract and a fresh judge request (READ-02:
+        a page read mid-render, an interstitial that clears itself)."""
+        first, reads = f"{state} {conf:.2f}", self._reads(answers)
+        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        digest = self._read_digest()
+        if not self._on_linkedin():
+            self._discover_listbox_options(digest)
+        answers = self._judge_page(digest)
+        state, conf = apply_judge.read_page_state(answers)
+        self._decide_next("reread_unsure", f"a read below the page-state floor ({first}); "
+                                           "settled and read once more",
+                          first_reads=reads, now=f"{state} {conf:.2f}",
+                          settled_ms=_settled_ms(info))
+        return digest, answers, state, conf
+
+    def _dismiss_consent(self) -> None:
+        """A visible cookie or consent banner is dismissed before the page is
+        read (study G1: on Teamtailor and bunq it took the Apply click): its
+        reject, decline or necessary-only control, else its close; never an
+        accept, allow or agree (`apply_form.consent_control`). Then the page
+        settles. At most `CONSENT_MAX` per job, so a banner that comes back
+        cannot hold the run."""
+        if self._consent_clicks >= CONSENT_MAX:
+            return
+        try:
+            found = apply_form.consent_control(self.page)
+        except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
+            return
+        if not found:
+            return
+        idx, control = found
+        self._consent_clicks += 1
+        error = ""
+        try:
+            apply_form.resolve(self.page, (idx, str(control.get("css") or ""))).first.click(
+                timeout=apply_fill.ACTION_TIMEOUT_MS)
+        except Exception as e:      # noqa: BLE001  (the banner went away on its own)
+            if _closed_error(e):
+                raise
+            error = type(e).__name__
+        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        text = str(control.get("text") or "")
+        self.log.info("job %s: consent banner: clicked %r (%s)", self.job_id, text,
+                      control.get("kind"))
+        self._decide_next("consent_dismissed", f"a consent banner ({control.get('banner')}): "
+                                               f"clicked its {control.get('kind')} control",
+                          text=text, error=error, settled_ms=_settled_ms(info))
+
+    def _linkedin_step(self, digest: apply_form.FormDigest) -> bool:
+        """LinkedIn's pages, without the judge (`apply_linkedin`): True when
+        the page was handled and the loop reads the next one; a park raises.
+        A signed-out URL parks; the `/safety/go/` hop is followed; a job page
+        waits up to `LINKEDIN_READY_S` for its top card, then takes its
+        offsite Apply or parks (Easy Apply, already applied, closed, signed
+        out, no Apply); another LinkedIn page parks on an open form dialog
+        (Easy Apply's) or a sign-in, and otherwise goes to the judge (False),
+        whose form steps park on LinkedIn (`_no_form_on_linkedin`)."""
+        url = str(self.page.url or "")
+        kind = apply_linkedin.url_kind(url)
+        if not kind:
+            return False
+        if kind == "signed_out":
+            why = apply_linkedin.signed_out_evidence(url)
+            self._new_page_record("login_wall", 1.0, digest=digest, answers={})
+            self._decide("linkedin_handler", f"LinkedIn's {why}", url_kind=kind)
+            raise _Parked("needs_human", f"{apply_linkedin.SIGNED_OUT_REASON} ({why})",
+                          LINKEDIN_LOGIN_NOTE)
+        if kind == "redirector":
+            self._new_page_record("linkedin_redirect", 1.0, digest=digest, answers={})
+            self._decide("linkedin_handler", "LinkedIn's redirect to the company's site",
+                         url_kind=kind)
+            dest, info = self._await_destination(self.page)
+            self._trace("redirect", destination=str(dest.url), **info)
+            if dest is not self.page:
+                self._follow_popup(dest, source_url=url)
+                return True
+            if _on_linkedin_redirector(self.page.url):
+                raise _Parked("needs_human", f"the LinkedIn redirect did not move on "
+                                             f"({_cap(url, 160)})")
+            self._admit_ats_transition(self.page.url, url)
+            self._check_host(self.page.url)
+            self.last_sig = None
+            return True
+        view, waited = linkedin_view(self.page, wait_s=LINKEDIN_READY_S if kind == "job" else 0)
+        d = apply_linkedin.decide(view)
+        if kind == "other" and d.kind not in ("form_dialog", "signed_out"):
+            self._decide_next("linkedin_handler", "a LinkedIn page other than a job page, "
+                                                  "with nothing for the handler; the judge "
+                                                  "reads it", url_kind=kind, found=d.kind)
+            return False
+        if waited:
+            digest = self._drop_foreign_controls(apply_form.extract(self.page))
+        state = {"form_dialog": "application_form", "signed_out": "login_wall"}.get(
+            d.kind, "job_posting")
+        rec = self._new_page_record(state, 1.0, digest=digest, answers={})
+        self._decide("linkedin_handler", d.why, found=d.kind, url_kind=kind,
+                     view=view.to_dict(), waited_ms=waited)
+        self.log.info("job %s: LinkedIn %s page: %s", self.job_id, kind, d.why)
+        if d.kind in ("form_dialog", "easy_apply"):
+            raise _Parked("needs_human", EASY_APPLY_REASON, EASY_APPLY_NOTE)
+        if d.kind == "applied":
+            raise _Parked("needs_human", f"{apply_linkedin.APPLIED_REASON} ({view.applied})",
+                          apply_linkedin.APPLIED_NOTE)
+        if d.kind == "closed":
+            raise _Parked("needs_human", f"{apply_linkedin.CLOSED_REASON} ({view.closed})",
+                          apply_linkedin.CLOSED_NOTE)
+        if d.kind == "signed_out":
+            raise _Parked("needs_human", f"{apply_linkedin.SIGNED_OUT_REASON} ({d.why})",
+                          LINKEDIN_LOGIN_NOTE)
+        if d.kind == "none":
+            raise _Parked("needs_human", f"{apply_linkedin.NO_APPLY_REASON} ({d.why}; "
+                                         f"title {view.title!r}; waited {waited} ms)")
+        if self.submit_clicked or self.form_filled:
+            raise _Parked("needs_human", f"back on the LinkedIn job page after the "
+                                         f"application's form ({_cap(url, 160)})")
+        clicks = self._linkedin_clicks.get(url, 0) + 1
+        self._linkedin_clicks[url] = clicks
+        control = d.control
+        if clicks > 1:
+            raise _Parked("needs_human", f"the offsite Apply ({control.label}) did not open the "
+                                         f"company's site (clicked twice)")
+        loc = self.page.main_frame.locator(control.css)
+        self._click_entry(rec, loc, control.label, how="linkedin_handler")
+        return True
+
+    def _no_form_on_linkedin(self, why: str) -> None:
+        """Nothing is filled, ticked, picked, uploaded or sent on LinkedIn: a
+        form step there is Easy Apply's, and the job parks with its reason."""
+        if self._on_linkedin():
+            self._decide("linkedin_form", f"a form step on LinkedIn ({why}); nothing is "
+                                          "filled there")
+            raise _Parked("needs_human", EASY_APPLY_REASON, EASY_APPLY_NOTE)
+
     # -- per state ------------------------------------------------------------------------
 
     def _account_step(self, state: str, digest: apply_form.FormDigest) -> None:
@@ -1888,8 +2300,9 @@ class _JobRun:
         (`_after_submit`'s `handoff`)."""
         host = digest.url_host or _host(self.page.url)
         if not self._password_ok(host):
-            if _site(host) == _site(LINKEDIN_HOSTS[0]):
-                raise _Parked("needs_human", "LinkedIn is signed out", LINKEDIN_LOGIN_NOTE)
+            if apply_linkedin.is_linkedin(host):
+                raise _Parked("needs_human", f"{apply_linkedin.SIGNED_OUT_REASON} (read as "
+                                             f"{state})", LINKEDIN_LOGIN_NOTE)
             raise _Parked("needs_human", f"a sign-in on {host}, outside the application site",
                           LOGIN_NOTE)
         try:
@@ -1997,6 +2410,7 @@ class _JobRun:
             n = len(self.pages)
             self.trace.page(n, self.page.url, digest, answers or {}, state, conf,
                             dropped=self._last_dropped, timings=timings)
+            self._flush_decisions()
             self.trace.screenshot(self.page, f"page-{n}",
                                   extra_mask=self._secret_masks(self.page))
         return rec
@@ -2016,31 +2430,34 @@ class _JobRun:
                                        "with that read", reads=self._reads())
 
     def _on_linkedin(self) -> bool:
-        return _host(str(self.page.url or "")) in LINKEDIN_HOSTS
-
-    def _linkedin_apply(self, digest: apply_form.FormDigest, plan: FillPlan) -> int | None:
-        """The Apply control of a LinkedIn job page (`linkedin_apply_choice`),
-        else None; never once a form was filled or submitted."""
-        n, _ = linkedin_apply_choice(str(self.page.url or ""), digest, plan,
-                                     busy=self.submit_clicked or self.form_filled)
-        return n
+        page = self.page
+        return page is not None and apply_linkedin.is_linkedin(str(getattr(page, "url", "") or ""))
 
     def _job_posting(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan,
-                     rec: dict, *, apply_n: int | None = None) -> None:
-        """Click the posting's Apply entry: `apply_n` when the caller found
-        it (`_linkedin_apply`). Otherwise a page that carries form fields
+                     rec: dict) -> None:
+        """Click the posting's Apply entry. A page that carries form fields
         is only clicked through a confident `apply_entry` role whose text is
         not submit-shaped; otherwise it is treated as the application form (a
         form's own Apply button is a submit, and clicking it before the fill
         would send an empty form). A fieldless posting keeps the text match.
-        After a form was filled, an Apply button sends that form: the page
-        goes the form's way, to the submit gate. In park mode so does one
-        after a form page with a password box, typed or left blank: a page of
-        a sign-up's boxes does not count as the filled application
-        (`_fills_the_application`), and the Apply after it may be the review
-        of an application that asked for no more."""
+        An Easy Apply control is never the entry. After a form was filled,
+        an Apply button sends that form: the page goes the form's way, to the
+        submit gate. In park mode so does one after a form page with a
+        password box, typed or left blank: a page of a sign-up's boxes does
+        not count as the filled application (`_fills_the_application`), and
+        the Apply after it may be the review of an application that asked for
+        no more. On LinkedIn the judge never picks the entry: the handler
+        (`_linkedin_step`) takes a job page's offsite Apply, and a posting
+        read anywhere else on LinkedIn parks."""
+        if self._on_linkedin():
+            if digest.fields and (self.form_filled
+                                  or posting_entry_choice(digest, plan)[0] is None):
+                self._no_form_on_linkedin("a posting with form fields is the form")
+            raise _Parked("needs_human", f"{apply_linkedin.NO_APPLY_REASON} (read as a posting "
+                                         f"at {_cap(self.page.url, 120)}; buttons: "
+                                         f"{self._buttons_seen(digest)})")
         park_mode = not self.r.settings.get("auto_apply_submit", True)
-        if apply_n is None and (self.form_filled or (park_mode and self.form_had_password)):
+        if self.form_filled or (park_mode and self.form_had_password):
             self.log.info("job %s: a posting read after a filled form; treating it as the "
                           "form's next page", self.job_id)
             self._decide("posting_as_form", "a posting read after a filled form (or a "
@@ -2048,8 +2465,7 @@ class _JobRun:
                                             "page")
             self._application_form(digest, answers, plan, rec)
             return
-        n, how = (apply_n, "linkedin_shortcut") if apply_n is not None \
-            else posting_entry_choice(digest, plan)
+        n, how = posting_entry_choice(digest, plan)
         if n is None:
             if digest.fields:
                 self.log.info("job %s: posting with %d form field(s) and no confident Apply "
@@ -2063,25 +2479,28 @@ class _JobRun:
                                          f"{self._buttons_seen(digest)})")
         button = next(b for b in digest.buttons if b.n == n)
         loc = apply_form.resolve(self.page, button.locator)
-        self.pages[-1]["clicked"].append(f"{button.text} (apply_entry)")
-        self._last_click = (button.text, "apply_entry")
+        self._click_entry(rec, loc, button.text, how=how, n=n)
+
+    def _click_entry(self, rec: dict, loc, text: str, *, how: str, n: int | None = None) -> None:
+        """Click an Apply entry (`click_entry`: a popup, a same-tab
+        navigation or a DOM change, whichever comes first) and follow it to
+        its destination: a new tab is adopted (`_follow_popup`), the same tab
+        waits out LinkedIn's redirect; the destination's host is admitted and
+        checked."""
+        rec["clicked"].append(f"{text} (apply_entry)")
+        self._last_click = (text, "apply_entry")
         source_url = self.page.url
-        popup = None
-        try:
-            with self.page.expect_popup(timeout=POPUP_TIMEOUT_MS) as info:
-                loc.first.click(timeout=apply_fill.ACTION_TIMEOUT_MS)
-            popup = info.value
-        except Exception as e:      # noqa: BLE001  (no popup within the timeout)
-            self.log.debug("job %s: no popup after Apply (%s)", self.job_id, type(e).__name__)
+        popup, signal, waited = click_entry(self.page, loc)
         if popup is None:
-            self._await_destination(self.page)
-            self._trace("apply_entry", n=n, text=button.text, how=how, popup=False,
-                        destination=str(self.page.url))
+            dest, info = self._await_destination(self.page)
+            self._trace("apply_entry", n=n, text=text, how=how, popup=False, signal=signal,
+                        waited_ms=waited, destination=str(dest.url), **info)
+            if dest is not self.page:
+                self._follow_popup(dest, source_url=source_url)
+                return
             self._admit_ats_transition(self.page.url, source_url)
             self._check_host(self.page.url)
             return
-        self.trace.nav(str(popup.url))      # its first load came before the watch
-        self._watch(popup)
         try:
             popup.wait_for_load_state("domcontentloaded", timeout=CLICK_TIMEOUT_S * 1000)
         except Exception:       # noqa: BLE001
@@ -2090,27 +2509,38 @@ class _JobRun:
         try:
             self._follow_popup(popup, source_url=source_url)
         finally:
-            self._trace("apply_entry", n=n, text=button.text, how=how, popup=True,
-                        destination=str(popup.url))
+            self._trace("apply_entry", n=n, text=text, how=how, popup=True, signal=signal,
+                        waited_ms=waited, destination=str(self.page.url))
 
     def _follow_popup(self, popup, *, source_url: str | None = None) -> None:
         """Adopt the tab Apply opened once it has reached its destination:
         its host is admitted and checked after the redirects, never at the
-        popup event, which on LinkedIn still shows the `/safety/go/` hop."""
+        popup event, which on LinkedIn still shows the `/safety/go/` hop. A
+        tab the safety interstitial's Continue opens is followed the same
+        way."""
         source = source_url or self.page.url
-        self._await_destination(popup)
+        for _ in range(2):
+            if popup is not self.page:
+                self.trace.nav(str(getattr(popup, "url", "")))  # its first load came before the watch
+                self._watch(popup)
+            dest, _info = self._await_destination(popup)
+            if dest is popup:
+                break
+            popup = dest
         self._admit_ats_transition(popup.url, source)
         self._check_host(popup.url)
         self.page = popup
         self.last_sig = None
 
-    def _await_destination(self, page) -> None:
-        await_destination(page, self.log, self.job_id)
+    def _await_destination(self, page) -> tuple[Any, dict[str, Any]]:
+        return await_destination(page, self.log, self.job_id)
 
     def _application_form(self, digest: apply_form.FormDigest, answers: dict,
                           plan: FillPlan, rec: dict, *, completed: bool = False) -> None:
         """Fill and verify the page, then click its advance or go to the
-        submit gate. `completed`: the plan already has its option picks."""
+        submit gate. `completed`: the plan already has its option picks.
+        Never on LinkedIn (`_no_form_on_linkedin`)."""
+        self._no_form_on_linkedin("the form step")
         if not completed:
             plan = self._complete_option_plan(digest, answers, plan, rec)
         with self._password_guard() as guard:
@@ -2193,7 +2623,9 @@ class _JobRun:
 
     def _review_page(self, digest: apply_form.FormDigest, answers: dict,
                      plan: FillPlan, rec: dict) -> None:
-        """Fill and verify editable review controls before the submit gate."""
+        """Fill and verify editable review controls before the submit gate.
+        Never on LinkedIn (`_no_form_on_linkedin`)."""
+        self._no_form_on_linkedin("the review step")
         plan = self._complete_option_plan(digest, answers, plan, rec)
         with self._password_guard() as guard:
             verification = self._fill_and_verify(digest, plan, rec)
@@ -2485,6 +2917,7 @@ class _JobRun:
 
     def _submit_gate(self, digest: apply_form.FormDigest, plan: FillPlan,
                      verification: list[VerifyResult], rec: dict) -> None:
+        self._no_form_on_linkedin("the submit gate")
         ok, why = can_submit(plan, verification, self.r.settings)
         submit = plan.buttons.get("submit")
         self._trace("gate", ok=ok, why=why, button=submit[0] if submit else None,
@@ -2578,6 +3011,7 @@ class _JobRun:
             raise _Parked("submitted", f"submitted (unconfirmed): {p.reason}") from None
 
     def _code_gate(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict) -> None:
+        self._no_form_on_linkedin("the code step")
         site = digest.url_host or _host(self.page.url)
         code = self.inbox.fetch_code(self.page, site, str(self.r.run_context().get("inbox_url") or ""))
         if not code:
@@ -2628,6 +3062,7 @@ class _JobRun:
     def _finish(self, status: str, reason: str, tab_note: str = "") -> Outcome:
         usage = _usage_delta(self.usage_before, jev.usage())
         usage["generated"] = generated_count(self.pages)
+        self._flush_decisions()
         text = ""
         if self.page is not None:
             try:
@@ -2791,12 +3226,29 @@ def _probe_catalog():
     return apply_facts.FactCatalog([])
 
 
+def _probe_linkedin(page) -> tuple[apply_linkedin.Decision | None, str]:
+    """(the LinkedIn handler's decision on `page`, the line that says it); a
+    job page gets the loop's wait for its top card."""
+    kind = apply_linkedin.url_kind(str(page.url))
+    if not kind:
+        return None, "not on LinkedIn"
+    if kind in ("signed_out", "redirector"):
+        return None, str(linkedin_step(str(page.url), None))
+    view, waited = linkedin_view(page, wait_s=LINKEDIN_READY_S if kind == "job" else 0)
+    d = apply_linkedin.decide(view)
+    step = linkedin_step(str(page.url), d)
+    return d, (f"{step}; {d.why}; waited {waited} ms" if step
+               else f"not taken ({d.why}; the judge reads this page)")
+
+
 def _probe_page(page, n: int, judge: Any, out, *,
-                park_mode: bool = False) -> tuple[apply_form.FormDigest, FillPlan | None]:
+                park_mode: bool = False) -> tuple[apply_form.FormDigest, FillPlan | None,
+                                                  apply_linkedin.Decision | None]:
     """Print page `n` as the run would read it: the digest (fields, buttons,
     the text's head), the judge's read when a judge is given, what the
-    LinkedIn shortcut and the fieldless-posting fallback would click, and,
-    with a judge, the step the loop would take (`loop_step`)."""
+    LinkedIn handler and the fieldless-posting fallback would do, and, with
+    a judge, the step the loop would take (`loop_step`)."""
+    linkedin, linkedin_line = _probe_linkedin(page)
     digest = apply_form.extract(page)
     print(f"page {n}: {page.url}", file=out)
     print(f"  title: {_one_line(digest.title, 120)}", file=out)
@@ -2825,10 +3277,9 @@ def _probe_page(page, n: int, judge: Any, out, *,
             print(f"  judge: button [{b.n}] {role} {rconf:.2f}", file=out)
         plan = apply_judge.plan(digest, catalog, answers)
         step = loop_step(str(page.url), digest, plan, read, conf,
-                         apply_trace.page_state_reads(answers), park_mode=park_mode)
-    n_li, why = linkedin_apply_choice(str(page.url), digest, plan)
-    print("  linkedin shortcut: " + (f"would click [{n_li}] {_button_text(digest, n_li)!r}"
-                                     if n_li is not None else f"not taken ({why})"), file=out)
+                         apply_trace.page_state_reads(answers), park_mode=park_mode,
+                         linkedin=linkedin)
+    print(f"  linkedin handler: {linkedin_line}", file=out)
     n_fl = fieldless_apply_choice(digest)
     print("  fieldless posting: " + (f"would click [{n_fl}] {_button_text(digest, n_fl)!r}"
                                      if n_fl is not None else
@@ -2837,31 +3288,40 @@ def _probe_page(page, n: int, judge: Any, out, *,
     print(f"  account screen: {'yes' if _credential_form(digest) else 'no'}", file=out)
     if judge is not None:
         print(f"  the loop would: {step}", file=out)
-    return digest, plan
+    return digest, plan, linkedin
 
 
-def _probe_entry(page, digest: apply_form.FormDigest,
-                 plan: FillPlan | None) -> tuple[int | None, str]:
-    """The Apply entry `--follow-apply` may click, or (None, why not). Never
-    on a page with form fields (an Apply there may send the form), and only a
-    plain Apply (`_PLAIN_APPLY`): an Easy, quick, one-click or third-party
-    apply can send a stored profile at once on a signed-in profile."""
+def _probe_entry(page, digest: apply_form.FormDigest, plan: FillPlan | None,
+                 linkedin: apply_linkedin.Decision | None = None) -> tuple[Any, str, str]:
+    """(the locator of the Apply entry `--follow-apply` may click, its text,
+    "") or (None, "", why not). On LinkedIn only the handler's offsite Apply,
+    whatever else the page holds. Elsewhere never on a page with form fields
+    (an Apply there may send the form), and only a plain Apply
+    (`_PLAIN_APPLY`): an Easy, quick, one-click or third-party apply can send
+    a stored profile at once on a signed-in profile."""
+    if apply_linkedin.is_linkedin(str(page.url)):
+        if linkedin is None or linkedin.kind != "offsite" or linkedin.control is None:
+            return None, "", f"the LinkedIn handler takes no Apply here " \
+                             f"({linkedin.why if linkedin else 'not a job page'})"
+        c = linkedin.control
+        return page.main_frame.locator(c.css), c.label, ""
     if digest.fields:
-        return None, f"the page has {len(digest.fields)} form field(s); an Apply there may " \
-                     "send the form"
-    n, _ = linkedin_apply_choice(str(page.url), digest, plan)
-    if n is None and plan is not None:
+        return None, "", f"the page has {len(digest.fields)} form field(s); an Apply there " \
+                         "may send the form"
+    n = None
+    if plan is not None:
         entry = plan.buttons.get("apply_entry")
         if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
             n = entry[0]
     if n is None:
         n = fieldless_apply_choice(digest)
     if n is None:
-        return None, "no Apply control"
+        return None, "", "no Apply control"
     text = _button_text(digest, n)
     if not _PLAIN_APPLY.match(" ".join(text.split())):
-        return None, f"[{n}] {text!r} is not a plain Apply entry"
-    return n, ""
+        return None, "", f"[{n}] {text!r} is not a plain Apply entry"
+    button = next(b for b in digest.buttons if b.n == n)
+    return apply_form.resolve(page, button.locator), f"[{n}] {_one_line(text, 60)!r}", ""
 
 
 def _probe(ctx, url: str, *, follow_apply: bool, judge: Any, out, settle_s: float,
@@ -2874,26 +3334,18 @@ def _probe(ctx, url: str, *, follow_apply: bool, judge: Any, out, settle_s: floa
         print(f"probe: the page did not load ({type(e).__name__})", file=out)
         return 1
     apply_fill.settle(page, settle_s)
-    digest, plan = _probe_page(page, 1, judge, out, park_mode=park_mode)
+    digest, plan, linkedin = _probe_page(page, 1, judge, out, park_mode=park_mode)
     if not follow_apply:
         return 0
-    n, why = _probe_entry(page, digest, plan)
-    if n is None:
+    loc, label, why = _probe_entry(page, digest, plan, linkedin)
+    if loc is None:
         print(f"follow-apply: nothing clicked ({why})", file=out)
         return 0
-    button = next(b for b in digest.buttons if b.n == n)
-    popup = None
-    try:
-        with page.expect_popup(timeout=POPUP_TIMEOUT_MS) as info:
-            apply_form.resolve(page, button.locator).first.click(
-                timeout=apply_fill.ACTION_TIMEOUT_MS)
-        popup = info.value
-    except Exception:       # noqa: BLE001  (no popup: the tab itself moved on, or nothing did)
-        popup = None
-    target = popup or page
-    await_destination(target)
-    print(f"follow-apply: clicked [{n}] {_one_line(button.text, 60)!r}; "
-          f"{'a new tab' if popup else 'the same tab'} at {target.url}", file=out)
+    popup, signal, _ = click_entry(page, loc)
+    target, _info = await_destination(popup or page)
+    print(f"follow-apply: clicked {label}; "
+          f"{'a new tab' if popup or target is not page else 'the same tab'} at {target.url}",
+          file=out)
     _probe_page(target, 2, judge, out, park_mode=park_mode)
     return 0
 

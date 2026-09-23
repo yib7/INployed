@@ -100,36 +100,20 @@ def test_a_tab_that_stays_on_the_redirector_admits_nothing(monkeypatch):
 def test_same_tab_linkedin_transition_admits_one_ats_host(monkeypatch):
     job = _job()
     source = job.page.url
-    button = apply_form.Button(0, (0, "#apply"), "Apply", "")
-    digest = apply_form.FormDigest("www.linkedin.com", "Job", "", buttons=[button])
-    plan = apply_run.FillPlan(buttons={"apply_entry": (0, 0.99)})
     rec = {"clicked": []}
     job.pages.append(rec)
 
-    class _Locator:
-        first = None
+    def _same_tab(page, loc, **kw):
+        page.url = "https://careers.example/apply"
+        return None, "navigation", 5
 
-        def __init__(self):
-            self.first = self
-
-        def click(self, **kwargs):
-            job.page.url = "https://careers.example/apply"
-
-    monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: _Locator())
+    monkeypatch.setattr(apply_run, "click_entry", _same_tab)
     monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
     monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
 
-    class _NoPopup:
-        def __enter__(self):
-            return self
+    job._click_entry(rec, object(), "Apply", how="linkedin_handler")
 
-        def __exit__(self, *args):
-            raise TimeoutError("same tab")
-
-    job.page.expect_popup = Mock(return_value=_NoPopup())
-
-    job._job_posting(digest, {}, plan, rec)
-
+    assert rec["clicked"] == ["Apply (apply_entry)"]
     assert source.startswith("https://www.linkedin.com/")
     assert "careers.example" in job.allowed
     with pytest.raises(apply_run._Parked, match="allowed"):
@@ -194,10 +178,11 @@ def test_blank_frame_inherits_allowed_parent(url):
 ])
 def test_code_gate_refuses_low_confidence_continue(monkeypatch, role, confidence):
     job = _job()
+    job.page.url = "https://careers.example/verify"     # a code step never runs on LinkedIn
     job.inbox = SimpleNamespace(fetch_code=lambda *a: "SYNTHETIC-CODE")
     code = apply_form.Field(0, (0, "#code"), "Security code", "text", True,
                             id_or_name="code")
-    digest = apply_form.FormDigest("www.linkedin.com", "Verify", "", fields=[code])
+    digest = apply_form.FormDigest("careers.example", "Verify", "", fields=[code])
     plan = apply_run.FillPlan(buttons={role: (0, confidence)})
     locator = SimpleNamespace(first=SimpleNamespace(fill=lambda *a, **kw: None))
     monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: locator)
@@ -210,10 +195,11 @@ def test_code_gate_refuses_low_confidence_continue(monkeypatch, role, confidence
 
 def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
     job = _job()
+    job.page.url = "https://careers.example/verify"     # a code step never runs on LinkedIn
     job.inbox = SimpleNamespace(fetch_code=lambda *a: "SYNTHETIC-CODE")
     code = apply_form.Field(0, (0, "#code"), "Security code", "text", True,
                             id_or_name="code")
-    digest = apply_form.FormDigest("www.linkedin.com", "Verify", "", fields=[code])
+    digest = apply_form.FormDigest("careers.example", "Verify", "", fields=[code])
     plan = apply_run.FillPlan(buttons={
         "submit": (0, apply_run.apply_judge.BUTTON_SUBMIT_MIN_CONF)})
     locator = SimpleNamespace(first=SimpleNamespace(fill=lambda *a, **kw: None))

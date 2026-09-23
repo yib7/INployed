@@ -25,8 +25,11 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   at most one send; park mode never sends; only the gate sends; `submitted`
   only with the confirmation marker showing, or "submitted (unconfirmed)"
   with a send counted; no click whose live text reads as a submit outside the
-  gate; no fill, tick, pick, upload or gate on a `*.linkedin.com` page; the
-  master password nowhere in the record, the trace, the queue or the logs.
+  gate; no fill, tick, pick, upload or gate on a `*.linkedin.com` page; no
+  click on an Easy Apply control (its text or aria-label); the master
+  password nowhere in the record, the trace, the queue or the logs. A flow
+  that must end before any page opens (`Flow.opens_no_page`) is checked for
+  that too.
 - `run_flow` / `run_matrix` / `summary`: one flow under one judge, the whole
   registry under many, and the table with success rates.
 
@@ -71,8 +74,8 @@ JOB_ID = "42"
 NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs the first three
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
-# at the SP1 baseline. Later phases raise it to 0.95.
-SUCCESS_FLOOR = 0.64                      # SP1 fix round 1: 30 of 45 suite runs (0.667)
+# one run below what the matrix measures. Later phases raise it to 0.95.
+SUCCESS_FLOOR = 0.77                      # SP2: 64 of 81 suite runs (0.790); SP1: 30 of 45
 # Under the fake judge every flow reaches its end but the known failing ones
 # (`Flow.known`), which the rates leave out.
 FAKE_SUCCESS_FLOOR = 1.0
@@ -218,9 +221,19 @@ FAST_TIMING = {
     ("apply_fill", "NETWORK_IDLE_MS"): 50,
     ("apply_fill", "POLL_S"): 0.05,
     ("apply_run", "POPUP_TIMEOUT_MS"): 1_500,
+    ("apply_run", "POPUP_GRACE_S"): 0.3,
+    ("apply_run", "ENTRY_POLL_MS"): 50,
+    ("apply_run", "GOTO_RETRY_S"): 0.1,
     ("apply_run", "CLICK_TIMEOUT_S"): 3,
     ("apply_run", "SUBMIT_SETTLE_S"): 5,
     ("apply_run", "REDIRECT_TIMEOUT_S"): 6,
+    # the empty-read and top-card waits keep room for the fixtures that render
+    # late (0.8 s and 2.5 s after `load`)
+    ("apply_run", "EMPTY_READ_MAX_S"): 4.0,
+    ("apply_run", "EMPTY_READ_STABLE_S"): 1.2,
+    ("apply_run", "EMPTY_READ_POLL_S"): 0.1,
+    ("apply_run", "LINKEDIN_READY_S"): 5.0,
+    ("apply_run", "LINKEDIN_POLL_MS"): 100,
 }
 
 
@@ -329,26 +342,52 @@ _COMBINED = """<!doctype html><html><head><title>Apply</title></head><body>
 </body></html>"""
 
 
-def _linkedin_routes(base: str) -> dict[str, str]:
-    """LinkedIn's job page and its `/safety/go/` redirector (routed; no
-    network): the Apply link goes through the redirector, whose script sends
-    the tab on to the fixture form after a moment, as LinkedIn's does (0.4 s
-    here, 1.5 s in the fixture: the run waits for the hop either way). The
-    redirector's route is registered last, so it wins for its own URLs."""
-    forms = FIXTURES_DIR / "forms"
-    target = f"{base}/forms/ashby_steps.html"
-    posting = (forms / "linkedin_posting.html").read_text(encoding="utf-8").replace(
-        'href="linkedin_redirect.html"',
-        f'href="https://www.linkedin.com/safety/go/?url={target}"')
-    redirect = (forms / "linkedin_redirect.html").read_text(encoding="utf-8").replace(
-        "location.replace('ashby_steps.html'); }, 1500)",
-        f"location.replace('{target}'); }}, 400)")
-    return {"https://www.linkedin.com/**": posting,
-            "https://www.linkedin.com/safety/go/**": redirect}
+def linkedin_job_routes(page: str = "linkedin_posting.html", target: str = "ashby_steps.html",
+                        *, hop: str = "linkedin_redirect.html",
+                        host: str = "www.linkedin.com") -> Callable[[str], dict[str, str]]:
+    """Routes (a function of the server's base URL; no network) for a
+    LinkedIn job page fixture `page` served on `host`, its Apply link going
+    through the `/safety/go/` hop to the fixture `target`. The hop is the
+    redirector, whose script sends the tab on after a moment as LinkedIn's
+    does (0.4 s here, 1.5 s in the fixture: the run waits either way), or the
+    safety interstitial, whose Continue link leads on. The hop's route is
+    registered last, so it wins for its own URLs."""
+    def _routes(base: str) -> dict[str, str]:
+        forms = FIXTURES_DIR / "forms"
+        to = f"{base}/forms/{target}"
+        posting = (forms / page).read_text(encoding="utf-8").replace(
+            'href="linkedin_redirect.html"', f'href="https://{host}/safety/go/?url={to}"')
+        hop_page = (forms / hop).read_text(encoding="utf-8").replace(
+            "location.replace('ashby_steps.html'); }, 1500)",
+            f"location.replace('{to}'); }}, 400)").replace(
+            'href="lever_single.html"', f'href="{to}"')
+        return {f"https://{host}/**": posting, f"https://{host}/safety/go/**": hop_page}
+    return _routes
+
+
+_linkedin_routes = linkedin_job_routes()
 
 
 def _no_routes(base: str) -> dict[str, str]:
     return {}
+
+
+class LinkedInReadAsOther:
+    """A judge that reads every LinkedIn page as `other` at 0.30 (the GTS
+    park of 2026-09-22) and passes the rest to the judge it wraps."""
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        out = dict(self.inner.judge(state, questions))
+        host = str(((state or {}).get("page") or {}).get("url_host") or "")
+        if "page_state" in out and on_linkedin(f"https://{host}/"):
+            out["page_state"] = jev.Answer(
+                kind="choice", choice="other", confidence=0.30,
+                probabilities={"other": 0.30, "job_posting": 0.28, "application_form": 0.22,
+                               "login_wall": 0.20})
+        return out
 
 
 @dataclass(frozen=True)
@@ -371,6 +410,9 @@ class Flow:
     # "<phase>: why": the fake judge does not reach the end yet; the matrix
     # reports the flow apart and leaves it out of the rates the floors read
     known: str = ""
+    easy_apply: bool = False        # the queue entry's `is_easy_apply`
+    wrap: Callable[[Any], Any] | None = None    # wraps every judge the flow runs under
+    opens_no_page: bool = False     # the run must end before any page opens
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
@@ -398,6 +440,7 @@ class Flow:
 
 _SUBMITTED = r"^confirmation page"
 _PARKED = r"^auto_apply_submit is off$"
+_EASY_APPLY = "^" + re.escape(apply_run.EASY_APPLY_REASON) + "$"
 
 FLOWS: tuple[Flow, ...] = (
     Flow("ashby_wizard", "ashby_steps.html", True, "submitted", _SUBMITTED,
@@ -446,6 +489,51 @@ FLOWS: tuple[Flow, ...] = (
          confirm="body[data-confirmed]", covers="a real form POST the server counts"),
     Flow("captcha", "captcha.html", True, "needs_human", r"^captcha or bot check",
          covers="a bot check nobody solves parks"),
+    # --- SP2: the entry (Easy Apply, the LinkedIn job page, settling, consent) ---
+    Flow("linkedin_easy_apply", _LINKEDIN_JOB, True, "needs_human", _EASY_APPLY,
+         routes=linkedin_job_routes("linkedin_easy_apply.html", "lever_single.html"),
+         covers="a job page whose only Apply is Easy Apply (its aria-label) stops unclicked"),
+    Flow("linkedin_easy_apply_modal", _LINKEDIN_JOB, True, "needs_human", _EASY_APPLY,
+         routes=linkedin_job_routes("linkedin_easy_apply_modal.html", "lever_single.html"),
+         covers="LinkedIn's own form open in a modal: nothing filled, the run stops"),
+    Flow("linkedin_easy_apply_flag", _LINKEDIN_JOB, True, "needs_human", _EASY_APPLY,
+         routes=linkedin_job_routes(), easy_apply=True, opens_no_page=True,
+         covers="an Easy Apply queue entry ends before any page opens"),
+    Flow("linkedin_posting_late", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_posting_late.html", "lever_single.html"),
+         covers="a top card that renders 2.5 s after load, then the company's form"),
+    Flow("linkedin_posting_noise", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_posting_noise.html", "lever_single.html"),
+         covers="an alert switch, a feedback Submit, the messaging search and a hidden "
+                "sign-in form beside the offsite Apply"),
+    Flow("linkedin_gts_other", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_posting_noise.html", "lever_single.html"),
+         wrap=LinkedInReadAsOther,
+         covers="the GTS park: a posting with stray controls the judge reads as other at "
+                "0.30 still reaches the company's form"),
+    Flow("linkedin_applied", _LINKEDIN_JOB, True, "needs_human", r"^already applied: ",
+         routes=linkedin_job_routes("linkedin_applied.html", "lever_single.html"),
+         covers="a job LinkedIn shows as applied is not applied to again"),
+    Flow("linkedin_closed", _LINKEDIN_JOB, True, "needs_human", r"^closed: ",
+         routes=linkedin_job_routes("linkedin_closed.html", "lever_single.html"),
+         covers="a posting that no longer accepts applications"),
+    Flow("linkedin_signed_out", _LINKEDIN_JOB, True, "needs_human", r"^LinkedIn is signed out",
+         routes=linkedin_job_routes("linkedin_signed_out.html", "lever_single.html"),
+         covers="a sign-in dialog and no offsite Apply: the user signs in to LinkedIn"),
+    Flow("linkedin_safety_interstitial", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         routes=linkedin_job_routes("linkedin_posting.html", "lever_single.html",
+                                    hop="linkedin_safety_interstitial.html"),
+         covers="the safety reminder on the hop, which waits for its Continue"),
+    Flow("spa_late_render", "spa_late_render.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a posting that renders 800 ms after load, then its same-tab Apply"),
+    Flow("consent_overlay", "consent_overlay.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a cookie dialog over the posting, declined through its input button"),
 )
 
 
@@ -528,12 +616,17 @@ _LIVE_JS = r"""el => {
   text = (text || el.getAttribute('aria-label') || el.getAttribute('title') || '')
     .replace(/\s+/g, ' ').trim().slice(0, 160);
   return {text: text, role: el.getAttribute('role') || '', tag: tag, type: type,
+          aria: (el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 160),
           form: !!(el.form || (el.closest && el.closest('form'))),
           url: String(el.ownerDocument.location.href)};
 }"""
-# The focused element of a page, for a key press or typed text without a target.
+# The focused element of a frame's document, for a key press or typed text
+# without a target; `frame: true` when the focus sits in a child frame (the
+# element is then read in that frame).
 _FOCUS_JS = "() => { const el = document.activeElement; " \
             "if (!el || el === document.body) return {url: String(location.href)}; " \
+            "if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') " \
+            "return {url: String(location.href), frame: true}; " \
             "return (" + _LIVE_JS + ")(el); }"
 LIVE_TIMEOUT_MS = 1_000
 # The loop's own send vocabulary (`apply_run.SUBMIT_WORDS`, `FINAL_WORDS`).
@@ -552,13 +645,18 @@ _ON_LINKEDIN_FORBIDDEN = ("fill", "tick", "pick", "upload", "gate")
 def submit_worded(text: str, *, park_mode: bool) -> bool:
     """Does a control's live text read as sending the application, in the
     loop's words? A send word other than "apply" (a bare "Apply" is the
-    posting's entry), or in park mode a last-step word on anything but an
-    account step (`apply_run._final_shaped`, `_sends_application`)."""
+    posting's entry), unless the text names a sign-in or a code or link sent
+    for one ("Sign in to apply", "Send code", "Send me a link": the account
+    step's exemption, `apply_run._sends_application`); or in park mode a
+    last-step word on anything but an account step (`apply_run._final_shaped`)."""
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
-    if words - {"apply"}:
+    if words - {"apply"} and not apply_run._SIGN_IN_WORDS.search(text or ""):
         return True
     return (park_mode and bool(FINAL_WORDS.search(text or ""))
             and not apply_run._ACCOUNT_STEP_WORDS.search(text or ""))
+
+
+_EASY_APPLY_WORDS = re.compile(r"easy\s*apply", re.I)
 
 
 def _host(url: str) -> str:
@@ -583,6 +681,7 @@ class Action:
     how: str = ""       # the Playwright call
     key: str = ""       # a key press's key
     form: bool = False  # the element (or the focused one) sits in a form
+    aria: str = ""      # the element's aria-label
 
     @property
     def host(self) -> str:
@@ -626,7 +725,39 @@ class Recorder:
                                    text=str(info.get("text", "")), role=str(info.get("role", "")),
                                    tag=str(info.get("tag", "")), type=str(info.get("type", "")),
                                    in_gate=self.gate_depth > 0, key=key,
-                                   form=bool(info.get("form", False))))
+                                   form=bool(info.get("form", False)),
+                                   aria=str(info.get("aria", ""))))
+
+    @staticmethod
+    def focused(page) -> dict:
+        """The focused element's live info, read in the frame that holds the
+        focus: a key pressed while an input inside an iframe has the focus
+        goes to that input and its form (N4), so the main document's
+        `activeElement` (the `<iframe>`) is followed down, frame by frame."""
+        try:
+            info = dict(page.evaluate(_FOCUS_JS))
+        except Exception:   # noqa: BLE001
+            return {}
+        frame = page.main_frame
+        for _ in range(8):
+            if not info.get("frame"):
+                return info
+            found = None
+            for child in frame.child_frames:
+                try:
+                    if child.frame_element().evaluate("el => el === document.activeElement"):
+                        found = child
+                        break
+                except Exception:   # noqa: BLE001  (a detached frame)
+                    continue
+            if found is None:
+                return info
+            frame = found
+            try:
+                info = dict(frame.evaluate(_FOCUS_JS))
+            except Exception:   # noqa: BLE001
+                return info
+        return info
 
     @staticmethod
     def _kind(kind: str, name: str, args: tuple, kw: dict) -> str:
@@ -686,10 +817,7 @@ class Recorder:
 
                 def _key(kb, *a, _orig=orig, _kind=kind, _name=name, **kw):
                     page = rec._keyboards.get(id(kb))
-                    try:
-                        info = dict(page.evaluate(_FOCUS_JS)) if page is not None else {}
-                    except Exception:   # noqa: BLE001
-                        info = {}
+                    info = rec.focused(page) if page is not None else {}
                     key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
                     rec._add(_kind, f"Keyboard.{_name}", info, key)
                     return _orig(kb, *a, **kw)
@@ -834,6 +962,8 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
         if on_linkedin(a.url) and (a.kind in _ON_LINKEDIN_FORBIDDEN or enter):
             breaks.append(f"LINKEDIN-{'PRESS' if enter else a.kind.upper()}: a "
                           f"{a.kind} on {a.host}")
+        if a.kind == "click" and _EASY_APPLY_WORDS.search(f"{a.text} {a.aria}"):
+            breaks.append(f"EASY-APPLY-CLICK: clicked {a.text or a.aria!r} on {a.host}")
         if a.kind == "fill" and a.type == "password" and recorder.app_hosts \
                 and a.host not in recorder.app_hosts:
             breaks.append(f"PASSWORD-OFF-SITE: a password box filled on {a.host}")
@@ -859,12 +989,19 @@ def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends) -> None:
 
 # The parks the user's policy allows: the park-mode submit, a required
 # question the data cannot answer, a sensitive question, a payment, a check
-# nobody solved, a dead page, and the window or tab the user closed.
+# nobody solved, a dead page, and the window or tab the user closed; on
+# LinkedIn, an Easy Apply job (the user applies there, by the user's call), a
+# job already applied to, a closed posting, and LinkedIn signed out (dead ends
+# the run cannot pass).
 _POLICY_PARKS = tuple(re.compile(p) for p in (
     r"^auto_apply_submit is off$", r"^required field without an answer",
     r"^asks for .*which auto-apply never fills", r"^payment requested",
     r"(?i)captcha|bot check", r"^error or dead page",
-    "^" + re.escape(apply_run.CLOSED_REASON), "^" + re.escape(apply_run.TAB_CLOSED_REASON)))
+    "^" + re.escape(apply_run.CLOSED_REASON), "^" + re.escape(apply_run.TAB_CLOSED_REASON),
+    "^" + re.escape(apply_run.EASY_APPLY_REASON) + "$",
+    "^" + re.escape(apply_run.apply_linkedin.APPLIED_REASON),
+    "^" + re.escape(apply_run.apply_linkedin.CLOSED_REASON),
+    "^" + re.escape(apply_run.apply_linkedin.SIGNED_OUT_REASON)))
 
 
 def policy_park(status: str, reason: str) -> bool | None:
@@ -890,6 +1027,7 @@ class RunResult:
     seconds: float
     trace: str = ""
     policy: bool | None = None      # `policy_park` of the end
+    actions: list[Action] = field(default_factory=list, repr=False)  # what the run did
 
 
 def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True) -> list[tuple[str, Any]]:
@@ -897,6 +1035,22 @@ def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True) -> list[tup
     out: list[tuple[str, Any]] = [("fake", jev.FakeJev())] if fake else []
     out += [(f"noisy-{s}", jev.NoisyJev(jev.FakeJev(), s)) for s in seeds]
     return out
+
+
+_LOCAL_HOSTS = ("127.0.0.1", "localhost")
+
+
+def offline(context) -> None:
+    """Keep a test context off the network: a request to anything but the
+    local fixture server is aborted, unless a route registered after this one
+    (a flow's fake host, LinkedIn's fixture) answers it first. Register it
+    before the flow's routes: Playwright tries the latest route first."""
+    def _guard(route) -> None:
+        if _host(route.request.url) in _LOCAL_HOSTS:
+            route.continue_()
+        else:
+            route.abort("blockedbyclient")
+    context.route("**/*", _guard)
 
 
 def _fulfiller(body: str) -> Callable[[Any], None]:
@@ -934,15 +1088,22 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
                                   path=queue)
         if f.ats:
             apply_queue.update(JOB_ID, path=queue, ats=f.ats)
+        if f.easy_apply:
+            apply_queue.update(JOB_ID, path=queue, is_easy_apply=True)
         context = browser.new_context()
         stack.callback(context.close)
         stack.callback(sends.uninstall, server)
+        opened: list = []
+        context.on("page", lambda p: opened.append(p))
+        offline(context)
         for glob, body in f.routes(server.base).items():
             context.route(glob, _fulfiller(body))
         sends.install(context, f, server)
         stack.enter_context(recorder.recording())
         inbox = f"{server.base}/inbox/outlook_list.html" if f.inbox \
             else "https://mail.example.com/inbox"
+        if f.wrap is not None:
+            judge = f.wrap(judge)
         runner = apply_run.Runner(
             jev=recorder.watch(judge), queue_path=queue, profile_dir=rundir / "profile",
             settings={"auto_apply_submit": f.submit, "auto_apply_headless": True,
@@ -958,11 +1119,14 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
                          ["NO-OUTCOME: the drain ran no job"], sends.count, 0, seconds)
     out = outcomes[0]
     breaks = invariant_breaks(out, recorder, sends)
+    if f.opens_no_page and opened:
+        breaks.append(f"PAGE-OPENED: {len(opened)} page(s) opened for a job that must end "
+                      "before any page")
     traces = sorted((folder / "apply_trace").glob("attempt-*"))
     return RunResult(f.name, judge_name, out.status, out.reason,
                      f.reached(out.status, out.reason, recorder.final), breaks, sends.count,
                      out.pages, seconds, str(traces[-1]) if traces else "",
-                     policy_park(out.status, out.reason))
+                     policy_park(out.status, out.reason), list(recorder.actions))
 
 
 def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, browser,

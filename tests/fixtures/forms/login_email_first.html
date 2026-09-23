@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<!-- A two-step sign-in (the iCIMS shape probed 2026-09-22): the address on
+     this screen, the password on the next. -->
+<h1>Sign in to continue your application</h1>
+<p>Enter the email for your Fabrikam Careers account.</p>
+<div id="login">
+  <label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email">
+  <p><button type="button" id="btn-next">Next</button></p>
+</div>
+<script>
+  document.getElementById('btn-next').addEventListener('click', function () {
+    if (!document.getElementById('email').value) { return; }
+    window.location.href = 'login_password_step.html';
+  });
+</script>
+</body>
+</html>

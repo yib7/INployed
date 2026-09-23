@@ -42,8 +42,9 @@ KINDS = (
     ("button other", re.compile(r"^button_\d+_role$"), "confidence", None, None),
     ("verify", re.compile(r"^verify_\d+$"), "noul", "VERIFY_MIN", "min"),
     ("placeholder", re.compile(r"^placeholder_\d+$"), "noul", "PLACEHOLDER_MAX", "max"),
-    ("prohibited", re.compile(r"^asks_for_prohibited$"), "noul", "PROHIBITED_MAX", "max"),
-    ("captcha", re.compile(r"^has_captcha$"), "noul", "CAPTCHA_MAX", "max"),
+    # recorded only since 2026-09-22: neither flag parks a job on its own
+    ("prohibited", re.compile(r"^asks_for_prohibited$"), "noul", None, None),
+    ("captcha", re.compile(r"^has_captcha$"), "noul", None, None),
     ("requires account", re.compile(r"^requires_account$"), "noul", None, None),
     ("inbox", re.compile(r"^msg_\d+_(from_site|has_code)$"), "noul", "INBOX_MIN", "min"),
     ("code pick", re.compile(r"^code_pick$"), "confidence", None, None),

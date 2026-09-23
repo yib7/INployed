@@ -383,7 +383,7 @@ def test_thresholds_helper_prints_every_kind_with_its_threshold(tmp_path):
                  "button advance", "verify", "placeholder", "prohibited", "captcha",
                  "inbox", "grounding", "code pick"):
         assert kind in out, kind
-    assert "PAGE_STATE_MIN_CONF" in out and "0.60" in out
+    assert "PAGE_STATE_MIN_CONF" in out and "0.40" in out
     assert "BUTTON_SUBMIT_MIN_CONF" in out and "GROUNDING_MIN" in out
     assert "thresholds tuned" in out and "UNTUNED" not in out
     assert "test_a" in out and "needs_human" in out and "xfail" in out

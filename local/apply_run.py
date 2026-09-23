@@ -65,7 +65,7 @@ from apply_judge import FillPlan, VerifyResult  # noqa: E402
 
 log = logging.getLogger("apply_run")
 
-JOB_WALL_CLOCK_S = 8 * 60          # per job, on the injectable clock
+JOB_WALL_CLOCK_S = 15 * 60         # per job, on the injectable clock (a solved CAPTCHA's wait is added back)
 GENERATE_MAX = 3                   # generated answers per job (spec 3.7)
 POPUP_TIMEOUT_MS = 5_000           # for the Apply entry to open a new tab
 CLICK_TIMEOUT_S = 20               # click_button's wait for a change
@@ -76,12 +76,45 @@ LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
 LINKEDIN_REDIRECTOR = "/safety/go"  # the hop an off-site Apply link goes through
 REDIRECT_TIMEOUT_S = 20            # for that hop's script to send the tab on
+HUMAN_CHECK_WAIT_S = 5 * 60        # for the user to solve a CAPTCHA in the visible window
+HUMAN_CHECK_POLL_S = 2.0
+HUMAN_CHECK_AUTO_S = 16            # headless: for a whole-page check to clear itself
+HUMAN_CHECK_MIN_PX = 150           # a bot-check frame this tall is a challenge, not a badge
+# The sites (registrable domains) of the platforms most applications run on. A
+# page or a frame on one of them is part of the application wherever the flow
+# met it: a company page embeds Greenhouse, a careers site hands off to Workday,
+# an iCIMS portal signs in on login.icims.com.
+ATS_SITES = frozenset((
+    "greenhouse.io", "lever.co", "ashbyhq.com", "icims.com", "myworkdayjobs.com",
+    "myworkdaysite.com", "myworkday.com", "workday.com", "smartrecruiters.com",
+    "jobvite.com", "workable.com", "bamboohr.com", "taleo.net", "oraclecloud.com",
+    "successfactors.com", "successfactors.eu", "sapsf.com", "sapsf.eu", "brassring.com",
+    "adp.com", "ultipro.com", "ukg.com", "dayforcehcm.com", "applytojob.com",
+    "jazzhr.com", "recruitee.com", "teamtailor.com", "breezy.hr", "pinpointhq.com",
+    "rippling.com", "paylocity.com", "paycomonline.net", "avature.net", "eightfold.ai",
+    "gem.com", "comeet.com", "personio.de", "personio.com", "csod.com",
+    "clearcompany.com", "hrmdirect.com", "applicantpro.com", "isolvedhire.com",
+    "phenompeople.com", "trinethire.com"))
+# Bot-check providers. Their frames' controls are never filled or clicked: a
+# challenge is the user's to solve in the visible window.
+CAPTCHA_SITES = frozenset(("hcaptcha.com", "recaptcha.net", "arkoselabs.com",
+                           "funcaptcha.com", "geetest.com"))
+_SECOND_LEVEL = frozenset(("co", "com", "org", "net", "ac", "gov", "edu", "ne", "or", "go"))
+# Hosting domains whose subdomains belong to different owners: each
+# `<name>.github.io` is its own site, never one site with every other.
+_SHARED_HOSTING = frozenset((
+    "github.io", "herokuapp.com", "azurewebsites.net", "vercel.app", "netlify.app",
+    "pages.dev", "workers.dev", "web.app", "firebaseapp.com", "appspot.com",
+    "cloudfront.net", "amazonaws.com", "blogspot.com", "wixsite.com", "webflow.io",
+    "onrender.com", "fly.dev", "glitch.me", "ngrok.io", "ngrok-free.app", "surge.sh",
+    "wordpress.com", "sharepoint.com", "notion.site"))
 VIEWPORT = {"width": 1400, "height": 1000}
 BROWSER_CHANNEL = "chrome"         # the installed Google Chrome; the bundled Chromium is the fallback
 RECORD_NAME = "apply_record.md"
 HIDDEN = "<hidden>"
 
 LOGIN_NOTE = "log in manually, then Re-queue"
+LINKEDIN_LOGIN_NOTE = "run `python local/apply_run.py login`, sign in to LinkedIn, then Re-queue"
 CODE_NOTE = "enter the emailed code manually, then Re-queue"
 REVIEW_NOTE = "review and submit"
 SUBMIT_FAILED_NOTE = "submit did not register; review and submit"
@@ -94,9 +127,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_apply_generate": True,
 }
 _ACTED = ("fill", "select", "upload")     # the actions that put a value on the page
-# the only facts an account screen may be given, beyond the email and the password
-_ACCOUNT_FACT_KEYS = ("first_name", "last_name", "full_name")
-
 _PARK_STATES = {
     "captcha_or_bot_check": "captcha or bot check on the page",
     "payment_request": "payment requested",
@@ -161,11 +191,36 @@ class NotConfigured:
         return None
 
 
+def _is_email_box(field) -> bool:
+    """An account screen's address box: an email input, an autocomplete of
+    `username` / `email`, or a text box `quick_map` reads as the email."""
+    return (field.type == "email" or field.autocomplete in ("username", "email")
+            or (field.type == "text"
+                and apply_facts.quick_map(field.label, field.id_or_name, field.type) == "email"))
+
+
 class _Accounts:
-    """Account transitions for one job; secrets bypass the generic filler."""
+    """Account transitions for one job; secrets bypass the generic filler.
+
+    Sign-in comes in two shapes: the address and the password on one screen,
+    or the address first (`Next`) and the password or the create-account form
+    on the screen after it (iCIMS, Workday). Either way the loop judges every
+    screen and calls back here; a password-only screen is taken once the
+    address went in on the same site this job, or when the ledger knows the
+    account. Other boxes on an account screen (a name, a phone, a privacy
+    checkbox) are filled from the user's facts through the ordinary plan; one
+    the facts cannot answer parks the job with its question, like any form."""
+
+    MAX_STEPS_PER_SITE = 4      # account screens handled per site before the job parks
 
     def __init__(self, run):
         self.run = run
+        self.email_sites: set[str] = set()      # sites where the address went in this job
+        self.steps: dict[str, int] = {}
+        # (site, "login" | "signup") where the password went in this job: a
+        # second password screen of the same kind is a rejected password, and
+        # typing it again only moves the account toward a lockout
+        self.password_typed: set[tuple[str, str]] = set()
 
     def login(self, page, digest, host: str) -> bool:
         account = ats_accounts.lookup(host)
@@ -175,6 +230,10 @@ class _Accounts:
             return self._fill(page, digest, host, str(account.get("email") or ""), False)
         if not ats_accounts.has_password():
             return False
+        if self._email_first(page, digest) or _site(host) in self.email_sites:
+            # the address screen of a two-step sign-in, or the password screen
+            # after it: the next screen says whether the account exists
+            return self._fill(page, digest, host, self._signup_email(), False)
         # Expose account-creation links as buttons to the same role judge.
         links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
         try:
@@ -199,22 +258,35 @@ class _Accounts:
                 return False
             page.goto(target, timeout=self._nav_timeout())
             self.run._check_host(page.url)
-            fresh = apply_form.extract(page)
-            self.run._check_frames(fresh)
+            fresh = self.run._drop_foreign_controls(apply_form.extract(page))
             state, confidence = apply_judge.read_page_state(self.run._judge_page(fresh))
             if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
                 return False
-            return self.signup(page, fresh, host)
+            return self.signup(page, fresh, fresh.url_host or _host(page.url))
         except _Parked:
-            # the loop's own park (a host or frame check): the reason names
-            # what was refused and the loop ends the job with it
+            # the loop's own park (a host check, an unanswerable box): the
+            # reason names what was refused and the loop ends the job with it
             raise
         except Exception:  # noqa: BLE001  (account details stay out of errors)
             return False
 
     def signup(self, page, digest, host: str) -> bool:
-        email = str(self.run.r.run_context().get("signup_email") or "")
-        return self._fill(page, digest, host, email, True)
+        return self._fill(page, digest, host, self._signup_email(), True)
+
+    def _signup_email(self) -> str:
+        return str(self.run.r.run_context().get("signup_email") or "")
+
+    @staticmethod
+    def _email_first(page, digest) -> bool:
+        """An address box and no password box: the first screen of a two-step
+        sign-in."""
+        has_email = has_password = False
+        for f in digest.fields:
+            if _is_email_box(f):
+                has_email = True
+            elif apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
+                has_password = True
+        return has_email and not has_password
 
     def _timeout(self) -> int:
         """Milliseconds for one action on the page, inside the job's clock."""
@@ -226,92 +298,134 @@ class _Accounts:
         return max(1, int(min(CLICK_TIMEOUT_S,
                               self.run.deadline - self.run.r.clock()) * 1000))
 
-    def _record(self, digest, email: str, advance_n: int, passwords: int) -> None:
+    def _record(self, digest, email: str, advance_n: int, passwords: int,
+                others: list | None = None) -> None:
         """Write the account step into the current page's record (spec 3.5):
-        the address that was used, one hidden row per password box, and the
-        button that was clicked. The password value is never carried; the row
-        is marked hidden and `write_record` writes `<hidden>`."""
+        the address that was used, one hidden row per password box, the other
+        boxes filled from the facts, and the button that was clicked. The
+        password value is never carried; the row is marked hidden and
+        `write_record` writes `<hidden>`."""
         rec = self.run.pages[-1] if self.run.pages else None
         if rec is None:
             return
-        rec["filled"].append({"n": -1, "label": "Email", "value": email,
-                              "type": "email", "id_or_name": "account_email",
-                              "upload": False})
+        if email:
+            rec["filled"].append({"n": -1, "label": "Email", "value": email,
+                                  "type": "email", "id_or_name": "account_email",
+                                  "upload": False})
         for i in range(passwords):
             rec["filled"].append({"n": -2 - i, "label": "Password", "value": "",
                                   "type": "other", "id_or_name": "account_password",
                                   "upload": False, "hidden": True})
+        for f in others or []:
+            rec["filled"].append({"n": f.n, "label": f.label, "value": f.value,
+                                  "type": "", "id_or_name": "", "upload": False})
         button = next((b for b in digest.buttons if b.n == advance_n), None)
         rec["clicked"].append(f"{button.text if button else 'account'} (advance)")
-
-    def _name_value(self, field) -> str:
-        """The catalog's value for a name box on an account screen, else "".
-
-        An account form asks for little beyond the credentials, and the one
-        extra it does ask for is the candidate's name. `apply_facts.quick_map`
-        has to recognise the control outright (no judged mapping here), and
-        only the three identity name keys are ever used, so nothing else about
-        the candidate reaches a page that is not the application itself."""
-        key = apply_facts.quick_map(field.label, field.id_or_name, field.type)
-        if key not in _ACCOUNT_FACT_KEYS:
-            return ""
-        return self.run.catalog.value(key) if self.run.catalog else ""
 
     def _fill(self, page, digest, host: str, email: str, signup: bool) -> bool:
         if not email or not ats_accounts.has_password() or self.run.r.clock() >= self.run.deadline:
             return False
+        site = _site(host)
+        self.steps[site] = self.steps.get(site, 0) + 1
+        if self.steps[site] > self.MAX_STEPS_PER_SITE:
+            return False
         blocked: list[str] = []
+        frames = apply_form.frames(page)
+        guarded: set[int] = {id(page.main_frame)}
 
         def _guard(route, request) -> None:
-            """Nothing leaves the allowed hosts while the credentials are on
-            the page. A navigation or a request with a body could carry them,
-            so that one parks the job; a plain GET for a script, a font or a
-            beacon is aborted quietly, the way `apply_inbox.fetch_code` guards
-            the inbox tab. A sign-in page that pulls a bot-check script from a
-            CDN is ordinary and is no reason to stop."""
+            """While the credentials are on the page, the page and the frames
+            that hold them may not navigate off the application's sites: a
+            sign-in form that posts there parks the job. Every other request
+            goes through (a fetch, a popup, another frame), so the site's own
+            bot check, sign-in API and scripts work as they would for a
+            person; the password is only ever typed on the application's
+            site (`_password_ok`), which is the protection that matters."""
             target_host = _host(request.url)
-            if not target_host or target_host in self.run.allowed:
-                route.continue_()
-                return
-            if request.is_navigation_request() or str(request.method).upper() != "GET":
+            try:
+                frame_id = id(request.frame)
+            except Exception:       # noqa: BLE001  (a service-worker request has no frame)
+                frame_id = None
+            if (target_host and request.is_navigation_request() and frame_id in guarded
+                    and not self.run._allowed_site(target_host)):
                 blocked.append(target_host)
-            route.abort()
+                route.abort()
+                return
+            route.continue_()
 
         try:
             answers = self.run._judge_page(digest)
             plan = apply_judge.plan(digest, self.run.catalog, answers)
+            rec = self.run.pages[-1] if self.run.pages else {"flags": {}}
+            plan = self.run._complete_option_plan(digest, answers, plan, rec)
             advance = plan.buttons.get("advance")
-            if (advance is None or advance[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF
-                    or plan.flags.get("has_captcha", 0) >= apply_judge.CAPTCHA_MAX
-                    or plan.flags.get("asks_for_prohibited", 0) >= apply_judge.PROHIBITED_MAX):
+            if advance is None or advance[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
+                advance = plan.buttons.get("submit")
+            if advance is None or advance[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
                 return False
-            passwords = []
-            emails = []
-            names: list[tuple[Any, str]] = []
+            by_n = {pf.n: pf for pf in plan.fields}
+            passwords, emails, others = [], [], []
+            password_hosts = {_host(page.url)}
             for field in digest.fields:
                 loc = apply_form.resolve(page, field.locator).first
+                idx = int(field.locator[0])
                 if loc.get_attribute("type") == "password":
                     passwords.append(loc)
-                elif field.type == "email" or field.autocomplete == "username":
+                    if 0 <= idx < len(frames):
+                        guarded.add(id(frames[idx]))
+                        password_hosts.add(_host(self.run._frame_url(frames, idx)))
+                elif _is_email_box(field):
                     emails.append(loc)
+                    if 0 <= idx < len(frames):
+                        guarded.add(id(frames[idx]))
                 else:
-                    value = self._name_value(field)
-                    if value:
-                        names.append((loc, value))
+                    pf = by_n.get(field.n)
+                    if pf is not None and pf.action in ("fill", "select", "upload") \
+                            and (pf.value or pf.option):
+                        others.append(pf)
+                    elif field.required and apply_judge.is_sensitive_field(field.label,
+                                                                           field.id_or_name):
+                        raise _Parked("needs_human", apply_judge.sensitive_reason(field.label))
                     elif field.required:
-                        return False
-            if not passwords or not emails:
+                        self.run._add_missing(field.label, field.help or field.placeholder
+                                              or field.type)
+                        raise _Parked("needs_human",
+                                      f"required field without an answer: {field.label}")
+            if not passwords and not emails:
                 return False
+            if passwords and not emails and not signup \
+                    and site not in self.email_sites and not ats_accounts.lookup(host):
+                return False
+            if passwords:
+                # the last word before the password is typed: the page and
+                # every frame holding a password box are on the application's
+                # site, whichever path (a sign-up link, a redirect) led here
+                outside = sorted(h for h in password_hosts if h and not self.run._password_ok(h))
+                if outside:
+                    raise _Parked("needs_human",
+                                  f"a sign-in on {outside[0]}, outside the application site",
+                                  LOGIN_NOTE)
+                kind = "signup" if signup else "login"
+                if (site, kind) in self.password_typed:
+                    raise _Parked("needs_human", f"the {kind} on {host} did not take the "
+                                                 "master password", LOGIN_NOTE)
             page.route("**/*", _guard)
             try:
-                for loc, value in names:
-                    loc.fill(value, timeout=self._timeout())
                 for loc in emails:
-                    loc.fill(email, timeout=self._timeout())
+                    try:
+                        current = str(loc.input_value(timeout=self._timeout()) or "")
+                    except Exception:       # noqa: BLE001  (a box that cannot be read is filled)
+                        current = ""
+                    if current.strip().lower() != email.strip().lower():
+                        loc.fill(email, timeout=self._timeout())
+                filled = apply_fill.apply(page, FillPlan(fields=others),
+                                          deadline=self.run.deadline, clock=self.run.r.clock)
                 for loc in passwords:
                     if not ats_accounts.fill_password(page, loc):
                         return False
-                self._record(digest, email, advance[0], len(passwords))
+                if passwords:
+                    self.password_typed.add((site, "signup" if signup else "login"))
+                self._record(digest, email if emails else "", advance[0], len(passwords), filled)
                 # an aborted navigation leaves the tab on a browser error page,
                 # so the note for the human names the page before the click
                 before = f"{page.url} | {page.title()}"
@@ -319,25 +433,24 @@ class _Accounts:
                                           timeout_s=self._timeout() / 1000)
             finally:
                 page.unroute("**/*", _guard)
-            if signup and result.clicked:
+            if signup and passwords and result.clicked:
                 # the click landed, so the account may already exist whatever
                 # the page did next; a ledger entry for an account that was
                 # never created costs one failed login, a missing one costs a
                 # second signup with the same address
                 ats_accounts.record(host, email)
-                signup = False
             if blocked:
                 raise _Parked("needs_human", f"left the allowed sites: {blocked[0]}", before)
+            if emails:
+                self.email_sites.add(site)
             if not result.changed:
-                return False
+                if not self.run._human_check_showing():
+                    return False
+                self.run._wait_for_human_check("a CAPTCHA challenge appeared at sign-in")
             self.run._check_host(page.url)
-            fresh = apply_form.extract(page)
-            self.run._check_frames(fresh)
-            state, confidence = apply_judge.read_page_state(self.run._judge_page(fresh))
-            if state not in ("application_form", "review_page", "code_gate") or confidence < apply_judge.PAGE_STATE_MIN_CONF:
-                return False
-            if signup:
-                ats_accounts.record(host, email)
+            # the loop judges whatever comes next: the password screen, the
+            # form, a code gate, or the same screen with an error (which the
+            # per-site step cap ends)
             return True
         except _Parked:
             raise
@@ -387,6 +500,32 @@ def _host(url_or_netloc: str) -> str:
     if "://" in raw:
         return (urlsplit(raw).hostname or "").lower()
     return raw.split("/")[0].rsplit("@", 1)[-1].split(":")[0].lower()
+
+
+def _site(url_or_host: str) -> str:
+    """The registrable domain of a URL or host, near enough without a public
+    suffix list: the last two labels, three under a two-letter country code
+    whose second level is generic (`jobs.example.co.uk` -> `example.co.uk`)."""
+    host = _host(url_or_host)
+    if not host or host.replace(".", "").isdigit() or "." not in host:
+        return host             # an IP address, `localhost`
+    labels = [p for p in host.split(".") if p]
+    if len(labels) >= 3 and (len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL
+                             or ".".join(labels[-2:]) in _SHARED_HOSTING):
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _is_captcha_url(url: str) -> bool:
+    """A bot-check provider's page: hCaptcha, reCAPTCHA (Google's `/recaptcha`
+    paths too), Cloudflare's challenge host, Arkose, GeeTest."""
+    parts = urlsplit(str(url or ""))
+    host = (parts.hostname or "").lower()
+    if not host:
+        return False
+    if _site(host) in CAPTCHA_SITES or host == "challenges.cloudflare.com":
+        return True
+    return _site(host) == "google.com" and parts.path.startswith("/recaptcha")
 
 
 def _on_linkedin_redirector(url: str) -> bool:
@@ -449,6 +588,17 @@ def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
     """
     button = next((b for b in digest.buttons if b.n == n), None)
     return bool(button) and bool(re.search(r"\b(submit|apply|send|finish)\b", button.text, re.I))
+
+
+def _final_shaped(digest: apply_form.FormDigest, n: int) -> bool:
+    """Words a last step's button also uses ("Complete", "Confirm",
+    "Finalize", "Done"). In park mode such an advance goes through the submit
+    gate, which parks it: a final button judged advance must not send the
+    application the user asked to review. With submitting on it stays an
+    advance, since "Complete profile" is a step too."""
+    button = next((b for b in digest.buttons if b.n == n), None)
+    return bool(button) and bool(re.search(r"\b(complete|confirm|finali[sz]e|done)\b",
+                                           button.text, re.I))
 
 
 def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
@@ -550,8 +700,8 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
     """(True, "") when the application may be sent, else (False, the first
     failing reason): the setting, the plan's park reason, a required field
     without an answer (any action other than fill / select / upload), a
-    required field unverified, the prohibited and captcha flags, the submit
-    button's confidence."""
+    required field unverified, the submit button's confidence. The
+    prohibited and captcha flags are recorded only (`apply_judge`'s rule)."""
     if not settings.get("auto_apply_submit", True):
         return False, "auto_apply_submit is off"
     if plan.park_reason:
@@ -570,12 +720,6 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
             return False, (f"required field failed verification: {pf.label} "
                            f"(p_correct {v.p_correct:.2f}, p_placeholder "
                            f"{v.p_placeholder:.2f})")
-    prohibited = float(plan.flags.get("asks_for_prohibited", 0.0))
-    if prohibited > apply_judge.PROHIBITED_MAX:
-        return False, f"page asks for prohibited data (p={prohibited:.2f})"
-    captcha = float(plan.flags.get("has_captcha", 0.0))
-    if captcha > apply_judge.CAPTCHA_MAX:
-        return False, f"captcha or bot check on the page (p={captcha:.2f})"
     submit = plan.buttons.get("submit")
     if submit is None:
         return False, "no submit button"
@@ -753,6 +897,7 @@ class _JobRun:
         self.catalog: apply_facts.FactCatalog | None = None
         self.allowed: set[str] = set()
         self.ats_host = ""
+        self.ats_hosts: set[str] = set()       # every admitted ATS host; matched by site
         self.ats_transition_used = False
         self.last_sig: tuple | None = None
         self.usage_before = jev.usage()
@@ -779,35 +924,78 @@ class _JobRun:
             self.allowed.add(ats_host)
         if ats_host and ats_host not in LINKEDIN_HOSTS:
             self.ats_host = ats_host
+            self.ats_hosts.add(ats_host)
             self.ats_transition_used = True
         inbox_host = _host(str(self.r.run_context().get("inbox_url") or ""))
         if inbox_host:
             self.allowed.add(inbox_host)
 
+    def _allowed_site(self, host: str) -> bool:
+        """LinkedIn and the inbox by their exact hosts (their domains carry
+        other people's content: `docs.google.com`, `forms.office.com`, a
+        Google sign-in frame); the admitted ATS by its whole site
+        (`login.icims.com` next to `careers-gtsx.icims.com`); a known ATS
+        platform (`ATS_SITES`) anywhere."""
+        host = _host(host)
+        if host in self.allowed:
+            return True
+        site = _site(host)
+        return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
+
     def _check_host(self, url: str) -> None:
         host = _host(url)
-        if host and host not in self.allowed:
+        if host and not self._allowed_site(host):
             raise _Parked("needs_human", f"left the allowed sites: {host}")
 
-    def _check_frames(self, digest: apply_form.FormDigest) -> None:
-        """Validate every frame that contributed an actionable control."""
-        indices = {int(item.locator[0]) for item in (*digest.fields, *digest.buttons)}
-        frames = list(self.page.frames)
-        for idx in sorted(indices):
-            if not 0 <= idx < len(frames):
-                raise _Parked("needs_human",
-                              f"actionable frame {idx} is outside the allowed sites")
-            frame = frames[idx]
+    def _password_ok(self, host: str) -> bool:
+        """May the master password be typed on `host`? Only on the application
+        itself: the admitted ATS site or a known ATS platform, never on
+        LinkedIn's or the inbox provider's domain."""
+        host = _host(host)
+        site = _site(host)
+        if not site or site == _site(LINKEDIN_HOSTS[0]):
+            return False
+        if site == _site(str(self.r.run_context().get("inbox_url") or "")):
+            return False
+        return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
+
+    def _frame_url(self, frames: list, idx: int) -> str:
+        """The URL a frame's controls answer to; a blank or srcdoc frame takes
+        its parent's."""
+        frame = frames[idx]
+        url = str(getattr(frame, "url", "") or "")
+        seen: set[int] = set()
+        while url in ("about:blank", "about:srcdoc") and id(frame) not in seen:
+            seen.add(id(frame))
+            frame = getattr(frame, "parent_frame", None)
+            if frame is None:
+                return str(self.page.url)
             url = str(getattr(frame, "url", "") or "")
-            seen: set[int] = set()
-            while url in ("about:blank", "about:srcdoc") and id(frame) not in seen:
-                seen.add(id(frame))
-                frame = getattr(frame, "parent_frame", None)
-                if frame is None:
-                    url = str(self.page.url)
-                    break
-                url = str(getattr(frame, "url", "") or "")
-            self._check_host(url)
+        return url
+
+    def _drop_foreign_controls(self, digest: apply_form.FormDigest) -> apply_form.FormDigest:
+        """The digest without the controls of a frame from another site or a
+        bot-check provider (a CAPTCHA widget, a chat or cookie widget): they
+        are never judged, filled or clicked, and the page goes on without
+        them. The page text keeps every frame's words."""
+        frames = list(self.page.frames)
+        dropped: dict[int, str] = {}
+        for idx in sorted({int(item.locator[0]) for item in (*digest.fields, *digest.buttons)}):
+            if not 0 <= idx < len(frames):
+                dropped[idx] = "gone"
+                continue
+            url = self._frame_url(frames, idx)
+            host = _host(url)
+            if _is_captcha_url(url) or (host and not self._allowed_site(host)):
+                dropped[idx] = host
+        if not dropped:
+            return digest
+        self.log.info("job %s: ignoring the controls of frame(s) %s", self.job_id,
+                      ", ".join(f"{i} ({h})" for i, h in sorted(dropped.items())))
+        return apply_form.FormDigest(
+            url_host=digest.url_host, title=digest.title, text=digest.text,
+            fields=[f for f in digest.fields if int(f.locator[0]) not in dropped],
+            buttons=[b for b in digest.buttons if int(b.locator[0]) not in dropped])
 
     def _discover_listbox_options(self, digest: apply_form.FormDigest) -> None:
         """Read choices rendered only after a listbox is opened, before planning."""
@@ -821,18 +1009,26 @@ class _JobRun:
                               self.job_id, control.label, e)
 
     def _admit_ats_transition(self, url: str, source_url: str) -> None:
-        """Admit at most one LinkedIn-to-ATS destination, then freeze it."""
+        """Record where the application lives. A known ATS platform is
+        admitted wherever the flow met it; any other site only as the one
+        destination LinkedIn's Apply led to."""
         host = _host(url)
-        if not host or host in self.allowed:
+        if not host or host in LINKEDIN_HOSTS or _site(host) == _site(LINKEDIN_HOSTS[0]):
             return
-        if self.ats_transition_used or _host(source_url) not in LINKEDIN_HOSTS:
-            self._check_host(url)
+        if any(_site(host) == _site(h) for h in self.ats_hosts):
+            return
+        if _site(host) not in ATS_SITES:
+            if host in self.allowed:
+                return
+            if self.ats_transition_used or _host(source_url) not in LINKEDIN_HOSTS:
+                self._check_host(url)
         inferred = apply_queue.infer_ats(url)
         apply_queue.update(self.job_id, path=self.r.queue_path,
                            ats={"domain": host, "system": inferred["system"]})
         ats = self.entry.get("ats") or {}
         self.entry["ats"] = {**ats, "domain": host, "system": inferred["system"]}
         self.allowed.add(host)
+        self.ats_hosts.add(host)
         self.ats_host = host
         self.ats_transition_used = True
 
@@ -895,9 +1091,11 @@ class _JobRun:
             if self.r.clock() >= self.deadline:
                 raise _Parked("needs_human", "time budget exhausted")
             self._check_host(self.page.url)
-            digest = apply_form.extract(self.page)
-            self._check_frames(digest)
-            self._discover_listbox_options(digest)
+            if self._human_check_showing():
+                self._wait_for_human_check("a CAPTCHA challenge is showing")
+            digest = self._drop_foreign_controls(apply_form.extract(self.page))
+            marker = self._page_marker()        # the page as judged: a bot check that
+            self._discover_listbox_options(digest)  # clears itself shows as a change
             answers = self._judge_page(digest)
             state, conf = apply_judge.read_page_state(answers)
             sig = (state, self.page.url, json.dumps(digest.to_dict(), sort_keys=True))
@@ -918,25 +1116,107 @@ class _JobRun:
                 self._application_form(digest, answers, plan, rec)
             elif state == "review_page":
                 self._review_page(digest, answers, plan, rec)
-            elif state == "login_wall":
-                if not self.accounts.login(self.page, digest, digest.url_host):
-                    raise _Parked("needs_human", "login wall", LOGIN_NOTE)
-            elif state == "signup_form":
-                if not self.accounts.signup(self.page, digest, digest.url_host):
-                    raise _Parked("needs_human", "account signup needed", LOGIN_NOTE)
+            elif state in ("login_wall", "signup_form"):
+                self._account_step(state, digest)
             elif state == "code_gate":
                 self._code_gate(digest, plan, rec)
             elif state == "confirmation":
+                if not self.submit_clicked and conf < apply_judge.CONFIRMATION_MIN_CONF:
+                    raise _Parked("needs_human", f"a confirmation-like page before any submit "
+                                                 f"({conf:.2f})")
                 raise _Parked("submitted", "confirmation page")
+            elif state == "captcha_or_bot_check":
+                self._wait_for_human_check(
+                    f"{_PARK_STATES[state]} (has_captcha p={plan.flags.get('has_captcha', 0.0):.2f})",
+                    before=marker)
             else:
                 reason = _PARK_STATES.get(state, state)
-                if state == "captcha_or_bot_check":
-                    reason += f" (has_captcha p={plan.flags.get('has_captcha', 0.0):.2f})"
-                elif state == "payment_request":
+                if state == "payment_request":
                     reason += f" (asks_for_prohibited p={plan.flags.get('asks_for_prohibited', 0.0):.2f})"
                 raise _Parked("needs_human", reason)
 
     # -- per state ------------------------------------------------------------------------
+
+    def _account_step(self, state: str, digest: apply_form.FormDigest) -> None:
+        """A sign-in or sign-up screen goes to the accounts hook when the
+        master password may be typed on its site (`_password_ok`); LinkedIn
+        signed out, or a sign-in on some other site, parks for the human."""
+        host = digest.url_host or _host(self.page.url)
+        if not self._password_ok(host):
+            if _site(host) == _site(LINKEDIN_HOSTS[0]):
+                raise _Parked("needs_human", "LinkedIn is signed out", LINKEDIN_LOGIN_NOTE)
+            raise _Parked("needs_human", f"a sign-in on {host}, outside the application site",
+                          LOGIN_NOTE)
+        if state == "login_wall":
+            if not self.accounts.login(self.page, digest, host):
+                raise _Parked("needs_human", "login wall", LOGIN_NOTE)
+        elif not self.accounts.signup(self.page, digest, host):
+            raise _Parked("needs_human", "account signup needed", LOGIN_NOTE)
+
+    def _human_check_showing(self) -> bool:
+        """Is a bot-check challenge open on the page: a frame from a CAPTCHA
+        provider that is visible and at least `HUMAN_CHECK_MIN_PX` tall (the
+        checkbox badge and an invisible widget are smaller or hidden)?"""
+        try:
+            frames = list(self.page.frames)
+        except Exception:       # noqa: BLE001  (a page double, or the page is gone)
+            return False
+        for frame in frames:
+            if not _is_captcha_url(str(getattr(frame, "url", "") or "")):
+                continue
+            try:
+                element = frame.frame_element()
+                if not element.is_visible():
+                    continue
+                box = element.bounding_box()
+            except Exception:       # noqa: BLE001  (a frame detached while looking)
+                continue
+            if box and box["height"] >= HUMAN_CHECK_MIN_PX and box["y"] + box["height"] > 0:
+                return True
+        return False
+
+    def _page_marker(self) -> tuple[str, str]:
+        try:
+            text = apply_fill.page_text(self.page)[:2000]
+        except Exception:       # noqa: BLE001
+            text = ""
+        return str(self.page.url), text
+
+    def _wait_for_human_check(self, reason: str, *, before: tuple | None = None) -> None:
+        """A CAPTCHA is the user's to solve; the run never touches it. The
+        check is over when its challenge frame closes or, for a whole-page
+        check, when the page differs from `before` (the page as it was judged;
+        a check that clears itself, Cloudflare's "Just a moment", may already
+        have). In a visible window the run waits up to `HUMAN_CHECK_WAIT_S`
+        for that, then carries on, and the wait is added back to the job's
+        clock. Headless, an open challenge parks at once and a whole-page
+        check gets `HUMAN_CHECK_AUTO_S` to clear itself."""
+        framed = self._human_check_showing()
+        if not framed and before is None:
+            before = self._page_marker()
+        headless = bool(self.r.settings.get("auto_apply_headless"))
+        if headless and framed:
+            raise _Parked("needs_human", reason)
+        limit = HUMAN_CHECK_AUTO_S if headless else HUMAN_CHECK_WAIT_S
+        polls = int(limit / HUMAN_CHECK_POLL_S)
+        start = self.r.clock()
+        for i in range(polls + 1):
+            if framed:
+                done = not self._human_check_showing()
+            else:
+                done = self._page_marker() != before
+            if done:
+                break
+            if i == polls:
+                raise _Parked("needs_human", reason if headless else f"{reason}; not solved in time")
+            if i == 0 and not headless:
+                self.log.warning("job %s: %s; solve it in the browser window (waiting up to "
+                                 "%d min)", self.job_id, reason, HUMAN_CHECK_WAIT_S // 60)
+            self.r.sleep(HUMAN_CHECK_POLL_S)
+        self.deadline += max(0.0, self.r.clock() - start)
+        self.last_sig = None
+        self.log.info("job %s: the check is done; going on", self.job_id)
+        apply_fill.settle(self.page, CLICK_TIMEOUT_S)
 
     def _judge_page(self, digest: apply_form.FormDigest) -> dict:
         state, questions = apply_judge.page_questions(digest, self.catalog, self.entry)
@@ -961,7 +1241,7 @@ class _JobRun:
         if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
             if not (digest.fields and _submit_shaped(digest, entry[0])):
                 n = entry[0]
-        elif not digest.fields:
+        if n is None and not digest.fields:
             for b in digest.buttons:
                 if "apply" in b.text.lower():
                     n = b.n
@@ -1031,7 +1311,9 @@ class _JobRun:
         verification = self._fill_and_verify(digest, plan, rec)
         advance = plan.buttons.get("advance")
         submit = plan.buttons.get("submit")
-        if advance is not None and _submit_shaped(digest, advance[0]):
+        park_mode = not self.r.settings.get("auto_apply_submit", True)
+        if advance is not None and (_submit_shaped(digest, advance[0])
+                                    or (park_mode and _final_shaped(digest, advance[0]))):
             self.log.info("job %s: the advance button is submit-shaped; routing it "
                           "through the submit gate", self.job_id)
             if submit is None:
@@ -1224,6 +1506,9 @@ class _JobRun:
         self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
         result = apply_fill.click(self.page, digest, n, timeout_s=timeout)
         if not result.changed and role == "advance":
+            if self._human_check_showing():
+                self._wait_for_human_check(f"a CAPTCHA challenge appeared after {text}")
+                return apply_fill.ClickResult(clicked=True, changed=True)
             raise _Parked("needs_human", f"the {role} button ({text}) did nothing")
         return result
 
@@ -1280,9 +1565,7 @@ class _JobRun:
         """
         try:
             self._check_host(self.page.url)
-            digest = apply_form.extract(self.page)
-            self._check_frames(digest)
-            return digest
+            return self._drop_foreign_controls(apply_form.extract(self.page))
         except _Parked as p:
             raise _Parked("submitted", f"submitted (unconfirmed): {p.reason}") from None
 

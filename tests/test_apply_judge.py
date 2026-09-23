@@ -162,16 +162,17 @@ def _assert_clean_text(obj):
 # --- constants --------------------------------------------------------------------
 
 def test_threshold_constants_match_the_spec_table():
-    assert apply_judge.PAGE_STATE_MIN_CONF == 0.60
+    assert apply_judge.PAGE_STATE_MIN_CONF == 0.40
     assert apply_judge.FIELD_MAP_MIN_CONF == 0.70
     assert apply_judge.OPTION_MIN_CONF == 0.70
-    assert apply_judge.BUTTON_SUBMIT_MIN_CONF == 0.90
-    assert apply_judge.BUTTON_ADVANCE_MIN_CONF == 0.75
+    assert apply_judge.BUTTON_SUBMIT_MIN_CONF == 0.75
+    assert apply_judge.BUTTON_ADVANCE_MIN_CONF == 0.50
     assert apply_judge.VERIFY_MIN == 0.80
-    assert apply_judge.PROHIBITED_MAX == 0.30
-    assert apply_judge.CAPTCHA_MAX == 0.30
+    # the flags park nothing on their own since 2026-09-22, so they have no gate
+    assert not hasattr(apply_judge, "PROHIBITED_MAX")
+    assert not hasattr(apply_judge, "CAPTCHA_MAX")
     assert apply_judge.GROUNDING_MIN == 0.70
-    assert apply_judge.MAX_PAGES == 12
+    assert apply_judge.MAX_PAGES == 20
     assert apply_judge.PAGE_TEXT_CAP == 4000
     assert "tuned 2026-09-22" in apply_judge.__doc__ and "UNTUNED" not in apply_judge.__doc__
 
@@ -666,17 +667,46 @@ def test_plan_buttons_keep_the_best_n_per_role(catalog):
     assert p.buttons == {"advance": (1, 0.9), "submit": (2, 0.95)}
 
 
-def test_plan_park_order_prohibited_then_captcha_then_required(catalog):
-    digest = FormDigest(url_host="x", title="t", text="",
-                        fields=[_f(0, "Social Security Number", required=True)])
-    answers = _page_answers(digest, {}, prohibited=0.8, captcha=0.9)
+@pytest.mark.parametrize("label,sensitive", [
+    ("Social Security Number", True), ("SSN (last 4)", True), ("Date of Birth", True),
+    ("Birthdate", True), ("Bank account number", True), ("Routing number", True),
+    ("Credit card number", True), ("Passport number", True), ("Driver's license number", True),
+    ("Mother's maiden name", True), ("Birthday", True), ("National Insurance number", True),
+    ("SIN", True), ("Tax file number", True), ("Tax ID", True),
+    ("Do you have a valid passport?", False), ("Do you have a valid driver's license?", False),
+    ("Phone number", False), ("Start date", False), ("Destination", False)])
+def test_sensitive_labels(label, sensitive):
+    assert apply_judge.is_sensitive_field(label) is sensitive
+
+
+def test_a_sensitive_box_is_never_filled_whatever_the_model_maps_it_to(catalog):
+    # the fake judge mapped "Social Security Number" to signature_today (the
+    # typed name) in the runner's signup test; the guard does not ask
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Social Security Number", required=True), _f(1, "Date of birth")])
+    answers = _page_answers(digest, {0: ("signature_today", 1.0), 1: ("needs_generation", 1.0)})
     p = apply_judge.plan(digest, catalog, answers)
-    assert p.park_reason.startswith("page asks for prohibited data")
-    answers = _page_answers(digest, {}, captcha=0.9)
-    assert apply_judge.plan(digest, catalog, answers).park_reason.startswith("captcha")
-    answers = _page_answers(digest, {}, captcha=0.3)      # at the max, never above it
-    assert apply_judge.plan(digest, catalog, answers).park_reason == \
-        "required field without an answer: Social Security Number"
+    assert [(pf.fact_key, pf.action) for pf in p.fields] == [(None, "skip"), (None, "skip")]
+    # its own reason, and no missing answer: a stored SSN would never be typed
+    assert p.park_reason == apply_judge.sensitive_reason("Social Security Number")
+    assert p.missing == []
+
+
+def test_plan_flags_never_park_and_an_unanswerable_required_question_does(catalog):
+    # the user's rule: the facts hold only what they chose to share, so a
+    # question they cannot answer (an SSN) is the required-field park; the
+    # prohibited and captcha flags are recorded and park nothing
+    ssn = FormDigest(url_host="x", title="t", text="",
+                     fields=[_f(0, "Social Security Number", required=True)])
+    p = apply_judge.plan(ssn, catalog, _page_answers(ssn, {}, prohibited=0.8, captcha=0.9))
+    assert p.park_reason == apply_judge.sensitive_reason("Social Security Number")
+    assert p.flags["asks_for_prohibited"] == 0.8 and p.flags["has_captcha"] == 0.9
+    optional = FormDigest(url_host="x", title="t", text="",
+                          fields=[_f(0, "Social Security Number", required=False)])
+    p = apply_judge.plan(optional, catalog,
+                         _page_answers(optional, {}, prohibited=0.8, captcha=0.9))
+    assert p.park_reason == ""
+    assert [pf.action for pf in p.fields] == ["skip"]
 
 
 def test_plan_to_dict_is_json(catalog):
@@ -935,7 +965,7 @@ def test_fake_jev_flags_a_captcha_page_and_a_login_wall(catalog):
     state, q = apply_judge.page_questions(captcha, catalog, _JOB)
     p = apply_judge.plan(captcha, catalog, jev.FakeJev().judge(state, q))
     assert p.flags["has_captcha"] == 0.9
-    assert p.park_reason.startswith("captcha")
+    assert p.park_reason == ""          # the flag is recorded; the page state parks
 
     login = FormDigest(url_host="jobs.example.com", title="Sign in to your account",
                        text="Sign in with your existing account email and password.",

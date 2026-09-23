@@ -528,13 +528,13 @@ of page this is (the posting, an application form, a login wall, a code gate, a
 review page, a confirmation, a CAPTCHA), which of your facts each field asks for
 (with "leave blank" and "needs a written answer" always on offer), which option of a
 dropdown matches your answer, which button advances and which one submits, whether
-the page asks for something the run must never type (payment, SSN, a government ID),
-whether each typed value reads back correctly, and whether every sentence of a
-drafted answer is supported by your apply sheet. Jev never writes text: your facts
-come from the job's `apply.md` and the **Apply Answers** bank, and a free-text answer
-is drafted by the résumé engine's flash-lite tier and then checked sentence by
-sentence by Jev before it is typed. The thresholds behind those decisions are
-marked untuned in `local/apply_judge.py` until the first live pass tunes them.
+each typed value reads back correctly, and whether every sentence of a drafted answer
+is supported by your apply sheet. Jev never writes text: your facts come from the
+job's `apply.md` and the **Apply Answers** bank, and a free-text answer is drafted by
+the résumé engine's flash-lite tier and then checked sentence by sentence by Jev
+before it is typed. A box that asks for an SSN, a birthdate, bank or card details or
+an ID number is never filled, whatever Jev maps it to. The thresholds behind those
+decisions live in `local/apply_judge.py`, with the live answers they were tuned on.
 
 **Setup, once.**
 
@@ -558,13 +558,29 @@ marked untuned in `local/apply_judge.py` until the first live pass tunes them.
    typed into a real password field only, it is compared by length only after the
    fill, and it never reaches a file, a log, the record or Jev.
 
-**The submit gate.** The run submits an application when every required field was
-filled from your answers and read back correctly, the page shows no CAPTCHA, no
-payment or identity question and no blocked field, and Jev is confident about the
-submit button. Anything less parks the job at its review page with the window left
-open, the queue row says why (a missing answer, a code gate, a login it could not
-pass, a CAPTCHA), and you finish it by hand and **Mark applied** or **Re-queue** it.
-The four settings under **Settings → Auto-apply**:
+**When the run stops.** The run submits an application when every required field was
+filled from your answers and read back correctly and Jev picks out the submit button.
+It stops only in these cases, with the window left open and the queue row saying why:
+
+- **Submit when verified** is off (or the run has `--no-submit`): every job stops at its
+  submit step as **Ready to submit**.
+- A required question has no answer in your data. Answer it in the job's panel and
+  **Re-queue**; the answer is kept for later applications.
+- A required question the run never answers: an SSN, a birthdate, bank or card details,
+  an ID number. You finish that application by hand; an optional one is left blank.
+- The page cannot be passed: a payment request, a closed or dead posting, a page that
+  does not move after its button, a sign-in it cannot complete, or LinkedIn signed out.
+- A CAPTCHA challenge opens. The run never solves one. With the window visible it waits
+  up to five minutes for you to solve it, then carries on; hidden, or unsolved, the job
+  stops.
+
+Sign-in screens are handled on the application's own site only: the address and the
+password on one screen, or the address first and the password or the create-account form
+on the next (iCIMS, Workday). Other boxes on a sign-up form are filled from your data.
+Controls inside another site's frame (a CAPTCHA widget, a chat or cookie widget) are
+never clicked or filled, and the run goes on without them. You finish a stopped job by
+hand and **Mark applied** or **Re-queue** it. The four settings under **Settings →
+Auto-apply**:
 
 - **Submit when verified** (`auto_apply_submit`, on): off parks every job at its review
   page instead. `--no-submit` on the command line does the same for one run.

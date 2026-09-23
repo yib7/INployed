@@ -54,20 +54,29 @@ log = logging.getLogger("apply_judge")
 
 # --- thresholds (tuned 2026-09-22 against the recorded live answers) ----------------
 
-PAGE_STATE_MIN_CONF = 0.60      # below it: park needs_human
+PAGE_STATE_MIN_CONF = 0.40      # below it: park needs_human (the best guess wins above it)
+CONFIRMATION_MIN_CONF = 0.60    # a confirmation read before any submit click needs this
+                                # to count as submitted ("already applied", "thanks for
+                                # your interest" misread at 0.45 must not)
 FIELD_MAP_MIN_CONF = 0.70       # below it: optional -> blank + flagged; required -> park
 CONSENT_MIN_CONF = 0.85         # consent_attest needs this much: a tick cannot be taken back
 OPTION_MIN_CONF = 0.70          # the same rule for select / radio picks
-BUTTON_SUBMIT_MIN_CONF = 0.90   # a click on a submit-role button needs this
-BUTTON_ADVANCE_MIN_CONF = 0.75
+BUTTON_SUBMIT_MIN_CONF = 0.75   # a click on a submit-role button needs this
+BUTTON_ADVANCE_MIN_CONF = 0.50
 VERIFY_MIN = 0.80               # every filled required field must verify above this
 PLACEHOLDER_MAX = 0.50          # and look like a placeholder no more than this
-PROHIBITED_MAX = 0.30           # above it: park
-CAPTCHA_MAX = 0.30              # above it: park
 GROUNDING_MIN = 0.70            # a generated sentence below it drops the draft
 INBOX_MIN = 0.50                # an inbox message needs from_site and has_code both above it
-MAX_PAGES = 12                  # pages per application before parking
+MAX_PAGES = 20                  # pages per application before parking
 PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
+
+# What parks a job (the user's rule, 2026-09-22): the submit step while park
+# mode is on, a required question the user's data cannot answer, and a page the
+# run cannot get past (a payment, a dead posting, a check nobody solved, a page
+# that will not move). The `asks_for_prohibited` and `has_captcha` flags are
+# recorded and never park on their own: the catalog holds only what the user
+# chose to share, so a question it cannot answer is the required-field park,
+# and a captcha widget that does not block the page is no reason to stop.
 
 # How each gate was read (SP8, 2026-09-22): `scripts/jev_thresholds.py` over the
 # committed cache, 38 live requests and 224 answers from jev-1.13.0 over every
@@ -76,6 +85,11 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 # question shapes were fixed (the ATS-aware inbox question, the button text
 # without the extractor's kind_hint, no speculative option pick, generated
 # answers verified in code). Per gate:
+#   (2026-09-22, after the first live runs: PAGE_STATE_MIN_CONF 0.60 -> 0.40,
+#   BUTTON_SUBMIT_MIN_CONF 0.90 -> 0.75, BUTTON_ADVANCE_MIN_CONF 0.75 -> 0.50 and
+#   MAX_PAGES 12 -> 20 at the user's call to stop only where the run cannot go
+#   on; PROHIBITED_MAX and CAPTCHA_MAX went with the flag parks. LinkedIn's live
+#   posting read job_posting at 0.72 and 0.78.)
 #   PAGE_STATE_MIN_CONF 0.60   28 answers, min 0.90, median 1.00; seven states seen.
 #   FIELD_MAP_MIN_CONF 0.70    49 answers, min 0.69 (a login wall's Email box, which
 #                              the accounts hook fills and `plan` never reads); the
@@ -422,6 +436,35 @@ def _noul_of(answers: Mapping[str, Answer], qid: str) -> float:
     return float(a.noul) if a is not None and a.noul is not None else 0.0
 
 
+# Questions the run never answers, whatever the model maps them to: no fact
+# and no drafted text ever goes into one, so a required one parks as
+# unanswerable and an optional one stays blank. This is the user's line
+# (2026-09-22: the run gives out only the answers they chose to share) made
+# deterministic, in place of the removed `asks_for_prohibited` park. A yes/no
+# question about holding a passport or a licence is not one of them; its number is.
+_SENSITIVE_LABEL = re.compile(
+    r"social\s*security|\bssn\b|social\s*insurance|\bsin\b|national\s*insurance"
+    r"|taxpayer\s*id|tax\s*(id|file)\s*(number|no\b|#)?|\bi?tin\b"
+    r"|date\s*of\s*birth|birth\s*date|birthdate|birthday|\bdob\b"
+    r"|bank\s*(account|routing|name)|routing\s*number|account\s*number"
+    r"|credit\s*card|debit\s*card|card\s*number|\bcvv\b|\bcvc\b"
+    r"|passport\s*(number|no\b|#)|licen[cs]e\s*(number|no\b|#)"
+    r"|national\s*id|government[-\s]*issued\s*id|alien\s*(registration\s*)?number"
+    r"|maiden\s*name", re.I)
+
+
+def is_sensitive_field(label: str, id_or_name: str = "") -> bool:
+    """Does the control ask for a government ID, a birthdate, bank or card
+    details (`_SENSITIVE_LABEL`)? Its label and its DOM id or name are read."""
+    return bool(_SENSITIVE_LABEL.search(f"{label or ''} {id_or_name or ''}"))
+
+
+def sensitive_reason(label: str) -> str:
+    """The park reason for a required sensitive question: it is finished by
+    hand, and no stored answer would ever be typed into it."""
+    return f"asks for {label}, which auto-apply never fills; finish it by hand"
+
+
 _DATE_TOKENS = frozenset(("date", "dated", "today"))
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -458,10 +501,11 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     a label with `date` / `dated` / `today` as a whole word, else the typed
     name; `consent_attest` (a checkbox's attestation, privacy or contact
     consent) is `select` with option `checked` at or above `CONSENT_MIN_CONF`,
-    and below it follows the unanswerable rule. Buttons keep the highest-confidence n per role. The park
-    reasons are checked in the order prohibited, captcha, required field."""
+    and below it follows the unanswerable rule. Buttons keep the highest-confidence n per role. The one
+    park reason is a required field without an answer; the flags are recorded only."""
     out = FillPlan()
     required_reason = ""
+    sensitive_reason_ = ""
     for f in digest.fields:
         model_key, model_conf = _choice_of(answers, f"field_{f.n}_source")
         quick = quick_map(f.label, f.id_or_name, f.type)
@@ -488,6 +532,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # the only writer of a password field is `ats_accounts.fill_password`
             # through the accounts hook; no fact ever lands in one
             fact_key, pf.fact_key = None, None
+        elif is_sensitive_field(f.label, f.id_or_name):
+            # an SSN, a birthdate, bank or card details: never answered
+            fact_key, pf.fact_key = None, None
         elif fact_key == "needs_generation":
             pf.action = "generate" if generation_enabled else "skip"
         elif fact_key == "consent_attest":
@@ -509,7 +556,12 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                 else:
                     pf.option = opt
         out.fields.append(pf)
-        if pf.action == "skip":
+        if pf.action == "skip" and is_sensitive_field(f.label, f.id_or_name):
+            # no answer is asked for: one would never be used (the loop the
+            # SP8 review found), and the user is not nudged to store an SSN
+            if f.required and not sensitive_reason_:
+                sensitive_reason_ = sensitive_reason(f.label)
+        elif pf.action == "skip":
             out.missing.append((f.label, f.help or f.placeholder or f.type))
             if f.required and not required_reason:
                 required_reason = f"required field without an answer: {f.label}"
@@ -523,13 +575,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
 
     out.flags = {qid: _noul_of(answers, qid)
                  for qid in ("asks_for_prohibited", "requires_account", "has_captcha")}
-    if out.flags["asks_for_prohibited"] > PROHIBITED_MAX:
-        out.park_reason = (f"page asks for prohibited data "
-                           f"(p={out.flags['asks_for_prohibited']:.2f})")
-    elif out.flags["has_captcha"] > CAPTCHA_MAX:
-        out.park_reason = f"captcha or bot check on the page (p={out.flags['has_captcha']:.2f})"
-    elif required_reason:
-        out.park_reason = required_reason
+    out.park_reason = sensitive_reason_ or required_reason
     return out
 
 

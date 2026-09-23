@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import apply_facts  # noqa: E402
+import apply_form  # noqa: E402
 import apply_judge  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
@@ -317,7 +318,7 @@ def test_captcha_page_parks_needs_human_with_the_flag(
     entry = _entry()
     assert "captcha" in entry["notes"].lower()
     flag = re.search(r"has_captcha p=(\d\.\d\d)", entry["notes"])
-    assert flag and float(flag.group(1)) > apply_judge.CAPTCHA_MAX, entry["notes"]
+    assert flag and float(flag.group(1)) > 0.5, entry["notes"]
     assert entry["tab_note"].startswith("http://127.0.0.1:")
     assert out.pages == 1
 
@@ -753,6 +754,72 @@ def test_default_accounts_continue_and_keep_password_private(
     assert ("Sign in (advance)" in record) or ("Create account (advance)" in record)
 
 
+def test_a_two_step_sign_in_types_the_address_then_the_password(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog):
+    # the iCIMS shape probed 2026-09-22: the address and Next on one screen,
+    # the password on the next; no ledger entry, the address is the signup email
+    secret = "synthetic-two-step-password"
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: secret)
+    _enqueue(job_folder, fixture_url("login_email_first.html"))
+    with caplog.at_level("INFO"):
+        out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "ready_to_submit", out
+    record = Path(out.record_path).read_text(encoding="utf-8")
+    assert secret not in record + caplog.text
+    assert "Email: jane.doe@example.com" in record and "Next (advance)" in record
+    assert "Password: <hidden>" in record and "Sign in (advance)" in record
+    assert record.count("State: login_wall") == 2
+
+
+def test_a_password_screen_without_the_address_step_or_an_account_parks(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    _enqueue(job_folder, fixture_url("login_password_step.html"))
+    out = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=1)[0]
+    assert out.status == "needs_human" and out.reason == "login wall", out
+
+
+def test_a_signup_asking_for_an_ssn_parks_for_the_human_without_asking_for_it(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    _enqueue(job_folder, fixture_url("signup_unanswerable.html"))
+    out = _runner(context, tmp_path).drain(cap=1)[0]
+    assert out.status == "needs_human", out
+    assert out.reason == apply_judge.sensitive_reason("Social Security Number")
+    assert _entry()["missing_answers"] == []
+    page = next(p for p in context.pages if not p.is_closed())
+    assert page.evaluate("window.__created") == 0
+    assert ats_accounts.lookup("127.0.0.1") is None
+
+
+def test_the_password_is_never_typed_on_linkedin_whatever_led_there(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # the SP8-live review: a sign-up link on a login screen could lead to
+    # linkedin.com/signup and the old path typed the master password there;
+    # the page stands in for LinkedIn through a route, no network is used
+    html = (fixture_url("signup.html"))
+    body = Path(__file__).parent.joinpath("fixtures", "forms", "signup.html").read_text(
+        encoding="utf-8")
+    context.route("https://www.linkedin.com/**",
+                  lambda route: route.fulfill(body=body, content_type="text/html"))
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "synthetic-password")
+    typed = []
+    monkeypatch.setattr(ats_accounts, "fill_password", lambda *a: typed.append(a) or True)
+    _enqueue(job_folder, html)
+    run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
+    run._prepare()
+    run.ats_hosts.add("careers.fabrikam.example")
+    run.page = context.new_page()
+    run.page.goto("https://www.linkedin.com/signup")
+    digest = apply_form.extract(run.page)
+    run._new_page_record("signup_form", 1.0)
+    with pytest.raises(apply_run._Parked, match="outside the application site"):
+        run.accounts._fill(run.page, digest, "careers.fabrikam.example",
+                           "jane.doe@example.com", True)
+    assert typed == []
+    assert ats_accounts.lookup("careers.fabrikam.example") is None
+
+
 def test_default_signup_fills_the_candidates_name_fields_from_the_catalog(
         context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch, caplog):
     """A signup form that also asks for a name is filled from the fact catalog,
@@ -1059,15 +1126,11 @@ def test_can_submit_required_field_unverified_or_failed():
     assert not ok and why.startswith("required field failed verification: First name")
 
 
-def test_can_submit_flags():
+def test_can_submit_ignores_the_recorded_flags():
     plan = _ok_plan()
-    plan.flags["asks_for_prohibited"] = 0.5
-    assert apply_run.can_submit(plan, _ok_verification(), _ON) == (
-        False, "page asks for prohibited data (p=0.50)")
-    plan = _ok_plan()
-    plan.flags["has_captcha"] = 0.31
-    assert apply_run.can_submit(plan, _ok_verification(), _ON) == (
-        False, "captcha or bot check on the page (p=0.31)")
+    plan.flags["asks_for_prohibited"] = 0.9
+    plan.flags["has_captcha"] = 0.9
+    assert apply_run.can_submit(plan, _ok_verification(), _ON) == (True, "")
 
 
 def test_can_submit_submit_button():
@@ -1075,9 +1138,9 @@ def test_can_submit_submit_button():
     del plan.buttons["submit"]
     assert apply_run.can_submit(plan, _ok_verification(), _ON) == (False, "no submit button")
     plan = _ok_plan()
-    plan.buttons["submit"] = (3, 0.85)
+    plan.buttons["submit"] = (3, 0.70)
     assert apply_run.can_submit(plan, _ok_verification(), _ON) == (
-        False, "submit button confidence 0.85 below 0.90")
+        False, "submit button confidence 0.70 below 0.75")
 
 
 # --- the review page resolves generation before the gate ---------------------------------
@@ -1240,7 +1303,10 @@ def test_finish_retries_the_queue_write_once_after_a_second(
     runner.sleep = naps.append
     out = runner.drain(cap=1)[0]
     assert out.status == "needs_human"
-    assert len(calls) == 2 and naps == [apply_run.FINISH_RETRY_S]
+    # the one finish retry waits FINISH_RETRY_S; the other naps are the headless
+    # captcha page's moment to clear itself (HUMAN_CHECK_POLL_S each)
+    assert len(calls) == 2 and naps[-1] == apply_run.FINISH_RETRY_S
+    assert naps.count(apply_run.FINISH_RETRY_S) == 1
     assert _entry()["status"] == "needs_human"
 
 

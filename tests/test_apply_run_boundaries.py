@@ -147,7 +147,7 @@ def test_post_submit_redirect_is_checked_before_reading_or_filling(monkeypatch):
     extract.assert_not_called()
 
 
-def test_post_submit_actionable_frame_violation_keeps_no_retry_outcome(monkeypatch):
+def test_post_submit_foreign_frame_controls_are_dropped_before_the_judge(monkeypatch):
     job = _job()
     main = SimpleNamespace(url=job.page.url, parent_frame=None)
     job.page.frames = [main, SimpleNamespace(url="https://unrelated.example/code",
@@ -156,23 +156,26 @@ def test_post_submit_actionable_frame_violation_keeps_no_retry_outcome(monkeypat
     digest = apply_form.FormDigest("www.linkedin.com", "Verify", "", fields=[
         apply_form.Field(0, (1, "#code"), "Security code", "text", True)])
     monkeypatch.setattr(apply_run.apply_form, "extract", lambda page: digest)
-    monkeypatch.setattr(job, "_judge_page",
-                        Mock(side_effect=AssertionError("untrusted frame was judged")))
-
-    with pytest.raises(apply_run._Parked, match="allowed") as parked:
-        job._after_submit()
-
-    assert parked.value.status == "submitted"
+    assert job._post_submit_digest().fields == []
 
 
-def test_actionable_cross_origin_frame_is_rejected():
+def test_a_foreign_frame_loses_its_controls_and_the_page_goes_on():
+    # the 2026-09-22 iCIMS sign-in: hCaptcha's frame carried "Verify" and
+    # "Refresh Challenge" buttons and the old check parked the whole job
     job = _job()
-    job.page.frames = [SimpleNamespace(url=job.page.url),
-                       SimpleNamespace(url="https://unrelated.example/form")]
+    main = SimpleNamespace(url=job.page.url, parent_frame=None)
+    job.page.frames = [main,
+                       SimpleNamespace(url="https://unrelated.example/form", parent_frame=main),
+                       SimpleNamespace(url="https://newassets.hcaptcha.com/captcha/v1/x/static/"
+                                           "hcaptcha.html", parent_frame=main)]
     digest = apply_form.FormDigest("www.linkedin.com", "Apply", "", fields=[
-        apply_form.Field(0, (1, "#email"), "Email", "email", True)])
-    with pytest.raises(apply_run._Parked, match="allowed"):
-        job._check_frames(digest)
+        apply_form.Field(0, (0, "#name"), "Name", "text", True),
+        apply_form.Field(1, (1, "#email"), "Email", "email", True)], buttons=[
+        apply_form.Button(0, (0, "#next"), "Next"),
+        apply_form.Button(1, (2, "#verify"), "Verify")])
+    kept = job._drop_foreign_controls(digest)
+    assert [f.label for f in kept.fields] == ["Name"]
+    assert [b.text for b in kept.buttons] == ["Next"]
 
 
 @pytest.mark.parametrize("url", ["about:blank", "about:srcdoc"])
@@ -182,7 +185,7 @@ def test_blank_frame_inherits_allowed_parent(url):
     job.page.frames = [main, SimpleNamespace(url=url, parent_frame=main)]
     digest = apply_form.FormDigest("www.linkedin.com", "Apply", "", fields=[
         apply_form.Field(0, (1, "#email"), "Email", "email", True)])
-    job._check_frames(digest)
+    assert job._drop_foreign_controls(digest).fields == digest.fields
 
 
 @pytest.mark.parametrize("role,confidence", [
@@ -223,3 +226,169 @@ def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
     clicked.assert_called_once_with(digest, 0, "submit", {"filled": [{
         "n": 0, "label": "Security code", "value": apply_run.HIDDEN,
         "type": "text", "id_or_name": "code", "upload": False, "hidden": True}]})
+
+
+# --- the relaxed rules (2026-09-22): sites, the password's sites, the human check ---------
+
+@pytest.mark.parametrize("host,site", [
+    ("careers-gtsx.icims.com", "icims.com"), ("login.icims.com", "icims.com"),
+    ("https://jobs.example.co.uk/apply", "example.co.uk"), ("127.0.0.1", "127.0.0.1"),
+    ("localhost", "localhost"), ("www.linkedin.com", "linkedin.com")])
+def test_site_is_the_registrable_domain(host, site):
+    assert apply_run._site(host) == site
+
+
+@pytest.mark.parametrize("url,captcha", [
+    ("https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html", True),
+    ("https://www.google.com/recaptcha/api2/anchor?k=x", True),
+    ("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/x", True),
+    ("https://www.google.com/search?q=recaptcha", False),
+    ("https://careers-gtsx.icims.com/jobs/1605/login", False)])
+def test_captcha_urls(url, captcha):
+    assert apply_run._is_captcha_url(url) is captcha
+
+
+def test_the_ats_site_and_known_platforms_are_allowed_and_others_are_not(monkeypatch):
+    job = _job()
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
+    monkeypatch.setattr(apply_run.apply_queue, "update", lambda *a, **kw: None)
+    job._follow_popup(Mock(url="https://careers.gts.example/jobs/1"), source_url=job.page.url)
+    job._check_host("https://login.gts.example/sso")          # the same site
+    job._check_host("https://acme.wd5.myworkdayjobs.com/x")    # a known platform, any time
+    with pytest.raises(apply_run._Parked, match="allowed"):
+        job._check_host("https://unrelated.example/collect")
+
+
+def test_the_master_password_goes_only_to_the_application_site():
+    job = _job()
+    job.r._run_context = {"inbox_url": "https://outlook.office.com/mail/"}
+    job.ats_hosts.add("careers.gts.example")
+    assert job._password_ok("login.gts.example")
+    assert job._password_ok("careers-gtsx.icims.com")          # a known platform
+    assert not job._password_ok("www.linkedin.com")
+    assert not job._password_ok("outlook.office.com")
+    assert not job._password_ok("unrelated.example")
+
+
+def test_linkedin_signed_out_parks_with_the_login_command():
+    job = _job()
+    digest = apply_form.FormDigest("www.linkedin.com", "Sign in", "")
+    job.accounts = Mock()
+    job.accounts.login.side_effect = AssertionError("the password must not go to LinkedIn")
+    with pytest.raises(apply_run._Parked, match="LinkedIn is signed out") as parked:
+        job._account_step("login_wall", digest)
+    assert "apply_run.py login" in parked.value.tab_note
+
+
+class _Frame:
+    def __init__(self, url, heights):
+        self.url = url
+        self.heights = list(heights)       # the challenge's height at each look
+
+    def frame_element(self):
+        height = self.heights.pop(0) if len(self.heights) > 1 else self.heights[0]
+        return SimpleNamespace(is_visible=lambda: height > 0,
+                               bounding_box=lambda: {"x": 0, "y": 10, "width": 400,
+                                                     "height": height})
+
+
+def _human_check_job(monkeypatch, heights, headless=False):
+    job = _job()
+    job.r.settings["auto_apply_headless"] = headless
+    frame = _Frame("https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html", heights)
+    job.page.frames = [SimpleNamespace(url=job.page.url), frame]
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a: None)
+    return job
+
+
+def test_a_visible_challenge_waits_for_the_user_and_the_run_goes_on(monkeypatch):
+    job = _human_check_job(monkeypatch, [480, 480, 480, 480, 0])
+    naps = []
+    job.r.sleep = naps.append
+    deadline = job.deadline
+    assert job._human_check_showing()
+    job._wait_for_human_check("a CAPTCHA challenge is showing")
+    assert len(naps) == 2 and job.deadline >= deadline
+    assert job.last_sig is None
+
+
+def test_a_hidden_or_small_captcha_frame_is_no_challenge(monkeypatch):
+    assert not _human_check_job(monkeypatch, [0])._human_check_showing()
+    assert not _human_check_job(monkeypatch, [78])._human_check_showing()   # the badge
+
+
+def test_a_challenge_headless_or_unsolved_parks(monkeypatch):
+    with pytest.raises(apply_run._Parked, match="showing"):
+        _human_check_job(monkeypatch, [480], headless=True)._wait_for_human_check(
+            "a CAPTCHA challenge is showing")
+    job = _human_check_job(monkeypatch, [480])
+    monkeypatch.setattr(apply_run, "HUMAN_CHECK_WAIT_S", 3 * apply_run.HUMAN_CHECK_POLL_S)
+    with pytest.raises(apply_run._Parked, match="not solved in time"):
+        job._wait_for_human_check("a CAPTCHA challenge is showing")
+
+
+def test_linkedin_and_the_inbox_are_matched_by_exact_host():
+    # their domains carry other people's content: a Google Form, a Google
+    # sign-in frame, a Microsoft form (the SP8-live review)
+    job = _job()
+    job.r._run_context = {"inbox_url": "https://mail.google.com/mail/u/0/"}
+    job._build_allowlist()
+    job._check_host("https://mail.google.com/mail/u/0/#inbox")
+    for url in ("https://docs.google.com/forms/d/x", "https://accounts.google.com/o/oauth2",
+                "https://sites.google.com/view/x"):
+        with pytest.raises(apply_run._Parked, match="allowed"):
+            job._check_host(url)
+
+
+def test_shared_hosting_subdomains_are_separate_sites():
+    assert apply_run._site("acme.github.io") == "acme.github.io"
+    assert apply_run._site("careers.acme.github.io") == "acme.github.io"
+    job = _job()
+    job.ats_hosts.add("acme.github.io")
+    assert job._allowed_site("acme.github.io")
+    assert not job._allowed_site("evil.github.io")
+    assert not job._password_ok("evil.github.io")
+
+
+def test_a_known_platform_met_later_is_recorded_as_the_jobs_ats(monkeypatch):
+    job = _job()
+    updates = []
+    monkeypatch.setattr(apply_run.apply_queue, "update",
+                        lambda *a, **kw: updates.append(kw.get("ats")))
+    job._admit_ats_transition("https://careers.gts.example/jobs/1", job.page.url)
+    job._admit_ats_transition("https://careers-gtsx.icims.com/jobs/1605/login",
+                              "https://careers.gts.example/jobs/1")
+    assert [u["domain"] for u in updates] == ["careers.gts.example", "careers-gtsx.icims.com"]
+    assert job.entry["ats"]["system"] == "icims"
+    job._admit_ats_transition("https://login.icims.com/x", "https://careers-gtsx.icims.com/")
+    assert len(updates) == 2                   # the same site is not recorded twice
+
+
+def test_an_advance_that_opens_a_challenge_waits_for_the_user(monkeypatch):
+    job = _human_check_job(monkeypatch, [480, 480, 0])
+    job.r.sleep = lambda s: None
+    digest = apply_form.FormDigest("jobs.example", "Apply", "",
+                                   buttons=[apply_form.Button(0, (0, "#next"), "Next")])
+    monkeypatch.setattr(apply_run.apply_fill, "click",
+                        lambda *a, **kw: apply_run.apply_fill.ClickResult(True, False))
+    result = job._click(digest, 0, "advance", {"clicked": []})
+    assert result.changed and job.last_sig is None
+
+
+def test_a_whole_page_check_that_already_cleared_is_not_waited_on(monkeypatch):
+    job = _human_check_job(monkeypatch, [0])
+    markers = iter([("https://jobs.example/apply", "Apply for the role")])
+    monkeypatch.setattr(job, "_page_marker", lambda: next(markers))
+    job.r.sleep = Mock(side_effect=AssertionError("waited on a page that had moved on"))
+    job._wait_for_human_check("captcha or bot check on the page",
+                              before=("https://jobs.example/", "Just a moment..."))
+
+
+def test_headless_a_whole_page_check_gets_a_moment_to_clear_itself(monkeypatch):
+    job = _human_check_job(monkeypatch, [0], headless=True)
+    seen = iter([("u", "Just a moment..."), ("u", "Just a moment..."), ("u", "Apply")])
+    monkeypatch.setattr(job, "_page_marker", lambda: next(seen))
+    naps = []
+    job.r.sleep = naps.append
+    job._wait_for_human_check("captcha or bot check on the page", before=("u", "Just a moment..."))
+    assert len(naps) == 2

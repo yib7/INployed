@@ -828,9 +828,12 @@ def same_scope(page, button_locator: tuple[int, str],
 # read; in a `novalidate` form (the site validates in its own script) a
 # hidden control is skipped. Then the visible error texts of the frame:
 # [role=alert], an assertive live region, and short boxes whose class names
-# an error. An error text beside a control (its box within two levels holds
-# one) is a field's; the rest are banners. Returns {invalid: [{label,
-# message, reason}], errors: [{text, field}]}.
+# an error (a success or info note is none). An error text beside a control
+# (its box within two levels holds one) is a field's; the rest are banners;
+# `tied` when a control names it (`aria-describedby`, `aria-errormessage`).
+# Without a button, the forms of the filled fields (`fcss`) when there are
+# any. Returns {invalid: [{label, message, reason}], errors: [{text, field,
+# tied}]}.
 _VALIDITY_JS = r"""({bcss, fcss}) => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const visible = (el) => {
@@ -875,6 +878,10 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
     controls = [...Array.from(forms).flatMap((f) => Array.from(f.elements)), ...loose];
     inScope = (el) => Array.from(forms).some((f) => f.contains(el))
       || (box.contains(el) && !owner(el) && !outside(el));
+  } else if (filled.some((f) => owner(f))) {
+    const forms = new Set(filled.map(owner).filter(Boolean));
+    controls = Array.from(forms).flatMap((f) => Array.from(f.elements));
+    inScope = (el) => Array.from(forms).some((f) => f.contains(el));
   } else {
     controls = Array.from(document.querySelectorAll('input, select, textarea'))
       .filter((el) => !owner(el) && !outside(el));
@@ -906,9 +913,16 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
   const texts = new Set();
   const esel = '[role=alert], [aria-live=assertive], [class*=error i], [class*=invalid i], '
     + '[class*=danger i]';
+  const SUCCESS = /\b(success|succeeded|info|notice)\b|alert-(success|info)/i;
+  const namedBy = (el) => !!el.id && Array.from(document.querySelectorAll(
+    '[aria-describedby], [aria-errormessage]')).some((c) => (
+      (c.getAttribute('aria-describedby') || '') + ' ' + (c.getAttribute('aria-errormessage') || ''))
+      .split(/\s+/).includes(el.id));
   for (const el of document.querySelectorAll(esel)) {
     if (outside(el) || !visible(el)) continue;
     if (el.matches('input, select, textarea, button, form, body')) continue;
+    const cls = el.getAttribute('class') || '';
+    if (SUCCESS.test(cls) && !/error|invalid|danger/i.test(cls)) continue;
     const text = norm(el.innerText);
     if (!text || text.length > 240 || texts.has(text)) continue;
     if (Array.from(texts).some((t) => t.includes(text) || text.includes(t))) continue;
@@ -922,10 +936,44 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
       const n = p.querySelectorAll('input:not([type=hidden]), select, textarea').length;
       field = n >= 1 && n <= 6;
     }
-    errors.push({text: text.slice(0, 200), field: field});
+    errors.push({text: text.slice(0, 200), field: field, tied: namedBy(el)});
   }
   return {invalid: invalid.slice(0, 20), errors: errors.slice(0, 10)};
 }""".replace("__CONSENT__", CONSENT_ROOTS_JS)
+
+
+_VALUES_JS = r"""(css) => css.map((c) => {
+  let el = null;
+  try { el = document.querySelector(c); } catch (e) { return null; }
+  if (!el) return null;
+  const t = (el.getAttribute('type') || '').toLowerCase();
+  if (el.tagName === 'INPUT' && ['file', 'password', 'hidden'].includes(t)) return null;
+  if (el.tagName === 'INPUT' && (t === 'checkbox' || t === 'radio')) return el.checked ? 'on' : '';
+  if (el.tagName === 'SELECT') return el.selectedIndex >= 0 && el.value ? el.value : '';
+  return el.value === undefined ? null : String(el.value);
+})"""
+
+
+def box_values(page, locators: list[tuple[int, str]]) -> list[str | None]:
+    """What each box holds now (None for a file, password or hidden box, or
+    one that is gone), in `locators` order: the run compares them before and
+    after its submit click; they are never written to the trace or the
+    record."""
+    out: list[str | None] = [None] * len(locators)
+    by_frame: dict[int, list[int]] = {}
+    for i, loc in enumerate(locators):
+        by_frame.setdefault(int(loc[0]), []).append(i)
+    all_frames = frames(page)
+    for idx, rows in by_frame.items():
+        if not 0 <= idx < len(all_frames):
+            continue
+        try:
+            got = all_frames[idx].evaluate(_VALUES_JS, [str(locators[i][1]) for i in rows])
+        except Exception:       # noqa: BLE001  (a frame mid-navigation)
+            continue
+        for i, v in zip(rows, got or []):
+            out[i] = v
+    return out
 
 
 def validity_report(page, button_locator: tuple[int, str] | None = None,
@@ -940,6 +988,9 @@ def validity_report(page, button_locator: tuple[int, str] | None = None,
     out: dict[str, list] = {"invalid": [], "errors": []}
     targets = [(int(button_locator[0]), str(button_locator[1]))] if button_locator \
         else [(i, "") for i in range(len(frames(page)))]
+    # without a button, the filled fields' forms: a button no longer found
+    # (a server's answer whose inserted summary shifts a path) is looked for
+    # through them
     all_frames = frames(page)
     for idx, css in targets:
         if not 0 <= idx < len(all_frames):

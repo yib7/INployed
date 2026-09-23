@@ -1290,3 +1290,339 @@ def test_the_trace_names_the_rule_that_made_an_apply_the_submit(context, flow_se
     assert (out.status, out.reason) == ("submitted", "confirmation page"), out
     rows = _trace_decisions(_trace_dir(tmp_path), "apply_button_submit")
     assert rows and "it sits with the fields this page filled" in rows[0]["why"], rows
+
+
+# =================================================================================================
+# SP3 review round 2
+# =================================================================================================
+
+# --- R1: after a send, "not sent" only on the form as the run typed it ------------------------------
+
+@pytest.mark.parametrize("name", ["success_flash_emptied", "reset_aria_invalid"])
+def test_a_flash_or_a_reset_form_after_its_send_is_never_read_as_not_sent(
+        _browser, flow_server, tmp_path, name):
+    r = _flow(name, _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    assert r.sends == 1 and not r.reason.startswith(apply_run.NOT_SENT_REASON), r
+
+
+def test_a_bare_alert_beside_the_kept_form_after_a_send_is_never_not_sent(context, tmp_path,
+                                                                           monkeypatch):
+    # the form keeps what the run typed, and a status line no control names
+    # shows beside a box: only a message a control names says "refused"
+    _quiet_click(monkeypatch)
+    posts = _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
+          var n = document.createElement('div');
+          n.setAttribute('role', 'alert');
+          n.textContent = 'We are processing your application';
+          document.getElementById('email').insertAdjacentElement('afterend', n);
+        });
+      };""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert posts.count == 1, out
+    assert out.status == "needs_human", out
+    assert not out.reason.startswith(apply_run.NOT_SENT_REASON), out
+    assert out.reason.startswith(apply_run.CHECK_SENT_REASON), out
+
+
+def test_a_success_flash_is_never_an_error_text(browser_page):
+    browser_page.set_content("""<body><form>
+      <div class="alert alert-success" role="alert">Your details were saved</div>
+      <label for="e">Email</label><input id="e" name="e" type="email">
+      <button type="submit">Submit</button></form></body>""")
+    assert apply_form.validity_report(browser_page)["errors"] == []
+    # a class that names an error stays one, whatever else it says
+    browser_page.set_content("""<body><form>
+      <label for="e">Email</label><input id="e" name="e" type="email">
+      <div class="field-error-info">Enter an email address</div>
+      <button type="submit">Submit</button></form></body>""")
+    assert [e["text"] for e in apply_form.validity_report(browser_page)["errors"]] == [
+        "Enter an email address"]
+
+
+# --- R2: the click guard is one-shot ----------------------------------------------------------------
+
+def test_the_persons_own_click_after_the_runs_goes_through(browser_page):
+    # a wizard footer: the run's Next lands and the node reads "Submit" on the
+    # review step; later the person clicks it themselves
+    browser_page.set_content("""<body><div id="bar"><button id="go">Next</button></div><script>
+      var go = document.getElementById('go');
+      go.addEventListener('click', function () {
+        if (go.textContent === 'Submit') { document.body.dataset.submitted = 1; return; }
+        go.textContent = 'Submit';
+      });</script></body>""")
+    d = apply_form.extract(browser_page)
+    check = apply_run._JobRun._live_check(Mock(), "advance")
+    r = apply_fill.click(browser_page, d, d.buttons[0].n, timeout_s=1, check=check)
+    assert r.clicked and not r.refused, r
+    browser_page.evaluate("document.getElementById('go').click()")
+    assert browser_page.evaluate("document.body.dataset.submitted") == "1"
+
+
+# --- M-a: the handle is disposed; a re-rendered node is found again -------------------------------
+
+def test_a_node_re_rendered_before_the_click_is_found_again(browser_page, monkeypatch):
+    from playwright.sync_api import ElementHandle
+    browser_page.set_content('<body><div id="bar"><button id="go" onclick="document.body.dataset'
+                             '.next = 1">Continue</button></div></body>')
+    d = apply_form.extract(browser_page)
+    real = ElementHandle.evaluate
+    disposed, rendered = [], []
+
+    def _evaluate(self, expression, *a, **kw):
+        out = real(self, expression, *a, **kw)
+        if expression == apply_fill._ARM_JS and not rendered:
+            # the page re-renders the node once, between the check and the click
+            rendered.append(1)
+            browser_page.evaluate("var b = document.getElementById('go');"
+                                  " b.replaceWith(b.cloneNode(true));")
+        return out
+    real_dispose = ElementHandle.dispose
+
+    def _dispose(self):
+        disposed.append(1)
+        return real_dispose(self)
+    monkeypatch.setattr(ElementHandle, "evaluate", _evaluate)
+    monkeypatch.setattr(ElementHandle, "dispose", _dispose)
+    check = apply_run._JobRun._live_check(Mock(), "advance")
+    r = apply_fill.click(browser_page, d, d.buttons[0].n, timeout_s=1, check=check)
+    assert r.clicked, r
+    assert browser_page.evaluate("document.body.dataset.next") == "1"
+    assert len(disposed) == 2        # the first node's handle and the one found again
+
+
+# --- R3: the person's own send during the gate's wait ----------------------------------------------
+
+_AJAX_CHECKBOX = """<!doctype html><html><body><h1>Analytics Engineer</h1>
+<div id="app">
+<label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+<label for="last_name">Last name *</label><input id="last_name" name="last_name" required>
+<label for="email">Email *</label><input id="email" name="email" type="email" required>
+<iframe style="width:304px;height:78px"
+  src="https://www.google.com/recaptcha/api2/anchor?k=x&size=normal"></iframe>
+<textarea id="tok" name="g-recaptcha-response" style="display:none"></textarea>
+<button type="button" id="go">Submit application</button>
+<p id="toast"></p>
+</div><script>
+  window.__tick = function () { document.getElementById('tok').value = 'synthetic'; };
+  document.getElementById('go').onclick = function () {
+    if (!document.getElementById('tok').value) return;
+    fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
+      document.getElementById('toast').textContent = 'Sent!';
+    });
+  };
+</script></body></html>"""
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_a_send_the_person_made_during_the_wait_is_never_sent_again(context, tmp_path, reset):
+    context.route("https://www.google.com/recaptcha/**", lambda route: route.fulfill(
+        body="<body>I'm not a robot</body>", content_type="text/html"))
+    posts = _Posts(context, {"/apply/42": _AJAX_CHECKBOX})
+    calls = []
+
+    def _sleep(seconds):
+        for p in context.pages:
+            if p.is_closed():
+                continue
+            if not calls:
+                # the person ticks the box and sends the form themselves
+                p.evaluate("window.__tick(); document.getElementById('go').click()")
+                p.wait_for_timeout(200)
+            if reset:
+                # the site resets the CAPTCHA after its send
+                p.evaluate("document.getElementById('tok').value = ''")
+        calls.append(seconds)
+    out, rec, _ = _drain(context, tmp_path, APPLY_URL, sleep=_sleep, auto_apply_headless=False)
+    assert posts.count == 1, out
+    assert out.status == "needs_human", out
+    assert "POST https://careers.fabrikam.example/api/applications" in out.reason, out
+    assert apply_queue.load()["jobs"][-1]["tab_note"] == apply_run.CHECK_SENT_NOTE
+    assert not [a for a in rec.actions if a.kind == "click" and a.text == "Submit application"]
+
+
+# --- R4: only the job's page and its tabs count ---------------------------------------------------
+
+def test_another_tabs_post_during_the_window_changes_nothing(context, tmp_path, monkeypatch):
+    _quiet_click(monkeypatch)
+    ats = []
+    context.route("https://acme.greenhouse.io/**", lambda route: ats.append(1)
+                  or route.fulfill(body="{}", content_type="application/json"))
+    context.route("https://other.example/**", lambda route: route.fulfill(
+        body="<body>another tab</body>", content_type="text/html"))
+    other = context.new_page()
+    other.goto("https://other.example/")
+    _Posts(context, {"/apply/42": _form("Submit application", "")})
+    real = apply_run._JobRun._after_submit
+
+    def _after(self, **kw):
+        # the person, in another tab, posts to an ATS host while the run reads
+        other.evaluate("fetch('https://acme.greenhouse.io/api', {method: 'POST', body: 'x'})")
+        other.wait_for_timeout(300)
+        return real(self, **kw)
+    monkeypatch.setattr(apply_run._JobRun, "_after_submit", _after)
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert ats == [1]
+    assert out.reason.startswith(apply_run.NOT_SENT_REASON + " (the form did not change"), out
+
+
+def test_a_post_to_the_inbox_host_is_never_a_send(context, tmp_path, monkeypatch):
+    _quiet_click(monkeypatch)
+    inbox = []
+    context.route("https://mail.example.com/**", lambda route: inbox.append(1)
+                  or route.fulfill(body="{}", content_type="application/json"))
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('https://mail.example.com/api/ping', {method: 'POST', body: 'x'});
+      };""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert inbox == [1]
+    assert out.reason.startswith(apply_run.NOT_SENT_REASON + " (the form did not change"), out
+
+
+def test_an_application_served_from_the_inbox_host_still_counts_its_send(context, tmp_path):
+    # the job's page lives on the inbox's host (a test server, a form on the
+    # mail provider's own site): its own post is the send
+    _Posts(context, {"/apply/42": """<!doctype html><html><body><h1>Analytics Engineer</h1>
+      <form method="post" action="/api/applications">
+      <label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+      <label for="last_name">Last name *</label><input id="last_name" name="last_name" required>
+      <label for="email">Email *</label><input id="email" name="email" type="email" required>
+      <button type="submit">Submit application</button></form></body></html>"""},
+           answer="<!doctype html><html><body><h1>Next steps</h1><p>Your profile</p></body></html>",
+           host="https://mail.example.com")
+    out, _, _ = _drain(context, tmp_path, "https://mail.example.com/apply/42")
+    assert out.status == "submitted", out
+    assert "a request left after the submit click (POST https://mail.example.com/api/"            "applications)" in out.reason, out
+
+
+# --- R5: the gate reads the filled fields' form and the required scan ------------------------------
+
+def test_the_gate_reads_the_form_behind_a_footer_submit(context, tmp_path):
+    _Posts(context, {"/apply/42": """<!doctype html><html><body><h1>Analytics Engineer</h1>
+      <form id="step">
+      <label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+      <label for="last_name">Last name *</label><input id="last_name" name="last_name" required>
+      <label for="email">Email *</label><input id="email" name="email" type="email" required>
+      <textarea name="cover" aria-label="Cover letter" required style="display:none"></textarea>
+      </form>
+      <div class="footer"><button type="button" id="go"
+        onclick="document.getElementById('step').requestSubmit()">Submit application</button></div>
+      </body></html>"""})
+    out, rec, _ = _drain(context, tmp_path, APPLY_URL)
+    assert out.status == "needs_human", out
+    assert out.reason.startswith("required field without an answer: Cover letter (the form "
+                                 "reports it empty"), out
+    assert not [a for a in rec.actions if a.kind == "click"]
+
+
+def test_the_gate_finds_a_required_box_past_the_scans_cap(context, tmp_path):
+    boxes = "".join(f'<div role="textbox" contenteditable="true" aria-label="Note {i}"></div>'
+                    for i in range(45))
+    _Posts(context, {"/apply/42": _form("Submit application", "", extra=boxes + (
+        '<div role="textbox" contenteditable="true" aria-required="true" '
+        'aria-label="Required note"></div>'))})
+    out, rec, _ = _drain(context, tmp_path, APPLY_URL)
+    assert out.status == "needs_human", out
+    assert out.reason.startswith("required field without an answer: Required note (a textbox"), out
+    assert not [a for a in rec.actions if a.kind == "click"]
+
+
+# --- M-b: the refused form is read when the submit's path moved -----------------------------------
+
+def test_a_server_answer_that_moved_the_submit_is_still_read_as_refused(context, tmp_path):
+    form = """<label for="first_name">First name *</label><input id="first_name" name="first_name"
+      required value="{first}">
+      <label for="last_name">Last name *</label><input id="last_name" name="last_name" required
+      value="{last}">
+      <label for="email">Email *</label><input id="email" name="email" type="email" required
+      value="{email}"{invalid}><span id="email-error">{message}</span>
+      <button type="submit">Submit application</button>"""
+    page = ("<!doctype html><html><body><h1>Analytics Engineer</h1><form method='post' action=''>"
+            + form.format(first="", last="", email="", invalid="", message="") + "</form></body></html>")
+    answer = ("<!doctype html><html><body><h1>Analytics Engineer</h1><div class='wrap'>"
+              "<div role='alert'>Please correct the highlighted field.</div>"
+              "<form method='post' action=''>"
+              + form.format(first="Jane", last="Doering", email="jane.doe@example.com",
+                            invalid=' aria-invalid="true" aria-describedby="email-error"',
+                            message="Use your work email.")
+              + "</form></div></body></html>")
+    posts = _Posts(context, {"/apply/42": page}, answer=answer)
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert posts.count == 1
+    assert out.reason.startswith(apply_run.NOT_SENT_REASON + ": validation errors (the form "
+                                                             "reports an invalid field: Email"), out
+
+
+# --- M-c: the advance path names an unticked checkbox -------------------------------------------
+
+def test_a_next_that_waits_for_the_checkbox_names_it(context, tmp_path, monkeypatch):
+    _quiet_click(monkeypatch)
+    context.route("https://www.google.com/recaptcha/**", lambda route: route.fulfill(
+        body="<body>I'm not a robot</body>", content_type="text/html"))
+    _Posts(context, {"/apply/42": _form("Continue", "", extra="""<iframe
+        style="width:304px;height:78px"
+        src="https://www.google.com/recaptcha/api2/anchor?k=x&size=normal"></iframe>
+      <textarea name="g-recaptcha-response" style="display:none"></textarea>""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert out.status == "needs_human", out
+    assert "did nothing" in out.reason and "a CAPTCHA checkbox on the page is unticked" in \
+        out.reason, out
+
+
+# --- M-d: a stale read is taken once more before the requests decide ------------------------------
+
+class _ReadsByHeadline(jev.FakeJev):
+    """The fake, with the page state read from the headline (`READS`:
+    headline words -> state, at 0.9)."""
+    READS: dict = {}
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        text = str((state.get("page") or {}).get("headline_text") or "")
+        for words, read in self.READS.items():
+            if "page_state" in out and words in text:
+                out["page_state"] = jev.Answer(kind="choice", choice=read, confidence=0.9,
+                                               probabilities={read: 0.9, "other": 0.1})
+        return out
+
+
+def test_a_page_the_judge_never_read_is_read_once_more(context, tmp_path, monkeypatch):
+    # the judge's budget is spent on the first look (a progress note); the
+    # page then turns into a review step with its own send button: read
+    # once more, it is the person's to check, never "submitted"
+    monkeypatch.setattr(apply_run, "POST_SUBMIT_READS", 1)
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
+          // a progress note that grows past the click's settle cap (the
+          // judge's one read lands on it), then the review step
+          var n = 0;
+          var tick = setInterval(function () {
+            document.body.innerHTML = '<h1>Processing</h1><p>' + '.'.repeat(++n) + '</p>';
+          }, 50);
+          setTimeout(function () {
+            clearInterval(tick);
+            document.body.innerHTML = '<h1>Review your application</h1>'
+              + '<p>First name: Ada</p><button type="button">Submit application</button>';
+          }, 4500);
+        });
+      };""")})
+    judge = type("J", (_ReadsByHeadline,), {"READS": {"Processing": "other",
+                                                       "Review your": "review_page"}})()
+    out, _, _ = _drain(context, tmp_path, APPLY_URL, judge=judge)
+    assert out.status == "needs_human", out
+    assert "a form with its own send button (review_page 0.90)" in out.reason, out
+    rows = _trace_decisions(_trace_dir(tmp_path), "after_submit")
+    assert any("the last read was stale" in r["why"] for r in rows), rows
+
+
+# --- M-e: the ad and chat hosts -----------------------------------------------------------------
+
+@pytest.mark.parametrize("url", ["https://insight.adsrvr.org/track/cei", "https://ib.adnxs.com/x",
+                                 "https://api-iam.intercom.io/messenger/web/ping",
+                                 "https://www.facebook.com/tr/", "https://bat.bing.com/action/0"])
+def test_ad_and_chat_posts_are_trackers(url):
+    assert apply_run._tracking(url)

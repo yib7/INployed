@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Engineer - Woodgrove Bank</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+</style>
+</head>
+<body>
+<h1>Data Engineer</h1>
+<p>Woodgrove Bank, Charlotte, NC</p>
+<!-- Posts back to its own page; the answer shows a success flash above the
+     same form, emptied (flow server: this page's POST). -->
+<div class="container">
+<form id="application" method="post" action="">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+</div>
+</body>
+</html>

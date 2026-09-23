@@ -472,7 +472,11 @@ _TRACKING_SITES = frozenset((
     "hsadspixel.net", "licdn.com", "cookielaw.org", "onetrust.com", "cookiebot.com",
     "trustarc.com", "usercentrics.eu", "osano.com", "didomi.io", "bugsnag.com",
     "rollbar.com", "logrocket.io", "logrocket.com", "mouseflow.com", "crazyegg.com",
-    "optimizely.com", "demdex.net", "omtrdc.net", "adobedc.net", "everesttech.net"))
+    "optimizely.com", "demdex.net", "omtrdc.net", "adobedc.net", "everesttech.net",
+    "adsrvr.org", "adnxs.com", "rubiconproject.com", "pubmatic.com", "casalemedia.com",
+    "criteo.net", "scorecardresearch.com", "intercom.io", "intercomcdn.com", "drift.com",
+    "driftt.com", "crisp.chat", "tawk.to", "livechatinc.com", "olark.com", "zdassets.com",
+    "sc-static.net", "t.co"))
 # Google's own tag and ad paths; a form on docs.google.com is a real send
 _GOOGLE_TRACKING = ("/ccm/", "/pagead/", "/ads/", "/g/collect", "/j/collect", "/recaptcha")
 
@@ -493,14 +497,20 @@ class SendWatch:
       or a POST, PUT or PATCH, to the application's sites
       (`_JobRun._allowed_site`): the evidence for "submitted (unconfirmed)";
     - `possible`: a POST, PUT or PATCH to any other host (a form backend on
-      another domain, a tab the submit opened): it may have been the send,
-      so the job never reads as unsent after it.
+      another domain): it may have been the send, so the job never reads as
+      unsent after it.
 
-    A bot-check provider, an analytics, ad or consent host (`_tracking`) and
-    LinkedIn (its Insight Tag posts from company pages) never count. Each
+    Only the job's page and the tabs it opens after `start` count (R4): an
+    earlier job's parked tab, the inbox tab and a tab the person uses never
+    do. A tab's first request comes before its page is known (Playwright
+    gives no frame for it): it is held (`_unplaced`) and counted when the
+    job's page reports that tab, at the same URL. A bot-check provider, an
+    analytics, ad, chat or consent host (`_tracking`), LinkedIn (its Insight
+    Tag posts from company pages) and the inbox's host (unless the job's page
+    is served from it) never count. Each row
     keeps the method and the URL without its query (a GET form puts the
-    answers there); `pending` keeps the read waiting while one is in
-    flight."""
+    answers there); `pending` keeps the read waiting while one of the job's
+    page is in flight."""
 
     _SEND_METHODS = ("POST", "PUT", "PATCH")
 
@@ -514,19 +524,48 @@ class SendWatch:
         self.sent: list[str] = []
         self.possible: list[str] = []
         self.pending: set[int] = set()
-        self._pages: list = []
+        self._targets: list = []
+        self._before: set[int] = set()     # the context's tabs before `start`
+        self._opened: set[int] = set()     # the tabs the job's page opened since
+        self._unplaced: list[tuple[str, str, str]] = []    # (url, kind, row)
+        self._inbox = ""
         self._on = False
 
-    def _kind(self, request) -> str:
+    @staticmethod
+    def _bare(url: str) -> str:
+        parts = urlsplit(str(url or ""))
+        return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+    def _owner(self, request) -> str:
+        """"job" (the job's page or a tab it opened), "other", or "unknown"
+        (a new tab's first request, whose page Playwright cannot name yet)."""
+        try:
+            page = request.frame.page
+        except Exception:       # noqa: BLE001  (no frame yet, or a service worker's request)
+            return "unknown"
+        if page is self.page or id(page) in self._opened:
+            return "job"
+        if page is None or id(page) in self._before:
+            return "other"
+        try:
+            return "job" if page.opener() is self.page else "other"
+        except Exception:       # noqa: BLE001
+            return "other"
+
+    def _kind(self, request, owner: str) -> str:
         url = str(request.url)
         host = _host(url)
         if not host or _is_captcha_url(url) or apply_linkedin.is_linkedin(host) or _tracking(url):
             return ""
+        if self._inbox and host == self._inbox:
+            return ""
         method = str(request.method).upper()
-        try:
-            navigation = request.is_navigation_request() and id(request.frame) in self.frames
-        except Exception:       # noqa: BLE001  (a service worker's request has no frame)
-            navigation = False
+        navigation = False
+        if owner == "job":
+            try:
+                navigation = request.is_navigation_request() and id(request.frame) in self.frames
+            except Exception:       # noqa: BLE001
+                navigation = False
         send = method in self._SEND_METHODS
         if self.run._allowed_site(host) and (navigation or send):
             return "sent"
@@ -534,11 +573,16 @@ class SendWatch:
 
     def _request(self, request) -> None:
         try:
-            kind = self._kind(request)
+            owner = self._owner(request)
+            if owner == "other":
+                return
+            kind = self._kind(request, owner)
             if not kind:
                 return
-            parts = urlsplit(str(request.url))
-            row = f"{str(request.method).upper()} {parts.scheme}://{parts.netloc}{parts.path}"
+            row = f"{str(request.method).upper()} {self._bare(request.url)}"
+            if owner == "unknown":
+                self._unplaced.append((self._bare(request.url), kind, row))
+                return
             (self.sent if kind == "sent" else self.possible).append(row)
             self.pending.add(id(request))
         except Exception:       # noqa: BLE001  (a request that cannot be read counts as nothing)
@@ -547,34 +591,62 @@ class SendWatch:
     def _done(self, request) -> None:
         self.pending.discard(id(request))
 
+    def _popup(self, popup) -> None:
+        """A tab the job's page opened: its requests count, and a first
+        request held for it (the same URL) is counted now."""
+        self._opened.add(id(popup))
+        try:
+            url = self._bare(popup.url)
+        except Exception:       # noqa: BLE001
+            return
+        keep = []
+        for bare, kind, row in self._unplaced:
+            if bare == url:
+                (self.sent if kind == "sent" else self.possible).append(row)
+            else:
+                keep.append((bare, kind, row))
+        self._unplaced = keep
+
     def start(self) -> None:
-        """Listen on the page's context: the page, its frames and the tabs
-        the submit opens (a `target=_blank` post's first request comes
-        before its tab could be listened on)."""
+        """Listen on the page's context (a new tab's first request reaches
+        only the context) and for the tabs the page opens."""
         if self._on:
             return
         self._on = True
-        target = getattr(self.page, "context", None) or self.page
         try:
-            target.on("request", self._request)
-            target.on("requestfinished", self._done)
-            target.on("requestfailed", self._done)
-            self._pages.append(target)
+            self._inbox = _host(str(self.run.r.run_context().get("inbox_url") or ""))
+            if self._inbox and _host(str(self.page.url)) == self._inbox:
+                # the application is served from the inbox's own host: only
+                # the tab rule keeps the inbox out
+                self._inbox = ""
+        except Exception:       # noqa: BLE001  (a runner double)
+            self._inbox = ""
+        try:
+            self._before = {id(p) for p in self.page.context.pages if p is not self.page}
         except Exception:       # noqa: BLE001  (a page double)
-            pass
+            self._before = set()
+        context = getattr(self.page, "context", None) or self.page
+        for target, events in ((context, (("request", self._request),
+                                          ("requestfinished", self._done),
+                                          ("requestfailed", self._done))),
+                               (self.page, (("popup", self._popup),))):
+            for event, fn in events:
+                try:
+                    target.on(event, fn)
+                    self._targets.append((target, event, fn))
+                except Exception:   # noqa: BLE001  (a page double)
+                    pass
 
     def stop(self) -> None:
         if not self._on:
             return
         self._on = False
-        for target in self._pages:
-            for event, fn in (("request", self._request), ("requestfinished", self._done),
-                              ("requestfailed", self._done)):
-                try:
-                    target.remove_listener(event, fn)
-                except Exception:   # noqa: BLE001  (the page is gone)
-                    pass
-        self._pages = []
+        for target, event, fn in self._targets:
+            try:
+                target.remove_listener(event, fn)
+            except Exception:   # noqa: BLE001  (the page is gone)
+                pass
+        self._targets = []
 
     def any(self) -> bool:
         """Something that may have been the send left."""
@@ -3627,8 +3699,10 @@ class _JobRun:
                 self._wait_for_human_check(f"a CAPTCHA challenge appeared after {text}")
                 return apply_fill.ClickResult(clicked=True, changed=True)
             judged = f"judged {role} {conf:.2f}, " if conf is not None else ""
+            ticked = ("; a CAPTCHA checkbox on the page is unticked: tick it, then Re-queue"
+                      if self._human_check_showing(checkbox=True) else "")
             raise _Parked("needs_human", f"the {role} button ({text}) did nothing "
-                                         f"({judged}clicked twice)")
+                                         f"({judged}clicked twice){ticked}")
         return result
 
     def _live_check(self, role: str, *, account: bool = False) -> Callable[[str, dict], str]:
@@ -3667,9 +3741,11 @@ class _JobRun:
         if apply_judge.apply_worded(button.text):
             out["apply_button"] = self._apply_button_why(digest, button)
         try:
-            out["invalid"] = apply_form.validity_report(self.page, button.locator)["invalid"]
+            out["invalid"] = apply_form.validity_report(self.page, button.locator,
+                                                        self._filled_here)["invalid"]
             out["required_empty"] = [
-                r for r in apply_form.control_scan(self.page, [int(button.locator[0])])
+                r for r in apply_form.control_scan(self.page, [int(button.locator[0])],
+                                                   required_only=True)
                 if r.get("required") and r.get("empty")]
         except Exception as e:      # noqa: BLE001  (a page double; a real page answers)
             self._trace("error", step="gate_read", error=type(e).__name__)
@@ -3765,9 +3841,17 @@ class _JobRun:
         if self._human_check_showing(checkbox=True):
             # the person ticks it; the run never does (study G11)
             self._decide("gate_captcha", "a CAPTCHA check is on the page before the submit")
-            self._wait_for_human_check("a CAPTCHA check is on the form before the submit",
-                                       checkbox=True)
-            if self._moved_during_wait(digest):
+            try:
+                self._wait_for_human_check("a CAPTCHA check is on the form before the submit",
+                                           checkbox=True)
+            except _Parked as p:
+                if not watch.any():
+                    raise
+                # a request left while the run waited: the person may have sent
+                # it; the job never reads as unsent (R3)
+                self.submit_clicked = True
+                raise self._send_evidence(p, watch, when="during the wait") from None
+            if watch.any() or self._moved_during_wait(digest):
                 # the person may have sent it while the run waited
                 self.submit_clicked = True
                 self._decide("gate_moved", "the page moved on while the run waited for the "
@@ -3835,8 +3919,29 @@ class _JobRun:
             errors = {e["text"] for e in apply_form.validity_report(self.page)["errors"]}
         except Exception:       # noqa: BLE001
             errors = set()
+        try:
+            values = apply_form.box_values(self.page, self._filled_here)
+        except Exception:       # noqa: BLE001  (a page double)
+            values = []
+        # the boxes' values stay in memory for the post-submit read; they are
+        # never written to the trace or the record
         return {"url": str(self.page.url), "fields": _fields_sig(digest), "text": text,
-                "errors": errors}
+                "errors": errors, "values": values}
+
+    def _holds_typed(self, before: Mapping[str, Any]) -> bool:
+        """Does the form still hold what the run typed: at least half of the
+        boxes that held a value before the click hold the same one? A
+        server's validation answer keeps the values (a password or an upload
+        it may drop, and those are not read); an emptied or reset form keeps
+        none (R1)."""
+        was = list(before.get("values") or [])
+        try:
+            now = apply_form.box_values(self.page, self._filled_here)
+        except Exception:       # noqa: BLE001
+            return False
+        pairs = [(a, b) for a, b in zip(was, now) if a]
+        kept = sum(1 for a, b in pairs if a == b)
+        return bool(pairs) and kept >= max(1, (len(pairs) + 1) // 2)
 
     def _after_submit(self, *, account: bool = False, handoff: bool = False) -> None:
         """Read what the submit click did before deciding (TERM-01), again
@@ -3885,13 +3990,14 @@ class _JobRun:
             watch.stop()
 
     @staticmethod
-    def _send_evidence(p: _Parked, watch: SendWatch) -> _Parked:
-        """A park after the submit click: the "check whether" note, and the
-        request that left named in the reason when one did."""
+    def _send_evidence(p: _Parked, watch: SendWatch, when: str = "after the click") -> _Parked:
+        """A park after the submit click (or a send the person made while the
+        run waited): the "check whether" note, and the request that left
+        named in the reason when one did."""
         reason = p.reason
         first = watch.first()
         if first and first not in reason:
-            reason = f"{reason}; a request left after the click: {_cap(first, 120)}"
+            reason = f"{reason}; a request left {when}: {_cap(first, 120)}"
         return _Parked("needs_human", reason, CHECK_SENT_NOTE)
 
     def _read_after_submit(self, watch: SendWatch, before: Mapping[str, Any], account: bool,
@@ -3946,12 +4052,16 @@ class _JobRun:
             banners = [e for e in report["errors"]
                        if not e.get("field") and e["text"] not in old_errors]
             invalid = report["invalid"]
+            may_refuse = True
             if watch.any():
-                # a request left: an emptied or reset form says nothing about
-                # it; only what the site marked on the same form counts (I1)
+                # a request left: only what the site marked on a control
+                # (`aria-invalid`, a message a control names) of the form as
+                # the run typed it says the send was refused; an emptied or
+                # reset form, a flash or a bare alert says nothing (I1, R1)
                 invalid = [r for r in invalid if r.get("reason") == "aria-invalid"]
-            if digest.fields and (invalid or field_errors) \
-                    and (not watch.any() or same_form):
+                field_errors = [e for e in field_errors if e.get("tied")]
+                may_refuse = same_form and self._holds_typed(before)
+            if digest.fields and (invalid or field_errors) and may_refuse:
                 self._not_sent(invalid, field_errors, watch)
             sure = conf >= apply_judge.PAGE_STATE_MIN_CONF and judged == seen
             if account and state in _OPENED_BY_ACCOUNT and sure:
@@ -3982,6 +4092,14 @@ class _JobRun:
             if not busy or now - start >= POST_SUBMIT_WAIT_S:
                 break
             self.page.wait_for_timeout(int(POST_SUBMIT_POLL_S * 1000))
+        if judged != seen:
+            # the last look was never judged (the budget ran out, or the page
+            # moved on the last look): the requests decide on a fresh read
+            answers = self._judge_page(digest)
+            state, conf = apply_judge.read_page_state(answers)
+            self._new_page_record(state, conf, digest=digest, answers=answers)
+            self._decide("after_submit", f"the last read was stale; read once more "
+                                         f"({state} {conf:.2f})")
         self._inconclusive(state, conf, digest, watch, before, handoff)
 
     def _page_text(self) -> str:
@@ -4001,9 +4119,11 @@ class _JobRun:
         try:
             report = apply_form.validity_report(self.page)
             locator = self._submit_locator()
-            if locator is not None:
-                report["invalid"] = apply_form.validity_report(
-                    self.page, locator, self._filled_here)["invalid"]
+            # the submit's form, or when its locator no longer names one
+            # control (an inserted error summary shifts a path), the form
+            # that held the filled fields
+            report["invalid"] = apply_form.validity_report(
+                self.page, locator, self._filled_here)["invalid"]
             if not as_before:
                 report["invalid"] = [r for r in report["invalid"]
                                      if r.get("reason") == "aria-invalid"]

@@ -451,7 +451,8 @@ def _norm(text: str) -> str:
 # a click that finds the element's text changed into a send or a last step
 # (`_SEND_JS` words the checked text did not have) is cancelled there, at
 # its dispatch, before any handler of the page sees it (INV-04: the check
-# and the click are one step).
+# and the click are one step). The listener is removed once the run's click
+# is over (`_DISARM_JS`): a later click of the person's is never touched.
 _SEND_JS = r"\\b(submit|apply|send|finish|complete|confirm|finali[sz]e|done)\\b"
 _ARM_JS = """(el, want) => {
   const w = el.ownerDocument.defaultView;
@@ -479,6 +480,8 @@ _ARM_JS = """(el, want) => {
 _SEEN_JS = "() => window.__applyClickSeen === true"
 _BLOCKED_JS = "() => window.__applyClickBlocked || ''"
 _UNSEEN_JS = "() => { window.__applyClickSeen = false; window.__applyClickBlocked = ''; }"
+_DISARM_JS = ("() => { if (window.__applyClickMark) { window.removeEventListener('click', "
+              "window.__applyClickMark, true); window.__applyClickMark = null; } }")
 _DISPATCH_METHODS = ("POST", "PUT", "PATCH")
 
 
@@ -576,27 +579,70 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
         except Exception:       # noqa: BLE001
             pass
 
-    def _act() -> None:
+    handles: list = []
+
+    def _arm():
+        """Pin the element to click (an element handle, disposed after the
+        click) and arm its window's one-shot listener."""
         target = loc.first
         try:
             if frame is not None:
                 frame.evaluate(_UNSEEN_JS)      # an earlier click's mark never counts
-            # the element the check read is the one clicked
-            target = loc.first.element_handle(timeout=ACTION_TIMEOUT_MS) or loc.first
+            handle = loc.first.element_handle(timeout=ACTION_TIMEOUT_MS)
+            if handle is not None:
+                handles.append(handle)
+                target = handle
             target.evaluate(_ARM_JS, want if guard else None)
         except Exception:       # noqa: BLE001  (the click finds out)
             pass
+        return target
+
+    def _refind() -> None:
+        """The node was re-rendered between the check and the click: find it
+        again once, by its locator, else by its text in its frame, and check
+        it again; a control that now reads otherwise is refused."""
+        nonlocal loc
+        live2 = apply_form.live_text(loc)
+        if not live2 or (want is not None and _norm(live2.get("text")) != want):
+            found = apply_form.find_by_text(page, button.locator[0], button.text)
+            if len(found) != 1:
+                blocked.append(f"it was re-rendered and {len(found)} controls read "
+                               f"{_norm(button.text)[:60]!r}")
+                raise _ClickStopped(blocked[-1])
+            loc = apply_form.resolve(page, (button.locator[0], found[0]))
+            live2 = apply_form.live_text(loc)
+        why = check(button.text, live2) if check is not None and live2 else ""
+        if why:
+            blocked.append(why)
+            raise _ClickStopped(why)
+
+    def _act() -> None:
         url0 = str(page.url)
         page.on("request", _on_request)
         try:
-            target.click(timeout=ACTION_TIMEOUT_MS)
+            target = _arm()
+            for attempt in (1, 2):
+                try:
+                    target.click(timeout=ACTION_TIMEOUT_MS)
+                    break
+                except Exception as e:      # noqa: BLE001  (a node re-rendered under the click)
+                    text = str(e).lower()
+                    if attempt == 1 and ("not attached" in text or "detached" in text) \
+                            and not _dispatched(frame, url0, page, requests, e):
+                        log.info("apply_fill: button %s (%r) was re-rendered; found again", n,
+                                 button.text)
+                        _refind()
+                        target = _arm()
+                        continue
+                    raise
             if frame is not None:
                 try:
                     stopped = frame.evaluate(_BLOCKED_JS)
                 except Exception:       # noqa: BLE001  (the page moved on: nothing was stopped)
                     stopped = ""
                 if stopped:
-                    blocked.append(str(stopped))
+                    blocked.append(f"its text turned into {str(stopped)!r} at the click; the "
+                                   "click was stopped")
                     raise _ClickStopped(str(stopped))
         except _ClickStopped:
             raise
@@ -613,15 +659,27 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
                 page.remove_listener("request", _on_request)
             except Exception:       # noqa: BLE001  (a page double)
                 pass
+            # the guard is one-shot: the person's own click on the same node
+            # later (a footer that reads "Submit" on the review step) goes through
+            if frame is not None:
+                try:
+                    frame.evaluate(_DISARM_JS)
+                except Exception:       # noqa: BLE001  (the page moved on: its listener went too)
+                    pass
+            for handle in handles:
+                try:
+                    handle.dispose()
+                except Exception:       # noqa: BLE001  (already gone)
+                    pass
+            handles.clear()
         landed.append(True)
 
     try:
         changed = _await_change(page, _act, timeout_s)
     except Exception as e:      # noqa: BLE001
         if blocked:
-            why = f"its text turned into {blocked[0]!r} at the click; the click was stopped"
-            log.info("apply_fill: click on %r refused: %s", button.text, why)
-            return ClickResult(clicked=False, changed=False, refused=why)
+            log.info("apply_fill: click on %r refused: %s", button.text, blocked[0])
+            return ClickResult(clicked=False, changed=False, refused=blocked[0])
         log.info("apply_fill: click on %r failed: %s", button.text, type(e).__name__)
         return ClickResult(clicked=bool(landed), changed=False, late=late[0] if late else "")
     return ClickResult(clicked=True, changed=changed, late=late[0] if late else "")

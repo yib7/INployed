@@ -327,7 +327,8 @@ class FlowServer:
         self.answers: dict[str, tuple[float, Any]] = {
             "slow_post": (SLOW_POST_S, None),
             "server_validation": (0.0, _page("server_validation_errors.html")),
-            "postback_emptied.html": (0.0, _page("postback_emptied_answer.html"))}
+            "postback_emptied.html": (0.0, _page("postback_emptied_answer.html")),
+            "success_flash.html": (0.0, _page("success_flash_answer.html"))}
         self.rejects: set[str] = {"server_validation"}      # posts answered with a refusal
         self._server = None
         self._thread = None
@@ -711,6 +712,15 @@ FLOWS: tuple[Flow, ...] = (
     Flow("ajax_reset", "ajax_reset.html", True, "needs_human",
          r"^check whether the application went through: a request left",
          covers="a fetch send, then the form reset: never read as not sent"),
+    # --- SP3 review round 2 ---
+    Flow("success_flash_emptied", "success_flash.html", True, "needs_human",
+         r"^check whether the application went through: a request left",
+         covers="a success flash (role=alert) above the same form emptied after the post: "
+                "never read as not sent"),
+    Flow("reset_aria_invalid", "reset_aria_invalid.html", True, "needs_human",
+         r"^check whether the application went through: a request left",
+         covers="a fetch send, then a reset form with aria-invalid and its message on every "
+                "box: never read as not sent"),
     Flow("email_verify_thanks", "verify_email_code.html", True, "needs_human",
          r"^(check whether the application went through: after the emailed code"
          r"|a confirmation page before any submit)",

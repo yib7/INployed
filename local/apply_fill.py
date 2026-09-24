@@ -1403,11 +1403,17 @@ def _norm(text: str) -> str:
 # control's centre, when it is neither the control nor inside it, climbed to
 # its overlay (the outermost fixed or sticky box, a dialog), which is marked
 # `data-apply-overlay`. Then the one control to put it away: in a cookie or
-# consent banner (`apply_form.CONSENT_ROOTS_JS`) its reject, decline or
-# necessary-only control, else its close; anywhere else a close, dismiss,
-# minimise or "no thanks" control of the overlay (never one that accepts,
-# allows, agrees, sends or applies); marked `data-apply-close`. Returns
-# {what, kind: consent|close|none, text} or null when nothing covers it.
+# consent banner (`apply_form.CONSENT_ROOTS_JS`) its reject, decline,
+# disagree or necessary-only control (read before the words that accept,
+# which "Disagree and close" and "Allow necessary only" hold), else its
+# close, looked for in the banner's own root too when the climbed overlay
+# holds none of its controls; anywhere else a close, dismiss, minimise, "no
+# thanks" or bare "x" control of the overlay (never one that accepts,
+# allows, agrees, sends or applies); marked `data-apply-close`. A dialog of
+# the application itself (two or more fields, or a control that applies,
+# uploads or submits) is no cover: nothing is picked and `own` says so (SP6
+# review M4). Returns {what, kind: consent|close|none, text, own} or null
+# when nothing covers it.
 _OVERLAY_JS = r"""el => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   el.scrollIntoView({block: 'center', inline: 'center'});
@@ -1424,30 +1430,57 @@ _OVERLAY_JS = r"""el => {
   document.querySelectorAll('[data-apply-overlay], [data-apply-close]').forEach((n) => {
     n.removeAttribute('data-apply-overlay'); n.removeAttribute('data-apply-close'); });
   root.setAttribute('data-apply-overlay', '1');
-  const consent = (__CONSENT__)().some((c) => c === root || c.contains(root) || root.contains(c));
-  const REJECT = /^(reject|decline|refuse|deny)\b|\b(necessary|essential) only\b|\bonly (strictly )?(necessary|essential)\b|\b(necessary|essential) cookies only\b/i;
-  const CLOSE = /^(close|dismiss|hide|minimi[sz]e|no,? thanks|not now|maybe later|skip|×|✕|x)\b/i;
+  const mine = (__CONSENT__)().filter((c) => c === root || c.contains(root) || root.contains(c));
+  const consent = mine.length > 0;
+  const REJECT = /^(reject|decline|refuse|deny|disagree)\b|\b(necessary|essential) only\b|\bonly (strictly )?(necessary|essential)\b|\b(necessary|essential) cookies only\b|\bwithout (agreeing|accepting|consent(ing)?)\b/i;
+  const CLOSE = /^(close|dismiss|hide|minimi[sz]e|no,? thanks|not now|maybe later|skip|x)\b|^[\u00d7\u2715\u2716](\s|$)/i;
   const CLOSE_ARIA = /\b(close|dismiss|hide|minimi[sz]e)\b/i;
   const NEVER = /accept|allow|agree|submit|apply|send|sign ?up|subscribe|start chat|chat now/i;
+  const APP = /\b(apply|application|autofill|resume|cv|upload|submit)\b/i;
+  const DIALOG = 'dialog, [role=dialog], [role=alertdialog], [aria-modal=true]';
+  const CTRLS = 'button, [role=button], input[type=button], input[type=submit], a:not([href]), a[href="#"]';
   const shown = (n) => { const b = n.getBoundingClientRect(); const st = getComputedStyle(n);
     return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
-  let pick = null, kind = 'none';
-  const ctrls = Array.from(root.querySelectorAll(
-    'button, [role=button], input[type=button], input[type=submit], a:not([href]), a[href="#"]'));
-  for (const c of ctrls) {
-    if (!shown(c) || c.disabled) continue;
-    const text = norm(c.innerText) || norm(c.value);
-    const aria = norm(c.getAttribute('aria-label')) || norm(c.getAttribute('title'));
-    const label = text || aria;
-    if (!label || NEVER.test(label) || NEVER.test(aria)) continue;
-    if (consent && REJECT.test(label)) { pick = c; kind = 'consent'; break; }
-    if (!pick && (CLOSE.test(label) || CLOSE_ARIA.test(aria))) { pick = c; kind = consent ? 'consent' : 'close'; }
-  }
-  if (pick) pick.setAttribute('data-apply-close', '1');
+  const words = (c) => [norm(c.innerText) || norm(c.value),
+    norm(c.getAttribute('aria-label')) || norm(c.getAttribute('title'))];
   const name = norm((root.id ? '#' + root.id + ' ' : '') + (root.getAttribute('aria-label') || '')
     + ' ' + (root.innerText || '').slice(0, 60)).slice(0, 80);
+  const ctrls = Array.from(root.querySelectorAll(CTRLS)).filter((c) => shown(c) && !c.disabled);
+  if (!consent && (root.matches(DIALOG) || root.querySelector(DIALOG))) {
+    // the application's own dialog (Workday's "Start Your Application"):
+    // its fields or its apply, upload or submit controls; never put away
+    const fields = Array.from(root.querySelectorAll(
+      'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=checkbox])'
+      + ':not([type=radio]), select, textarea')).filter(shown);
+    if (fields.length >= 2 || ctrls.some((c) => APP.test(words(c).join(' '))))
+      return {what: name, kind: 'none', text: '', own: true};
+  }
+  let pick = null, kind = 'none';
+  const choose = (list) => {
+    for (const c of list) {
+      const [text, aria] = words(c);
+      const label = text || aria;
+      if (!label) continue;
+      // a banner's reject before the words that accept: "Disagree and
+      // close", "Continue without agreeing", "Allow necessary only"
+      if (consent && REJECT.test(label)) { pick = c; kind = 'consent'; return; }
+      if (NEVER.test(label) || NEVER.test(aria)) continue;
+      if (!pick && (CLOSE.test(label) || CLOSE_ARIA.test(aria))) { pick = c; kind = consent ? 'consent' : 'close'; }
+    }
+  };
+  choose(ctrls);
+  if (!pick && consent) {
+    // the climbed overlay holds none of the banner's controls (JazzHR): the
+    // banner's own root does
+    for (const c of mine) {
+      choose(Array.from(c.querySelectorAll(CTRLS)).filter((x) => shown(x) && !x.disabled
+        && !ctrls.includes(x)));
+      if (pick) break;
+    }
+  }
+  if (pick) pick.setAttribute('data-apply-close', '1');
   return {what: name, kind: kind, text: pick ? (norm(pick.innerText) || norm(pick.value)
-    || norm(pick.getAttribute('aria-label'))).slice(0, 60) : ''};
+    || norm(pick.getAttribute('aria-label'))).slice(0, 60) : '', own: false};
 }""".replace("__CONSENT__", apply_form.CONSENT_ROOTS_JS)
 _INTERCEPTED = ("intercepts pointer events", "is not visible", "outside of the viewport")
 

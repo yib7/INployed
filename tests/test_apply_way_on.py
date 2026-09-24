@@ -71,6 +71,50 @@ def test_a_cover_with_nothing_to_close_is_never_clicked_through(browser_page):
         None, None]
 
 
+# --- SP6 review M4: the overlay picker's gaps ------------------------------------------------------------
+
+_TARGET = ('<form><button type="button" id="go" style="position: fixed; bottom: 40px; right: 40px; '
+           'width: 80px; height: 30px">Next</button></form>')
+_COVERS = {
+    "bare_x": ('<div id="promo" style="position: fixed; inset: 0; background: #eee">Our new app!'
+               '<button type="button">×</button></div>', ("close", "×", False)),
+    "disagree": ('<div id="didomi-popup" style="position: fixed; inset: 0; background: #eee">'
+                 'We and our partners use cookies.<button type="button">Agree and close</button>'
+                 '<button type="button">Disagree and close</button></div>',
+                 ("consent", "Disagree and close", False)),
+    "without_agreeing": ('<div id="cookie-notice" style="position: fixed; inset: 0; '
+                         'background: #eee">We use cookies.<button type="button">Agree</button>'
+                         '<a href="#">Continue without agreeing</a></div>',
+                         ("consent", "Continue without agreeing", False)),
+    "necessary_only": ('<div class="cookie-bar" style="position: fixed; inset: 0; background: #eee">'
+                       'Cookies help us.<button type="button">Allow all</button>'
+                       '<button type="button">Allow necessary only</button></div>',
+                       ("consent", "Allow necessary only", False)),
+    # the fixed box over the click holds the banner's words; its controls sit
+    # in the banner's own root beside it (the JazzHR capture)
+    "controls_beside": ('<div id="cookie-consent"><div style="position: fixed; inset: 0; '
+                        'background: #eee">This website uses cookies and other analytics '
+                        'technologies.</div><div style="position: fixed; top: 0; left: 0">'
+                        '<button type="button">Accept All</button><button type="button">Reject '
+                        'All</button></div></div>', ("consent", "Reject All", False)),
+    # the application's own dialog (Workday's "Start Your Application")
+    "own_dialog": ('<div role="dialog" aria-modal="true" style="position: fixed; inset: 0; '
+                   'background: #fff"><h2>Start Your Application</h2><button type="button">'
+                   'Autofill with Resume</button><button type="button">Apply Manually</button>'
+                   '<button type="button" aria-label="Close">×</button></div>',
+                   ("none", "", True)),
+}
+
+
+@pytest.mark.parametrize("cover", sorted(_COVERS))
+def test_the_overlay_picker_puts_away_each_cover_its_own_way(browser_page, cover):
+    html, want = _COVERS[cover]
+    browser_page.set_content(f"<body>{_TARGET}{html}</body>")
+    found = browser_page.locator("#go").evaluate(apply_fill._OVERLAY_JS)
+    assert (found["kind"], found["text"], found.get("own")) == want, found
+    assert not found["text"].lower().startswith(("accept", "allow all", "agree"))
+
+
 # === the way on: a Next beside another Submit, two forms, sign-ins elsewhere (ADV-05, 08, 09) ==========
 
 @pytest.mark.parametrize("name", ["next_and_feedback_submit", "two_forms", "apply_with_linkedin"])

@@ -1041,3 +1041,53 @@ def test_a_popup_button_that_says_more_menu_apply_next_or_back_is_no_field(brows
     d = apply_form.extract(browser_page)
     assert [(f.label, f.widget or f.type) for f in d.fields] == [
         ("How did you hear about us?", "popup"), ("CV", "file")]
+
+
+# === SP5 review round 3 ============================================================================
+
+# --- R3-I1: a consent's floor from the label the extractor read -----------------------------------
+
+_LONG_ROUTINE = ("I have read the privacy notice for candidates and I understand how my personal "
+                 "information is collected, processed, stored and retained for this application, "
+                 "and I certify that the information provided in this application is true, "
+                 "accurate and complete to the best of my knowledge, and I agree to the terms "
+                 "and conditions of this application.")
+
+
+@pytest.mark.parametrize("box, partial, ticked", [
+    # the button's words are left out of the label: read in part
+    ("""<label><input type="checkbox" id="c" required> I agree to the Privacy Policy and the
+        <button type="button">Background Check Disclosure</button></label>""", True, False),
+    # a question box's words past the cap: read in part
+    (f"""<div class="q"><p>{_LONG_ROUTINE} I consent to a criminal background check</p>
+        <input type="checkbox" id="c" required></div>""", True, False),
+    ("""<label><input type="checkbox" id="c" required>
+        Я согласен на проверку судимости и Privacy Policy</label>""", False, False),
+    ("""<label><input type="checkbox" id="c" required> 我同意背景调查 Privacy Policy</label>""",
+     False, False),
+    ("""<label><input type="checkbox" id="c" required>
+        I consent to the Biometric Privacy Policy</label>""", False, False),
+    # an optional box
+    ("""<label><input type="checkbox" id="c">
+        I agree to the privacy notice for candidates</label>""", False, False),
+    ("""<label><input type="checkbox" id="c"> I accept the Talent Network Terms</label>""",
+     False, False),
+    # the one that ticks: required, whole, routine
+    ("""<label><input type="checkbox" id="c" required>
+        I agree to the privacy notice for candidates</label>""", False, True),
+])
+def test_a_consent_read_in_part_in_another_script_named_or_optional_keeps_its_high_floor(
+        browser_page, tmp_path, box, partial, ticked):
+    browser_page.set_content(f"<body><form>{box}</form></body>")
+    d = apply_form.extract(browser_page)
+    assert len(d.fields) == 1, [(f.label, f.type) for f in d.fields]
+    f = d.fields[0]
+    assert f.label_partial is partial, f.label
+    catalog = apply_facts.build(h.write_job_folder(tmp_path / "job"), answers=h.bank())
+    answers = {"field_0_source": jev.Answer(kind="choice", choice="consent_attest",
+                                            probabilities={"consent_attest": 0.74},
+                                            confidence=0.74)}
+    plan = apply_judge.plan(d, catalog, answers, company="Fabrikam")
+    assert (plan.fields[0].action == "select") is ticked, f.label
+    # the flag rides the digest's JSON
+    assert apply_form.FormDigest.from_dict(d.to_dict()).fields[0].label_partial is partial

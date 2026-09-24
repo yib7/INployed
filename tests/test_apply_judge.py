@@ -354,24 +354,52 @@ def test_a_routine_consent_ticks_at_the_mapping_floor_and_a_commitment_does_not(
     assert (targets == []) is ticked
 
 
-@pytest.mark.parametrize("label", [
-    "I agree to the privacy notice for candidates",
-    "I certify that the information provided is accurate",
-    "I agree with the terms and conditions of the application",
-    "I confirm that the information in this application is accurate",
-    "I have read and accept Fabrikam's Privacy Policy",
-    "I have read the Adatum Privacy Notice for Candidates",
-    "I consent to the processing and storage of my personal data for this application",
-    "I agree to be contacted about this role",
-    "By checking this box, I acknowledge that I have read the Terms of Use",
-    "I certify that the information in this application is true and complete to the best "
-    "of my knowledge",
+# the probes of review R3-I1 (all keep CONSENT_MIN_CONF)
+_CUT_300 = ("I have read the privacy notice for candidates and I understand how my personal "
+            "information is collected, processed, stored and retained for this application, "
+            "and I certify that the information provided in this application is true, "
+            "accurate and complete to the best of my knowledge, and I agree to the terms and "
+            "conditions of this application and to be contacted about")[:300]
+_NAMED_COMMITMENTS = [
+    "I consent to the Biometric Privacy Policy",
+    "I agree to the Binding Dispute Resolution Terms",
+    "I accept the Non-Disclosure Agreement Terms",
+    "I consent to the Video Interview Recording Terms",
+    "I agree to the Pre-Employment Assessment Terms",
+]
+_OPTIONAL_MARKETING = [
+    "Contact me about any position",
+    "I agree to be contacted about any role",
+    "Contact me by email",
+    "I accept the Talent Network Terms",
+    "I accept the Job Alerts Terms",
+    "I agree to the Future Opportunities Privacy Notice",
+]
+
+
+@pytest.mark.parametrize("label, company", [
+    ("I agree to the privacy notice for candidates", ""),
+    ("I certify that the information provided is accurate", ""),
+    ("I agree with the terms and conditions of the application", ""),
+    ("I confirm that the information in this application is accurate", ""),
+    # a single capitalised word before a possessive
+    ("I have read and accept Fabrikam's Privacy Policy", ""),
+    ("I accept Acme's Privacy Policy", ""),
+    # the job's company before a routine noun
+    ("I have read the Adatum Privacy Notice for Candidates", "Adatum"),
+    ("I have read the Adatum Corporation Privacy Notice", "Adatum Corporation, Inc."),
+    ("I consent to the processing and storage of my personal data for this application", ""),
+    ("I agree to be contacted about this role", ""),
+    ("I agree to be contacted regarding this position", ""),
+    ("By checking this box, I acknowledge that I have read the Terms of Use", ""),
+    ("I certify that the information in this application is true and complete to the best "
+     "of my knowledge", ""),
 ])
-def test_a_label_that_names_only_routine_things_is_a_routine_consent(label):
-    assert apply_judge.routine_consent(label), label
+def test_a_label_that_names_only_routine_things_is_a_routine_consent(label, company):
+    assert apply_judge.routine_consent(label, company=company), label
 
 
-@pytest.mark.parametrize("label", [
+@pytest.mark.parametrize("label, company", [(label, "Fabrikam") for label in [
     "I consent to a background check",
     "I consent to a criminal record check",
     "I consent to a credit check",
@@ -390,9 +418,65 @@ def test_a_label_that_names_only_routine_things_is_a_routine_consent(label):
     "I agree to the privacy policy and to share my data with Partners",
     "I agree",
     "I Agree To Share My Data With Partners",
+    "I agree to be contacted about the role",
+    # review R3-I1: other scripts, a label at the extractor's cap, commitments
+    # written as names, the contact family without this application or role
+    "Я согласен на проверку судимости и Privacy Policy",
+    "我同意背景调查 Privacy Policy",
+    _CUT_300,
+    *_NAMED_COMMITMENTS,
+    *_OPTIONAL_MARKETING,
+]] + [
+    # a name before a routine noun that is no job's company (none given, or another)
+    ("I have read the Adatum Privacy Notice for Candidates", ""),
+    ("I have read the Adatum Privacy Notice for Candidates", "Fabrikam"),
+    # two capitalised words before a possessive are no single name
+    ("I accept Talent Network's Privacy Policy", ""),
 ])
-def test_a_label_that_names_a_commitment_or_anything_else_is_no_routine_consent(label):
-    assert not apply_judge.routine_consent(label), label
+def test_a_label_that_names_a_commitment_or_anything_else_is_no_routine_consent(label, company):
+    assert len(_CUT_300) == 300
+    assert not apply_judge.routine_consent(label, company=company), label
+
+
+def test_a_consent_the_extractor_cut_or_an_optional_one_keeps_the_commitment_floor():
+    routine = "I agree to the privacy notice for candidates"
+    floor = apply_judge.consent_floor
+    assert floor(routine, required=True) == apply_judge.FIELD_MAP_MIN_CONF
+    # a label the extractor cut, or whose button or widget words it skipped
+    assert floor(routine, required=True, partial=True) == apply_judge.CONSENT_MIN_CONF
+    # an optional box
+    assert floor(routine, required=False) == apply_judge.CONSENT_MIN_CONF
+    for label in _OPTIONAL_MARKETING:
+        assert floor(label, required=False) == apply_judge.CONSENT_MIN_CONF, label
+
+
+@pytest.mark.parametrize("label, required, partial, ticked", [
+    ("I agree to the privacy notice for candidates", True, False, True),
+    ("I agree to the privacy notice for candidates", False, False, False),
+    ("I agree to the privacy notice for candidates", True, True, False),
+    ("I consent to the Biometric Privacy Policy", True, False, False),
+    *[(label, False, False, False) for label in _OPTIONAL_MARKETING],
+])
+def test_plan_ticks_at_074_only_a_required_whole_routine_consent(catalog, label, required,
+                                                                 partial, ticked):
+    box = _f(0, label, "checkbox", required=required)
+    box.label_partial = partial
+    digest = FormDigest(url_host="x", title="t", text="", fields=[box])
+    p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("consent_attest", 0.74)}),
+                         company="Fabrikam")
+    assert (p.fields[0].action == "select") is ticked, label
+
+
+def test_the_jobs_company_is_the_only_name_a_routine_consent_takes(catalog):
+    label = "I have read the Fabrikam Privacy Notice"
+    box = _f(0, label, "checkbox", required=True)
+    digest = FormDigest(url_host="x", title="t", text="", fields=[box])
+    answers = _page_answers(digest, {0: ("consent_attest", 0.74)})
+    assert apply_judge.plan(digest, catalog, answers, company="Fabrikam").fields[0].action == \
+        "select"
+    assert apply_judge.plan(digest, catalog, answers).fields[0].action == "skip"
+    assert apply_judge.plan(digest, catalog, answers, company="Adatum").fields[0].action == \
+        "skip"
 
 
 def test_unbacked_file_specials_are_not_offered(catalog, tmp_path):

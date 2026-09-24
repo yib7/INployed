@@ -60,6 +60,9 @@ class Field:
     click_locator: tuple[int, str] | None = None
     option_locators: list[str] = field(default_factory=list)   # per option, in its frame
     section: str = ""           # the heading the control sits under (READ-05)
+    # the label was read in part (review R3-I1): cut at its cap, or a button's or a
+    # dropdown's words inside it left out; a consent so read is never routine
+    label_partial: bool = False
     ident: str = ""             # who the control is (tag|type|id|name|aria|...): read again
                                 # before every act (FILL-02)
 
@@ -137,7 +140,8 @@ class FormDigest:
                         else None,
                         option_locators=[str(o) for o in (f.get("option_locators") or [])],
                         section=str(f.get("section", "") or ""),
-                        ident=str(f.get("ident", "") or ""))
+                        ident=str(f.get("ident", "") or ""),
+                        label_partial=bool(f.get("label_partial", False)))
                   for f in (raw.get("fields") or [])]
         buttons = [Button(n=int(b["n"]), locator=_locator(b.get("locator")),
                           text=str(b.get("text", "")),
@@ -742,6 +746,10 @@ _EXTRACT_JS = r"""
   // Teamtailor's sr-only "Required"); `stop(el)` ends the walk at that
   // element (a question's text before its first control)
   const REQ_CLASS = /(^|[\s_-])required([\s_-]|$)/i;
+  // noted in `marks` where a label's words were left out or cut (a button's or
+  // a dropdown's words skipped inside it, a box's words past their cap): such a
+  // label is read in part (`label_partial`, review R3-I1)
+  const CUT = '\u0000cut';
   const NOT_REQ_CLASS = /not[\s_-]?required|optional/i;
   const MARK_CHARS = /^\s*(?:[*\u2731\uff0a]+|\(\s*required\s*\)|required)\s*$/i;
   const styledMark = (n) => {
@@ -766,7 +774,12 @@ _EXTRACT_JS = r"""
       }
       if (n.nodeType !== 1) return;
       if (!top && stop && stop(n)) { stopped = true; return; }
-      if (SKIP_TEXT.test(n.tagName)) return;
+      if (SKIP_TEXT.test(n.tagName)) {
+        if (marks && !top && /^(BUTTON|SELECT)$/i.test(n.tagName) && norm(n.textContent)) {
+          marks.push(CUT);
+        }
+        return;
+      }
       if (!top && n.getAttribute('aria-hidden') === 'true') {
         // hidden from the reader, seen by the person: a marker there counts
         if (marks && n.getClientRects().length) marks.push(norm(n.textContent));
@@ -781,7 +794,10 @@ _EXTRACT_JS = r"""
       // class (Ashby's `_required_`): a marker the person sees (review I2)
       if (marks && st.visibility !== 'hidden' && styledMark(n)) marks.push('*');
       // a dropdown's shown value inside its label ("State Select a state")
-      if (!top && n.matches(WIDGET_TEXT)) return;
+      if (!top && n.matches(WIDGET_TEXT)) {
+        if (marks && norm(n.textContent)) marks.push(CUT);
+        return;
+      }
       if (!top && srOnly(n)) { if (marks) marks.push(norm(n.textContent)); return; }
       const block = !/^inline/.test(st.display) && st.display !== 'contents';
       if (block) out += ' ';
@@ -870,6 +886,7 @@ _EXTRACT_JS = r"""
         continue;
       }
       if (srAncestor(p) || MARK_ONLY.test(t)) { if (marks) marks.push(t); continue; }
+      if (marks && t.length > 120) marks.push(CUT);
       return t.slice(-120);
     }
     return '';
@@ -912,7 +929,12 @@ _EXTRACT_JS = r"""
   const isUpload = (n) => isCtrl(n) || n.matches('a[href], [role=link]')
     || (n.tagName === 'LABEL' && !!n.control && n.control.type === 'file');
   // the question's own words: its box's visible text before the first control
-  const boxText = (box, marks, stop) => box ? seen(box, marks, stop || isCtrl).slice(0, 300) : '';
+  const boxText = (box, marks, stop) => {
+    if (!box) return '';
+    const t = seen(box, marks, stop || isCtrl);
+    if (marks && t.length > 300) marks.push(CUT);
+    return t.slice(0, 300);
+  };
   // the words of the question `own` answers: up to five boxes above it, each
   // holding no other question's control, the first whose words before its
   // first control say something (a select's own wrapper often holds only
@@ -956,8 +978,11 @@ _EXTRACT_JS = r"""
     const [, req] = strip(seen(title, m), m);
     return req;
   };
+  const cutLabels = new Set();  // controls whose label was read in part
   const labelFor = (el, marks) => {
-    const [label, req] = labelWords(el, marks);
+    const m = marks || [];
+    const [label, req] = labelWords(el, m);
+    if (m.includes(CUT)) cutLabels.add(el);
     return [label, req || titleReq(el)];
   };
   const labelWords = (el, marks) => {
@@ -1132,7 +1157,7 @@ _EXTRACT_JS = r"""
       id_or_name: el.id || el.getAttribute('name') || '',
       autocomplete: norm(el.getAttribute('autocomplete')).toLowerCase(),
       click: x.click || '', option_css: x.option_css || [], widget: x.widget || '',
-      section: sectionOf(el), ident: identOf(el),
+      section: sectionOf(el), ident: identOf(el), label_partial: cutLabels.has(el),
     };
   };
 
@@ -1792,7 +1817,8 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
                 widget=str(f.get("widget") or ""),
                 click_locator=(idx, str(f["click"])) if f.get("click") else None,
                 option_locators=[str(o) for o in (f.get("option_css") or [])],
-                section=str(f.get("section") or ""), ident=str(f.get("ident") or "")))
+                section=str(f.get("section") or ""), ident=str(f.get("ident") or ""),
+                label_partial=bool(f.get("label_partial"))))
         for b in raw.get("buttons") or []:
             buttons.append(Button(n=len(buttons), locator=(idx, str(b["css"])),
                                   text=str(b["text"]), kind_hint=str(b.get("kind_hint") or ""),

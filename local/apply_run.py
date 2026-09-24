@@ -825,7 +825,7 @@ class _Accounts:
                 buttons=[apply_form.Button(0, (0, "a"), links.first.inner_text(), "")])
             plan = apply_judge.plan(link_digest, self.run.catalog,
                                     self.run._map(link_digest, {}, "job_posting", discover=False,
-                                                  own_page=False))
+                                                  own_page=False), company=self.run._company())
             advance_conf = plan.buttons.get("advance", (None, 0))[1]
             self.run._decide("signup_link", "the sign-in page's one create-account link",
                              target=target, advance=advance_conf)
@@ -937,7 +937,8 @@ class _Accounts:
         try:
             answers = self.run._map(digest, {}, "signup_form" if signup else "login_wall",
                                     discover=False)
-            plan = apply_judge.plan(digest, self.run.catalog, answers)
+            plan = apply_judge.plan(digest, self.run.catalog, answers,
+                                    company=self.run._company())
             rec = self.run.pages[-1] if self.run.pages else {"flags": {}}
             plan = self.run._complete_option_plan(digest, answers, plan, rec)
             advance = account_advance(digest, plan, signup=signup)
@@ -3278,7 +3279,8 @@ class _JobRun:
                     sites.add(_site(digest.url_host or _host(self.page.url)))
             self._map(digest, answers, state)
             plan = apply_judge.plan(digest, self.catalog, answers,
-                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]))
+                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]),
+                                    company=self._company())
             rec["flags"] = dict(plan.flags)
             self._trace("plan", plan=apply_trace.plan_json(plan))
             if state == "job_posting":
@@ -3320,6 +3322,11 @@ class _JobRun:
         trace."""
         for row in open_page(self.page, url):
             self._decide_next(**row)
+
+    def _company(self) -> str:
+        """The queue entry's company: the one name a routine consent's label
+        may carry (`apply_judge.routine_consent`, review R3-I1)."""
+        return str((self.entry or {}).get("company") or "")
 
     def _busy(self) -> bool:
         """Whether a loading placeholder shows in the viewport (an `aria-busy`
@@ -4066,7 +4073,8 @@ class _JobRun:
             picks = self.r.jev.judge(s2, q2)
             answers.update(picks)
             plan = apply_judge.plan(digest, self.catalog, answers,
-                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]))
+                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]),
+                                    company=self._company())
             rec["flags"] = dict(plan.flags)
             self._trace("option_picks", answers=apply_trace.answers_json(picks),
                         plan=apply_trace.plan_json(plan))
@@ -4083,7 +4091,8 @@ class _JobRun:
         makes no request. A field the data cannot answer still parks: the
         second look names `leave_blank` or `no_match` too; a consent tick
         read under its floor again still parks (review I1)."""
-        targets = apply_judge.reask_targets(digest, self.catalog, answers, plan, what=what)
+        targets = apply_judge.reask_targets(digest, self.catalog, answers, plan, what=what,
+                                            company=self._company())
         if not targets:
             return plan
         key = (urlsplit(str(getattr(self.page, "url", "") or "")).path, _fields_sig(digest),
@@ -4098,7 +4107,8 @@ class _JobRun:
             self._reask_cache[key] = dict(got)
         answers.update(got)
         plan = apply_judge.plan(digest, self.catalog, answers,
-                                generation_enabled=bool(self.r.settings["auto_apply_generate"]))
+                                generation_enabled=bool(self.r.settings["auto_apply_generate"]),
+                                company=self._company())
         rec["flags"] = dict(plan.flags)
         labels = {f.n: f.label for f in digest.fields}
         self._decide("reask", f"asked {len(targets)} required field(s) once more ({what})"
@@ -4902,7 +4912,7 @@ class _JobRun:
                     raise _Parked("needs_human", f"the emailed code was not accepted (the "
                                                  f"code screen came back, {conf:.2f}); "
                                                  f"{CHECK_SENT_REASON}")
-                plan = apply_judge.plan(digest, self.catalog, answers)
+                plan = apply_judge.plan(digest, self.catalog, answers, company=self._company())
                 rec["flags"] = dict(plan.flags)
                 self._code_gate(digest, plan, rec)
                 code_entered = True

@@ -98,6 +98,14 @@ def test_a_next_beside_a_submit_goes_on_unless_the_page_is_the_last_step(text, a
     assert (got, button[0]) == (step, 0 if step == "advance" else 1)
 
 
+def test_a_step_read_as_a_review_goes_on_beside_another_boxs_submit_too():
+    # the matrix's next_and_feedback_submit seed 8: the step read as a review
+    digest = _route_digest("", "Next", "Submit")
+    plan = FillPlan(buttons={"advance": (0, 0.88), "submit": (1, 0.93)})
+    assert apply_run.review_route(digest, plan, submit_apart=True)[:2] == ("advance", (0, 0.88))
+    assert apply_run.review_route(digest, plan)[:2] == ("gate", (1, 0.93))
+
+
 def test_a_stranger_that_took_the_advance_gives_way_to_the_forms_own_next():
     # the chat window's words, judged under noise: its close (in the site's
     # top bar) or its "Start chat" took the advance, the form's Next was

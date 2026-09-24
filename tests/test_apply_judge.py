@@ -382,9 +382,11 @@ _OPTIONAL_MARKETING = [
     ("I certify that the information provided is accurate", ""),
     ("I agree with the terms and conditions of the application", ""),
     ("I confirm that the information in this application is accurate", ""),
-    # a single capitalised word before a possessive
-    ("I have read and accept Fabrikam's Privacy Policy", ""),
-    ("I accept Acme's Privacy Policy", ""),
+    # the job's company before a possessive (review round 4, M2: no other name)
+    ("I have read and accept Fabrikam's Privacy Policy", "Fabrikam"),
+    ("I accept Acme's Privacy Policy", "Acme"),
+    ("I have read and agree to Checkr's Privacy Policy", "Checkr"),
+    ("I accept HireRight's Terms of Use", "HireRight Inc."),
     # the job's company before a routine noun
     ("I have read the Adatum Privacy Notice for Candidates", "Adatum"),
     ("I have read the Adatum Corporation Privacy Notice", "Adatum Corporation, Inc."),
@@ -432,6 +434,18 @@ def test_a_label_that_names_only_routine_things_is_a_routine_consent(label, comp
     ("I have read the Adatum Privacy Notice for Candidates", "Fabrikam"),
     # two capitalised words before a possessive are no single name
     ("I accept Talent Network's Privacy Policy", ""),
+    # review round 4, M2: a possessive name that is no job's company (two
+    # background-screening vendors)
+    ("I have read and agree to Checkr's Privacy Policy", "Fabrikam"),
+    ("I accept HireRight's Terms of Use", "Fabrikam"),
+    ("I accept Acme's Privacy Policy", ""),
+    # review round 4, M1: a label that ends on a function word was cut
+    ("I agree to the Privacy Policy and the", ""),
+    ("I certify that the information provided is accurate and", ""),
+    ("I agree with the terms and conditions of the", ""),
+    ("I have read the privacy notice of", ""),
+    ("I agree to the terms of a", ""),
+    ("I accept the privacy policy, and", ""),
 ])
 def test_a_label_that_names_a_commitment_or_anything_else_is_no_routine_consent(label, company):
     assert len(_CUT_300) == 300

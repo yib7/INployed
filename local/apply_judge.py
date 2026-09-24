@@ -261,10 +261,12 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
 #   role or "by email") and no commitment word;
 # - every word of it (any script: `[^\W_]+`) is a routine word, a word of
 #   assent or a function word, the job's company (its name before a routine
-#   noun: "the Fabrikam Privacy Notice"), or one capitalised word before a
-#   possessive ("Acme's Privacy Policy"). No other name is taken: "the
-#   Biometric Privacy Policy" and "the Talent Network Terms" are no routine
-#   consents.
+#   noun or a possessive: "the Fabrikam Privacy Notice", "Fabrikam's Privacy
+#   Policy"). No other name is taken: "the Biometric Privacy Policy", "the
+#   Talent Network Terms" and a vendor's "Checkr's Privacy Policy" are no
+#   routine consents (review round 4, M2);
+# - it does not end on a function word ("... and the"): such a label was cut
+#   (review round 4, M1).
 CONSENT_RULES: dict[str, Any] = {
     # at least one routine thing is named
     "routine": re.compile(
@@ -311,6 +313,8 @@ CONSENT_RULES: dict[str, Any] = {
                           "plc sa ag lp llp".split()),
     # a label this long is at the extractor's cap: read as cut
     "max_chars": 300,
+    # a label that ends on one of these was cut before its object
+    "dangling": re.compile(r"\b(the|a|an|and|or|to|of|for|with|by|in|on|at|from)\W*$", re.I),
 }
 
 
@@ -322,13 +326,14 @@ def routine_consent(label: str, *, company: str = "", partial: bool = False) -> 
     """Whether a consent box's own label names only routine things
     (`CONSENT_RULES`, the allowlist above): the label read whole (`partial`
     off), under the extractor's cap, naming a routine thing and no
-    commitment, a contact consent only about this application, role or
-    position, and every word a routine one, the job's `company` before a
-    routine noun, or one capitalised word before a possessive."""
+    commitment, not ending on a function word, a contact consent only
+    about this application, role or position, and every word a routine one
+    or the job's `company` before a routine noun or a possessive."""
     rules = CONSENT_RULES
     text = " ".join(str(label or "").split())
     if partial or not text or len(text) >= rules["max_chars"] \
-            or not rules["routine"].search(text) or rules["commitment"].search(text):
+            or not rules["routine"].search(text) or rules["commitment"].search(text) \
+            or rules["dangling"].search(text):
         return False
     if rules["contact"].search(text) and not rules["this_role"].search(text):
         return False
@@ -345,13 +350,6 @@ def routine_consent(label: str, *, company: str = "", partial: bool = False) -> 
         taken = _company_at(tokens, i, firm)
         if taken:
             i += taken
-            continue
-        # one capitalised word before a possessive: "Acme's Privacy Policy"
-        if token[:1].isupper() and i + 1 < len(tokens) and tokens[i + 1].lower() == "s" \
-                and re.search(re.escape(token) + r"['\u2019]s\b", text) \
-                and (i == 0 or not tokens[i - 1][:1].isupper()
-                     or tokens[i - 1].lower() in rules["words"]):
-            i += 2
             continue
         return False
     return True

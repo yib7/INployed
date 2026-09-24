@@ -302,6 +302,24 @@ def test_already_applied_is_the_pages_own_statement_on_a_page_with_nothing_to_fi
     boxed = FormDigest(url_host="x", title="Apply", text="You have already applied.",
                        fields=FORM.fields, buttons=FORM.buttons)
     assert apply_judge.page_facts(boxed).already_applied == ""
+    # R2-I1: a condition, on a sign-in page or on a page with no box at all
+    for sentence in ("If you have already applied, sign in with the email you used.",
+                     "Returning candidate? If you have already applied for a job, sign in "
+                     "below.",
+                     "If you have previously applied, please sign in"):
+        for fields, buttons in ((LOGIN.fields, [_b(0, "Sign in")]), ([], [])):
+            page = FormDigest(url_host="x", title="Sign in", text=f"Sign In. {sentence}",
+                              fields=fields, buttons=buttons)
+            facts = apply_judge.page_facts(page)
+            assert facts.already_applied == "", (sentence, fields)
+            state = "login_wall" if fields else "other"
+            step = apply_run.loop_step("https://x.example/login", page,
+                                       FillPlan(buttons={"advance": (0, 0.9)}), state, 0.9)
+            assert "already applied" not in step, (sentence, step)
+    # a sign-in page's own statement is no status page either
+    signin_said = FormDigest(url_host="x", title="Sign in", text="You have already applied.",
+                             fields=LOGIN.fields, buttons=[_b(0, "Sign in")])
+    assert apply_judge.page_facts(signin_said).already_applied == ""
     # a label that says it, with no "?", is a field's words
     labelled = FormDigest(url_host="x", title="Status", text="Already applied to Fabrikam",
                           fields=[_f(0, "Already applied to Fabrikam", "checkbox")], buttons=[])

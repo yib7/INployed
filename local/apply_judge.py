@@ -574,17 +574,25 @@ def entry_worded(text: str) -> bool:
             and not PROFILE_APPLY.search(text) and not SEND_WORDS.search(text))
 
 
+_CONDITION = re.compile(r"(?:if|when|whether)\b", re.I)
+
+
 def statement_words(pattern: re.Pattern, text: str, labels=()) -> str:
     """The first match of `pattern` in `text` the page states itself: never
-    one inside a field's label (`labels`) and never one in a question (its
+    one inside a field's label (`labels`), never one in a question (its
     sentence ends with "?": "Already applied? Sign in", "Have you already
-    applied to us before?"); "" when there is none."""
+    applied to us before?"), never one in a condition (its clause opens with
+    "if", "when" or "whether": "If you have already applied, sign in");
+    "" when there is none."""
     plain = str(text or "").translate(APOSTROPHES)
     own = [" ".join(str(label or "").translate(APOSTROPHES).lower().split())
            for label in labels]
     for m in pattern.finditer(plain):
         rest = re.match(r"[^.!?\n]*([.!?\n]|$)", plain[m.end():])
         if rest is not None and rest.group(1) == "?":
+            continue
+        start = max(plain.rfind(c, 0, m.start()) for c in ".,;:!?\n") + 1
+        if _CONDITION.match(plain[start:m.start()].strip()):
             continue
         words = " ".join(m.group(0).lower().split())
         if any(words in label for label in own):
@@ -745,10 +753,13 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
     received = sorted(confirmation_words(text))
     labels = [f.label for f in digest.fields]
     # a page's own word that the job was applied to, or is closed, counts only
-    # where no application box and no Apply entry is offered (I1, I2): a
-    # sign-in's "Already applied? Sign in", a screening question, an open
-    # posting's "until the position is filled" never do
-    plain_page = not app and not any(f.type == "file" for f in digest.fields) and not entries
+    # where no application box, no account box and no Apply entry is offered
+    # (I1, I2, R2-I1): a sign-in's "Already applied? Sign in" or "If you have
+    # already applied, sign in", a screening question, an open posting's
+    # "until the position is filled" never do; a site that means "you
+    # applied" says so on a status page
+    plain_page = (not app and not any(f.type == "file" for f in digest.fields) and not entries
+                  and not passwords and not email_first)
     applied_words = statement_words(ALREADY_APPLIED_WORDS, text, labels) if plain_page else ""
     closed_words = statement_words(CLOSED_WORDS, text, labels) if not entries else ""
     return PageFacts(

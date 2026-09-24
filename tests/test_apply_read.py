@@ -756,3 +756,49 @@ def test_a_placeholder_that_never_clears_costs_one_short_wait_per_page(context, 
     # the page is short, so its one wait is an empty read's: the settle (3 s
     # in the tests) and the placeholder's own LOADING_WAIT_S, never 8 s
     assert all(d["waited_ms"] < 6500 for d in waits), waits
+
+
+# --- review M11: the site's header never holds the entry or the way on ------------------------------
+
+_HEADER_ENTRY = """<!doctype html><html><head><title>Analyst - Fabrikam</title></head><body>
+<div data-automation-id="header"><button type="button"
+  onclick="document.body.dataset.general = 1">Submit A General Application</button></div>
+<main><h1>Analyst</h1><p>About the role: own the dashboards. Qualifications: SQL.</p>
+<a class="btn" href="/apply">Apply</a></main></body></html>"""
+
+
+class _HeaderAsEntry(jev.FakeJev):
+    """The fake, judging the header's "Submit A General Application" the
+    posting's entry at 0.95, above the page's own Apply at 0.90."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        for b in state.get("buttons") or []:
+            qid = f"button_{b['n']}_role"
+            conf = {"Submit A General Application": 0.95, "Apply": 0.90}.get(b.get("text"))
+            if conf and qid in out:
+                out[qid] = jev.Answer(kind="choice", choice="apply_entry", confidence=conf,
+                                      probabilities={"apply_entry": conf})
+        return out
+
+
+def test_a_header_control_judged_the_entry_never_beats_the_postings_own_apply(context, tmp_path):
+    _serve(context, {"/jobs/7": _HEADER_ENTRY,
+                     "/apply": (FORMS / "lever_single.html").read_text(encoding="utf-8")})
+    out, rec, _ = _drain(context, tmp_path, f"{CAREERS}/jobs/7", _HeaderAsEntry(),
+                         auto_apply_submit=False)
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+    clicked = [a.text for a in rec.actions if a.kind == "click"]
+    assert "Submit A General Application" not in clicked and "Apply" in clicked, clicked
+
+
+def test_a_header_advance_is_no_way_on_and_a_footers_next_is_the_pages(browser_page):
+    browser_page.set_content("""<body><header><button type="button">Sign In</button></header>
+      <form><label>First name <input name="f"></label></form>
+      <footer><button type="button">Next</button></footer></body>""")
+    d = apply_form.extract(browser_page)
+    assert {b.text: b.chrome for b in d.buttons} == {"Sign In": True, "Next": False}
+    header = next(b.n for b in d.buttons if b.text == "Sign In")
+    got, button, _ = apply_run.form_route(d, FillPlan(buttons={"advance": (header, 0.9)}),
+                                          park_mode=False)
+    assert got == "stuck", (got, button)

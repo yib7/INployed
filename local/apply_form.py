@@ -196,7 +196,9 @@ def _locator(raw: Any) -> tuple[int, str]:
 #   top bar  a Workday header (`data-automation-id*=header`) and a bar fixed
 #            or sticky at the top of the page (study G4) are chrome like the
 #            landmarks: no field is kept there, and its buttons carry
-#            `chrome` (the page read leaves them out). A button with no
+#            `chrome` (the page read leaves them out, the entry and the
+#            advance never take one; a footer's button is no chrome, a
+#            wizard's Next can live there). A button with no
 #            text, value, aria-label or title is dropped.
 # The label of one radio or checkbox option, self-contained so `apply_fill` can
 # run the same rule on a live locator: label[for], aria-label, an enclosing
@@ -384,6 +386,13 @@ _EXTRACT_JS = r"""
     + '[role=navigation], [role=search]';
   const inChrome = (el) => {
     const c = el.closest(CHROME);
+    return !!c && !(c.parentElement && c.parentElement.closest('form, dialog, [role=dialog]'));
+  };
+  // a button's chrome: the header, nav and search landmarks only; a footer
+  // holds a wizard's Next often enough (review M11)
+  const HEAD_CHROME = 'header, nav, search, [role=banner], [role=navigation], [role=search]';
+  const inHeadChrome = (el) => {
+    const c = el.closest(HEAD_CHROME);
     return !!c && !(c.parentElement && c.parentElement.closest('form, dialog, [role=dialog]'));
   };
   const consent = (__CONSENT__)();
@@ -684,7 +693,7 @@ _EXTRACT_JS = r"""
     if (!kind && /\b(back|previous)\b/i.test(text)) kind = 'back';
     const owner = el.form || el.closest('form');
     buttons.push({ css: locatorFor(el), text: text, kind_hint: kind,
-                   in_form: holdsControls(owner), chrome: inChrome(el) || topBar(el) });
+                   in_form: holdsControls(owner), chrome: inHeadChrome(el) || topBar(el) });
   }
 
   let text = document.body ? (document.body.innerText || '') : '';

@@ -1368,6 +1368,11 @@ def _button_text(digest: apply_form.FormDigest, n: int) -> str:
     return next((b.text for b in digest.buttons if b.n == n), "")
 
 
+def _chrome(digest: apply_form.FormDigest, n: int) -> bool:
+    """Is button `n` in the site's header or top bar (`Button.chrome`)?"""
+    return any(b.n == n and b.chrome for b in digest.buttons)
+
+
 def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
     """Whether the text describes a final application submission.
 
@@ -1634,6 +1639,8 @@ def posting_entry_choice(digest: apply_form.FormDigest, plan: FillPlan, *,
     judge took the alert box's button for the entry); (None, "") when
     none."""
     entry = plan.buttons.get("apply_entry")
+    if entry is not None and _chrome(digest, entry[0]):
+        entry = None            # the site's header is no posting's entry (M11)
     if entry is not None and entry[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF \
             and not _PROFILE_APPLY.search(_button_text(digest, entry[0])):
         button = next((b for b in digest.buttons if b.n == entry[0]), None)
@@ -1699,8 +1706,9 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
     advance = plan.buttons.get("advance")
     submit = plan.buttons.get("submit")
     why = ""
-    if advance is not None and apply_judge.DECLINE_WORDS.search(_button_text(digest, advance[0])):
-        advance = None
+    if advance is not None and (apply_judge.DECLINE_WORDS.search(_button_text(digest, advance[0]))
+                                or _chrome(digest, advance[0])):
+        advance = None          # a decline, or the site's header (M11), is no way on
     if advance is None and submit is None:
         accept = next((b for b in digest.buttons if apply_judge.ACCEPT_WORDS.search(b.text)
                        and not apply_judge.DECLINE_WORDS.search(b.text)
@@ -1911,7 +1919,7 @@ def fieldless_apply_choice(digest: apply_form.FormDigest, *,
     if digest.fields or unclassified:
         return None
     return next((b.n for b in digest.buttons
-                 if apply_judge.entry_worded(b.text) and not b.in_form), None)
+                 if apply_judge.entry_worded(b.text) and not b.in_form and not b.chrome), None)
 
 
 class LateWatch:

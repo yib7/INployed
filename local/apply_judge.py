@@ -1263,7 +1263,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     and below it follows the unanswerable rule; a sensitive box is never
     answered, and a password box is `PASSWORD_ACTION`, with no value. Buttons
     keep the highest-confidence n per role. The one
-    park reason is a required field without an answer; the flags are recorded only."""
+    park reason is a required field without an answer; the flags are recorded only. A
+    button of the site's header or top bar (`Button.chrome`) holds a role only
+    when no button of the page's own was judged to it."""
     out = FillPlan()
     required_reason = ""
     sensitive_reason_ = ""
@@ -1331,11 +1333,14 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             if f.required and not required_reason:
                 required_reason = f"required field without an answer: {f.label}"
 
+    chrome = {b.n for b in digest.buttons if getattr(b, "chrome", False)}
     for b in digest.buttons:
         role, conf = _choice_of(answers, f"button_{b.n}_role")
         if role is None:
             continue
-        if role not in out.buttons or conf > out.buttons[role][1]:
+        held = out.buttons.get(role)
+        # the page's own button beats the site's header for any role (M11)
+        if held is None or (b.n not in chrome, conf) > (held[0] not in chrome, held[1]):
             out.buttons[role] = (b.n, conf)
 
     out.flags = {qid: noul_of(answers, qid)

@@ -1158,31 +1158,37 @@ def test_a_linkedin_posting_the_judge_reads_as_signed_out_or_closed_still_goes_o
 
 
 class _UnsureJudge(jev.FakeJev):
-    """The fake, with every application form read at 0.33 and its Nouls
-    saying nothing either way."""
+    """The fake, with every application form read at 0.33, its details Noul
+    leaning against it (0.20) and every other page-read Noul saying nothing:
+    the combined read stays under the floor, so the unsure rule decides."""
 
     def judge(self, state, questions):
         out = super().judge(state, questions)
         a = out.get("page_state")
         if a is not None and a.choice == "application_form":
             h.read_as(out, a.choice, 0.33, nouls="neutral")
+            if "page_applicant_details" in out:
+                out["page_applicant_details"] = jev.Answer(kind="noul", noul=0.20)
         return out
 
 
 def test_an_unsure_read_of_a_form_is_acted_on_through_the_forms_own_gates(
         context, fixture_url, job_folder, catalog_builder, tmp_path):
-    # SP4: the judge's 0.33 is one voice of the read; the page's boxes read
-    # it as the form, and the form's own gates decide the rest
+    # an unsure read of a form (under the floor twice) goes on as its guess,
+    # and the form's own gates decide the rest (review I5: the path is the
+    # unsure rule's, `_check_unsure`, never the sure read's)
     _enqueue(job_folder, fixture_url("ashby_steps.html"))
     runner = _runner(context, tmp_path)
     runner.jev = _UnsureJudge()
     out = runner.drain(cap=1)[0]
     assert out.status == "submitted", out
-    assert "State: application_form (" in Path(out.record_path).read_text(encoding="utf-8")
     trace = sorted((job_folder / "apply_trace").glob("attempt-*"))[-1]
     first = json.loads((trace / "page-1.json").read_text(encoding="utf-8"))
     assert first["answers"]["page_state_judged"]["confidence"] == 0.33
     assert first["state"] == "application_form"
+    assert first["confidence"] < apply_judge.PAGE_STATE_MIN_CONF, first["confidence"]
+    decided = [e["what"] for e in first["events"] if e["kind"] == "decision"]
+    assert "reread_unsure" in decided and "unsure_goes_on" in decided, decided
 
 
 # A page whose structure places it nowhere (no box, no Apply, no Next): the

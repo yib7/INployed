@@ -1065,6 +1065,16 @@ FLOWS: tuple[Flow, ...] = (
          covers="a talent box's Submit above the application's own Submit, which refuses a "
                 "blank box: repaired, the application's Submit clicked again, the talent box "
                 "never sent (SP6 review I2)"),
+    Flow("recaptcha_disabled_submit", "recaptcha_disabled_submit.html", True, "needs_human",
+         r"^a CAPTCHA check is on the form before the submit", confirm="#received:visible",
+         routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
+         covers="a submit disabled until the reCAPTCHA tick: the gate's CAPTCHA path, the "
+                "person ticks it (SP6 review I4)"),
+    Flow("recaptcha_disabled_submit_park", "recaptcha_disabled_submit.html", False,
+         "ready_to_submit", r"^auto_apply_submit is off; a CAPTCHA checkbox is on the form",
+         confirm="#received:visible", gate="#btn-submit:visible",
+         routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},
+         covers="the same in park mode: the gate with the checkbox's note (SP6 review I4)"),
     # the chaos case: the form is drawn anew (the same markup, new nodes)
     # right after the run first reads it, before any act
     Flow("rerender_after_read", "lever_single.html", False, "ready_to_submit", _PARKED,
@@ -1621,7 +1631,10 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # a posting the run cannot apply to itself: a job board's with no link to
     # the company's site, an Apply that is an email address
     "^" + re.escape(apply_run.AGGREGATOR_REASON) + " on ",
-    "^" + re.escape(apply_run.MAILTO_REASON) + " to "))
+    "^" + re.escape(apply_run.MAILTO_REASON) + " to ",
+    # a real dead end (SP6 review I4): a way on still disabled once every
+    # field is answered, and no field the form or the plan names as blank
+    r"^the .{1,80} button stays disabled after the fill( \(|$)"))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

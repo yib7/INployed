@@ -4328,7 +4328,8 @@ class _JobRun:
         if step in ("advance", "gate"):
             self._unreadable(digest, button[0])
             digest, plan, verification, n = self._still_disabled(digest, plan, verification,
-                                                                 button[0], rec)
+                                                                 button[0], rec,
+                                                                 gate=step == "gate")
             button = (n, button[1])
         if step == "advance":
             self._advance(digest, plan, verification, rec, button[0], button[1])
@@ -4425,7 +4426,8 @@ class _JobRun:
         return plan
 
     def _still_disabled(self, digest: apply_form.FormDigest, plan: FillPlan,
-                        verification: list[VerifyResult], n: int, rec: dict
+                        verification: list[VerifyResult], n: int, rec: dict, *,
+                        gate: bool = False
                         ) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult], int]:
         """The way on the filled page chose (study G10): when its button is
         still disabled once the fill settled, and stays so for
@@ -4436,10 +4438,23 @@ class _JobRun:
         a required control left empty) and the boxes the plan left blank.
         Nothing is clicked. Returns the page, its plan, its verification and
         the button's `n` as the page now numbers it (the same control,
-        `_same_button`)."""
+        `_same_button`).
+
+        A CAPTCHA checkbox on the page comes first (SP6 review I4): a way on
+        disabled until the person ticks it is the gate's to hand over
+        (`gate`: `_submit_gate`'s CAPTCHA path, in either mode), and an
+        advance waits for the person's tick like the account step does."""
         button = next((b for b in digest.buttons if b.n == n), None)
         if button is None or not button.disabled:
             return digest, plan, verification, n
+        if self._human_check_showing(checkbox=True):
+            if gate:
+                self._decide("disabled_captcha", f"the {_cap(button.text, 40)} button is disabled "
+                                                 "and a CAPTCHA checkbox is on the page: the "
+                                                 "gate's CAPTCHA path")
+                return digest, plan, verification, n
+            self._wait_for_human_check("a CAPTCHA check is on the form before the step",
+                                       checkbox=True)
         for round_no in range(REPAIR_ROUNDS + 1):
             loc = apply_form.resolve(self.page, button.locator)
             deadline = time.monotonic() + DISABLED_WAIT_S
@@ -4485,9 +4500,13 @@ class _JobRun:
             label = " ".join(str(missing[0].get("label") or "a field").split())[:80]
             raise _Parked("needs_human", f"required field without an answer: {label} (the "
                                          f"{text} button stays disabled after the fill)")
-        rows = [_invalid_words(r) for r in invalid[:2]]
         if blank:
-            rows.append(f"left blank: {_cap(', '.join(blank), 120)}")
+            # the page wants a box the plan left blank (SP6 review I4): the
+            # unanswered fields are the evidence, in the policy's words
+            more = f"; also blank: {_cap(', '.join(blank[1:]), 100)}" if blank[1:] else ""
+            raise _Parked("needs_human", f"required field without an answer: {blank[0]} (the "
+                                         f"{text} button stays disabled after the fill{more})")
+        rows = [_invalid_words(r) for r in invalid[:2]]
         raise _Parked("needs_human", f"the {text} button stays disabled after the fill"
                                      + (f" ({_cap('; '.join(rows), 220)})" if rows else ""))
 

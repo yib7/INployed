@@ -503,7 +503,11 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
                     "submit click (POST x) and the page reads as the form again "
                     "(captcha_or_bot_check 0.17)", False),
     ("needs_human", "unsure what this page is (other, 0.30); reads: other 0.30, "
-                    "captcha_or_bot_check 0.20", False)])
+                    "captcha_or_bot_check 0.20", False),
+    # SP6 review I4: a way on still disabled with every field answered is a dead end
+    ("needs_human", "the Submit application button stays disabled after the fill", True),
+    ("needs_human", "required field without an answer: Referral code (the Submit application "
+                    "button stays disabled after the fill)", True)])
 def test_policy_parks_are_told_apart_from_the_rest(status, reason, policy):
     assert h.policy_park(status, reason) is policy
 

@@ -155,8 +155,9 @@ def test_a_still_disabled_submit_parks_naming_what_was_left_blank(_browser, flow
                    workdir=tmp_path)
     assert not r.breaks, r.breaks
     assert r.status == "needs_human", (r.status, r.reason)
-    assert r.reason.startswith("the Submit application button stays disabled after the fill "
-                               "(left blank: Referral code"), r.reason
+    assert r.reason == ("required field without an answer: Referral code (the Submit "
+                        "application button stays disabled after the fill)"), r.reason
+    assert r.policy is True
 
 
 # === the form's refusals, read and repaired (ADV-02, ADV-06, ADV-07) =====================================
@@ -405,3 +406,15 @@ def test_a_step_that_posted_and_never_moved_parks_without_a_second_click(_browse
     finally:
         flow_server.answers.pop(name, None)
         context.close()
+
+
+# --- I4: a submit disabled until the CAPTCHA tick goes the gate's CAPTCHA path -----------------------
+
+@pytest.mark.parametrize("name", ["recaptcha_disabled_submit", "recaptcha_disabled_submit_park"])
+def test_a_submit_disabled_until_the_captcha_tick_goes_the_gates_captcha_path(
+        _browser, flow_server, tmp_path, name):
+    r = h.run_flow(h.flow(name), jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.policy is True
+    assert any(d["what"] == "disabled_captcha" for d in _decisions(r))

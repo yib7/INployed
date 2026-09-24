@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Support Analyst - Northwind</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  .g-recaptcha iframe { width: 304px; height: 78px; border: 0; }
+  #captcha-error { display: none; color: #b00; }
+  #received { display: none; }
+</style>
+</head>
+<body>
+<h1>Support Analyst</h1>
+<p>Northwind, Seattle, WA</p>
+<!-- A reCAPTCHA v2 checkbox (a 78 px anchor frame, size=normal; the flow
+     routes its URL to a local stub) and its empty response token, and a
+     submit that stays disabled until the box is ticked (SP6 review I4).
+     `window.__tick()` stands in for the person ticking it. -->
+<div id="application">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" type="text" required></div>
+  <div class="field"><label for="last_name">Last name *</label><input id="last_name" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="g-recaptcha" id="widget">
+    <iframe title="reCAPTCHA" src="https://www.google.com/recaptcha/api2/anchor?ar=1&amp;k=synthetic-site-key&amp;size=normal"></iframe>
+    <textarea name="g-recaptcha-response" id="g-recaptcha-response" style="display:none"></textarea>
+  </div>
+  <p id="captcha-error" role="alert">Please complete the CAPTCHA.</p>
+  <button type="button" id="btn-submit" disabled>Submit application</button>
+</div>
+<section id="received">
+  <h2>Application received</h2>
+  <p>Thank you for applying.</p>
+</section>
+<script>
+  window.__tick = function () { document.getElementById('g-recaptcha-response').value = 'synthetic-token'; document.getElementById('btn-submit').disabled = false; };
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    if (!document.getElementById('g-recaptcha-response').value) {
+      document.getElementById('captcha-error').style.display = 'block';
+      return;
+    }
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('received').style.display = 'block';
+  });
+</script>
+</body>
+</html>

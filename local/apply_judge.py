@@ -57,7 +57,7 @@ from urllib.parse import urlsplit
 
 from apply_facts import FactCatalog, quick_map
 from apply_form import FormDigest, is_password_field
-from jev import PAGE_KIND_NOULS, Answer
+from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer
 
 log = logging.getLogger("apply_judge")
 
@@ -282,14 +282,13 @@ _SENDS_CRITERIA = {
 }
 
 _APPLY_WORD = re.compile(r"\bapply\b", re.I)
-_OTHER_SEND_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
 
 
 def apply_worded(text: str) -> bool:
     """A control whose only send word is "apply" ("Apply", "Apply now",
     "Apply Manually"): a posting's entry and a form's final button read the
     same, so the text alone never makes it the submit."""
-    return bool(_APPLY_WORD.search(text or "")) and not _OTHER_SEND_WORDS.search(text or "")
+    return bool(_APPLY_WORD.search(text or "")) and not SEND_WORDS.search(text or "")
 
 
 def read_sends(answers: Mapping[str, Answer], n: int) -> float:
@@ -469,8 +468,6 @@ CONFIRMATION_WORDS = re.compile(
     r"|application (?:has been |was |is )?(?:received|submitted|sent|complete)"
     r"|we(?:'ve| have) received your application"
     r"|successfully (?:applied|submitted)|you(?:'ve| have) (?:successfully )?applied", re.I)
-# typographic apostrophes read as the plain one before any words are matched
-_APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "＇": "'"})
 # A job applied to before (TERM-04), a posting that takes no more applications
 # (READ-08), a review of the answers, an error page, a bot check.
 ALREADY_APPLIED_WORDS = re.compile(
@@ -510,12 +507,13 @@ PROFILE_APPLY = re.compile(
     r"|(1|one)[\s-]*click\s+apply", re.I)
 _APPLY_ENTRY_WORDS = re.compile(r"\bapply\b|\bi'?m interested\b|\bstart (?:your |an |the )?"
                                 r"application\b", re.I)
-_SEND_ONLY_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
-# a sign-in's own send words: "Sign in", "Send code", "Send me a link"
-_SIGN_IN_SEND = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
+# the loop's words for a send and for a sign-in's own button: one name each
+SEND_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
+# a sign-in's own words: "Sign in", "Log on", "Send code", "Send me a link"
+SIGN_IN_WORDS = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
                            r"|\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
                            r"(code|link)\b", re.I)
-_ADVANCE_WORDS = re.compile(r"\b(next|continue)\b|^\s*(i\s+)?(accept|agree)\b", re.I)
+ADVANCE_WORDS = re.compile(r"\b(next|continue)\b|^\s*(i\s+)?(accept|agree)\b", re.I)
 # A button that accepts an application's privacy agreement or data consent
 # step (study G13: Taleo's "I Accept", Jobvite's "Accept"), and one that
 # declines or leaves it: never a step's way on.
@@ -555,7 +553,7 @@ _URL_SHAPES: tuple[tuple[str, re.Pattern], ...] = tuple(
 def confirmation_words(text: str) -> set[str]:
     """The received phrases (`CONFIRMATION_WORDS`) a page's text shows,
     lowercased, typographic apostrophes read as plain ones."""
-    plain = str(text or "").translate(_APOSTROPHES)
+    plain = str(text or "").translate(APOSTROPHES)
     return {" ".join(m.group(0).lower().split()) for m in CONFIRMATION_WORDS.finditer(plain)}
 
 
@@ -571,9 +569,9 @@ def entry_worded(text: str) -> bool:
     tips" or "Apply filters", "Applied", "Apply Later" or "Save for later"
     (study G4), a profile Apply (`PROFILE_APPLY`) or a send word ("Submit
     application")."""
-    text = str(text or "").translate(_APOSTROPHES)
+    text = str(text or "").translate(APOSTROPHES)
     return (bool(_APPLY_ENTRY_WORDS.search(text)) and not _NOT_ENTRY.search(text)
-            and not PROFILE_APPLY.search(text) and not _SEND_ONLY_WORDS.search(text))
+            and not PROFILE_APPLY.search(text) and not SEND_WORDS.search(text))
 
 
 def statement_words(pattern: re.Pattern, text: str, labels=()) -> str:
@@ -581,8 +579,8 @@ def statement_words(pattern: re.Pattern, text: str, labels=()) -> str:
     one inside a field's label (`labels`) and never one in a question (its
     sentence ends with "?": "Already applied? Sign in", "Have you already
     applied to us before?"); "" when there is none."""
-    plain = str(text or "").translate(_APOSTROPHES)
-    own = [" ".join(str(label or "").translate(_APOSTROPHES).lower().split())
+    plain = str(text or "").translate(APOSTROPHES)
+    own = [" ".join(str(label or "").translate(APOSTROPHES).lower().split())
            for label in labels]
     for m in pattern.finditer(plain):
         rest = re.match(r"[^.!?\n]*([.!?\n]|$)", plain[m.end():])
@@ -596,7 +594,7 @@ def statement_words(pattern: re.Pattern, text: str, labels=()) -> str:
 
 
 def _first_words(pattern: re.Pattern, text: str) -> str:
-    m = pattern.search(str(text or "").translate(_APOSTROPHES))
+    m = pattern.search(str(text or "").translate(APOSTROPHES))
     return " ".join(m.group(0).split()) if m else ""
 
 
@@ -720,8 +718,8 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
     # the page's own buttons: never the site's header or top bar (study G4)
     buttons = [b for b in digest.buttons if not getattr(b, "chrome", False)]
     # a send word other than a sign-in's ("Submit application", not "Send code")
-    sends = [b for b in buttons if _SEND_ONLY_WORDS.search(b.text)
-             and not _SIGN_IN_SEND.search(b.text)]
+    sends = [b for b in buttons if SEND_WORDS.search(b.text)
+             and not SIGN_IN_WORDS.search(b.text)]
     # the boxes of the page's own step: no job-alert, search or sort box
     # beside a posting, no remember-me
     own = [f for f in digest.fields
@@ -762,7 +760,7 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
                      for f in digest.fields),
         apply_entries=len(entries),
         send_buttons=len(sends),
-        advance_buttons=sum(1 for b in buttons if _ADVANCE_WORDS.search(b.text)),
+        advance_buttons=sum(1 for b in buttons if ADVANCE_WORDS.search(b.text)),
         received=received[0] if received else "",
         already_applied=applied_words,
         closed=closed_words, review=_first_words(REVIEW_WORDS, text),

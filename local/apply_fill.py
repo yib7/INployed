@@ -359,7 +359,7 @@ def _load(page, state: str, timeout_ms: int) -> None:
         pass
 
 
-def _ready_snapshot(page) -> tuple[tuple, bool]:
+def ready_snapshot(page) -> tuple[tuple, bool]:
     """(every frame's snapshot with its text length, a loading placeholder
     shows in some frame's viewport)."""
     out, busy = [], False
@@ -403,7 +403,7 @@ def _settle(page, timeout_s: float, *, navigated: list | None = None) -> dict[st
             _load(page, "networkidle", NETWORK_IDLE_MS)
             last = None
             quiet_since = time.monotonic()
-        snap, busy = _ready_snapshot(page)
+        snap, busy = ready_snapshot(page)
         busy_seen = busy_seen or busy
         if snap != last or ("gone",) in snap or busy:
             last = snap

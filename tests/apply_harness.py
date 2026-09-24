@@ -427,6 +427,27 @@ def tracker_routes(base: str) -> dict[str, str]:
     return routes
 
 
+def board_chain_routes(base: str, boards: tuple[str, ...] = ("www.dice.com",
+                                                              "www.ziprecruiter.com"),
+                       *, plain_apply: bool = False) -> dict[str, str]:
+    """LinkedIn's Apply to a chain of job boards (`boards`, each a copy of
+    `aggregator.html`), each board's company link to the next board and the
+    last one's to the company's form (`lever_single.html`). `plain_apply`:
+    the last board's only off-site control reads "Apply now" (review M7)."""
+    page = (FIXTURES_DIR / "forms" / "aggregator.html").read_text(encoding="utf-8")
+    targets = [f"https://{b}/job-detail/4438751519" for b in boards[1:]]
+    targets.append(f"{base}/forms/lever_single.html")
+    routes = linkedin_job_routes("linkedin_posting.html",
+                                 dest=lambda b: f"https://{boards[0]}/job-detail/4438751519")(base)
+    for i, (board, target) in enumerate(zip(boards, targets)):
+        body = page.replace("__COMPANY__", target)
+        if plain_apply and i == len(boards) - 1:
+            body = body.replace('<a class="btn" href="#board-apply" id="board-apply">Apply now</a>',
+                                "").replace(">Apply on company site<", ">Apply now<")
+        routes[f"https://{board}/**"] = body
+    return routes
+
+
 def board_routes(base: str, *, company_link: bool = True) -> dict[str, str]:
     """LinkedIn's Apply through its hop to a job board's copy of the posting,
     whose "Apply on company site" leads to the company's form
@@ -812,6 +833,10 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible", routes=board_routes,
          covers="a job board's copy of the posting: its link to the company's site is followed "
                 "once, the board is never filled"),
+    Flow("aggregator_chain", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", routes=board_chain_routes,
+         covers="a job board whose company link lands on a second board: the second board's "
+                "own company link is followed, neither board is filled"),
     Flow("aggregator_board_only", _LINKEDIN_JOB, True, "needs_human",
          r"^aggregator posting on www\.dice\.com: no link to the company's site",
          routes=lambda base: board_routes(base, company_link=False),
@@ -952,7 +977,7 @@ def submit_worded(text: str, *, park_mode: bool, account_step: bool = False) -> 
     words to the submit gate); or in park mode a last-step word on anything
     but an account step (`apply_run._final_shaped`)."""
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
-    if words - {"apply"} and not (account_step and apply_run._SIGN_IN_WORDS.search(text or "")):
+    if words - {"apply"} and not (account_step and apply_run.apply_judge.SIGN_IN_WORDS.search(text or "")):
         return True
     return (park_mode and bool(FINAL_WORDS.search(text or ""))
             and not apply_run._ACCOUNT_STEP_WORDS.search(text or ""))

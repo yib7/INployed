@@ -22,6 +22,7 @@
 Headless Chromium through the module-scoped test browser; the fixtures are
 served by the flow server, fake hosts are routed; the judge is `FakeJev`,
 `NoisyJev` or a scripted subclass. No network."""
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -390,10 +391,6 @@ def test_the_signature_ignores_times_counts_and_the_judges_read():
 
 # --- NAV-07, NAV-08, NAV-09, ALLOW-01, ALLOW-02: trackers, job boards, email ----------------------
 
-def _entry_ats():
-    return next(e for e in apply_queue.load()["jobs"] if e["job_posting_id"] == "42").get("ats")
-
-
 def test_an_ad_trackers_hop_is_waited_out_and_never_the_destination(
         _browser, flow_server, tmp_path):
     r = _flow("tracker_redirect", _browser, flow_server, tmp_path)
@@ -409,6 +406,45 @@ def test_a_job_boards_link_to_the_company_site_is_followed_once(_browser, flow_s
     on_board = [a for a in r.actions if "dice.com" in a.url]
     assert [a.text for a in on_board if a.kind == "click"] == ["Apply on company site"], on_board
     assert not [a for a in on_board if a.kind != "click"], on_board
+
+
+def test_a_board_whose_company_link_lands_on_another_board_reads_that_board_the_same_way(
+        _browser, flow_server, tmp_path):
+    # review I4: LinkedIn, a board, a second board, the company's form
+    r = _flow("aggregator_chain", _browser, flow_server, tmp_path)
+    assert r.ok and not r.breaks, r
+    boards = [a for a in r.actions if "dice.com" in a.url or "ziprecruiter.com" in a.url]
+    assert [a.text for a in boards if a.kind == "click"] == ["Apply on company site"] * 2, boards
+    assert not [a for a in boards if a.kind != "click"], boards
+    gates = [a for a in r.actions if a.kind == "gate"]
+    assert gates and all(a.url.endswith("/forms/lever_single.html") for a in gates), gates
+
+
+def test_a_chain_of_job_boards_past_the_bound_parks_and_no_board_is_the_application(
+        _browser, flow_server, tmp_path):
+    flow = dataclasses.replace(
+        h.flow("aggregator_chain"), name="aggregator_chain_3", status="needs_human",
+        reason=r"^aggregator posting on www\.talent\.com: a chain of job boards",
+        routes=lambda base: h.board_chain_routes(
+            base, ("www.dice.com", "www.ziprecruiter.com", "www.talent.com")))
+    r = h.run_flow(flow, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks and r.policy is True, r
+    assert not [a for a in r.actions if "talent.com" in a.url], r.actions
+    assert not [a for a in r.actions if a.kind in ("fill", "gate", "tick", "pick", "upload")]
+
+
+def test_a_boards_lone_apply_link_off_the_board_is_its_company_link(
+        _browser, flow_server, tmp_path):
+    # review M7: the off-site control reads just "Apply now"
+    flow = dataclasses.replace(
+        h.flow("aggregator_company_site"), name="aggregator_plain_apply",
+        routes=lambda base: h.board_chain_routes(base, ("www.dice.com",), plain_apply=True))
+    r = h.run_flow(flow, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, r
+    assert [a.text for a in r.actions if a.kind == "click" and "dice.com" in a.url] == [
+        "Apply now"]
 
 
 def test_a_job_board_with_no_link_to_the_company_site_parks_at_once(

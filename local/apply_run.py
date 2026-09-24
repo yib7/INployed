@@ -183,6 +183,7 @@ AGGREGATOR_SITES = frozenset((
     "hiring.cafe", "simplyhired.com", "careerbuilder.com", "monster.com", "snagajob.com",
     "adzuna.com", "jobleads.com", "theladders.com"))
 TRACKER_HOPS_MAX = 3               # tracker hops waited out after one entry click
+AGGREGATOR_BOARDS_MAX = 2          # job boards read for their company link in one job
 # Bot-check providers. Their frames' controls are never filled or clicked: a
 # challenge is the user's to solve in the visible window. DataDome
 # (`captcha-delivery.com`) and PerimeterX serve full-page checks (study G11).
@@ -1188,12 +1189,44 @@ _COMPANY_SITE = re.compile(
     r"(?:site|website)\b|\bapply\s+externally\b", re.I)
 
 
-def company_site_control(digest: apply_form.FormDigest) -> apply_form.Button | None:
-    """The control of an aggregator's posting that says it leads to the
-    company's own site ("Apply on company site", "Continue to the employer's
-    website"), never a form's own button; None when there is none."""
-    return next((b for b in digest.buttons if _COMPANY_SITE.search(
-        str(b.text or "").translate(apply_judge._APOSTROPHES)) and not b.in_form), None)
+def company_site_control(digest: apply_form.FormDigest, *, board: str = "",
+                         targets: Mapping[int, str] | None = None) -> apply_form.Button | None:
+    """The control of an aggregator's posting that leads to the company's own
+    site: one that says so ("Apply on company site", "Continue to the
+    employer's website"), else the one Apply-worded link (`targets`: each
+    button's link target) that leads off the board (`board`: the board's
+    host; M7: a board whose off-site control reads just "Apply"). Never a
+    form's own button or the site's chrome; None when there is none."""
+    said = next((b for b in digest.buttons if _COMPANY_SITE.search(
+        str(b.text or "").translate(jev.APOSTROPHES)) and not b.in_form), None)
+    if said is not None:
+        return said
+    off = [b for b in digest.buttons
+           if apply_judge.entry_worded(b.text) and not b.in_form and not b.chrome
+           and (targets or {}).get(b.n) and _site((targets or {})[b.n]) != _site(board)]
+    return off[0] if len(off) == 1 else None
+
+
+_LINK_TARGET_JS = ("el => { const a = el.closest('a[href]'); "
+                   "return a ? String(a.href || '') : ''; }")
+
+
+def link_targets(page, digest: apply_form.FormDigest) -> dict[int, str]:
+    """The link each Apply-worded control leads to (its own `a[href]` or its
+    enclosing one), by button number; a control that is no link is left
+    out."""
+    out: dict[int, str] = {}
+    for b in digest.buttons:
+        if not apply_judge.entry_worded(b.text):
+            continue
+        try:
+            href = str(apply_form.resolve(page, b.locator).first.evaluate(
+                _LINK_TARGET_JS, timeout=apply_fill.ACTION_TIMEOUT_MS) or "")
+        except Exception:       # noqa: BLE001  (a page double, a detached control)
+            continue
+        if href.lower().startswith(("http://", "https://")):
+            out[b.n] = href
+    return out
 
 
 def _on_linkedin_redirector(url: str) -> bool:
@@ -1348,9 +1381,6 @@ def _final_shaped(digest: apply_form.FormDigest, n: int) -> bool:
     return bool(button) and bool(FINAL_WORDS.search(button.text))
 
 
-_SIGN_IN_WORDS = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
-                            r"|\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
-                            r"(code|link)\b", re.I)
 _ACCOUNT_STEP_WORDS = re.compile(r"\b(registration|register|sign[\s-]*up|account|profile)\b",
                                  re.I)
 
@@ -1367,7 +1397,7 @@ def _sends_application(digest: apply_form.FormDigest, n: int, *,
     button = next((b for b in digest.buttons if b.n == n), None)
     text = button.text if button else ""
     if _submit_shaped(digest, n):
-        return not (account_only and _SIGN_IN_WORDS.search(text))
+        return not (account_only and apply_judge.SIGN_IN_WORDS.search(text))
     return _final_shaped(digest, n) and not _ACCOUNT_STEP_WORDS.search(text)
 
 
@@ -1379,7 +1409,7 @@ def _send_worded(text: str, *, entry: bool = False, account: bool = False) -> bo
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
     if entry:
         words.discard("apply")
-    if words and not (account and _SIGN_IN_WORDS.search(text or "")):
+    if words and not (account and apply_judge.SIGN_IN_WORDS.search(text or "")):
         return True
     return bool(FINAL_WORDS.search(text or "")) and not _ACCOUNT_STEP_WORDS.search(text or "")
 
@@ -1527,8 +1557,6 @@ def unsure_step(state: str, digest: apply_form.FormDigest,
     return None, ""
 
 
-_SEND_ONLY_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
-_NEXT_WORDS = apply_judge._ADVANCE_WORDS       # Next, Continue, I Accept (G13)
 
 
 def _runner_up(answers: Mapping[str, Any], exclude: str) -> tuple[str, float]:
@@ -1559,10 +1587,10 @@ def confirmation_step(digest: apply_form.FormDigest, answers: Mapping[str, Any],
     acts on that one (`_UNSURE_ACTS`); any other parks (the job may have
     been applied to before)."""
     words = confirmation_words(digest.text)
-    form = bool(digest.fields) or any(_SEND_ONLY_WORDS.search(b.text) for b in digest.buttons)
+    form = bool(digest.fields) or any(apply_judge.SEND_WORDS.search(b.text) for b in digest.buttons)
     # before any submit, a Next or a Continue asks for more too (SP4: a
     # wizard's summary step read as a confirmation)
-    step_button = any(_NEXT_WORDS.search(b.text) for b in digest.buttons)
+    step_button = any(apply_judge.ADVANCE_WORDS.search(b.text) for b in digest.buttons)
     if submit_clicked:
         if words or (conf >= apply_judge.CONFIRMATION_MIN_CONF and not form):
             return "submitted", "confirmation page", conf
@@ -2528,8 +2556,9 @@ class _JobRun:
         self.ats_host = ""
         self.ats_hosts: set[str] = set()       # every admitted ATS host; matched by site
         self.ats_transition_used = False
-        self._aggregator_host = ""        # a job board LinkedIn's Apply led to (NAV-08)
+        self._aggregator_host = ""        # the job board the tab is on (NAV-08)
         self._aggregator_left = False     # its company-site link was followed
+        self._boards: list[str] = []      # the boards read in this job, in order
         self.last_sig: tuple | None = None
         self.usage_before = jev.usage()
         self.start = runner.clock()
@@ -2792,8 +2821,27 @@ class _JobRun:
                 # is ever filled or signed in on it (`_password_ok`)
                 self.allowed.add(host)
                 self._aggregator_host = host
+                self._boards = [host]
                 self.ats_transition_used = True
                 self._decide_next("aggregator", f"LinkedIn's Apply led to a job board ({host})")
+                return
+            if _aggregator(host) and from_board:
+                # a board's company link that lands on another board (review
+                # I4): that board is read the same way, for its own company
+                # link (chains such as one board handing to another are
+                # common), up to `AGGREGATOR_BOARDS_MAX`; a board is never
+                # the application's site (`ats_hosts`)
+                chain = " -> ".join([*self._boards, host])
+                if len(self._boards) >= AGGREGATOR_BOARDS_MAX:
+                    raise _Parked("needs_human", f"{AGGREGATOR_REASON} on {host}: a chain of job "
+                                                 f"boards ({chain}) and no company site",
+                                  AGGREGATOR_NOTE)
+                self.allowed.add(host)
+                self._aggregator_host = host
+                self._aggregator_left = False
+                self._boards.append(host)
+                self._decide_next("aggregator", f"a job board's company link led to another "
+                                                f"board ({chain}); it is read the same way")
                 return
             if not (from_linkedin or from_board):
                 self._check_host(url)
@@ -3094,7 +3142,7 @@ class _JobRun:
         if digest.fields:
             return False
         try:
-            return bool(apply_fill._ready_snapshot(self.page)[1])
+            return bool(apply_fill.ready_snapshot(self.page)[1])
         except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
             return False
 
@@ -3295,15 +3343,18 @@ class _JobRun:
 
     def _aggregator_step(self, digest: apply_form.FormDigest) -> bool:
         """A job board's posting (NAV-08): its company-site control
-        (`company_site_control`) is clicked once as the entry, and the page
-        it leads to is the application's (`_admit_ats_transition`); a board's
-        posting without one parks at once, never filled or signed in on.
-        False off a board, or once its link was followed."""
+        (`company_site_control`: one that says so, or the one Apply link off
+        the board) is clicked once as the entry, and the page it leads to is
+        the application's (`_admit_ats_transition`; another board is read the
+        same way, `AGGREGATOR_BOARDS_MAX`); a board's posting without one
+        parks at once, never filled or signed in on. False off a board, or
+        once its link was followed."""
         host = _host(str(self.page.url or ""))
         if not _aggregator(host) or self._aggregator_left:
             return False
         rec = self._new_page_record("job_posting", 1.0, digest=digest, answers={})
-        control = company_site_control(digest)
+        control = company_site_control(digest, board=host,
+                                       targets=link_targets(self.page, digest))
         if control is None:
             self._decide("aggregator", f"a job board's posting ({host}) with no link to the "
                                        "company's site")
@@ -3315,7 +3366,7 @@ class _JobRun:
                                    f"site is the entry", text=control.text)
         self._click_entry(rec, apply_form.resolve(self.page, control.locator), control.text,
                           how="aggregator_company_site", n=control.n)
-        if not self._aggregator_left and _aggregator(self.page.url):
+        if not self._aggregator_left and _host(str(self.page.url or "")) == host:
             raise _Parked("needs_human", f"{AGGREGATOR_REASON} on {host}: its link to the "
                                          f"company's site ({_cap(control.text, 60)}) stayed on "
                                          f"the board", AGGREGATOR_NOTE)
@@ -4389,7 +4440,7 @@ class _JobRun:
         # save-your-profile password on an application is no account page
         account = bool(typed) and (any(pf.required for pf in typed)
                                    or bool(_ACCOUNT_STEP_WORDS.search(text)
-                                           or _SIGN_IN_WORDS.search(text)))
+                                           or apply_judge.SIGN_IN_WORDS.search(text)))
         self._after_submit(account=account, handoff=self.handed_off)
 
     def _moved_during_wait(self, digest: apply_form.FormDigest) -> bool:
@@ -4620,7 +4671,7 @@ class _JobRun:
         since the click (`marker`), or the judge's confirmation of this very
         page (`judged`) at `CONFIRMATION_MIN_CONF` with no form field and no
         send button. Raises `submitted`."""
-        send_button = any(_SEND_ONLY_WORDS.search(b.text) for b in digest.buttons)
+        send_button = any(apply_judge.SEND_WORDS.search(b.text) for b in digest.buttons)
         if not (marker or (state == "confirmation" and judged
                            and conf >= apply_judge.CONFIRMATION_MIN_CONF
                            and not digest.fields and not send_button)):
@@ -4733,7 +4784,7 @@ class _JobRun:
                                          f"({read}); the session may have expired before the "
                                          f"send")
         if sure and state in ("application_form", "review_page") and any(
-                _SEND_ONLY_WORDS.search(b.text) for b in digest.buttons):
+                apply_judge.SEND_WORDS.search(b.text) for b in digest.buttons):
             raise _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left {when} ({first}) "
                                          f"and the page is a form with its own send button "
                                          f"({read})")

@@ -299,11 +299,13 @@ class FakeJev:
                       confidence=1.0)
 
 
-_APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'", "＇": "'"})
+# typographic apostrophes read as the plain one before words are matched
+# (the one table: apply_judge and apply_run read it too)
+APOSTROPHES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'", "\uff07": "'"})
 
 
 def _plain(text: str) -> str:
-    return " ".join(str(text or "").translate(_APOSTROPHES).lower().split())
+    return " ".join(str(text or "").translate(APOSTROPHES).lower().split())
 
 
 def _phrase_in(phrase: str, text: str) -> bool:

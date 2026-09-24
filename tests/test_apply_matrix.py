@@ -353,6 +353,14 @@ def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
     _RESULTS[flow_name] = results
     table = h.summary(results)
     assert all(not r.breaks for r in results), table
+    # SP4's checkpoint, per flow so it runs under xdist too (review M4): a
+    # page is never left unread ("unsure what this page is") and a moving
+    # page never reads as stuck ("page did not advance") but where the flow
+    # is built to end so
+    stuck = ("unsure what this page is", "page did not advance")
+    wrong = [(r.judge, r.reason) for r in results
+             if not r.ok and (r.reason or "").startswith(stuck)]
+    assert not wrong, wrong
     fake = next(r for r in results if r.judge == "fake")
     if f.known:
         assert not fake.ok, (f"{flow_name} reaches its end now; clear its known flag "
@@ -371,19 +379,6 @@ def test_the_success_floors_over_the_whole_registry():
     assert rates["breaks"] == 0, table
     assert rates["fake"] >= h.FAKE_SUCCESS_FLOOR, table
     assert rates["noisy"] >= h.SUCCESS_FLOOR, table
-
-
-def test_no_flow_parks_unsure_or_not_advancing_unless_it_is_designed_to():
-    # SP4's checkpoint, a property over every flow under the fake and the
-    # pinned noisy seeds: a page is never left unread ("unsure what this page
-    # is") and a moving page never reads as stuck ("page did not advance")
-    # but where a flow is built to end so
-    if set(_RESULTS) != {f.name for f in h.FLOWS}:
-        pytest.skip("the per-flow matrix tests did not all run")
-    stuck = ("unsure what this page is", "page did not advance")
-    wrong = [(r.flow, r.judge, r.reason) for name, rows in _RESULTS.items() for r in rows
-             if not r.ok and (r.reason or "").startswith(stuck)]
-    assert not wrong, wrong
 
 
 # === review round 1 ===============================================================================
@@ -498,7 +493,17 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
     ("needs_human", "unsure what this page is (other, 0.30)", False),
     ("ready_to_submit", "submit did not register", False),
     ("submitted", "confirmation page", None),
-    ("failed", "TimeoutError: x", False)])
+    ("failed", "TimeoutError: x", False),
+    # review M3: the captcha words count only as the park's own reason
+    ("needs_human", "a CAPTCHA challenge appeared after the submit click", True),
+    ("needs_human", "a CAPTCHA check is on the form before the submit; not solved in time", True),
+    ("needs_human", "the advance button (Next) did nothing (judged advance 1.00, clicked twice); "
+                    "a CAPTCHA checkbox on the page is unticked: tick it, then Re-queue", True),
+    ("needs_human", "check whether the application went through: a request left after the "
+                    "submit click (POST x) and the page reads as the form again "
+                    "(captcha_or_bot_check 0.17)", False),
+    ("needs_human", "unsure what this page is (other, 0.30); reads: other 0.30, "
+                    "captcha_or_bot_check 0.20", False)])
 def test_policy_parks_are_told_apart_from_the_rest(status, reason, policy):
     assert h.policy_park(status, reason) is policy
 

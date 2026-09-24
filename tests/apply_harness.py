@@ -1345,7 +1345,11 @@ def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends) -> None:
 _POLICY_PARKS = tuple(re.compile(p) for p in (
     r"^auto_apply_submit is off(; |$)", r"^required field without an answer",
     r"^asks for .*which auto-apply never fills", r"^payment requested",
-    r"(?i)captcha|bot check", r"^error or dead page",
+    # a bot check nobody solved: the loop's park and the run's own CAPTCHA
+    # reasons, anchored (an unanchored word matched a reads list's
+    # "captcha_or_bot_check 0.17" inside another park's evidence, review M3)
+    r"^captcha or bot check on the page", r"^a CAPTCHA (?:challenge|check) ",
+    r"; a CAPTCHA checkbox on the page is unticked: tick it", r"^error or dead page",
     "^" + re.escape(apply_run.CLOSED_REASON), "^" + re.escape(apply_run.TAB_CLOSED_REASON),
     "^" + re.escape(apply_run.EASY_APPLY_REASON) + "$",
     "^" + re.escape(apply_run.apply_linkedin.APPLIED_REASON),

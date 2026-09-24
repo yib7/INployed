@@ -1143,8 +1143,46 @@ def test_a_named_chrome_popup_is_still_no_field(browser_page):
         <button type="button" id="lang" aria-haspopup="menu">English</button></div>
       <div><label for="acct">Your account</label>
         <button type="button" id="acct" aria-haspopup="true">Jane</button></div>
+      <div><label for="cl">Change language</label>
+        <button type="button" id="cl" aria-haspopup="menu">English</button></div>
+      <div><label for="as">Account settings</label>
+        <button type="button" id="as" aria-haspopup="menu">Open</button></div>
+      <!-- review R5-I1: a popup that sends or goes on, by its own text or aria-label -->
+      <div class="split"><button type="submit">Submit application</button>
+        <button type="button" aria-haspopup="menu" aria-label="More submit options">
+          <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></div>
+      <button type="button" aria-haspopup="menu" aria-label="Save and continue">Save and
+        continue</button>
+      <button type="button" aria-haspopup="menu" aria-label="Continue with">Continue with</button>
+      <button type="button" aria-haspopup="menu" aria-label="Apply with">Apply with</button>
+      <button type="button" aria-haspopup="true" aria-label="Next step">Next step</button>
       </form></body>""")
-    assert apply_form.extract(browser_page).fields == []
+    d = apply_form.extract(browser_page)
+    assert d.fields == [], [(f.label, f.widget) for f in d.fields]
+    # a way-on popup stays among the page's buttons
+    assert "Save and continue" in [b.text for b in d.buttons]
+
+
+# --- R5 Minor 1: a menu label is chrome only when it names the chrome itself ----------------------
+
+def test_a_language_question_and_a_listbox_answered_back_are_fields(browser_page):
+    browser_page.set_content("""<body><form>
+      <div><label for="pl">Preferred language *</label>
+        <button type="button" id="pl" aria-haspopup="menu">Select...</button></div>
+      <div><label for="il">Interview language</label>
+        <button type="button" id="il" aria-haspopup="menu">Select...</button></div>
+      <div><label for="bt">Bank account type</label>
+        <button type="button" id="bt" aria-haspopup="menu" aria-required="true">Choose</button>
+      </div>
+      <div><label for="st">Stack preference</label>
+        <button type="button" id="st" aria-haspopup="listbox" aria-controls="st-list">Back</button>
+        <div role="listbox" id="st-list" hidden><div role="option">Front</div>
+          <div role="option">Back</div><div role="option">Full stack</div></div></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.required, f.widget) for f in d.fields] == [
+        ("Preferred language", True, "popup"), ("Interview language", False, "popup"),
+        ("Bank account type", True, "popup"), ("Stack preference", False, "popup")]
 
 
 # --- R4 Minor 1: every skipped subtree with words marks the label read in part --------------------

@@ -1526,9 +1526,16 @@ _EXTRACT_JS = r"""
   const POPUP_TOOL = /^(import|autofill|upload|attach)\b|^(sort|filter)( by)?\s*[:\-]/i;
   // a menu popup's label names the site's own chrome; a label that asks is
   // a question, whatever words it holds
-  const POPUP_CHROME_LABEL = /\b(account|profile|settings|language|share|sort|filter)\b/i;
+  // a label that names the chrome itself, short: "Language", "Change
+  // language", "Account settings", "Your account" (review round 5, Minor 1:
+  // "Interview language" and a starred "Preferred language" are questions)
+  const POPUP_CHROME_LABEL = /^((change|select|choose|switch|set|your|my|site|display)\s+)?(language|account|profile|settings|share|sort( by)?|filters?)(\s+(settings|preferences|options|menu))?$/i;
   const ASKS = /\?\s*$|\ball that apply\b/i;
   const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
+  // a control that sends or goes on, by its own words (review R5-I1: a
+  // submit's menu arrow "More submit options", a "Save and continue" menu):
+  // never a field, never opened to read its options, still a button
+  const POPUP_WAY_ON = /\b(submit|send|finish|continue|apply with|next step)\b/i;
   for (const el of all) {
     if (consumed.has(el) || !el.matches(FIELD_SEL)) continue;
     if (!usable(el)) continue;
@@ -1653,19 +1660,30 @@ _EXTRACT_JS = r"""
       // one holding its own text box is that box's (the box is the field)
       if (Array.from(el.querySelectorAll('input:not([type=hidden])')).some(visible)) continue;
       const text = norm(el.innerText) || norm(el.value);
-      if (chromePopup(text)) continue;
+      const aria = norm(el.getAttribute('aria-label'));
+      if (POPUP_WAY_ON.test(text) || (aria && !ASKS.test(aria) && POPUP_WAY_ON.test(aria))) continue;
       const [label, req] = labelFor(el, marks);
       const scoped = !!closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset');
       const placeholder = PLACEHOLDER_OPTION.test(text);
       // named by a label of its own (never only by the words above it)
       const named = !!labelElementFor(el) || !!el.getAttribute('aria-labelledby')
-        || !!ariaWords(el.getAttribute('aria-label'))[0];
+        || !!ariaWords(aria)[0];
+      const required = req || isRequired(el);
+      // a label that asks, or a required one, is a question's
+      const question = !!label && (ASKS.test(label) || required);
+      const chromeLabel = !!label && !question && (chromePopup(label)
+                                                   || POPUP_CHROME_LABEL.test(label));
+      // a shown chrome word: chrome, unless a listbox holds it as its answer
+      // (options of its own, or a question's label: "Stack preference: Back")
+      if (chromePopup(text) && !(pop === 'listbox' && (listboxOptions(el).length
+                                                        || (named && label && !chromeLabel)))) {
+        continue;
+      }
       if (pop !== 'listbox' && !(placeholder || named)) continue;
-      if (pop !== 'listbox' && label && !ASKS.test(label)
-          && (chromePopup(label) || POPUP_CHROME_LABEL.test(label))) continue;
+      if (pop !== 'listbox' && chromeLabel) continue;
       if (pop === 'listbox' && !(scoped || named || placeholder)) continue;
       asButtons.add(el);
-      push(el, describe(el, 'listbox', label || text, req || isRequired(el), locatorFor(el),
+      push(el, describe(el, 'listbox', label || text, required, locatorFor(el),
                         listboxOptions(el), { widget: 'popup' }));
       continue;
     }

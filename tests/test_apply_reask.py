@@ -454,6 +454,38 @@ def test_a_re_read_of_the_same_page_reuses_the_second_look(_browser, flow_server
     assert judge.second_looks == 1
 
 
+# --- review round 5, R5-I1: discovery never clicks a popup that sends -----------------------------
+
+_SPLIT_SUBMIT = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
+<h1>Analytics Engineer</h1>
+<form id="app" onsubmit="event.preventDefault(); document.body.dataset.submitted = 1">
+  <label for="fn">First name *</label><input id="fn" name="first_name" required>
+  <label for="em">Email *</label><input id="em" name="email" type="email" required>
+  <div class="split"><button type="submit" id="btn-submit">Submit application</button>
+    <button type="button" id="more" aria-haspopup="menu" aria-label="More submit options"
+      onclick="document.getElementById('menu').hidden = false">
+      <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></div>
+  <div role="menu" id="menu" hidden><div role="menuitem">Submit and save a copy</div></div>
+</form></body></html>"""
+
+
+def test_discovery_never_clicks_a_popup_whose_own_words_send(_browser, flow_server, tmp_path):
+    """Review R5-I1: a submit's menu arrow ("More submit options") read as a
+    dropdown was opened by the options discovery, a click outside the
+    submit gate on a control that reads submit (CLICK-OUTSIDE-GATE)."""
+    import dataclasses
+    f = dataclasses.replace(h.flow("lever_single_park"), name="split_submit",
+                            start="https://careers.fabrikam.example/apply/42",
+                            routes=lambda base: {"https://careers.fabrikam.example/**":
+                                                 _SPLIT_SUBMIT})
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.ok, (r.status, r.reason)
+    assert not [a for a in r.actions if a.kind == "click" and "submit" in (a.text or "").lower()
+                and not a.in_gate]
+
+
 # --- review round 3, M4: the commitment floor in the matrix ---------------------------------------
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])

@@ -1039,7 +1039,10 @@ _LIVE_JS = r"""el => {
   } else if (tag !== 'textarea' && tag !== 'select') {
     text = el.innerText || el.textContent || '';
   }
-  text = (text || el.getAttribute('aria-label') || el.getAttribute('title') || '')
+  // an icon button's words are its accessible name (review R5-I1: a submit's
+  // menu arrow whose only text is white space around an svg)
+  const shown = (text || '').replace(/\s+/g, ' ').trim();
+  text = (shown || el.getAttribute('aria-label') || el.getAttribute('title') || '')
     .replace(/\s+/g, ' ').trim().slice(0, 160);
   // a box no person fills, by the page's own truth, never the extractor's
   // word lists (review M10): read-only (a combobox opens on a click), a box

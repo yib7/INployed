@@ -4179,7 +4179,11 @@ class _JobRun:
         click failed and a second click could send twice, so a
         landed-but-quiet submit waits up to `SUBMIT_SETTLE_S` for the page
         instead. Any other role gets one retry of a quiet click; a dead
-        advance parks with the button, its role and the judge's confidence."""
+        advance parks with the button, its role and the judge's confidence.
+        A click that opens a new tab (NAV-05), right away or a moment after
+        the click (the tabs are watched until the retry, which waits
+        `POPUP_GRACE_S` for one first, review M5), is followed and never
+        clicked again."""
         button = next((b for b in digest.buttons if b.n == n), None)
         text = button.text if button else f"button {n}"
         rec["clicked"].append(f"{text} ({role})")
@@ -4188,6 +4192,11 @@ class _JobRun:
         check = self._live_check(role)
         with _popups(self.page) as opened:
             result = apply_fill.click(self.page, digest, n, timeout_s=timeout, check=check)
+            if (role != "submit" and not opened and not result.changed
+                    and not result.refused and result.clicked):
+                # a tab that opens a moment after the click comes before any
+                # second click
+                self.page.wait_for_timeout(int(POPUP_GRACE_S * 1000))
         self._trace("click", n=n, text=text, role=role, confidence=conf,
                     clicked=result.clicked, changed=result.changed, url=str(self.page.url),
                     refused=result.refused, late=result.late, popups=len(opened))
@@ -4211,12 +4220,15 @@ class _JobRun:
         if result.changed:
             return result
         self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
-        result = apply_fill.click(self.page, digest, n, timeout_s=timeout, check=check)
+        with _popups(self.page) as opened:
+            result = apply_fill.click(self.page, digest, n, timeout_s=timeout, check=check)
         self._trace("click", n=n, text=text, role=role, confidence=conf, retry=True,
                     clicked=result.clicked, changed=result.changed, url=str(self.page.url),
-                    refused=result.refused)
+                    refused=result.refused, popups=len(opened))
         if result.refused:
             self._refused_click(role, text, result.refused)
+        if opened and not result.changed and self._adopt_click_popup(opened[0], text, role):
+            return apply_fill.ClickResult(clicked=True, changed=True, late=result.late)
         if not result.changed and role == "advance":
             if self._human_check_showing():
                 self._wait_for_human_check(f"a CAPTCHA challenge appeared after {text}")

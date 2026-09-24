@@ -698,3 +698,33 @@ def test_a_privacy_step_whose_roles_are_exchanged_is_still_accepted(_browser, fl
     assert r.ok and not r.breaks, r
     clicked = [a.text for a in r.actions if a.kind == "click"]
     assert "I Decline" not in clicked and "I Accept" in clicked, clicked
+
+
+_LATE_TAB = """<!doctype html><html><head><title>Apply - Tailwind Traders</title></head><body>
+<h1>Tailwind Traders: Data Engineer</h1>
+<label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+<p id="note"></p>
+<button type="button" id="next">Next</button>
+<script>
+  document.getElementById('next').addEventListener('click', function () {
+    if (!document.getElementById('first_name').value) { return; }
+    // "Opening..." then the tab a moment later, after the click has returned
+    setTimeout(function () { window.open('/apply/step2', '_blank'); }, 150);
+  });
+</script></body></html>"""
+_STEP2 = """<!doctype html><html><head><title>Apply - step 2</title></head><body>
+<h1>Contact</h1><label for="email">Email *</label><input id="email" type="email" required>
+<button type="button" id="btn-submit">Submit application</button></body></html>"""
+
+
+def test_a_tab_that_opens_a_moment_after_the_click_is_followed_before_any_second_click(
+        context, tmp_path, monkeypatch):
+    # review M5: the click's own wait ends before the tab opens
+    real = apply_run.apply_fill.click
+    monkeypatch.setattr(apply_run.apply_fill, "click",
+                        lambda page, digest, n, **kw: real(page, digest, n,
+                                                           **{**kw, "timeout_s": 0.05}))
+    _serve(context, {"/apply/1": _LATE_TAB, "/apply/step2": _STEP2})
+    out, rec, folder = _drain(context, tmp_path, f"{CAREERS}/apply/1", auto_apply_submit=False)
+    assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+    assert [a.text for a in rec.actions if a.kind == "click"].count("Next") == 1, rec.actions

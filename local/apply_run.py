@@ -1399,8 +1399,10 @@ _SIGN_IN_ONLY = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b", re.I)
 def password_step(digest: apply_form.FormDigest) -> str:
     """What an account screen's password boxes say it is (review R2-I4):
     "signup" for a `new-password` box or two boxes (a password and its
-    confirmation), "signin" for `current-password` alone; "" (the read
-    decides) with no box, one box that names neither (a one-box sign-up
+    confirmation), "signin" for `current-password` alone, or for one box
+    that names neither beside a "Forgot your password?" control (a sign-in's
+    own tie-break, review round 4, M4); "" (the read decides) with no box,
+    one box that names neither and nothing else to go on (a one-box sign-up
     looks like a sign-in, review round 3, M2), or boxes that say both (a
     change of password)."""
     boxes = [f for f in digest.fields
@@ -1412,7 +1414,14 @@ def password_step(digest: apply_form.FormDigest) -> str:
         return ""
     if "new-password" in tokens or len(boxes) >= 2:
         return "signup"
-    return "signin" if "current-password" in tokens else ""
+    if "current-password" in tokens:
+        return "signin"
+    forgot = any(_FORGOT.search(b.text or "") for b in digest.buttons) \
+        or bool(_FORGOT.search(digest.text or ""))
+    return "signin" if forgot else ""
+
+
+_FORGOT = re.compile(r"\bforgot(ten)?\s+(your\s+)?password\b", re.I)
 
 
 def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,

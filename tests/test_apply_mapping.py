@@ -248,6 +248,35 @@ def test_a_one_box_sign_up_read_as_a_sign_up_takes_its_create_account():
     assert apply_run.account_advance(signup, FillPlan(), signup=False) == (1, floor)
 
 
+@pytest.mark.parametrize("forgot", [
+    Button(n=3, locator=(0, "#f"), text="Forgot your password?"),
+    Button(n=3, locator=(0, "#f"), text="Forgot password"),
+])
+def test_a_one_box_screen_with_a_forgot_password_control_is_a_sign_in(forgot):
+    """Review round 4, M4: one password box with no autocomplete, a "Create
+    Account" beside "Sign In", read as a sign-up: its "Forgot your
+    password?" says a sign-in (R2-I4's case for this shape)."""
+    import apply_run
+    from apply_judge import FillPlan
+    floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
+    signin = FormDigest(url_host="x", title="Sign In", text="Sign In", fields=[
+        _f(0, "Email Address", required=True), _pw(1, "Password")], buttons=[
+        Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
+        Button(n=1, locator=(0, "#s"), text="Sign In"),
+        Button(n=2, locator=(0, "#c"), text="Create Account"), forgot])
+    assert apply_run.password_step(signin) == "signin"
+    assert apply_run.account_advance(signin, FillPlan(), signup=True) == (1, floor)
+    assert apply_run.account_advance(signin, FillPlan(buttons={"advance": (1, 0.93)}),
+                                     signup=True) == (1, 0.93)
+    # the words in the page's text count as well (a link the digest keeps no button of)
+    signin.buttons = signin.buttons[:3]
+    signin.text = "Sign In Email Address Password Forgot your password? Create Account"
+    assert apply_run.password_step(signin) == "signin"
+    # a declared new-password box is a sign-up, whatever the page says
+    signin.fields[1] = _pw(1, "Password", "new-password")
+    assert apply_run.password_step(signin) == "signup"
+
+
 def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():
     import apply_run
     from apply_judge import FillPlan

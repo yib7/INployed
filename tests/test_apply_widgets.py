@@ -1116,6 +1116,21 @@ def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(br
         <button type="button" id="l3" aria-haspopup="listbox">Does not apply</button></div>
       <div><label for="m5">Which language do you prefer for interviews?</label>
         <button type="button" id="m5" aria-haspopup="menu">Select...</button></div>
+      <!-- review R6-I1: Workday's question in the aria-label, "Select One Required"
+           after it; a listbox answered with a send or go-on word -->
+      <div><button type="button" aria-haspopup="listbox"
+        aria-label="Are you willing to submit to a background check? Select One Required"
+        >Select One</button></div>
+      <div><button type="button" aria-haspopup="listbox"
+        aria-label="Do you wish to continue your application with this company? Select One Required"
+        >Select One</button></div>
+      <div><label for="dm">Delivery method</label>
+        <button type="button" id="dm" aria-haspopup="listbox" aria-controls="dm-list"
+          >Send by post</button>
+        <div role="listbox" id="dm-list" hidden><div role="option">Send by post</div>
+          <div role="option">Email</div></div></div>
+      <div><label for="np">What are your plans after graduating?</label>
+        <button type="button" id="np" aria-haspopup="listbox">Continue studies</button></div>
       </form></body>""")
     d = apply_form.extract(browser_page)
     assert [(f.label, f.widget) for f in d.fields] == [
@@ -1124,7 +1139,12 @@ def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(br
         ("Tell us more about your availability", "popup"), ("Team", "popup"),
         ("Experience", "popup"), ("Veteran status", "popup"),
         # a label that asks is a question, a chrome word in it or not
-        ("Which language do you prefer for interviews?", "popup")]
+        ("Which language do you prefer for interviews?", "popup"),
+        ("Are you willing to submit to a background check?", "popup"),
+        ("Do you wish to continue your application with this company?", "popup"),
+        ("Delivery method", "popup"), ("What are your plans after graduating?", "popup")]
+    workday = [f for f in d.fields if f.label.startswith(("Are you willing", "Do you wish"))]
+    assert all(f.required for f in workday)
 
 
 def test_a_named_chrome_popup_is_still_no_field(browser_page):

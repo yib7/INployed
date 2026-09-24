@@ -1534,8 +1534,15 @@ _EXTRACT_JS = r"""
   const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
   // a control that sends or goes on, by its own words (review R5-I1: a
   // submit's menu arrow "More submit options", a "Save and continue" menu):
-  // never a field, never opened to read its options, still a button
+  // never a field, never opened to read its options, still a button. Read on
+  // its shown text (never a listbox's answer) and on an aria-label that is a
+  // short control name: four words at most, no "?", no prompt tail (review
+  // R6-I1: Workday's "Are you willing to submit to a background check?
+  // Select One Required" is a question)
   const POPUP_WAY_ON = /\b(submit|send|finish|continue|apply with|next step)\b/i;
+  const PROMPT_TAIL = /\b(select one|required|please select|choose one)\b/i;
+  const controlName = (aria) => !!aria && !/\?/.test(aria) && !PROMPT_TAIL.test(aria)
+    && aria.split(/\s+/).length <= 4;
   for (const el of all) {
     if (consumed.has(el) || !el.matches(FIELD_SEL)) continue;
     if (!usable(el)) continue;
@@ -1661,7 +1668,7 @@ _EXTRACT_JS = r"""
       if (Array.from(el.querySelectorAll('input:not([type=hidden])')).some(visible)) continue;
       const text = norm(el.innerText) || norm(el.value);
       const aria = norm(el.getAttribute('aria-label'));
-      if (POPUP_WAY_ON.test(text) || (aria && !ASKS.test(aria) && POPUP_WAY_ON.test(aria))) continue;
+      if (controlName(aria) && POPUP_WAY_ON.test(aria)) continue;
       const [label, req] = labelFor(el, marks);
       const scoped = !!closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset');
       const placeholder = PLACEHOLDER_OPTION.test(text);
@@ -1673,12 +1680,12 @@ _EXTRACT_JS = r"""
       const question = !!label && (ASKS.test(label) || required);
       const chromeLabel = !!label && !question && (chromePopup(label)
                                                    || POPUP_CHROME_LABEL.test(label));
-      // a shown chrome word: chrome, unless a listbox holds it as its answer
-      // (options of its own, or a question's label: "Stack preference: Back")
-      if (chromePopup(text) && !(pop === 'listbox' && (listboxOptions(el).length
-                                                        || (named && label && !chromeLabel)))) {
-        continue;
-      }
+      // a shown chrome word, or a shown send or go-on word: chrome, unless a
+      // listbox holds it as its answer (options of its own, or a question's
+      // label: "Stack preference: Back", "Delivery method: Send by post")
+      const answer = pop === 'listbox' && (listboxOptions(el).length
+                                           || (named && !!label && !chromeLabel));
+      if ((chromePopup(text) || POPUP_WAY_ON.test(text)) && !answer) continue;
       if (pop !== 'listbox' && !(placeholder || named)) continue;
       if (pop !== 'listbox' && chromeLabel) continue;
       if (pop === 'listbox' && !(scoped || named || placeholder)) continue;

@@ -17,24 +17,34 @@ load (to `domcontentloaded`, settled), then one page at a time up to
 `apply_judge.MAX_PAGES` and the job's wall clock (`JOB_WALL_CLOCK_S`): a
 visible cookie or consent banner dismissed by its reject control (never its
 accept), the page read once it holds still (`_read_digest` reads an empty
-page again), LinkedIn's pages decided without the judge (`apply_linkedin`: a
-job page's offsite Apply is clicked; Easy Apply, already applied, closed and
-signed out park; nothing is ever filled on LinkedIn), and every other page
-through `apply_form.extract` -> one Jev request (`apply_judge.page_questions`)
--> `read_page_state` (a read under the floor is taken once more after a
-settle) -> the state table from the design (section 3.5):
+page or a loading skeleton again), LinkedIn's pages decided without the
+judge (`apply_linkedin`: a job page's offsite Apply is clicked; Easy Apply,
+already applied, closed and signed out park; nothing is ever filled on
+LinkedIn), a job board's posting by its link to the company's site
+(`_aggregator_step`), and every other page through `apply_form.extract` ->
+the page read (`_read`: its own small Jev request,
+`apply_judge.read_questions`, combined with the page's structure,
+`apply_judge.read_page`; a read under the floor is taken once more after a
+settle, then goes on as the kind the structure settles, `unsure_step`) ->
+the page's mapping on a page the run acts on (`_map`,
+`apply_judge.page_questions`) -> the state table from the design (section
+3.5):
 
-    job_posting            click the Apply entry, follow a popup
+    job_posting            click the Apply entry, follow a popup (an email
+                           Apply parks with its address)
     application_form       plan, fill, verify, type the keyring password into a
                            password box, then advance, or the submit gate
-    review_page            fill and verify editable controls, then submit gate
+    review_page            fill and verify editable controls, then its advance
+                           when it has no submit (a wizard step), else the gate
     login_wall / signup    fill the account email and hidden keyring password
     code_gate              read the emailed code in a separate inbox tab
     confirmation           before any submit click never the run's send: a
                            form or review misread goes on as its next read,
                            anything else parks (`confirmation_step`)
     captcha / payment / error / other / low confidence
-                           park needs_human
+                           park needs_human (a closed posting and a job the
+                           site says was applied to with their own reasons;
+                           an `other` whose structure settles a kind is it)
 
 The submit gate is `can_submit(plan, verification, settings, live)`; it
 returns the first failing reason. `live` is the page as the gate reads it
@@ -1543,11 +1553,11 @@ def confirmation_step(digest: apply_form.FormDigest, answers: Mapping[str, Any],
     else the person checks. After a code step's click alone (`code_sent`: a
     sign-up's email "Verify" is one) only received words make it the
     confirmation; else the person checks. Before any submit click a
-    confirmation is never the run's own send: a page with a form field or a
-    submit button and no received words is a form or a review misread, and
-    goes on as its next read when the loop acts on that one
-    (`_UNSURE_ACTS`); any other parks (the job may have been applied to
-    before)."""
+    confirmation is never the run's own send: a page with a form field, a
+    submit button, a Next, a Continue or an accept and no received words is
+    a form or a review misread, and goes on as its next read when the loop
+    acts on that one (`_UNSURE_ACTS`); any other parks (the job may have
+    been applied to before)."""
     words = confirmation_words(digest.text)
     form = bool(digest.fields) or any(_SEND_ONLY_WORDS.search(b.text) for b in digest.buttons)
     # before any submit, a Next or a Continue asks for more too (SP4: a

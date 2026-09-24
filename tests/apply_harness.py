@@ -552,6 +552,29 @@ class ModalReadAsForm:
         return out
 
 
+class CommitmentUnderFloor:
+    """A judge that reads a background-check box as a consent under
+    `CONSENT_MIN_CONF` on every look: 0.84 of the inner judge's confidence
+    (under NoisyJev, 0.63 to 0.84). The commitment floor then decides, and
+    the run must park on the box, never tick it (SP5 review round 3, M4)."""
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        out = dict(self.inner.judge(state, questions))
+        for row in (state or {}).get("fields") or []:
+            qid = f"field_{row.get('n')}_source"
+            a = out.get(qid)
+            if "background check" in str(row.get("label", "")).lower() and a is not None \
+                    and a.choice == "consent_attest":
+                conf = round(0.84 * float(a.confidence or 0.0), 4)
+                out[qid] = jev.Answer(kind="choice", choice="consent_attest", confidence=conf,
+                                      probabilities={"consent_attest": conf,
+                                                     "leave_blank": round(1 - conf, 4)})
+        return out
+
+
 class VerifiedReadAsConfirmation:
     """A judge that reads an email-verified page as a confirmation at 0.90,
     its received Noul yes (the I5 shape: "Your email is verified, thank
@@ -930,6 +953,12 @@ FLOWS: tuple[Flow, ...] = (
     Flow("typeahead_editor", "typeahead_editor.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
          covers="a City combobox whose matches come only after typing, a rich-text cover letter"),
+    # --- SP5 review round 3 ---
+    Flow("consent_commitment", "consent_commitment.html", True, "needs_human",
+         r"^required field without an answer: I consent to a background check$",
+         confirm="#thanks:visible", wrap=CommitmentUnderFloor,
+         covers="a required background-check consent beside a routine privacy box, read as a "
+                "consent under 0.85 on every look: the run parks on it and never ticks it"),
 )
 
 

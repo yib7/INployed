@@ -452,3 +452,19 @@ def test_a_re_read_of_the_same_page_reuses_the_second_look(_browser, flow_server
     asked = [e for e in _events(r.trace, "reask") if e["what"] == "source"]
     assert [e["reused"] for e in asked] == [False, True], (r.reason, asked)
     assert judge.second_looks == 1
+
+
+# --- review round 3, M4: the commitment floor in the matrix ---------------------------------------
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+def test_the_commitment_flow_parks_on_its_box_and_never_ticks_it(_browser, flow_server, tmp_path,
+                                                                 seed):
+    f = h.flow("consent_commitment")
+    judge = jev.FakeJev() if seed == 0 else jev.NoisyJev(jev.FakeJev(), seed)
+    r = h.run_flow(f, judge, f"noisy-{seed}", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.policy is True
+    # the run parks before it acts: no box is ticked, nothing is sent
+    assert not [a for a in r.actions if a.kind in ("tick", "click", "pick")], r.actions
+    assert r.sends == 0

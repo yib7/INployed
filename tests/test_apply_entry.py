@@ -848,8 +848,8 @@ _LOGIN = """<!doctype html><html><head><title>Sign in - Fabrikam Careers</title>
 <p><a href="/register">Create an account</a></p></body></html>"""
 _REGISTER = """<!doctype html><html><head><title>Talent network</title></head><body>
 <h1>Join our talent network</h1><p>Hear about new roles first.</p>
-<label for="k">Keywords</label><input id="k" name="keywords">
-<button type="button">Search jobs</button></body></html>"""
+<label for="k">Your email</label><input id="k" name="network_email">
+<button type="button">Join the network</button></body></html>"""
 
 
 class _ReadsByTitle(jev.FakeJev):
@@ -872,7 +872,9 @@ def test_a_login_wall_park_names_the_sign_up_page_with_its_own_evidence(
     out, _ = _drain(context, tmp_path, f"{CAREERS}/login", _ReadsByTitle())
     assert out.reason.startswith(f"login wall (the create-account link led to {CAREERS}/register:"
                                  " read as job_posting "), out.reason
-    assert "boxes: Keywords" in out.reason and "Search jobs" in out.reason
+    # (a job search's box beside only a search button is no box of a page since
+    # SP5's EXT-16; the talent network's own box and button are its evidence)
+    assert "boxes: Your email" in out.reason and "Join the network" in out.reason
     assert "Password" not in out.reason          # the sign-in page's boxes are not its evidence
 
 

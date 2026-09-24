@@ -6,13 +6,15 @@
 <!-- A synthetic replica of an Ashby-style application (layout study G2, G7):
      Yes / No questions as button pairs with aria-pressed and a hidden
      checkbox, a radio question whose options share one id (so label[for]
-     names the first option only), the required star on the question title,
+     names the first option only), the required star drawn by CSS (::after) on
+     the question title,
      a resume parser's own upload at the top. -->
 <style>
   body { font-family: sans-serif; margin: 24px; }
   .field-entry { margin: 16px 0; }
   .title { display: block; font-weight: bold; }
-  .star { color: #b00; }
+  /* the required star is drawn in CSS on the title, as Ashby draws it */
+  ._required_k2q::after { content: "*"; color: #b00; margin-left: 2px; }
   .yesno button { min-width: 70px; margin-right: 6px; }
   .yesno button[aria-pressed="true"] { background: #234; color: #fff; }
   .visually-hidden-box { display: none; }
@@ -29,19 +31,19 @@
     <input type="file" id="autofill-file" aria-label="Application">
   </div>
   <div class="field-entry">
-    <label class="title" for="_systemfield_name">Name<span class="star">*</span></label>
+    <label class="title _required_k2q" for="_systemfield_name">Name</label>
     <input id="_systemfield_name" name="_systemfield_name" type="text">
   </div>
   <div class="field-entry">
-    <label class="title" for="_systemfield_email">Email<span class="star">*</span></label>
+    <label class="title _required_k2q" for="_systemfield_email">Email</label>
     <input id="_systemfield_email" name="_systemfield_email" type="email">
   </div>
   <div class="field-entry">
-    <label class="title" for="_systemfield_resume">Resume<span class="star">*</span></label>
+    <label class="title _required_k2q" for="_systemfield_resume">Resume</label>
     <input id="_systemfield_resume" name="_systemfield_resume" type="file">
   </div>
   <div class="field-entry" id="q-auth">
-    <label class="title">Are you legally allowed to take up employment in the United States?<span class="star">*</span></label>
+    <label class="title _required_k2q" for="q-auth-none">Are you legally allowed to take up employment in the United States?</label>
     <div class="yesno">
       <button type="button" aria-pressed="false">Yes</button>
       <button type="button" aria-pressed="false">No</button>
@@ -49,7 +51,7 @@
     <input class="visually-hidden-box" type="checkbox" name="q_auth" tabindex="-1">
   </div>
   <div class="field-entry" id="q-sponsor">
-    <label class="title">Will you now or in the future require visa sponsorship?<span class="star">*</span></label>
+    <label class="title _required_k2q" for="q-sponsor-none">Will you now or in the future require visa sponsorship?</label>
     <div class="yesno">
       <button type="button" aria-pressed="false">Yes</button>
       <button type="button" aria-pressed="false">No</button>
@@ -57,7 +59,7 @@
     <input class="visually-hidden-box" type="checkbox" name="q_sponsor" tabindex="-1">
   </div>
   <fieldset class="field-entry" style="border: 0; padding: 0">
-    <label class="title" for="q_relocate">Are you willing to relocate for this role?<span class="star">*</span></label>
+    <label class="title _required_k2q" for="q_relocate">Are you willing to relocate for this role?</label>
     <div><input type="radio" id="q_relocate" name="q_relocate" value="yes"><label for="q_relocate">Yes, I am open to it</label></div>
     <div><input type="radio" id="q_relocate" name="q_relocate" value="no"><label for="q_relocate">No, not at this time</label></div>
   </fieldset>

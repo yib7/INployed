@@ -908,6 +908,14 @@ FLOWS: tuple[Flow, ...] = (
     Flow("ukg_shadow_apply", "ukg_shadow_apply.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="buttons and a box inside open shadow roots, the Apply and the Submit among them"),
+    # --- SP5 review round 1 ---
+    Flow("aria_controls", "aria_controls.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible",
+         covers="a role=checkbox consent and a role=switch toggle, a resume box hidden inside a "
+                "wrapper until 'Attach resume' is clicked"),
+    Flow("typeahead_editor", "typeahead_editor.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible",
+         covers="a City combobox whose matches come only after typing, a rich-text cover letter"),
 )
 
 
@@ -990,19 +998,17 @@ _LIVE_JS = r"""el => {
   }
   text = (text || el.getAttribute('aria-label') || el.getAttribute('title') || '')
     .replace(/\s+/g, ' ').trim().slice(0, 160);
-  // a box no person fills: read-only, or a honeypot (its name, off the page,
-  // two pixels or less, under aria-hidden); a text box or a textarea only
-  let junk = '';
+  // a box no person fills, by the page's own truth, never the extractor's
+  // word lists (review M10): read-only (a combobox opens on a click), a box
+  // the fixture declares one (`data-harness-junk`), off the page, two pixels
+  // or less, or under aria-hidden; a text box or a textarea only
+  let junk = el.getAttribute('data-harness-junk') || '';
   const typing = tag === 'textarea' || (tag === 'input'
     && !['checkbox', 'radio', 'file', 'submit', 'button', 'reset', 'image', 'hidden'].includes(type));
-  if (typing) {
-    const labels = Array.from(el.labels || []).map((l) => l.textContent || '').join(' ');
-    const words = (el.id || '') + ' ' + (el.getAttribute('name') || '') + ' ' + labels + ' '
-      + (el.getAttribute('aria-label') || '');
+  if (typing && !junk) {
     const r = el.getBoundingClientRect();
     const x = window.scrollX || 0, y = window.scrollY || 0;
-    if (el.readOnly) junk = 'read-only';
-    else if (/honey[\s_-]?pot|robots? only|for robots|leave (this )?(field )?(blank|empty)|do not (fill|enter)\b|(^|\s)hp[_-]/i.test(words)) junk = 'honeypot';
+    if (el.readOnly && el.getAttribute('role') !== 'combobox') junk = 'read-only';
     else if (r.right + x < 0 || r.bottom + y < 0 || r.left + x < -500 || r.top + y < -500) junk = 'off the page';
     else if (r.width <= 2 && r.height <= 2) junk = 'two pixels or less';
     else if (el.closest('[aria-hidden=true]')) junk = 'aria-hidden';

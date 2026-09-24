@@ -5,7 +5,8 @@
 <title>Apply - Analytics Engineer - Fabrikam Careers</title>
 <!-- A synthetic replica of a Workday application after "Apply Manually"
      (layout study G3, G7, EXT-02, EXT-07, EXT-12, FILL-11): the account
-     screen with a robots-only box one pixel wide, then "My Information" with
+     screen (a robots-only box one pixel wide, the Create Account button
+     drawn twice as Workday draws it, an in-page Sign In), then "My Information" with
      dropdowns drawn as buttons ("Select One", a country list of 64 with the
      United States of America near its end) and a read-only email, then a
      date of Month / Day / Year boxes, then the review and its Submit. All
@@ -26,6 +27,8 @@
   .date input { width: 60px; }
   #thanks { display: none; }
   footer { margin-top: 20px; }
+  .create-wrap { position: relative; display: inline-block; }
+  #create-filter { position: absolute; inset: 0; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -44,11 +47,19 @@
     <input id="password" type="password" data-automation-id="password" aria-required="true"></div>
   <div class="field"><label for="verify">Verify New Password<abbr title="required">*</abbr></label>
     <input id="verify" type="password" data-automation-id="verifyPassword" aria-required="true"></div>
-  <input class="beecatcher" type="text" data-automation-id="beecatcher"
-         aria-label="Enter website. This input is for robots only, do not enter if you are human." tabindex="-1">
+  <input class="beecatcher" type="text" data-automation-id="beecatcher" data-harness-junk="honeypot"
+         aria-label="Homepage (robots only; people skip this box)" tabindex="-1">
   <p id="account-error" role="alert" style="display: none">Passwords do not match.</p>
-  <button type="button" id="create" data-automation-id="createAccountSubmitButton">Create Account</button>
-  <p>Already have an account? <a href="#" data-automation-id="signInLink">Sign In</a></p>
+  <!-- Workday draws the button twice: a click filter over the real submit,
+       which is hidden from the reader -->
+  <div class="create-wrap">
+    <div role="button" tabindex="0" aria-label="Create Account" id="create-filter"
+         data-automation-id="click_filter"></div>
+    <button type="button" id="create" data-automation-id="createAccountSubmitButton" tabindex="-2"
+            aria-hidden="true">Create Account</button>
+  </div>
+  <p>Already have an account? <button type="button" data-automation-id="signInLink">Sign In</button></p>
+  <button type="button" data-automation-id="backToJobPosting">Back to Job Posting</button>
 </div>
 
 <div class="step" id="step-info" data-automation-id="applyFlowPage">
@@ -101,6 +112,9 @@
   function show(id) {
     order.forEach(function (s) { document.getElementById(s).classList.toggle('active', s === id); });
   }
+  document.getElementById('create-filter').addEventListener('click', function () {
+    document.getElementById('create').click();
+  });
   document.getElementById('create').addEventListener('click', function () {
     var e = document.getElementById('email').value, p = document.getElementById('password').value;
     if (document.querySelector('[data-automation-id=beecatcher]').value) {

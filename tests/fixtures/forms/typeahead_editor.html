@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam</title>
+<!-- A synthetic replica of an async location box and a rich-text answer
+     (audit EXT-06, EXT-13): the City combobox shows no option until it is
+     typed in, and its matches arrive 300 ms later; the cover letter is a
+     contenteditable editor whose text the form copies into a hidden field
+     on submit. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; position: relative; }
+  label { display: block; }
+  [role=listbox] { border: 1px solid #555; background: #fff; width: 320px; }
+  [role=option] { padding: 3px; cursor: pointer; }
+  .editor { border: 1px solid #999; min-height: 90px; padding: 6px; width: 480px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<form id="application" novalidate>
+  <div class="field"><label for="first">First name *</label><input id="first" name="first" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field">
+    <label id="city-label" for="city">City *</label>
+    <input id="city" role="combobox" aria-labelledby="city-label" aria-controls="city-list"
+           aria-expanded="false" aria-autocomplete="list" aria-required="true" autocomplete="off">
+    <div id="city-list" role="listbox"></div>
+  </div>
+  <div class="field">
+    <div id="letter-label">Cover letter *</div>
+    <div class="editor" id="letter" contenteditable="true" role="textbox" aria-multiline="true"
+         aria-labelledby="letter-label" aria-required="true"></div>
+    <input type="hidden" name="cover_letter" id="letter-value">
+  </div>
+  <button type="submit" id="btn-submit">Submit application</button>
+  <p id="problems" role="alert"></p>
+</form>
+<section id="thanks"><h2>Thank you for applying</h2><p>Your application has been received.</p></section>
+<script>
+  var PLACES = ['Anytown, California, United States', 'Anytown, New York, United States',
+                'Lakeside, Washington, United States'];
+  var box = document.getElementById('city'), list = document.getElementById('city-list');
+  var chosen = '';
+  box.addEventListener('input', function () {
+    chosen = '';
+    list.innerHTML = '';
+    box.setAttribute('aria-expanded', 'false');
+    var q = box.value.toLowerCase();
+    if (q.length < 2) return;
+    setTimeout(function () {
+      PLACES.filter(function (p) { return p.toLowerCase().indexOf(q) === 0; }).forEach(function (p) {
+        var o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = p;
+        o.addEventListener('click', function () {
+          box.value = p; chosen = p; list.innerHTML = '';
+          box.setAttribute('aria-expanded', 'false');
+        });
+        list.appendChild(o);
+      });
+      box.setAttribute('aria-expanded', list.children.length ? 'true' : 'false');
+    }, 300);
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var letter = document.getElementById('letter').innerText.trim();
+    document.getElementById('letter-value').value = letter;
+    var missing = [];
+    if (!document.getElementById('first').value) missing.push('first name');
+    if (!document.getElementById('email').value) missing.push('email');
+    if (!chosen) missing.push('city');
+    if (!letter) missing.push('cover letter');
+    if (missing.length) { document.getElementById('problems').textContent = 'Missing: ' + missing.join(', '); return; }
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

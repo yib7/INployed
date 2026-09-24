@@ -226,7 +226,7 @@ def test_honeypots_read_only_boxes_and_hidden_twins_are_no_fields(browser_page, 
 
 def test_the_harness_breaks_on_a_fill_into_a_honeypot_or_a_read_only_box(browser_page):
     browser_page.set_content("""<body><form>
-      <label for="site">Leave this field blank</label><input id="site" type="text">
+      <label for="site">Website</label><input id="site" type="text" data-harness-junk="honeypot">
       <label for="share">Link to this job</label><input id="share" type="text" readonly>
       <label for="name">Name</label><input id="name" type="text"></form></body>""")
     rec = h.Recorder(None)
@@ -557,6 +557,31 @@ def test_a_stable_attribute_locates_a_control_and_a_moved_one_is_never_typed_int
         == "12345"
 
 
+def test_a_moved_box_with_no_attributes_is_told_apart_by_its_label(browser_page):
+    # review I5: boxes that carry no id, name or test attribute are told apart
+    # by their label's words; the inserted box has no attribute either
+    browser_page.set_content("""<body><form id="f">
+      <div class="row"><label>City <input></label></div>
+      <div class="row"><label>Postal code <input></label></div></form></body>""")
+    d = apply_form.extract(browser_page)
+    city, postal = _by_label(d, "City"), _by_label(d, "Postal code")
+    assert city.ident != postal.ident
+    assert postal.ident.endswith("|postal code")
+    browser_page.evaluate("""() => { const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<label>Nickname <input></label>';
+      document.getElementById('f').prepend(row); }""")
+    out = apply_fill.apply(browser_page, FillPlan(fields=[_planned(postal, "fill", "12345")]))
+    values = browser_page.locator("input").evaluate_all("els => els.map((e) => e.value)")
+    assert values == ["", "", "12345"], values          # Nickname, City, Postal code
+    assert out[0].value == "12345"
+    # one definition of the identity: the extractor's and the filler's agree
+    live = browser_page.locator("input").nth(2).evaluate(apply_form.IDENT_FN_JS)
+    assert live == postal.ident
+    assert apply_form.same_ident(postal.ident, postal.ident + " required")
+    assert not apply_form.same_ident(postal.ident, city.ident)
+
+
 # --- FILL-13: picks are verified in code ---------------------------------------------------------
 
 @pytest.mark.parametrize("value, option, group, ok", [
@@ -589,6 +614,55 @@ def test_the_mapping_sends_the_section_headings_with_the_fields(browser_page, fi
     s2, _ = apply_judge.reask_questions(d, catalog, plan, [4], what="source")
     assert s2["sections"] == [{"heading": "A few more questions", "fields": [4]}]
     json.dumps(state)
+
+
+# === SP5 review round 1 ============================================================================
+
+# --- I2: a required marker drawn by CSS or named by a class --------------------------------------
+
+def test_a_star_drawn_by_css_or_a_required_class_marks_the_question_required(browser_page):
+    browser_page.set_content("""<head><style>
+      .q-title::after { content: "*"; color: #b00; }
+      .opt-title::after { content: " (optional)"; }
+      </style></head><body><form>
+      <div><label class="q-title" for="a">Preferred start date</label><input id="a"></div>
+      <div><label class="field-required" for="b">Current employer</label><input id="b"></div>
+      <div><label class="not-required" for="c">Nickname</label><input id="c"></div>
+      <div><label class="opt-title" for="d">Middle name</label><input id="d"></div>
+      <fieldset><label class="q-title">Acknowledgement</label>
+        <div><input type="checkbox" id="e"><label for="e">I have read the policy.</label></div>
+      </fieldset></form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.required) for f in d.fields] == [
+        ("Preferred start date", True), ("Current employer", True), ("Nickname", False),
+        ("Middle name", False), ("I have read the policy.", True)]
+
+
+# --- I3: an upload hidden until "Attach resume" is clicked ----------------------------------------
+
+def test_a_file_box_hidden_under_its_shown_question_is_kept_and_a_hidden_steps_is_not(
+        browser_page, fixture_url):
+    d = _open(browser_page, fixture_url, "aria_controls.html")
+    resume = _by_label(d, "Resume")
+    assert (resume.type, resume.required) == ("file", True)
+    browser_page.set_content("""<body><form>
+      <div class="step"><label for="n">Name *</label><input id="n" required></div>
+      <div class="step" style="display:none"><label for="cv">Resume *</label>
+        <input type="file" id="cv" required></div></form></body>""")
+    assert [f.label for f in apply_form.extract(browser_page).fields] == ["Name"]
+
+
+# --- I4: a link inside a label keeps its words ------------------------------------------------------
+
+def test_a_link_that_opens_a_dialog_keeps_its_words_in_the_label(browser_page, fixture_url):
+    d = _open(browser_page, fixture_url, "oracle_email_terms.html")
+    assert [f.label for f in d.fields][1] == ("I agree with the terms and conditions of the "
+                                              "application")
+    # a dropdown's shown value inside a label still stays out of it
+    browser_page.set_content("""<body><form><label for="s">State
+      <div aria-haspopup="listbox"><span>Select a state</span><input id="s" type="text"></div>
+      </label></form></body>""")
+    assert [f.label for f in apply_form.extract(browser_page).fields] == ["State"]
 
 
 # --- I6: a menu that closed under the option's click is opened once more -------------------------
@@ -631,6 +705,101 @@ def test_an_option_click_that_fails_opens_the_menu_once_more_and_clicks_again(mo
         apply_fill._pick_listbox(None, None, None, "Remote")
 
 
+# --- I7: a custom tick box (role=checkbox, role=switch) ---------------------------------------------
+
+def test_a_custom_tick_box_is_a_field_ticked_and_read_back(browser_page, fixture_url):
+    d = _open(browser_page, fixture_url, "aria_controls.html")
+    certify = _by_label(d, "I certify that the information in this application is accurate")
+    texts = _by_label(d, "Send me updates about this application by text message")
+    assert (certify.type, certify.widget, certify.required, certify.options) == (
+        "checkbox", "aria_check", True, ["checked"])
+    assert (texts.widget, texts.required) == ("aria_check", False)
+    values = _fill(browser_page, _planned(certify, "select", "yes", "checked"),
+                   _planned(texts, "select", "no", "unchecked"))
+    assert values == {certify.n: "checked", texts.n: ""}
+    assert browser_page.locator("#certify").get_attribute("aria-checked") == "true"
+    # ticked already: left as it is
+    values = _fill(browser_page, _planned(certify, "select", "yes", "checked"))
+    assert browser_page.locator("#certify").get_attribute("aria-checked") == "true"
+
+
+# --- I8 (EXT-16, G3): a posting's widget groups -------------------------------------------------
+
+def test_a_postings_filters_search_box_alert_form_and_footer_picker_are_no_fields(browser_page):
+    browser_page.set_content("""<body><h1>Open roles</h1>
+      <div id="open-roles-filters"><div><div><label for="dep">Department</label></div>
+        <button id="dep" type="button" aria-haspopup="listbox">All departments</button></div>
+        <div><div><div><label for="q">Search</label></div><div><div>
+          <input id="q" placeholder="Search roles"></div></div></div></div></div>
+      <a class="btn" href="/apply">Apply now</a>
+      <aside><form><label for="e">Email</label><input id="e" type="email">
+        <button type="submit">Notify me</button></form></aside>
+      <div><div><a href="/terms">Terms of service</a><a href="/privacy">Privacy</a>
+        <a href="https://example.com">Powered by Example</a></div>
+        <div><div><input role="combobox" aria-label="Search" aria-haspopup="listbox"
+          value="United States (English)"></div></div></div></body>""")
+    assert apply_form.extract(browser_page).fields == []
+
+
+def test_an_application_forms_boxes_stay_beside_its_search_labelled_dropdown(browser_page):
+    browser_page.set_content("""<body><div class="application">
+      <div><span>Location *</span><input role="combobox" aria-label="Search" required></div>
+      <div><label for="f">First name</label><input id="f"></div>
+      <p>By applying you accept our <a href="/terms">Terms of service</a> and
+        <a href="/privacy">Privacy</a>.</p>
+      <button type="button">Submit application</button></div></body>""")
+    assert [f.label for f in apply_form.extract(browser_page).fields] == ["Location", "First name"]
+
+
+# --- M4: honeypot words as a whole label --------------------------------------------------------
+
+def test_a_question_that_says_leave_blank_or_do_not_enter_is_no_honeypot(browser_page):
+    browser_page.set_content("""<body><form>
+      <label for="p">Phone number (do not enter dashes or spaces) *</label><input id="p" required>
+      <label for="m">Middle name (leave this field blank if none)</label><input id="m">
+      <label for="h">Please leave this field blank</label><input id="h">
+      <label for="r">Website (for robots only)</label><input id="r"></form></body>""")
+    assert [f.label for f in apply_form.extract(browser_page).fields] == [
+        "Phone number (do not enter dashes or spaces)",
+        "Middle name (leave this field blank if none)"]
+
+
+# --- M5: statements under a line that asks nothing stay apart -----------------------------------
+
+def test_two_consent_statements_under_a_heading_line_stay_two_boxes(browser_page):
+    browser_page.set_content("""<body><form><div><p>Consent:</p>
+      <label><input type="checkbox" name="c1" required> I agree to the terms</label>
+      <label><input type="checkbox" name="c2"> I agree to receive texts</label></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.widget, f.options) for f in d.fields] == [
+        ("I agree to the terms", "", ["checked"]), ("I agree to receive texts", "", ["checked"])]
+
+
+# --- M6: a read-only picker stays a field ---------------------------------------------------------
+
+def test_a_read_only_picker_stays_a_field_and_a_read_only_box_does_not(browser_page):
+    browser_page.set_content("""<body><form>
+      <label for="g">Gender</label><input id="g" role="combobox" readonly aria-expanded="false">
+      <label for="d">Start date</label><input id="d" class="react-datepicker__input" readonly>
+      <label for="s">Link to this job</label><input id="s" readonly value="https://x.example/1">
+      </form></body>""")
+    assert [f.label for f in apply_form.extract(browser_page).fields] == ["Gender", "Start date"]
+
+
+# --- M7: a heading counts only when its own box holds the control ---------------------------------
+
+def test_a_section_heading_is_one_whose_box_holds_the_control(browser_page, fixture_url):
+    browser_page.set_content("""<body><h2>Compensation</h2><p>Base pay range.</p>
+      <div class="autofill"><h3>Autofill from resume</h3><button>Upload file</button></div>
+      <form><div><label for="n">Name</label><input id="n"></div>
+      <h3>Eligibility</h3><div><label for="w">Work authorization</label><input id="w"></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.section) for f in d.fields] == [("Name", ""),
+                                                        ("Work authorization", "Eligibility")]
+
+
 # --- M8: a question's tick boxes take every chosen option ---------------------------------------
 
 def test_every_option_the_value_names_is_ticked(browser_page, fixture_url):
@@ -654,3 +823,13 @@ def test_a_choice_option_that_is_a_forms_submit_is_never_clicked(browser_page):
                      errors=errors)
     assert [e["error"] for e in errors] == ["LookupError"]
     assert browser_page.evaluate("document.body.dataset.sent") is None
+
+
+# --- review M1: Workday's click filter over its real button --------------------------------------
+
+def test_a_button_under_a_click_filter_of_the_same_words_is_one_button(browser_page, fixture_url):
+    d = _open(browser_page, fixture_url, "workday_create_account.html")
+    assert [b.text for b in d.buttons if not b.chrome] == [
+        "Create Account", "Sign In", "Back to Job Posting"]
+    create = next(b for b in d.buttons if b.text == "Create Account")
+    assert create.locator[1] == "#create-filter"

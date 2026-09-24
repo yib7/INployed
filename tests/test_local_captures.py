@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
 import apply_form  # noqa: E402
+import apply_run  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
 
@@ -67,10 +68,12 @@ def test_the_consent_control_on_each_capture_with_a_banner(_browser, capture):
 # label is a bare required marker or keeps one, and no field is a box no
 # person fills. The captures' expectations file (`_fields_expected.json`,
 # beside the captures, local only like them) names per capture the fields
-# a person sees there (label, type, required), their widgets, the labels no
+# a person sees there (label, type, required), the questions a person sees
+# marked required (`required`, by their first words), their widgets, the labels no
 # field may carry (`no_labels` inside any label, `not_labels` as a whole
-# label), and the buttons that must show (with `disabled` where the page
-# keeps one disabled).
+# label, `max_fields` for a page whose widgets are no application's), and the
+# buttons that must show (with `disabled` where the page keeps one disabled).
+# A bot check's frame is left out, as the run leaves it out.
 
 FIELDS = CAPTURES / "_fields_expected.json"
 _MARKER_ONLY = re.compile(r"^\s*([*✱＊]+|\(required\)|required\.?)\s*$", re.I)
@@ -151,7 +154,14 @@ def _read_capture(browser, folder: Path):
                                                                errors="replace"),
                              wait_until="domcontentloaded", timeout=20_000)
         page.wait_for_timeout(300)
-        return apply_form.extract(page)
+        d = apply_form.extract(page)
+        # the run never reads a bot check's frame (`_drop_foreign_controls`):
+        # a reCAPTCHA anchor is no field of the application (review M12)
+        urls = [str(f.url) for f in apply_form.frames(page)]
+        bot = {i for i, u in enumerate(urls) if apply_run._is_captcha_url(u)}
+        d.fields = [f for f in d.fields if int(f.locator[0]) not in bot]
+        d.buttons = [b for b in d.buttons if int(b.locator[0]) not in bot]
+        return d
     finally:
         ctx.close()
 
@@ -179,7 +189,12 @@ def test_each_capture_shows_the_fields_a_person_sees(_browser, capture):
         assert not [x for x in labels if label.lower() in x.lower()], (capture, label, labels)
     for label in want.get("not_labels", []):
         assert label not in labels, (capture, label, labels)
+    for start in want.get("required", []):
+        # (a question by its first words)
+        assert any(f.label.startswith(start) and f.required for f in d.fields),             (capture, start, [(f.label[:40], f.required) for f in d.fields])
     assert len(d.fields) >= want.get("min_fields", 0), (capture, labels)
+    if "max_fields" in want:
+        assert len(d.fields) <= want["max_fields"], (capture, labels)
     texts = {b.text: b for b in d.buttons}
     for text in want.get("buttons", []):
         assert text in texts, (capture, text, sorted(texts))

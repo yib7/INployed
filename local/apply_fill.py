@@ -581,8 +581,8 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> None:
 
 _POPUP_READ_JS = """el => {
   const t = (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim();
-  return /^(select|choose|pick|please|--|\u2013|\u2014)/i.test(t) ? '' : t;
-}"""
+  return __PLACEHOLDER__.test(t) ? '' : t;
+}""".replace("__PLACEHOLDER__", apply_form.PLACEHOLDER_TEXT_JS)
 _EDITABLE_READ_JS = "el => (el.innerText || '').replace(/\\s+/g, ' ').trim()"
 # a text box inside a dropdown drawn as a box: its value, else the value the
 # box shows beside it (cleared after a pick, as react-select's is)
@@ -593,8 +593,8 @@ _COMBO_READ_JS = """el => {
   if (!box) return '';
   const sv = box.querySelector('[class*=single-value], [class*=singleValue]');
   const t = norm(sv ? sv.textContent : box.innerText);
-  return /^(select|choose|pick|please|--|\u2013|\u2014)/i.test(t) ? '' : t;
-}"""
+  return __PLACEHOLDER__.test(t) ? '' : t;
+}""".replace("__PLACEHOLDER__", apply_form.PLACEHOLDER_TEXT_JS)
 
 
 def _read_widget(page, pf: PlannedField, loc) -> str:
@@ -641,18 +641,13 @@ def _read_back(loc, kind: dict[str, str] | None, page=None, pf: PlannedField | N
         return ""
 
 
-# Who the control is now (FILL-02): the extractor's `identOf`, read on the
-# live element; and every element of the frame, open shadow roots walked,
-# whose identity reads `want` (how a control the page moved is found again).
-IDENT_FN_JS = r"""(el) => {
-  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  return [el.tagName.toLowerCase(), (el.getAttribute('type') || '').toLowerCase(),
-    el.id || '', el.getAttribute('name') || '', norm(el.getAttribute('aria-label')),
-    el.getAttribute('data-automation-id') || '', el.getAttribute('data-testid') || '',
-    el.getAttribute('data-qa') || '', norm(el.getAttribute('placeholder'))].join('|');
-}"""
+# Who the control is now (FILL-02): `apply_form.IDENT_FN_JS`, the extractor's
+# own identity, read on the live element; and every element of the frame,
+# open shadow roots walked, whose identity names the same control
+# (`apply_form.SAME_IDENT_JS`): how a control the page moved is found again.
 _FIND_IDENT_JS = r"""(want) => {
   const identOf = __IDENT__;
+  const same = __SAME__;
   const all = [];
   const walk = (root) => {
     for (const el of root.querySelectorAll('*')) {
@@ -663,10 +658,10 @@ _FIND_IDENT_JS = r"""(want) => {
   walk(document);
   all.forEach((el) => el.removeAttribute('data-apply-found'));
   const out = all.filter((el) => el.matches('input, select, textarea, button, [role], '
-                                            + '[contenteditable]') && identOf(el) === want);
+                                            + '[contenteditable]') && same(identOf(el), want));
   if (out.length === 1) out[0].setAttribute('data-apply-found', '1');
   return out.length;
-}""".replace("__IDENT__", IDENT_FN_JS)
+}""".replace("__IDENT__", apply_form.IDENT_FN_JS).replace("__SAME__", apply_form.SAME_IDENT_JS)
 _IDENTITY_BLIND = ("choice", "checkbox_group")      # a group's locator names no one control
 
 
@@ -678,10 +673,10 @@ def _same_control(page, pf: PlannedField, loc):
     if not pf.ident or pf.widget in _IDENTITY_BLIND or "radio" in str(pf.locator[1]):
         return loc
     try:
-        live = str(loc.first.evaluate(IDENT_FN_JS, timeout=ACTION_TIMEOUT_MS))
+        live = str(loc.first.evaluate(apply_form.IDENT_FN_JS, timeout=ACTION_TIMEOUT_MS))
     except Exception:       # noqa: BLE001  (the click finds out)
         return loc
-    if live == pf.ident:
+    if apply_form.same_ident(live, pf.ident):
         return loc
     frame = apply_form.frames(page)[int(pf.locator[0])]
     found = frame.evaluate(_FIND_IDENT_JS, pf.ident)

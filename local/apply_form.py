@@ -439,6 +439,64 @@ LOCATOR_FN_JS = r"""(el) => {
 _CONSENT_CONTROL_JS = _CONSENT_CONTROL_JS.replace("__CONSENT__", CONSENT_ROOTS_JS).replace(
     "__LOCATOR__", LOCATOR_FN_JS)
 
+# Who a control is (FILL-02): its tag, type, id, name, aria-label, stable
+# test attributes, placeholder, and the words of its label (the labels that
+# name it, else aria-labelledby, else the box it sits in alone), letters only
+# so a counter or a count never changes it. One definition for the extractor
+# (`Field.ident`) and the filler, which reads it again before every act
+# (`apply_fill._same_control`); two idents name the same control when every
+# attribute agrees and one label's words start the other's (`SAME_IDENT_JS`).
+IDENT_FN_JS = r"""(el) => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const words = (s) => norm((s || '').toLowerCase().replace(/[^a-z]+/g, ' ')).slice(0, 60);
+  const minus = (node) => {
+    const c = node.cloneNode(true);
+    c.querySelectorAll('input, select, textarea, button, option, script, style').forEach((n) => n.remove());
+    return c.textContent;
+  };
+  let label = '';
+  const labs = el.labels ? Array.from(el.labels) : [];
+  if (labs.length) label = words(labs.map(minus).join(' '));
+  const by = el.getAttribute('aria-labelledby');
+  if (!label && by) {
+    const root = el.getRootNode();
+    label = words(by.split(/\s+/).map((id) => {
+      const n = (root !== document && root.getElementById ? root.getElementById(id) : null)
+        || document.getElementById(id);
+      return n ? minus(n) : '';
+    }).join(' '));
+  }
+  let p = el.parentElement;
+  for (let i = 0; !label && p && i < 3; i++, p = p.parentElement) {
+    if (p.querySelectorAll('input:not([type=hidden]), select, textarea, [contenteditable]').length > 1) break;
+    label = words(minus(p));
+  }
+  return [el.tagName.toLowerCase(), (el.getAttribute('type') || '').toLowerCase(), el.id || '',
+    el.getAttribute('name') || '', norm(el.getAttribute('aria-label')),
+    el.getAttribute('data-automation-id') || '', el.getAttribute('data-testid') || '',
+    el.getAttribute('data-qa') || '', norm(el.getAttribute('placeholder')), label].join('|');
+}"""
+SAME_IDENT_JS = r"""(a, b) => {
+  const A = String(a).split('|'), B = String(b).split('|');
+  const la = A.pop(), lb = B.pop();
+  return A.join('|') === B.join('|') && (la === lb || (!!la && !!lb && (la.startsWith(lb) || lb.startsWith(la))));
+}"""
+
+
+def same_ident(a: str, b: str) -> bool:
+    """`SAME_IDENT_JS` in Python: every attribute of the two idents agrees and
+    one label's words start the other's."""
+    pa, pb = str(a).split("|"), str(b).split("|")
+    la, lb = pa.pop(), pb.pop()
+    return pa == pb and (la == lb or (bool(la) and bool(lb)
+                                      and (la.startswith(lb) or lb.startswith(la))))
+
+
+# A placeholder text a dropdown shows before a pick ("Select...", "-- Select --",
+# "Choose one"), one pattern for the extractor and the filler's read-backs.
+PLACEHOLDER_TEXT_JS = r"/^(select|choose|pick|please|--|\u2013|\u2014)/i"
+
+
 _EXTRACT_JS = r"""
 (cap) => {
   const CONTROL = /^(INPUT|SELECT|TEXTAREA|BUTTON)$/;
@@ -563,11 +621,26 @@ _EXTRACT_JS = r"""
   // a hidden file box's form, or outside a form a box within three levels
   // above it, still shows (a styled upload hides the input itself)
   const boxShows = (el) => {
-    // inside a hidden step (a display:none box anywhere above): its box has
-    // no layout at all
-    const parent = up(el);
-    if (parent && !parent.getClientRects().length
-        && getComputedStyle(parent).display !== 'contents') return false;
+    // under a hidden box (display:none above it): kept only while its
+    // question shows, a label of its own or the box above the hidden part
+    // holding words and no other question (JazzHR hides its upload until
+    // "Attach resume" is clicked); a hidden wizard step drops (review I3)
+    let hiddenTop = null;
+    for (let p = up(el); p && p !== document.body; p = up(p)) {
+      if (p.nodeType === 1 && !p.getClientRects().length
+          && getComputedStyle(p).display !== 'contents') hiddenTop = p;
+    }
+    if (hiddenTop) {
+      const lab = labelElementFor(el);
+      if (!(lab && visible(lab))) {
+        const shown = up(hiddenTop);
+        if (!shown || shown === document.body || shown === document.documentElement
+            || shown.matches('form, main, [role=main], dialog, [role=dialog]')) return false;
+        const others = Array.from(shown.querySelectorAll(QUESTION_CTRL)).filter((c) =>
+          c !== el && !hiddenTop.contains(c) && visible(c));
+        if (others.length || !seen(shown)) return false;
+      }
+    }
     if (el.form) return visible(el.form);
     let p = up(el);
     for (let i = 0; p && i < 3; i++, p = up(p)) { if (visible(p)) return true; }
@@ -642,10 +715,8 @@ _EXTRACT_JS = r"""
     return parts.length ? parts.join(' >> ') + ' >> ' : '';
   };
   const locatorFor = (el) => hostPrefix(el) + ownLocator(el);
-  // who the control is, read again before every act (FILL-02)
-  const identOf = (el) => [el.tagName.toLowerCase(), (el.getAttribute('type') || '').toLowerCase(),
-    el.id || '', el.getAttribute('name') || '', norm(el.getAttribute('aria-label')),
-    ...STABLE.map((a) => el.getAttribute(a) || ''), norm(el.getAttribute('placeholder'))].join('|');
+  // who the control is, read again before every act (FILL-02; `IDENT_FN_JS`)
+  const identOf = __IDENT__;
 
   // --- what a person sees (G2) ---
   const SR_CLASS = /(^|[\s_-])(sr-only|visually-?hidden|screen-?reader(-only|-text)?|a11y-hidden|visuallyhidden|assistive-text)([\s_-]|$)/i;
@@ -658,14 +729,31 @@ _EXTRACT_JS = r"""
       || /inset\((50|100)%\)/.test(st.clipPath || '');
   };
   const SKIP_TEXT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|INPUT|SELECT|TEXTAREA|BUTTON|OPTION|DATALIST|IFRAME|SVG)$/i;
-  const WIDGET_TEXT = '[aria-haspopup], [role=combobox], [role=listbox], [role=spinbutton], '
-    + '[role=textbox], [contenteditable=""], [contenteditable=true]';
+  // a form widget's own words inside a label (review I4): a button, a
+  // combobox, listbox or spin box, an editable box, a dropdown drawn as a box;
+  // never a link (Oracle's "terms and conditions" opens a dialog)
+  const WIDGET_TEXT = 'button, [role=combobox], [role=listbox], [role=spinbutton], '
+    + '[role=textbox], [contenteditable=""], [contenteditable=true], '
+    + '[aria-haspopup]:not(a):not([role=link])';
   const QUIET_ROLES = /^(listbox|option|menu|menuitem|menuitemradio|menuitemcheckbox|tooltip|alert|status)$/;
   // the visible text of a subtree: never a display:none or visibility:hidden
   // part, an aria-hidden subtree, a listbox, option, menu or alert, a control
   // or an svg; sr-only text goes to `marks` (a marker there still counts:
   // Teamtailor's sr-only "Required"); `stop(el)` ends the walk at that
   // element (a question's text before its first control)
+  const REQ_CLASS = /(^|[\s_-])required([\s_-]|$)/i;
+  const NOT_REQ_CLASS = /not[\s_-]?required|optional/i;
+  const MARK_CHARS = /^\s*(?:[*\u2731\uff0a]+|\(\s*required\s*\)|required)\s*$/i;
+  const styledMark = (n) => {
+    const cls = n.getAttribute('class') || '';
+    if (REQ_CLASS.test(cls) && !NOT_REQ_CLASS.test(cls)) return true;
+    for (const pseudo of ['::after', '::before']) {
+      const c = getComputedStyle(n, pseudo).content || '';
+      if (!c || c === 'none' || c === 'normal') continue;
+      if (MARK_CHARS.test(c.replace(/^["']|["']$/g, ''))) return true;
+    }
+    return false;
+  };
   const seen = (node, marks, stop) => {
     let out = '';
     let stopped = false;
@@ -685,6 +773,9 @@ _EXTRACT_JS = r"""
         return;
       }
       if (!top && QUIET_ROLES.test(n.getAttribute('role') || '')) return;
+      // a required marker drawn in CSS (Ashby's ::after star) or named by a
+      // class (Ashby's `_required_`): a marker the person sees (review I2)
+      if (marks && styledMark(n)) marks.push('*');
       // a dropdown's shown value inside its label ("State Select a state")
       if (!top && n.matches(WIDGET_TEXT)) return;
       const st = getComputedStyle(n);
@@ -813,7 +904,7 @@ _EXTRACT_JS = r"""
   const isCtrl = (n) => n.matches(QUESTION_CTRL + ', button, [role=button]');
   // an upload's own words, never its question (G2c): "Attach", "Drop your file
   // or upload", "Total 0 file selected", "file-input", a missing-SVG fallback
-  const FACE = /^(attach|upload|browse|choose( an?)? files?|select( an?)? files?|no file chosen|drop (your )?files?( here)?( or upload)?|drag (and|&) drop.*|click to upload|total \d+ files? selected|file-?input|svgs? (are )?not supported.*)\.?$/i;
+  const FACE = /^(attach|upload( an?)?( files?)?|browse|choose( an?)? files?|select( an?)? files?|no file chosen|drop (your )?files?( here)?( or upload)?|drag (and|&) drop.*|click to upload|total \d+ files? selected|file-?input|svgs? (are )?not supported.*)\.?$/i;
   const STEP = /^\s*step\s+\d+\s*(of|\/)\s*\d+\s*$/i;     // a wizard's step marker
   // an upload's own clickable face ("Attach", "ATTACH RESUME/CV") is no question
   const isUpload = (n) => isCtrl(n) || n.matches('a[href], [role=link]')
@@ -847,7 +938,23 @@ _EXTRACT_JS = r"""
   const AUTOFILL = /autofill|auto-fill|import (your )?(resume|cv)|parse (your )?(resume|cv)|apply with (your )?resume/i;
 
   // [label, required] of one control
+  // is the question the control answers marked required: its fieldset's
+  // own title (a legend, or a label that is none of the control's), by a
+  // marker in its words or drawn by CSS (review I2)
+  const titleReq = (el) => {
+    const fs = el.closest('fieldset');
+    if (!fs) return false;
+    const title = Array.from(fs.children).find((c) => c.matches('legend, label'));
+    if (!title || title.contains(el) || title === labelElementFor(el)) return false;
+    const m = [];
+    const [, req] = strip(seen(title, m), m);
+    return req;
+  };
   const labelFor = (el, marks) => {
+    const [label, req] = labelWords(el, marks);
+    return [label, req || titleReq(el)];
+  };
+  const labelWords = (el, marks) => {
     const own = new Set([el]);
     const tryText = (t) => { const [s, r] = strip(t, marks); return [s, r]; };
     const lab = labelElementFor(el);
@@ -937,7 +1044,7 @@ _EXTRACT_JS = r"""
   };
   // a placeholder option: an empty-valued "Select..." or "--", and "Click
   // here..." or "-- No answer --" whatever its value (G7)
-  const PLACEHOLDER_OPTION = /^(select|choose|please|pick|-{2,}|\u2013|\u2014)/i;
+  const PLACEHOLDER_OPTION = __PLACEHOLDER__;
   const PLACEHOLDER_ANY = /^(click here\b|-+\s*(no answer|none|select)?\s*-+$|\u2013\s*select\s*\u2013$)/i;
   const selectOptions = (el) => Array.from(el.options).map((o) => norm(o.text)).filter((t, i) => {
     const o = el.options[i];
@@ -973,7 +1080,13 @@ _EXTRACT_JS = r"""
   const sectionOf = (el) => {
     const at = order.has(el) ? order.get(el) : -1;
     let best = null;
-    for (const h of heads) { if (order.get(h) < at) best = h; else break; }
+    for (const h of heads) {
+      if (order.get(h) >= at) break;
+      // its own box holds the control (review M7: a parser's box or the
+      // posting's headings above the form are no section of it)
+      const box = up(h);
+      if (box && !box.matches('body, html, main, [role=main]') && containsC(box, el)) best = h;
+    }
     return best ? seen(best).slice(0, 80) : '';
   };
   const describe = (el, type, label, required, css, options, extra) => {
@@ -996,13 +1109,24 @@ _EXTRACT_JS = r"""
   };
 
   // --- junk boxes (G3) ---
-  const HONEY = /honey[\s_-]?pot|robots? only|for robots|leave (this )?(field )?(blank|empty)|do not (fill|enter)\b/i;
+  // a honeypot's words: "honeypot", "robots only", "if you are human", or a
+  // label that is nothing but "leave this field blank" / "do not fill this"
+  // (review M4: "Middle name (leave this field blank if none)" is a question)
+  const HONEY = /honey[\s_-]?pot|robots? only|for robots|if you('re| are) (a )?human|^\s*(please )?(leave (this )?(field |box )?(blank|empty)|do not (fill|enter)( (in|this)( field| box)?)?)\.?\s*$/i;
   const HONEY_ID = /^hp[_-]|nickname_hp|honey/i;
-  const POSTING_WIDGET = /job alerts?\b|receive (an |job )?alerts?\b|newsletter|\bsort by\b|search (for )?jobs\b/i;
+  const POSTING_WIDGET = /job alerts?\b|receive (an |job )?alerts?\b|newsletter|\bsort by\b|search (for )?jobs\b|^\s*(search( (jobs|roles|positions|openings))?|keywords?|find (a )?jobs?)\s*$/i;
   const junk = (el, t, label) => {
     // a choice or a file box is often hidden behind its label or trigger
     const choice = t === 'checkbox' || t === 'radio' || t === 'file' || t === 'select';
-    if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.readOnly && !choice) return 'read-only';
+    // a read-only box, never a picker that opens on a click (review M6:
+    // react-select without search, a date picker)
+    const picker = el.matches('[role=combobox], [aria-haspopup], [aria-autocomplete]')
+      || /date|calendar|picker/i.test((el.getAttribute('class') || '') + ' '
+                                      + (el.getAttribute('placeholder') || '') + ' ' + (el.id || '')
+                                      + ' ' + (el.getAttribute('name') || ''));
+    if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.readOnly && !choice && !picker) {
+      return 'read-only';
+    }
     if (HONEY_ID.test(el.id || '') || HONEY_ID.test(el.getAttribute('name') || '')
         || HONEY.test(label)) return 'honeypot';
     if (POSTING_WIDGET.test(label)) return 'posting widget';
@@ -1043,7 +1167,49 @@ _EXTRACT_JS = r"""
   const items = [];             // {at, rec}: the fields in document order
   const consumed = new Set();   // controls already part of a field
   const asButtons = new Set();  // controls that are a field, never a button
-  const push = (anchor, rec) => { items.push({ at: order.has(anchor) ? order.get(anchor) : 1e9, rec: rec }); };
+  // a posting's widgets (EXT-16, study G3): the fields of a form whose own
+  // buttons only search, filter, alert or subscribe; outside a form, of a box
+  // named for filters, a search bar, job alerts or a newsletter, or whose
+  // buttons only do those things; a lone picker beside the page's legal
+  // links (a footer's language picker). Never a group with a password or a
+  // file box, or one beside a button that goes on (submit, apply, next...).
+  const WIDGET_BTN = /^(search( jobs| roles)?|find( jobs)?|go|filters?|apply filters?|clear( all| filters)?|reset( filters)?|notify me|alert me|subscribe|get (job )?alerts|create (a )?(job )?alert|set (up )?(an? )?(job )?alert|email me( jobs)?|send me (jobs|alerts))$/i;
+  const WAY_ON = /\b(submit|apply|send|next|continue|save|finish|sign in|log in|create account|register)\b/i;
+  const WIDGET_BOX = /(^|\s)([\w-]*[-_])?(filters?|job-?alerts?|newsletter|subscribe|search-?(bar|box|form|filters?))(\s|$)/i;
+  const LEGAL = /^(terms( of (service|use))?|privacy( policy)?|cookies?( (policy|notice|settings))?|legal( notice)?|accessibility|powered by .+)$/i;
+  const btnText = (b) => norm(b.innerText) || norm(b.value) || norm(b.getAttribute('aria-label'));
+  const ownButtons = (box) => Array.from(box.querySelectorAll(
+    'button, input[type=submit], input[type=button], [role=button]')).filter((b) => visible(b)
+      && !b.matches('[aria-haspopup]') && !closestC(b, '[role=combobox]') && !!btnText(b));
+  const serious = (box) => !!box.querySelector('input[type=password], input[type=file]');
+  const widgetGroup = (el) => {
+    const form = el.form || el.closest('form');
+    if (form) {
+      if (serious(form)) return false;
+      if (form.matches('[role=search]')) return true;
+      const btns = ownButtons(form);
+      return btns.length > 0 && btns.every((b) => WIDGET_BTN.test(btnText(b)));
+    }
+    const picker = el.matches('select, [role=combobox], [aria-haspopup]') && !isRequired(el);
+    let p = up(el);
+    for (let i = 0; p && i < 9; i++, p = up(p)) {
+      if (p === document.body || p === document.documentElement
+          || p.matches('main, [role=main], dialog, [role=dialog], form')) return false;
+      if (serious(p)) return false;
+      const btns = ownButtons(p);
+      if (btns.some((b) => WAY_ON.test(btnText(b)))) return false;
+      if (WIDGET_BOX.test((p.id || '') + ' ' + (p.getAttribute('class') || ''))) return true;
+      if (btns.length && btns.every((b) => WIDGET_BTN.test(btnText(b)))) return true;
+      const legal = Array.from(p.querySelectorAll('a[href]')).filter((a) =>
+        !a.closest('label') && LEGAL.test(norm(a.innerText)));
+      if (picker && legal.length >= 2) return true;      // a footer's language picker
+    }
+    return false;
+  };
+  const push = (anchor, rec) => {
+    if (widgetGroup(anchor)) return;
+    items.push({ at: order.has(anchor) ? order.get(anchor) : 1e9, rec: rec });
+  };
   const textOfOption = (o) => norm(seen(o)) || norm(o.getAttribute('aria-label'))
     || (o.getAttribute('aria-labelledby') ? byIds(o, o.getAttribute('aria-labelledby')) : '');
 
@@ -1154,6 +1320,7 @@ _EXTRACT_JS = r"""
   const boxes = all.filter((e) => e.matches('input[type=checkbox]') && !consumed.has(e)
                            && enabled(e) && (visible(e) || !!proxyFor(e)));
   const byKey = new Map();
+  const STATEMENT = /^\s*(yes,\s*)?i\b|\b(agree|consent|confirm|acknowledge|accept|certify|authori[sz]e)\b/i;
   const keyOf = (b) => {
     const name = b.getAttribute('name') || '';
     if (name && boxes.filter((o) => o.getAttribute('name') === name).length > 1) return 'name:' + name;
@@ -1166,8 +1333,15 @@ _EXTRACT_JS = r"""
     const box = choiceBox(b, 'input[type=checkbox]', boxes);
     if (box) {
       const mine = boxes.filter((o) => box.contains(o));
-      const asks = /[?:]\s*$|all that apply|select|choose/i.test(strip(boxText(box))[0]);
-      if (asks || mine.every((o) => optionLabel(o).length <= 60)) return 'box:' + order.get(box);
+      const words = strip(boxText(box))[0];
+      const asks = /\?\s*$|all that apply|select|choose|which/i.test(words);
+      // boxes that each state something ("I agree to ...", "I consent to
+      // ...") under a line that asks nothing stay apart (review M5)
+      const statements = mine.every((o) => STATEMENT.test(optionLabel(o)));
+      if (statements && !asks) return 'one:' + order.get(b);
+      if (asks || /:\s*$/.test(words) || mine.every((o) => optionLabel(o).length <= 60)) {
+        return 'box:' + order.get(box);
+      }
     }
     return 'one:' + order.get(b);
   };
@@ -1255,7 +1429,7 @@ _EXTRACT_JS = r"""
         if (!g) {
           g = { first: el, name: shared ? name : '', box: box, radios: [] };
           radios.set(key, g);
-          items.push({ at: order.get(el), group: g });
+          if (!widgetGroup(el)) items.push({ at: order.get(el), group: g });
         }
         g.radios.push(el);
         continue;
@@ -1352,7 +1526,7 @@ _EXTRACT_JS = r"""
       if (POPUP_NOT.test(text)) continue;
       const [label, req] = labelFor(el, marks);
       const scoped = !!closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset');
-      const placeholder = /^(select|choose|pick|please|--|\u2013|\u2014)/i.test(text);
+      const placeholder = PLACEHOLDER_OPTION.test(text);
       // named by a label of its own (never only by the words above it)
       const named = !!labelElementFor(el) || !!el.getAttribute('aria-labelledby')
         || !!ariaWords(el.getAttribute('aria-label'))[0];
@@ -1412,6 +1586,14 @@ _EXTRACT_JS = r"""
       || norm(el.getAttribute('title')) || (host ? norm(host.innerText) : '');
     if (!text) continue;        // an icon with no name the judge could read (G4)
     if (!el.matches(bsel) && !applyLink(el, text)) continue;
+    // a button drawn under a click filter of the same words (Workday's
+    // "Create Account"): the filter takes the click, the button is no
+    // second button
+    const rb = el.getBoundingClientRect();
+    const cx = rb.left + rb.width / 2, cy = rb.top + rb.height / 2;
+    const over = cx >= 0 && cy >= 0 && cx < vw && cy < vh ? document.elementFromPoint(cx, cy) : null;
+    if (over && over !== el && !el.contains(over) && !over.contains(el) && over.matches(bsel)
+        && (norm(over.innerText) || norm(over.getAttribute('aria-label'))) === text) continue;
     const typeB = (el.getAttribute('type') || '').toLowerCase();
     const submits = typeB === 'submit' || (el.tagName === 'BUTTON' && !typeB && !!el.form);
     const aria = norm(el.getAttribute('aria-label'));
@@ -1459,7 +1641,8 @@ _EXTRACT_JS = r"""
   return { fields: fields, buttons: buttons, text: text.slice(0, cap), dialog: modalTitle.slice(0, 160),
            modal: !!modal };
 }
-""".replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS).replace("__CONSENT__", CONSENT_ROOTS_JS)
+""".replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS).replace("__CONSENT__", CONSENT_ROOTS_JS).replace(
+    "__IDENT__", IDENT_FN_JS).replace("__PLACEHOLDER__", PLACEHOLDER_TEXT_JS)
 
 _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
 

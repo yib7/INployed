@@ -5,7 +5,8 @@
 <title>Analytics Engineer - Fabrikam Careers - Apply</title>
 <!-- A synthetic replica of an Oracle Recruiting Cloud first screen (layout
      study G3, G6): an email box, a required terms checkbox drawn at 0 x 0
-     with opacity 0 and a clip behind its visible custom label, a honeypot
+     with opacity 0 and a clip behind its visible custom label, whose words
+     hold a link that opens the terms in a dialog (aria-haspopup), a honeypot
      box off the page, NEXT; then the application's own step and its
      Submit on the same URL. -->
 <style>
@@ -30,10 +31,11 @@
   <p>Enter your email to begin.</p>
   <div class="field"><label for="primary-email">Email Address *</label>
     <input id="primary-email" type="email" name="email" required></div>
-  <div class="honey"><label for="honey-pot-1">honeypot</label><input id="honey-pot-1" name="honey" type="text"></div>
+  <div class="honey"><label for="honey-pot-1">honeypot</label><input id="honey-pot-1" name="honey" type="text" data-harness-junk="honeypot"></div>
   <div class="field">
     <input type="checkbox" id="legal-disclaimer" class="apply-flow-input-checkbox" required>
-    <label for="legal-disclaimer">I agree with the terms and conditions of the application</label>
+    <label for="legal-disclaimer">I agree with the <a href="#" id="terms-link" aria-haspopup="true"
+      onclick="event.preventDefault()">terms and conditions</a> of the application</label>
   </div>
   <button type="button" id="next" class="button--primary">NEXT</button>
 </div>

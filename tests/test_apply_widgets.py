@@ -1278,3 +1278,69 @@ def test_a_labels_skipped_words_mark_it_read_in_part(browser_page, inner, partia
       {inner}</label></form></body>""")
     f = apply_form.extract(browser_page).fields[0]
     assert f.label_partial is partial, f.label
+
+
+# === SP5 review round 8 ============================================================================
+
+# the three send shapes the word rules let through (R8-I1 a, c), for the
+# classification tests and the open guard's
+_SEND_POPUPS = {
+    "shown": """<div><button type="button" id="arrow" aria-haspopup="menu"
+        aria-label="Submit your application right now"
+        onclick="document.body.dataset.opened = 1">Submit your application right now</button></div>""",
+    "long": """<div><button type="button" id="arrow" aria-haspopup="menu"
+        aria-label="Submit your application or save a draft"
+        onclick="document.body.dataset.opened = 1">Submit &#9662;</button></div>""",
+    "legend": """<fieldset><legend>Your application *</legend>
+        <button type="submit" id="btn-submit">Submit application</button>
+        <button type="button" id="arrow" aria-haspopup="menu" aria-label="More submit options"
+          onclick="document.body.dataset.opened = 1">
+          <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></fieldset>""",
+}
+
+
+# --- R8 (2), (3): a popup is a field by a question from outside it, or by its own requirement -----
+
+@pytest.mark.parametrize("shape", sorted(_SEND_POPUPS))
+def test_a_send_popup_is_no_field(browser_page, shape):
+    browser_page.set_content(f"<body><form>{_SEND_POPUPS[shape]}</form></body>")
+    d = apply_form.extract(browser_page)
+    assert d.fields == [], [(f.label, f.required) for f in d.fields]
+
+
+def test_a_popup_named_by_its_own_span_that_goes_on_stays_a_button(browser_page):
+    browser_page.set_content("""<body><form><button type="button" aria-haspopup="menu"
+      aria-labelledby="sc-name"><span id="sc-name">Save and continue</span></button>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert d.fields == []
+    assert "Save and continue" in [b.text for b in d.buttons]
+
+
+def test_a_popup_with_its_star_beside_it_reads_required(browser_page):
+    browser_page.set_content("""<body><form>
+      <div><span>Expected finish date *</span>
+        <button type="button" aria-haspopup="listbox" aria-label="Expected finish date"
+          >Select</button></div>
+      <div><button type="button" aria-haspopup="listbox" aria-label="Start month">Select</button>
+        <span class="req" aria-hidden="true">*</span></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.required) for f in d.fields] == [
+        ("Expected finish date", True), ("Start month", True)]
+
+
+def test_an_optional_question_with_a_send_word_is_a_field_only_by_an_outside_label(browser_page):
+    # the Minor's two cases: with a label of its own it is a question; named
+    # only by its own aria-label it is a button, which is never opened
+    browser_page.set_content("""<body><form>
+      <div><label for="ref">Willing to submit references</label>
+        <button type="button" id="ref" aria-haspopup="listbox">Select</button></div>
+      <div><button type="button" id="ref2" aria-haspopup="listbox"
+        aria-label="Willing to submit references">Select</button></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.locator[1]) for f in d.fields] == [("Willing to submit references",
+                                                            "#ref")]
+    # the aria-label-only one stays among the page's buttons (by its shown text)
+    assert "#ref2" in [b.locator[1] for b in d.buttons]

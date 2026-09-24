@@ -1532,21 +1532,62 @@ _EXTRACT_JS = r"""
   const POPUP_CHROME_LABEL = /^((change|select|choose|switch|set|your|my|site|display)\s+)?(language|account|profile|settings|share|sort( by)?|filters?)(\s+(settings|preferences|options|menu))?$/i;
   const ASKS = /\?\s*$|\ball that apply\b/i;
   const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
-  // a control that sends or goes on, by its own words (review R5-I1: a
-  // submit's menu arrow "More submit options", a "Save and continue" menu):
-  // never a field, never opened to read its options, still a button. Read on
-  // its shown text when it has no question label of its own (a re-read
-  // question showing "Continue studies" is answered, review round 7, M1),
-  // and on its aria-label when that is a short control name (four words at
-  // most, no "?", no prompt tail: Workday's "Are you willing to submit to a
-  // background check? Select One Required" is a question, review R6-I1) or
-  // when the control shows no words of its own (an icon-only arrow named at
-  // any length, review R7-I1). A required control is an answer, never a send
-  // button ("Willing to submit references", required, review R7-I1).
+  // a send or go-on phrase, as a popup's own name ("More submit options",
+  // "Save and continue", "Continue with", "Apply with", "Next step")
   const POPUP_WAY_ON = /\b(submit|send|finish|continue|apply with|next step)\b/i;
-  const PROMPT_TAIL = /\b(select one|required|please select|choose one)\b/i;
-  const controlName = (aria) => !!aria && !/\?/.test(aria) && !PROMPT_TAIL.test(aria)
-    && aria.split(/\s+/).length <= 4;
+  // A popup's question from outside the control (review round 8): the words
+  // of a label[for] or an aria-labelledby target outside it, else of its
+  // question box (at most three boxes up, none a form or a fieldset, each
+  // holding no other question), and whether that question is starred. Never
+  // the control's own words, never a fieldset's legend.
+  const popupQuestion = (el) => {
+    const marks = [];
+    const lab = labelElementFor(el);
+    if (lab && !lab.contains(el)) {
+      const t = strip(labelText(lab, marks), marks);
+      if (t[0]) return t;
+    }
+    const by = el.getAttribute('aria-labelledby');
+    if (by) {
+      const outside = by.split(/\s+/).map((id) => byIdIn(el, id))
+        .filter((n) => n && n !== el && !el.contains(n));
+      const t = strip(norm(outside.map((n) => labelText(n, marks)).join(' ')), marks);
+      if (t[0]) return t;
+    }
+    let p = up(el);
+    for (let i = 0; p && i < 3; i++, p = up(p)) {
+      if (p.matches('body, html, form, fieldset, main, [role=main], dialog, [role=dialog]')) break;
+      if (Array.from(p.querySelectorAll(QUESTION_CTRL)).some((c) => c !== el
+          && !el.contains(c) && visible(c))) break;
+      // the words before the control, and a star anywhere in its box (before
+      // it, or a marker beside it after)
+      const mine = [];
+      const [words, starBefore] = strip(seen(p, mine, (n) => n === el || isCtrl(n)), mine);
+      const all = [];
+      const starAll = strip(seen(p, all), all)[1];
+      if (words || starBefore || starAll) return [words, starBefore || starAll];
+    }
+    return ['', false];
+  };
+  // A popup's kind (review round 8): a field when it has a question from
+  // outside it that is no chrome name, or when it is required by its own
+  // attributes (`aria-required`, `required`, Workday's aria-label ending
+  // "Required") or its own question's star; else a button (left among the
+  // page's buttons, never opened) when its own name, shown or aria-label,
+  // is a send or go-on phrase; else chrome for a chrome word or name; else a
+  // field when it names a question of its own (an aria-label) or shows a
+  // placeholder, or is a listbox inside a form.
+  const chromeName = (t) => !!t && !ASKS.test(t) && (chromePopup(t) || POPUP_CHROME_LABEL.test(t));
+  const popupKind = (el, pop, text, aria, question, required) => {
+    if ((question && !chromeName(question)) || required) return 'field';
+    if (POPUP_WAY_ON.test(text) || POPUP_WAY_ON.test(aria)) return 'button';
+    if (chromePopup(text) || chromeName(ariaWords(aria)[0]) || question) return 'chrome';
+    if (ariaWords(aria)[0] || PLACEHOLDER_OPTION.test(text)) return 'field';
+    if (pop === 'listbox' && closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset')) {
+      return 'field';
+    }
+    return 'chrome';
+  };
   for (const el of all) {
     if (consumed.has(el) || !el.matches(FIELD_SEL)) continue;
     if (!usable(el)) continue;
@@ -1672,30 +1713,12 @@ _EXTRACT_JS = r"""
       if (Array.from(el.querySelectorAll('input:not([type=hidden])')).some(visible)) continue;
       const text = norm(el.innerText) || norm(el.value);
       const aria = norm(el.getAttribute('aria-label'));
+      const [question, star] = popupQuestion(el);
+      const own = isRequired(el) || ariaWords(aria)[1] || star;
+      if (popupKind(el, pop, text, aria, question, own) !== 'field') continue;
       const [label, req] = labelFor(el, marks);
-      const required = req || isRequired(el);
-      if (!required && aria && (controlName(aria) || !text) && POPUP_WAY_ON.test(aria)) continue;
-      const scoped = !!closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset');
-      const placeholder = PLACEHOLDER_OPTION.test(text);
-      // named by a label of its own (never only by the words above it)
-      const named = !!labelElementFor(el) || !!el.getAttribute('aria-labelledby')
-        || !!ariaWords(aria)[0];
-      // a label that asks, or a required one, is a question's
-      const question = !!label && (ASKS.test(label) || required);
-      const chromeLabel = !!label && !question && (chromePopup(label)
-                                                   || POPUP_CHROME_LABEL.test(label));
-      // a shown chrome word, or a shown send or go-on word: chrome, unless a
-      // listbox holds it as its answer (options of its own, or a question's
-      // label: "Stack preference: Back", "Delivery method: Send by post")
-      const questionLabel = named && !!label && !chromeLabel;
-      const answer = pop === 'listbox' && (listboxOptions(el).length || questionLabel);
-      if (chromePopup(text) && !answer) continue;
-      if (POPUP_WAY_ON.test(text) && !required && !questionLabel && !answer) continue;
-      if (pop !== 'listbox' && !(placeholder || named)) continue;
-      if (pop !== 'listbox' && chromeLabel) continue;
-      if (pop === 'listbox' && !(scoped || named || placeholder)) continue;
       asButtons.add(el);
-      push(el, describe(el, 'listbox', label || text, required, locatorFor(el),
+      push(el, describe(el, 'listbox', label || question || text, own || req, locatorFor(el),
                         listboxOptions(el), { widget: 'popup' }));
       continue;
     }

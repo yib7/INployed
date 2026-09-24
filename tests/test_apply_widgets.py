@@ -1183,6 +1183,37 @@ def test_a_named_chrome_popup_is_still_no_field(browser_page):
     assert "Save and continue" in [b.text for b in d.buttons]
 
 
+# --- R6 Minor 1: the harness never reads a tick or a toggle as a click outside the gate -----------
+
+def test_a_tick_or_a_toggle_that_says_confirm_is_no_click_outside_the_gate(browser_page):
+    import types
+    browser_page.set_content("""<body><form>
+      <div role="checkbox" id="tick" aria-checked="false" tabindex="0"
+        style="width: 16px; height: 16px; border: 1px solid #333"
+        aria-label="I confirm the information above is complete"
+        onclick="this.setAttribute('aria-checked', 'true')"></div>
+      <button type="button" id="toggle" aria-pressed="false"
+        onclick="this.setAttribute('aria-pressed', 'true')">Yes, I confirm</button>
+      <button type="button" id="done" role="switch" aria-checked="false"
+        aria-label="Done"><svg width="8" height="8"></svg></button>
+      <button type="submit" id="send" aria-label="Submit application"
+        onclick="event.preventDefault()"><svg width="8" height="8"></svg></button>
+      </form></body>""")
+    rec = h.Recorder(None, park_mode=True)
+    out = types.SimpleNamespace(status="ready_to_submit", reason="auto_apply_submit is off")
+    with rec.recording():
+        for sel in ("#tick", "#toggle", "#done"):
+            browser_page.locator(sel).click()
+    assert h.invariant_breaks(out, rec, h.Sends(rec)) == [], [
+        (a.kind, a.text, a.role) for a in rec.actions]
+    # a real icon-only submit clicked outside the gate still breaks
+    with rec.recording():
+        browser_page.locator("#send").click()
+    breaks = h.invariant_breaks(out, rec, h.Sends(rec))
+    assert len(breaks) == 1 and breaks[0].startswith("CLICK-OUTSIDE-GATE: clicked 'Submit "
+                                                    "application'"), breaks
+
+
 # --- R5 Minor 1: a menu label is chrome only when it names the chrome itself ----------------------
 
 def test_a_language_question_and_a_listbox_answered_back_are_fields(browser_page):

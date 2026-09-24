@@ -1059,7 +1059,12 @@ _LIVE_JS = r"""el => {
     else if (r.width <= 2 && r.height <= 2) junk = 'two pixels or less';
     else if (el.closest('[aria-hidden=true]')) junk = 'aria-hidden';
   }
-  return {text: text, role: el.getAttribute('role') || '', tag: tag, type: type,
+  // a tick or a toggle: it never sends (review round 6, Minor 1)
+  const role = el.getAttribute('role') || '';
+  const toggle = ['checkbox', 'switch', 'radio', 'option', 'menuitemcheckbox',
+                  'menuitemradio'].includes(role) || ['checkbox', 'radio'].includes(type)
+    || el.hasAttribute('aria-pressed');
+  return {text: text, role: role, tag: tag, type: type, toggle: toggle,
           aria: (el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 160),
           form: !!(el.form || (el.closest && el.closest('form'))),
           url: String(el.ownerDocument.location.href), junk: junk};
@@ -1087,7 +1092,8 @@ _ON_LINKEDIN_FORBIDDEN = ("fill", "tick", "pick", "upload", "gate")
 _CAPTCHA_TOUCH = ("click", "fill", "tick", "pick", "press", "event")   # never in a bot check
 
 
-def submit_worded(text: str, *, park_mode: bool, account_step: bool = False) -> bool:
+def submit_worded(text: str, *, park_mode: bool, account_step: bool = False,
+                  toggle: bool = False) -> bool:
     """Does a control's live text read as sending the application, in the
     loop's words? A send word other than "apply" (a bare "Apply" is the
     posting's entry), unless the click is the account step's and the text
@@ -1095,7 +1101,12 @@ def submit_worded(text: str, *, park_mode: bool, account_step: bool = False) -> 
     code", "Send me a link": the account step's own exemption,
     `apply_run._sends_application`; everywhere else the loop routes those
     words to the submit gate); or in park mode a last-step word on anything
-    but an account step (`apply_run._final_shaped`)."""
+    but an account step (`apply_run._final_shaped`). A tick or a toggle
+    (`toggle`: a checkbox, switch, radio or option, or an aria-pressed
+    button) never sends, whatever its words ("I confirm the information above
+    is complete"): the loop ticks it as an answer (review round 6, Minor 1)."""
+    if toggle:
+        return False
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
     if words - {"apply"} and not (account_step and apply_run.apply_judge.SIGN_IN_WORDS.search(text or "")):
         return True
@@ -1131,6 +1142,8 @@ class Action:
     aria: str = ""      # the element's aria-label
     in_account: bool = False    # made by the account step (`_Accounts._fill`)
     junk: str = ""      # a box no person fills: read-only, or a honeypot (SP5, study G3)
+    toggle: bool = False    # a tick or a toggle (a checkbox, switch, radio or option role,
+                            # aria-pressed): it never sends (review round 6, Minor 1)
 
     @property
     def host(self) -> str:
@@ -1178,7 +1191,8 @@ class Recorder:
                                    form=bool(info.get("form", False)),
                                    aria=str(info.get("aria", "")),
                                    in_account=self.account_depth > 0,
-                                   junk=str(info.get("junk", ""))))
+                                   junk=str(info.get("junk", "")),
+                                   toggle=bool(info.get("toggle", False))))
 
     @staticmethod
     def focused(page) -> dict:
@@ -1419,7 +1433,7 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
     for a in recorder.actions:
         if a.kind == "click" and not a.in_gate \
                 and submit_worded(a.text, park_mode=recorder.park_mode,
-                                  account_step=a.in_account):
+                                  account_step=a.in_account, toggle=a.toggle):
             breaks.append(f"CLICK-OUTSIDE-GATE: clicked {a.text!r} ({a.role or a.tag}) on "
                           f"{a.host} outside the submit gate")
         enter = a.kind == "press" and a.key in _ENTER_KEYS

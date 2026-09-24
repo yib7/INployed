@@ -142,6 +142,8 @@ FILL_ROUNDS_MAX = 3                # re-reads after a page's fill: revealed fiel
 DISABLED_WAIT_S = 2.0              # a way on still disabled after the fill: waited on this long
 REPAIR_ROUNDS = 2                  # repairs of the fields a form refused, per step (ADV-02)
 BUSY_WAIT_S = 60                   # a loading indicator after a click: waited on this long (ADV-07)
+STEP_SETTLE_S = 20                 # a quiet click that set a request going: waited on this long
+                                   # more, never clicked again (ADV-06)
 BUSY_POLL_S = 0.25
 SUBMIT_SETTLE_S = 10               # after a quiet submit click: wait this long for the page
 POST_SUBMIT_WAIT_S = 45            # after the submit click, the page is read again while a
@@ -5384,8 +5386,12 @@ class _JobRun:
         clicked once whatever the page showed: a quiet page is no proof the
         click failed and a second click could send twice, so a
         landed-but-quiet submit waits up to `SUBMIT_SETTLE_S` for the page
-        instead. Any other role gets one retry of a quiet click; a dead
-        advance parks with the button, its role and the judge's confidence.
+        instead. Any other role gets one retry of a quiet click that set
+        nothing going (no navigation, no POST, PUT or PATCH: a click before
+        the page's script was ready); a quiet click that did is waited for
+        `STEP_SETTLE_S` more and never made again (ADV-06, SP6 review I3); a
+        dead advance parks with the button, its role and the judge's
+        confidence.
         A click that opens a new tab (NAV-05), right away or a moment after
         the click (the tabs are watched until the retry, which waits
         `POPUP_GRACE_S` for one first, review M5), is followed and never
@@ -5440,6 +5446,28 @@ class _JobRun:
         if result.clicked and refused_by_form is not None and refused_by_form():
             return result
         if result.changed:
+            return result
+        went = [row for row in result.sent if not _tracking(row.split(" ", 1)[-1])
+                and not _is_captcha_url(row.split(" ", 1)[-1])]
+        if went:
+            # ADV-06 (SP6 review I3): the click reached the page and set a
+            # request going; a second click would make it twice (a step saved
+            # twice, a send made twice). The page is waited for, never
+            # clicked again.
+            self.log.info("job %s: the %s click set %s going; waiting up to %s s for the page",
+                          self.job_id, role, went[0], STEP_SETTLE_S)
+            changed = apply_fill.wait_for_change(self.page, timeout_s=STEP_SETTLE_S)
+            self._trace("step_settle", changed=changed, waited_s=STEP_SETTLE_S, sent=went[:3])
+            if changed:
+                self._wait_while_busy(text)
+            if changed or (refused_by_form is not None and refused_by_form()):
+                return apply_fill.ClickResult(clicked=True, changed=changed, late=result.late,
+                                              sent=result.sent)
+            if role == "advance":
+                judged = f"judged {role} {conf:.2f}, " if conf is not None else ""
+                raise _Parked("needs_human", f"the {role} button ({text}) did nothing ({judged}"
+                                             f"its request left: {_cap(went[0], 100)}; it was "
+                                             "not clicked again)")
             return result
         self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
         with _popups(self.page) as opened:

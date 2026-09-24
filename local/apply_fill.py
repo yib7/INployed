@@ -1319,13 +1319,17 @@ class ClickResult:
     the caller's live check (`click`'s `check`) stopped the click, and why;
     nothing was clicked. `late`: the error a dispatched click raised
     afterwards. `overlay`: what covered the control and how it was put away
-    before the click was made once more (ADV-04). Truthiness is `changed`,
-    the shape `click_button` returns."""
+    before the click was made once more (ADV-04). `sent`: every navigation,
+    POST, PUT or PATCH the page made from the click to the end of its wait
+    ("METHOD url", no query): a click that set one going reached the page
+    (SP6 review I3). Truthiness is `changed`, the shape `click_button`
+    returns."""
     clicked: bool
     changed: bool
     refused: str = ""
     late: str = ""
     overlay: str = ""
+    sent: tuple = ()
 
     def __bool__(self) -> bool:
         return self.changed
@@ -1531,6 +1535,9 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
     requests: list[str] = []
     blocked: list[str] = []
     overlays: list[dict] = []
+    # every navigation, POST, PUT or PATCH from the click to the end of its
+    # wait ("METHOD url"): what the click set going (SP6 review I3)
+    sent: list[str] = []
 
     def _on_request(request) -> None:
         # a navigation or a send proves the dispatch; a GET for an image does not
@@ -1538,6 +1545,14 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
             method = str(request.method).upper()
             if method in _DISPATCH_METHODS or request.is_navigation_request():
                 requests.append(method)
+        except Exception:       # noqa: BLE001
+            pass
+
+    def _on_sent(request) -> None:
+        try:
+            method = str(request.method).upper()
+            if method in _DISPATCH_METHODS or request.is_navigation_request():
+                sent.append(f"{method} {str(request.url).split('?')[0]}")
         except Exception:       # noqa: BLE001
             pass
 
@@ -1655,6 +1670,10 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
         return (f"{o.get('what') or 'an overlay'}: {o.get('kind')}"
                 + (f" {o.get('text')!r}" if o.get("text") else ""))[:160]
     try:
+        page.on("request", _on_sent)
+    except Exception:       # noqa: BLE001  (a page double)
+        pass
+    try:
         changed = _await_change(page, _act, timeout_s)
     except Exception as e:      # noqa: BLE001
         if blocked:
@@ -1662,9 +1681,14 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
             return ClickResult(clicked=False, changed=False, refused=blocked[0], overlay=_cover())
         log.info("apply_fill: click on %r failed: %s", button.text, type(e).__name__)
         return ClickResult(clicked=bool(landed), changed=False, late=late[0] if late else "",
-                           overlay=_cover())
+                           overlay=_cover(), sent=tuple(sent))
+    finally:
+        try:
+            page.remove_listener("request", _on_sent)
+        except Exception:       # noqa: BLE001  (a page double)
+            pass
     return ClickResult(clicked=True, changed=changed, late=late[0] if late else "",
-                       overlay=_cover())
+                       overlay=_cover(), sent=tuple(sent))
 
 
 def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:

@@ -327,3 +327,81 @@ def test_a_control_gone_after_a_repair_is_never_replaced_by_a_look_alike(browser
     assert run._same_button(apply_form.extract(browser_page), who) is None
     with pytest.raises(apply_run._Parked, match="could not be found again"):
         raise run._button_lost(who)
+
+
+# --- I3 (ADV-06): a quiet click that set a request going is waited for, never made again -----------
+
+_SLOW_STEP = """<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Analytics Engineer</h1><form id="f" novalidate>
+<div id="s1"><label>Full name * <input name="name" required></label>
+<button type="button" id="next">Save and continue</button></div>
+<div id="s2" hidden><label>Resume * <input type="file" name="resume" required></label></div>
+</form><script>
+  let saves = 0;
+  document.getElementById('next').addEventListener('click', () => {
+    fetch('/submit/__NAME__', {method: 'POST', body: 'x'}).then(() => {
+      saves++; document.body.dataset.saves = String(saves);
+      document.getElementById('s1').hidden = true; document.getElementById('s2').hidden = false;
+    });
+  });
+</script></body></html>"""
+
+
+@pytest.mark.parametrize("delay, name", [(5.0, "sp6_slow_step"), (0.0, "sp6_quick_step")])
+def test_a_slow_step_posts_once_and_is_waited_for(_browser, flow_server, delay, name):
+    flow_server.answers[name] = (delay, "ok")
+    context = _browser.new_context()
+    try:
+        h.offline(context)
+        page = context.new_page()
+        base = flow_server.base
+        context.route(f"{base}/forms/{name}.html", lambda route: route.fulfill(
+            body=_SLOW_STEP.replace("__NAME__", name), content_type="text/html"))
+        page.goto(f"{base}/forms/{name}.html")
+        run = apply_run._JobRun(apply_run.Runner(jev=jev.FakeJev(), context=context,
+                                                 run_context={}, sleep=lambda s: None),
+                                context, {"job_posting_id": "s", "apply_url": page.url})
+        run._build_allowlist()
+        run.page = page
+        digest = apply_form.extract(page)
+        n = next(b.n for b in digest.buttons if b.text == "Save and continue")
+        with h.fast_timing():
+            result = run._click(digest, n, "advance", {"clicked": []}, conf=0.9)
+        assert result.changed
+        assert flow_server.posts.get(name) == 1
+        assert page.evaluate("document.body.dataset.saves") == "1"
+    finally:
+        flow_server.answers.pop(name, None)
+        context.close()
+
+
+def test_a_step_that_posted_and_never_moved_parks_without_a_second_click(_browser, flow_server,
+                                                                        monkeypatch):
+    name = "sp6_dead_step"
+    flow_server.answers[name] = (0.0, "ok")
+    context = _browser.new_context()
+    try:
+        h.offline(context)
+        page = context.new_page()
+        base = flow_server.base
+        body = _SLOW_STEP.replace("__NAME__", name).replace(
+            "saves++; document.body.dataset.saves = String(saves);\n      "
+            "document.getElementById('s1').hidden = true; "
+            "document.getElementById('s2').hidden = false;", "saves++;")
+        context.route(f"{base}/forms/{name}.html",
+                      lambda route: route.fulfill(body=body, content_type="text/html"))
+        page.goto(f"{base}/forms/{name}.html")
+        run = apply_run._JobRun(apply_run.Runner(jev=jev.FakeJev(), context=context,
+                                                 run_context={}, sleep=lambda s: None),
+                                context, {"job_posting_id": "s", "apply_url": page.url})
+        run._build_allowlist()
+        run.page = page
+        digest = apply_form.extract(page)
+        n = next(b.n for b in digest.buttons if b.text == "Save and continue")
+        monkeypatch.setattr(apply_run, "STEP_SETTLE_S", 1)
+        with h.fast_timing(), pytest.raises(apply_run._Parked, match="it was not clicked again"):
+            run._click(digest, n, "advance", {"clicked": []}, conf=0.9)
+        assert flow_server.posts.get(name) == 1
+    finally:
+        flow_server.answers.pop(name, None)
+        context.close()

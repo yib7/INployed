@@ -1399,8 +1399,10 @@ _SIGN_IN_ONLY = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b", re.I)
 def password_step(digest: apply_form.FormDigest) -> str:
     """What an account screen's password boxes say it is (review R2-I4):
     "signup" for a `new-password` box or two boxes (a password and its
-    confirmation), "signin" for one box or `current-password` alone, "" with
-    no box or boxes that say both (a change of password)."""
+    confirmation), "signin" for `current-password` alone; "" (the read
+    decides) with no box, one box that names neither (a one-box sign-up
+    looks like a sign-in, review round 3, M2), or boxes that say both (a
+    change of password)."""
     boxes = [f for f in digest.fields
              if apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete)]
     if not boxes:
@@ -1410,7 +1412,7 @@ def password_step(digest: apply_form.FormDigest) -> str:
         return ""
     if "new-password" in tokens or len(boxes) >= 2:
         return "signup"
-    return "signin"
+    return "signin" if "current-password" in tokens else ""
 
 
 def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
@@ -1419,9 +1421,9 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     the judged submit, at `BUTTON_ADVANCE_MIN_CONF` or above, never one of
     the site's header (a header's "Sign In" on a sign-up screen, review
     M11), and never one whose words name the other step while the screen
-    has its own button that names this one and its password boxes agree
-    with the read (`password_step`: a sign-up screen's "Already have an
-    account? Sign In" beside its "Create Account"; a screen whose only way
+    has its own button that names this one and its password boxes say no
+    other step than the read (`password_step`: a sign-up screen's "Already
+    have an account? Sign In" beside its "Create Account"; a screen whose only way
     on says "Sign in" is a sign-in whatever it was read as; a sign-in read
     as a sign-up keeps its judged Sign In, review R2-I4). With neither: the
     screen's own buttons whose words name the account step ("Create
@@ -1451,7 +1453,7 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
                 or _chrome(digest, held[0]):
             continue
         words = text.get(held[0], "")
-        if boxes == read and fitting and other.search(words) and not fits.search(words):
+        if step == read and fitting and other.search(words) and not fits.search(words):
             # the judge rated the screen's own "Sign In" the advance above
             # "Create Account", and the sign-up clicked it and landed on the
             # sign-in screen (the fix round's Workday misses)
@@ -3338,12 +3340,21 @@ class _JobRun:
 
     def _loading(self, digest: apply_form.FormDigest, busy: bool) -> bool:
         """A read with no field taken while a loading placeholder showed
-        (`busy`, read before the extract): a skeleton is no read of the page
-        (NAV-04, READ-02). The placeholder is looked for before the read, so
-        a page that clears it between the read and the look is read again
-        (SP5 round 2: a busy machine read the skeleton, the form came, and
-        the look after the read saw no placeholder)."""
+        (`busy`: `_read_busy`'s look before or after the extract): a skeleton
+        is no read of the page (NAV-04, READ-02)."""
         return busy and not digest.fields
+
+    def _read_busy(self, look: bool) -> tuple[apply_form.FormDigest, bool]:
+        """(the page's digest, whether a loading placeholder showed before or
+        after it was read). With `look` off, no look. The look before the read
+        catches a skeleton that clears between the read and a later look (SP5
+        round 2: a busy machine read the skeleton, the form came, and the look
+        saw none); the look after it, when the read has no field, a skeleton
+        painted between the first look and the read (review round 3, M1)."""
+        before = look and self._busy()
+        digest = self._drop_foreign_controls(self._extract())
+        after = look and not before and not digest.fields and self._busy()
+        return digest, bool(before or after)
 
     def _read_digest(self) -> apply_form.FormDigest:
         """The page's digest, read once more while it is still empty
@@ -3360,8 +3371,7 @@ class _JobRun:
         again."""
         url = str(self.page.url)
         watch = url not in self._loading_waited
-        busy = watch and self._busy()
-        digest = self._drop_foreign_controls(self._extract())
+        digest, busy = self._read_busy(watch)
         loading = watch and self._loading(digest, busy)
         empty = _empty_read(digest)
         if not empty and not loading:
@@ -3380,8 +3390,7 @@ class _JobRun:
             # the page may have moved on while it settled or between reads:
             # a page off the allowed sites is never read, let alone judged
             self._check_host(self.page.url)
-            busy = loading and self._busy()
-            digest = self._drop_foreign_controls(self._extract())
+            digest, busy = self._read_busy(loading)
             now = time.monotonic()
             empty = _empty_read(digest)
             loading = loading and self._loading(digest, busy)

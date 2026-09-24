@@ -195,9 +195,10 @@ def test_the_password_boxes_say_whether_an_account_screen_signs_in_or_signs_up()
     """Review R2-I4: Workday's sign-in (its own "Sign In", a "Create Account",
     one password box) read as a sign-up once took "Create Account", typed the
     master password into the sign-in's box and parked on the sign-up that
-    followed. The other-step rule holds only when the password boxes agree
-    with the read: one box or `current-password` says sign-in, `new-password`
-    or two boxes say sign-up."""
+    followed. The other-step rule holds only when the password boxes say no
+    other step than the read: `current-password` says sign-in, `new-password`
+    or two boxes say sign-up, one box that names neither lets the read
+    decide (review round 3, M2)."""
     import apply_run
     from apply_judge import FillPlan
     floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
@@ -224,7 +225,27 @@ def test_the_password_boxes_say_whether_an_account_screen_signs_in_or_signs_up()
                                                                    "new-password")])
     none = FormDigest(url_host="x", title="t", text="", fields=[_f(0, "Email")])
     assert [apply_run.password_step(d) for d in (one, two, new, none)] == [
-        "signin", "signup", "signup", ""]
+        "", "signup", "signup", ""]
+
+
+def test_a_one_box_sign_up_read_as_a_sign_up_takes_its_create_account():
+    """Review round 3, M2: a sign-up with one password box (Email, Password,
+    Create Account, "Already have an account? Sign in") read as a sign-up:
+    the one box names no step, the read decides, and neither the judged
+    in-page Sign in nor the fallback takes the sign-in."""
+    import apply_run
+    from apply_judge import FillPlan
+    floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
+    signup = FormDigest(url_host="x", title="Join", text="Create your account", fields=[
+        _f(0, "Email", required=True), _pw(1, "Password")], buttons=[
+        Button(n=0, locator=(0, "#c"), text="Create Account"),
+        Button(n=1, locator=(0, "#s"), text="Sign in")])
+    assert apply_run.password_step(signup) == ""
+    assert apply_run.account_advance(signup, FillPlan(buttons={"advance": (1, 0.95)}),
+                                     signup=True) == (0, floor)
+    assert apply_run.account_advance(signup, FillPlan(), signup=True) == (0, floor)
+    # the same screen read as a sign-in signs in
+    assert apply_run.account_advance(signup, FillPlan(), signup=False) == (1, floor)
 
 
 def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():

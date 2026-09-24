@@ -41,6 +41,7 @@ import apply_queue  # noqa: E402
 import apply_run  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan  # noqa: E402
+from apply_form import Button, Field, FormDigest  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
 
@@ -774,6 +775,65 @@ def test_a_skeleton_that_clears_right_after_it_was_read_is_read_again(_browser, 
     waited = _decisions(Path(r.trace), "reread_after_settle")
     assert waited and waited[0]["why"].startswith("a loading placeholder"), waited
     assert waited[0]["still_loading"] is False
+
+
+class _ReadPage:
+    url = "https://jobs.example.com/apply/42"
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+class _ScriptedRead:
+    """`_JobRun._read_digest` over scripted looks (`_busy`) and reads
+    (`_extract`), the page never touched."""
+
+    _read_busy = apply_run._JobRun._read_busy
+    _loading = apply_run._JobRun._loading
+
+    def __init__(self, looks, reads):
+        self.page = _ReadPage()
+        self._loading_waited: set = set()
+        self.looks, self.reads, self.decisions = list(looks), list(reads), []
+
+    def _busy(self):
+        return self.looks.pop(0) if self.looks else False
+
+    def _extract(self):
+        return self.reads.pop(0)
+
+    def _drop_foreign_controls(self, digest):
+        return digest
+
+    def _check_host(self, url):
+        pass
+
+    def _decide_next(self, what, why, **kw):
+        self.decisions.append((what, why, kw))
+
+
+_SKELETON = FormDigest(url_host="jobs.example.com", title="Apply", text="Loading your "
+                       "application. This can take a few seconds while we fetch the questions "
+                       "for this role and the documents you uploaded before. Please keep this "
+                       "window open; closing it now would lose the answers you have not saved.",
+                       buttons=[Button(n=0, locator=(0, "#cancel"), text="Cancel")])
+_FORM = FormDigest(url_host="jobs.example.com", title="Apply", text="Apply for Business Analyst",
+                   fields=[Field(n=0, locator=(0, "#first"), label="First name", type="text",
+                                 required=True)],
+                   buttons=[Button(n=0, locator=(0, "#submit"), text="Submit application")])
+
+
+@pytest.mark.parametrize("looks", [
+    [True],             # the placeholder showed before the read and cleared after it
+    [False, True],      # painted between the look and the read (review round 3, M1)
+])
+def test_a_skeleton_seen_before_or_after_the_read_is_read_again(looks):
+    run = _ScriptedRead(looks, [_SKELETON, _FORM])
+    digest = apply_run._JobRun._read_digest(run)
+    assert digest.fields, "the skeleton's read went on as the page"
+    what, why, kw = run.decisions[0]
+    assert what == "reread_after_settle" and why.startswith("a loading placeholder"), why
+    assert kw["still_loading"] is False
 
 
 # --- study G13: a privacy step's accept is its way on, its decline never ---------------------------

@@ -46,6 +46,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import weakref
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Callable
@@ -890,12 +891,16 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
     want = pf.option if pf.option is not None else pf.value
     tag, typ, role = kind["tag"], kind["type"], kind["role"]
     if pf.action == "upload":
-        if upload_shown(loc, pf.value):
-            # the box or its widget shows the file already: a second upload
-            # would attach it twice (FILL-01)
-            log.info("apply_fill: %r already holds %s; not uploaded again", pf.label,
-                     _file_name(pf.value))
+        if upload_shown(page, loc, pf):
+            # this run put the file in this box on this page, the chip showed
+            # it, and it still does: a second upload would attach it twice
+            # (FILL-01)
+            log.info("apply_fill: %r already holds %s from this run; not uploaded again",
+                     pf.label, _file_name(pf.value))
             return "upload already shown"
+        # the box's words before this run's upload: a file of the same name
+        # the page showed already (a stored resume) never counts as this one
+        _before_upload(page)[_box_key(pf)] = _upload_state(loc).get("text", "")
         _upload(page, pf.locator, pf.value)
         return "upload"
     if pf.action not in ("fill", "select"):
@@ -994,32 +999,83 @@ def _read_widget(page, pf: PlannedField, loc) -> str:
 # unless `named`, its success note, in the box around the input that holds
 # no other file input (four levels up, never the form or the page). The
 # file's name when one of them shows it, else "".
-_FILE_READ_JS = r"""(el, [want, named]) => {
+_FILE_STATE_JS = r"""el => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  if (el.files && el.files.length) return el.files[0].name;
-  const DONE = /\b(successfully\s+uploaded|upload(ed)?\s+(complete|successful(ly)?|succeeded)|file\s+(uploaded|attached))\b/i;
-  let box = el.parentElement;
+  const file = el.files && el.files.length ? el.files[0].name : '';
+  let box = el.parentElement, text = '';
   for (let i = 0; box && i < 4; i++, box = box.parentElement) {
     if (box.matches('form, body, html, main, [role=main]')) break;
     if (Array.from(box.querySelectorAll('input[type=file]')).some((f) => f !== el)) break;
-    const text = norm(box.innerText);
-    if (want && text.toLowerCase().includes(want.toLowerCase())) return want;
-    if (want && !named && DONE.test(text)) return want;
+    text = norm(box.innerText);
   }
-  return '';
+  return {file: file, text: text};
 }"""
+_UPLOAD_DONE = re.compile(r"\b(successfully\s+uploaded|upload(ed)?\s+(complete|successful(ly)?"
+                          r"|succeeded)|file\s+(uploaded|attached))\b", re.I)
+# Per page (a job's tab): the box words before this run's upload into a box,
+# and the (box, file name) pairs this run uploaded and saw verified
+_BEFORE_UPLOAD: "weakref.WeakKeyDictionary[Any, dict]" = weakref.WeakKeyDictionary()
+_VERIFIED_UPLOADS: "weakref.WeakKeyDictionary[Any, set]" = weakref.WeakKeyDictionary()
 
 
-def upload_shown(loc, path: str) -> bool:
-    """Does the file box, or its widget's chip, already show the file
-    `path` names (its name, never a success note alone)? Such a file is
-    never uploaded again (FILL-01)."""
-    name = _file_name(path)
+def _before_upload(page) -> dict:
     try:
-        return bool(name) and loc.first.evaluate(_FILE_READ_JS, [name, True],
-                                                  timeout=ACTION_TIMEOUT_MS) == name
-    except Exception:       # noqa: BLE001  (the upload finds out)
+        return _BEFORE_UPLOAD.setdefault(page, {})
+    except TypeError:       # a page double that takes no weak reference
+        return {}
+
+
+def _verified_uploads(page) -> set:
+    try:
+        return _VERIFIED_UPLOADS.setdefault(page, set())
+    except TypeError:
+        return set()
+
+
+def _box_key(pf: PlannedField) -> tuple[int, str]:
+    return int(pf.locator[0]), str(pf.locator[1])
+
+
+def _upload_state(loc) -> dict:
+    """The file box as it reads now: its own file's name and the words of
+    the box around it (four levels up, never the form or the page, holding
+    no other file box)."""
+    try:
+        return dict(loc.first.evaluate(_FILE_STATE_JS, timeout=ACTION_TIMEOUT_MS) or {})
+    except Exception:       # noqa: BLE001  (gone)
+        return {}
+
+
+def upload_read(state: dict, name: str, before: str | None) -> str:
+    """An upload's read-back (FILL-01, SP6 review I5): the box's own file,
+    else the file's name when the box's words show it more often than
+    before this run's upload (a chip the upload added), or a success note
+    that was not there before; "" when neither. With no upload by this run
+    (`before` None) the name shown counts only as the box's own words."""
+    if state.get("file"):
+        return str(state["file"])
+    now, was, want = (str(state.get("text") or "").lower(), str(before or "").lower(),
+                      str(name or "").lower())
+    if not want:
+        return ""
+    if now.count(want) > was.count(want):
+        return name
+    if _UPLOAD_DONE.search(now) and not _UPLOAD_DONE.search(was):
+        return name
+    return ""
+
+
+def upload_shown(page, loc, pf: PlannedField) -> bool:
+    """May the upload of `pf` be skipped (FILL-01)? Only when this run put
+    that file in that box on this page and saw it verified
+    (`_verified_uploads`), and the box still shows it. A file of the same
+    name the page showed before this run's upload (a resume kept from an
+    earlier application) never counts (SP6 review I5)."""
+    name = _file_name(pf.value)
+    if not name or (_box_key(pf) + (name,)) not in _verified_uploads(page):
         return False
+    before = _before_upload(page).get(_box_key(pf))
+    return upload_read(_upload_state(loc), name, before) == name
 
 
 def _file_name(path: str) -> str:
@@ -1031,8 +1087,12 @@ def _read_back(loc, kind: dict[str, str] | None, page=None, pf: PlannedField | N
         if loc.count() == 0:
             return ""
         if pf is not None and pf.action == "upload" and kind and kind["type"] == "file":
-            return str(loc.first.evaluate(_FILE_READ_JS, [_file_name(pf.value), False],
-                                          timeout=ACTION_TIMEOUT_MS) or "")
+            name = _file_name(pf.value)
+            before = _before_upload(page).get(_box_key(pf)) if page is not None else None
+            got = upload_read(_upload_state(loc), name, before)
+            if got == name and page is not None and before is not None:
+                _verified_uploads(page).add(_box_key(pf) + (name,))
+            return got
         if pf is not None and pf.widget and pf.widget not in ("typeahead", "hidden_select") \
                 and page is not None:
             return _read_widget(page, pf, loc)

@@ -494,3 +494,33 @@ def test_a_page_read_again_takes_its_listboxes_options_without_opening_them(brow
     assert browser_page.evaluate("window.opens") == 1
 
 
+
+
+# --- SP6 review I5: a file of the same name the page showed before this run's upload ---------------
+
+def test_a_kept_resume_of_the_same_name_never_stands_for_this_jobs_upload(
+        _browser, flow_server, tmp_path):
+    r = h.run_flow(h.flow("upload_profile_kept"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert [a.kind for a in r.actions].count("upload") == 1
+
+
+def test_an_upload_is_skipped_only_after_this_run_uploaded_and_saw_it(browser_page, tmp_path):
+    pdf = tmp_path / "Jane_Doe_Resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    browser_page.set_content((REPO / "tests" / "fixtures" / "forms" /
+                              "upload_profile_kept.html").read_text(encoding="utf-8"))
+    d = apply_form.extract(browser_page)
+    resume = _by_label(d, "Resume")
+    pf = _planned(resume, "upload", str(pdf), fact_key="resume_file")
+    # the kept chip names the file already: never this run's upload, nor verified by it
+    assert apply_fill.upload_read({"file": "", "text": "Jane_Doe_Resume.pdf (uploaded)"},
+                                  "Jane_Doe_Resume.pdf",
+                                  "Jane_Doe_Resume.pdf (uploaded)") == ""
+    assert not apply_fill.upload_shown(browser_page, browser_page.locator("#resume"), pf)
+    assert _fill(browser_page, pf)[resume.n] == "Jane_Doe_Resume.pdf"
+    assert browser_page.evaluate("document.body.dataset.uploads") == "1"
+    # the same plan again (a retry, the page read again): this run's verified upload stands
+    assert _fill(browser_page, pf)[resume.n] == "Jane_Doe_Resume.pdf"
+    assert browser_page.evaluate("document.body.dataset.uploads") == "1"

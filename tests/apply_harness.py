@@ -1065,6 +1065,10 @@ FLOWS: tuple[Flow, ...] = (
          covers="a talent box's Submit above the application's own Submit, which refuses a "
                 "blank box: repaired, the application's Submit clicked again, the talent box "
                 "never sent (SP6 review I2)"),
+    Flow("upload_profile_kept", "upload_profile_kept.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="body[data-uploads='1'] #btn-submit:visible",
+         covers="a returning candidate's page showing a kept resume of the same file name: "
+                "this job's resume is uploaded, exactly once (SP6 review I5)"),
     Flow("recaptcha_disabled_submit", "recaptcha_disabled_submit.html", True, "needs_human",
          r"^a CAPTCHA check is on the form before the submit", confirm="#received:visible",
          routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},

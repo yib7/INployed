@@ -773,13 +773,15 @@ _EXTRACT_JS = r"""
         return;
       }
       if (!top && QUIET_ROLES.test(n.getAttribute('role') || '')) return;
+      const st = getComputedStyle(n);
+      // (a hidden element's mark is none: Breezy's conditional `span.ng-hide.required`,
+      // review R2-I1)
+      if (st.display === 'none') return;
       // a required marker drawn in CSS (Ashby's ::after star) or named by a
       // class (Ashby's `_required_`): a marker the person sees (review I2)
-      if (marks && styledMark(n)) marks.push('*');
+      if (marks && st.visibility !== 'hidden' && styledMark(n)) marks.push('*');
       // a dropdown's shown value inside its label ("State Select a state")
       if (!top && n.matches(WIDGET_TEXT)) return;
-      const st = getComputedStyle(n);
-      if (st.display === 'none') return;
       if (!top && srOnly(n)) { if (marks) marks.push(norm(n.textContent)); return; }
       const block = !/^inline/.test(st.display) && st.display !== 'contents';
       if (block) out += ' ';
@@ -939,12 +941,16 @@ _EXTRACT_JS = r"""
 
   // [label, required] of one control
   // is the question the control answers marked required: its fieldset's
-  // own title (a legend, or a label that is none of the control's), by a
-  // marker in its words or drawn by CSS (review I2)
+  // own title, by a marker in its words or drawn by CSS (review I2). The
+  // title is the fieldset's legend, or a label of it that no control in the
+  // fieldset owns: another question's label ("First name *" beside Middle
+  // name) is no title (review R2-I1)
   const titleReq = (el) => {
     const fs = el.closest('fieldset');
     if (!fs) return false;
-    const title = Array.from(fs.children).find((c) => c.matches('legend, label'));
+    const kids = Array.from(fs.children);
+    const title = kids.find((c) => c.tagName === 'LEGEND')
+      || kids.find((c) => c.tagName === 'LABEL' && !(c.control && fs.contains(c.control)));
     if (!title || title.contains(el) || title === labelElementFor(el)) return false;
     const m = [];
     const [, req] = strip(seen(title, m), m);
@@ -1077,15 +1083,37 @@ _EXTRACT_JS = r"""
   // heading role before it, outside the site chrome
   const heads = all.filter((e) => e.matches('h2, h3, h4, [role=heading]') && !inChrome(e)
                            && !inConsent(e) && visible(e));
+  // The nearest heading before the control whose nearest common ancestor
+  // with it is no body, html or main (a posting's headings share only those
+  // with the form, review M7), taken from a header box beside the fields as
+  // well as from the fields' own box (Greenhouse's `div.section-header > h3`,
+  // review R2-I3). A heading whose own branch under that ancestor holds a
+  // control of its own (the resume parser's box, "Autofill from resume") is
+  // another block's: it is no section, and it closes off the headings before
+  // it. A heading in another column (Ashby's posting details beside the
+  // form: the two branches side by side) is no section either.
+  const sideBySide = (a, b) => {
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return ra.width > 0 && rb.width > 0 && (ra.right <= rb.left || rb.right <= ra.left);
+  };
+  const holdsControl = (box, el) => box.nodeType === 1 && Array.from(
+    box.querySelectorAll(QUESTION_CTRL + ', input[type=file]')).some((c) => c !== el
+      && !c.contains(el));
   const sectionOf = (el) => {
     const at = order.has(el) ? order.get(el) : -1;
+    const mine = new Set();
+    for (let n = el; n; n = up(n)) mine.add(n);
     let best = null;
     for (const h of heads) {
       if (order.get(h) >= at) break;
-      // its own box holds the control (review M7: a parser's box or the
-      // posting's headings above the form are no section of it)
-      const box = up(h);
-      if (box && !box.matches('body, html, main, [role=main]') && containsC(box, el)) best = h;
+      let branch = h, common = up(h);
+      while (common && !mine.has(common)) { branch = common; common = up(common); }
+      if (!common || common.nodeType !== 1
+          || common.matches('body, html, main, [role=main]')) continue;
+      let own = el;
+      while (own && up(own) !== common) own = up(own);
+      if (own && own.nodeType === 1 && branch.nodeType === 1 && sideBySide(branch, own)) continue;
+      best = holdsControl(branch, el) ? null : h;
     }
     return best ? seen(best).slice(0, 80) : '';
   };
@@ -1115,15 +1143,31 @@ _EXTRACT_JS = r"""
   const HONEY = /honey[\s_-]?pot|robots? only|for robots|if you('re| are) (a )?human|^\s*(please )?(leave (this )?(field |box )?(blank|empty)|do not (fill|enter)( (in|this)( field| box)?)?)\.?\s*$/i;
   const HONEY_ID = /^hp[_-]|nickname_hp|honey/i;
   const POSTING_WIDGET = /job alerts?\b|receive (an |job )?alerts?\b|newsletter|\bsort by\b|search (for )?jobs\b|^\s*(search( (jobs|roles|positions|openings))?|keywords?|find (a )?jobs?)\s*$/i;
+  // the words of a name as words: "startDate", "start_date", "datepicker-input"
+  const nameWords = (s) => (s || '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+    .split(/[^a-z]+/).filter(Boolean);
+  const DATE_WORDS = new Set(['date', 'calendar', 'picker', 'datepicker', 'datetimepicker']);
+  // a combobox drawn by its box (react-select without search: a one-pixel
+  // input scaled to nothing inside the control a person clicks): that box
+  const comboFace = (el) => {
+    if (!el.matches('[role=combobox]')) return null;
+    let p = up(el);
+    for (let i = 0; p && i < 3; i++, p = up(p)) {
+      if (p === document.body || p.matches('form, label, fieldset')) return null;
+      const r = p.getBoundingClientRect();
+      if (visible(p) && r.width >= 20 && r.height >= 10) return p;
+    }
+    return null;
+  };
   const junk = (el, t, label) => {
     // a choice or a file box is often hidden behind its label or trigger
     const choice = t === 'checkbox' || t === 'radio' || t === 'file' || t === 'select';
     // a read-only box, never a picker that opens on a click (review M6:
-    // react-select without search, a date picker)
+    // react-select without search, a date picker; "date" as a word of the
+    // box's names, never inside "candidate" or "update", review R2 Minor 1)
     const picker = el.matches('[role=combobox], [aria-haspopup], [aria-autocomplete]')
-      || /date|calendar|picker/i.test((el.getAttribute('class') || '') + ' '
-                                      + (el.getAttribute('placeholder') || '') + ' ' + (el.id || '')
-                                      + ' ' + (el.getAttribute('name') || ''));
+      || [el.getAttribute('class'), el.getAttribute('placeholder'), el.id,
+          el.getAttribute('name')].some((s) => nameWords(s).some((w) => DATE_WORDS.has(w)));
     if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.readOnly && !choice && !picker) {
       return 'read-only';
     }
@@ -1131,6 +1175,8 @@ _EXTRACT_JS = r"""
         || HONEY.test(label)) return 'honeypot';
     if (POSTING_WIDGET.test(label)) return 'posting widget';
     if (choice) return '';
+    // react-select's dummy input: a field through its face (review R2 Minor 2)
+    if (comboFace(el) && !closestC(el, '[aria-hidden=true]')) return '';
     if (closestC(el, '[aria-hidden=true]')) return 'aria-hidden';
     const st = getComputedStyle(el);
     if (el.getAttribute('tabindex') === '-1' && parseFloat(st.opacity) < 0.1) return 'hidden';
@@ -1173,24 +1219,57 @@ _EXTRACT_JS = r"""
   // buttons only do those things; a lone picker beside the page's legal
   // links (a footer's language picker). Never a group with a password or a
   // file box, or one beside a button that goes on (submit, apply, next...).
-  const WIDGET_BTN = /^(search( jobs| roles)?|find( jobs)?|go|filters?|apply filters?|clear( all| filters)?|reset( filters)?|notify me|alert me|subscribe|get (job )?alerts|create (a )?(job )?alert|set (up )?(an? )?(job )?alert|email me( jobs)?|send me (jobs|alerts))$/i;
+  // a search, alert or subscribe action; Go, Clear and Reset go with one
+  // and never make a group a widget alone (review R2-I2: a phone box's Clear)
+  const WIDGET_BTN = /^(search( jobs| roles)?|find( jobs)?|filters?|apply filters?|notify me|alert me|subscribe|get (job )?alerts|create (a )?(job )?alert|set (up )?(an? )?(job )?alert|email me( jobs)?|send me (jobs|alerts))$/i;
+  const WIDGET_AID = /^(go|clear( all| filters)?|reset( filters)?)$/i;
   const WAY_ON = /\b(submit|apply|send|next|continue|save|finish|sign in|log in|create account|register)\b/i;
-  const WIDGET_BOX = /(^|\s)([\w-]*[-_])?(filters?|job-?alerts?|newsletter|subscribe|search-?(bar|box|form|filters?))(\s|$)/i;
+  // a box named for one: a whole class token or id ("filters", "job-alert",
+  // "search-bar"; never "location-search-box", review R2-I2), or an id that
+  // ends in filters, alerts or a newsletter (Rippling's "open-roles-filters")
+  const WIDGET_BOX = /^(filters?|job-?alerts?|newsletter|subscribe|search-?(bar|box|form|filters?))$/i;
+  const WIDGET_ID_END = /[-_](filters|job-?alerts?|newsletter)$/i;
   const LEGAL = /^(terms( of (service|use))?|privacy( policy)?|cookies?( (policy|notice|settings))?|legal( notice)?|accessibility|powered by .+)$/i;
+  const LANGUAGE = /\b(language|locale|region)\b|english/i;
   const btnText = (b) => norm(b.innerText) || norm(b.value) || norm(b.getAttribute('aria-label'));
   const ownButtons = (box) => Array.from(box.querySelectorAll(
     'button, input[type=submit], input[type=button], [role=button]')).filter((b) => visible(b)
       && !b.matches('[aria-haspopup]') && !closestC(b, '[role=combobox]') && !!btnText(b));
   const serious = (box) => !!box.querySelector('input[type=password], input[type=file]');
-  const widgetGroup = (el) => {
+  // every button names a search, alert or subscribe action, or goes with one
+  const widgetButtons = (btns) => btns.length > 0
+    && btns.every((b) => WIDGET_BTN.test(btnText(b)) || WIDGET_AID.test(btnText(b)))
+    && btns.some((b) => WIDGET_BTN.test(btnText(b)));
+  const widgetBox = (p) => (p.getAttribute('class') || '').split(/\s+/).concat([p.id || ''])
+    .some((t) => WIDGET_BOX.test(t)) || WIDGET_ID_END.test(p.id || '');
+  const wayOnLink = () => Array.from(document.querySelectorAll('a[href], [role=link]')).some((a) =>
+    visible(a) && WAY_ON.test(norm(a.innerText)));
+  const widgetGroup = (el, label) => {
     const form = el.form || el.closest('form');
     if (form) {
       if (serious(form)) return false;
       if (form.matches('[role=search]')) return true;
-      const btns = ownButtons(form);
-      return btns.length > 0 && btns.every((b) => WIDGET_BTN.test(btnText(b)));
+      // its own buttons, those that name it from outside (`form=`), else,
+      // when all its buttons sit outside it, the page's (review R2-I2)
+      let btns = ownButtons(form);
+      if (form.id) {
+        btns = btns.concat(Array.from(document.querySelectorAll('[form=' + q(form.id) + ']'))
+          .filter((b) => !form.contains(b) && visible(b) && !!btnText(b)));
+      }
+      if (!btns.length) {
+        if (wayOnLink()) return false;
+        btns = ownButtons(document.body);
+      }
+      return widgetButtons(btns);
     }
+    // a footer's language picker: a picker with no question of its own (no
+    // label, a language or region, or words taken from the legal links
+    // beside it: "Powered by ...") beside the page's legal links; an EEO
+    // question beside a privacy note is a question (review R2-I2)
     const picker = el.matches('select, [role=combobox], [aria-haspopup]') && !isRequired(el);
+    const letters = (t) => norm(t).toLowerCase().replace(/[^a-z]/g, '');
+    const noQuestion = (legal) => !label || LEGAL.test(label) || LANGUAGE.test(label)
+      || letters(legal.map((a) => a.innerText).join(' ')).includes(letters(label));
     let p = up(el);
     for (let i = 0; p && i < 9; i++, p = up(p)) {
       if (p === document.body || p === document.documentElement
@@ -1198,16 +1277,16 @@ _EXTRACT_JS = r"""
       if (serious(p)) return false;
       const btns = ownButtons(p);
       if (btns.some((b) => WAY_ON.test(btnText(b)))) return false;
-      if (WIDGET_BOX.test((p.id || '') + ' ' + (p.getAttribute('class') || ''))) return true;
-      if (btns.length && btns.every((b) => WIDGET_BTN.test(btnText(b)))) return true;
+      if (widgetBox(p)) return true;
+      if (widgetButtons(btns)) return true;
       const legal = Array.from(p.querySelectorAll('a[href]')).filter((a) =>
         !a.closest('label') && LEGAL.test(norm(a.innerText)));
-      if (picker && legal.length >= 2) return true;      // a footer's language picker
+      if (picker && legal.length >= 2 && noQuestion(legal)) return true;
     }
     return false;
   };
   const push = (anchor, rec) => {
-    if (widgetGroup(anchor)) return;
+    if (widgetGroup(anchor, rec.label)) return;
     items.push({ at: order.has(anchor) ? order.get(anchor) : 1e9, rec: rec });
   };
   const textOfOption = (o) => norm(seen(o)) || norm(o.getAttribute('aria-label'))
@@ -1467,9 +1546,13 @@ _EXTRACT_JS = r"""
       const [label, req] = labelFor(el, marks);
       if (junk(el, t, label)) continue;
       const type = typeahead || combo ? 'listbox' : typeOf(el);
+      // react-select's dummy input takes its clicks through its face (R2 Minor 2)
+      const face = hiddenish(el) ? comboFace(el) : null;
+      if (face) kept.add(el);
       push(el, describe(el, type, label, req || isRequired(el), locatorFor(el),
                         type === 'listbox' ? [] : optionsFor(el, type),
-                        { widget: combo ? 'combo' : typeahead ? 'typeahead' : '' }));
+                        { widget: combo ? 'combo' : typeahead ? 'typeahead' : '',
+                          click: face ? locatorFor(face) : '' }));
       continue;
     }
     if (el.tagName === 'SELECT') {

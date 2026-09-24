@@ -347,12 +347,14 @@ _MENU_OPTIONS = ("[role=option], [role=menuitemradio], [role=menuitem], "
                  "[role=menuitemcheckbox]")
 
 
-def _open_menu(frame, loc, *, popup: bool = False):
-    """Click the combobox unless its menu is already open; return the visible
-    options locator, or None when nothing rendered within LISTBOX_WAIT_MS."""
+def _open_menu(frame, loc, *, popup: bool = False, face=None):
+    """Click the combobox (or `face`, the box a person clicks for it:
+    react-select's dummy input) unless its menu is already open; return the
+    visible options locator, or None when nothing rendered within
+    LISTBOX_WAIT_MS."""
     expanded = loc.first.get_attribute("aria-expanded", timeout=ACTION_TIMEOUT_MS)
     if expanded != "true":
-        loc.first.click(timeout=ACTION_TIMEOUT_MS)
+        (face if face is not None else loc.first).click(timeout=ACTION_TIMEOUT_MS)
     options = frame.locator(_MENU_OPTIONS).filter(visible=True) if popup \
         else _options_locator(frame, loc)
     try:
@@ -401,8 +403,8 @@ def _type_to_filter(page, frame, loc, want: str):
     return options
 
 
-def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False) -> None:
-    options = _open_menu(frame, loc, popup=popup)
+def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None) -> None:
+    options = _open_menu(frame, loc, popup=popup, face=face)
     if options is None and not popup:
         options = _type_to_filter(page, frame, loc, want)
     if options is None:
@@ -415,7 +417,7 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False) -> None:
     try:
         options.nth(i).click(timeout=ACTION_TIMEOUT_MS)
     except Exception:       # noqa: BLE001  (the menu closed under the click: open it once more)
-        again = _open_menu(frame, loc, popup=popup)
+        again = _open_menu(frame, loc, popup=popup, face=face)
         if again is None:
             raise
         texts = [t.strip() for t in again.all_inner_texts()]
@@ -575,7 +577,9 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> None:
     elif tag == "INPUT" and typ == "checkbox":
         _check_box(page, loc, want, pf)
     elif role in ("combobox", "listbox"):
-        _pick_listbox(page, frame, loc, want)
+        face = _clicked(page, pf.click_locator[0], pf.click_locator[1]) \
+            if pf.click_locator else None
+        _pick_listbox(page, frame, loc, want, face=face)
     elif tag == "INPUT" and typ == "file":
         raise LookupError("a file input takes an upload action")
     else:

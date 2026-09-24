@@ -69,7 +69,10 @@ def test_the_consent_control_on_each_capture_with_a_banner(_browser, capture):
 # person fills. The captures' expectations file (`_fields_expected.json`,
 # beside the captures, local only like them) names per capture the fields
 # a person sees there (label, type, required), the questions a person sees
-# marked required (`required`, by their first words), their widgets, the labels no
+# marked required (`required`, by their first words) and those a person sees
+# as optional (`optional`), their widgets, the heading a question sits under
+# (`sections`: its first words to the heading) and the headings no field sits
+# under (`no_sections`: a posting's or a resume parser's), the labels no
 # field may carry (`no_labels` inside any label, `not_labels` as a whole
 # label, `max_fields` for a page whose widgets are no application's), and the
 # buttons that must show (with `disabled` where the page keeps one disabled).
@@ -193,6 +196,15 @@ def test_each_capture_shows_the_fields_a_person_sees(_browser, capture):
         # (a question by its first words)
         want_req = (capture, start, [(f.label[:40], f.required) for f in d.fields])
         assert any(f.label.startswith(start) and f.required for f in d.fields), want_req
+    for start in want.get("optional", []):
+        want_opt = (capture, start, [(f.label[:40], f.required) for f in d.fields])
+        assert any(f.label.startswith(start) and not f.required for f in d.fields), want_opt
+    for start, section in (want.get("sections") or {}).items():
+        want_sec = (capture, start, section, [(f.label[:40], f.section) for f in d.fields])
+        held = [f for f in d.fields if f.label.startswith(start) and f.section == section]
+        assert held, want_sec
+    for section in want.get("no_sections", []):
+        assert not [f.label for f in d.fields if f.section == section], (capture, section)
     assert len(d.fields) >= want.get("min_fields", 0), (capture, labels)
     if "max_fields" in want:
         assert len(d.fields) <= want["max_fields"], (capture, labels)

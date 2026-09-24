@@ -695,7 +695,7 @@ def test_an_option_click_that_fails_opens_the_menu_once_more_and_clicks_again(mo
     menus = [first, second]
     opened = []
 
-    def _open_menu(frame, loc, *, popup=False):
+    def _open_menu(frame, loc, *, popup=False, face=None):
         opened.append(popup)
         return menus.pop(0) if menus else None
     monkeypatch.setattr(apply_fill, "_open_menu", _open_menu)
@@ -851,3 +851,172 @@ def test_a_button_under_a_click_filter_of_the_same_words_is_one_button(browser_p
         "Create Account", "Sign In", "Back to Job Posting"]
     create = next(b for b in d.buttons if b.text == "Create Account")
     assert create.locator[1] == "#create-filter"
+
+
+# === SP5 review round 2 ============================================================================
+
+# --- R2-I1: a hidden required mark, and a fieldset's title --------------------------------------
+
+def test_a_hidden_required_mark_and_another_questions_label_mark_nothing_required(browser_page):
+    browser_page.set_content("""<head><style>.ng-hide { display: none !important; }</style>
+      </head><body><form>
+      <div><label for="s">Experience Summary <span class="ng-hide required">*</span></label>
+        <textarea id="s"></textarea></div>
+      <div><label for="n">Full Name <span class="required">*</span></label><input id="n"></div>
+      <fieldset><label for="fn">First name *</label><input id="fn">
+        <label for="mn">Middle name</label><input id="mn">
+        <label for="nk">Nickname</label><input id="nk"></fieldset>
+      <fieldset><legend>Contact <span class="required">*</span></legend>
+        <label for="ph">Phone</label><input id="ph"></fieldset>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.required) for f in d.fields] == [
+        ("Experience Summary", False), ("Full Name", True), ("First name", True),
+        ("Middle name", False), ("Nickname", False), ("Phone", True)]
+
+
+# --- R2-I2: only a search, alert or subscribe group is a posting's widget -------------------------
+
+def test_a_clear_button_a_prefixed_search_box_an_outside_next_and_an_eeo_note_keep_their_fields(
+        browser_page):
+    browser_page.set_content("""<body><div class="app">
+      <div class="q"><div><label for="p">Phone *</label><input id="p" required></div>
+        <button type="button">Clear</button></div>
+      <div class="location-search-box"><label for="loc">Location *</label>
+        <input id="loc" required aria-autocomplete="list">
+        <ul role="listbox" hidden><li role="option">Anytown</li></ul></div>
+      <div class="eeo"><div><label for="g">Gender</label>
+        <select id="g"><option value="">Select</option><option>Female</option>
+          <option>Male</option></select></div>
+        <p>See our <a href="/privacy">Privacy Policy</a> and
+          <a href="/terms">Terms of Service</a>.</p></div>
+      <form id="details"><label for="e">Email *</label><input id="e" type="email" required>
+        <button type="button">Clear</button></form>
+      <form id="more"><label for="c">City</label><input id="c"></form>
+      <form id="step"><label for="t">Team</label><input id="t">
+        <button type="button">Search</button></form>
+      <div class="footer"><button type="submit" form="details">Next</button>
+        <button type="submit" form="step">Save and continue</button></div>
+      </div></body>""")
+    assert [f.label for f in apply_form.extract(browser_page).fields] == [
+        "Phone", "Location", "Gender", "Email", "City", "Team"]
+
+
+def test_a_form_whose_buttons_sit_outside_it_is_read_by_the_pages_buttons(browser_page):
+    browser_page.set_content("""<body><h1>Open roles</h1>
+      <form id="find"><label for="c">City</label><input id="c"></form>
+      <div class="bar"><button type="button">Search jobs</button>
+        <button type="button">Clear</button></div></body>""")
+    assert apply_form.extract(browser_page).fields == []
+
+
+def test_a_search_and_clear_group_is_still_a_postings_widget(browser_page):
+    browser_page.set_content("""<body><h1>Open roles</h1>
+      <div class="search-bar"><label for="kw">Team</label><input id="kw">
+        <button type="button">Search</button><button type="button">Clear</button></div>
+      <form><label for="loc">Office</label><input id="loc">
+        <button type="submit">Search</button><button type="reset">Reset</button></form>
+      <a class="btn" href="/apply">Apply now</a></body>""")
+    assert apply_form.extract(browser_page).fields == []
+
+
+# --- R2-I3: a section heading in its own header box ------------------------------------------------
+
+def test_a_heading_in_its_own_header_box_is_the_section_and_a_parsers_box_is_not(browser_page):
+    # Ashby's shape: the posting's details in a left column beside the form,
+    # the parser's upload before its own heading; Greenhouse's header box
+    browser_page.set_content("""<body><main><h1>Analytics Engineer</h1>
+      <div class="details" style="display: flex">
+      <div class="left" style="width: 300px"><h2>Compensation</h2><p>Base pay range.</p></div>
+      <div id="application" style="width: 700px">
+        <div class="autofill"><input type="file" id="parse" aria-label="Upload file">
+          <div class="header"><h3>Autofill from resume</h3>
+          <p>Upload your resume here to fill the fields below.</p></div></div>
+        <form><div class="field"><label for="fn">First Name</label><input id="fn"></div>
+          <div class="section-header"><h3>Voluntary Self-Identification</h3>
+            <p>Completion is voluntary.</p></div>
+          <div class="field"><label for="g">Gender</label>
+            <select id="g"><option>Female</option><option>Male</option></select></div>
+          <div class="field"><label for="r">Race</label>
+            <select id="r"><option>Asian</option><option>White</option></select></div>
+        </form></div></div></main></body>""")
+    d = apply_form.extract(browser_page)
+    got = {f.type if f.type == "file" else f.label: f.section for f in d.fields}
+    # a heading in another column is no section; the parser's box (its own
+    # upload and its own heading) closes off the headings before it; the
+    # header box beside the fields is their section
+    assert got == {"file": "", "First Name": "",
+                   "Gender": "Voluntary Self-Identification",
+                   "Race": "Voluntary Self-Identification"}
+
+
+# --- R2 Minor 1: "date" as a whole word only --------------------------------------------------
+
+def test_a_read_only_box_named_candidate_or_update_is_no_date_picker(browser_page):
+    browser_page.set_content("""<body><form>
+      <label for="ce">Email</label><input id="ce" name="candidate_email" readonly value="a@b.c">
+      <label for="ul">Link</label><input id="ul" name="update_link" readonly value="https://x">
+      <label for="sd">Start</label><input id="sd" name="start_date" readonly>
+      <label for="ed">End</label><input id="ed" name="endDate" readonly>
+      <label for="dp">When</label><input id="dp" class="datepicker-input" readonly>
+      </form></body>""")
+    assert [f.label for f in apply_form.extract(browser_page).fields] == ["Start", "End", "When"]
+
+
+# --- R2 Minor 2: react-select without search --------------------------------------------------
+
+_REACT_SELECT_DUMMY = """<body><form>
+  <label id="g-label" for="g-input">Gender *</label>
+  <div class="select__control" id="g-face"
+       style="border: 1px solid #888; width: 260px; height: 36px; display: grid">
+    <div class="select__value-container" style="grid-area: 1 / 1 / 2 / 3; padding: 6px">
+      <div class="select__placeholder" id="g-shown">Select...</div>
+      <input id="g-input" role="combobox" readonly aria-readonly="true" aria-autocomplete="list"
+        aria-expanded="false" aria-haspopup="true" aria-labelledby="g-label" inputmode="none"
+        tabindex="0" value=""
+        style="background: 0; border: 0; caret-color: transparent; font-size: inherit;
+               outline: 0; padding: 0; width: 1px; color: transparent; left: -100px;
+               opacity: 0; position: relative; transform: scale(.01)">
+    </div></div>
+  <button type="submit">Submit application</button></form>
+<script>
+  var face = document.getElementById('g-face'), input = document.getElementById('g-input');
+  var menu = null;
+  face.addEventListener('mousedown', function (e) {
+    e.preventDefault();
+    if (menu) return;
+    menu = document.createElement('div');
+    menu.setAttribute('role', 'listbox');
+    menu.id = 'g-listbox';
+    ['Female', 'Male', 'Decline to self-identify'].forEach(function (t) {
+      var o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = t;
+      o.addEventListener('click', function () {
+        var shown = document.getElementById('g-shown');
+        shown.className = 'select__single-value';
+        shown.textContent = t;
+        menu.remove(); menu = null;
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-controls');
+      });
+      menu.appendChild(o);
+    });
+    document.body.appendChild(menu);
+    input.setAttribute('aria-controls', 'g-listbox');
+    input.setAttribute('aria-expanded', 'true');
+  });
+</script></body>"""
+
+
+def test_react_selects_dummy_input_is_a_dropdown_opened_through_its_face(browser_page):
+    browser_page.set_content(_REACT_SELECT_DUMMY)
+    d = apply_form.extract(browser_page)
+    gender = _by_label(d, "Gender")
+    assert (gender.type, gender.required) == ("listbox", True)
+    # the box a person clicks, the one that holds the dummy input
+    assert gender.click_locator
+    assert browser_page.locator(gender.click_locator[1]).locator("#g-input").count() == 1
+    values = _fill(browser_page, _planned(gender, "select", "Female", "Female"))
+    assert values[gender.n] == "Female"
+    assert browser_page.inner_text("#g-shown") == "Female"

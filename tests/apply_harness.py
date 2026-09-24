@@ -255,13 +255,14 @@ FAST_TIMING = {
 
 
 @contextmanager
-def fast_timing(settle_s: float | None = None):
+def fast_timing(settle_s: float | None = None, extra: tuple = ()):
     """`FAST_TIMING` on the runner's modules; `settle_s` replaces the quiet
-    window for a flow whose page moves on by a timer."""
+    window for a flow whose page moves on by a timer; `extra` raises a flow's
+    own caps (`Flow.timing`)."""
     import importlib
     p = Patches()
     try:
-        for (mod, name), value in FAST_TIMING.items():
+        for (mod, name), value in [*FAST_TIMING.items(), *extra]:
             if name == "SETTLE_QUIET_S" and settle_s is not None:
                 value = settle_s
             p.setattr(importlib.import_module(mod), name, value)
@@ -594,6 +595,10 @@ class Flow:
     inbox: bool = False             # the fixture inbox is the run's inbox
     ats: dict[str, str] = field(default_factory=dict)
     settle_s: float | None = None   # the quiet window when a page moves on by a timer
+    # ((module, name), value) caps raised for this flow on top of `FAST_TIMING`:
+    # a wait that ends on its condition (a placeholder clearing) is given room
+    # to, so a busy machine never ends it by its cap (SP5 review: the skeleton)
+    timing: tuple = ()
     covers: str = ""                # what the flow exercises
     # "<phase>: why": the fake judge does not reach the end yet; the matrix
     # reports the flow apart and leaves it out of the rates the floors read
@@ -854,6 +859,9 @@ FLOWS: tuple[Flow, ...] = (
          covers="a Next and a submit that each open a new tab: the thank-you tab is read"),
     Flow("skeleton_then_form", "skeleton_then_form.html", False, "ready_to_submit", _PARKED,
          confirm="#received:visible", gate="#btn-submit:visible",
+         # the read waits for the skeleton to clear, never for a clock: its
+         # caps sit far past the page's 3.5 s timer
+         timing=((("apply_run", "LOADING_WAIT_S"), 30.0), (("apply_run", "EMPTY_READ_MAX_S"), 30.0)),
          covers="a loading skeleton (aria-busy, a Cancel) for 3.5 s, then the form: the "
                 "skeleton is never read as the page"),
     Flow("privacy_gate", "privacy_gate.html", False, "ready_to_submit", _PARKED,
@@ -1565,7 +1573,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
     with ExitStack() as stack:
         stack.enter_context(hermetic(rundir, password=f.password))
         if fast:
-            stack.enter_context(fast_timing(f.settle_s))
+            stack.enter_context(fast_timing(f.settle_s, f.timing))
         url = f.start_url(server.base)
         apply_queue.enqueue(apply_queue.new_entry(JOB_ID, company="Fabrikam",
                                                   title="Analytics Engineer", apply_url=url),

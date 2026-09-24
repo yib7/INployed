@@ -25,10 +25,14 @@ def test_fetch_code_keeps_application_tab_and_ignores_the_decoys(
     inbox = _inbox()
     browser_page.goto(fixtures_server + "/forms/code_gate.html")
     original = browser_page.url
+    # a second poll with no wait: a list read before the inbox page rendered
+    # (a busy parallel run) is read again; an error that ended the polls is
+    # shown by its type
+    errors: list = []
     code = inbox.fetch_code(browser_page, "greenhouse.io",
                             fixtures_server + f"/inbox/{provider}_list.html",
-                            jev=jev.FakeJev(), polls=1)
-    assert code == "MKPZ3QRA"          # not Q7R2XK (Ashby) and not 48213 (the order)
+                            jev=jev.FakeJev(), polls=2, sleep=lambda s: None, errors=errors)
+    assert code == "MKPZ3QRA", errors  # not Q7R2XK (Ashby) and not 48213 (the order)
     assert browser_page.url == original
     assert len(browser_page.context.pages) == 1
     assert code not in caplog.text

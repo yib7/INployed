@@ -725,21 +725,27 @@ _VOLATILE_TEXT = re.compile(
     r"\b\d+\s*(?:s|sec|second|min|minute|h|hr|hour|d|day|week|month|year)s?\s+ago\b"
     r"|\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?|\d+", re.I)
 SIGNATURE_TEXT_CHARS = 400         # of the steadied text `page_signature` keeps
+# A wizard's step marker ("Step 2 of 5", "1 / 3"): a number that moves only
+# when the page does, kept in the signature (review M2)
+_STEP_MARKER = re.compile(r"\b(?:step\s+)?\d+\s*(?:of|/)\s*\d+\b", re.I)
 
 
 def page_signature(url: str, digest: apply_form.FormDigest) -> tuple:
     """The page as it stands, for "did not advance" (READ-04): its host and
     path, its title, its fields (label, type, required), its button texts,
-    and the head of its text with times, clocks and numbers taken out.
-    Never the judge's read (a read that flips on the same page is the same
-    page) and never a ticker, a timestamp or a counter."""
+    its step markers ("2 of 3", `_STEP_MARKER`), and the head of its text
+    with times, clocks and numbers taken out. Never the judge's read (a read
+    that flips on the same page is the same page) and never a ticker, a
+    timestamp or a counter."""
     parts = urlsplit(str(url or ""))
+    raw = f"{digest.title or ''}\n{digest.text or ''}"
+    steps = tuple(" ".join(m.group(0).lower().split()) for m in _STEP_MARKER.finditer(raw))
     text = " ".join(_VOLATILE_TEXT.sub(" ", digest.text or "").split())
     return (parts.hostname or "", parts.path, " ".join((digest.title or "").split()),
             tuple((" ".join((f.label or "").split()), f.type, bool(f.required))
                   for f in digest.fields),
             tuple(" ".join((b.text or "").split()) for b in digest.buttons),
-            text[:SIGNATURE_TEXT_CHARS])
+            steps, text[:SIGNATURE_TEXT_CHARS])
 
 
 def _fields_sig(digest: apply_form.FormDigest) -> tuple:

@@ -387,6 +387,10 @@ def test_the_signature_ignores_times_counts_and_the_judges_read():
     c = apply_run.page_signature("https://x.example/apply?step=2",
                                  digest("Step two: tell us about your experience"))
     assert c != a
+    # review M2: two steps that differ only by their step number are two pages
+    one = apply_run.page_signature("https://x.example/apply", digest("Work Experience 1 of 3"))
+    two = apply_run.page_signature("https://x.example/apply", digest("Work Experience 2 of 3"))
+    assert one != two
 
 
 # --- NAV-07, NAV-08, NAV-09, ALLOW-01, ALLOW-02: trackers, job boards, email ----------------------

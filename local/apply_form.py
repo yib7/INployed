@@ -837,7 +837,15 @@ def resolve(page, locator: tuple[int, str]):
     frame. The frame is found by the URL it had at the last `extract` first
     (study G14: a frame that detached since shifts the indexes after it),
     then by its index. Raises `IndexError` when the frame no longer
-    exists."""
+    exists.
+
+    The URLs are the page's last `extract`'s (`_FRAME_URLS`), not carried on
+    the locator: that holds while no other extract runs between a read and
+    its act, as in the loop today. Two frames at one URL (two `about:blank`
+    frames, two copies of one widget) cannot be told apart this way; the
+    first frame at the URL is taken, so for them the index is the better
+    guide, and it is used whenever the frame at the index still has the
+    URL."""
     idx, css = int(locator[0]), str(locator[1])
     all_frames = frames(page)
     try:

@@ -123,6 +123,8 @@ EMPTY_TEXT_MIN = 200               # a fieldless read with less visible text is 
 EMPTY_READ_MAX_S = 10.0            # an empty read is re-read after a settle for up to this long
 EMPTY_READ_STABLE_S = 3.0          # or until the page has held the same empty read this long
 EMPTY_READ_POLL_S = 0.5
+LOADING_WAIT_S = 3.0               # a read with a loading placeholder up waits this long, once
+                                   # per page (an ad or widget region may never clear, M10)
 LINKEDIN_READY_S = 12.0            # for a LinkedIn job page's top card to render
 LINKEDIN_POLL_MS = 250
 LINKEDIN_EASY_RECHECK_S = 1.5      # an Easy Apply read is read again after this, and a settle
@@ -2578,6 +2580,7 @@ class _JobRun:
         self.browser_closed = False
         self._last_answers: Mapping[str, Any] = {}   # the page read the loop acts on
         self._facts = apply_judge.PageFacts()        # the last read page's structure
+        self._loading_waited: set[str] = set()       # pages whose placeholder was waited on
         self._last_dropped: dict[int, str] = {}      # frames `_drop_foreign_controls` left out
         self._last_click: tuple[str, str] | None = None     # (text, role) of the last click
         # (page, frame, locator) of every box the master password or an
@@ -3156,31 +3159,44 @@ class _JobRun:
         """The page's digest, read once more while it is still empty
         (`_empty_read`: no button, or no field and under `EMPTY_TEXT_MIN`
         characters) or still loading (`_loading`: a skeleton or an
-        `aria-busy` region and no field): a settle, then a read every
-        `EMPTY_READ_POLL_S` until it is neither, an empty read has held the
-        same for `EMPTY_READ_STABLE_S` (a short page that is done; a page
-        still showing its placeholder is not done), or `EMPTY_READ_MAX_S` has
-        passed (G5: content arrives 0.3 to 1.7 s after `load` on SPA
-        postings). The host is checked before every read again."""
+        `aria-busy` region and no field): an empty read gets a settle, then a
+        read every `EMPTY_READ_POLL_S` until it is not empty, has held the
+        same for `EMPTY_READ_STABLE_S` (a short page that is done), or
+        `EMPTY_READ_MAX_S` has passed (G5: content arrives 0.3 to 1.7 s after
+        `load` on SPA postings). A read that is only loading is read again
+        every `EMPTY_READ_POLL_S` for at most `LOADING_WAIT_S`, once per page
+        (M10: an ad's or a widget's placeholder may never clear; the trace
+        says when it stayed up). The host is checked before every read
+        again."""
         digest = self._drop_foreign_controls(apply_form.extract(self.page))
-        loading = self._loading(digest)
-        if not _empty_read(digest) and not loading:
+        url = str(self.page.url)
+        loading = url not in self._loading_waited and self._loading(digest)
+        empty = _empty_read(digest)
+        if not empty and not loading:
             return digest
+        if loading:
+            self._loading_waited.add(url)
         first = (f"{len(digest.fields)} field(s), {len(digest.buttons)} button(s), "
                  f"{len((digest.text or '').strip())} characters")
-        what = "a loading placeholder" if loading else "an empty read"
+        what = "an empty read" if empty else "a loading placeholder"
         start = time.monotonic()
         last = json.dumps(digest.to_dict(), sort_keys=True)
         stable_since = start
-        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S) if empty else {"ms": 0}
+        lingered = False
         while True:
             # the page may have moved on while it settled or between reads:
             # a page off the allowed sites is never read, let alone judged
             self._check_host(self.page.url)
             digest = self._drop_foreign_controls(apply_form.extract(self.page))
             now = time.monotonic()
-            loading = self._loading(digest)
-            if not _empty_read(digest) and not loading:
+            empty = _empty_read(digest)
+            loading = loading and self._loading(digest)
+            if loading and now - start >= LOADING_WAIT_S:
+                # the placeholder had its one short wait: it no longer holds
+                # the read (the empty-read rules still do)
+                loading, lingered = False, True
+            if not empty and not loading:
                 break
             seen = json.dumps(digest.to_dict(), sort_keys=True)
             if seen != last:
@@ -3189,11 +3205,13 @@ class _JobRun:
                     not loading and now - stable_since >= EMPTY_READ_STABLE_S):
                 break
             self.page.wait_for_timeout(int(EMPTY_READ_POLL_S * 1000))
+        waited = int((time.monotonic() - start) * 1000)
+        then = ("and read again" if not lingered else
+                f"and read as it was: a loading placeholder stayed up past {waited} ms")
         self._decide_next("reread_after_settle", f"{what} ({first}); "
-                                                 + settled_words(info, "and read again"),
-                          still_empty=_empty_read(digest), still_loading=loading,
-                          capped=_settle_capped(info),
-                          waited_ms=int((time.monotonic() - start) * 1000))
+                                                 + settled_words(info, then),
+                          still_empty=empty, still_loading=lingered,
+                          capped=_settle_capped(info), waited_ms=waited)
         return digest
 
     def _reread(self, digest: apply_form.FormDigest, answers: dict, state: str,

@@ -45,6 +45,7 @@ from apply_judge import FillPlan  # noqa: E402
 pytest_plugins = ["conftest_browser"]
 
 CAREERS = "https://careers.fabrikam.example"
+FORMS = REPO / "tests" / "fixtures" / "forms"
 
 
 @pytest.fixture(autouse=True)
@@ -728,3 +729,30 @@ def test_a_tab_that_opens_a_moment_after_the_click_is_followed_before_any_second
     out, rec, folder = _drain(context, tmp_path, f"{CAREERS}/apply/1", auto_apply_submit=False)
     assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
     assert [a.text for a in rec.actions if a.kind == "click"].count("Next") == 1, rec.actions
+
+
+_LINGERING = """<!doctype html><html><head><title>Analyst - Fabrikam</title></head><body>
+<h1>Analyst</h1><p>About the role: own the dashboards. Qualifications: SQL.</p>
+<a class="btn" href="/apply">Apply</a>
+<aside><h2>Similar jobs</h2><div aria-busy="true" class="skeleton" style="height:40px"></div>
+</aside></body></html>"""
+
+
+def test_a_placeholder_that_never_clears_costs_one_short_wait_per_page(context, tmp_path,
+                                                                     monkeypatch):
+    # review M10: a widget's region stays busy; the read goes on after
+    # LOADING_WAIT_S, once for the page, and the trace says so
+    monkeypatch.setattr(apply_run, "EMPTY_READ_MAX_S", 8.0)
+    monkeypatch.setattr(apply_run, "LOADING_WAIT_S", 1.0, raising=False)
+    _serve(context, {"/jobs/7": _LINGERING, "/apply": (FORMS / "lever_single.html").read_text(
+        encoding="utf-8")})
+    judge = _reads({"Analyst - Fabrikam": ("other", 0.30)}, nouls="neutral")
+    out, _, folder = _drain(context, tmp_path, f"{CAREERS}/jobs/7", judge,
+                            auto_apply_submit=False)
+    assert out.status == "ready_to_submit", out
+    waits = _decisions(folder / "apply_trace" / "attempt-1", "reread_after_settle")
+    lingered = [d for d in waits if d.get("still_loading")]
+    assert len(lingered) == 1 and "stayed up" in lingered[0]["why"], waits
+    # the page is short, so its one wait is an empty read's: the settle (3 s
+    # in the tests) and the placeholder's own LOADING_WAIT_S, never 8 s
+    assert all(d["waited_ms"] < 6500 for d in waits), waits

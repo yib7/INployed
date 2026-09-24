@@ -1747,6 +1747,7 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
     advance = plan.buttons.get("advance")
     submit = plan.buttons.get("submit")
     why = ""
+    header_advance = advance is not None and _chrome(digest, advance[0])
     if advance is not None and (apply_judge.DECLINE_WORDS.search(_button_text(digest, advance[0]))
                                 or _chrome(digest, advance[0])):
         advance = None          # a decline, or the site's header (M11), is no way on
@@ -1755,16 +1756,18 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
                        and not apply_judge.DECLINE_WORDS.search(b.text)
                        and "cookie" not in b.text.lower()
                        and not getattr(b, "chrome", False)), None)
-        if accept is None:
-            # the page's own Next or Continue when the judge named no way on
-            # (SP5: Workday's "Save and Continue" judged other while its
-            # header's buttons took the advance); never a "Continue with ..."
-            # sign-in, never a send
-            accept = next((b for b in digest.buttons if _NEXT_WORDS.search(b.text)
-                           and not _WITH_WORDS.search(b.text)
-                           and not apply_judge.DECLINE_WORDS.search(b.text)
-                           and not _submit_shaped(digest, b.n)
-                           and not getattr(b, "chrome", False)), None)
+        other = plan.buttons.get("other")
+        if accept is None and header_advance and other is not None:
+            # the roles look exchanged (SP5): the header took the advance
+            # while the page's own Next or Continue was judged other
+            # (Workday's "Save and Continue" beside its header's Sign In).
+            # That button is the way on; never a "Continue with ..." sign-in,
+            # never a send. An unjudged Next stays unclicked.
+            b = next((x for x in digest.buttons if x.n == other[0]), None)
+            if b is not None and _NEXT_WORDS.search(b.text) and not _WITH_WORDS.search(b.text) \
+                    and not apply_judge.DECLINE_WORDS.search(b.text) \
+                    and not _submit_shaped(digest, b.n) and not getattr(b, "chrome", False):
+                accept = b
         if accept is not None:
             advance = (accept.n, apply_judge.BUTTON_ADVANCE_MIN_CONF)
     if advance is not None and (_submit_shaped(digest, advance[0])

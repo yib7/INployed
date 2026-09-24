@@ -581,6 +581,6 @@ def test_the_mapping_sends_the_section_headings_with_the_fields(browser_page, fi
     assert {k: a.choice for k, a in jev.FakeJev().judge(state, q).items()} == \
         {k: a.choice for k, a in jev.FakeJev().judge(bare, q).items()}
     plan = apply_judge.plan(d, catalog, {})
-    s2, _ = apply_judge.reask_questions(d, catalog, plan, 4, what="source")
-    assert s2["section"] == "A few more questions"
+    s2, _ = apply_judge.reask_questions(d, catalog, plan, [4], what="source")
+    assert s2["sections"] == [{"heading": "A few more questions", "fields": [4]}]
     json.dumps(state)

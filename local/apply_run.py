@@ -2670,6 +2670,9 @@ class _JobRun:
         self._last_answers: Mapping[str, Any] = {}   # the page read the loop acts on
         self._facts = apply_judge.PageFacts()        # the last read page's structure
         self._loading_waited: set[str] = set()       # pages whose placeholder was waited on
+        # the second look's answers per page (its URL path and fields) and kind:
+        # a re-read of the same page reuses them, never asks again (review M11)
+        self._reask_cache: dict[tuple, dict[str, Any]] = {}
         self._last_dropped: dict[int, str] = {}      # frames `_drop_foreign_controls` left out
         self._last_click: tuple[str, str] | None = None     # (text, role) of the last click
         # (page, frame, locator) of every box the master password or an
@@ -3995,36 +3998,39 @@ class _JobRun:
 
     def _reask(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan, rec: dict,
                what: str) -> FillPlan:
-        """The second look (SP5): each required field the plan skipped for a
+        """The second look (SP5): the required fields the plan skipped for a
         mapping the first request dropped or left under its floor
-        (`apply_judge.reask_targets`) is asked once more in a request of its
-        own (`apply_judge.reask_questions`); its answers replace the first
-        look's and the plan is made again. A field the data cannot answer
-        still parks: the second look names `leave_blank` or `no_match` too."""
+        (`apply_judge.reask_targets`) are asked once more, all in one request
+        (`apply_judge.reask_questions`, review M11); the answers replace the
+        first look's and the plan is made again. A re-read of the same page
+        (its URL path and its fields) reuses the second look's answers and
+        makes no request. A field the data cannot answer still parks: the
+        second look names `leave_blank` or `no_match` too; a consent tick
+        read under its floor again still parks (review I1)."""
         targets = apply_judge.reask_targets(digest, self.catalog, answers, plan, what=what)
         if not targets:
             return plan
-        got: dict[str, Any] = {}
-        for n in targets:
-            s, q = apply_judge.reask_questions(digest, self.catalog, plan, n, what=what,
+        key = (urlsplit(str(getattr(self.page, "url", "") or "")).path, _fields_sig(digest),
+               what, tuple(targets))
+        cached = key in self._reask_cache
+        if cached:
+            got = dict(self._reask_cache[key])
+        else:
+            s, q = apply_judge.reask_questions(digest, self.catalog, plan, targets, what=what,
                                                job=self.entry)
-            second = {k: v for k, v in self.r.jev.judge(s, q).items() if k in q}
-            got.update(second)
-            first = f"field_{n}_source"
-            if what == "source" and first in answers and first in second:
-                # the first look stays beside the second: two looks that agree
-                # on a consent tick hold together (`apply_judge.consent_looks`)
-                answers[first + apply_judge.FIRST_LOOK] = answers[first]
+            got = {k: v for k, v in self.r.jev.judge(s, q).items() if k in q}
+            self._reask_cache[key] = dict(got)
         answers.update(got)
         plan = apply_judge.plan(digest, self.catalog, answers,
                                 generation_enabled=bool(self.r.settings["auto_apply_generate"]))
         rec["flags"] = dict(plan.flags)
         labels = {f.n: f.label for f in digest.fields}
-        self._decide("reask", f"asked {len(targets)} required field(s) once more on their own "
-                              f"({what}): {_cap(', '.join(labels.get(n, '') for n in targets), 160)}",
-                     fields=targets, answered=sorted(got))
+        self._decide("reask", f"asked {len(targets)} required field(s) once more ({what})"
+                              f"{', the same page again: its answers reused' if cached else ''}: "
+                              f"{_cap(', '.join(labels.get(n, '') for n in targets), 160)}",
+                     fields=targets, answered=sorted(got), reused=cached)
         self._trace("reask", what=what, fields=targets, answers=apply_trace.answers_json(got),
-                    plan=apply_trace.plan_json(plan))
+                    reused=cached, plan=apply_trace.plan_json(plan))
         return plan
 
     def _fill_and_verify(self, digest: apply_form.FormDigest, plan: FillPlan,

@@ -1431,8 +1431,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
         elif model_key is None or model_key == "leave_blank" or model_conf < FIELD_MAP_MIN_CONF:
             fact_key, conf = None, model_conf
         elif model_key == "consent_attest" and model_conf < CONSENT_MIN_CONF:
-            joint = consent_looks(answers, f.n)
-            fact_key, conf = (model_key, joint) if joint >= CONSENT_MIN_CONF else (None, model_conf)
+            fact_key, conf = None, model_conf
         else:
             fact_key, conf = model_key, model_conf
 
@@ -1561,7 +1560,8 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
     settles is never one. With "pick": its fact is known and has a value,
     the field has options and its pick is missing or under
     `OPTION_MIN_CONF`. A confident `leave_blank` or a confident `no_match` is
-    the data's own answer: that field parks as it did."""
+    the data's own answer: that field parks as it did. A consent tick's
+    second look stands alone against `CONSENT_MIN_CONF` (review I1)."""
     if what not in REASK_WHAT:
         raise ValueError(f"unknown re-ask {what!r}")
     by_n = {f.n: f for f in digest.fields}
@@ -1590,52 +1590,46 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
     return out
 
 
-FIRST_LOOK = "_first"       # `field_{n}_source_first`: the first look, kept by the runner
-
-
-def consent_looks(answers: Mapping[str, Answer], n: int) -> float:
-    """A consent tick's confidence over its two looks: when the second look
-    (`field_{n}_source`) and the first (`field_{n}_source_first`) both name
-    `consent_attest`, each at `FIELD_MAP_MIN_CONF` or above, the chance that
-    both are wrong is the product of their doubts, so the pair holds at
-    1 - (1 - a)(1 - b); otherwise the second look's own confidence."""
-    key, conf = _choice_of(answers, f"field_{n}_source")
-    first, first_conf = _choice_of(answers, f"field_{n}_source{FIRST_LOOK}")
-    if key == first == "consent_attest" and min(conf, first_conf) >= FIELD_MAP_MIN_CONF:
-        return 1.0 - (1.0 - conf) * (1.0 - first_conf)
-    return conf
-
-
-def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPlan, n: int, *,
-                    what: str, job: Mapping[str, Any] | None = None) -> tuple[dict, dict]:
-    """The second look at one field (`reask_targets`), a request of its own:
-    the field alone (its label, type, whether it is required, its options,
-    help, placeholder and section) with, for "source", the job and the
-    descriptions of the sources its type can take (`facts`, never a value;
-    the question is the first look's `field_{n}_source`), and for "pick"
-    the fact's value in the instruction of the field's pick question (the
-    first look's `field_{n}_option` or `field_{n}_pick`)."""
-    f = next(x for x in digest.fields if x.n == n)
-    pf = next(p for p in fill_plan.fields if p.n == n)
+def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPlan,
+                    ns: list[int], *, what: str,
+                    job: Mapping[str, Any] | None = None) -> tuple[dict, dict]:
+    """The second look at the fields `ns` (`reask_targets`), one request for
+    them all (review M11): the fields alone (label, type, whether required,
+    options, help, placeholder) and the headings they sit under. For
+    "source", the job, the page's host and title and the descriptions of the
+    sources their types can take (`facts`, never a value); each question is
+    the first look's `field_{n}_source`. For "pick", each field's pick
+    question with the fact's value in its instruction (the first look's
+    `field_{n}_option` or `field_{n}_pick`)."""
+    by_n = {x.n: x for x in digest.fields}
+    by_pf = {p.n: p for p in fill_plan.fields}
+    fields = [by_n[n] for n in ns if n in by_n and n in by_pf]
+    state: dict[str, Any] = {"fields": [_compact_field(f) for f in fields]}
+    sections = _sections(fields)
+    if sections:
+        state["sections"] = sections
+    questions: dict[str, Any] = {}
     if what == "pick":
-        return ({"fields": [_compact_field(f)]},
-                {_pick_qid(pf): _option_question(0, f.options, pf.value)})
+        for i, f in enumerate(fields):
+            questions[_pick_qid(by_pf[f.n])] = _option_question(i, f.options, by_pf[f.n].value)
+        return state, questions
     job = job or {}
-    criteria = _source_criteria(list(catalog.to_criteria()), f.type)
-    facts = _facts_map(catalog)
+    catalog_keys = list(catalog.to_criteria())
+    all_facts = _facts_map(catalog)
+    facts: dict[str, Any] = {}
+    for i, f in enumerate(fields):
+        criteria = _source_criteria(catalog_keys, f.type)
+        facts.update({k: all_facts[k] for k in criteria if k in all_facts})
+        questions[f"field_{f.n}_source"] = {
+            "type": "choice",
+            "instructions": f"Which key of `facts` describes what `fields[{i}]` asks for? When "
+                            "nothing fits, `leave_blank`; for an essay question no fact "
+                            "answers, `needs_generation`.",
+            "criteria": criteria}
     state = {"job": {"company": str(job.get("company_name") or job.get("company") or ""),
                      "title": str(job.get("job_title") or job.get("title") or "")},
-             "page": {"url_host": digest.url_host, "title": digest.title},
-             "field": _compact_field(f),
-             "facts": {k: facts[k] for k in criteria if k in facts}}
-    if getattr(f, "section", ""):
-        state["section"] = str(f.section)[:READ_TEXT_CAP]     # the heading it sits under
-    questions = {f"field_{f.n}_source": {
-        "type": "choice",
-        "instructions": "Which key of `facts` describes what `field` asks for? When nothing "
-                        "fits, `leave_blank`; for an essay question no fact answers, "
-                        "`needs_generation`.",
-        "criteria": criteria}}
+             "page": {"url_host": digest.url_host, "title": digest.title}, **state,
+             "facts": facts}
     return state, questions
 
 

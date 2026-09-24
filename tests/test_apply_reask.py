@@ -103,7 +103,7 @@ def test_a_quick_map_field_gets_its_pick_asked_again_never_its_source(catalog):
     assert plan.fields[0].quick and plan.fields[0].action == "skip"
     assert apply_judge.reask_targets(digest, catalog, {}, plan, what="source") == []
     assert apply_judge.reask_targets(digest, catalog, {}, plan, what="pick") == [0]
-    state, q = apply_judge.reask_questions(digest, catalog, plan, 0, what="pick")
+    state, q = apply_judge.reask_questions(digest, catalog, plan, [0], what="pick")
     assert list(q) == ["field_0_option"]
     assert q["field_0_option"]["instructions"]["candidate_answer"] == "United States"
     assert state == {"fields": [{"n": 0, "label": "Country", "type": "select", "required": True,
@@ -113,12 +113,13 @@ def test_a_quick_map_field_gets_its_pick_asked_again_never_its_source(catalog):
 def test_the_second_look_is_the_field_alone_with_its_types_sources_and_no_value(catalog):
     digest = _digest()
     plan = apply_judge.plan(digest, catalog, {})
-    state, q = apply_judge.reask_questions(digest, catalog, plan, 0, what="source",
+    state, q = apply_judge.reask_questions(digest, catalog, plan, [0], what="source",
                                            job={"company_name": "Fabrikam",
                                                 "job_title": "Analytics Engineer"})
     assert list(q) == ["field_0_source"]
-    assert state["field"]["label"] == "Are you authorized to work in the US?"
-    assert state["field"]["options"] == ["Yes", "No"]
+    assert [f["label"] for f in state["fields"]] == ["Are you authorized to work in the US?"]
+    assert state["fields"][0]["options"] == ["Yes", "No"]
+    assert "`fields[0]`" in q["field_0_source"]["instructions"]
     assert state["job"] == {"company": "Fabrikam", "title": "Analytics Engineer"}
     crit = q["field_0_source"]["criteria"]
     # a select never takes a name, an email or a file
@@ -131,9 +132,24 @@ def test_the_second_look_is_the_field_alone_with_its_types_sources_and_no_value(
     # the fake reads it as the first look would
     got = jev.FakeJev().judge(state, q)
     assert got["field_0_source"].choice == "work_authorized"
-    state2, q2 = apply_judge.reask_questions(digest, catalog, plan, 2, what="source")
+    state2, q2 = apply_judge.reask_questions(digest, catalog, plan, [2], what="source")
     assert "consent_attest" in q2["field_2_source"]["criteria"]
     assert jev.FakeJev().judge(state2, q2)["field_2_source"].choice == "consent_attest"
+
+
+def test_the_second_look_asks_every_target_in_one_request(catalog):
+    # review M11: one request per read and kind, whatever the number of targets
+    digest = _digest()
+    plan = apply_judge.plan(digest, catalog, {})
+    targets = apply_judge.reask_targets(digest, catalog, {}, plan, what="source")
+    assert targets == [0, 1, 2, 4]
+    state, q = apply_judge.reask_questions(digest, catalog, plan, targets, what="source")
+    assert sorted(q) == [f"field_{n}_source" for n in targets]
+    assert [f["n"] for f in state["fields"]] == targets
+    got = jev.FakeJev().judge(state, q)
+    assert got["field_0_source"].choice == "work_authorized"
+    assert got["field_1_source"].choice == "requires_sponsorship"
+    assert got["field_2_source"].choice == "consent_attest"
 
 
 def test_the_noisy_judge_drops_the_second_look_at_its_own_rate_and_draw(catalog):
@@ -143,7 +159,7 @@ def test_the_noisy_judge_drops_the_second_look_at_its_own_rate_and_draw(catalog)
     digest = _digest()
     plan = apply_judge.plan(digest, catalog, {})
     first = apply_judge.page_questions(digest, catalog, {})
-    second = apply_judge.reask_questions(digest, catalog, plan, 0, what="source")
+    second = apply_judge.reask_questions(digest, catalog, plan, [0], what="source")
     drops = [0, 0, 0]
     seeds = range(1, 401)
     for seed in seeds:
@@ -182,7 +198,7 @@ class DropFirst:
 
     def _field_of(self, state, qid):
         n = int(qid.split("_")[1])
-        rows = state.get("fields") or ([state["field"]] if "field" in state else [])
+        rows = state.get("fields") or []
         return any(r.get("n") == n and self.word in r.get("label", "") for r in rows)
 
     def judge(self, state, questions):
@@ -274,7 +290,7 @@ class NothingFits:
 
     def judge(self, state, questions):
         out = dict(self.inner.judge(state, questions))
-        rows = state.get("fields") or ([state["field"]] if "field" in state else [])
+        rows = state.get("fields") or []
         for row in rows:
             qid = f"field_{row.get('n')}_source"
             if self.word in row.get("label", "") and qid in out:
@@ -309,63 +325,115 @@ def test_a_consent_tick_read_under_its_floor_is_ticked_after_a_sure_second_look(
     assert len(asked) == 1 and asked[0]["what"] == "source"
 
 
-# --- a consent tick's two looks ----------------------------------------------------------------
+# --- a consent tick's second look stands alone (review I1) -------------------------------------
 
-@pytest.mark.parametrize("first, second, ticked", [
-    (("consent_attest", 0.80), ("consent_attest", 0.80), True),     # 1 - 0.2 x 0.2 = 0.96
-    (("consent_attest", 0.72), ("consent_attest", 0.75), True),     # 0.93
-    (("consent_attest", 0.80), ("consent_attest", 0.60), False),    # one look under the map floor
-    (("leave_blank", 0.90), ("consent_attest", 0.80), False),       # the looks disagree
-    (None, ("consent_attest", 0.80), False),                        # one look only
-    (("consent_attest", 0.80), None, False),                        # the second look was dropped
+@pytest.mark.parametrize("second, ticked", [
+    (("consent_attest", 0.90), True),
+    (("consent_attest", 0.84), False),      # under the floor: parks, however the first look read
+    (("leave_blank", 0.95), False),
 ])
-def test_two_looks_that_agree_on_a_consent_tick_hold_together(catalog, first, second, ticked):
+def test_a_consent_ticks_second_look_stands_alone_against_its_floor(catalog, second, ticked):
     digest = FormDigest(url_host="x", title="t", text="", fields=[
         _f(0, "I certify that the information provided is accurate", "checkbox",
            options=("checked",))])
-    answers = {}
-    if second is not None:
-        answers["field_0_source"] = _choice(*second)
-        if first is not None:
-            answers["field_0_source" + apply_judge.FIRST_LOOK] = _choice(*first)
-    elif first is not None:
-        answers["field_0_source"] = _choice(*first)
-    pf = apply_judge.plan(digest, catalog, answers).fields[0]
+    pf = apply_judge.plan(digest, catalog, {"field_0_source": _choice(*second)}).fields[0]
     assert (pf.action == "select" and pf.option == "checked") is ticked
 
 
-class ScaleEvery(ScaleFirst):
-    """Every look that maps the field to `consent_attest` reads it at `conf`."""
+class ConsentEvery:
+    """Every look maps a box labelled with `word` to `consent_attest` at `conf`:
+    a judge that finds the box borderline reads it borderline twice."""
+
+    def __init__(self, inner, word: str, conf: float):
+        self.inner = inner
+        self.word = word
+        self.conf = conf
 
     def judge(self, state, questions):
-        self.done = False
         out = dict(self.inner.judge(state, questions))
-        rows = state.get("fields") or ([state["field"]] if "field" in state else [])
-        for row in rows:
+        for row in state.get("fields") or []:
             qid = f"field_{row.get('n')}_source"
-            a = out.get(qid)
-            if self.word in row.get("label", "") and a is not None \
-                    and a.choice == "consent_attest":
-                out[qid] = jev.Answer(kind="choice", choice=a.choice,
-                                      probabilities={a.choice: self.conf}, confidence=self.conf)
+            if self.word in row.get("label", "") and qid in questions:
+                out[qid] = jev.Answer(kind="choice", choice="consent_attest",
+                                      probabilities={"consent_attest": self.conf},
+                                      confidence=self.conf)
         return out
 
 
-def test_a_consent_read_twice_under_its_floor_is_ticked_on_the_pair(_browser, flow_server,
-                                                                    tmp_path):
-    r = _run("greenhouse_embed", ScaleEvery(jev.FakeJev(), "certify", 0.80), _browser,
+_BACKGROUND = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
+<h1>Analytics Engineer</h1>
+<form id="app" onsubmit="event.preventDefault(); document.body.dataset.submitted = 1">
+  <label for="fn">First name *</label><input id="fn" name="first_name" required>
+  <label for="em">Email *</label><input id="em" name="email" type="email" required>
+  <label><input type="checkbox" id="bg" name="bg" required> I consent to a background check *</label>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form></body>"""
+
+
+def test_a_borderline_commitment_read_under_the_floor_twice_still_parks(
+        _browser, flow_server, tmp_path):
+    import dataclasses
+    f = dataclasses.replace(h.flow("lever_single_park"), name="background_check",
+                            start="https://careers.fabrikam.example/apply/42",
+                            routes=lambda base: {"https://careers.fabrikam.example/**":
+                                                 _BACKGROUND})
+    r = h.run_flow(f, ConsentEvery(jev.FakeJev(), "background", 0.78), "borderline",
+                   browser=_browser, server=flow_server, workdir=tmp_path)
+    assert (r.status, r.reason) == ("needs_human", "required field without an answer: I "
+                                                   "consent to a background check"), r.reason
+    asked = _events(r.trace, "reask")
+    assert len(asked) == 1 and asked[0]["answers"]["field_2_source"]["choice"] == "consent_attest"
+    assert not [a for a in r.actions if a.kind in ("tick", "click") and "background" in a.text]
+    assert not r.breaks
+
+
+def test_a_certify_box_read_under_its_floor_on_both_looks_parks(_browser, flow_server, tmp_path):
+    r = _run("greenhouse_embed", ConsentEvery(jev.FakeJev(), "certify", 0.80), _browser,
              flow_server, tmp_path)
-    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
-    # a second look that was dropped never counts the first one twice
-    class DropSecond(ScaleEvery):
-        def judge(self, state, questions):
-            out = super().judge(state, questions)
-            if "field" in state:            # the second look's shape: the field alone
-                out = {k: v for k, v in out.items() if not k.endswith("_source")}
-            return out
-    judge = DropSecond(jev.FakeJev(), "certify", 0.80)
-    (tmp_path / "again").mkdir()
-    r = _run("greenhouse_embed", judge, _browser, flow_server, tmp_path / "again")
     assert (r.status, r.reason) == ("needs_human", "required field without an answer: I "
                                                    "certify that the information provided is "
                                                    "accurate"), r.reason
+
+
+class DropInMapping:
+    """The page's mapping (a request that carries the page's buttons) never
+    answers a field labelled with `word`; the second look does."""
+
+    def __init__(self, inner, word: str):
+        self.inner = inner
+        self.word = word
+        self.second_looks = 0
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        rows = state.get("fields") or []
+        if "buttons" not in state and any(q.endswith("_source") for q in questions):
+            self.second_looks += 1
+            return out
+        for row in rows:
+            if self.word in row.get("label", ""):
+                out.pop(f"field_{row.get('n')}_source", None)
+        return out
+
+
+def test_a_re_read_of_the_same_page_reuses_the_second_look(_browser, flow_server, tmp_path):
+    """Review M11: the same step comes back with an error line (a new page to
+    the loop, the same fields); its second look is asked once and reused."""
+    import dataclasses
+    page = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
+    <h1>Analytics Engineer</h1><h2>Eligibility</h2>
+    <p id="err" role="alert"></p>
+    <label for="wa">Are you authorized to work in the US? *</label>
+    <select id="wa" required><option value="">Select</option><option>Yes</option>
+      <option>No</option></select>
+    <button type="button" id="next"
+      onclick="document.getElementById('err').textContent = 'Please check the answers above.'"
+      >Continue</button></body></html>"""
+    f = dataclasses.replace(h.flow("lever_single_park"), name="same_step",
+                            start="https://careers.fabrikam.example/apply/42",
+                            routes=lambda base: {"https://careers.fabrikam.example/**": page})
+    judge = DropInMapping(jev.FakeJev(), "authorized")
+    r = h.run_flow(f, judge, "same", browser=_browser, server=flow_server, workdir=tmp_path)
+    asked = [e for e in _events(r.trace, "reask") if e["what"] == "source"]
+    assert [e["reused"] for e in asked] == [False, True], (r.reason, asked)
+    assert judge.second_looks == 1

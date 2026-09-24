@@ -203,7 +203,9 @@ def test_page_questions_state_shape(catalog):
     assert state["fields"][8]["options"] == ["Yes", "No"]
     assert state["fields"][8]["required"] is True
     assert "placeholder" not in state["fields"][0]      # empty strings are dropped
-    assert state["buttons"][0] == {"n": 0, "text": "Submit application"}   # no kind_hint
+    # no kind_hint; the DOM flags (READ-10)
+    assert state["buttons"][0] == {"n": 0, "text": "Submit application", "in_form": False,
+                                   "disabled": False, "primary": False}
     # `facts` is the one description map: the catalog's facts plus the special
     # sources, so every key a field-source Choice offers is described there once
     assert state["facts"] == {**apply_judge.SPECIAL_DESCRIPTIONS, **catalog.to_criteria()}
@@ -394,7 +396,8 @@ def test_button_roles_separate_a_wizard_continue_from_the_final_submit(catalog):
                                  Button(n=3, locator=(0, "#l"), text="Sign in",
                                         kind_hint="submit")])
     state, q = apply_judge.page_questions(digest, catalog, _JOB)
-    assert all(set(b) == {"n", "text"} for b in state["buttons"])
+    assert all(set(b) == {"n", "text", "in_form", "disabled", "primary"}
+               for b in state["buttons"])
     answers = jev.FakeJev().judge(state, q)
     assert [answers[f"button_{n}_role"].choice for n in range(4)] ==         ["advance", "submit", "back", "advance"]
 

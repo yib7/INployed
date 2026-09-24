@@ -402,11 +402,16 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
         "page": {"url_host": digest.url_host, "title": digest.title,
                  "headline_text": text[:HEADLINE_CHARS]},
         "fields": [_compact_field(f) for f in digest.fields] if fields else [],
-        # the text only: the extractor's `kind_hint` is a regex guess ("Apply
-        # now" and a wizard's Continue both read `submit`) and the live judge
-        # took the word at face value (SP8: apply_entry 0.55 / submit 0.45,
-        # advance 0.72 / submit 0.28); `apply_run._submit_shaped` guards on text
-        "buttons": [{"n": b.n, "text": b.text} for b in digest.buttons],
+        # the text and three DOM flags (READ-10): the extractor's `kind_hint`
+        # is a regex guess ("Apply now" and a wizard's Continue both read
+        # `submit`) and the live judge took the word at face value (SP8:
+        # apply_entry 0.55 / submit 0.45, advance 0.72 / submit 0.28), so it is
+        # left out; `apply_run._submit_shaped` guards on text. `in_form`: the
+        # button's form holds the fields; `disabled`: it waits for the form to
+        # validate; `primary`: styled as the main action
+        "buttons": [{"n": b.n, "text": b.text, "in_form": bool(b.in_form),
+                     "disabled": bool(getattr(b, "disabled", False)),
+                     "primary": bool(getattr(b, "primary", False))} for b in digest.buttons],
     }
     if fields:
         state["facts"] = _facts_map(catalog)

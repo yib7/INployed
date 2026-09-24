@@ -190,7 +190,10 @@ class FakeJev:
 
     - Text is tokenised into lowercase word sets (`[a-z0-9]+`, so `leave_blank`
       is the two words `leave` and `blank`). Instructions may be a string, an
-      object or an array; every string inside counts.
+      object or an array; every string inside counts. A boolean is never
+      read: an object's entry whose value is a boolean is left out with its
+      key (a button's `in_form` / `disabled` / `primary` flags, a field's
+      `required`).
     - The state text is the slice(s) the instructions name with backticked
       paths (`sheet.work_authorization`, `field.options[0]`), serialised as
       JSON. When no named path resolves, it is the whole state as JSON, cut to
@@ -339,10 +342,22 @@ def _split_desc(value: Any) -> tuple[str, str]:
     return _flatten(value), ""
 
 
+def _no_bools(value: Any) -> Any:
+    """`value` without its boolean entries: an object's key whose value is a
+    boolean goes with it, an array's boolean items go. A boolean flag (a
+    button's `in_form`, `disabled`, `primary`, a field's `required`) says
+    nothing a word match could read, and its key would count as a word."""
+    if isinstance(value, Mapping):
+        return {k: _no_bools(v) for k, v in value.items() if not isinstance(v, bool)}
+    if isinstance(value, (list, tuple)):
+        return [_no_bools(v) for v in value if not isinstance(v, bool)]
+    return value
+
+
 def _flatten(value: Any) -> str:
     """Every string inside a str / object / array, space-joined; object keys are
-    labels and are left out."""
-    if value is None:
+    labels and are left out, and so are booleans."""
+    if value is None or isinstance(value, bool):
         return ""
     if isinstance(value, str):
         return value
@@ -381,7 +396,7 @@ def _as_text(value: Any) -> str:
     boundary; without this the escape's letter glues onto the next word)."""
     if isinstance(value, str):
         return value
-    text = json.dumps(value, ensure_ascii=False)
+    text = json.dumps(_no_bools(value), ensure_ascii=False)
     for esc in _JSON_ESCAPES:
         text = text.replace(esc, ' ')
     return text

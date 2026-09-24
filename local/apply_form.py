@@ -88,6 +88,10 @@ class Button:
     in_form: bool = False
     chrome: bool = False        # in the site's header, nav or top bar (study G4): kept for
                                 # the mapping, left out of the page read
+    disabled: bool = False      # disabled or aria-disabled now (study G10: a Submit that
+                                # waits for the form to validate is kept, flagged)
+    primary: bool = False       # styled as the page's main action (a primary or CTA class,
+                                # or its form's one submit control)
 
 
 @dataclass
@@ -117,7 +121,9 @@ class FormDigest:
                           text=str(b.get("text", "")),
                           kind_hint=str(b.get("kind_hint", "") or ""),
                           in_form=bool(b.get("in_form", False)),
-                          chrome=bool(b.get("chrome", False)))
+                          chrome=bool(b.get("chrome", False)),
+                          disabled=bool(b.get("disabled", False)),
+                          primary=bool(b.get("primary", False)))
                    for b in (raw.get("buttons") or [])]
         return cls(url_host=str(raw.get("url_host", "")), title=str(raw.get("title", "")),
                    text=str(raw.get("text", "")), fields=fields, buttons=buttons,
@@ -677,8 +683,21 @@ _EXTRACT_JS = r"""
   const APPLY_LINK_MAX = 40;
   const applyLink = (el, text) => text.length <= APPLY_LINK_MAX && !inChrome(el)
     && APPLY.test(text + ' ' + norm(el.getAttribute('aria-label')));
+  const PRIMARY = /(^|[\s_-])(primary|cta)([\s_-]|$)/i;
+  const submitsOf = new Map();    // a form -> its visible submit controls
+  const formSubmits = (form) => {
+    if (!form) return 0;
+    if (!submitsOf.has(form)) {
+      submitsOf.set(form, Array.from(form.querySelectorAll(
+        'button:not([type]), button[type=submit], input[type=submit]')).filter(visible).length);
+    }
+    return submitsOf.get(form);
+  };
   for (const el of document.querySelectorAll(bsel + ', a[href]')) {
-    if (!enabled(el) || !visible(el)) continue;
+    if (!visible(el)) continue;
+    // a disabled control is kept, flagged (G10): a Submit that waits for the
+    // form to validate is the page's way on once it is filled
+    const disabled = !enabled(el);
     if (el.closest('[role=combobox]') || inConsent(el) || outsideModal(el)) continue;
     const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label')) || norm(el.getAttribute('title'));
     if (!text) continue;        // an icon with no name the judge could read (G4)
@@ -692,8 +711,12 @@ _EXTRACT_JS = r"""
     else if (/\b(next|continue)\b/i.test(text)) kind = 'advance';
     if (!kind && /\b(back|previous)\b/i.test(text)) kind = 'back';
     const owner = el.form || el.closest('form');
+    const styled = (el.getAttribute('class') || '') + ' ' + (el.getAttribute('data-variant') || '')
+      + ' ' + (el.getAttribute('data-type') || '');
+    const primary = PRIMARY.test(styled) || (submits && !!owner && formSubmits(owner) === 1);
     buttons.push({ css: locatorFor(el), text: text, kind_hint: kind,
-                   in_form: holdsControls(owner), chrome: inHeadChrome(el) || topBar(el) });
+                   in_form: holdsControls(owner), chrome: inHeadChrome(el) || topBar(el),
+                   disabled: disabled, primary: primary });
   }
 
   let text = document.body ? (document.body.innerText || '') : '';
@@ -793,7 +816,9 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
         for b in raw.get("buttons") or []:
             buttons.append(Button(n=len(buttons), locator=(idx, str(b["css"])),
                                   text=str(b["text"]), kind_hint=str(b.get("kind_hint") or ""),
-                                  in_form=bool(b.get("in_form")), chrome=bool(b.get("chrome"))))
+                                  in_form=bool(b.get("in_form")), chrome=bool(b.get("chrome")),
+                                  disabled=bool(b.get("disabled")),
+                                  primary=bool(b.get("primary"))))
         if raw.get("dialog") and not dialog:
             dialog = str(raw["dialog"])
         if raw.get("text"):

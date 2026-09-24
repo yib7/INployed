@@ -64,6 +64,51 @@ def test_a_poll_that_times_out_leaves_the_next_poll_to_run(
     assert len(browser_page.context.pages) == 1
 
 
+def test_the_polls_end_when_the_same_error_comes_back(browser_page, fixtures_server, monkeypatch):
+    """Review round 3, M3: a failure that repeats (a provider outage) ends
+    the polls at its second time, never spending every poll and its waits."""
+    inbox = _inbox()
+    calls: list = []
+
+    def _always_times_out(tab, url, *a, **kw):
+        calls.append(url)
+        raise TimeoutError("the list did not render in time")
+    monkeypatch.setattr(inbox, "list_messages", _always_times_out)
+    browser_page.goto(fixtures_server + "/forms/code_gate.html")
+    errors: list = []
+    slept: list = []
+    code = inbox.fetch_code(browser_page, "greenhouse.io",
+                            fixtures_server + "/inbox/outlook_list.html", jev=jev.FakeJev(),
+                            polls=3, sleep=slept.append, wait_s=7, errors=errors)
+    assert code is None
+    assert len(calls) == 2 and slept == [7]
+    assert errors == ["TimeoutError", "TimeoutError"]
+
+
+def test_the_polls_end_on_a_navigation_the_host_guard_stopped(browser_page, fixtures_server,
+                                                               monkeypatch):
+    """Review round 3, M3: a signed-out inbox redirects to its provider's
+    sign-in, off the inbox host: the guard stops it, and no poll follows."""
+    inbox = _inbox()
+    calls: list = []
+
+    def _redirected(tab, url, *a, **kw):
+        calls.append(url)
+        tab.goto("http://login.signin.invalid/sign-in", timeout=5_000)
+        return []
+    monkeypatch.setattr(inbox, "list_messages", _redirected)
+    browser_page.goto(fixtures_server + "/forms/code_gate.html")
+    errors: list = []
+    slept: list = []
+    code = inbox.fetch_code(browser_page, "greenhouse.io",
+                            fixtures_server + "/inbox/outlook_list.html", jev=jev.FakeJev(),
+                            polls=3, sleep=slept.append, wait_s=7, errors=errors)
+    assert code is None
+    assert len(calls) == 1 and slept == []
+    assert len(errors) == 1
+    assert len(browser_page.context.pages) == 1
+
+
 @pytest.mark.parametrize("provider", ["outlook", "gmail"])
 def test_list_messages_reads_every_row_of_the_provider_shape(
         browser_page, fixtures_server, provider):

@@ -214,9 +214,12 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
     form's host. Polls share a three-minute budget and the caller's remaining
     job budget. Navigation in the temporary tab stays on the configured inbox
     host. A poll that fails (a list read that timed out on a busy machine, a
-    judge error) is that poll's error: the next poll runs after its wait.
-    Each error is appended to `errors` by its type name alone (its message
-    may quote the mail).
+    judge error) is that poll's error: the next poll runs after its wait,
+    unless the same error came back (a provider outage) or the tab tried to
+    leave the inbox host and the guard stopped it (a signed-out inbox's
+    sign-in redirect): the polls end there (review round 3, M3). Each error
+    is appended to `errors` by its type name alone (its message may quote the
+    mail).
     """
     parsed = urlsplit(inbox_url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or polls <= 0:
@@ -231,15 +234,18 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
         if clock() >= end:
             return None
         tab = page.context.new_page()
+        stopped: list[str] = []         # navigations the guard stopped
 
         def guard(route):
             request = route.request
             if request.is_navigation_request() and urlsplit(request.url).hostname != parsed.hostname:
+                stopped.append("off the inbox host")
                 route.abort()
             else:
                 route.continue_()
 
         tab.route("**/*", guard)
+        last = ""
         for attempt in range(min(polls, 3)):
             if clock() >= end:
                 break
@@ -247,7 +253,9 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
                 code = _poll(tab, inbox_url, site, jev=jev, ats=ats, company=company)
             except Exception as e:  # noqa: BLE001  (browser and judge errors may include private mail)
                 _noted(e)
-                code = None
+                if stopped or type(e).__name__ == last:
+                    break
+                last, code = type(e).__name__, None
             if code is not None and clock() < end:
                 return code
             if attempt + 1 < min(polls, 3):

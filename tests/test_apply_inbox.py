@@ -109,6 +109,33 @@ def test_the_polls_end_on_a_navigation_the_host_guard_stopped(browser_page, fixt
     assert len(browser_page.context.pages) == 1
 
 
+def test_a_frame_the_guard_stops_leaves_the_polls_running(browser_page, fixtures_server,
+                                                          monkeypatch):
+    """Review round 4, M3: a webmail loads frames on other hosts (a token
+    renewal, a cookie rotation), which the guard stops; that is no sign-in
+    redirect of the inbox itself, and a later failed poll still leaves the
+    next poll to run."""
+    inbox = _inbox()
+    real = inbox.list_messages
+    calls: list = []
+
+    def _framed_then_times_out(tab, url, *a, **kw):
+        calls.append(url)
+        if len(calls) == 1:
+            tab.set_content('<iframe src="http://login.signin.invalid/renew"></iframe>')
+            tab.wait_for_timeout(300)
+            raise TimeoutError("the list did not render in time")
+        return real(tab, url, *a, **kw)
+    monkeypatch.setattr(inbox, "list_messages", _framed_then_times_out)
+    browser_page.goto(fixtures_server + "/forms/code_gate.html")
+    errors: list = []
+    code = inbox.fetch_code(browser_page, "greenhouse.io",
+                            fixtures_server + "/inbox/outlook_list.html", jev=jev.FakeJev(),
+                            polls=2, sleep=lambda s: None, errors=errors)
+    assert code == "MKPZ3QRA", errors
+    assert len(calls) == 2 and errors == ["TimeoutError"]
+
+
 @pytest.mark.parametrize("provider", ["outlook", "gmail"])
 def test_list_messages_reads_every_row_of_the_provider_shape(
         browser_page, fixtures_server, provider):

@@ -181,6 +181,14 @@ def _code_shaped(token: str, body: str = "", subject: str = "") -> bool:
     return bool(re.search(labelled, body, re.I) or re.search(labelled, subject, re.I))
 
 
+def _main_frame(request) -> bool:
+    """Whether a request navigates the tab's own page (no parent frame)."""
+    try:
+        return request.frame.parent_frame is None
+    except Exception:  # noqa: BLE001  (a frame already gone: count it as the page's)
+        return True
+
+
 def _poll(tab, inbox_url: str, site: str, *, jev, ats: str, company: str) -> str | None:
     """One read of the inbox: the message the judge takes for the site's,
     and the code it picks from that message's body (None when either is
@@ -239,7 +247,10 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
         def guard(route):
             request = route.request
             if request.is_navigation_request() and urlsplit(request.url).hostname != parsed.hostname:
-                stopped.append("off the inbox host")
+                # the inbox itself leaving its host (a sign-in redirect), never a
+                # frame of it on another host (a token renewal, review round 4, M3)
+                if _main_frame(request):
+                    stopped.append("off the inbox host")
                 route.abort()
             else:
                 route.continue_()

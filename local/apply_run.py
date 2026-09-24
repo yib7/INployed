@@ -1353,18 +1353,27 @@ def open_page(page, url: str, *, timeout_ms: int | None = None,
 
 
 def _error_page_up(page, cap_s: float) -> bool:
-    """Wait, up to `cap_s`, for Chromium's error page (chrome-error://) to be
-    the page and loaded: the condition `open_page`'s retry needs. False at the
-    cap (a browser that shows no error page: the retry goes on)."""
+    """Wait, up to `cap_s` in all, for Chromium's error page (chrome-error://)
+    to be the page and loaded: the condition `open_page`'s retry needs. False
+    at the cap (a browser that shows no error page) or when the error page
+    does not load in the time left (review round 5, Minor 2): the retry goes
+    on either way."""
     step_ms = 50
-    for _ in range(max(1, int(cap_s * 1000 / step_ms))):
+    cap_ms = max(step_ms, int(cap_s * 1000))
+    waited = 0
+    while waited < cap_ms:
         try:
-            if str(page.url).startswith("chrome-error://"):
-                page.wait_for_load_state("load", timeout=int(cap_s * 1000))
-                return True
+            up = str(page.url).startswith("chrome-error://")
         except Exception:       # noqa: BLE001  (a page mid-navigation)
-            pass
+            up = False
+        if up:
+            try:
+                page.wait_for_load_state("load", timeout=max(1, cap_ms - waited))
+            except Exception:   # noqa: BLE001  (Playwright's TimeoutError: no load in time)
+                return False
+            return True
         page.wait_for_timeout(step_ms)
+        waited += step_ms
     return False
 
 

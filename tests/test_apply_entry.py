@@ -626,6 +626,47 @@ class _SlowErrorPage:
         pass
 
 
+class _NoErrorPage(_SlowErrorPage):
+    """A dropped first load after which no error page ever comes (a browser
+    that shows none): the retry goes on after the cap."""
+
+    @property
+    def url(self) -> str:
+        return "about:blank"
+
+    def goto(self, url, **kw):
+        self.gotos += 1
+        if self.gotos == 1:
+            raise RuntimeError(f"Page.goto: net::ERR_CONNECTION_RESET at {url}")
+
+
+class _ErrorPageNeverLoads(_SlowErrorPage):
+    """Chromium's error page commits at once and never fires `load`."""
+
+    def __init__(self):
+        super().__init__(lag_ms=0)
+        self.load_waits = 0
+
+    def wait_for_load_state(self, state="load", timeout=None):
+        self.load_waits += 1
+        self.clock += int(timeout or 0)
+        raise TimeoutError(f"wait_for_load_state: timeout {timeout}ms exceeded")
+
+
+@pytest.mark.parametrize("page_type", [_NoErrorPage, _ErrorPageNeverLoads])
+def test_the_wait_for_the_error_page_ends_at_its_cap(monkeypatch, page_type):
+    """Review round 5, Minor 2: with no error page, or one that never loads,
+    the retry waits `GOTO_ERROR_PAGE_S` at most, then its pause."""
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda page, timeout_s: {"ms": 0})
+    page = page_type() if page_type is _ErrorPageNeverLoads else page_type(lag_ms=0)
+    apply_run.open_page(page, f"{CAREERS}/apply/42")
+    assert page.gotos == 2
+    cap_ms = int(apply_run.GOTO_ERROR_PAGE_S * 1000) + int(apply_run.GOTO_RETRY_S * 1000)
+    assert page.clock <= cap_ms + 100, page.clock
+    if page_type is _ErrorPageNeverLoads:
+        assert page.load_waits == 1
+
+
 def test_the_retry_of_a_dropped_first_load_waits_for_chromiums_error_page(monkeypatch):
     """SP5 fix round 4 (the full suite under -n auto): the retry waited a
     fixed `GOTO_RETRY_S` for Chromium's error page; on a busy machine the

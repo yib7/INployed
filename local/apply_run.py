@@ -3909,6 +3909,11 @@ class _JobRun:
 
     def _complete_option_plan(self, digest: apply_form.FormDigest, answers: dict,
                               plan: FillPlan, rec: dict) -> FillPlan:
+        """The option picks the first request could not carry, around the
+        second look (`_reask`): a required field whose mapping came back
+        dropped or weak is asked alone once more, then the picks, then a
+        required field whose pick came back dropped or weak."""
+        plan = self._reask(digest, answers, plan, rec, "source")
         s2, q2 = apply_judge.option_questions(digest, plan)
         if q2:
             picks = self.r.jev.judge(s2, q2)
@@ -3918,6 +3923,34 @@ class _JobRun:
             rec["flags"] = dict(plan.flags)
             self._trace("option_picks", answers=apply_trace.answers_json(picks),
                         plan=apply_trace.plan_json(plan))
+        return self._reask(digest, answers, plan, rec, "pick")
+
+    def _reask(self, digest: apply_form.FormDigest, answers: dict, plan: FillPlan, rec: dict,
+               what: str) -> FillPlan:
+        """The second look (SP5): each required field the plan skipped for a
+        mapping the first request dropped or left under its floor
+        (`apply_judge.reask_targets`) is asked once more in a request of its
+        own (`apply_judge.reask_questions`); its answers replace the first
+        look's and the plan is made again. A field the data cannot answer
+        still parks: the second look names `leave_blank` or `no_match` too."""
+        targets = apply_judge.reask_targets(digest, self.catalog, answers, plan, what=what)
+        if not targets:
+            return plan
+        got: dict[str, Any] = {}
+        for n in targets:
+            s, q = apply_judge.reask_questions(digest, self.catalog, plan, n, what=what,
+                                               job=self.entry)
+            got.update({k: v for k, v in self.r.jev.judge(s, q).items() if k in q})
+        answers.update(got)
+        plan = apply_judge.plan(digest, self.catalog, answers,
+                                generation_enabled=bool(self.r.settings["auto_apply_generate"]))
+        rec["flags"] = dict(plan.flags)
+        labels = {f.n: f.label for f in digest.fields}
+        self._decide("reask", f"asked {len(targets)} required field(s) once more on their own "
+                              f"({what}): {_cap(', '.join(labels.get(n, '') for n in targets), 160)}",
+                     fields=targets, answered=sorted(got))
+        self._trace("reask", what=what, fields=targets, answers=apply_trace.answers_json(got),
+                    plan=apply_trace.plan_json(plan))
         return plan
 
     def _fill_and_verify(self, digest: apply_form.FormDigest, plan: FillPlan,

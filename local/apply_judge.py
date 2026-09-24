@@ -1386,6 +1386,88 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan) -> tuple[dict, dic
     return state, questions
 
 
+# --- the second look: a required field's dropped or weak mapping, asked alone ---------
+
+REASK_WHAT = ("source", "pick")
+
+
+def _pick_qid(pf: PlannedField) -> str:
+    """The pick question a field's option rides in: `field_{n}_option` for a
+    `quick_map` field (the first request), `field_{n}_pick` else."""
+    return f"field_{pf.n}_option" if pf.quick else f"field_{pf.n}_pick"
+
+
+def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer],
+                  fill_plan: FillPlan, *, what: str) -> list[int]:
+    """The fields to ask once more on their own before the run parks on them
+    (SP5): required, planned `skip`, never a sensitive or a password box.
+    With `what` "source": no `field_{n}_source` answer came back (the first
+    look dropped it), its mapping sits under `FIELD_MAP_MIN_CONF` (an unsure
+    `leave_blank` too: an unsure "nothing fits" is no answer), or a
+    `consent_attest` tick under `CONSENT_MIN_CONF`; a field `quick_map`
+    settles is never one. With "pick": its fact is known and has a value,
+    the field has options and its pick is missing or under
+    `OPTION_MIN_CONF`. A confident `leave_blank` or a confident `no_match` is
+    the data's own answer: that field parks as it did."""
+    if what not in REASK_WHAT:
+        raise ValueError(f"unknown re-ask {what!r}")
+    by_n = {f.n: f for f in digest.fields}
+    out: list[int] = []
+    for pf in fill_plan.fields:
+        f = by_n.get(pf.n)
+        if f is None or not pf.required or pf.action != "skip":
+            continue
+        if is_sensitive_field(f.label, f.id_or_name) or \
+                is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
+            continue
+        if what == "source":
+            if pf.quick:
+                continue
+            key, conf = _choice_of(answers, f"field_{f.n}_source")
+            if key is None or conf < FIELD_MAP_MIN_CONF \
+                    or (key == "consent_attest" and conf < CONSENT_MIN_CONF):
+                out.append(f.n)
+            continue
+        if not (f.options and pf.fact_key and pf.fact_key not in SPECIAL_SOURCES
+                and catalog.has(pf.fact_key)):
+            continue
+        opt, oconf = _choice_of(answers, _pick_qid(pf))
+        if opt is None or (opt != "no_match" and oconf < OPTION_MIN_CONF):
+            out.append(f.n)
+    return out
+
+
+def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPlan, n: int, *,
+                    what: str, job: Mapping[str, Any] | None = None) -> tuple[dict, dict]:
+    """The second look at one field (`reask_targets`), a request of its own:
+    the field alone (its label, type, whether it is required, its options,
+    help, placeholder and section) with, for "source", the job and the
+    descriptions of the sources its type can take (`facts`, never a value;
+    the question is the first look's `field_{n}_source`), and for "pick"
+    the fact's value in the instruction of the field's pick question (the
+    first look's `field_{n}_option` or `field_{n}_pick`)."""
+    f = next(x for x in digest.fields if x.n == n)
+    pf = next(p for p in fill_plan.fields if p.n == n)
+    if what == "pick":
+        return ({"fields": [_compact_field(f)]},
+                {_pick_qid(pf): _option_question(0, f.options, pf.value)})
+    job = job or {}
+    criteria = _source_criteria(list(catalog.to_criteria()), f.type)
+    facts = _facts_map(catalog)
+    state = {"job": {"company": str(job.get("company_name") or job.get("company") or ""),
+                     "title": str(job.get("job_title") or job.get("title") or "")},
+             "page": {"url_host": digest.url_host, "title": digest.title},
+             "field": _compact_field(f),
+             "facts": {k: facts[k] for k in criteria if k in facts}}
+    questions = {f"field_{f.n}_source": {
+        "type": "choice",
+        "instructions": "Which key of `facts` describes what `field` asks for? When nothing "
+                        "fits, `leave_blank`; for an essay question no fact answers, "
+                        "`needs_generation`.",
+        "criteria": criteria}}
+    return state, questions
+
+
 # --- verification --------------------------------------------------------------------
 
 @dataclass(frozen=True)

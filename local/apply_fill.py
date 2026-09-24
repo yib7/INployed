@@ -286,14 +286,17 @@ _PARTS = re.compile(r"\s*(?:[,;/]|\band\b)\s*", re.I)
 def _chosen(pf: PlannedField, want: str) -> list[int]:
     """The options to choose: the planned one; for a question's tick boxes
     also every option the value names ("Python, SQL": each is ticked, the
-    study's G8), in the options' order."""
+    study's G8), in the options' order. A value that is one option's whole
+    name is that option alone ("Research and Development" never ticks
+    Research and Development apart, review R2 Minor 3)."""
     options = list(pf.options)
     i = _ci_match(want, options)
     if i < 0 and pf.widget == "checkbox_group" and len(options) == 1 \
             and str(want or "").strip().lower() in CHECKED_WORDS:
         i = 0
     picked = [i] if i >= 0 else []
-    if pf.widget == "checkbox_group":
+    if pf.widget == "checkbox_group" \
+            and apply_judge.match_option(str(pf.value or ""), options) is None:
         for part in _PARTS.split(str(pf.value or "")):
             found = apply_judge.match_option(part, options) if part.strip() else None
             if found is not None and options.index(found) not in picked:

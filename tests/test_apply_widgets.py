@@ -812,6 +812,21 @@ def test_every_option_the_value_names_is_ticked(browser_page, fixture_url):
     assert values[langs.n] == "Python, SQL, Rust"
 
 
+@pytest.mark.parametrize("value, option, chosen", [
+    # review R2 Minor 3: a value that is one option's whole name is that option
+    ("Research and Development", "Research and Development", ["Research and Development"]),
+    ("Sales, Marketing", "Sales", ["Sales", "Marketing"]),
+    ("Research, Development", "Research", ["Research", "Development"]),
+])
+def test_a_value_that_names_one_option_whole_ticks_that_option_alone(value, option, chosen):
+    options = ["Research", "Development", "Research and Development", "Sales", "Marketing"]
+    pf = PlannedField(n=0, locator=(0, "#g"), label="Which teams?", required=False,
+                      fact_key="teams", value=value, option=option, confidence=0.9,
+                      action="select", widget="checkbox_group", options=options,
+                      option_locators=[f"#o{i}" for i in range(len(options))])
+    assert [options[i] for i in apply_fill._chosen(pf, option)] == chosen
+
+
 # --- M14: a choice never clicks a form's submit control -----------------------------------------
 
 def test_a_choice_option_that_is_a_forms_submit_is_never_clicked(browser_page):

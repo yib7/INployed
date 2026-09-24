@@ -38,6 +38,32 @@ def test_fetch_code_keeps_application_tab_and_ignores_the_decoys(
     assert code not in caplog.text
 
 
+def test_a_poll_that_times_out_leaves_the_next_poll_to_run(
+        browser_page, fixtures_server, monkeypatch):
+    """SP5 round 2, Minor 7: a timeout on one poll (a busy machine's 5 s cap
+    on the list read) is that poll's error; the next poll reads the inbox."""
+    inbox = _inbox()
+    real = inbox.list_messages
+    calls: list = []
+
+    def _first_times_out(tab, url, *a, **kw):
+        calls.append(url)
+        if len(calls) == 1:
+            raise TimeoutError("the list did not render in time")
+        return real(tab, url, *a, **kw)
+    monkeypatch.setattr(inbox, "list_messages", _first_times_out)
+    browser_page.goto(fixtures_server + "/forms/code_gate.html")
+    errors: list = []
+    slept: list = []
+    code = inbox.fetch_code(browser_page, "greenhouse.io",
+                            fixtures_server + "/inbox/outlook_list.html", jev=jev.FakeJev(),
+                            polls=2, sleep=slept.append, wait_s=7, errors=errors)
+    assert code == "MKPZ3QRA", errors
+    assert len(calls) == 2 and slept == [7]
+    assert errors == ["TimeoutError"]          # the failed poll, by its type alone
+    assert len(browser_page.context.pages) == 1
+
+
 @pytest.mark.parametrize("provider", ["outlook", "gmail"])
 def test_list_messages_reads_every_row_of_the_provider_shape(
         browser_page, fixtures_server, provider):

@@ -181,6 +181,28 @@ def _code_shaped(token: str, body: str = "", subject: str = "") -> bool:
     return bool(re.search(labelled, body, re.I) or re.search(labelled, subject, re.I))
 
 
+def _poll(tab, inbox_url: str, site: str, *, jev, ats: str, company: str) -> str | None:
+    """One read of the inbox: the message the judge takes for the site's,
+    and the code it picks from that message's body (None when either is
+    missing)."""
+    messages = list_messages(tab, inbox_url)
+    rows = [asdict(message) for message in messages]
+    if not rows:
+        return None
+    state, questions = apply_judge.inbox_questions(rows, site, ats=ats, company=company)
+    chosen = apply_judge.read_inbox(jev.judge(state, questions), rows)
+    message = next((m for m in messages if m.n == chosen), None)
+    if not message:
+        return None
+    body = open_message(tab, message)
+    picks = candidates(body, message.subject)
+    if not picks:
+        return None
+    state, questions = apply_judge.code_pick_questions(picks, body)
+    code = apply_judge.read_code_pick(jev.judge(state, questions))
+    return code if code in picks else None
+
+
 def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
                wait_s: float = 60, clock=time.monotonic, sleep=time.sleep,
                deadline: float | None = None, ats: str = "", company: str = "",
@@ -191,14 +213,20 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
     question: the mail comes from the ATS's domain, and `site` is only the
     form's host. Polls share a three-minute budget and the caller's remaining
     job budget. Navigation in the temporary tab stays on the configured inbox
-    host. An error that ends the polls is appended to `errors` by its type
-    name alone (its message may quote the mail).
+    host. A poll that fails (a list read that timed out on a busy machine, a
+    judge error) is that poll's error: the next poll runs after its wait.
+    Each error is appended to `errors` by its type name alone (its message
+    may quote the mail).
     """
     parsed = urlsplit(inbox_url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or polls <= 0:
         return None
     end = min(clock() + 180, deadline if deadline is not None else float("inf"))
     tab = None
+
+    def _noted(e: Exception) -> None:
+        if errors is not None:
+            errors.append(type(e).__name__)
     try:
         if clock() >= end:
             return None
@@ -215,28 +243,19 @@ def fetch_code(page, site: str, inbox_url: str, *, jev, polls: int = 3,
         for attempt in range(min(polls, 3)):
             if clock() >= end:
                 break
-            messages = list_messages(tab, inbox_url)
-            rows = [asdict(message) for message in messages]
-            if rows:
-                state, questions = apply_judge.inbox_questions(rows, site, ats=ats,
-                                                               company=company)
-                chosen = apply_judge.read_inbox(jev.judge(state, questions), rows)
-                message = next((m for m in messages if m.n == chosen), None)
-                if message:
-                    body = open_message(tab, message)
-                    picks = candidates(body, message.subject)
-                    if picks:
-                        state, questions = apply_judge.code_pick_questions(picks, body)
-                        code = apply_judge.read_code_pick(jev.judge(state, questions))
-                        if code in picks and clock() < end:
-                            return code
+            try:
+                code = _poll(tab, inbox_url, site, jev=jev, ats=ats, company=company)
+            except Exception as e:  # noqa: BLE001  (browser and judge errors may include private mail)
+                _noted(e)
+                code = None
+            if code is not None and clock() < end:
+                return code
             if attempt + 1 < min(polls, 3):
                 delay = min(max(0, wait_s), max(0, end - clock()))
                 if delay:
                     sleep(delay)
     except Exception as e:  # noqa: BLE001  (browser and judge errors may include private mail)
-        if errors is not None:
-            errors.append(type(e).__name__)
+        _noted(e)
         return None
     finally:
         if tab is not None:

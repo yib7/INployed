@@ -79,6 +79,7 @@ module imports without it; tests inject a `context`.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import os
@@ -2800,7 +2801,8 @@ class _JobRun:
         bot-check provider (a CAPTCHA widget, a chat or cookie widget), or a
         LinkedIn frame on a page off LinkedIn (an "Apply with LinkedIn"
         widget, study G4): they are never judged, filled or clicked, and the
-        page goes on without them. The page text keeps every frame's words."""
+        page goes on without them. The page text keeps every frame's words, and
+        a dialog the page read stays its dialog."""
         frames = list(self.page.frames)
         on_linkedin = self._on_linkedin()
         dropped: dict[int, str] = {}
@@ -2818,9 +2820,8 @@ class _JobRun:
             return digest
         self.log.info("job %s: ignoring the controls of frame(s) %s", self.job_id,
                       ", ".join(f"{i} ({h})" for i, h in sorted(dropped.items())))
-        return apply_form.FormDigest(
-            url_host=digest.url_host, title=digest.title, text=digest.text,
-            fields=[f for f in digest.fields if int(f.locator[0]) not in dropped],
+        return dataclasses.replace(       # the rest as read: its dialog too (R2-M2)
+            digest, fields=[f for f in digest.fields if int(f.locator[0]) not in dropped],
             buttons=[b for b in digest.buttons if int(b.locator[0]) not in dropped])
 
     def _discover_listbox_options(self, digest: apply_form.FormDigest) -> None:

@@ -543,6 +543,31 @@ def test_workdays_start_popup_is_the_page_its_text_first_and_its_controls_alone(
     assert state["page"]["dialog"] == "Start Your Application"
 
 
+def test_a_dropped_bot_check_frame_leaves_the_popup_the_page(context, tmp_path):
+    # R2-M2: dropping a reCAPTCHA frame's control rebuilds the digest; the
+    # Workday popup it read stays the page
+    captcha = "https://www.google.com/recaptcha/api2/anchor?k=1"
+    _serve(context, {"/job/7": _workday_page().replace(
+        "</div></body>", f"</div><iframe src='{captcha}' style='width:304px;height:78px'>"
+                         "</iframe></body>")})
+    context.route("https://www.google.com/recaptcha/**", lambda route: route.fulfill(
+        body="<body><button type=button>Verify</button></body>", content_type="text/html"))
+    run = _job_run(context, tmp_path, f"{CAREERS}/job/7")
+    run.page = context.new_page()
+    run.page.set_viewport_size({"width": 1400, "height": 900})
+    run.page.goto(f"{CAREERS}/job/7")
+    run.page.frames[1].wait_for_selector("button")
+    read = apply_form.extract(run.page)
+    assert "Verify" in [b.text for b in read.buttons]
+    digest = run._drop_foreign_controls(read)
+    assert run._last_dropped == {1: "www.google.com"}
+    assert [b.text for b in digest.buttons] == ["Autofill with Resume", "Apply Manually",
+                                                "Use My Last Application"], digest.buttons
+    assert digest.dialog == "Start Your Application"
+    state, _ = apply_judge.read_questions(digest)
+    assert state["page"]["dialog"] == "Start Your Application"
+
+
 def test_a_chat_window_or_a_dialog_behind_the_page_is_never_the_page(browser_page):
     browser_page.set_viewport_size({"width": 1400, "height": 900})
     chat = _workday_page('class="chat-window"').replace("Start Your Application", "Chat with us")

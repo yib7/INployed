@@ -175,3 +175,15 @@ def test_the_unreadable_flow_parks_on_the_required_one(_browser, flow_server, tm
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     unreadable = [d for d in _decisions(r) if d["what"] == "unreadable"]
     assert unreadable and unreadable[0]["required"] == ["Earliest start date"]
+
+
+# --- SP6 review I6: a form-associated control that blocks the send without `required` -------------
+
+@pytest.mark.parametrize("name", ["form_associated_invalid", "form_associated_invalid_park"])
+def test_a_form_associated_control_its_internals_mark_invalid_parks_naming_it(
+        _browser, flow_server, tmp_path, name):
+    r = h.run_flow(h.flow(name), jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.sends == 0 and r.policy is True
+    assert not any(a.kind == "click" and a.text == "Submit application" for a in r.actions)

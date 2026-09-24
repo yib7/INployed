@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Site Reliability Engineer - Contoso</title>
+<!-- A synthetic form-associated control that blocks the send without a
+     `required` attribute (SP6 review I6): its internals mark it invalid
+     (valueMissing) until a shift is chosen inside its closed shadow root, so
+     the form will not send; its question box shows a star. The run cannot
+     read into it: it parks naming it, in either mode. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label, .field > .q { display: block; font-weight: bold; }
+  shift-choice { display: inline-block; min-width: 200px; min-height: 28px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Site Reliability Engineer</h1>
+<p>Contoso, Austin, TX</p>
+<form id="application">
+  <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><span class="q">Preferred shift *</span>
+    <shift-choice name="shift" aria-label="Preferred shift"></shift-choice></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  customElements.define('shift-choice', class extends HTMLElement {
+    static formAssociated = true;
+    constructor() {
+      super();
+      this._internals = this.attachInternals();
+      const root = this.attachShadow({mode: 'closed'});
+      root.innerHTML = '<select><option value="">Choose</option><option>Day</option><option>Night</option></select>';
+      const select = root.querySelector('select');
+      const check = () => {
+        this._internals.setFormValue(select.value);
+        if (select.value) this._internals.setValidity({});
+        else this._internals.setValidity({valueMissing: true}, 'Choose a shift', select);
+      };
+      select.addEventListener('change', check);
+      check();
+    }
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

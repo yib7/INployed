@@ -2506,8 +2506,12 @@ _SCAN_JS = r"""(requiredOnly) => {
         // read as empty (the run cannot tell it holds an answer)
         let invalid = false;
         try { invalid = el.matches(':invalid'); } catch (e) { invalid = false; }
-        if (why === 'form-associated custom element') empty = invalid;
-        else empty = invalid || !('value' in el) || !norm(String(el.value || ''));
+        if (why === 'form-associated custom element') {
+          empty = invalid;
+          // one its internals mark invalid blocks its form's send whatever
+          // its attributes say: it counts as required (SP6 review I6)
+          required = required || invalid;
+        } else empty = invalid || !('value' in el) || !norm(String(el.value || ''));
       } else if (NATIVE.test(el.tagName)) {
         empty = !norm(el.value);
       } else {

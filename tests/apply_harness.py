@@ -1069,6 +1069,16 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="body[data-uploads='1'] #btn-submit:visible",
          covers="a returning candidate's page showing a kept resume of the same file name: "
                 "this job's resume is uploaded, exactly once (SP6 review I5)"),
+    Flow("form_associated_invalid", "form_associated_invalid.html", True, "needs_human",
+         r"^required field without an answer: Preferred shift \(a control the run cannot "
+         r"read: form-associated custom element\)$", confirm="#thanks:visible",
+         covers="a form-associated control its internals mark invalid, no required "
+                "attribute: named, parked on, never sent (SP6 review I6)"),
+    Flow("form_associated_invalid_park", "form_associated_invalid.html", False, "needs_human",
+         r"^required field without an answer: Preferred shift \(a control the run cannot "
+         r"read: form-associated custom element\)$", confirm="#thanks:visible",
+         covers="the same in park mode: never ready_to_submit with it unanswered (SP6 review "
+                "I6)"),
     Flow("recaptcha_disabled_submit", "recaptcha_disabled_submit.html", True, "needs_human",
          r"^a CAPTCHA check is on the form before the submit", confirm="#received:visible",
          routes=lambda base: {"https://www.google.com/recaptcha/**": _CHECKBOX_STUB},

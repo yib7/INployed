@@ -20,6 +20,7 @@ module stays importable without it.
 from __future__ import annotations
 
 import logging
+import re
 import weakref
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
@@ -183,8 +184,11 @@ def _locator(raw: Any) -> tuple[int, str]:
 #   consent  a cookie or consent banner (`CONSENT_ROOTS_JS`) is chrome as
 #            well: its fields and buttons are dropped and its text goes to
 #            the end (the study's G1: 11 ATSs, the banner text first on 3).
-#   modal    an open modal (`dialog[open]`, `aria-modal=true`, or a dialog
-#            covering over 40% of the viewport; never a consent banner) is
+#   modal    an open modal (`dialog[open]`, `aria-modal=true`, Workday's
+#            `data-automation-activepopup=true`, a dialog covering over 40% of
+#            the viewport, or a dialog of 280 x 200 px or more on top of the
+#            page, the element at its centre inside it; never a consent
+#            banner or preference center, never a chat window) is
 #            the page while it is open (study G9: Workday's "Start Your
 #            Application", Teamtailor's form overlay): only its fields and
 #            buttons are kept, its text goes first, and its title is
@@ -270,8 +274,13 @@ CONSENT_ROOTS_JS = r"""() => {
   };
   if (document.body) fixed(document.body, 0);
   const hits = [];
+  // a consent vendor's own preference center is consent UI whatever it holds
+  // (OneTrust's has a vendor search box, which `blocked` would keep out)
+  for (const el of document.querySelectorAll('#onetrust-pc-sdk, #onetrust-consent-sdk')) {
+    if (el !== document.body) hits.push(el);
+  }
   for (const el of found) {
-    if (blocked(el)) continue;
+    if (hits.includes(el) || blocked(el)) continue;
     const s = names(el);
     let hit = false;
     if (STRONG.test(s)) hit = true;
@@ -387,10 +396,29 @@ _EXTRACT_JS = r"""
     const h = Math.min(r.bottom, vh) - Math.max(r.top, 0);
     return w > 0 && h > 0 && w * h > 0.4 * vw * vh;
   };
+  // on top of the page: the element at its centre lies inside it (Workday's
+  // "Start Your Application" popup is 442 x 451 px with no aria-modal)
+  const onTop = (el) => {
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx < 0 || cy < 0 || cx >= vw || cy >= vh) return false;
+    const hit = document.elementFromPoint(cx, cy);
+    return !!hit && el.contains(hit);
+  };
+  // a chat window is a dialog of its own, never the page
+  const CHAT = /chat|intercom|drift|messenger|zendesk|livechat|hubspot|olark|tawk|crisp/i;
+  const sized = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width >= 280 && r.height >= 200;
+  };
   const modal = Array.from(document.querySelectorAll(
       'dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]')).find((el) =>
     visible(el) && !inConsent(el) && !consent.some((root) => el.contains(root))
-    && (el.matches('dialog[open]') || el.getAttribute('aria-modal') === 'true' || covers(el)));
+    && (el.matches('dialog[open]') || el.getAttribute('aria-modal') === 'true'
+        || el.getAttribute('data-automation-activepopup') === 'true' || covers(el)
+        || (el.matches('[role=dialog], [role=alertdialog]') && sized(el) && onTop(el)
+            && !CHAT.test((el.id || '') + ' ' + (el.getAttribute('class') || '')
+                          + ' ' + (el.getAttribute('aria-label') || '')))));
   const outsideModal = (el) => !!modal && !modal.contains(el);
   const modalTitle = (() => {
     if (!modal) return '';
@@ -698,7 +726,9 @@ _TEXT_JS = "() => document.body ? (document.body.innerText || '') : ''"
 # index can shift when an ad or tracker frame detaches between the read and
 # the act; `resolve` finds the frame by the URL it had at the read first.
 _FRAME_URLS: "weakref.WeakKeyDictionary[Any, list[str]]" = weakref.WeakKeyDictionary()
-CONTENT_FRAME_MIN = (600, 300)    # px: a child frame this big with fields is the content (G9)
+CONTENT_FRAME_MIN = (600, 300)    # px: a child frame this big is the content (G9)
+CONTENT_FRAME_ANY = (300, 150)    # px: or this big with fields or an Apply-worded control
+_APPLY_WORD = re.compile(r"\bapply\b", re.I)
 
 
 def frames(page) -> list:
@@ -712,8 +742,8 @@ def frames(page) -> list:
 def extract(page) -> FormDigest:
     """Read one page of an application into a `FormDigest`: every frame in one
     JS pass each, fields and buttons numbered across frames in document order,
-    the visible text of every frame joined and capped at
-    `apply_judge.PAGE_TEXT_CAP`. A frame whose evaluate fails (detached,
+    the visible text of every frame joined (a content frame's first,
+    `_content_frame`) and capped at `apply_judge.PAGE_TEXT_CAP`. A frame whose evaluate fails (detached,
     cross-origin) is skipped and keeps its index."""
     from apply_judge import PAGE_TEXT_CAP      # lazy: apply_judge imports this module
 
@@ -747,22 +777,26 @@ def extract(page) -> FormDigest:
         if raw.get("dialog") and not dialog:
             dialog = str(raw["dialog"])
         if raw.get("text"):
-            first = idx > 0 and raw.get("fields") and _content_frame(frame)
+            own = bool(raw.get("fields")) or any(_APPLY_WORD.search(str(b.get("text") or ""))
+                                                 for b in raw.get("buttons") or [])
+            first = idx > 0 and _content_frame(frame, CONTENT_FRAME_ANY if own
+                                               else CONTENT_FRAME_MIN)
             texts.append((0 if first else 1, str(raw["text"])))
     text = "\n".join(t for _, t in sorted(texts, key=lambda row: row[0]))[:PAGE_TEXT_CAP]
     return FormDigest(url_host=urlparse(page.url).hostname or "", title=page.title(),
                       text=text, fields=fields, buttons=buttons, dialog=dialog)
 
 
-def _content_frame(frame) -> bool:
-    """A child frame big enough to be the page's content (an iCIMS content
-    frame, a Greenhouse embed): at least `CONTENT_FRAME_MIN` on the page."""
+def _content_frame(frame, size: tuple[int, int] = CONTENT_FRAME_MIN) -> bool:
+    """A child frame big enough to be the page's content: at least
+    `CONTENT_FRAME_MIN` on the page by its size alone (an iCIMS posting's
+    frame holds no field), or `CONTENT_FRAME_ANY` when it holds fields or an
+    Apply-worded control (a Greenhouse embed)."""
     try:
         box = frame.frame_element().bounding_box()
     except Exception:       # noqa: BLE001  (a detached frame)
         return False
-    return bool(box) and box["width"] >= CONTENT_FRAME_MIN[0] \
-        and box["height"] >= CONTENT_FRAME_MIN[1]
+    return bool(box) and box["width"] >= size[0] and box["height"] >= size[1]
 
 
 def consent_control(page, allow=None) -> tuple[int, dict] | None:

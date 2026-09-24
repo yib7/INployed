@@ -5,13 +5,18 @@
 <title>Analytics Engineer - Fabrikam Careers</title>
 <style>
   body { font-family: sans-serif; margin: 24px; }
-  #start { display: none; position: fixed; inset: 10% 20%; background: #fff;
-           border: 1px solid #555; padding: 24px; }
+  /* the captured popup's shape: about 442 x 451 px, centred, no aria-modal */
+  #start { display: none; position: fixed; left: 50%; top: 50%; width: 394px; height: 403px;
+           margin: -225px 0 0 -221px; background: #fff; border: 1px solid #555; padding: 24px;
+           z-index: 10; }
+  header { display: flex; gap: 12px; }
   #start button { display: block; margin: 12px 0; }
   #last { display: none; }
 </style>
 </head>
 <body>
+<header data-automation-id="header"><button type="button">Sign In</button>
+  <button type="button">Search for Jobs</button></header>
 <h1>Analytics Engineer</h1>
 <p>Fabrikam, Austin, TX</p>
 <button type="button" id="apply">Apply</button>
@@ -23,7 +28,8 @@
 <p>Three years with SQL and a modern warehouse.</p>
 <!-- The start dialog a Workday posting opens: three ways to begin, none of
      which sends anything. "Apply Manually" opens the form. -->
-<div id="start" role="dialog" aria-modal="true" aria-labelledby="start-title">
+<div id="start" role="dialog" aria-label="Start Your Application"
+     data-automation-activepopup="true">
   <h2 id="start-title">Start Your Application</h2>
   <button type="button" id="autofill">Autofill with Resume</button>
   <button type="button" id="manual">Apply Manually</button>
@@ -32,7 +38,7 @@
 </div>
 <script>
   document.getElementById('apply').addEventListener('click', function () {
-    document.getElementById('apply').style.display = 'none';
+    // the posting and its Apply stay behind the popup, as Workday's do
     document.getElementById('start').style.display = 'block';
   });
   document.getElementById('manual').addEventListener('click', function () {

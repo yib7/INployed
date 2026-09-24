@@ -468,28 +468,80 @@ def test_a_step_opened_in_a_new_tab_is_the_next_page_and_nothing_is_clicked_twic
 
 # --- what the judge reads first: study G9, G13, G14, G4 --------------------------------------------
 
-_MODAL_PAGE = """<!doctype html><html><head><title>Analyst - Fabrikam</title></head><body>
+# The captured Workday popup's shape (review I3): a 442 x 451 px dialog, no
+# aria-modal, the header and the posting (its Apply still showing) behind it
+def _workday_page(attrs='data-automation-activepopup="true"'):
+    return f"""<!doctype html><html><head><title>Analyst - Fabrikam</title></head><body>
+<div data-automation-id="header"><button type="button">Sign In</button>
+  <button type="button">Search for Jobs</button></div>
 <h1>Analyst</h1><p>Fabrikam, Austin. About the role: own the dashboards.</p>
 <button type="button" id="apply">Apply</button><button type="button">Share</button>
-<label for="q">Search jobs</label><input id="q">
-<div role="dialog" aria-modal="true" aria-labelledby="t"
-     style="position:fixed;inset:10% 20%;background:#fff;border:1px solid #555;padding:24px">
-  <h2 id="t">Start Your Application</h2>
+<div role="dialog" aria-label="Start Your Application" {attrs}
+     style="position:fixed;left:50%;top:50%;width:394px;height:403px;margin:-225px 0 0 -221px;
+            padding:24px;background:#fff;border:1px solid #555;z-index:10">
+  <h2>Start Your Application</h2>
   <button type="button">Autofill with Resume</button>
   <button type="button">Apply Manually</button>
+  <button type="button">Use My Last Application</button>
 </div></body></html>"""
 
 
-def test_an_open_modal_is_the_page_its_text_first_and_its_controls_alone(browser_page):
-    # G9: Workday's "Start Your Application" dialog over the posting
-    browser_page.set_content(_MODAL_PAGE)
+@pytest.mark.parametrize("attrs", ['data-automation-activepopup="true"', ""])
+def test_workdays_start_popup_is_the_page_its_text_first_and_its_controls_alone(
+        browser_page, attrs):
+    # G9: Workday's own marker, and a dialog on top of the page without it
+    browser_page.set_viewport_size({"width": 1400, "height": 900})
+    browser_page.set_content(_workday_page(attrs))
     d = apply_form.extract(browser_page)
-    assert [b.text for b in d.buttons] == ["Autofill with Resume", "Apply Manually"], d.buttons
+    assert [b.text for b in d.buttons] == ["Autofill with Resume", "Apply Manually",
+                                           "Use My Last Application"], d.buttons
     assert d.fields == []
     assert d.dialog == "Start Your Application"
     assert d.text.startswith("Start Your Application"), d.text[:80]
     state, _ = apply_judge.read_questions(d)
     assert state["page"]["dialog"] == "Start Your Application"
+
+
+def test_a_chat_window_or_a_dialog_behind_the_page_is_never_the_page(browser_page):
+    browser_page.set_viewport_size({"width": 1400, "height": 900})
+    chat = _workday_page('class="chat-window"').replace("Start Your Application", "Chat with us")
+    browser_page.set_content(chat)
+    assert apply_form.extract(browser_page).dialog == ""
+    covered = _workday_page("").replace(
+        "</body>", "<div style='position:fixed;inset:0;background:#fff;z-index:20'>"
+                   "<h1>Other page</h1><button type='button'>Go</button></div></body>")
+    browser_page.set_content(covered)
+    assert apply_form.extract(browser_page).dialog == ""
+
+
+def test_an_open_onetrust_preference_center_is_consent_and_never_the_pages_modal(browser_page):
+    browser_page.set_viewport_size({"width": 1400, "height": 900})
+    browser_page.set_content("""<body><h1>Analyst</h1><p>About the role.</p>
+      <a class="btn" href="/apply">Apply</a>
+      <div id="onetrust-pc-sdk" role="dialog" aria-modal="true"
+           style="position:fixed;inset:10%;background:#fff;z-index:30">
+        <h2>Privacy Preference Center</h2><input type="text" placeholder="Search vendors">
+        <button type="button">Allow All</button><button type="button">Reject All</button>
+      </div></body>""")
+    d = apply_form.extract(browser_page)
+    assert d.dialog == ""
+    assert [b.text for b in d.buttons] == ["Apply"], d.buttons
+    assert d.fields == []
+
+
+def test_a_fieldless_posting_frame_is_read_before_the_host_pages_text(browser_page):
+    # G9, iCIMS: the posting's frame holds no field; its words must come
+    # first, inside the read's head
+    chrome = "Careers home. Our locations. Benefits. Sign in. " * 40
+    frame = ("<h1>Software Developer</h1><h2>Overview</h2><p>Build the tools.</p>"
+             "<a href=/apply>Apply for this job online</a>")
+    browser_page.set_content(f"<body><p>{chrome}</p><iframe style='width:900px;height:600px' "
+                             f"srcdoc=\"{frame}\"></iframe></body>")
+    browser_page.frames[1].wait_for_selector("h2")
+    d = apply_form.extract(browser_page)
+    assert d.text.startswith("Software Developer"), d.text[:80]
+    state, _ = apply_judge.read_questions(d)
+    assert "Overview" in state["page"]["headline_text"]
 
 
 def test_a_content_frame_is_read_before_the_host_pages_chrome(browser_page):

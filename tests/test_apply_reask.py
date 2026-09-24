@@ -462,22 +462,26 @@ _SPLIT_SUBMIT = """<!doctype html><html><head><title>Apply - Fabrikam</title></h
   <label for="fn">First name *</label><input id="fn" name="first_name" required>
   <label for="em">Email *</label><input id="em" name="email" type="email" required>
   <div class="split"><button type="submit" id="btn-submit">Submit application</button>
-    <button type="button" id="more" aria-haspopup="menu" aria-label="More submit options"
+    <button type="button" id="more" aria-haspopup="menu" aria-label="__ARROW__"
       onclick="document.getElementById('menu').hidden = false">
       <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></div>
   <div role="menu" id="menu" hidden><div role="menuitem">Submit and save a copy</div></div>
 </form></body></html>"""
 
 
-def test_discovery_never_clicks_a_popup_whose_own_words_send(_browser, flow_server, tmp_path):
+@pytest.mark.parametrize("arrow", ["More submit options",
+                                   # review round 7: an icon-only arrow named at any length
+                                   "Submit your application right now"])
+def test_discovery_never_clicks_a_popup_whose_own_words_send(_browser, flow_server, tmp_path,
+                                                             arrow):
     """Review R5-I1: a submit's menu arrow ("More submit options") read as a
     dropdown was opened by the options discovery, a click outside the
     submit gate on a control that reads submit (CLICK-OUTSIDE-GATE)."""
     import dataclasses
+    page = _SPLIT_SUBMIT.replace("__ARROW__", arrow)
     f = dataclasses.replace(h.flow("lever_single_park"), name="split_submit",
                             start="https://careers.fabrikam.example/apply/42",
-                            routes=lambda base: {"https://careers.fabrikam.example/**":
-                                                 _SPLIT_SUBMIT})
+                            routes=lambda base: {"https://careers.fabrikam.example/**": page})
     r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
                    workdir=tmp_path)
     assert not r.breaks, r.breaks

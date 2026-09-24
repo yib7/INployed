@@ -1535,10 +1535,14 @@ _EXTRACT_JS = r"""
   // a control that sends or goes on, by its own words (review R5-I1: a
   // submit's menu arrow "More submit options", a "Save and continue" menu):
   // never a field, never opened to read its options, still a button. Read on
-  // its shown text (never a listbox's answer) and on an aria-label that is a
-  // short control name: four words at most, no "?", no prompt tail (review
-  // R6-I1: Workday's "Are you willing to submit to a background check?
-  // Select One Required" is a question)
+  // its shown text when it has no question label of its own (a re-read
+  // question showing "Continue studies" is answered, review round 7, M1),
+  // and on its aria-label when that is a short control name (four words at
+  // most, no "?", no prompt tail: Workday's "Are you willing to submit to a
+  // background check? Select One Required" is a question, review R6-I1) or
+  // when the control shows no words of its own (an icon-only arrow named at
+  // any length, review R7-I1). A required control is an answer, never a send
+  // button ("Willing to submit references", required, review R7-I1).
   const POPUP_WAY_ON = /\b(submit|send|finish|continue|apply with|next step)\b/i;
   const PROMPT_TAIL = /\b(select one|required|please select|choose one)\b/i;
   const controlName = (aria) => !!aria && !/\?/.test(aria) && !PROMPT_TAIL.test(aria)
@@ -1668,14 +1672,14 @@ _EXTRACT_JS = r"""
       if (Array.from(el.querySelectorAll('input:not([type=hidden])')).some(visible)) continue;
       const text = norm(el.innerText) || norm(el.value);
       const aria = norm(el.getAttribute('aria-label'));
-      if (controlName(aria) && POPUP_WAY_ON.test(aria)) continue;
       const [label, req] = labelFor(el, marks);
+      const required = req || isRequired(el);
+      if (!required && aria && (controlName(aria) || !text) && POPUP_WAY_ON.test(aria)) continue;
       const scoped = !!closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset');
       const placeholder = PLACEHOLDER_OPTION.test(text);
       // named by a label of its own (never only by the words above it)
       const named = !!labelElementFor(el) || !!el.getAttribute('aria-labelledby')
         || !!ariaWords(aria)[0];
-      const required = req || isRequired(el);
       // a label that asks, or a required one, is a question's
       const question = !!label && (ASKS.test(label) || required);
       const chromeLabel = !!label && !question && (chromePopup(label)
@@ -1683,9 +1687,10 @@ _EXTRACT_JS = r"""
       // a shown chrome word, or a shown send or go-on word: chrome, unless a
       // listbox holds it as its answer (options of its own, or a question's
       // label: "Stack preference: Back", "Delivery method: Send by post")
-      const answer = pop === 'listbox' && (listboxOptions(el).length
-                                           || (named && !!label && !chromeLabel));
-      if ((chromePopup(text) || POPUP_WAY_ON.test(text)) && !answer) continue;
+      const questionLabel = named && !!label && !chromeLabel;
+      const answer = pop === 'listbox' && (listboxOptions(el).length || questionLabel);
+      if (chromePopup(text) && !answer) continue;
+      if (POPUP_WAY_ON.test(text) && !required && !questionLabel && !answer) continue;
       if (pop !== 'listbox' && !(placeholder || named)) continue;
       if (pop !== 'listbox' && chromeLabel) continue;
       if (pop === 'listbox' && !(scoped || named || placeholder)) continue;

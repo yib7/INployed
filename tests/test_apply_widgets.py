@@ -1131,6 +1131,15 @@ def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(br
           <div role="option">Email</div></div></div>
       <div><label for="np">What are your plans after graduating?</label>
         <button type="button" id="np" aria-haspopup="listbox">Continue studies</button></div>
+      <!-- review round 7: a required short question with a send word; a menu
+           question read again, showing its answer -->
+      <div><button type="button" aria-haspopup="listbox" aria-required="true"
+        aria-label="Willing to submit references">Select One</button></div>
+      <div><label for="wr">Able to continue remotely *</label>
+        <button type="button" id="wr" aria-haspopup="menu" aria-label="Able to continue remotely"
+          >Select...</button></div>
+      <div><label for="pd">Plans after your degree</label>
+        <button type="button" id="pd" aria-haspopup="menu">Continue studies</button></div>
       </form></body>""")
     d = apply_form.extract(browser_page)
     assert [(f.label, f.widget) for f in d.fields] == [
@@ -1142,9 +1151,12 @@ def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(br
         ("Which language do you prefer for interviews?", "popup"),
         ("Are you willing to submit to a background check?", "popup"),
         ("Do you wish to continue your application with this company?", "popup"),
-        ("Delivery method", "popup"), ("What are your plans after graduating?", "popup")]
-    workday = [f for f in d.fields if f.label.startswith(("Are you willing", "Do you wish"))]
-    assert all(f.required for f in workday)
+        ("Delivery method", "popup"), ("What are your plans after graduating?", "popup"),
+        ("Willing to submit references", "popup"), ("Able to continue remotely", "popup"),
+        ("Plans after your degree", "popup")]
+    required = [f for f in d.fields if f.label.startswith(("Are you willing", "Do you wish",
+                                                           "Willing to", "Able to"))]
+    assert len(required) == 4 and all(f.required for f in required)
 
 
 def test_a_named_chrome_popup_is_still_no_field(browser_page):
@@ -1176,6 +1188,12 @@ def test_a_named_chrome_popup_is_still_no_field(browser_page):
       <button type="button" aria-haspopup="menu" aria-label="Continue with">Continue with</button>
       <button type="button" aria-haspopup="menu" aria-label="Apply with">Apply with</button>
       <button type="button" aria-haspopup="true" aria-label="Next step">Next step</button>
+      <!-- review round 7: an icon-only arrow named at any length -->
+      <button type="button" aria-haspopup="menu" aria-label="Submit your application right now">
+        <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button>
+      <button type="button" aria-haspopup="menu"
+        aria-label="Choose how to submit your application">
+        <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button>
       </form></body>""")
     d = apply_form.extract(browser_page)
     assert d.fields == [], [(f.label, f.widget) for f in d.fields]

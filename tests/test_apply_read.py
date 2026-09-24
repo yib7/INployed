@@ -598,6 +598,54 @@ def test_a_content_frame_is_read_before_the_host_pages_chrome(browser_page):
     assert [f.label for f in d.fields] == ["First name"]
 
 
+def _posting_with_frames(context, frames: dict) -> object:
+    """A posting on `CAREERS` with a child frame per (src, (width, height)),
+    each frame's host routed to its own small page."""
+    def _page(html):
+        return lambda route: route.fulfill(body=html, content_type="text/html")
+    for src, (html, _) in frames.items():
+        context.route(src, _page(html))
+    tags = "".join(f"<iframe src='{src}' style='width:{w}px;height:{h}px'></iframe>"
+                   for src, (_, (w, h)) in frames.items())
+    _serve(context, {"/job": "<body><h1>Payroll Analyst</h1><p>Reconcile the ledgers.</p>"
+                             f"<a class=btn href=/apply>Apply</a>{tags}</body>"})
+    page = context.new_page()
+    page.goto(f"{CAREERS}/job")
+    for frame in page.frames[1:]:
+        frame.wait_for_selector("body *")
+    return page
+
+
+def test_an_embedded_video_and_an_ad_stay_in_place_behind_the_posting(context):
+    # R2-M1: a 640 x 360 video and a 300 x 250 ad reading "Apply now" are
+    # big enough to be content frames; neither is the page's site or an ATS
+    page = _posting_with_frames(context, {
+        "https://video.example/embed/1": ("<body><p>Meet the team. Play video.</p></body>",
+                                          (640, 360)),
+        "https://ads.example/slot/1": ("<body><p>Earn a degree online.</p>"
+                                       "<a href=/go>Apply now</a></body>", (300, 250))})
+    d = apply_form.extract(page)
+    assert d.text.startswith("Payroll Analyst"), d.text[:80]
+    run_site = apply_form.extract(page, content_site=lambda url: apply_run.content_frame_site(
+        url, str(page.url)))
+    assert run_site.text.startswith("Payroll Analyst"), run_site.text[:80]
+    state, _ = apply_judge.read_questions(run_site)
+    assert "Reconcile" in state["page"]["headline_text"]
+
+
+def test_an_ats_frame_is_read_before_the_careers_page_that_embeds_it(context):
+    # R2-M1: the run's own predicate still takes a Greenhouse embed first
+    page = _posting_with_frames(context, {
+        "https://boards.greenhouse.io/embed/job_app": (
+            "<body><h1>Apply for Payroll Analyst</h1><label for=f>First name</label>"
+            "<input id=f></body>", (900, 600))})
+    assert apply_run.content_frame_site("https://boards.greenhouse.io/x", str(page.url))
+    assert not apply_run.content_frame_site("https://video.example/x", str(page.url))
+    d = apply_form.extract(page, content_site=lambda url: apply_run.content_frame_site(
+        url, str(page.url)))
+    assert d.text.startswith("Apply for Payroll Analyst"), d.text[:80]
+
+
 def test_a_workday_header_and_a_top_bar_are_chrome_and_an_icon_with_no_name_is_dropped(
         browser_page):
     # G4: a header's Sign In invites a login misread; an unnamed icon is noise

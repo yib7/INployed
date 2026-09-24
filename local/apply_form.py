@@ -23,7 +23,7 @@ import logging
 import re
 import weakref
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
@@ -748,12 +748,17 @@ def frames(page) -> list:
     return [main] + [f for f in page.frames if f is not main]
 
 
-def extract(page) -> FormDigest:
+def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormDigest:
     """Read one page of an application into a `FormDigest`: every frame in one
     JS pass each, fields and buttons numbered across frames in document order,
     the visible text of every frame joined (a content frame's first,
-    `_content_frame`) and capped at `apply_judge.PAGE_TEXT_CAP`. A frame whose evaluate fails (detached,
-    cross-origin) is skipped and keeps its index."""
+    `_content_frame`) and capped at `apply_judge.PAGE_TEXT_CAP`. A frame whose
+    evaluate fails (detached, cross-origin) is skipped and keeps its index.
+
+    `content_site(frame_url)`: may that child frame be read first (R2-M1: an
+    embedded video or an ad stays in place)? The runner passes the page's
+    site and the ATS platforms (`apply_run.content_frame_site`); the default
+    takes only a frame of the page's own host, or a blank or srcdoc one."""
     from apply_judge import PAGE_TEXT_CAP      # lazy: apply_judge imports this module
 
     fields: list[Field] = []
@@ -761,6 +766,12 @@ def extract(page) -> FormDigest:
     texts: list[tuple[int, str]] = []     # (order, text): a content frame's first (G9)
     dialog = ""
     all_frames = frames(page)
+    if content_site is None:
+        page_host = (urlparse(str(page.url)).hostname or "").lower()
+
+        def content_site(url: str) -> bool:
+            host = (urlparse(str(url or "")).hostname or "").lower()
+            return not host or host == page_host
     try:
         _FRAME_URLS[page] = [str(getattr(f, "url", "") or "") for f in all_frames]
     except TypeError:           # a page double that takes no weak reference
@@ -788,8 +799,8 @@ def extract(page) -> FormDigest:
         if raw.get("text"):
             own = bool(raw.get("fields")) or any(_APPLY_WORD.search(str(b.get("text") or ""))
                                                  for b in raw.get("buttons") or [])
-            first = idx > 0 and _content_frame(frame, CONTENT_FRAME_ANY if own
-                                               else CONTENT_FRAME_MIN)
+            first = (idx > 0 and content_site(str(getattr(frame, "url", "") or ""))
+                     and _content_frame(frame, CONTENT_FRAME_ANY if own else CONTENT_FRAME_MIN))
             texts.append((0 if first else 1, str(raw["text"])))
     text = "\n".join(t for _, t in sorted(texts, key=lambda row: row[0]))[:PAGE_TEXT_CAP]
     return FormDigest(url_host=urlparse(page.url).hostname or "", title=page.title(),

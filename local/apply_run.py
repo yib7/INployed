@@ -837,7 +837,7 @@ class _Accounts:
             info = apply_fill.settle(page, CLICK_TIMEOUT_S)
             self.run._decide_next("settled", f"settled {_settled_ms(info)} ms after the "
                                              "create-account link")
-            fresh = self.run._drop_foreign_controls(apply_form.extract(page))
+            fresh = self.run._drop_foreign_controls(self.run._extract(page))
             # the loop's own read (NAV-03): the judge with the page's
             # structure (a box that makes a password is a sign-up), an unsure
             # read taken once more after a settle, then the structure alone
@@ -1235,6 +1235,19 @@ def link_targets(page, digest: apply_form.FormDigest) -> dict[int, str]:
         if href.lower().startswith(("http://", "https://")):
             out[b.n] = href
     return out
+
+
+def content_frame_site(frame_url: str, page_url: str, hosts=()) -> bool:
+    """May a child frame at `frame_url` be read before its page (study G9,
+    R2-M1)? Only a frame of the page's own site, a known ATS platform
+    (`ATS_SITES`) or an admitted application host (`hosts`): an iCIMS
+    content frame, a Greenhouse embed; never an embedded video or an ad. A
+    blank or srcdoc frame is the page's own."""
+    host = _host(frame_url)
+    if not host:
+        return True
+    site = _site(host)
+    return site == _site(page_url) or site in ATS_SITES or any(site == _site(h) for h in hosts)
 
 
 def _on_linkedin_redirector(url: str) -> bool:
@@ -2760,6 +2773,14 @@ class _JobRun:
             return False            # ALLOW-02: a job board or a tracker is never the application
         return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
 
+    def _extract(self, page=None) -> apply_form.FormDigest:
+        """`apply_form.extract` of `page` (the job's page by default), a child
+        frame read first only when it is the page's site, an ATS platform or
+        the admitted application (`content_frame_site`)."""
+        page = page if page is not None else self.page
+        return apply_form.extract(page, content_site=lambda url: content_frame_site(
+            url, str(page.url), self.ats_hosts))
+
     def _frame_url(self, frames: list, idx: int) -> str:
         """The URL a frame's controls answer to; a blank or srcdoc frame takes
         its parent's."""
@@ -3176,7 +3197,7 @@ class _JobRun:
         (M10: an ad's or a widget's placeholder may never clear; the trace
         says when it stayed up). The host is checked before every read
         again."""
-        digest = self._drop_foreign_controls(apply_form.extract(self.page))
+        digest = self._drop_foreign_controls(self._extract())
         url = str(self.page.url)
         loading = url not in self._loading_waited and self._loading(digest)
         empty = _empty_read(digest)
@@ -3196,7 +3217,7 @@ class _JobRun:
             # the page may have moved on while it settled or between reads:
             # a page off the allowed sites is never read, let alone judged
             self._check_host(self.page.url)
-            digest = self._drop_foreign_controls(apply_form.extract(self.page))
+            digest = self._drop_foreign_controls(self._extract())
             now = time.monotonic()
             empty = _empty_read(digest)
             loading = loading and self._loading(digest)
@@ -3332,7 +3353,7 @@ class _JobRun:
                                                   "reads it", url_kind=kind, found=d.kind)
             return False
         if waited:
-            digest = self._drop_foreign_controls(apply_form.extract(self.page))
+            digest = self._drop_foreign_controls(self._extract())
         state = {"form_dialog": "application_form", "signed_out": "login_wall"}.get(
             d.kind, "job_posting")
         rec = self._new_page_record(state, 1.0, digest=digest, answers={})
@@ -4851,7 +4872,7 @@ class _JobRun:
         the queue never sends it again."""
         try:
             self._check_host(self.page.url)
-            return self._drop_foreign_controls(apply_form.extract(self.page))
+            return self._drop_foreign_controls(self._extract())
         except _Parked as p:
             if watch is not None and watch.sent:
                 raise _Parked("submitted", f"submitted (unconfirmed): {p.reason} (after "
@@ -5117,7 +5138,8 @@ def _probe_page(page, n: int, judge: Any, out, *,
     LinkedIn handler and the fieldless-posting fallback would do, and, with
     a judge, the step the loop would take (`loop_step`)."""
     linkedin, linkedin_line = _probe_linkedin(page)
-    digest = apply_form.extract(page)
+    digest = apply_form.extract(page, content_site=lambda url: content_frame_site(
+        url, str(page.url)))
     print(f"page {n}: {page.url}", file=out)
     print(f"  title: {_one_line(digest.title, 120)}", file=out)
     print(f"  fields ({len(digest.fields)}):", file=out)

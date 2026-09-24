@@ -148,7 +148,7 @@ def test_post_submit_foreign_frame_controls_are_dropped_before_the_judge(monkeyp
     job.submit_clicked = True
     digest = apply_form.FormDigest("www.linkedin.com", "Verify", "", fields=[
         apply_form.Field(0, (1, "#code"), "Security code", "text", True)])
-    monkeypatch.setattr(apply_run.apply_form, "extract", lambda page: digest)
+    monkeypatch.setattr(apply_run.apply_form, "extract", lambda page, **_: digest)
     assert job._post_submit_digest().fields == []
 
 

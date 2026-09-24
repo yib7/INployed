@@ -660,8 +660,8 @@ def test_a_footer_button_that_turns_into_submit_is_never_clicked_as_an_advance(
     real_extract = apply_form.extract
     scheduled = []
 
-    def _extract(page):
-        digest = real_extract(page)
+    def _extract(page, **kw):
+        digest = real_extract(page, **kw)
         if not scheduled and "Continue" in [b.text for b in digest.buttons]:
             scheduled.append(__import__("time").monotonic())
             page.evaluate("setTimeout(function () { document.querySelector("

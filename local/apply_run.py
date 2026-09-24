@@ -120,6 +120,7 @@ POPUP_GRACE_S = 0.5                # after a same-tab DOM change, for a popup th
 ENTRY_POLL_MS = 100                # the entry click's watch for a popup, a navigation or a change
 GOTO_TIMEOUT_MS = 45_000           # the first load, to `domcontentloaded`
 GOTO_RETRY_S = 2.0                 # before the one retry of a first load that failed on the network
+GOTO_ERROR_PAGE_S = 10.0           # at most, for Chromium's error page to be up before that retry
 EMPTY_TEXT_MIN = 200               # a fieldless read with less visible text is read again
 EMPTY_READ_MAX_S = 10.0            # an empty read is re-read after a settle for up to this long
 EMPTY_READ_STABLE_S = 3.0          # or until the page has held the same empty read this long
@@ -1339,13 +1340,32 @@ def open_page(page, url: str, *, timeout_ms: int | None = None,
             rows.append({"what": "goto_retry", "why": f"the first load failed on the network "
                                                       f"({type(e).__name__}); one retry",
                          "error": _cap(str(e).splitlines()[0] if str(e) else "", 120)})
-            # a Playwright wait: Chromium's own error page finishes loading
-            # meanwhile, so the retry is not cut short by it
+            # Chromium swaps in its own error page after a dropped load; its
+            # navigation would cut the retry short, so the retry waits for it
+            # to be up (a fixed pause lost that race on a busy machine, SP5
+            # fix round 4), then pauses
+            _error_page_up(page, GOTO_ERROR_PAGE_S)
             page.wait_for_timeout(int(GOTO_RETRY_S * 1000))
     info = apply_fill.settle(page, CLICK_TIMEOUT_S if settle_s is None else settle_s)
     rows.append({"what": "settled", "why": settled_words(info, "after the first load"),
                  **(info if isinstance(info, Mapping) else {})})
     return rows
+
+
+def _error_page_up(page, cap_s: float) -> bool:
+    """Wait, up to `cap_s`, for Chromium's error page (chrome-error://) to be
+    the page and loaded: the condition `open_page`'s retry needs. False at the
+    cap (a browser that shows no error page: the retry goes on)."""
+    step_ms = 50
+    for _ in range(max(1, int(cap_s * 1000 / step_ms))):
+        try:
+            if str(page.url).startswith("chrome-error://"):
+                page.wait_for_load_state("load", timeout=int(cap_s * 1000))
+                return True
+        except Exception:       # noqa: BLE001  (a page mid-navigation)
+            pass
+        page.wait_for_timeout(step_ms)
+    return False
 
 
 def _page_closed(page) -> bool:

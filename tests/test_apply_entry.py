@@ -595,6 +595,49 @@ def test_a_first_load_the_network_dropped_is_retried_once(context, tmp_path):
     assert _decisions(folder / "apply_trace" / "attempt-1", "goto_retry")
 
 
+class _SlowErrorPage:
+    """A page whose first load the network drops and whose error page
+    (chrome-error://chromewebdata/) commits `lag_ms` later, on the page's own
+    clock (`wait_for_timeout`): a retry started before it is cut short, as
+    Chromium cuts it."""
+
+    def __init__(self, lag_ms: int):
+        self.clock, self.lag, self.error_at, self.gotos = 0, lag_ms, None, 0
+
+    @property
+    def url(self) -> str:
+        if self.error_at is not None and self.clock >= self.error_at:
+            return "chrome-error://chromewebdata/"
+        return "about:blank"
+
+    def goto(self, url, **kw):
+        self.gotos += 1
+        if self.gotos == 1:
+            self.error_at = self.clock + self.lag
+            raise RuntimeError(f"Page.goto: net::ERR_CONNECTION_RESET at {url}")
+        if self.clock < self.error_at:
+            raise RuntimeError(f'Page.goto: Navigation to "{url}" is interrupted by another '
+                               'navigation to "chrome-error://chromewebdata/"')
+
+    def wait_for_timeout(self, ms):
+        self.clock += ms
+
+    def wait_for_load_state(self, state="load", timeout=None):
+        pass
+
+
+def test_the_retry_of_a_dropped_first_load_waits_for_chromiums_error_page(monkeypatch):
+    """SP5 fix round 4 (the full suite under -n auto): the retry waited a
+    fixed `GOTO_RETRY_S` for Chromium's error page; on a busy machine the
+    error page committed after it and cut the retry short. The retry now
+    waits for the error page to be up, then its pause."""
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda page, timeout_s: {"ms": 0})
+    page = _SlowErrorPage(lag_ms=int(apply_run.GOTO_RETRY_S * 1000) + 400)
+    rows = apply_run.open_page(page, f"{CAREERS}/apply/42")
+    assert page.gotos == 2
+    assert [r["what"] for r in rows] == ["goto_retry", "settled"]
+
+
 _LATE_SIGNUP = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Create an account - Fabrikam Careers</title></head><body>
 <div id="app"></div>

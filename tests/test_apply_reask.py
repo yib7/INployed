@@ -307,3 +307,65 @@ def test_a_consent_tick_read_under_its_floor_is_ticked_after_a_sure_second_look(
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     asked = _events(r.trace, "reask")
     assert len(asked) == 1 and asked[0]["what"] == "source"
+
+
+# --- a consent tick's two looks ----------------------------------------------------------------
+
+@pytest.mark.parametrize("first, second, ticked", [
+    (("consent_attest", 0.80), ("consent_attest", 0.80), True),     # 1 - 0.2 x 0.2 = 0.96
+    (("consent_attest", 0.72), ("consent_attest", 0.75), True),     # 0.93
+    (("consent_attest", 0.80), ("consent_attest", 0.60), False),    # one look under the map floor
+    (("leave_blank", 0.90), ("consent_attest", 0.80), False),       # the looks disagree
+    (None, ("consent_attest", 0.80), False),                        # one look only
+    (("consent_attest", 0.80), None, False),                        # the second look was dropped
+])
+def test_two_looks_that_agree_on_a_consent_tick_hold_together(catalog, first, second, ticked):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "I certify that the information provided is accurate", "checkbox",
+           options=("checked",))])
+    answers = {}
+    if second is not None:
+        answers["field_0_source"] = _choice(*second)
+        if first is not None:
+            answers["field_0_source" + apply_judge.FIRST_LOOK] = _choice(*first)
+    elif first is not None:
+        answers["field_0_source"] = _choice(*first)
+    pf = apply_judge.plan(digest, catalog, answers).fields[0]
+    assert (pf.action == "select" and pf.option == "checked") is ticked
+
+
+class ScaleEvery(ScaleFirst):
+    """Every look that maps the field to `consent_attest` reads it at `conf`."""
+
+    def judge(self, state, questions):
+        self.done = False
+        out = dict(self.inner.judge(state, questions))
+        rows = state.get("fields") or ([state["field"]] if "field" in state else [])
+        for row in rows:
+            qid = f"field_{row.get('n')}_source"
+            a = out.get(qid)
+            if self.word in row.get("label", "") and a is not None \
+                    and a.choice == "consent_attest":
+                out[qid] = jev.Answer(kind="choice", choice=a.choice,
+                                      probabilities={a.choice: self.conf}, confidence=self.conf)
+        return out
+
+
+def test_a_consent_read_twice_under_its_floor_is_ticked_on_the_pair(_browser, flow_server,
+                                                                    tmp_path):
+    r = _run("greenhouse_embed", ScaleEvery(jev.FakeJev(), "certify", 0.80), _browser,
+             flow_server, tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    # a second look that was dropped never counts the first one twice
+    class DropSecond(ScaleEvery):
+        def judge(self, state, questions):
+            out = super().judge(state, questions)
+            if "field" in state:            # the second look's shape: the field alone
+                out = {k: v for k, v in out.items() if not k.endswith("_source")}
+            return out
+    judge = DropSecond(jev.FakeJev(), "certify", 0.80)
+    (tmp_path / "again").mkdir()
+    r = _run("greenhouse_embed", judge, _browser, flow_server, tmp_path / "again")
+    assert (r.status, r.reason) == ("needs_human", "required field without an answer: I "
+                                                   "certify that the information provided is "
+                                                   "accurate"), r.reason

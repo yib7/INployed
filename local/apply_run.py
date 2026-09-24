@@ -940,10 +940,8 @@ class _Accounts:
             plan = apply_judge.plan(digest, self.run.catalog, answers)
             rec = self.run.pages[-1] if self.run.pages else {"flags": {}}
             plan = self.run._complete_option_plan(digest, answers, plan, rec)
-            advance = plan.buttons.get("advance")
-            if advance is None or advance[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
-                advance = plan.buttons.get("submit")
-            if advance is None or advance[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF:
+            advance = account_advance(digest, plan)
+            if advance is None:
                 return False
             by_n = {pf.n: pf for pf in plan.fields}
             passwords, emails, others, drafts = [], [], [], []
@@ -1385,6 +1383,31 @@ def _button_text(digest: apply_form.FormDigest, n: int) -> str:
 def _chrome(digest: apply_form.FormDigest, n: int) -> bool:
     """Is button `n` in the site's header or top bar (`Button.chrome`)?"""
     return any(b.n == n and b.chrome for b in digest.buttons)
+
+
+# an account screen's own button by its words: sign in, log in, create an
+# account, register, sign up, continue, next
+_ACCOUNT_BUTTON = re.compile(r"\b(sign|log)[\s-]*(in|on|up)\b|\blogin\b|\bregister\b"
+                             r"|\bcreate\b.*\baccount\b|\b(continue|next)\b", re.I)
+
+
+def account_advance(digest: apply_form.FormDigest, plan: FillPlan) -> tuple[int, float] | None:
+    """The button an account screen's step clicks: the judged advance, else
+    the judged submit, at `BUTTON_ADVANCE_MIN_CONF` or above, never one of
+    the site's header (a header's "Sign In" on a sign-up screen, review
+    M11); with neither, the one button of the screen's own whose words name
+    the account step ("Create Account", "Sign in", "Continue"), at the
+    advance floor. None when there is no such button."""
+    for role in ("advance", "submit"):
+        held = plan.buttons.get(role)
+        if held is not None and held[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF \
+                and not _chrome(digest, held[0]):
+            return held
+    own = [b for b in digest.buttons if not getattr(b, "chrome", False)
+           and _ACCOUNT_BUTTON.search(b.text) and not apply_judge.DECLINE_WORDS.search(b.text)]
+    if len(own) == 1:
+        return own[0].n, apply_judge.BUTTON_ADVANCE_MIN_CONF
+    return None
 
 
 def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
@@ -2154,6 +2177,33 @@ def _same_text(a: str, b: str) -> bool:
     return " ".join(str(a).split()) == " ".join(str(b).split())
 
 
+def _picks(plan: FillPlan) -> dict[int, str]:
+    """n -> the option planned, for every pick (a select, a radio group, a
+    tick box, a dropdown, a question's tick boxes): checked in code against
+    the read-back (FILL-13), never by the judge against the sheet."""
+    return {pf.n: str(pf.option) for pf in plan.fields
+            if pf.action == "select" and pf.option is not None}
+
+
+def pick_holds(value: str, option: str) -> bool:
+    """Does the read-back `value` show the planned `option` (FILL-13): a tick
+    reads "checked"; any other pick shows the option's words (case,
+    punctuation and spacing aside), a name it goes by
+    (`apply_judge.match_option`), or the option among a group's ticked ones
+    ("A, B")."""
+    if str(option).strip().lower() == "checked":
+        return str(value).strip().lower() == "checked"
+    norm = apply_judge._norm_option
+    v, o = norm(value), norm(option)
+    if not v or not o:
+        return False
+    if v == o or f" {o} " in f" {v} ":
+        return True
+    if apply_judge.match_option(str(value), [str(option)]) is not None:
+        return True
+    return any(norm(part) == o for part in str(value).split(","))
+
+
 _TRACE_LINE = "- Trace: "
 _TRACE_LINK = re.compile(r"\]\((" + re.escape(apply_trace.TRACE_DIR) + r"/[^)]*)\)")
 
@@ -2827,7 +2877,8 @@ class _JobRun:
     def _discover_listbox_options(self, digest: apply_form.FormDigest) -> None:
         """Read choices rendered only after a listbox is opened, before planning."""
         for control in digest.fields:
-            if control.type != "listbox" or control.options:
+            if control.type != "listbox" or control.options \
+                    or getattr(control, "widget", "") == "typeahead":
                 continue
             try:
                 control.options = apply_fill.open_listbox_options(self.page, control)
@@ -3940,7 +3991,13 @@ class _JobRun:
         for n in targets:
             s, q = apply_judge.reask_questions(digest, self.catalog, plan, n, what=what,
                                                job=self.entry)
-            got.update({k: v for k, v in self.r.jev.judge(s, q).items() if k in q})
+            second = {k: v for k, v in self.r.jev.judge(s, q).items() if k in q}
+            got.update(second)
+            first = f"field_{n}_source"
+            if what == "source" and first in answers and first in second:
+                # the first look stays beside the second: two looks that agree
+                # on a consent tick hold together (`apply_judge.consent_looks`)
+                answers[first + apply_judge.FIRST_LOOK] = answers[first]
         answers.update(got)
         plan = apply_judge.plan(digest, self.catalog, answers,
                                 generation_enabled=bool(self.r.settings["auto_apply_generate"]))
@@ -3971,7 +4028,7 @@ class _JobRun:
         if _fills_the_application(digest, plan, filled):
             self.form_filled = True
         drafts = _drafts(plan)
-        verification = self._verify(filled, drafts)
+        verification = self._verify(filled, drafts, _picks(plan))
         verification = self._retry_failed(plan, filled, verification, drafts)
         self._record_fill(rec, digest, plan, filled, verification)
         self._trace("verify", results=[{"n": v.n, "label": v.label, "ok": v.ok,
@@ -4196,20 +4253,25 @@ class _JobRun:
         apply_queue.add_missing(self.job_id, question, context=context, path=self.r.queue_path)
 
     def _verify(self, filled: list[apply_fill.Filled],
-                drafts: Mapping[int, str] | None = None) -> list[VerifyResult]:
+                drafts: Mapping[int, str] | None = None,
+                picks: Mapping[int, str] | None = None) -> list[VerifyResult]:
         """The judge checks every typed fact against the sheet. A generated
         answer (`drafts`: n -> the accepted draft) is not on the sheet, and
         the grounding gate was its check; what is left is that the box holds
         the draft, which is a string comparison here, so no question carries
-        the draft. Results keep the fill order."""
+        the draft. A pick (`picks`: n -> the option planned: a select, a
+        radio, a tick box) is checked in code too (FILL-13): the read-back
+        shows the option (`pick_holds`). Results keep the fill order."""
         if not filled:
             return []
         drafts = drafts or {}
+        picks = picks or {}
         by_n: dict[int, VerifyResult] = {}
         rows = []
         for f in filled:
-            if f.n in drafts:
-                ok = _same_text(f.value, drafts[f.n])
+            if f.n in drafts or f.n in picks:
+                ok = (_same_text(f.value, drafts[f.n]) if f.n in drafts
+                      else pick_holds(f.value, picks[f.n]))
                 by_n[f.n] = VerifyResult(n=f.n, label=f.label, ok=ok,
                                          p_correct=1.0 if ok else 0.0, p_placeholder=0.0)
             else:
@@ -4237,7 +4299,7 @@ class _JobRun:
         refilled = apply_fill.apply(self.page, retry, deadline=self.deadline, clock=self.r.clock,
                                     errors=errors)
         self._trace_fill(retry, refilled, errors, retry=True)
-        again = {v.n: v for v in self._verify(refilled, drafts)}
+        again = {v.n: v for v in self._verify(refilled, drafts, _picks(plan))}
         by_n = {f.n: f for f in refilled}
         for i, f in enumerate(filled):
             if f.n in by_n:

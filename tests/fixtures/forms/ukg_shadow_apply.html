@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Opportunity Detail - Fabrikam</title>
+<!-- A synthetic replica of a UKG (UltiPro) opportunity page (layout study
+     G12): every button is a custom element whose real <button> sits in an
+     open shadow root, and so does one of the form's boxes with its label.
+     Apply shows the form in place; its Submit is a shadow button too. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  label { display: block; }
+  #form { display: none; }
+  #thanks { display: none; }
+</style>
+<script>
+  customElements.define('ukg-button', class extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      const root = this.attachShadow({mode: 'open'});
+      const id = this.getAttribute('data-inner-id');
+      root.innerHTML = '<style>button { padding: 6px 14px; }</style><button type="button"'
+        + (id ? ' id="' + id + '"' : '') + '><slot></slot></button>';
+      this.dispatchEvent(new Event('ready'));
+    }
+  });
+  customElements.define('ukg-text-field', class extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      const root = this.attachShadow({mode: 'open'});
+      root.innerHTML = '<label for="inner">' + this.getAttribute('label') + '</label>'
+        + '<input id="inner" type="text"' + (this.hasAttribute('required') ? ' required' : '') + '>';
+    }
+    get value() { return this.shadowRoot ? this.shadowRoot.getElementById('inner').value : ''; }
+  });
+</script>
+</head>
+<body>
+<header><ukg-button id="signin">Sign In</ukg-button> <ukg-button id="find">Find Opportunities</ukg-button></header>
+<main>
+  <h1>Analytics Engineer</h1>
+  <p>Fabrikam &middot; Chicago, IL</p>
+  <ukg-button id="apply" data-inner-id="apply-inner">Apply</ukg-button>
+  <h2>Job Description</h2>
+  <p>Own the reporting models and the data quality checks for the operations team.</p>
+  <h2>Responsibilities</h2>
+  <p>Build and review the nightly loads; answer the team's questions about the numbers.</p>
+  <h2>Qualifications</h2>
+  <p>Three years of SQL and a scripting language.</p>
+  <div id="form">
+    <h2>Your application</h2>
+    <div class="field"><ukg-text-field id="first-name" label="First Name *" required></ukg-text-field></div>
+    <div class="field"><label for="last-name">Last Name *</label><input id="last-name" type="text" required></div>
+    <div class="field"><label for="email">Email *</label><input id="email" type="email" required></div>
+    <div class="field"><label for="resume">Resume *</label><input id="resume" type="file" required></div>
+    <ukg-button id="submit" data-inner-id="btn-submit">Submit</ukg-button>
+  </div>
+</main>
+<section id="thanks"><h2>Application submitted</h2><p>Thank you for applying.</p></section>
+<script>
+  document.getElementById('apply').shadowRoot.querySelector('button').addEventListener('click', function () {
+    document.getElementById('form').style.display = 'block';
+    document.getElementById('apply').style.display = 'none';
+  });
+  document.getElementById('submit').shadowRoot.querySelector('button').addEventListener('click', function () {
+    var ok = document.getElementById('first-name').value && document.getElementById('last-name').value
+      && document.getElementById('email').value && document.getElementById('resume').files.length;
+    if (!ok) return;
+    document.body.setAttribute('data-submitted', '1');
+    document.querySelector('main').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

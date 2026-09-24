@@ -46,6 +46,22 @@ class Field:
     options: list[str] = field(default_factory=list)
     id_or_name: str = ""
     autocomplete: str = ""      # the control's autocomplete token, when it has one
+    # How the control works when it is no plain native box (SP5): "choice" (a
+    # custom radio group or Yes / No buttons, clicked through
+    # `option_locators`), "checkbox_group" (one question's boxes, ticked
+    # through `option_locators`), "popup" (a dropdown drawn as a button),
+    # "typeahead" (a text box that offers matches as it is typed in),
+    # "hidden_select" (a hidden <select> behind a styled trigger),
+    # "aria_check" (a custom tick box), "editable" (a rich-text box),
+    # "date:MDY" (date parts in that order, `option_locators`); "" else.
+    widget: str = ""
+    # the visible thing to click for a hidden native box (study G6: its label
+    # or proxy), in the control's frame; None when the control takes the act
+    click_locator: tuple[int, str] | None = None
+    option_locators: list[str] = field(default_factory=list)   # per option, in its frame
+    section: str = ""           # the heading the control sits under (READ-05)
+    ident: str = ""             # who the control is (tag|type|id|name|aria|...): read again
+                                # before every act (FILL-02)
 
 
 PASSWORD_WORDS = ("pass", "pwd", "secret")
@@ -115,7 +131,13 @@ class FormDigest:
                         help=str(f.get("help", "") or ""),
                         options=[str(o) for o in (f.get("options") or [])],
                         id_or_name=str(f.get("id_or_name", "") or ""),
-                        autocomplete=str(f.get("autocomplete", "") or ""))
+                        autocomplete=str(f.get("autocomplete", "") or ""),
+                        widget=str(f.get("widget", "") or ""),
+                        click_locator=_locator(f["click_locator"]) if f.get("click_locator")
+                        else None,
+                        option_locators=[str(o) for o in (f.get("option_locators") or [])],
+                        section=str(f.get("section", "") or ""),
+                        ident=str(f.get("ident", "") or ""))
                   for f in (raw.get("fields") or [])]
         buttons = [Button(n=int(b["n"]), locator=_locator(b.get("locator")),
                           text=str(b.get("text", "")),
@@ -141,22 +163,58 @@ def _locator(raw: Any) -> tuple[int, str]:
 
 # One pass over a frame's DOM. Returns {"fields": [...], "buttons": [...], "text": str}
 # with plain values only; the dataclasses are built in Python. The rules:
+#   tree     the composed tree: open shadow roots are walked where their host
+#            stands (study G12: UKG's buttons, SAP's header).
 #   fields   visible, enabled input (not hidden/submit/button/image/reset), select,
 #            textarea, [role=combobox], [role=listbox]; radios collapse into one
-#            entry per name group; a file input is kept even when hidden because
+#            entry per name group, or per question box when each radio has a
+#            name of its own; a file input is kept even when hidden because
 #            set_input_files works on it and ATS pages hide it behind a styled
-#            button, while its form (or, outside a form, a box within three
-#            levels above it) shows: a form hidden after its send (Greenhouse's
-#            embed shows its thanks in place) leaves no field behind; an input
-#            inside a [role=combobox] is part of that widget.
-#   locator  #id when the id is a plain CSS identifier and unique, else
-#            [name="..."] when unique, else a body-rooted nth-of-type path.
-#   label    label[for], aria-label, aria-labelledby, an enclosing label (minus
-#            the control's own text), a fieldset's legend, else the nearest
-#            preceding text node; a radio group takes its radiogroup's aria
-#            name, its fieldset's legend, else the text before the first radio.
-#   required the attribute, aria-required="true", or a trailing "*" in the
-#            label (stripped).
+#            button, while its box has a layout and its form (or, outside a
+#            form, a box within three levels above it) shows; an input inside
+#            a [role=combobox] is part of that widget. SP5 (the study's G3,
+#            G6, G7, G8, EXT-02..13) adds, with `widget` naming how each works:
+#            a custom radio group of [role=radio] and sibling Yes / No buttons
+#            with aria-pressed ("choice"); a question's tick boxes, by their
+#            shared name, an id's question prefix or their question box
+#            ("checkbox_group"); a dropdown drawn as a button or a box with
+#            aria-haspopup ("popup"), and a text box inside one ("combo"); an
+#            untyped text box with a results list or a hidden "selected" value
+#            beside it ("typeahead"); a hidden checkbox, radio or select behind
+#            a visible label or trigger, acted on through `click_locator`
+#            ("hidden_select" for a select); a custom tick box ("aria_check");
+#            a rich-text box ("editable"); Month / Day / Year boxes ("date:MDY").
+#            No field: a read-only box, a honeypot (its words or id, off the
+#            page, two pixels or less, under aria-hidden, see-through with
+#            tabindex -1), a posting's job-alert, sort or search widget, a
+#            placeholder option ("Click here...", "-- No answer --").
+#   locator  #id when the id is a plain CSS identifier and unique across the
+#            composed tree, else a unique data-automation-id / data-testid /
+#            data-qa, else [name="..."] when unique, else an nth-of-type path
+#            from the body or the shadow root; inside a shadow root it is
+#            `<host> >> <inner>` (a Playwright CSS query pierces the root).
+#            `ident` carries who the control is, checked before every act.
+#   label    what a person sees (G2): label[for] (only for a unique id whose
+#            control the label is), a non-generic aria-label ("Search",
+#            "Select...", "textbox" fall through; Workday's "Select One" and
+#            "Required" come off), aria-labelledby, an enclosing label, the
+#            question box's words (up to five boxes above, holding no other
+#            question's control, its visible text before the first control),
+#            a fieldset's legend, the nearest preceding text, the words after a
+#            tick box, else the placeholder. Visible text only: no display:none
+#            or aria-hidden part, no listbox, option, menu or alert, no control,
+#            no dropdown's shown value; sr-only text is set apart. A file box
+#            takes its group's or fieldset's question, its label or its box's
+#            words unless they are the upload's own ("Attach", "Drop your file
+#            or upload", "Total 0 file selected"), else its upload button's
+#            text; one inside an "Autofill from resume" box is the parser's
+#            (`help` "autofill parser", never required). A group takes its
+#            radiogroup's or group's name, its legend, its box's words, else
+#            the text before its first control.
+#   required the attribute, aria-required="true", or a required marker (a
+#            star, ✱, "(required)", "*Required", an sr-only "Required", an
+#            aria-hidden star) stripped from the label's words.
+#   section  the nearest h2 to h4 or heading above the control (READ-05).
 #   help     the aria-describedby text, then "Max N characters." from a
 #            maxlength (the answer generator's length budget).
 #   options  select option texts minus empty or "Select..." placeholders; radio
@@ -164,7 +222,11 @@ def _locator(raw: Any) -> tuple[int, str]:
 #            [role=option] texts of the listbox it controls when one is in the
 #            DOM (apply_fill.open_listbox_options reads it live otherwise).
 #   buttons  button, [role=button], input[type=submit|button], a.btn,
-#            a[class*=button]; text from innerText, value, aria-label, title.
+#            a[class*=button]; text from innerText, value, aria-label, title
+#            (a shadow button's host's words); a widget's own buttons (Yes /
+#            No, a dropdown's trigger) are no buttons. A disabled one is kept
+#            with `disabled` (G10); `primary` when styled as the main action
+#            or its form's one submit.
 #            `kind_hint` is `submit` for a submit control or a send word, never
 #            for "Apply with LinkedIn / Indeed", "Submit a general
 #            application", "Cancel", "Apply later" or "Save for later" (study
@@ -218,8 +280,14 @@ RADIO_OPTION_LABEL_JS = r"""(el) => {
     return norm(c.textContent);
   };
   if (el.id) {
-    const l = document.querySelector('label[for="' + el.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
-    if (l) { const t = minus(l); if (t) return t; }
+    // label[for] only when the id is the element's alone and the label's
+    // control is this element (study G2e: Ashby gives every option one id)
+    const root = el.getRootNode();
+    const esc = el.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    if (root.querySelectorAll('[id="' + esc + '"]').length === 1) {
+      const l = Array.from(root.querySelectorAll('label[for="' + esc + '"]')).find((x) => x.control === el);
+      if (l) { const t = minus(l); if (t) return t; }
+    }
   }
   const aria = norm(el.getAttribute('aria-label'));
   if (aria) return aria;
@@ -375,10 +443,38 @@ _EXTRACT_JS = r"""
 (cap) => {
   const CONTROL = /^(INPUT|SELECT|TEXTAREA|BUTTON)$/;
   const SKIP_INPUT = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
-  const STAR = /\s*\*$/;
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const q = (s) => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
   const cssIdent = /^-?[_a-zA-Z][_a-zA-Z0-9-]*$/;
+  const typeAttr = (el) => (el.getAttribute('type') || 'text').toLowerCase();
+
+  // the composed tree (G12): every element in document order, each open
+  // shadow root walked where its host stands
+  const roots = [document];
+  const all = [];
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      all.push(el);
+      if (el.shadowRoot) { roots.push(el.shadowRoot); walk(el.shadowRoot); }
+    }
+  };
+  walk(document);
+  const order = new Map(all.map((el, i) => [el, i]));
+  const up = (n) => n.parentElement || ((n.getRootNode && n.getRootNode().host) || null);
+  const closestC = (el, sel) => {
+    for (let n = el; n; n = up(n)) { if (n.nodeType === 1 && n.matches(sel)) return n; }
+    return null;
+  };
+  const containsC = (a, b) => { for (let n = b; n; n = up(n)) { if (n === a) return true; } return false; };
+  const rootOf = (el) => el.getRootNode();
+  const byIdIn = (el, id) => {
+    const r = rootOf(el);
+    return (r !== document && r.getElementById ? r.getElementById(id) : null)
+      || document.getElementById(id);
+  };
+  const queryIn = (el, sel) => {
+    try { return Array.from(rootOf(el).querySelectorAll(sel)); } catch (e) { return []; }
+  };
 
   const visible = (el) => {
     const st = getComputedStyle(el);
@@ -391,18 +487,18 @@ _EXTRACT_JS = r"""
   const CHROME = 'header, footer, nav, search, [role=banner], [role=contentinfo], '
     + '[role=navigation], [role=search]';
   const inChrome = (el) => {
-    const c = el.closest(CHROME);
-    return !!c && !(c.parentElement && c.parentElement.closest('form, dialog, [role=dialog]'));
+    const c = closestC(el, CHROME);
+    return !!c && !(up(c) && closestC(up(c), 'form, dialog, [role=dialog]'));
   };
   // a button's chrome: the header, nav and search landmarks only; a footer
   // holds a wizard's Next often enough (review M11)
   const HEAD_CHROME = 'header, nav, search, [role=banner], [role=navigation], [role=search]';
   const inHeadChrome = (el) => {
-    const c = el.closest(HEAD_CHROME);
-    return !!c && !(c.parentElement && c.parentElement.closest('form, dialog, [role=dialog]'));
+    const c = closestC(el, HEAD_CHROME);
+    return !!c && !(up(c) && closestC(up(c), 'form, dialog, [role=dialog]'));
   };
   const consent = (__CONSENT__)();
-  const inConsent = (el) => consent.some((root) => root.contains(el));
+  const inConsent = (el) => consent.some((root) => containsC(root, el));
   // an open modal is the page while it is open (G9)
   const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
   const covers = (el) => {
@@ -434,7 +530,7 @@ _EXTRACT_JS = r"""
         || (el.matches('[role=dialog], [role=alertdialog]') && sized(el) && onTop(el)
             && !CHAT.test((el.id || '') + ' ' + (el.getAttribute('class') || '')
                           + ' ' + (el.getAttribute('aria-label') || '')))));
-  const outsideModal = (el) => !!modal && !modal.contains(el);
+  const outsideModal = (el) => !!modal && !containsC(modal, el);
   const modalTitle = (() => {
     if (!modal) return '';
     const by = modal.getAttribute('aria-labelledby');
@@ -451,10 +547,10 @@ _EXTRACT_JS = r"""
   })();
   // a Workday header, a bar fixed or sticky at the top of the page (G4)
   const topBar = (el) => {
-    if (el.closest('[data-automation-id*=header i]')
-        && !el.closest('form, dialog, [role=dialog]')) return true;
-    let cur = el.parentElement;
-    for (let i = 0; cur && cur !== document.body && i < 10; i++, cur = cur.parentElement) {
+    const head = closestC(el, '[data-automation-id*=header i]');
+    if (head && !closestC(el, 'form, dialog, [role=dialog]')) return true;
+    let cur = up(el);
+    for (let i = 0; cur && cur !== document.body && i < 10; i++, cur = up(cur)) {
       if (cur.matches('form, dialog, [role=dialog], [aria-modal=true]')) return false;
       const pos = getComputedStyle(cur).position;
       if (pos === 'fixed' || pos === 'sticky') {
@@ -467,9 +563,14 @@ _EXTRACT_JS = r"""
   // a hidden file box's form, or outside a form a box within three levels
   // above it, still shows (a styled upload hides the input itself)
   const boxShows = (el) => {
+    // inside a hidden step (a display:none box anywhere above): its box has
+    // no layout at all
+    const parent = up(el);
+    if (parent && !parent.getClientRects().length
+        && getComputedStyle(parent).display !== 'contents') return false;
     if (el.form) return visible(el.form);
-    let p = el.parentElement;
-    for (let i = 0; p && i < 3; i++, p = p.parentElement) { if (visible(p)) return true; }
+    let p = up(el);
+    for (let i = 0; p && i < 3; i++, p = up(p)) { if (visible(p)) return true; }
     return false;
   };
   const FILLABLE = 'input:not([type=hidden]):not([type=submit]):not([type=button])'
@@ -490,36 +591,172 @@ _EXTRACT_JS = r"""
   };
   const NEVER_SUBMIT = /linkedin|indeed|general application|\bcancel\b|apply later|save for later/i;
 
+  // --- locators (EXT-19, G12) ---
+  const countC = (sel) => {
+    let n = 0;
+    for (const r of roots) {
+      try { n += r.querySelectorAll(sel).length; } catch (e) { return 99; }
+    }
+    return n;
+  };
+  // an nth-of-type path from the body (the document) or from the element's
+  // shadow root
   const nthPath = (el) => {
     const parts = [];
+    const root = rootOf(el);
     let cur = el;
-    while (cur && cur !== document.body && cur.nodeType === 1) {
+    while (cur && cur.nodeType === 1 && cur !== document.body) {
       let i = 1, sib = cur;
       while ((sib = sib.previousElementSibling)) { if (sib.tagName === cur.tagName) i++; }
       parts.unshift(cur.tagName.toLowerCase() + ':nth-of-type(' + i + ')');
+      if (root !== document && cur.parentNode === root) break;
       cur = cur.parentElement;
     }
-    return 'body > ' + parts.join(' > ');
+    return (root === document ? 'body > ' : '') + parts.join(' > ');
   };
-  const unique = (sel) => { try { return document.querySelectorAll(sel).length === 1; } catch (e) { return false; } };
-  const locatorFor = (el) => {
-    if (el.id && cssIdent.test(el.id) && unique('#' + el.id)) return '#' + el.id;
+  const STABLE = ['data-automation-id', 'data-testid', 'data-qa'];
+  const ownLocator = (el) => {
+    const root = rootOf(el);
+    const one = (sel) => {
+      try { return root.querySelectorAll(sel).length === 1 && countC(sel) === 1; }
+      catch (e) { return false; }
+    };
+    if (el.id && cssIdent.test(el.id) && one('#' + el.id)) return '#' + el.id;
+    for (const a of STABLE) {
+      const v = el.getAttribute(a);
+      if (v) {
+        const sel = el.tagName.toLowerCase() + '[' + a + '=' + q(v) + ']';
+        if (one(sel)) return sel;
+      }
+    }
     const name = el.getAttribute('name');
-    if (name && unique('[name=' + q(name) + ']')) return '[name=' + q(name) + ']';
+    if (name && one('[name=' + q(name) + ']')) return '[name=' + q(name) + ']';
     return nthPath(el);
   };
+  // `<host> >> <inner>` for an element inside an open shadow root: a
+  // Playwright CSS query pierces the host's shadow root
+  const hostPrefix = (el) => {
+    const parts = [];
+    let host = rootOf(el).host;
+    while (host) { parts.unshift(ownLocator(host)); host = rootOf(host).host; }
+    return parts.length ? parts.join(' >> ') + ' >> ' : '';
+  };
+  const locatorFor = (el) => hostPrefix(el) + ownLocator(el);
+  // who the control is, read again before every act (FILL-02)
+  const identOf = (el) => [el.tagName.toLowerCase(), (el.getAttribute('type') || '').toLowerCase(),
+    el.id || '', el.getAttribute('name') || '', norm(el.getAttribute('aria-label')),
+    ...STABLE.map((a) => el.getAttribute(a) || ''), norm(el.getAttribute('placeholder'))].join('|');
 
-  const textMinusControls = (node) => {
+  // --- what a person sees (G2) ---
+  const SR_CLASS = /(^|[\s_-])(sr-only|visually-?hidden|screen-?reader(-only|-text)?|a11y-hidden|visuallyhidden|assistive-text)([\s_-]|$)/i;
+  const srOnly = (el) => {
+    if (SR_CLASS.test(el.getAttribute('class') || '')) return true;
+    const st = getComputedStyle(el);
+    if (st.position !== 'absolute' && st.position !== 'fixed') return false;
+    const r = el.getBoundingClientRect();
+    return (r.width <= 1 && r.height <= 1) || /rect\(0/.test(st.clip || '')
+      || /inset\((50|100)%\)/.test(st.clipPath || '');
+  };
+  const SKIP_TEXT = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|INPUT|SELECT|TEXTAREA|BUTTON|OPTION|DATALIST|IFRAME|SVG)$/i;
+  const WIDGET_TEXT = '[aria-haspopup], [role=combobox], [role=listbox], [role=spinbutton], '
+    + '[role=textbox], [contenteditable=""], [contenteditable=true]';
+  const QUIET_ROLES = /^(listbox|option|menu|menuitem|menuitemradio|menuitemcheckbox|tooltip|alert|status)$/;
+  // the visible text of a subtree: never a display:none or visibility:hidden
+  // part, an aria-hidden subtree, a listbox, option, menu or alert, a control
+  // or an svg; sr-only text goes to `marks` (a marker there still counts:
+  // Teamtailor's sr-only "Required"); `stop(el)` ends the walk at that
+  // element (a question's text before its first control)
+  const seen = (node, marks, stop) => {
+    let out = '';
+    let stopped = false;
+    const rec = (n, top) => {
+      if (stopped) return;
+      if (n.nodeType === 3) {
+        const p = n.parentElement;
+        if (p && getComputedStyle(p).visibility !== 'hidden') out += n.data;
+        return;
+      }
+      if (n.nodeType !== 1) return;
+      if (!top && stop && stop(n)) { stopped = true; return; }
+      if (SKIP_TEXT.test(n.tagName)) return;
+      if (!top && n.getAttribute('aria-hidden') === 'true') {
+        // hidden from the reader, seen by the person: a marker there counts
+        if (marks && n.getClientRects().length) marks.push(norm(n.textContent));
+        return;
+      }
+      if (!top && QUIET_ROLES.test(n.getAttribute('role') || '')) return;
+      // a dropdown's shown value inside its label ("State Select a state")
+      if (!top && n.matches(WIDGET_TEXT)) return;
+      const st = getComputedStyle(n);
+      if (st.display === 'none') return;
+      if (!top && srOnly(n)) { if (marks) marks.push(norm(n.textContent)); return; }
+      const block = !/^inline/.test(st.display) && st.display !== 'contents';
+      if (block) out += ' ';
+      for (const c of n.childNodes) rec(c, false);
+      if (block) out += ' ';
+    };
+    rec(node, true);
+    return norm(out);
+  };
+  const textMinus = (node) => {
     const clone = node.cloneNode(true);
     clone.querySelectorAll('input, select, textarea, button, script, style').forEach((n) => n.remove());
     return norm(clone.textContent);
   };
-  const byIds = (ids) => norm(ids.split(/\s+/).map((id) => {
-    const n = document.getElementById(id);
-    return n ? textMinusControls(n) : '';
+  // a label's text: what shows, else (a label the page hides itself) its words
+  const labelText = (node, marks) => {
+    const t = seen(node, marks);
+    return t || node.getClientRects().length ? t : textMinus(node);
+  };
+  const byIds = (el, ids, marks) => norm(ids.split(/\s+/).map((id) => {
+    const n = byIdIn(el, id);
+    return n && n !== el ? labelText(n, marks) : '';
   }).join(' '));
-  const precedingText = (el, skipWithin) => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  // required markers (G2a): `*`, `✱`, `(required)`, `*Required`; `(optional)`
+  const MARK_ONLY = /^\s*(?:[*✱＊]+|\(\s*required\s*\)|required\.?|[*✱＊]\s*required\.?|\(\s*optional\s*\)|optional)\s*$/i;
+  const REQ_MARK = /^\s*(?:[*✱＊]+|\(\s*required\s*\)|required\.?|[*✱＊]\s*required\.?)\s*$/i;
+  const LEAD_STAR = /^\s*[*✱＊]+\s*/;
+  const TRAIL_REQ = /\s*(?:[*✱＊]+\s*(?:required\.?)?|\(\s*required\s*\)\.?)\s*$/i;
+  const TRAIL_OPT = /\s*\(\s*optional\s*\)\s*$/i;
+  // [the label without its markers, whether a required marker was there]
+  const strip = (text, marks) => {
+    let t = norm(text), req = !!marks && marks.some((m) => REQ_MARK.test(m));
+    for (let i = 0; i < 3; i++) {
+      const before = t;
+      if (TRAIL_REQ.test(t)) { req = true; t = t.replace(TRAIL_REQ, ''); }
+      t = t.replace(TRAIL_OPT, '');
+      if (LEAD_STAR.test(t)) { req = true; t = t.replace(LEAD_STAR, ''); }
+      if (t === before) break;
+    }
+    if (MARK_ONLY.test(t)) { req = req || REQ_MARK.test(t); t = ''; }
+    return [norm(t), req];
+  };
+  // an aria-label that names no question (G2d): "Search", "Select...", "textbox"
+  const GENERIC = /^(search|select( one| an option| an item)?|choose( one| an option)?|pick one|textbox|text box|combobox|input( \w+)?|type here|start typing|enter text|type to search)\s*(\.{3}|…)?$/i;
+  // an aria-label's own words: Workday's "Country Select One Required"
+  const ariaWords = (text) => {
+    let t = norm(norm(text).replace(/\bselect one\b/ig, ' ')), req = false;
+    if (/\s+required\s*$/i.test(t)) { req = true; t = t.replace(/\s+required\s*$/i, ''); }
+    return GENERIC.test(t) ? ['', req] : [t, req];
+  };
+  const srAncestor = (p) => {
+    for (let n = p, i = 0; n && i < 3; n = n.parentElement, i++) { if (srOnly(n)) return true; }
+    return false;
+  };
+  const shows = (textNode) => {
+    const p = textNode.parentElement;
+    if (!p || /^(SCRIPT|STYLE|OPTION|NOSCRIPT|TEMPLATE)$/.test(p.tagName)) return false;
+    if (closestC(p, '[aria-hidden=true], [role=listbox], [role=option], [role=menu], [role=alert], '
+                    + '[role=status], svg')) return false;
+    return !!p.getClientRects().length && getComputedStyle(p).visibility !== 'hidden';
+  };
+  // the nearest text before the control: marker-only and hidden text is
+  // passed over (a marker noted), another control's label or a control ends
+  // the walk
+  const precedingText = (el, skipWithin, marks) => {
+    const root = rootOf(el);
+    const walker = document.createTreeWalker(root === document ? document.body : root,
+                                             NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
     walker.currentNode = el;
     let node;
     while ((node = walker.previousNode())) {
@@ -533,44 +770,156 @@ _EXTRACT_JS = r"""
       const lab = p && p.closest('label');
       if (lab && (lab.control || lab.hasAttribute('for')) && lab.control !== el) return '';
       const t = norm(node.data);
-      if (t) return t.slice(-120);
+      if (!t) continue;
+      if (!shows(node)) {
+        // an aria-hidden star is still one the person sees
+        if (marks && MARK_ONLY.test(t) && p && p.getClientRects().length) marks.push(t);
+        continue;
+      }
+      if (srAncestor(p) || MARK_ONLY.test(t)) { if (marks) marks.push(t); continue; }
+      return t.slice(-120);
     }
     return '';
   };
   const optionLabel = __OPTION_LABEL__;
+  // label[for] counts only when its id is unique and the label's control is
+  // this element (G2e: Ashby reuses a question's id on every option)
   const labelElementFor = (el) => {
-    if (el.id) {
-      const l = document.querySelector('label[for=' + q(el.id) + ']');
-      if (l) return l;
+    if (!el.id) return null;
+    const labs = queryIn(el, 'label[for=' + q(el.id) + ']');
+    if (queryIn(el, '[id=' + q(el.id) + ']').length !== 1) return null;
+    return labs.find((l) => l.control === el) || null;
+  };
+  const QUESTION_CTRL = 'input:not([type=hidden]):not([type=submit]):not([type=button])'
+    + ':not([type=reset]):not([type=image]), select, textarea, [role=combobox], [role=radio], '
+    + '[role=checkbox], [role=switch], [role=spinbutton], [role=textbox], [contenteditable=""], '
+    + '[contenteditable=true], button[aria-pressed], [aria-haspopup=listbox]';
+  const kept = new Set();       // hidden natives kept behind a visible proxy (G6)
+  // the question's box (G2e): up to five boxes above the control, the first
+  // that holds all of `own` and no other question's control
+  const questionBox = (own) => {
+    const list = Array.from(own);
+    let p = up(list[0]);
+    for (let i = 0; p && i < 5; i++, p = up(p)) {
+      if (p === document.body || p === document.documentElement
+          || p.matches('form, main, [role=main], dialog, [role=dialog]')) return null;
+      const others = Array.from(p.querySelectorAll(QUESTION_CTRL)).filter((c) =>
+        !own.has(c) && !list.some((o) => o.contains(c)) && (visible(c) || kept.has(c)));
+      if (others.length) return null;
+      if (list.every((e) => containsC(p, e))) return p;
     }
     return null;
   };
-  const labelFor = (el) => {
-    const forLabel = labelElementFor(el);
-    if (forLabel) { const t = textMinusControls(forLabel); if (t) return t; }
-    const aria = norm(el.getAttribute('aria-label'));
-    if (aria) return aria;
+  const isCtrl = (n) => n.matches(QUESTION_CTRL + ', button, [role=button]');
+  // an upload's own words, never its question (G2c): "Attach", "Drop your file
+  // or upload", "Total 0 file selected", "file-input", a missing-SVG fallback
+  const FACE = /^(attach|upload|browse|choose( an?)? files?|select( an?)? files?|no file chosen|drop (your )?files?( here)?( or upload)?|drag (and|&) drop.*|click to upload|total \d+ files? selected|file-?input|svgs? (are )?not supported.*)\.?$/i;
+  const STEP = /^\s*step\s+\d+\s*(of|\/)\s*\d+\s*$/i;     // a wizard's step marker
+  // an upload's own clickable face ("Attach", "ATTACH RESUME/CV") is no question
+  const isUpload = (n) => isCtrl(n) || n.matches('a[href], [role=link]')
+    || (n.tagName === 'LABEL' && !!n.control && n.control.type === 'file');
+  // the question's own words: its box's visible text before the first control
+  const boxText = (box, marks, stop) => box ? seen(box, marks, stop || isCtrl).slice(0, 300) : '';
+  // the words of the question `own` answers: up to five boxes above it, each
+  // holding no other question's control, the first whose words before its
+  // first control say something (a select's own wrapper often holds only
+  // the select; an upload's face is skipped for a file box)
+  const questionText = (own, marks, file) => {
+    const list = Array.from(own);
+    let p = up(list[0]);
+    for (let i = 0; p && i < 5; i++, p = up(p)) {
+      if (p === document.body || p === document.documentElement
+          || p.matches('form, main, [role=main], dialog, [role=dialog]')) return '';
+      const others = Array.from(p.querySelectorAll(QUESTION_CTRL)).filter((c) =>
+        !own.has(c) && !list.some((o) => o.contains(c)) && (visible(c) || kept.has(c)));
+      if (others.length) return '';
+      if (!list.every((e) => containsC(p, e))) continue;
+      if (file && p.matches('a, button, [role=button]')) continue;
+      const mine = [];
+      const t = boxText(p, mine, file ? isUpload : isCtrl);
+      if (t && !STEP.test(t) && !(file && FACE.test(strip(t)[0]))) {
+        if (marks) marks.push(...mine);
+        return t;
+      }
+    }
+    return '';
+  };
+  const AUTOFILL = /autofill|auto-fill|import (your )?(resume|cv)|parse (your )?(resume|cv)|apply with (your )?resume/i;
+
+  // [label, required] of one control
+  const labelFor = (el, marks) => {
+    const own = new Set([el]);
+    const tryText = (t) => { const [s, r] = strip(t, marks); return [s, r]; };
+    const lab = labelElementFor(el);
+    if (el.tagName === 'INPUT' && typeAttr(el) === 'file') {
+      // a file box by its question (G2c): its group, its fieldset, its
+      // box's words, and only then its label (an "Attach" button's)
+      const grp = closestC(el, '[role=group]');
+      if (grp) {
+        const aria = ariaWords(grp.getAttribute('aria-label'));
+        if (aria[0]) return aria;
+        const by = grp.getAttribute('aria-labelledby');
+        if (by) { const t = tryText(byIds(grp, by, marks)); if (t[0]) return t; }
+      }
+      const fs = el.closest('fieldset');
+      const legend = fs && fs.querySelector('legend');
+      if (legend) { const t = tryText(seen(legend, marks)); if (t[0]) return t; }
+      if (lab) { const t = tryText(labelText(lab, marks)); if (t[0] && !FACE.test(t[0])) return t; }
+      const q1 = questionText(own, marks, true);
+      if (q1) { const t = tryText(q1); if (t[0]) return t; }
+      const a1 = ariaWords(el.getAttribute('aria-label'));
+      if (a1[0] && !FACE.test(a1[0])) return a1;
+      // last, the upload's own button ("Select Resume to Upload", Breezy's
+      // "Upload Resume*"), up to four boxes above it
+      let box = up(el);
+      for (let i = 0; box && i < 4; i++, box = up(box)) {
+        const face = Array.from(box.querySelectorAll('button, [role=button], a[href]'))
+          .map((b) => norm(b.innerText)).find((t) => /upload|resume|cv|attach|file/i.test(t));
+        if (face) return tryText(face);
+      }
+      return ['', false];
+    }
+    if (lab) { const t = tryText(labelText(lab, marks)); if (t[0]) return t; }
+    const aria = ariaWords(el.getAttribute('aria-label'));
+    if (aria[0]) return aria;
     const by = el.getAttribute('aria-labelledby');
-    if (by) { const t = byIds(by); if (t) return t; }
+    if (by) { const t = tryText(byIds(el, by, marks)); if (t[0]) return t; }
     const enclosing = el.closest('label');
-    if (enclosing) { const t = textMinusControls(enclosing); if (t) return t; }
+    if (enclosing) { const t = tryText(labelText(enclosing, marks)); if (t[0]) return t; }
+    const q2 = questionText(own, marks);
+    if (q2) { const t = tryText(q2); if (t[0]) return t; }
     const fs = el.closest('fieldset');
     const legend = fs && fs.querySelector('legend');
-    if (legend) { const t = norm(legend.textContent); if (t) return t; }
-    return precedingText(el, enclosing);
+    if (legend) { const t = tryText(seen(legend, marks)); if (t[0]) return t; }
+    const before = tryText(precedingText(el, enclosing, marks));
+    if (before[0]) return before;
+    // a tick box's words after it; a box whose only words are its placeholder
+    if (el.matches('input[type=checkbox], input[type=radio]')) {
+      const after = tryText(optionLabel(el));
+      if (after[0] && after[0] !== norm(el.value)) return after;
+    }
+    const ph = norm(el.getAttribute('placeholder'));
+    return ph ? [ph, before[1]] : before;
   };
-  const groupLabel = (first) => {
-    const rg = first.closest('[role=radiogroup]');
+  // [label, required] of a group of controls (radios, checkboxes, choice
+  // buttons): its group's name, its fieldset's legend, its box's words,
+  // else the text before its first control
+  const groupLabelFor = (members, group, marks) => {
+    const tryText = (t) => strip(t, marks);
+    const first = members[0];
+    const rg = group || closestC(first, '[role=radiogroup], [role=group]');
     if (rg) {
-      const aria = norm(rg.getAttribute('aria-label'));
-      if (aria) return aria;
+      const aria = ariaWords(rg.getAttribute('aria-label'));
+      if (aria[0]) return aria;
       const by = rg.getAttribute('aria-labelledby');
-      if (by) { const t = byIds(by); if (t) return t; }
+      if (by) { const t = tryText(byIds(rg, by, marks)); if (t[0]) return t; }
     }
     const fs = first.closest('fieldset');
     const legend = fs && fs.querySelector('legend');
-    if (legend) { const t = norm(legend.textContent); if (t) return t; }
-    return precedingText(first, first.closest('label'));
+    if (legend) { const t = tryText(seen(legend, marks)); if (t[0]) return t; }
+    const q3 = questionText(new Set(members), marks);
+    if (q3) { const t = tryText(q3); if (t[0]) return t; }
+    return tryText(precedingText(first, first.closest('label'), marks));
   };
 
   const typeOf = (el) => {
@@ -580,23 +929,26 @@ _EXTRACT_JS = r"""
     if (tag === 'SELECT') return 'select';
     if (tag === 'TEXTAREA') return 'textarea';
     if (tag === 'INPUT') {
-      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      const t = typeAttr(el);
       if (t === 'text' || t === 'search') return 'text';
       if (['email', 'tel', 'url', 'number', 'file', 'date', 'radio', 'checkbox'].includes(t)) return t;
     }
     return 'other';
   };
-  const PLACEHOLDER_OPTION = /^(select|choose|please|pick|-{2,})/i;
+  // a placeholder option: an empty-valued "Select..." or "--", and "Click
+  // here..." or "-- No answer --" whatever its value (G7)
+  const PLACEHOLDER_OPTION = /^(select|choose|please|pick|-{2,}|\u2013|\u2014)/i;
+  const PLACEHOLDER_ANY = /^(click here\b|-+\s*(no answer|none|select)?\s*-+$|\u2013\s*select\s*\u2013$)/i;
   const selectOptions = (el) => Array.from(el.options).map((o) => norm(o.text)).filter((t, i) => {
     const o = el.options[i];
-    if (!t) return false;
+    if (!t || PLACEHOLDER_ANY.test(t)) return false;
     return !(o.value === '' && (o.disabled || PLACEHOLDER_OPTION.test(t)));
   });
   const listboxFor = (el) => {
     if (el.getAttribute('role') === 'listbox') return el;
     const ids = (el.getAttribute('aria-controls') || '') + ' ' + (el.getAttribute('aria-owns') || '');
     for (const id of ids.split(/\s+/).filter(Boolean)) {
-      const n = document.getElementById(id);
+      const n = byIdIn(el, id);
       if (n) return n;
     }
     return el.querySelector('[role=listbox]') || (el.parentElement && el.parentElement.querySelector('[role=listbox]'));
@@ -604,7 +956,8 @@ _EXTRACT_JS = r"""
   const listboxOptions = (el) => {
     const lb = listboxFor(el);
     if (!lb) return [];
-    return Array.from(lb.querySelectorAll('[role=option]')).map((o) => norm(o.textContent)).filter(Boolean);
+    return Array.from(lb.querySelectorAll('[role=option], [role=menuitemradio]'))
+      .map((o) => norm(o.textContent)).filter((t) => t && !PLACEHOLDER_ANY.test(t));
   };
   const optionsFor = (el, type) => {
     if (type === 'select') return selectOptions(el);
@@ -613,12 +966,23 @@ _EXTRACT_JS = r"""
     return [];
   };
   const isRequired = (el) => !!el.required || el.getAttribute('aria-required') === 'true';
-  const describe = (el, type, label, required, css, options) => {
-    if (STAR.test(label)) { required = true; label = label.replace(STAR, ''); }
+  // the heading a control sits under (READ-05): the nearest h2 to h4 or
+  // heading role before it, outside the site chrome
+  const heads = all.filter((e) => e.matches('h2, h3, h4, [role=heading]') && !inChrome(e)
+                           && !inConsent(e) && visible(e));
+  const sectionOf = (el) => {
+    const at = order.has(el) ? order.get(el) : -1;
+    let best = null;
+    for (const h of heads) { if (order.get(h) < at) best = h; else break; }
+    return best ? seen(best).slice(0, 80) : '';
+  };
+  const describe = (el, type, label, required, css, options, extra) => {
     const desc = el.getAttribute('aria-describedby');
-    const helps = [desc ? byIds(desc) : ''];
+    const helps = [desc ? byIds(el, desc) : ''];
     const max = parseInt(el.getAttribute('maxlength') || '', 10);
     if (max > 0) helps.push('Max ' + max + ' characters.');
+    const x = extra || {};
+    if (x.help) helps.unshift(x.help);
     return {
       css: css, label: label, type: type, required: !!required,
       placeholder: norm(el.getAttribute('placeholder')),
@@ -626,54 +990,395 @@ _EXTRACT_JS = r"""
       options: options,
       id_or_name: el.id || el.getAttribute('name') || '',
       autocomplete: norm(el.getAttribute('autocomplete')).toLowerCase(),
+      click: x.click || '', option_css: x.option_css || [], widget: x.widget || '',
+      section: sectionOf(el), ident: identOf(el),
     };
   };
 
-  const fields = [];
-  const groups = new Map();
+  // --- junk boxes (G3) ---
+  const HONEY = /honey[\s_-]?pot|robots? only|for robots|leave (this )?(field )?(blank|empty)|do not (fill|enter)\b/i;
+  const HONEY_ID = /^hp[_-]|nickname_hp|honey/i;
+  const POSTING_WIDGET = /job alerts?\b|receive (an |job )?alerts?\b|newsletter|\bsort by\b|search (for )?jobs\b/i;
+  const junk = (el, t, label) => {
+    // a choice or a file box is often hidden behind its label or trigger
+    const choice = t === 'checkbox' || t === 'radio' || t === 'file' || t === 'select';
+    if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.readOnly && !choice) return 'read-only';
+    if (HONEY_ID.test(el.id || '') || HONEY_ID.test(el.getAttribute('name') || '')
+        || HONEY.test(label)) return 'honeypot';
+    if (POSTING_WIDGET.test(label)) return 'posting widget';
+    if (choice) return '';
+    if (closestC(el, '[aria-hidden=true]')) return 'aria-hidden';
+    const st = getComputedStyle(el);
+    if (el.getAttribute('tabindex') === '-1' && parseFloat(st.opacity) < 0.1) return 'hidden';
+    const r = el.getBoundingClientRect();
+    const x = window.scrollX || 0, y = window.scrollY || 0;
+    if (r.right + x < 0 || r.bottom + y < 0 || r.left + x < -500 || r.top + y < -500) return 'offscreen';
+    if (r.width <= 2 && r.height <= 2) return 'tiny';
+    return '';
+  };
+
+  // --- hidden natives behind a visible label or proxy (G6) ---
+  const proxyFor = (el) => {
+    if (el.tagName === 'SELECT') {
+      // a styled trigger beside it (MUI, BambooHR) is what a person clicks
+      let p = up(el);
+      for (let i = 0; p && i < 2; i++, p = up(p)) {
+        const b = Array.from(p.querySelectorAll('button, [role=button], [role=combobox], [aria-haspopup]'))
+          .find((x) => x !== el && visible(x));
+        if (b) return b;
+      }
+    }
+    const lab = labelElementFor(el);
+    if (lab && visible(lab)) return lab;
+    const enc = el.closest('label');
+    if (enc && visible(enc)) return enc;
+    const aria = closestC(up(el) || el, '[role=radio], [role=checkbox], [role=option], '
+                                        + '[role=menuitemradio], [role=menuitemcheckbox], [role=switch]');
+    if (aria && visible(aria)) return aria;
+    return null;
+  };
+  const faint = (el) => parseFloat(getComputedStyle(el).opacity) < 0.1;
+  const usable = (el) => !enabled(el) ? false : !(inChrome(el) || inConsent(el) || outsideModal(el) || topBar(el));
+
+  const items = [];             // {at, rec}: the fields in document order
+  const consumed = new Set();   // controls already part of a field
+  const asButtons = new Set();  // controls that are a field, never a button
+  const push = (anchor, rec) => { items.push({ at: order.has(anchor) ? order.get(anchor) : 1e9, rec: rec }); };
+  const textOfOption = (o) => norm(seen(o)) || norm(o.getAttribute('aria-label'))
+    || (o.getAttribute('aria-labelledby') ? byIds(o, o.getAttribute('aria-labelledby')) : '');
+
+  // combobox widgets and the listboxes they control
   const controlled = new Set();
-  for (const box of document.querySelectorAll('[role=combobox]')) {
+  for (const box of all.filter((e) => e.matches('[role=combobox]'))) {
     const lb = listboxFor(box);
     if (lb) controlled.add(lb);
   }
-  for (const el of document.querySelectorAll('input, select, textarea, [role=combobox], [role=listbox]')) {
-    if (!enabled(el) || inChrome(el) || inConsent(el) || outsideModal(el) || topBar(el)) continue;
+
+  // custom radio groups (G7): [role=radiogroup] of [role=radio], and
+  // [role=radio] siblings with no group
+  const ariaRadios = all.filter((e) => e.matches('[role=radio]') && e.tagName !== 'INPUT');
+  const radioGroups = new Map();
+  for (const r of ariaRadios) {
+    const g = closestC(r, '[role=radiogroup]') || up(r);
+    if (!radioGroups.has(g)) radioGroups.set(g, []);
+    radioGroups.get(g).push(r);
+  }
+  for (const [g, radios] of radioGroups) {
+    const shown = radios.filter(visible);
+    if (!shown.length || !usable(shown[0])) continue;
+    radios.forEach((r) => { consumed.add(r); asButtons.add(r);
+      r.querySelectorAll('input').forEach((i) => consumed.add(i)); });
+    const marks = [];
+    const [label, req] = groupLabelFor(shown, g.matches('[role=radiogroup]') ? g : null, marks);
+    const required = req || g.getAttribute('aria-required') === 'true' || shown.some(isRequired)
+      || shown.some((r) => Array.from(r.querySelectorAll('input')).some((i) => i.required));
+    push(shown[0], describe(g, 'radio', label, required, locatorFor(g), shown.map(textOfOption),
+                            { widget: 'choice', option_css: shown.map(locatorFor) }));
+  }
+
+  // choice buttons (G7): sibling buttons that say pressed or checked
+  // (Ashby's Yes / No), each a short text
+  const pressedByParent = new Map();
+  for (const b of all.filter((e) => e.matches('button[aria-pressed], [role=button][aria-pressed], '
+                                              + 'button[aria-checked]') && !consumed.has(e))) {
+    const p = up(b);
+    if (!pressedByParent.has(p)) pressedByParent.set(p, []);
+    pressedByParent.get(p).push(b);
+  }
+  for (const [p, group] of pressedByParent) {
+    const shown = group.filter(visible);
+    const texts = shown.map((b) => norm(b.innerText) || norm(b.getAttribute('aria-label')));
+    if (shown.length < 2 || texts.some((t) => !t || t.length > 30) || !usable(shown[0])) continue;
+    const own = new Set(shown);
+    const box = questionBox(own);
+    const hiddenIn = box ? Array.from(box.querySelectorAll('input[type=checkbox], input[type=radio], '
+                                                          + 'input[type=hidden]'))
+      .filter((i) => !visible(i)) : [];
+    hiddenIn.forEach((i) => consumed.add(i));
+    shown.forEach((b) => { consumed.add(b); asButtons.add(b); });
+    const marks = [];
+    const [label, req] = groupLabelFor(shown, null, marks);
+    const required = req || hiddenIn.some((i) => i.required)
+      || shown.some((b) => b.getAttribute('aria-required') === 'true');
+    push(shown[0], describe(p, 'radio', label, required, locatorFor(p), texts,
+                            { widget: 'choice', option_css: shown.map(locatorFor) }));
+  }
+
+  // date parts (EXT-12): Month / Day / Year spinbuttons in one box
+  const spins = all.filter((e) => e.matches('[role=spinbutton], input[data-automation-id^=dateSection]')
+                           && !consumed.has(e) && visible(e));
+  const spinBoxes = new Map();
+  for (const s of spins) {
+    const box = closestC(s, '[data-automation-id*=dateInputWrapper i], [data-automation-id*=dateInput i]')
+      || up(s);
+    if (!spinBoxes.has(box)) spinBoxes.set(box, []);
+    spinBoxes.get(box).push(s);
+  }
+  const PART = (s) => {
+    const t = (norm(s.getAttribute('aria-label')) + ' ' + (s.getAttribute('data-automation-id') || '')
+               + ' ' + norm(s.getAttribute('placeholder'))).toLowerCase();
+    return /month|\bmm\b/.test(t) ? 'M' : /day|\bdd\b/.test(t) ? 'D' : /year|yyyy/.test(t) ? 'Y' : '';
+  };
+  for (const [box, parts] of spinBoxes) {
+    const kinds = parts.map(PART);
+    if (parts.length < 2 || kinds.some((k) => !k) || !usable(parts[0])) continue;
+    parts.forEach((s) => consumed.add(s));
+    const marks = [];
+    const [label, req] = groupLabelFor(parts, closestC(box, '[role=group]'), marks);
+    push(parts[0], describe(box, 'date', label, req || parts.some(isRequired), locatorFor(box), [],
+                            { widget: 'date:' + kinds.join(''), option_css: parts.map(locatorFor) }));
+  }
+
+  // checkbox groups (G8): boxes sharing a name, an id's question prefix, or
+  // a question box of their own
+  // the question box of options with no shared name (bunq gives each box
+  // and each radio a name of its own): up to four boxes above the option,
+  // the first holding two or more options of its kind (`pool`), no other
+  // question's control and the question's words before its first option;
+  // null when the options' set would grow past one question first
+  const choiceBox = (el, sel, pool) => {
+    let p = up(el), size = 0;
+    for (let i = 0; p && i < 4; i++, p = up(p)) {
+      if (p === document.body || p.matches('form, main, [role=main], dialog, [role=dialog]')) return null;
+      const mine = pool.filter((o) => p.contains(o));
+      if (mine.length < 2) continue;
+      if (size && mine.length > size) return null;
+      size = mine.length;
+      const others = Array.from(p.querySelectorAll(QUESTION_CTRL)).filter((c) =>
+        !c.matches(sel) && visible(c));
+      if (others.length) return null;
+      if (boxText(p)) return p;
+    }
+    return null;
+  };
+  const boxes = all.filter((e) => e.matches('input[type=checkbox]') && !consumed.has(e)
+                           && enabled(e) && (visible(e) || !!proxyFor(e)));
+  const byKey = new Map();
+  const keyOf = (b) => {
+    const name = b.getAttribute('name') || '';
+    if (name && boxes.filter((o) => o.getAttribute('name') === name).length > 1) return 'name:' + name;
+    const m = (b.id || '').match(/^(.*\[\])/);
+    if (m && boxes.filter((o) => (o.id || '').startsWith(m[1])).length > 1) return 'id:' + m[1];
+    // a question's box of options with its question above them: short
+    // options ("He/Him", "Python"), or any options under a question that
+    // asks ("...?", "...:", "select all that apply"); two consent boxes side
+    // by side stay two fields
+    const box = choiceBox(b, 'input[type=checkbox]', boxes);
+    if (box) {
+      const mine = boxes.filter((o) => box.contains(o));
+      const asks = /[?:]\s*$|all that apply|select|choose/i.test(strip(boxText(box))[0]);
+      if (asks || mine.every((o) => optionLabel(o).length <= 60)) return 'box:' + order.get(box);
+    }
+    return 'one:' + order.get(b);
+  };
+  for (const b of boxes) {
+    const k = keyOf(b);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(b);
+  }
+  const clickFor = (el) => {
+    if (visible(el) && !faint(el)) return '';
+    const p = proxyFor(el);
+    return p ? locatorFor(p) : '';
+  };
+  for (const [k, group] of byKey) {
+    if (!usable(group[0])) continue;
+    group.forEach((b) => consumed.add(b));
+    if (group.length === 1) {
+      const b = group[0];
+      const marks = [];
+      const [label, req] = labelFor(b, marks);
+      if (junk(b, 'checkbox', label)) continue;
+      if (!visible(b)) kept.add(b);
+      push(b, describe(b, 'checkbox', label, req || isRequired(b), locatorFor(b), ['checked'],
+                       { click: clickFor(b) }));
+      continue;
+    }
+    const marks = [];
+    const [label, req] = groupLabelFor(group, null, marks);
+    const name = group[0].getAttribute('name') || '';
+    const shared = name && group.every((b) => b.getAttribute('name') === name);
+    const css = shared ? hostPrefix(group[0]) + 'input[type=checkbox][name=' + q(name) + ']'
+      : locatorFor(questionBox(new Set(group)) || up(group[0]));
+    group.forEach((b) => { if (!visible(b)) kept.add(b); });
+    push(group[0], describe(group[0], 'checkbox', label, req || group.some(isRequired), css,
+                            group.map(optionLabel),
+                            { widget: 'checkbox_group',
+                              option_css: group.map((b) => clickFor(b) || locatorFor(b)) }));
+  }
+
+  // hidden selects behind a styled trigger (G6): the trigger is the select's
+  // face, never a field or a button of its own
+  // (hidden: not shown, see-through, or a few pixels across)
+  const hiddenish = (el) => {
+    if (!visible(el) || faint(el)) return true;
+    const r = el.getBoundingClientRect();
+    return r.width <= 4 && r.height <= 4;
+  };
+  const proxied = new Map();
+  for (const s of all.filter((e) => e.tagName === 'SELECT' && hiddenish(e))) {
+    const p = proxyFor(s);
+    if (p && !p.matches('label')) { proxied.set(s, p); asButtons.add(p); consumed.add(p); }
+    else if (p) proxied.set(s, p);
+  }
+
+  const radios = new Map();     // native radios by root and name, or by their box
+  const allRadios = all.filter((e) => e.matches('input[type=radio]') && enabled(e)
+                               && (visible(e) || !!proxyFor(e)));
+  const FIELD_SEL = 'input, select, textarea, [role=combobox], [role=listbox], [role=checkbox], '
+    + '[role=switch], [role=textbox], [contenteditable], button[aria-haspopup], '
+    + '[role=button][aria-haspopup], [aria-haspopup=listbox]';
+  const POPUP_NOT = /import|autofill|upload|attach|share|menu|more|options|settings|profile|account|language|sign in|log in|filter|sort|apply|submit|next|continue|back|interested/i;
+  for (const el of all) {
+    if (consumed.has(el) || !el.matches(FIELD_SEL)) continue;
+    if (!usable(el)) continue;
     const role = el.getAttribute('role') || '';
     if (role !== 'combobox') {
-      const widget = el.closest('[role=combobox]');
+      const widget = closestC(el, '[role=combobox]');
       if (widget && widget !== el) continue;
     }
     if (role === 'listbox' && controlled.has(el)) continue;
-    const type = typeOf(el);
+    const marks = [];
     if (el.tagName === 'INPUT') {
-      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      const t = typeAttr(el);
       if (SKIP_INPUT.has(t)) continue;
-      if (t !== 'file' && !visible(el)) continue;
-      if (t === 'file' && !visible(el) && !boxShows(el)) continue;
       if (t === 'radio') {
+        if (!visible(el) && !proxyFor(el)) continue;
         const name = el.getAttribute('name') || '';
-        const key = name ? 'name:' + name : 'path:' + nthPath(el);
-        let g = groups.get(key);
+        const shared = !!name && allRadios.filter((r) => r.getAttribute('name') === name
+                                                  && rootOf(r) === rootOf(el)).length > 1;
+        // radios with a name each (bunq's "...yes", "...no"): one question by their box
+        const box = shared ? null : choiceBox(el, 'input[type=radio]', allRadios);
+        const key = shared ? 'name:' + name + '@' + (rootOf(el) === document ? '' : order.get(rootOf(el).host))
+          : box ? 'box:' + order.get(box) : 'path:' + locatorFor(el);
+        let g = radios.get(key);
         if (!g) {
-          g = { group: true, first: el, name: name, radios: [] };
-          groups.set(key, g);
-          fields.push(g);
+          g = { first: el, name: shared ? name : '', box: box, radios: [] };
+          radios.set(key, g);
+          items.push({ at: order.get(el), group: g });
         }
         g.radios.push(el);
         continue;
       }
-    } else if (!visible(el)) {
+      if (t === 'file') {
+        if (!visible(el) && !boxShows(el)) continue;
+        const [label, req] = labelFor(el, marks);
+        // a resume parser's own upload ("Autofill from resume"): its box's words
+        // say so, in any box above it that holds no other question
+        let parser = AUTOFILL.test(label);
+        for (let p = up(el), i = 0; p && !parser && i < 6; p = up(p), i++) {
+          if (p === document.body || p.matches('form, main, [role=main]')) break;
+          if (Array.from(p.querySelectorAll(QUESTION_CTRL)).some((c) => c !== el && visible(c))) break;
+          parser = AUTOFILL.test(seen(p).slice(0, 300));
+        }
+        if (junk(el, t, label)) continue;
+        push(el, describe(el, 'file', label, parser ? false : (req || isRequired(el)), locatorFor(el),
+                          [], { help: parser ? 'autofill parser' : '' }));
+        continue;
+      }
+      if (!visible(el)) continue;
+      // an untyped typeahead (G7): a text box with a results list beside it
+      // (or inside a box beside it) or a hidden "selected" value (Lever's location)
+      const RESULTS = '[class*=dropdown-results], [class*=autocomplete-results], [role=listbox]';
+      const sibs = el.parentElement ? Array.from(el.parentElement.children) : [];
+      const typeahead = (t === 'text' || t === 'search') && !role && (
+        /^(list|both)$/i.test(el.getAttribute('aria-autocomplete') || '')
+        || sibs.some((s) => s !== el && ((s.matches('input[type=hidden]')
+                                          && /^selected/i.test(s.getAttribute('name') || ''))
+                                         || s.matches(RESULTS) || !!s.querySelector(RESULTS))));
+      // a text box inside a dropdown drawn as a box (Paylocity's Country and
+      // State): the dropdown, typed in and picked from
+      const combo = (t === 'text' || t === 'search') && !role
+        && !!closestC(up(el) || el, '[aria-haspopup=listbox]');
+      const [label, req] = labelFor(el, marks);
+      if (junk(el, t, label)) continue;
+      const type = typeahead || combo ? 'listbox' : typeOf(el);
+      push(el, describe(el, type, label, req || isRequired(el), locatorFor(el),
+                        type === 'listbox' ? [] : optionsFor(el, type),
+                        { widget: combo ? 'combo' : typeahead ? 'typeahead' : '' }));
       continue;
     }
-    fields.push(describe(el, type, labelFor(el), isRequired(el), locatorFor(el), optionsFor(el, type)));
+    if (el.tagName === 'SELECT') {
+      const proxy = proxied.get(el);
+      if (!visible(el) && !proxy) continue;
+      const [label, req] = labelFor(el, marks);
+      if (junk(el, 'select', label)) continue;
+      const behind = !!proxy && hiddenish(el);
+      if (behind) kept.add(el);
+      push(el, describe(el, 'select', label, req || isRequired(el), locatorFor(el),
+                        selectOptions(el), { click: behind ? locatorFor(proxy) : '',
+                                             widget: behind ? 'hidden_select' : '' }));
+      continue;
+    }
+    if (el.tagName === 'TEXTAREA') {
+      if (!visible(el)) continue;
+      const [label, req] = labelFor(el, marks);
+      if (junk(el, 'textarea', label)) continue;
+      push(el, describe(el, 'textarea', label, req || isRequired(el), locatorFor(el), []));
+      continue;
+    }
+    if (!visible(el)) continue;
+    if (role === 'combobox' || role === 'listbox') {
+      const [label, req] = labelFor(el, marks);
+      push(el, describe(el, 'listbox', label, req || isRequired(el), locatorFor(el),
+                        listboxOptions(el)));
+      continue;
+    }
+    if (role === 'checkbox' || role === 'switch') {
+      // a custom tick box (EXT-04)
+      const [label, req] = labelFor(el, marks);
+      if (junk(el, 'checkbox', label)) continue;
+      asButtons.add(el);
+      push(el, describe(el, 'checkbox', label, req || isRequired(el), locatorFor(el), ['checked'],
+                        { widget: 'aria_check' }));
+      continue;
+    }
+    if (role === 'textbox' || (el.isContentEditable && el.hasAttribute('contenteditable'))) {
+      // a rich-text box (EXT-13), the outermost editable only
+      if (up(el) && closestC(up(el), '[contenteditable=""], [contenteditable=true], [role=textbox]')) continue;
+      const [label, req] = labelFor(el, marks);
+      push(el, describe(el, 'textarea', label, req || isRequired(el), locatorFor(el), [],
+                        { widget: 'editable' }));
+      continue;
+    }
+    if (el.matches('[aria-haspopup]')) {
+      // a dropdown drawn as a button (G7, EXT-02): Workday's "Select One",
+      // Teamtailor's menu, Paylocity's div
+      const pop = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+      if (!['listbox', 'menu', 'true'].includes(pop) || asButtons.has(el)) continue;
+      // one holding its own text box is that box's (the box is the field)
+      if (Array.from(el.querySelectorAll('input:not([type=hidden])')).some(visible)) continue;
+      const text = norm(el.innerText) || norm(el.value);
+      if (POPUP_NOT.test(text)) continue;
+      const [label, req] = labelFor(el, marks);
+      const scoped = !!closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset');
+      const placeholder = /^(select|choose|pick|please|--|\u2013|\u2014)/i.test(text);
+      // named by a label of its own (never only by the words above it)
+      const named = !!labelElementFor(el) || !!el.getAttribute('aria-labelledby')
+        || !!ariaWords(el.getAttribute('aria-label'))[0];
+      if (pop !== 'listbox' && !(placeholder || named)) continue;
+      if (pop !== 'listbox' && POPUP_NOT.test(label)) continue;
+      if (pop === 'listbox' && !(scoped || named || placeholder)) continue;
+      asButtons.add(el);
+      push(el, describe(el, 'listbox', label || text, req || isRequired(el), locatorFor(el),
+                        listboxOptions(el), { widget: 'popup' }));
+      continue;
+    }
   }
-  const out = fields.map((f) => {
-    if (!f.group) return f;
-    const css = f.name ? 'input[type=radio][name=' + q(f.name) + ']' : nthPath(f.first);
-    const required = f.radios.some(isRequired);
-    const options = f.radios.map(optionLabel);
-    const d = describe(f.first, 'radio', groupLabel(f.first), required, css, options);
-    d.id_or_name = f.name || f.first.id || '';
+  const fields = items.sort((a, b) => a.at - b.at).map((it) => {
+    if (it.rec) return it.rec;
+    const g = it.group;
+    const shown = g.radios;
+    const css = g.name ? hostPrefix(g.first) + 'input[type=radio][name=' + q(g.name) + ']'
+      : g.box ? locatorFor(g.box) + ' input[type=radio]' : locatorFor(g.first);
+    const marks = [];
+    const [label, req] = groupLabelFor(shown, null, marks);
+    const required = req || shown.some(isRequired);
+    const clicks = shown.map(clickFor);
+    shown.forEach((r) => { if (!visible(r)) kept.add(r); });
+    const d = describe(g.first, 'radio', label, required, css, shown.map(optionLabel),
+                       { option_css: clicks.some(Boolean) ? shown.map((r, i) => clicks[i] || locatorFor(r)) : [] });
+    d.id_or_name = g.name || g.first.id || '';
     return d;
   });
 
@@ -693,17 +1398,22 @@ _EXTRACT_JS = r"""
     }
     return submitsOf.get(form);
   };
-  for (const el of document.querySelectorAll(bsel + ', a[href]')) {
+  for (const el of all) {
+    if (!el.matches(bsel + ', a[href]') || asButtons.has(el)) continue;
     if (!visible(el)) continue;
     // a disabled control is kept, flagged (G10): a Submit that waits for the
     // form to validate is the page's way on once it is filled
     const disabled = !enabled(el);
-    if (el.closest('[role=combobox]') || inConsent(el) || outsideModal(el)) continue;
-    const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label')) || norm(el.getAttribute('title'));
+    if (closestC(el, '[role=combobox]') || inConsent(el) || outsideModal(el)) continue;
+    if (Array.from(asButtons).some((f) => f !== el && containsC(f, el))) continue;
+    // a shadow root's button shows its host's words through a slot (G12)
+    const host = rootOf(el).host;
+    const text = norm(el.innerText) || norm(el.value) || norm(el.getAttribute('aria-label'))
+      || norm(el.getAttribute('title')) || (host ? norm(host.innerText) : '');
     if (!text) continue;        // an icon with no name the judge could read (G4)
     if (!el.matches(bsel) && !applyLink(el, text)) continue;
-    const typeAttr = (el.getAttribute('type') || '').toLowerCase();
-    const submits = typeAttr === 'submit' || (el.tagName === 'BUTTON' && !typeAttr && !!el.form);
+    const typeB = (el.getAttribute('type') || '').toLowerCase();
+    const submits = typeB === 'submit' || (el.tagName === 'BUTTON' && !typeB && !!el.form);
     const aria = norm(el.getAttribute('aria-label'));
     let kind = '';
     if (NEVER_SUBMIT.test(text + ' ' + aria)) kind = '';
@@ -746,7 +1456,7 @@ _EXTRACT_JS = r"""
     const own = (modal.innerText || '').trim();
     if (own) text = [own, text.replace(own, '').trim()].filter(Boolean).join('\n');
   }
-  return { fields: out, buttons: buttons, text: text.slice(0, cap), dialog: modalTitle.slice(0, 160),
+  return { fields: fields, buttons: buttons, text: text.slice(0, cap), dialog: modalTitle.slice(0, 160),
            modal: !!modal };
 }
 """.replace("__OPTION_LABEL__", RADIO_OPTION_LABEL_JS).replace("__CONSENT__", CONSENT_ROOTS_JS)
@@ -812,7 +1522,11 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
                 placeholder=str(f.get("placeholder") or ""), help=str(f.get("help") or ""),
                 options=[str(o) for o in (f.get("options") or [])],
                 id_or_name=str(f.get("id_or_name") or ""),
-                autocomplete=str(f.get("autocomplete") or "")))
+                autocomplete=str(f.get("autocomplete") or ""),
+                widget=str(f.get("widget") or ""),
+                click_locator=(idx, str(f["click"])) if f.get("click") else None,
+                option_locators=[str(o) for o in (f.get("option_css") or [])],
+                section=str(f.get("section") or ""), ident=str(f.get("ident") or "")))
         for b in raw.get("buttons") or []:
             buttons.append(Button(n=len(buttons), locator=(idx, str(b["css"])),
                                   text=str(b["text"]), kind_hint=str(b.get("kind_hint") or ""),

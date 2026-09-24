@@ -494,17 +494,17 @@ def test_a_form_step_with_nothing_filled_never_sends_through_the_gate(context, t
 
 
 def test_an_apply_inside_a_form_of_controls_is_never_a_fieldless_entry(browser_page):
-    # INV-03: the form's controls are an editable box the extractor leaves
-    # out; its Apply is the form's own button
+    # INV-03: the form's control is a lone spin box the extractor leaves out
+    # (an editable box is a field since SP5); its Apply is the form's own button
     browser_page.set_content("""<body><h1>Role</h1><form>
-      <div contenteditable="true" role="textbox" aria-label="Why us?"></div>
+      <div role="spinbutton" tabindex="0" aria-label="Years in the role">0</div>
       <button type="button">Apply</button></form></body>""")
     d = apply_form.extract(browser_page)
     assert d.fields == [] and [b.in_form for b in d.buttons] == [True]
     assert apply_run.fieldless_apply_choice(d) is None
     plan = FillPlan()
     apart, unclassified, scan = apply_run.posting_context(browser_page, d, plan)
-    assert unclassified == 1 and scan[0]["kind"] == "textbox"
+    assert unclassified == 1 and scan[0]["kind"] == "spinbutton"
     assert apply_run.posting_entry_choice(d, plan, apart=apart, unclassified=unclassified) \
         == (None, "")
 
@@ -530,12 +530,15 @@ def test_the_gate_refuses_a_control_the_site_marked_invalid(context, tmp_path):
     assert not [a for a in rec.actions if a.kind == "click"]
 
 
+# (an editable box and a box in an open shadow root are fields since SP5: the
+# run fills them; a lone spin box is still left out)
 @pytest.mark.parametrize("extra, label", [
-    ('<div role="textbox" contenteditable="true" aria-required="true" '
-     'aria-label="Portfolio note"></div>', "Portfolio note"),
+    ('<div role="spinbutton" tabindex="0" aria-required="true" '
+     'aria-label="Years in the role"></div>', "Years in the role"),
     ('<x-question></x-question><script>customElements.define("x-question", class extends '
      'HTMLElement { constructor() { super(); this.attachShadow({mode: "open"}).innerHTML = '
-     '"<input required aria-label=\\"Start date\\">"; } });</script>', "Start date")])
+     '"<div role=\\"spinbutton\\" tabindex=\\"0\\" aria-required=\\"true\\" '
+     'aria-label=\\"Start year\\"></div>"; } });</script>', "Start year")])
 def test_the_gate_refuses_an_empty_required_control_the_extractor_leaves_out(
         context, tmp_path, extra, label):
     _Posts(context, {"/apply/42": _form("Submit application",
@@ -1519,14 +1522,15 @@ def test_the_gate_reads_the_form_behind_a_footer_submit(context, tmp_path):
 
 
 def test_the_gate_finds_a_required_box_past_the_scans_cap(context, tmp_path):
-    boxes = "".join(f'<div role="textbox" contenteditable="true" aria-label="Note {i}"></div>'
+    boxes = "".join(f'<div role="spinbutton" tabindex="0" aria-label="Count {i}">1</div>'
                     for i in range(45))
     _Posts(context, {"/apply/42": _form("Submit application", "", extra=boxes + (
-        '<div role="textbox" contenteditable="true" aria-required="true" '
-        'aria-label="Required note"></div>'))})
+        '<div role="spinbutton" tabindex="0" aria-required="true" '
+        'aria-label="Required count"></div>'))})
     out, rec, _ = _drain(context, tmp_path, APPLY_URL)
     assert out.status == "needs_human", out
-    assert out.reason.startswith("required field without an answer: Required note (a textbox"), out
+    assert out.reason.startswith("required field without an answer: Required count (a "
+                                 "spinbutton"), out
     assert not [a for a in rec.actions if a.kind == "click"]
 
 

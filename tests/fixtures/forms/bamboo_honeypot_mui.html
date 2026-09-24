@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam Careers</title>
+<!-- A synthetic replica of a BambooHR posting and form (layout study G3, G5,
+     G6): the page renders 600 ms after load, a read-only "Link to This Job"
+     share box sits on the posting, the form renders in place with a
+     honeypot box off the page, Country and Highest Education are hidden
+     native selects behind styled buttons, the file box is labelled
+     "file-input", and the form has a Cancel. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; position: relative; }
+  label { display: block; }
+  .hp { position: absolute; left: -5000px; top: -5000px; }
+  .mui-select { position: relative; }
+  .mui-select select { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .mui-trigger { border: 1px solid #777; width: 260px; text-align: left; padding: 4px; background: #fff; }
+  .menu { border: 1px solid #555; background: #fff; width: 260px; position: absolute; z-index: 5; }
+  .menu [role=option] { padding: 3px; cursor: pointer; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<template id="posting">
+  <h1>Analytics Engineer</h1>
+  <p>Remote &middot; Full-Time</p>
+  <div class="field"><label for="share">Link to This Job</label>
+    <input id="share" type="text" readonly value="https://fabrikam.example/careers/42"></div>
+  <button type="button" id="apply" class="fab-Button--primary">Apply for This Job</button>
+  <h2>Job description</h2>
+  <p>Keep the warehouse models tidy and the dashboards fast.</p>
+</template>
+<template id="application">
+  <h1>Analytics Engineer</h1>
+  <form id="app-form" novalidate>
+    <div class="hp"><label for="nickname_hpcsaf">Please leave this field blank</label>
+      <input id="nickname_hpcsaf" name="nickname" type="text" autocomplete="off"></div>
+    <div class="field"><label for="firstName">First Name*</label><input id="firstName" name="firstName" type="text"></div>
+    <div class="field"><label for="lastName">Last Name*</label><input id="lastName" name="lastName" type="text"></div>
+    <div class="field"><label for="email">Email*</label><input id="email" name="email" type="email"></div>
+    <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="tel"></div>
+    <div class="field mui-select"><label id="country-label" for="countryId">Country*</label>
+      <select id="countryId" name="countryId">
+        <option value="">--Select--</option>
+        <option value="1">Canada</option>
+        <option value="2">Mexico</option>
+        <option value="3">United States</option>
+      </select>
+      <button type="button" class="mui-trigger" aria-haspopup="listbox" aria-labelledby="country-label" data-for="countryId">--Select--</button>
+    </div>
+    <div class="field mui-select"><label id="edu-label" for="educationLevel">Highest Education</label>
+      <select id="educationLevel" name="educationLevel">
+        <option value="">--Select--</option>
+        <option value="1">High school</option>
+        <option value="2">Bachelor's degree</option>
+        <option value="3">Master's degree</option>
+      </select>
+      <button type="button" class="mui-trigger" aria-haspopup="listbox" aria-labelledby="edu-label" data-for="educationLevel">--Select--</button>
+    </div>
+    <div class="field" role="group" aria-labelledby="resume-label">
+      <div id="resume-label">Resume*</div>
+      <input id="resumeFile" type="file" aria-label="file-input">
+    </div>
+    <button type="button" id="cancel">Cancel</button>
+    <button type="submit" id="btn-submit" class="fab-Button--primary">Submit Application</button>
+    <p id="problems" role="alert"></p>
+  </form>
+</template>
+<section id="thanks"><h2>Thanks for applying</h2><p>Your application was received.</p></section>
+<script>
+  function render(id) {
+    var root = document.getElementById('root');
+    root.innerHTML = '';
+    root.appendChild(document.getElementById(id).content.cloneNode(true));
+  }
+  setTimeout(function () {
+    render('posting');
+    document.getElementById('apply').addEventListener('click', function () {
+      render('application');
+      wire();
+    });
+  }, 600);
+  function wire() {
+    document.querySelectorAll('.mui-trigger').forEach(function (t) {
+      var select = document.getElementById(t.getAttribute('data-for'));
+      var menu = null;
+      function close() { if (menu) { menu.remove(); menu = null; } t.setAttribute('aria-expanded', 'false'); }
+      select.addEventListener('change', function () { t.textContent = select.selectedOptions[0].text; });
+      t.addEventListener('click', function () {
+        if (menu) { close(); return; }
+        menu = document.createElement('div');
+        menu.className = 'menu';
+        menu.setAttribute('role', 'listbox');
+        Array.from(select.options).slice(1).forEach(function (o) {
+          var item = document.createElement('div');
+          item.setAttribute('role', 'option');
+          item.textContent = o.text;
+          item.addEventListener('click', function () {
+            select.value = o.value;
+            select.dispatchEvent(new Event('change', {bubbles: true}));
+            close();
+          });
+          menu.appendChild(item);
+        });
+        t.setAttribute('aria-expanded', 'true');
+        t.parentElement.appendChild(menu);
+      });
+    });
+    document.getElementById('app-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (document.getElementById('nickname_hpcsaf').value) { document.body.setAttribute('data-bot', '1'); }
+      var missing = ['firstName', 'lastName', 'email', 'countryId'].filter(function (id) {
+        return !document.getElementById(id).value; });
+      if (!document.getElementById('resumeFile').files.length) missing.push('resume');
+      if (missing.length) { document.getElementById('problems').textContent = 'Missing: ' + missing.join(', '); return; }
+      document.body.setAttribute('data-submitted', '1');
+      document.getElementById('root').innerHTML = '';
+      document.getElementById('thanks').style.display = 'block';
+    });
+  }
+</script>
+</body>
+</html>

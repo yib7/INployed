@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam - Application</title>
+<!-- A synthetic replica of a Lever-style application (layout study G2, G7,
+     G8): a star marker in its own span after each question, a location box
+     that offers matches as it is typed in (no ARIA, a hidden "selected"
+     value), a languages question of tick boxes, a hidden error inside a
+     label, a list whose first entry is a "Click here" placeholder. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .application-question { margin: 14px 0; }
+  .application-label { font-weight: bold; }
+  .required { color: #b00; margin-left: 2px; }
+  ul { list-style: none; padding: 0; margin: 4px 0; }
+  .hidden { display: none; }
+  .dropdown-results { border: 1px solid #999; max-width: 320px; }
+  .dropdown-results div { padding: 3px; cursor: pointer; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, Remote</p>
+<form id="application-form" novalidate>
+  <h3>Submit your application</h3>
+  <div class="application-question">
+    <label for="name"><div class="application-label">Full name<span class="required">&#10033;</span></div></label>
+    <input id="name" name="name" type="text" required>
+  </div>
+  <div class="application-question">
+    <label for="email"><div class="application-label">Email<span class="required">&#10033;</span></div></label>
+    <input id="email" name="email" type="email" required>
+  </div>
+  <div class="application-question">
+    <label for="resume-upload">
+      <div class="application-label">Resume/CV<span class="required">&#10033;</span></div>
+      <span class="hidden">Could not read the resume file.</span>
+    </label>
+    <input id="resume-upload" name="resume" type="file" required>
+  </div>
+  <div class="application-question">
+    <label for="location-input">
+      <div class="application-label">Current location<span class="required">&#10033;</span></div>
+      <span class="hidden no-results">No match for that place. Try another spelling.</span>
+    </label>
+    <div class="location-box">
+      <input id="location-input" name="location" type="text" required autocomplete="off">
+      <input type="hidden" name="selectedLocation" id="selected-location" value="">
+      <div class="dropdown-results hidden" id="location-results"></div>
+    </div>
+  </div>
+
+  <h3>A few more questions</h3>
+  <div class="application-question">
+    <div class="application-label">Are you legally allowed to take up employment in the United States?<span class="required">&#10033;</span></div>
+    <ul>
+      <li><label><input type="radio" name="cards[q1]" value="Yes" required> Yes</label></li>
+      <li><label><input type="radio" name="cards[q1]" value="No"> No</label></li>
+    </ul>
+  </div>
+  <div class="application-question">
+    <div class="application-label">Which languages do you write code in?</div>
+    <ul>
+      <li><label><input type="checkbox" name="cards[q2][]" value="Python"> Python</label></li>
+      <li><label><input type="checkbox" name="cards[q2][]" value="SQL"> SQL</label></li>
+      <li><label><input type="checkbox" name="cards[q2][]" value="Go"> Go</label></li>
+      <li><label><input type="checkbox" name="cards[q2][]" value="Rust"> Rust</label></li>
+    </ul>
+  </div>
+  <div class="application-question">
+    <div class="application-label">How did you hear about this job?<span class="required">&#10033;</span></div>
+    <select name="cards[q3]" required>
+      <option value="click">Click here (if the list looks wrong, reload the page)</option>
+      <option value="linkedin">LinkedIn</option>
+      <option value="site">Company website</option>
+      <option value="friend">A friend</option>
+    </select>
+  </div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  var places = ['Anytown, CA, United States', 'Anytown, NY, United States',
+                'Springfield, IL, United States', 'Lakeside, WA, United States'];
+  var input = document.getElementById('location-input');
+  var results = document.getElementById('location-results');
+  input.addEventListener('input', function () {
+    var q = input.value.toLowerCase().split(',')[0].trim();
+    document.getElementById('selected-location').value = '';
+    results.innerHTML = '';
+    if (q.length < 2) { results.classList.add('hidden'); return; }
+    setTimeout(function () {
+      places.filter(function (p) { return p.toLowerCase().indexOf(q) === 0; }).forEach(function (p) {
+        var d = document.createElement('div');
+        d.textContent = p;
+        d.addEventListener('click', function () {
+          input.value = p;
+          document.getElementById('selected-location').value = p;
+          results.classList.add('hidden');
+        });
+        results.appendChild(d);
+      });
+      results.classList.toggle('hidden', !results.children.length);
+    }, 150);
+  });
+  document.getElementById('application-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var ok = document.getElementById('selected-location').value
+      && document.querySelector('input[name="cards[q1]"]:checked')
+      && document.querySelector('select[name="cards[q3]"]').value !== 'click';
+    if (!ok) { document.body.setAttribute('data-invalid', '1'); return; }
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application-form').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

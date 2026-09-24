@@ -79,3 +79,50 @@ def test_the_fake_judge_reads_no_boolean_so_the_flags_leave_its_roles_as_they_we
         '{"text": "Next", "items": ["Back"]}'
     words = jev._flatten({"a": True, "b": "word", "c": [False, "more"]}).split()
     assert words == ["word", "more"]
+
+
+# --- a question that names code, a review step with its submit ---------------------------------
+
+def test_a_question_of_tick_boxes_that_names_code_is_no_code_box():
+    langs = Field(n=0, locator=(0, "#g"), label="Which languages do you write code in?",
+                  type="checkbox", required=False, options=["Python", "SQL"])
+    promo = Field(n=1, locator=(0, "#s"), label="Code of conduct accepted", type="select",
+                  required=True, options=["Yes", "No"])
+    digest = FormDigest(url_host="x", title="Apply", text="Apply for the role",
+                        fields=[_f(2, "Full name", required=True), langs, promo])
+    assert apply_judge.code_field(digest.fields) is None
+    assert not apply_judge.page_facts(digest).code_box
+    code = _f(3, "Enter the code", required=True)
+    assert apply_judge.code_field([langs, code]) is code
+
+
+def test_a_review_step_with_its_submit_and_no_box_is_the_review_by_its_structure():
+    digest = FormDigest(url_host="x", title="Apply", text="Step 2 of 2 Review and submit",
+                        buttons=[Button(n=0, locator=(0, "#s"), text="Submit Application")])
+    facts = apply_judge.page_facts(digest)
+    assert facts.review and facts.send_buttons == 1
+    assert apply_judge.structural_kind(facts, strict=True) == "review_page"
+    # a page that still asks for something is no review by its structure
+    digest.fields = [_f(0, "Email", "email", required=True)]
+    assert apply_judge.structural_kind(apply_judge.page_facts(digest), strict=True) != \
+        "review_page"
+
+
+# --- an account screen's own button -----------------------------------------------------------
+
+def test_an_account_screen_never_clicks_the_sites_header_sign_in():
+    import apply_run
+    from apply_judge import FillPlan
+    digest = FormDigest(url_host="x", title="Create Account", text="Create Account", fields=[
+        _f(0, "Email Address", required=True)], buttons=[
+        Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
+        Button(n=1, locator=(0, "#s"), text="Search for Jobs", chrome=True),
+        Button(n=2, locator=(0, "#c"), text="Create Account")])
+    # the header's Sign In judged the advance, the screen's own button other
+    plan = FillPlan(buttons={"advance": (0, 0.95), "other": (2, 0.9)})
+    assert apply_run.account_advance(digest, plan) == (2, apply_judge.BUTTON_ADVANCE_MIN_CONF)
+    plan = FillPlan(buttons={"advance": (2, 0.9), "other": (0, 0.9)})
+    assert apply_run.account_advance(digest, plan) == (2, 0.9)
+    # two buttons of the screen's own that name the step: no guess
+    digest.buttons.append(Button(n=3, locator=(0, "#l"), text="Sign in instead"))
+    assert apply_run.account_advance(digest, FillPlan(buttons={"advance": (0, 0.95)})) is None

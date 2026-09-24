@@ -371,10 +371,114 @@ def _compact_field(f) -> dict[str, Any]:
     return obj
 
 
+# --- options: a value matched in code first (EXT-07, FILL-07) ---------------------------
+
+AUTOFILL_PARSER = "autofill parser"     # the extractor's help for a resume parser's upload
+
+_US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+    "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia",
+    "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+    "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
+    "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee",
+    "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia"}
+# Names one answer goes by: each set is one meaning (normalised as `_norm_option` does)
+_ALIASES: tuple[frozenset[str], ...] = tuple(frozenset(g) for g in (
+    ("united states", "us", "usa", "u s", "u s a", "united states of america", "america"),
+    ("united kingdom", "uk", "u k", "great britain", "gb", "britain"),
+    ("yes", "y", "true"), ("no", "n", "false"),
+    *(((name.lower(), code.lower())) for code, name in _US_STATES.items()),
+))
+# the "I decline to answer" family: a stored decline matches any of them
+_DECLINE = re.compile(r"\bdecline\b|\bprefer(?:s)? not\b|\b(?:do not|don t|choose not to|wish not "
+                      r"to|not wish to)\b.*\b(?:answer|disclose|identify|say|specify|provide)\b"
+                      r"|\bnot (?:to )?(?:answer|disclose|say)\b", re.I)
+_OPTION_NORM = re.compile(r"[^a-z0-9]+")
+
+
+def _norm_option(text: str) -> str:
+    return " ".join(_OPTION_NORM.sub(" ", str(text or "").lower().replace("'", " ")).split())
+
+
+def _alias_set(text: str) -> frozenset[str]:
+    n = _norm_option(text)
+    for group in _ALIASES:
+        if n in group:
+            return group
+    return frozenset((n,))
+
+
+def match_option(value: str, options: list[str]) -> str | None:
+    """The option that means `value`, found in code over every option (a
+    Country list of 250, the United States near its end): the same words
+    (case, punctuation and spacing aside), then a name the value goes by
+    (US / USA / United States of America; a state's name and its postal
+    code; Yes / Y), then, for a stored decline, the one option that declines
+    ("Prefer not to say"), then the one option that starts with the value
+    ("California (CA)"). None when nothing matches or two options do."""
+    want = _norm_option(value)
+    if not want or not options:
+        return None
+    normed = [_norm_option(o) for o in options]
+    exact = [o for o, n in zip(options, normed) if n == want]
+    if len(exact) == 1:
+        return exact[0]
+    aliases = _alias_set(value)
+    named = [o for o, n in zip(options, normed) if n in aliases]
+    if len(named) == 1:
+        return named[0]
+    if _DECLINE.search(want):
+        declines = [o for o, n in zip(options, normed) if _DECLINE.search(n)]
+        if len(declines) == 1:
+            return declines[0]
+    starts = [o for o, n in zip(options, normed) if n.startswith(want + " ")]
+    return starts[0] if len(starts) == 1 else None
+
+
+def shortlist(options: list[str], value: str, cap: int = OPTIONS_CAP) -> list[str]:
+    """At most `cap` of `options` for a pick question (EXT-07): the ones
+    sharing a word with `value` or a name it goes by first, the rest in page
+    order after them."""
+    if len(options) <= cap:
+        return list(options)
+    words = set(_norm_option(value).split())
+    for alias in _alias_set(value):
+        words |= set(alias.split())
+    decline = bool(_DECLINE.search(_norm_option(value)))
+
+    def score(o: str) -> int:
+        n = _norm_option(o)
+        return len(words & set(n.split())) + (2 if decline and _DECLINE.search(n) else 0)
+    ranked = sorted(range(len(options)), key=lambda i: (-score(options[i]), i))
+    return [options[i] for i in ranked[:cap]]
+
+
+def _sections(fields) -> list[dict[str, Any]]:
+    """The page's section headings in order, each with the fields under it
+    (READ-05): [{"heading": ..., "fields": [n, ...]}]; a field under no
+    heading is in none."""
+    out: list[dict[str, Any]] = []
+    for f in fields:
+        heading = str(getattr(f, "section", "") or "")[:READ_TEXT_CAP]
+        if not heading:
+            continue
+        if out and out[-1]["heading"] == heading:
+            out[-1]["fields"].append(f.n)
+        else:
+            out.append({"heading": heading, "fields": [f.n]})
+    return out
+
+
 def _option_question(i: int, options: list[str], candidate_answer: str) -> dict[str, Any]:
     """The pick among a field's options for a known fact value; the value
-    rides in the instruction so the question is self-contained."""
-    criteria: dict[str, Any] = {o: None for o in options[:OPTIONS_CAP]}
+    rides in the instruction so the question is self-contained. A list past
+    `OPTIONS_CAP` is cut to the shortlist for the value (`shortlist`)."""
+    criteria: dict[str, Any] = {o: None for o in shortlist(options, candidate_answer)}
     criteria["no_match"] = NO_MATCH_DESCRIPTION
     instructions = {
         "candidate_answer": candidate_answer,
@@ -413,6 +517,12 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
                      "disabled": bool(getattr(b, "disabled", False)),
                      "primary": bool(getattr(b, "primary", False))} for b in digest.buttons],
     }
+    sections = _sections(digest.fields) if fields else []
+    if sections:
+        # READ-05: the headings the fields sit under ("Voluntary
+        # Self-Identification", "Eligibility"), beside the fields: a field
+        # question names `fields[i]` alone
+        state["sections"] = sections
     if fields:
         state["facts"] = _facts_map(catalog)
     questions: dict[str, Any] = {}
@@ -611,6 +721,9 @@ def _first_words(pattern: re.Pattern, text: str) -> str:
     return " ".join(m.group(0).split()) if m else ""
 
 
+_CODE_TYPES = frozenset(("text", "number", "tel", "other", ""))
+
+
 def code_field(fields):
     """The box the emailed code goes in.
 
@@ -623,6 +736,10 @@ def code_field(fields):
     def blob(f):
         return f"{f.label} {f.id_or_name}"
 
+    # a code is typed: a question of tick boxes or a list that names code
+    # ("Which languages do you write code in?") is no code box (SP5: a
+    # group's question is its label now)
+    fields = [f for f in fields if str(getattr(f, "type", "") or "") in _CODE_TYPES]
     for f in fields:
         if str(getattr(f, "autocomplete", "")).lower() == "one-time-code":
             return f
@@ -1096,7 +1213,8 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
     boxes a form; a page whose only way on is a Next or a Continue a step of
     the application; else None. `strict`: only a kind the structure settles (a
     lone password box with no autocomplete, a page with a Next alone and a
-    single application box settle nothing)."""
+    single application box settle nothing). A review's words and a send
+    button with no box left are the review."""
     if facts.captcha == "a bot-check frame" or (facts.captcha and not facts.app_fields):
         return "captcha_or_bot_check"
     if facts.code_box and not facts.passwords:
@@ -1111,6 +1229,12 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
         return "job_posting"
     if facts.closed and not facts.app_fields and not facts.files:
         return "error_or_dead"      # after the Apply-entry rule: an Apply is no closed page
+    if facts.review and facts.send_buttons and not facts.app_fields and not facts.files \
+            and not facts.received:
+        # a review's words and a send button with no box left to fill (SP5:
+        # a review step misread as a confirmation, the structure ruling
+        # the confirmation out)
+        return "review_page"
     if facts.email_first:
         return "login_wall"
     if facts.files or facts.app_fields >= 2:
@@ -1170,6 +1294,13 @@ class PlannedField:
     confidence: float
     action: str
     quick: bool = False      # the fact came from quick_map (its pick rode in the first request)
+    # the field's widget, as the extractor read it (SP5): the filler acts
+    # through these (`apply_form.Field`)
+    widget: str = ""
+    click_locator: tuple[int, str] | None = None
+    option_locators: list[str] = field(default_factory=list)
+    options: list[str] = field(default_factory=list)
+    ident: str = ""
 
 
 @dataclass
@@ -1300,13 +1431,24 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
         elif model_key is None or model_key == "leave_blank" or model_conf < FIELD_MAP_MIN_CONF:
             fact_key, conf = None, model_conf
         elif model_key == "consent_attest" and model_conf < CONSENT_MIN_CONF:
-            fact_key, conf = None, model_conf
+            joint = consent_looks(answers, f.n)
+            fact_key, conf = (model_key, joint) if joint >= CONSENT_MIN_CONF else (None, model_conf)
         else:
             fact_key, conf = model_key, model_conf
 
         pf = PlannedField(n=f.n, locator=f.locator, label=f.label, required=bool(f.required),
                           fact_key=fact_key, value="", option=None, confidence=conf,
-                          action="skip", quick=bool(quick))
+                          action="skip", quick=bool(quick),
+                          widget=str(getattr(f, "widget", "") or ""),
+                          click_locator=getattr(f, "click_locator", None),
+                          option_locators=list(getattr(f, "option_locators", None) or []),
+                          options=list(f.options or []), ident=str(getattr(f, "ident", "") or ""))
+        if AUTOFILL_PARSER in (f.help or ""):
+            # a resume parser's own upload (Ashby's "Autofill from resume"),
+            # no question of the application's: left alone
+            fact_key, pf.fact_key = None, None
+            out.fields.append(pf)
+            continue
         if is_sensitive_field(f.label, f.id_or_name):
             # an SSN, a birthdate, bank or card details: never answered, and
             # a masked "Passport number" box is one of these before it is a
@@ -1331,10 +1473,16 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             if pf.action == "select":
                 # a quick_map field's pick rode in the first request with the
                 # value in hand; a model-mapped field's pick is `field_{n}_pick`
-                # from the second request, and until it arrives the field waits
+                # from the second request, and until it arrives the field waits.
+                # A list past `OPTIONS_CAP` is searched in code first (EXT-07:
+                # the United States and most states sit past the 40th option)
                 qid = f"field_{f.n}_option" if quick else f"field_{f.n}_pick"
                 opt, oconf = _choice_of(answers, qid)
-                if opt is None or opt == "no_match" or oconf < OPTION_MIN_CONF:
+                found = match_option(pf.value, f.options) \
+                    if len(f.options) > OPTIONS_CAP else None
+                if found is not None:
+                    pf.option = found
+                elif opt is None or opt == "no_match" or oconf < OPTION_MIN_CONF:
                     pf.action = "skip"
                 else:
                     pf.option = opt
@@ -1442,6 +1590,22 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
     return out
 
 
+FIRST_LOOK = "_first"       # `field_{n}_source_first`: the first look, kept by the runner
+
+
+def consent_looks(answers: Mapping[str, Answer], n: int) -> float:
+    """A consent tick's confidence over its two looks: when the second look
+    (`field_{n}_source`) and the first (`field_{n}_source_first`) both name
+    `consent_attest`, each at `FIELD_MAP_MIN_CONF` or above, the chance that
+    both are wrong is the product of their doubts, so the pair holds at
+    1 - (1 - a)(1 - b); otherwise the second look's own confidence."""
+    key, conf = _choice_of(answers, f"field_{n}_source")
+    first, first_conf = _choice_of(answers, f"field_{n}_source{FIRST_LOOK}")
+    if key == first == "consent_attest" and min(conf, first_conf) >= FIELD_MAP_MIN_CONF:
+        return 1.0 - (1.0 - conf) * (1.0 - first_conf)
+    return conf
+
+
 def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPlan, n: int, *,
                     what: str, job: Mapping[str, Any] | None = None) -> tuple[dict, dict]:
     """The second look at one field (`reask_targets`), a request of its own:
@@ -1464,6 +1628,8 @@ def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPla
              "page": {"url_host": digest.url_host, "title": digest.title},
              "field": _compact_field(f),
              "facts": {k: facts[k] for k in criteria if k in facts}}
+    if getattr(f, "section", ""):
+        state["section"] = str(f.section)[:READ_TEXT_CAP]     # the heading it sits under
     questions = {f"field_{f.n}_source": {
         "type": "choice",
         "instructions": "Which key of `facts` describes what `field` asks for? When nothing "

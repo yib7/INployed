@@ -15,7 +15,14 @@ by option label, case-insensitively; a radio group checks the radio whose
 label equals the option; a checkbox checks on `"checked"`; a combobox or
 listbox opens and clicks the option text; a file input takes
 `set_input_files` through its frame, the same call `apply_driver._set_files`
-proved on Greenhouse. A file control gets no click.
+proved on Greenhouse. A file control gets no click. A field the extractor
+read as a widget (`PlannedField.widget`, SP5) is acted on its own way: a
+custom radio group, Yes / No buttons and a question's tick boxes by clicking
+the option's own element; a dropdown drawn as a button by opening it and
+clicking the option; a typeahead or an async combobox by typing the value and
+clicking its match; a hidden select in place; a hidden tick box or radio
+through its label; a rich-text box by typing; date parts part by part. The
+control is checked to be the one planned for before the act (FILL-02).
 
 `click_button(page, digest, n)` clicks a digest button and waits for a
 navigation or a DOM change (body length and the set of visible controls,
@@ -33,6 +40,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 import apply_form
+import apply_judge
 from apply_judge import PAGE_TEXT_CAP, FillPlan, PlannedField
 
 log = logging.getLogger(__name__)
@@ -80,7 +88,17 @@ _READ_JS = """el => {
     if (dv) return norm(dv);
     const sel = el.querySelector('[aria-selected=true]');
     if (sel) return norm(sel.textContent);
-    return norm(el.innerText);
+    // react-select clears its input after a pick and shows the choice in a
+    // sibling (EXT-10): the single value in the widget's control box
+    let box = el;
+    for (let i = 0; box && i < 4; i++, box = box.parentElement) {
+      const sv = box.querySelector('[class*=single-value], [class*=singleValue], '
+        + '[class*=multi-value__label], [class*=multiValue] [class*=label]');
+      if (sv) return Array.from(box.querySelectorAll('[class*=single-value], [class*=singleValue], '
+        + '[class*=multi-value__label]')).map((n) => norm(n.textContent)).filter(Boolean).join(', ');
+      if (box !== el && /__control\\b|(^|\\s)control(\\s|$)/i.test(box.getAttribute('class') || '')) break;
+    }
+    return tag === 'INPUT' ? '' : norm(el.innerText);
   }
   if (el.value !== undefined) return el.value;
   return norm(el.textContent);
@@ -159,11 +177,16 @@ def _date_value(value: str) -> str:
 
 def _ci_match(want: str, candidates: list[str]) -> int:
     """Index of the candidate equal to `want` case-insensitively (whitespace
-    folded), else the one containing it, else -1."""
+    folded), else the one a name of `want` matches (`apply_judge.match_option`:
+    USA for United States, CA for California, a decline for a decline;
+    FILL-07), else the one containing it, else -1."""
     w = " ".join((want or "").split()).lower()
-    folded = [" ".join(c.split()).lower() for c in candidates]
+    folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
         return folded.index(w)
+    found = apply_judge.match_option(want, [str(c) for c in candidates])
+    if found is not None:
+        return [str(c) for c in candidates].index(found)
     for i, c in enumerate(folded):
         if w and w in c:
             return i
@@ -190,7 +213,29 @@ def _select_native(loc, want: str) -> None:
     loc.first.select_option(value=options[i][1], timeout=ACTION_TIMEOUT_MS)
 
 
-def _check_radio(loc, want: str) -> None:
+def _clicked(page, frame_index: int, css: str):
+    """A locator for `css` in frame `frame_index` (a widget's option or proxy)."""
+    return apply_form.resolve(page, (int(frame_index), str(css))).first
+
+
+# Is the box behind an option or a proxy ticked: the element itself (a
+# native box), its label's control, a box inside it, or its aria state.
+_TICKED_JS = """el => {
+  const box = el.matches('input') ? el : (el.control || el.querySelector('input[type=checkbox], input[type=radio]'));
+  if (box) return !!box.checked;
+  return el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true'
+    || el.getAttribute('aria-selected') === 'true';
+}"""
+
+
+def _ticked(loc) -> bool:
+    try:
+        return bool(loc.evaluate(_TICKED_JS, timeout=ACTION_TIMEOUT_MS))
+    except Exception:       # noqa: BLE001  (gone)
+        return False
+
+
+def _check_radio(page, loc, want: str, pf: PlannedField | None = None) -> None:
     labels = loc.evaluate_all(_RADIO_LABELS_JS)
     i = _ci_match(want, labels)
     if i < 0:
@@ -198,17 +243,54 @@ def _check_radio(loc, want: str) -> None:
         i = _ci_match(want, values)
     if i < 0:
         raise LookupError(f"no radio {want!r} among {labels}")
+    if pf is not None and i < len(pf.option_locators) and pf.option_locators[i]:
+        # a hidden native radio behind its label (study G6): the label takes the click
+        target = _clicked(page, pf.locator[0], pf.option_locators[i])
+        if not _ticked(target):
+            target.click(timeout=ACTION_TIMEOUT_MS)
+        return
     loc.nth(i).check(timeout=ACTION_TIMEOUT_MS)
 
 
-def _check_box(loc, want: str) -> None:
+def _check_box(page, loc, want: str, pf: PlannedField | None = None) -> None:
     w = (want or "").strip().lower()
-    if w in CHECKED_WORDS:
-        loc.first.check(timeout=ACTION_TIMEOUT_MS)
-    elif w in UNCHECKED_WORDS:
-        loc.first.uncheck(timeout=ACTION_TIMEOUT_MS)
-    else:
+    if w not in CHECKED_WORDS and w not in UNCHECKED_WORDS:
         raise LookupError(f"checkbox option {want!r} is neither checked nor unchecked")
+    tick = w in CHECKED_WORDS
+    if pf is not None and pf.click_locator:
+        # a hidden or see-through box behind its label (study G6): the label
+        # takes the click, the box's own state is read
+        if _ticked(loc.first) != tick:
+            _clicked(page, pf.click_locator[0], pf.click_locator[1]).click(timeout=ACTION_TIMEOUT_MS)
+        return
+    if tick:
+        loc.first.check(timeout=ACTION_TIMEOUT_MS)
+    else:
+        loc.first.uncheck(timeout=ACTION_TIMEOUT_MS)
+
+
+def _choose(page, pf: PlannedField, want: str) -> None:
+    """A custom radio group or Yes / No buttons (widget "choice"), a question's
+    tick boxes (widget "checkbox_group"): the option's own element takes the
+    click, unless it is already chosen."""
+    options = list(pf.options)
+    i = _ci_match(want, options)
+    if i < 0 and pf.widget == "checkbox_group" and len(options) == 1 \
+            and str(want or "").strip().lower() in CHECKED_WORDS:
+        i = 0
+    if i < 0 or i >= len(pf.option_locators):
+        raise LookupError(f"no option {want!r} among {options}")
+    target = _clicked(page, pf.locator[0], pf.option_locators[i])
+    if not _ticked(target):
+        target.click(timeout=ACTION_TIMEOUT_MS)
+
+
+def _aria_check(loc, want: str) -> None:
+    w = (want or "").strip().lower()
+    if w not in CHECKED_WORDS and w not in UNCHECKED_WORDS:
+        raise LookupError(f"checkbox option {want!r} is neither checked nor unchecked")
+    if _ticked(loc.first) != (w in CHECKED_WORDS):
+        loc.first.click(timeout=ACTION_TIMEOUT_MS)
 
 
 def _options_locator(frame, loc):
@@ -224,12 +306,58 @@ def _options_locator(frame, loc):
     return frame.locator("[role=listbox] [role=option]").filter(visible=True)
 
 
-def _open_menu(frame, loc):
+# the entries a dropdown drawn as a button shows (study G7): a listbox's
+# options or a menu's radio items, visible
+_MENU_OPTIONS = ("[role=option], [role=menuitemradio], [role=menuitem], "
+                 "[role=menuitemcheckbox]")
+
+
+def _open_menu(frame, loc, *, popup: bool = False):
     """Click the combobox unless its menu is already open; return the visible
     options locator, or None when nothing rendered within LISTBOX_WAIT_MS."""
     expanded = loc.first.get_attribute("aria-expanded", timeout=ACTION_TIMEOUT_MS)
     if expanded != "true":
         loc.first.click(timeout=ACTION_TIMEOUT_MS)
+    options = frame.locator(_MENU_OPTIONS).filter(visible=True) if popup \
+        else _options_locator(frame, loc)
+    try:
+        options.first.wait_for(state="visible", timeout=LISTBOX_WAIT_MS)
+    except Exception:       # noqa: BLE001  (Playwright's TimeoutError)
+        return None
+    return options
+
+
+def _close_menu(page, loc) -> None:
+    """Escape only while a menu is open (FILL-08): an Escape with nothing open
+    would close the dialog the form lives in."""
+    try:
+        expanded = loc.first.get_attribute("aria-expanded", timeout=1_000)
+    except Exception:       # noqa: BLE001
+        expanded = None
+    if expanded == "true":
+        page.keyboard.press("Escape")
+
+
+_TYPEABLE_JS = """el => {
+  const box = el.matches('input, textarea') ? el : el.querySelector('input');
+  return !!box && !box.readOnly && !box.disabled;
+}"""
+
+
+def _type_to_filter(page, frame, loc, want: str):
+    """An async combobox that shows nothing until typed in (EXT-06:
+    Greenhouse's location and school, Ashby's location): the value is typed,
+    and the options it brings are waited for."""
+    try:
+        if not loc.first.evaluate(_TYPEABLE_JS, timeout=ACTION_TIMEOUT_MS):
+            return None
+    except Exception:       # noqa: BLE001
+        return None
+    target = loc.first if (loc.first.evaluate("el => el.tagName") or "") == "INPUT" \
+        else loc.first.locator("input").first
+    target.fill("", timeout=ACTION_TIMEOUT_MS)
+    target.press_sequentially(str(want or "").split(",")[0].strip(), delay=10,
+                              timeout=ACTION_TIMEOUT_MS)
     options = _options_locator(frame, loc)
     try:
         options.first.wait_for(state="visible", timeout=LISTBOX_WAIT_MS)
@@ -238,16 +366,130 @@ def _open_menu(frame, loc):
     return options
 
 
-def _pick_listbox(page, frame, loc, want: str) -> None:
-    options = _open_menu(frame, loc)
+def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False) -> None:
+    options = _open_menu(frame, loc, popup=popup)
+    if options is None and not popup:
+        options = _type_to_filter(page, frame, loc, want)
     if options is None:
         raise LookupError("the listbox showed no options")
     texts = [t.strip() for t in options.all_inner_texts()]
     i = _ci_match(want, texts)
     if i < 0:
-        page.keyboard.press("Escape")
+        _close_menu(page, loc)
         raise LookupError(f"no option {want!r} among {texts}")
     options.nth(i).click(timeout=ACTION_TIMEOUT_MS)
+
+
+# The matches a typeahead offers under its box (study G7: Lever's location has
+# no ARIA): the visible entries of the nearest results list around it, each
+# marked for the click.
+_TYPEAHEAD_OPTIONS_JS = """el => {
+  const visible = (n) => { const st = getComputedStyle(n); const r = n.getBoundingClientRect();
+    return st.display !== 'none' && st.visibility !== 'hidden' && (r.width > 0 || r.height > 0); };
+  let box = el.parentElement;
+  for (let i = 0; box && i < 3; i++, box = box.parentElement) {
+    const lists = box.querySelectorAll('[role=listbox], [class*=dropdown-results], '
+      + '[class*=autocomplete-results], [class*=suggestions], [class*=results]');
+    for (const list of lists) {
+      if (!visible(list)) continue;
+      let opts = Array.from(list.querySelectorAll('[role=option]'));
+      if (!opts.length) opts = Array.from(list.children);
+      opts = opts.filter((o) => visible(o) && (o.innerText || '').trim());
+      if (!opts.length) continue;
+      opts.forEach((o, k) => o.setAttribute('data-apply-option', String(k)));
+      return opts.map((o) => (o.innerText || '').replace(/\\s+/g, ' ').trim());
+    }
+  }
+  return [];
+}"""
+
+
+def _type_ahead(page, frame, loc, value: str) -> None:
+    """Type the value into a typeahead (study G7), wait for its matches and
+    click the one that fits; with no match the typed value stays."""
+    loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
+    loc.first.press_sequentially(value, delay=10, timeout=ACTION_TIMEOUT_MS)
+    deadline = time.monotonic() + LISTBOX_WAIT_MS / 1000
+    texts: list[str] = []
+    while time.monotonic() < deadline:
+        texts = list(loc.first.evaluate(_TYPEAHEAD_OPTIONS_JS, timeout=ACTION_TIMEOUT_MS) or [])
+        if texts:
+            break
+        page.wait_for_timeout(100)
+    if not texts:
+        return
+    i = _ci_match(value, texts)
+    if i < 0:
+        first = (value or "").split(",")[0].strip()
+        i = _ci_match(first, texts)
+    if i < 0:
+        return
+    frame.locator(f'[data-apply-option="{i}"]').first.click(timeout=ACTION_TIMEOUT_MS)
+
+
+_SET_SELECT_JS = """(el, value) => {
+  el.value = value;
+  el.dispatchEvent(new Event('input', {bubbles: true}));
+  el.dispatchEvent(new Event('change', {bubbles: true}));
+  return el.value === value;
+}"""
+
+
+def _select_hidden(loc, want: str) -> None:
+    """A hidden <select> behind a styled trigger (study G6): picked in place,
+    forced past the actionability check, else set and announced by script."""
+    options = loc.first.evaluate(_SELECT_OPTIONS_JS, timeout=ACTION_TIMEOUT_MS)
+    labels = [o[0] for o in options]
+    i = _ci_match(want, labels)
+    if i < 0:
+        i = _ci_match(want, [o[1] for o in options])
+    if i < 0:
+        raise LookupError(f"no option {want!r} among {labels}")
+    try:
+        loc.first.select_option(value=options[i][1], force=True, timeout=ACTION_TIMEOUT_MS)
+    except Exception:       # noqa: BLE001  (a select the page keeps out of reach)
+        loc.first.evaluate(_SET_SELECT_JS, options[i][1], timeout=ACTION_TIMEOUT_MS)
+
+
+_SELECT_ALL_JS = """el => {
+  el.focus();
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  const s = window.getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+}"""
+
+
+def _fill_editable(page, loc, value: str) -> None:
+    """A rich-text box (EXT-13): focused, its content selected, the text
+    inserted as typing would."""
+    loc.first.click(timeout=ACTION_TIMEOUT_MS)
+    loc.first.evaluate(_SELECT_ALL_JS, timeout=ACTION_TIMEOUT_MS)
+    page.keyboard.insert_text(value)
+
+
+def _date_parts(value: str) -> dict[str, str]:
+    iso = _date_value(value)
+    try:
+        d = datetime.strptime(iso, "%Y-%m-%d").date()
+    except ValueError as e:
+        raise LookupError(f"not a date: {value!r}") from e
+    return {"M": f"{d.month:02d}", "D": f"{d.day:02d}", "Y": f"{d.year:04d}"}
+
+
+def _fill_date_parts(page, pf: PlannedField, value: str) -> None:
+    """Month / Day / Year boxes (EXT-12): each part typed into its own box, in
+    the order the widget names ("date:MDY")."""
+    parts = _date_parts(value)
+    order = pf.widget.split(":", 1)[1] if ":" in pf.widget else ""
+    for kind, css in zip(order, pf.option_locators):
+        target = _clicked(page, pf.locator[0], css)
+        if (target.evaluate("el => el.tagName", timeout=ACTION_TIMEOUT_MS) or "") == "INPUT":
+            target.fill(parts[kind], timeout=ACTION_TIMEOUT_MS)
+        else:
+            target.click(timeout=ACTION_TIMEOUT_MS)
+            page.keyboard.insert_text(parts[kind])
 
 
 def _upload(page, locator: tuple[int, str], path: str) -> None:
@@ -263,14 +505,31 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> None:
         return
     if pf.action not in ("fill", "select"):
         return
-    if tag == "SELECT":
+    frame = apply_form.frames(page)[int(pf.locator[0])]
+    widget = pf.widget or ""
+    if widget in ("choice", "checkbox_group"):
+        _choose(page, pf, want)
+    elif widget == "popup":
+        _pick_listbox(page, frame, loc, want, popup=True)
+    elif widget == "combo":
+        _pick_listbox(page, frame, loc, pf.value if pf.action == "fill" else want)
+    elif widget == "typeahead":
+        _type_ahead(page, frame, loc, pf.value if pf.action == "fill" else want)
+    elif widget == "hidden_select":
+        _select_hidden(loc, want)
+    elif widget == "aria_check":
+        _aria_check(loc, want)
+    elif widget == "editable":
+        _fill_editable(page, loc, pf.value if pf.action == "fill" else want)
+    elif widget.startswith("date:"):
+        _fill_date_parts(page, pf, pf.value)
+    elif tag == "SELECT":
         _select_native(loc, want)
     elif tag == "INPUT" and typ == "radio":
-        _check_radio(loc, want)
+        _check_radio(page, loc, want, pf)
     elif tag == "INPUT" and typ == "checkbox":
-        _check_box(loc, want)
+        _check_box(page, loc, want, pf)
     elif role in ("combobox", "listbox"):
-        frame = apply_form.frames(page)[int(pf.locator[0])]
         _pick_listbox(page, frame, loc, want)
     elif tag == "INPUT" and typ == "file":
         raise LookupError("a file input takes an upload action")
@@ -278,10 +537,57 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> None:
         _fill(loc, kind, pf.value if pf.action == "fill" else want)
 
 
-def _read_back(loc, kind: dict[str, str] | None) -> str:
+_POPUP_READ_JS = """el => {
+  const t = (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim();
+  return /^(select|choose|pick|please|--|\u2013|\u2014)/i.test(t) ? '' : t;
+}"""
+_EDITABLE_READ_JS = "el => (el.innerText || '').replace(/\\s+/g, ' ').trim()"
+# a text box inside a dropdown drawn as a box: its value, else the value the
+# box shows beside it (cleared after a pick, as react-select's is)
+_COMBO_READ_JS = """el => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  if (el.value) return norm(el.value);
+  const box = el.closest('[aria-haspopup]');
+  if (!box) return '';
+  const sv = box.querySelector('[class*=single-value], [class*=singleValue]');
+  const t = norm(sv ? sv.textContent : box.innerText);
+  return /^(select|choose|pick|please|--|\u2013|\u2014)/i.test(t) ? '' : t;
+}"""
+
+
+def _read_widget(page, pf: PlannedField, loc) -> str:
+    """What a widget holds now, in the words its options use."""
+    widget = pf.widget or ""
+    if widget in ("choice", "checkbox_group"):
+        chosen = [opt for opt, css in zip(pf.options, pf.option_locators)
+                  if css and _ticked(_clicked(page, pf.locator[0], css))]
+        return ", ".join(chosen) if widget == "checkbox_group" else (chosen[0] if chosen else "")
+    if widget == "popup":
+        return str(loc.first.evaluate(_POPUP_READ_JS, timeout=ACTION_TIMEOUT_MS) or "")
+    if widget == "combo":
+        return str(loc.first.evaluate(_COMBO_READ_JS, timeout=ACTION_TIMEOUT_MS) or "")
+    if widget == "aria_check":
+        return "checked" if _ticked(loc.first) else ""
+    if widget == "editable":
+        return str(loc.first.evaluate(_EDITABLE_READ_JS, timeout=ACTION_TIMEOUT_MS) or "")
+    if widget.startswith("date:"):
+        order = widget.split(":", 1)[1]
+        got = {k: str(_clicked(page, pf.locator[0], css).evaluate(
+            "el => (el.value !== undefined ? el.value : el.innerText) || ''",
+            timeout=ACTION_TIMEOUT_MS)).strip() for k, css in zip(order, pf.option_locators)}
+        if not all(got.values()):
+            return ""
+        return f"{got.get('M', '')}/{got.get('D', '')}/{got.get('Y', '')}"
+    return ""
+
+
+def _read_back(loc, kind: dict[str, str] | None, page=None, pf: PlannedField | None = None) -> str:
     try:
         if loc.count() == 0:
             return ""
+        if pf is not None and pf.widget and pf.widget not in ("typeahead", "hidden_select") \
+                and page is not None:
+            return _read_widget(page, pf, loc)
         if kind and kind["tag"] == "INPUT" and kind["type"] == "radio":
             i = loc.evaluate_all(_CHECKED_INDEX_JS)
             if i is None or i < 0:
@@ -291,6 +597,57 @@ def _read_back(loc, kind: dict[str, str] | None) -> str:
         return str(loc.first.evaluate(_READ_JS, timeout=ACTION_TIMEOUT_MS) or "")
     except Exception:       # noqa: BLE001
         return ""
+
+
+# Who the control is now (FILL-02): the extractor's `identOf`, read on the
+# live element; and every element of the frame, open shadow roots walked,
+# whose identity reads `want` (how a control the page moved is found again).
+IDENT_FN_JS = r"""(el) => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  return [el.tagName.toLowerCase(), (el.getAttribute('type') || '').toLowerCase(),
+    el.id || '', el.getAttribute('name') || '', norm(el.getAttribute('aria-label')),
+    el.getAttribute('data-automation-id') || '', el.getAttribute('data-testid') || '',
+    el.getAttribute('data-qa') || '', norm(el.getAttribute('placeholder'))].join('|');
+}"""
+_FIND_IDENT_JS = r"""(want) => {
+  const identOf = __IDENT__;
+  const all = [];
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      all.push(el);
+      if (el.shadowRoot) walk(el.shadowRoot);
+    }
+  };
+  walk(document);
+  all.forEach((el) => el.removeAttribute('data-apply-found'));
+  const out = all.filter((el) => el.matches('input, select, textarea, button, [role], '
+                                            + '[contenteditable]') && identOf(el) === want);
+  if (out.length === 1) out[0].setAttribute('data-apply-found', '1');
+  return out.length;
+}""".replace("__IDENT__", IDENT_FN_JS)
+_IDENTITY_BLIND = ("choice", "checkbox_group")      # a group's locator names no one control
+
+
+def _same_control(page, pf: PlannedField, loc):
+    """The control `pf` was planned for (FILL-02): the live element at its
+    locator when it is still that control (its identity the extractor read),
+    else the one element of the frame with that identity, else a
+    LookupError: a value is never typed into another box."""
+    if not pf.ident or pf.widget in _IDENTITY_BLIND or "radio" in str(pf.locator[1]):
+        return loc
+    try:
+        live = str(loc.first.evaluate(IDENT_FN_JS, timeout=ACTION_TIMEOUT_MS))
+    except Exception:       # noqa: BLE001  (the click finds out)
+        return loc
+    if live == pf.ident:
+        return loc
+    frame = apply_form.frames(page)[int(pf.locator[0])]
+    found = frame.evaluate(_FIND_IDENT_JS, pf.ident)
+    if found != 1:
+        raise LookupError(f"the control at {pf.locator[1]} is another one now "
+                          f"({found} match its identity)")
+    log.info("apply_fill: %r moved; found again by its identity", pf.label)
+    return frame.locator("[data-apply-found='1']")
 
 
 def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
@@ -304,7 +661,8 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
     passed the remaining fields are left alone and the list so far comes back
     (the job's wall clock belongs to the caller). A failed action lands in
     `errors` as `{n, label, action, error}` with the error's type name only
-    (a Playwright message can quote the value)."""
+    (a Playwright message can quote the value). Before each act the control
+    is checked to be the one planned for (`_same_control`, FILL-02)."""
     out: list[Filled] = []
     for pf in plan.fields:
         if pf.action not in ("fill", "select", "upload"):
@@ -318,6 +676,8 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
             loc = apply_form.resolve(page, pf.locator)
             if loc.count() == 0:
                 raise LookupError(f"no element at {pf.locator}")
+            if pf.action != "upload":
+                loc = _same_control(page, pf, loc)
             kind = _kind(loc)
             _act(page, pf, loc, kind)
         except Exception as e:      # noqa: BLE001  (the read-back reports the outcome)
@@ -327,18 +687,19 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
             if errors is not None:
                 errors.append({"n": pf.n, "label": pf.label, "action": pf.action,
                                "error": type(e).__name__})
-        value = _read_back(loc, kind) if loc is not None else ""
+        value = _read_back(loc, kind, page, pf) if loc is not None else ""
         out.append(Filled(n=pf.n, label=pf.label, value=value))
     return out
 
 
 def open_listbox_options(page, field) -> list[str]:
-    """Open a combobox / listbox field, read its option texts, close it."""
+    """Open a combobox / listbox field (a dropdown drawn as a button too),
+    read its option texts, close it (an Escape only while it is open)."""
     loc = apply_form.resolve(page, field.locator)
     frame = apply_form.frames(page)[int(field.locator[0])]
-    options = _open_menu(frame, loc)
+    options = _open_menu(frame, loc, popup=getattr(field, "widget", "") == "popup")
     texts = [t.strip() for t in options.all_inner_texts()] if options is not None else []
-    page.keyboard.press("Escape")
+    _close_menu(page, loc)
     return [t for t in texts if t]
 
 

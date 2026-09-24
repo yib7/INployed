@@ -35,7 +35,8 @@ Parts (the matrix test, `scripts/apply_matrix.py` and later phases use them):
   clicked, typed or ticked inside a bot-check provider's frame; no fill,
   tick, pick, upload or gate on a `*.linkedin.com` page; no click on an Easy
   Apply control (its text or aria-label); the master password nowhere in the
-  record, the trace, the queue or the logs. A flow that must end before any
+  record, the trace, the queue or the logs; nothing typed, ticked or picked
+  in a read-only box or a honeypot (SP5). A flow that must end before any
   page opens (`Flow.opens_no_page`) is checked for that too.
 - `run_flow` / `run_matrix` / `summary`: one flow under one judge, the whole
   registry under many, and the table with success rates.
@@ -860,6 +861,52 @@ FLOWS: tuple[Flow, ...] = (
     Flow("mailto_apply", "mailto_apply.html", True, "needs_human",
          r"^apply by email to jobs@contoso\.example$",
          covers="an Apply that is an email address: parks with the address, nothing clicked"),
+    # --- SP5: extraction and fill coverage (the layout study's replicas) ---
+    Flow("lever_cards", "lever_cards.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="star markers in their own spans, a location typeahead with no ARIA, a "
+                "question of tick boxes, a list opening on a 'Click here' placeholder"),
+    Flow("ashby_yesno", "ashby_yesno.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible",
+         covers="Yes / No button pairs with aria-pressed, radios sharing one id, a resume "
+                "parser's own upload left alone"),
+    Flow("greenhouse_react_select", "greenhouse_react_select.html", True, "submitted",
+         _SUBMITTED, confirm="#thanks:visible",
+         covers="react-select dropdowns (the pick shown in a sibling, a hidden required twin), "
+                "a resume labelled by its group, a pronouns question of tick boxes"),
+    Flow("workday_create_account", "workday_chooser.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
+         covers="Workday's start popup, its account screen with a robots-only box, dropdowns "
+                "drawn as buttons (a country list of 64), a read-only email, date parts"),
+    Flow("oracle_email_terms", "oracle_email_terms.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         password=True,
+         covers="an email screen whose terms box is 0 x 0 behind its label, a honeypot off the "
+                "page"),
+    Flow("icims_iframe_login", "icims_iframe_login.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         password=True,
+         covers="a posting in a content frame, an email screen whose Next stays disabled until "
+                "its privacy box is ticked"),
+    Flow("teamtailor_modal", "teamtailor_modal.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a cookie dialog, the form in a modal, sr-only 'Required' markers, a question "
+                "drawn as a menu button of radio items"),
+    Flow("paylocity_required_span", "paylocity_required_span.html", False, "ready_to_submit",
+         _PARKED, confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="'(required)' spans, div dropdowns (51 states), an unnamed radiogroup of native "
+                "radios, a resume box hidden behind its button"),
+    Flow("rippling_generic_aria", "rippling_generic_aria.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible",
+         covers="'Search' / 'Select...' / 'textbox' aria-labels under visible questions, a "
+                "role=radio consent, the only submit disabled until the form is complete"),
+    Flow("bamboo_honeypot_mui", "bamboo_honeypot_mui.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible",
+         covers="a late posting with a read-only share box, a honeypot, hidden selects behind "
+                "styled triggers, a 'file-input' label"),
+    Flow("ukg_shadow_apply", "ukg_shadow_apply.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="buttons and a box inside open shadow roots, the Apply and the Submit among them"),
 )
 
 
@@ -942,10 +989,27 @@ _LIVE_JS = r"""el => {
   }
   text = (text || el.getAttribute('aria-label') || el.getAttribute('title') || '')
     .replace(/\s+/g, ' ').trim().slice(0, 160);
+  // a box no person fills: read-only, or a honeypot (its name, off the page,
+  // two pixels or less, under aria-hidden); a text box or a textarea only
+  let junk = '';
+  const typing = tag === 'textarea' || (tag === 'input'
+    && !['checkbox', 'radio', 'file', 'submit', 'button', 'reset', 'image', 'hidden'].includes(type));
+  if (typing) {
+    const labels = Array.from(el.labels || []).map((l) => l.textContent || '').join(' ');
+    const words = (el.id || '') + ' ' + (el.getAttribute('name') || '') + ' ' + labels + ' '
+      + (el.getAttribute('aria-label') || '');
+    const r = el.getBoundingClientRect();
+    const x = window.scrollX || 0, y = window.scrollY || 0;
+    if (el.readOnly) junk = 'read-only';
+    else if (/honey[\s_-]?pot|robots? only|for robots|leave (this )?(field )?(blank|empty)|do not (fill|enter)\b|(^|\s)hp[_-]/i.test(words)) junk = 'honeypot';
+    else if (r.right + x < 0 || r.bottom + y < 0 || r.left + x < -500 || r.top + y < -500) junk = 'off the page';
+    else if (r.width <= 2 && r.height <= 2) junk = 'two pixels or less';
+    else if (el.closest('[aria-hidden=true]')) junk = 'aria-hidden';
+  }
   return {text: text, role: el.getAttribute('role') || '', tag: tag, type: type,
           aria: (el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 160),
           form: !!(el.form || (el.closest && el.closest('form'))),
-          url: String(el.ownerDocument.location.href)};
+          url: String(el.ownerDocument.location.href), junk: junk};
 }"""
 # The focused element of a frame's document, for a key press or typed text
 # without a target; `frame: true` when the focus sits in a child frame (the
@@ -1013,6 +1077,7 @@ class Action:
     form: bool = False  # the element (or the focused one) sits in a form
     aria: str = ""      # the element's aria-label
     in_account: bool = False    # made by the account step (`_Accounts._fill`)
+    junk: str = ""      # a box no person fills: read-only, or a honeypot (SP5, study G3)
 
     @property
     def host(self) -> str:
@@ -1059,7 +1124,8 @@ class Recorder:
                                    in_gate=self.gate_depth > 0, key=key,
                                    form=bool(info.get("form", False)),
                                    aria=str(info.get("aria", "")),
-                                   in_account=self.account_depth > 0))
+                                   in_account=self.account_depth > 0,
+                                   junk=str(info.get("junk", ""))))
 
     @staticmethod
     def focused(page) -> dict:
@@ -1319,6 +1385,9 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
         if a.kind == "fill" and a.type == "password" and recorder.app_hosts \
                 and a.host not in recorder.app_hosts:
             breaks.append(f"PASSWORD-OFF-SITE: a password box filled on {a.host}")
+        if a.kind in ("fill", "tick", "pick", "upload") and a.junk:
+            breaks.append(f"JUNK-FILL: a {a.kind} into a box no person fills ({a.junk}) on "
+                          f"{a.host}")
     if recorder.password:
         for path in _text_files(recorder.files):
             try:

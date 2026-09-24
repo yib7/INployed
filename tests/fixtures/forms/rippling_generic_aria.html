@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam</title>
+<!-- A synthetic replica of a Rippling application (layout study G2, G6, G7,
+     G10): dropdowns whose aria-label is "Search" or "Select..." under a
+     visible question, a text box whose aria-label is "textbox", a consent
+     question drawn as a radiogroup of role=radio divs each holding a hidden
+     native radio, a resume box whose own label is its file count, and the
+     only submit, "Apply", disabled until the form is complete. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; position: relative; }
+  .q { display: block; font-weight: bold; }
+  [role=listbox] { border: 1px solid #555; background: #fff; width: 280px; position: absolute; z-index: 5; }
+  [role=option] { padding: 3px; cursor: pointer; }
+  [role=radio] { display: inline-block; border: 1px solid #555; padding: 4px 10px; margin-right: 6px; cursor: pointer; }
+  [role=radio][aria-checked=true] { background: #234; color: #fff; }
+  [role=radio] input { display: none; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<form id="application" novalidate>
+  <div class="field"><span class="q" id="fn-q">First name *</span><input id="fn" name="first_name" type="text" aria-label="textbox" aria-required="true"></div>
+  <div class="field"><span class="q" id="ln-q">Last name *</span><input id="ln" name="last_name" type="text" aria-label="textbox" aria-required="true"></div>
+  <div class="field"><span class="q">Email *</span><input id="em" name="email" type="email" aria-label="textbox" aria-required="true"></div>
+  <div class="field">
+    <span class="q">Location *</span>
+    <input id="loc" role="combobox" aria-label="Search" aria-expanded="false" aria-autocomplete="list" autocomplete="off"
+           data-choices='["Anytown, CA", "Springfield, IL", "Lakeside, WA"]'>
+  </div>
+  <div class="field">
+    <span class="q">Gender</span>
+    <input id="gender" role="combobox" aria-label="Select..." aria-expanded="false" readonly-look="1" autocomplete="off"
+           data-choices='["Female", "Male", "Non-binary", "Decline to self-identify"]'>
+  </div>
+  <div class="field">
+    <span class="q" id="sms-q">May we text you about this application? *</span>
+    <div role="radiogroup" aria-labelledby="sms-q" aria-required="true">
+      <div role="radio" aria-checked="false" tabindex="0"><input type="radio" name="sms" value="yes">Yes</div>
+      <div role="radio" aria-checked="false" tabindex="-1"><input type="radio" name="sms" value="no">No</div>
+    </div>
+  </div>
+  <div class="field" role="group" aria-labelledby="resume-q">
+    <span class="q" id="resume-q">Resume *</span>
+    <label for="resume" id="count">Total 0 file selected</label>
+    <input id="resume" name="resume" type="file">
+  </div>
+  <button type="button" id="exit">Back to all jobs</button>
+  <button type="submit" id="btn-submit" disabled>Apply</button>
+</form>
+<section id="thanks"><h2>Application submitted</h2><p>Thank you for applying. We will be in touch.</p></section>
+<script>
+  function complete() {
+    return ['fn', 'ln', 'em', 'loc'].every(function (id) { return document.getElementById(id).value; })
+      && document.querySelector('[role=radio][aria-checked=true]') && document.getElementById('resume').files.length;
+  }
+  function refresh() {
+    document.getElementById('btn-submit').disabled = !complete();
+    document.getElementById('count').textContent = 'Total ' + document.getElementById('resume').files.length + ' file selected';
+  }
+  document.querySelectorAll('input').forEach(function (i) { i.addEventListener('input', refresh); i.addEventListener('change', refresh); });
+  document.querySelectorAll('[role=combobox]').forEach(function (box) {
+    var list = null;
+    function close() { if (list) { list.remove(); list = null; } box.setAttribute('aria-expanded', 'false'); }
+    box.addEventListener('click', function () {
+      if (list) return;
+      list = document.createElement('div');
+      list.setAttribute('role', 'listbox');
+      list.id = box.id + '-list';
+      JSON.parse(box.getAttribute('data-choices')).forEach(function (c) {
+        var o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = c;
+        o.addEventListener('click', function () { box.value = c; close(); refresh(); });
+        list.appendChild(o);
+      });
+      box.setAttribute('aria-controls', list.id);
+      box.setAttribute('aria-expanded', 'true');
+      box.parentElement.appendChild(list);
+    });
+    box.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  });
+  document.querySelectorAll('[role=radio]').forEach(function (r) {
+    r.addEventListener('click', function () {
+      document.querySelectorAll('[role=radio]').forEach(function (o) { o.setAttribute('aria-checked', 'false'); });
+      r.setAttribute('aria-checked', 'true');
+      r.querySelector('input').checked = true;
+      refresh();
+    });
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!complete()) return;
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

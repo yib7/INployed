@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam Careers</title>
+<!-- A synthetic replica of a Workday posting (layout study G4, G9): a header
+     that is a div (Sign In, Search for Jobs), an Apply drawn as a link with
+     a button role, and the "Start Your Application" popup it opens with no
+     aria-modal. "Apply Manually" goes on to the account screen. -->
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  [data-automation-id=header] { display: flex; gap: 12px; padding: 12px 24px; background: #eef; }
+  main { margin: 24px; }
+  #start { display: none; position: fixed; left: 50%; top: 50%; width: 394px; height: 403px;
+           margin: -225px 0 0 -221px; background: #fff; border: 1px solid #555; padding: 24px;
+           z-index: 10; }
+  #start a[role=button] { display: block; margin: 12px 0; padding: 8px; border: 1px solid #333;
+                          text-decoration: none; color: #000; }
+</style>
+</head>
+<body>
+<div data-automation-id="header">
+  <a role="button" href="#" data-automation-id="utilityButtonSignIn">Sign In</a>
+  <a role="button" href="#" data-automation-id="navigationItem-Search for Jobs">Search for Jobs</a>
+</div>
+<main>
+  <h2 data-automation-id="jobPostingHeader">Analytics Engineer</h2>
+  <p>Remote, United States &middot; Full time &middot; Job requisition R-1042</p>
+  <a role="button" href="#" id="apply" data-automation-id="adventureButton">Apply</a>
+  <div data-automation-id="jobPostingDescription">
+    <h3>About the team</h3>
+    <p>Our analytics group keeps the reporting layer tidy for every product line.</p>
+    <h3>Responsibilities</h3>
+    <p>Model the warehouse, review changes, and keep the nightly loads healthy.</p>
+    <h3>Qualifications</h3>
+    <p>Two years of SQL and one scripting language.</p>
+  </div>
+</main>
+<div id="start" role="dialog" aria-labelledby="start-title" data-automation-activepopup="true">
+  <h2 id="start-title">Start Your Application</h2>
+  <a role="button" href="#" id="autofill" data-automation-id="autofillWithResume">Autofill with Resume</a>
+  <a role="button" href="#" id="manual" data-automation-id="applyManually">Apply Manually</a>
+  <a role="button" href="#" id="use-last" data-automation-id="useMyLastApplication">Use My Last Application</a>
+</div>
+<script>
+  document.getElementById('apply').addEventListener('click', function (e) {
+    e.preventDefault();
+    document.getElementById('start').style.display = 'block';
+  });
+  ['manual', 'autofill', 'use-last'].forEach(function (id) {
+    document.getElementById(id).addEventListener('click', function (e) {
+      e.preventDefault();
+      location.href = 'workday_create_account.html';
+    });
+  });
+</script>
+</body>
+</html>

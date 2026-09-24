@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam Careers</title>
+<!-- A synthetic replica of a Workday application after "Apply Manually"
+     (layout study G3, G7, EXT-02, EXT-07, EXT-12, FILL-11): the account
+     screen with a robots-only box one pixel wide, then "My Information" with
+     dropdowns drawn as buttons ("Select One", a country list of 64 with the
+     United States of America near its end) and a read-only email, then a
+     date of Month / Day / Year boxes, then the review and its Submit. All
+     steps share one URL. -->
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  [data-automation-id=header] { display: flex; gap: 12px; padding: 12px 24px; background: #eef; }
+  main { margin: 24px; }
+  .step { display: none; }
+  .step.active { display: block; }
+  .field { margin: 12px 0; position: relative; }
+  label { display: block; }
+  .beecatcher { position: absolute; width: 1px; height: 0; border: 0; padding: 0; overflow: hidden; }
+  [role=listbox] { border: 1px solid #555; max-height: 180px; overflow: auto; width: 300px;
+                   background: #fff; position: absolute; z-index: 5; }
+  [role=option] { padding: 3px; cursor: pointer; }
+  .date { display: flex; gap: 6px; }
+  .date input { width: 60px; }
+  #thanks { display: none; }
+  footer { margin-top: 20px; }
+</style>
+</head>
+<body>
+<div data-automation-id="header">
+  <a role="button" href="#" data-automation-id="utilityButtonSignIn">Sign In</a>
+  <a role="button" href="#">Search for Jobs</a>
+</div>
+<main>
+<h2>Analytics Engineer</h2>
+
+<div class="step active" id="step-account" data-automation-id="applyFlowPage">
+  <h3>Create Account</h3>
+  <div class="field"><label for="email">Email Address<abbr title="required">*</abbr></label>
+    <input id="email" type="text" data-automation-id="email" aria-required="true"></div>
+  <div class="field"><label for="password">Password<abbr title="required">*</abbr></label>
+    <input id="password" type="password" data-automation-id="password" aria-required="true"></div>
+  <div class="field"><label for="verify">Verify New Password<abbr title="required">*</abbr></label>
+    <input id="verify" type="password" data-automation-id="verifyPassword" aria-required="true"></div>
+  <input class="beecatcher" type="text" data-automation-id="beecatcher"
+         aria-label="Enter website. This input is for robots only, do not enter if you are human." tabindex="-1">
+  <p id="account-error" role="alert" style="display: none">Passwords do not match.</p>
+  <button type="button" id="create" data-automation-id="createAccountSubmitButton">Create Account</button>
+  <p>Already have an account? <a href="#" data-automation-id="signInLink">Sign In</a></p>
+</div>
+
+<div class="step" id="step-info" data-automation-id="applyFlowPage">
+  <h3>My Information</h3>
+  <p>Step 2 of 4</p>
+  <div class="field" data-automation-id="formField-source">
+    <label id="source-label">How Did You Hear About Us?<abbr title="required">*</abbr></label>
+    <button type="button" id="source" aria-haspopup="listbox" aria-label="How Did You Hear About Us? Select One Required"
+            data-automation-id="sourcePrompt" data-choices='["LinkedIn", "Company Website", "Referral", "Job Board"]'>Select One</button>
+  </div>
+  <div class="field" data-automation-id="formField-country">
+    <label id="country-label">Country<abbr title="required">*</abbr></label>
+    <button type="button" id="country" aria-haspopup="listbox" aria-label="Country Select One Required"
+            data-automation-id="countryDropdown" data-choices='["Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burundi", "Cambodia", "Cameroon", "Canada", "Chile", "China", "Colombia", "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czechia", "Denmark", "Ecuador", "Egypt", "Estonia", "Finland", "France", "Germany", "Ghana", "Greece", "India", "Ireland", "Italy", "Japan", "Kenya", "Mexico", "Netherlands", "Norway", "Peru", "Poland", "Portugal", "Spain", "Sweden", "Switzerland", "Ukraine", "United Kingdom", "United States of America", "Uruguay", "Vietnam"]'>Select One</button>
+  </div>
+  <div class="field"><label for="first">First Name<abbr title="required">*</abbr></label>
+    <input id="first" type="text" data-automation-id="legalNameSection_firstName" aria-required="true"></div>
+  <div class="field"><label for="last">Last Name<abbr title="required">*</abbr></label>
+    <input id="last" type="text" data-automation-id="legalNameSection_lastName" aria-required="true"></div>
+  <div class="field"><label for="account-email">Email</label>
+    <input id="account-email" type="text" readonly data-automation-id="accountEmail" value=""></div>
+  <footer><button type="button" class="next" data-automation-id="bottom-navigation-next-button">Save and Continue</button></footer>
+</div>
+
+<div class="step" id="step-disclosure" data-automation-id="applyFlowPage">
+  <h3>Voluntary Disclosures</h3>
+  <p>Step 3 of 4</p>
+  <div class="field" role="group" aria-labelledby="date-label">
+    <div id="date-label">Today's Date<abbr title="required">*</abbr></div>
+    <div class="date" data-automation-id="dateInputWrapper">
+      <input role="spinbutton" aria-label="Month" data-automation-id="dateSectionMonth-input" placeholder="MM">
+      <input role="spinbutton" aria-label="Day" data-automation-id="dateSectionDay-input" placeholder="DD">
+      <input role="spinbutton" aria-label="Year" data-automation-id="dateSectionYear-input" placeholder="YYYY">
+    </div>
+  </div>
+  <footer><button type="button" class="next" data-automation-id="bottom-navigation-next-button">Save and Continue</button></footer>
+</div>
+
+<div class="step" id="step-review" data-automation-id="applyFlowPage">
+  <h3>Review</h3>
+  <p>Step 4 of 4</p>
+  <p>Please review your application before you submit it.</p>
+  <p id="summary"></p>
+  <footer><button type="button" id="btn-submit" data-automation-id="bottom-navigation-next-button">Submit</button></footer>
+</div>
+<section id="thanks"><h2>Application Submitted</h2><p>Thank you for applying. Your application has been received.</p></section>
+</main>
+<script>
+  var order = ['step-account', 'step-info', 'step-disclosure', 'step-review'];
+  function show(id) {
+    order.forEach(function (s) { document.getElementById(s).classList.toggle('active', s === id); });
+  }
+  document.getElementById('create').addEventListener('click', function () {
+    var e = document.getElementById('email').value, p = document.getElementById('password').value;
+    if (document.querySelector('[data-automation-id=beecatcher]').value) {
+      document.body.setAttribute('data-bot', '1');
+    }
+    if (!e || !p || p !== document.getElementById('verify').value) {
+      document.getElementById('account-error').style.display = 'block';
+      return;
+    }
+    document.getElementById('account-email').value = e;
+    show('step-info');
+  });
+  document.querySelectorAll('button[aria-haspopup=listbox]').forEach(function (b) {
+    var list = null;
+    function close() { if (list) { list.remove(); list = null; } b.setAttribute('aria-expanded', 'false'); }
+    b.addEventListener('click', function () {
+      if (list) { close(); return; }
+      list = document.createElement('div');
+      list.setAttribute('role', 'listbox');
+      list.id = b.id + '-list';
+      JSON.parse(b.getAttribute('data-choices')).forEach(function (c) {
+        var o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = c;
+        o.addEventListener('click', function () {
+          b.textContent = c;
+          b.dataset.value = c;
+          close();
+        });
+        list.appendChild(o);
+      });
+      b.setAttribute('aria-controls', list.id);
+      b.setAttribute('aria-expanded', 'true');
+      b.parentElement.appendChild(list);
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  });
+  document.querySelector('#step-info .next').addEventListener('click', function () {
+    var ok = document.getElementById('source').dataset.value && document.getElementById('country').dataset.value
+      && document.getElementById('first').value && document.getElementById('last').value;
+    if (ok) show('step-disclosure');
+  });
+  document.querySelector('#step-disclosure .next').addEventListener('click', function () {
+    var parts = Array.from(document.querySelectorAll('.date input')).map(function (i) { return i.value; });
+    if (parts.every(Boolean)) {
+      document.getElementById('summary').textContent = 'Country: ' + document.getElementById('country').dataset.value;
+      show('step-review');
+    }
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    order.forEach(function (s) { document.getElementById(s).classList.remove('active'); });
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

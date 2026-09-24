@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer @ Fabrikam</title>
+<!-- A synthetic replica of an Ashby-style application (layout study G2, G7):
+     Yes / No questions as button pairs with aria-pressed and a hidden
+     checkbox, a radio question whose options share one id (so label[for]
+     names the first option only), the required star on the question title,
+     a resume parser's own upload at the top. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field-entry { margin: 16px 0; }
+  .title { display: block; font-weight: bold; }
+  .star { color: #b00; }
+  .yesno button { min-width: 70px; margin-right: 6px; }
+  .yesno button[aria-pressed="true"] { background: #234; color: #fff; }
+  .visually-hidden-box { display: none; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, New York</p>
+<form id="application" novalidate>
+  <div class="autofill-pane field-entry">
+    <p>Autofill from resume</p>
+    <p>Upload your resume here to fill the fields below automatically.</p>
+    <input type="file" id="autofill-file" aria-label="Application">
+  </div>
+  <div class="field-entry">
+    <label class="title" for="_systemfield_name">Name<span class="star">*</span></label>
+    <input id="_systemfield_name" name="_systemfield_name" type="text">
+  </div>
+  <div class="field-entry">
+    <label class="title" for="_systemfield_email">Email<span class="star">*</span></label>
+    <input id="_systemfield_email" name="_systemfield_email" type="email">
+  </div>
+  <div class="field-entry">
+    <label class="title" for="_systemfield_resume">Resume<span class="star">*</span></label>
+    <input id="_systemfield_resume" name="_systemfield_resume" type="file">
+  </div>
+  <div class="field-entry" id="q-auth">
+    <label class="title">Are you legally allowed to take up employment in the United States?<span class="star">*</span></label>
+    <div class="yesno">
+      <button type="button" aria-pressed="false">Yes</button>
+      <button type="button" aria-pressed="false">No</button>
+    </div>
+    <input class="visually-hidden-box" type="checkbox" name="q_auth" tabindex="-1">
+  </div>
+  <div class="field-entry" id="q-sponsor">
+    <label class="title">Will you now or in the future require visa sponsorship?<span class="star">*</span></label>
+    <div class="yesno">
+      <button type="button" aria-pressed="false">Yes</button>
+      <button type="button" aria-pressed="false">No</button>
+    </div>
+    <input class="visually-hidden-box" type="checkbox" name="q_sponsor" tabindex="-1">
+  </div>
+  <fieldset class="field-entry" style="border: 0; padding: 0">
+    <label class="title" for="q_relocate">Are you willing to relocate for this role?<span class="star">*</span></label>
+    <div><input type="radio" id="q_relocate" name="q_relocate" value="yes"><label for="q_relocate">Yes, I am open to it</label></div>
+    <div><input type="radio" id="q_relocate" name="q_relocate" value="no"><label for="q_relocate">No, not at this time</label></div>
+  </fieldset>
+  <button type="submit" id="btn-submit">Submit Application</button>
+  <p id="problems" role="alert" style="display: none"></p>
+</form>
+<section id="thanks"><h2>Thank you for applying</h2><p>Your application was received.</p></section>
+<script>
+  document.querySelectorAll('.yesno').forEach(function (pair) {
+    var box = pair.parentElement.querySelector('input[type=checkbox]');
+    pair.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        pair.querySelectorAll('button').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
+        b.setAttribute('aria-pressed', 'true');
+        box.checked = b.textContent.trim() === 'Yes';
+        box.dataset.answered = '1';
+      });
+    });
+  });
+  document.getElementById('application').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var missing = [];
+    if (!document.getElementById('_systemfield_name').value) missing.push('Name');
+    if (!document.getElementById('_systemfield_email').value) missing.push('Email');
+    if (!document.getElementById('_systemfield_resume').files.length) missing.push('Resume');
+    document.querySelectorAll('input[type=checkbox][name^=q_]').forEach(function (box) {
+      if (!box.dataset.answered) missing.push(box.name);
+    });
+    if (!document.querySelector('input[name=q_relocate]:checked')) missing.push('relocate');
+    if (missing.length) {
+      var p = document.getElementById('problems');
+      p.textContent = 'Please answer: ' + missing.join(', ');
+      p.style.display = 'block';
+      return;
+    }
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

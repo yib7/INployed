@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Embedded Software Engineer | Careers at Fabrikam Defense Systems</title>
+<!-- The content frame of icims_iframe_login.html (a synthetic replica):
+     the posting, the email-first screen, the application step. -->
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  .step { display: none; }
+  .step.active { display: block; }
+  .field { margin: 10px 0; }
+  label { display: block; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<div class="step active" id="posting">
+  <h1 class="iCIMS_Header">Embedded Software Engineer</h1>
+  <a class="iCIMS_ApplyOnlineButton" id="apply" href="#">Apply for this job online</a>
+  <h2>Overview</h2>
+  <p>Write and test firmware for the flight control units our customers rely on.</p>
+  <h2>Responsibilities</h2>
+  <p>Design, review and verify embedded code; pair with the hardware team on bring-up.</p>
+  <h2>Qualifications</h2>
+  <p>A degree in computer science or a related field, and two years of C.</p>
+</div>
+<form class="step" id="login" action="#" novalidate>
+  <h2>Welcome</h2>
+  <p>Enter your email address to start your application.</p>
+  <div class="field"><label for="email">Email Address</label><input id="email" name="email" type="email"></div>
+  <div class="field"><label><input type="checkbox" id="accept_gdpr" name="accept_gdpr" required>
+    I agree to the privacy notice for candidates</label></div>
+  <input type="submit" id="enterEmailSubmitButton" value="Next" disabled>
+</form>
+<div class="step" id="form">
+  <h2>Candidate Profile</h2>
+  <div class="field"><label for="first">First Name *</label><input id="first" type="text" required></div>
+  <div class="field"><label for="last">Last Name *</label><input id="last" type="text" required></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" type="tel"></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" type="file" required></div>
+  <button type="button" id="btn-submit">Submit</button>
+</div>
+<section id="thanks"><h2>Thank you</h2><p>Your application has been submitted.</p></section>
+<script>
+  function show(id) {
+    document.querySelectorAll('.step').forEach(function (s) { s.classList.toggle('active', s.id === id); });
+  }
+  document.getElementById('apply').addEventListener('click', function (e) { e.preventDefault(); show('login'); });
+  var box = document.getElementById('accept_gdpr');
+  box.addEventListener('change', function () {
+    document.getElementById('enterEmailSubmitButton').disabled = !box.checked;
+  });
+  document.getElementById('login').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (document.getElementById('email').value && box.checked) show('form');
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    if (!document.getElementById('first').value || !document.getElementById('resume').files.length) return;
+    document.body.setAttribute('data-submitted', '1');
+    show('none');
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

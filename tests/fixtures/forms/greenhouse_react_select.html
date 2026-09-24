@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Job Application for Analytics Engineer at Fabrikam</title>
+<!-- A synthetic replica of Greenhouse's newer job board form (layout study
+     G2, G3, G8, EXT-10): react-select style dropdowns (an input with role
+     combobox whose pick shows in a sibling and clears the input, a hidden
+     required twin at opacity 0), a resume group labelled by its heading
+     while its own label says "Attach", a pronouns question of tick boxes,
+     a "Toggle flyout" button beside each dropdown. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 14px 0; position: relative; }
+  .select__control { display: flex; border: 1px solid #888; width: 320px; min-height: 30px; }
+  .select__value-container { flex: 1; display: grid; padding: 2px 6px; }
+  .select__placeholder, .select__single-value, .select__input-container { grid-area: 1 / 1; }
+  .select__placeholder { color: #888; }
+  .select__input { border: 0; outline: 0; width: 100%; background: transparent; }
+  .select__menu { border: 1px solid #888; width: 320px; background: #fff; }
+  .select__option { padding: 4px; cursor: pointer; }
+  .requiredInput { opacity: 0; position: absolute; left: 0; bottom: 0; height: 1px; width: 100%;
+                   pointer-events: none; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden;
+                     clip: rect(0 0 0 0); white-space: nowrap; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam &middot; Remote</p>
+<form id="application-form" novalidate>
+  <h2>Apply for this job</h2>
+  <div class="field"><label for="first_name">First Name<span aria-hidden="true">*</span></label>
+    <input id="first_name" name="first_name" type="text" aria-required="true"></div>
+  <div class="field"><label for="last_name">Last Name<span aria-hidden="true">*</span></label>
+    <input id="last_name" name="last_name" type="text" aria-required="true"></div>
+  <div class="field"><label for="email">Email<span aria-hidden="true">*</span></label>
+    <input id="email" name="email" type="email" aria-required="true"></div>
+
+  <div class="field" role="group" aria-labelledby="upload-label-resume">
+    <div id="upload-label-resume">Resume/CV<span aria-hidden="true">*</span></div>
+    <div class="upload-buttons">
+      <button type="button" class="attach">Attach</button>
+      <button type="button">Dropbox</button>
+      <button type="button">Enter manually</button>
+    </div>
+    <label for="resume" class="visually-hidden">Attach</label>
+    <input id="resume" name="resume" type="file" class="visually-hidden">
+  </div>
+
+  <div class="field" data-select="q_auth">
+    <label id="q_auth-label" for="q_auth">Are you legally allowed to take up employment in the United States?<span aria-hidden="true">*</span></label>
+    <div class="select__control">
+      <div class="select__value-container">
+        <div class="select__placeholder">Select...</div>
+        <div class="select__input-container">
+          <input id="q_auth" class="select__input" role="combobox" aria-labelledby="q_auth-label"
+                 aria-expanded="false" aria-haspopup="true" aria-autocomplete="list" autocomplete="off">
+        </div>
+      </div>
+      <button type="button" aria-label="Toggle flyout" tabindex="-1"><svg width="10" height="10" aria-hidden="true"><path d="M0 0L10 0L5 8z"></path></svg></button>
+    </div>
+    <input class="requiredInput" tabindex="-1" aria-hidden="true" required value="">
+  </div>
+
+  <div class="field" data-select="q_sponsor">
+    <label id="q_sponsor-label" for="q_sponsor">Will you now or in the future require visa sponsorship?<span aria-hidden="true">*</span></label>
+    <div class="select__control">
+      <div class="select__value-container">
+        <div class="select__placeholder">Select...</div>
+        <div class="select__input-container">
+          <input id="q_sponsor" class="select__input" role="combobox" aria-labelledby="q_sponsor-label"
+                 aria-expanded="false" aria-haspopup="true" aria-autocomplete="list" autocomplete="off">
+        </div>
+      </div>
+      <button type="button" aria-label="Toggle flyout" tabindex="-1"><svg width="10" height="10" aria-hidden="true"><path d="M0 0L10 0L5 8z"></path></svg></button>
+    </div>
+    <input class="requiredInput" tabindex="-1" aria-hidden="true" required value="">
+  </div>
+
+  <fieldset class="field" style="border: 0; padding: 0">
+    <legend>Which pronouns do you use?</legend>
+    <label><input type="checkbox" id="question_77[]_1" name="question_77[]" value="1"> He/him</label>
+    <label><input type="checkbox" id="question_77[]_2" name="question_77[]" value="2"> She/her</label>
+    <label><input type="checkbox" id="question_77[]_3" name="question_77[]" value="3"> They/them</label>
+  </fieldset>
+
+  <button type="submit" id="btn-submit">Submit application</button>
+  <p id="problems" role="alert" style="display: none"></p>
+</form>
+<section id="thanks"><h2>Thank you for applying</h2><p>Your application has been received.</p></section>
+<script>
+  var CHOICES = ['Yes', 'No'];
+  document.querySelectorAll('[data-select]').forEach(function (field) {
+    var input = field.querySelector('.select__input');
+    var control = field.querySelector('.select__control');
+    var twin = field.querySelector('.requiredInput');
+    var menu = null;
+    function close() { if (menu) { menu.remove(); menu = null; } input.setAttribute('aria-expanded', 'false'); }
+    function open() {
+      if (menu) return;
+      menu = document.createElement('div');
+      menu.className = 'select__menu';
+      menu.id = input.id + '-listbox';
+      menu.setAttribute('role', 'listbox');
+      CHOICES.forEach(function (c) {
+        var o = document.createElement('div');
+        o.className = 'select__option';
+        o.setAttribute('role', 'option');
+        o.textContent = c;
+        o.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        o.addEventListener('click', function () {
+          var sv = control.querySelector('.select__single-value');
+          if (!sv) {
+            sv = document.createElement('div');
+            sv.className = 'select__single-value';
+            control.querySelector('.select__value-container').insertBefore(sv, control.querySelector('.select__input-container'));
+          }
+          sv.textContent = c;
+          control.querySelector('.select__placeholder').style.display = 'none';
+          input.value = '';
+          twin.value = c;
+          close();
+        });
+        menu.appendChild(o);
+      });
+      input.setAttribute('aria-controls', menu.id);
+      input.setAttribute('aria-expanded', 'true');
+      field.appendChild(menu);
+    }
+    control.addEventListener('click', function () { input.focus(); open(); });
+    input.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    input.addEventListener('blur', function () { setTimeout(close, 150); });
+  });
+  document.getElementById('application-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var missing = [];
+    ['first_name', 'last_name', 'email'].forEach(function (id) {
+      if (!document.getElementById(id).value) missing.push(id);
+    });
+    if (!document.getElementById('resume').files.length) missing.push('resume');
+    document.querySelectorAll('.requiredInput').forEach(function (t) { if (!t.value) missing.push('a question'); });
+    if (missing.length) {
+      var p = document.getElementById('problems');
+      p.textContent = 'Missing: ' + missing.join(', ');
+      p.style.display = 'block';
+      return;
+    }
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application-form').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

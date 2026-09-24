@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Senior Analytics Engineer - Fabrikam</title>
+<!-- A synthetic replica of a Teamtailor posting (layout study G1, G2, G7,
+     G9): a cookie dialog over the page, an Apply that opens the form in a
+     modal overlay on the same URL, required labels that end in a star and
+     an sr-only "Required", a question drawn as a button that opens a menu
+     of radio items (each holding a hidden radio), a one-pixel sr-only text
+     box beside it. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+             clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  #cookies { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 2px solid #333;
+             padding: 16px; z-index: 30; }
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 20; }
+  #overlay .panel { background: #fff; width: 760px; margin: 20px auto; padding: 24px; max-height: 90vh;
+                    overflow: auto; }
+  .field { margin: 12px 0; position: relative; }
+  label { display: block; }
+  [role=menu] { border: 1px solid #555; background: #fff; width: 260px; }
+  [role=menuitemradio] { display: block; width: 100%; text-align: left; padding: 4px; border: 0; background: none; }
+  [role=menuitemradio] input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Senior Analytics Engineer</h1>
+<p>Fabrikam &middot; Remote, US</p>
+<button type="button" id="apply" data-action="click->form-overlay#showFormOverlay">Apply</button>
+<h2>About the role</h2>
+<p>Shape the models our finance team reads each quarter and mentor two analysts.</p>
+<h2>Responsibilities</h2>
+<p>Own the revenue models, review the team's changes, and keep the nightly loads healthy.</p>
+<h2>Qualifications</h2>
+<p>Four years of SQL, a warehouse, and a scripting language.</p>
+
+<div id="cookies" role="dialog" aria-label="Cookie settings" class="cookie-consent">
+  <p>We use cookies to improve your experience and to measure how the site is used.</p>
+  <button type="button" id="decline-cookies">Decline all non-necessary cookies</button>
+  <button type="button" id="accept-cookies">Accept all cookies</button>
+</div>
+
+<div id="overlay">
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="form-title">
+    <h2 id="form-title">Apply for Senior Analytics Engineer</h2>
+    <form id="application" novalidate>
+      <div class="field"><label for="first_name">First name<span aria-hidden="true">*</span><span class="sr-only">Required</span></label>
+        <input id="first_name" name="first_name" type="text"></div>
+      <div class="field"><label for="last_name">Last name<span aria-hidden="true">*</span><span class="sr-only">Required</span></label>
+        <input id="last_name" name="last_name" type="text"></div>
+      <div class="field"><label for="email">Email<span aria-hidden="true">*</span><span class="sr-only">Required</span></label>
+        <input id="email" name="email" type="email"></div>
+      <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="tel"></div>
+      <div class="field">
+        <div id="state-q">Which of these states do you currently live in?<span aria-hidden="true">*</span><span class="sr-only">Required</span></div>
+        <input class="sr-only" type="text" name="state_proxy" aria-labelledby="state-q" tabindex="-1">
+        <button type="button" id="state" aria-haspopup="menu" aria-expanded="false" aria-labelledby="state-q">Select an option</button>
+        <div role="menu" id="state-menu" hidden>
+          <button type="button" role="menuitemradio" aria-checked="false"><input type="radio" name="state" value="CA">California</button>
+          <button type="button" role="menuitemradio" aria-checked="false"><input type="radio" name="state" value="NY">New York</button>
+          <button type="button" role="menuitemradio" aria-checked="false"><input type="radio" name="state" value="TX">Texas</button>
+          <button type="button" role="menuitemradio" aria-checked="false"><input type="radio" name="state" value="WA">Washington</button>
+        </div>
+      </div>
+      <div class="field"><label for="resume">Resume<span aria-hidden="true">*</span><span class="sr-only">Required</span></label>
+        <input id="resume" name="resume" type="file"></div>
+      <div class="field"><label><input type="checkbox" id="consent" name="consent">
+        <span class="sr-only">Required.</span>I confirm that the information in this application is accurate</label></div>
+      <button type="submit" id="btn-submit">Send application</button>
+      <p id="problems" role="alert"></p>
+    </form>
+  </div>
+</div>
+<section id="thanks"><h2>Thank you for applying</h2><p>Your application has been received.</p></section>
+<script>
+  function hideCookies() { document.getElementById('cookies').style.display = 'none'; }
+  document.getElementById('decline-cookies').addEventListener('click', hideCookies);
+  document.getElementById('accept-cookies').addEventListener('click', hideCookies);
+  document.getElementById('apply').addEventListener('click', function () {
+    document.getElementById('overlay').style.display = 'block';
+  });
+  var trigger = document.getElementById('state');
+  var menu = document.getElementById('state-menu');
+  trigger.addEventListener('click', function () {
+    var open = menu.hidden;
+    menu.hidden = !open;
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  menu.querySelectorAll('[role=menuitemradio]').forEach(function (item) {
+    item.addEventListener('click', function () {
+      menu.querySelectorAll('[role=menuitemradio]').forEach(function (o) { o.setAttribute('aria-checked', 'false'); });
+      item.setAttribute('aria-checked', 'true');
+      item.querySelector('input').checked = true;
+      trigger.textContent = item.textContent.trim();
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      if (!menu.hidden) { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+      else document.getElementById('overlay').style.display = 'none';
+    }
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var missing = ['first_name', 'last_name', 'email'].filter(function (id) { return !document.getElementById(id).value; });
+    if (!document.querySelector('input[name=state]:checked')) missing.push('state');
+    if (!document.getElementById('resume').files.length) missing.push('resume');
+    if (missing.length) { document.getElementById('problems').textContent = 'Missing: ' + missing.join(', '); return; }
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('overlay').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

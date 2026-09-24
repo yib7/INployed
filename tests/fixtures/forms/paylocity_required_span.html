@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam Holdings</title>
+<!-- A synthetic replica of a Paylocity application (layout study G2, G6, G7,
+     EXT-07): every required label ends in its own "(required)" span, Country
+     and State are dropdowns drawn as divs with aria-haspopup=listbox (the
+     state list has 51 entries, California past the 4th and Washington past
+     the 40th), "How did you hear about us?" is a radiogroup of native radios
+     with no name of its own, the resume box is hidden behind its button,
+     icon buttons carry no text. Step 1 of 2, then the review and its Submit. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; position: relative; }
+  label, .q { display: block; }
+  .req { color: #a00; font-size: 0.85em; margin-left: 4px; }
+  .dropdown { border: 1px solid #777; width: 280px; padding: 4px; cursor: pointer; }
+  [role=listbox] { border: 1px solid #555; background: #fff; width: 280px; max-height: 200px; overflow: auto;
+                   position: absolute; z-index: 5; }
+  [role=option] { padding: 3px; cursor: pointer; }
+  .icon { width: 24px; height: 24px; }
+  .step { display: none; }
+  .step.active { display: block; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<button type="button" class="icon" title=""><svg width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle></svg></button>
+<button type="button" class="icon"><svg width="16" height="16" aria-hidden="true"><rect width="12" height="12"></rect></svg></button>
+<div class="step active" id="step-1">
+  <p>Step 1 of 2</p>
+  <h2>Personal Information</h2>
+  <div class="field"><label for="FirstName">First Name <span class="req">(required)</span></label>
+    <input id="FirstName" name="FirstName" type="text"></div>
+  <div class="field"><label for="LastName">Last Name <span class="req">(required)</span></label>
+    <input id="LastName" name="LastName" type="text"></div>
+  <div class="field"><label for="Email">Email <span class="req">(required)</span></label>
+    <input id="Email" name="Email" type="text"></div>
+  <div class="field"><label for="Mobile">Mobile Phone</label>
+    <input id="Mobile" name="Mobile" type="tel"></div>
+  <div class="field"><label id="country-label">Country <span class="req">(required)</span></label>
+    <div class="dropdown" id="Country" role="button" tabindex="0" aria-haspopup="listbox" aria-labelledby="country-label"
+         data-choices='["Canada", "Mexico", "United Kingdom", "United States"]'>Select a country</div></div>
+  <div class="field"><label id="state-label">State <span class="req">(required)</span></label>
+    <div class="dropdown" id="State" role="button" tabindex="0" aria-haspopup="listbox" aria-labelledby="state-label"
+         data-choices='["Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "District of Columbia", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"]'>Select a state</div></div>
+  <div class="field">
+    <span class="q">How did you hear about us? <span class="req">(required)</span></span>
+    <div role="radiogroup">
+      <label><input type="radio" name="Source" value="linkedin"> LinkedIn</label>
+      <label><input type="radio" name="Source" value="indeed"> A job board</label>
+      <label><input type="radio" name="Source" value="friend"> A friend</label>
+    </div>
+  </div>
+  <div class="field">
+    <label for="Resume">Resume <span class="req">(required)</span></label>
+    <button type="button" id="upload" onclick="document.getElementById('Resume').click()">Upload a file</button>
+    <input id="Resume" name="Resume" type="file" style="display: none">
+  </div>
+  <button type="button" id="next">Next Step</button>
+</div>
+<div class="step" id="step-2">
+  <p>Step 2 of 2</p>
+  <h2>Review and submit</h2>
+  <p id="summary"></p>
+  <button type="button" id="btn-submit">Submit Application</button>
+</div>
+<section id="thanks"><h2>Application submitted</h2><p>Thank you for applying.</p></section>
+<script>
+  document.querySelectorAll('.dropdown').forEach(function (d) {
+    var list = null;
+    function close() { if (list) { list.remove(); list = null; } d.setAttribute('aria-expanded', 'false'); }
+    d.addEventListener('click', function () {
+      if (list) { close(); return; }
+      list = document.createElement('div');
+      list.setAttribute('role', 'listbox');
+      list.id = d.id + '-list';
+      JSON.parse(d.getAttribute('data-choices')).forEach(function (c) {
+        var o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = c;
+        o.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          d.textContent = c;
+          d.dataset.value = c;
+          close();
+        });
+        list.appendChild(o);
+      });
+      d.setAttribute('aria-controls', list.id);
+      d.setAttribute('aria-expanded', 'true');
+      d.parentElement.appendChild(list);
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  });
+  document.getElementById('next').addEventListener('click', function () {
+    var ok = ['FirstName', 'LastName', 'Email'].every(function (id) { return document.getElementById(id).value; })
+      && document.getElementById('Country').dataset.value && document.getElementById('State').dataset.value
+      && document.querySelector('input[name=Source]:checked') && document.getElementById('Resume').files.length;
+    if (!ok) return;
+    document.getElementById('summary').textContent = 'State: ' + document.getElementById('State').dataset.value;
+    document.getElementById('step-1').classList.remove('active');
+    document.getElementById('step-2').classList.add('active');
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('step-2').classList.remove('active');
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

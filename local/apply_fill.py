@@ -316,23 +316,24 @@ def _typed(loc, text: str) -> None:
     loc.first.press_sequentially(text, delay=15, timeout=ACTION_TIMEOUT_MS)
 
 
-def _fill(loc, kind: dict[str, str], value: str) -> None:
+def _fill(loc, kind: dict[str, str], value: str) -> str:
     """Type `value` into a text-like box in the shape the box asks for: a
     native date control ISO; a number box the value's number (FILL-06); a
     text box whose hints name a date format that format (FILL-05, "Date
     (MM/DD/YYYY)"); a phone box its national digits when a country-code
     control sits on its row or its pattern or length asks for bare digits,
     typed key by key into a masked box, and typed again key by key when a
-    mask left the box holding other digits (FILL-04)."""
+    mask left the box holding other digits (FILL-04). Returns how
+    (FILL-15)."""
     if kind["tag"] == "INPUT" and kind["type"] == "date":
         loc.first.fill(_date_value(value), timeout=ACTION_TIMEOUT_MS)
-        return
+        return "date"
     if kind["tag"] == "INPUT" and kind["type"] == "number":
         loc.first.fill(number_value(value), timeout=ACTION_TIMEOUT_MS)
-        return
+        return "number"
     if kind["tag"] != "INPUT" or kind["type"] in ("checkbox", "radio", "file", "password"):
         loc.first.fill(value, timeout=ACTION_TIMEOUT_MS)
-        return
+        return "fill"
     try:
         hints = dict(loc.first.evaluate(_HINTS_JS, timeout=ACTION_TIMEOUT_MS) or {})
     except Exception:       # noqa: BLE001  (the fill finds out)
@@ -341,25 +342,28 @@ def _fill(loc, kind: dict[str, str], value: str) -> None:
     fmt = date_format(hints) if d is not None else ""
     if fmt:
         loc.first.fill(format_date(d, fmt), timeout=ACTION_TIMEOUT_MS)
-        return
+        return f"date as {fmt}"
     digits = phone_digits(value)
     if not _phoneish(hints) or len(digits) < 7:
         loc.first.fill(value, timeout=ACTION_TIMEOUT_MS)
-        return
+        return "fill"
     bare = _DIGITS_ONLY.search(str(hints.get("pattern") or ""))
     national = bool(hints.get("cc")) or bool(bare) or hints.get("maxlength") == len(digits)
     text = digits if national else value
     if _masked(hints):
         _typed(loc, digits)
-        return
+        return "phone digits key by key"
     loc.first.fill(text, timeout=ACTION_TIMEOUT_MS)
+    how = "phone national digits" if national else "fill"
     try:
         now = str(loc.first.input_value(timeout=ACTION_TIMEOUT_MS) or "")
     except Exception:       # noqa: BLE001  (the read-back finds out)
-        return
+        return how
     if phone_digits(now) != digits:
         # a mask that takes keys only, or mangled the pasted value
         _typed(loc, digits)
+        return "phone digits key by key"
+    return how
 
 
 def _select_native(loc, want: str) -> None:
@@ -843,7 +847,7 @@ def _upload(page, locator: tuple[int, str], path: str) -> None:
     frame.set_input_files(str(locator[1]), path, timeout=ACTION_TIMEOUT_MS)
 
 
-def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> None:
+def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> str:
     want = pf.option if pf.option is not None else pf.value
     tag, typ, role = kind["tag"], kind["type"], kind["role"]
     if pf.action == "upload":
@@ -852,43 +856,54 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> None:
             # would attach it twice (FILL-01)
             log.info("apply_fill: %r already holds %s; not uploaded again", pf.label,
                      _file_name(pf.value))
-            return
+            return "upload already shown"
         _upload(page, pf.locator, pf.value)
-        return
+        return "upload"
     if pf.action not in ("fill", "select"):
-        return
+        return ""
     frame = apply_form.frames(page)[int(pf.locator[0])]
     widget = pf.widget or ""
     if widget in ("choice", "checkbox_group"):
         _choose(page, pf, want)
-    elif widget == "popup":
+        return "option click"
+    if widget == "popup":
         _pick_listbox(page, frame, loc, want, popup=True)
-    elif widget == "combo":
+        return "menu pick"
+    if widget == "combo":
         _pick_listbox(page, frame, loc, pf.value if pf.action == "fill" else want)
-    elif widget == "typeahead":
+        return "list pick"
+    if widget == "typeahead":
         _type_ahead(page, frame, loc, pf.value if pf.action == "fill" else want)
-    elif widget == "hidden_select":
+        return "typeahead"
+    if widget == "hidden_select":
         _select_hidden(loc, want)
-    elif widget == "aria_check":
+        return "hidden select"
+    if widget == "aria_check":
         _aria_check(loc, want)
-    elif widget == "editable":
+        return "custom tick"
+    if widget == "editable":
         _fill_editable(page, loc, pf.value if pf.action == "fill" else want)
-    elif widget.startswith("date:"):
+        return "rich text"
+    if widget.startswith("date:"):
         _fill_date_parts(page, pf, pf.value)
-    elif tag == "SELECT":
+        return "date parts"
+    if tag == "SELECT":
         _select_native(loc, want)
-    elif tag == "INPUT" and typ == "radio":
+        return "select"
+    if tag == "INPUT" and typ == "radio":
         _check_radio(page, loc, want, pf)
-    elif tag == "INPUT" and typ == "checkbox":
+        return "radio"
+    if tag == "INPUT" and typ == "checkbox":
         _check_box(page, loc, want, pf)
-    elif role in ("combobox", "listbox"):
+        return "tick"
+    if role in ("combobox", "listbox"):
         face = _clicked(page, pf.click_locator[0], pf.click_locator[1]) \
             if pf.click_locator else None
         _pick_listbox(page, frame, loc, want, face=face)
-    elif tag == "INPUT" and typ == "file":
+        return "list pick"
+    if tag == "INPUT" and typ == "file":
         raise LookupError("a file input takes an upload action")
-    else:
-        _fill(loc, kind, pf.value if pf.action == "fill" else want)
+    return _fill(loc, kind, pf.value if pf.action == "fill" else want)
 
 
 _POPUP_READ_JS = """el => {
@@ -1042,7 +1057,7 @@ def _same_control(page, pf: PlannedField, loc):
 def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
           deadline: float | None = None,
           clock: Callable[[], float] = time.monotonic,
-          errors: list | None = None) -> list[Filled]:
+          errors: list | None = None, outcomes: list | None = None) -> list[Filled]:
     """Perform every `fill` / `select` / `upload` in `plan` and return the
     read-back value of each acted field. `skip` and `generate` are not acted
     on and do not appear in the result. `deadline` is an instant on `clock`
@@ -1054,7 +1069,9 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
     is checked to be the one planned for (`_same_control`, FILL-02). The
     uploads go first and the page settles after them (FILL-03: a resume
     parser writes its guesses then, and the planned values go in after
-    them); the result keeps the plan's order."""
+    them); the result keeps the plan's order. `outcomes` (FILL-15) takes
+    one row per acted field: {n, label, action, how, error} (how it was
+    acted on, the error's type name when it failed; never the value)."""
     done: dict[int, Filled] = {}
     acted = [pf for pf in plan.fields if pf.action in ("fill", "select", "upload")]
     order = [pf for pf in acted if pf.action == "upload"] + \
@@ -1071,6 +1088,7 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
             break
         loc = None
         kind = None
+        how, failed = "", ""
         try:
             loc = apply_form.resolve(page, pf.locator)
             if loc.count() == 0:
@@ -1078,8 +1096,9 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
             if pf.action != "upload":
                 loc = _same_control(page, pf, loc)
             kind = _kind(loc)
-            _act(page, pf, loc, kind)
+            how = _act(page, pf, loc, kind)
         except Exception as e:      # noqa: BLE001  (the read-back reports the outcome)
+            failed = type(e).__name__
             # the type alone: a Playwright message quotes the call, value included
             _say(log, f"apply_fill: {pf.action} on {pf.label!r} ({pf.locator[1]}) failed: "
                       f"{type(e).__name__}")
@@ -1088,6 +1107,9 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
                                "error": type(e).__name__})
         value = _read_back(loc, kind, page, pf) if loc is not None else ""
         done[pf.n] = Filled(n=pf.n, label=pf.label, value=value)
+        if outcomes is not None:
+            outcomes.append({"n": pf.n, "label": pf.label, "action": pf.action, "how": how,
+                             "error": failed})
     return [done[pf.n] for pf in acted if pf.n in done]
 
 

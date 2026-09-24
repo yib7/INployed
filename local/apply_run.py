@@ -2394,8 +2394,10 @@ def _usage_delta(before: dict, after: dict) -> dict[str, Any]:
 
 
 def generated_count(pages: list[dict]) -> int:
-    """Accepted generated answers across the job's page records."""
-    return sum(1 for p in pages for g in p.get("generated", []) if g.get("ok"))
+    """Accepted generated answers across the job's page records (a draft
+    reused on a page read again counts once, FILL-12)."""
+    return sum(1 for p in pages for g in p.get("generated", [])
+               if g.get("ok") and not g.get("reused"))
 
 
 def _drafts(plan: FillPlan) -> dict[int, str]:
@@ -2481,6 +2483,13 @@ def new_fields(before: apply_form.FormDigest,
         if not known:
             out.append(f)
     return out
+
+
+def _draft_key(f) -> str:
+    """A generated answer's question, as the draft cache keys it (FILL-12):
+    its label and its help (a length budget), case and spacing aside."""
+    return " | ".join(" ".join(str(getattr(f, attr, "") or "").lower().split())
+                      for attr in ("label", "help"))
 
 
 def buttons_moved(before: apply_form.FormDigest, after: apply_form.FormDigest) -> bool:
@@ -2637,6 +2646,14 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
             lines.append("- Uploads:")
             for r in uploads:
                 lines.append(f"  - {r.get('label', '')}: {r.get('value', '')}")
+        if p.get("fill_outcomes"):
+            # FILL-15: how each field was acted on, and the error's type when
+            # the act failed (never a value)
+            lines.append("- Fill outcomes:")
+            for o in p["fill_outcomes"]:
+                what = (f"failed ({o.get('error')})" if o.get("error")
+                        else str(o.get("how") or o.get("action") or ""))
+                lines.append(f"  - {o.get('label', '')}: {what}")
         if p.get("verification"):
             lines.append("- Verification:")
             for v in p["verification"]:
@@ -2999,6 +3016,8 @@ class _JobRun:
         self._last_filled: dict[int, apply_fill.Filled] = {}
         self._idle: list[tuple[Any, str | None]] = []
         self._refilled: set[int] = set()    # fields put back once after the page changed them
+        self._drafts_by_question: dict[str, str] = {}   # FILL-12: accepted drafts, this job
+        self._options_seen: dict[tuple, list[str]] = {}  # FILL-09: a page's listbox options
         self._repaired = False              # the last `_repair` acted on the page
         self._submit_repairs = 0            # repairs after the form refused the submit (ADV-02)
         self._gate_repairs = 0              # repairs of what the gate read invalid, this page
@@ -3210,13 +3229,24 @@ class _JobRun:
             buttons=[b for b in digest.buttons if int(b.locator[0]) not in dropped])
 
     def _discover_listbox_options(self, digest: apply_form.FormDigest) -> None:
-        """Read choices rendered only after a listbox is opened, before planning."""
+        """Read choices rendered only after a listbox is opened, before
+        planning. A page read again (a step the form sent back) takes the
+        options its listboxes showed before, by the page's path, the
+        control's locator and its label, and opens none of them again
+        (FILL-09)."""
+        path = urlsplit(str(getattr(self.page, "url", "") or "")).path
         for control in digest.fields:
             if control.type != "listbox" or control.options \
                     or getattr(control, "widget", "") == "typeahead":
                 continue
+            key = (path, tuple(control.locator), " ".join(control.label.split()))
+            if self._options_seen.get(key):
+                control.options = list(self._options_seen[key])
+                continue
             try:
                 control.options = apply_fill.open_listbox_options(self.page, control)
+                if control.options:
+                    self._options_seen[key] = list(control.options)
             except apply_fill.PopupRefused as e:
                 # its own words send: never opened, left unanswered (round 8)
                 control.refused = str(e)
@@ -4778,9 +4808,11 @@ class _JobRun:
             idle_before = [None] * len(idle)
         self._idle += list(zip(idle, idle_before))
         errors: list[dict] = []
+        outcomes: list[dict] = []
         filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock,
-                                  errors=errors)
-        self._trace_fill(plan, filled, errors)
+                                  errors=errors, outcomes=outcomes)
+        self._trace_fill(plan, filled, errors, outcomes=outcomes)
+        rec.setdefault("fill_outcomes", []).extend(outcomes)
         locators = {pf.n: pf.locator for pf in plan.fields}
         self._filled_here += [locators[f.n] for f in filled
                               if f.n in locators and str(f.value or "").strip()]
@@ -4982,12 +5014,14 @@ class _JobRun:
                 dataclasses.replace(plan, buttons=dict(roles.buttons)))
 
     def _trace_fill(self, plan: FillPlan, filled: list[apply_fill.Filled], errors: list[dict],
-                    *, retry: bool = False) -> None:
-        """Which boxes took a value (never the value) and the fill errors by
-        their type."""
+                    *, retry: bool = False, outcomes: list[dict] | None = None) -> None:
+        """Which boxes took a value (never the value), how each was acted on
+        (FILL-15) and the fill errors by their type."""
         actions = {pf.n: pf.action for pf in plan.fields}
+        how = {o["n"]: o.get("how", "") for o in outcomes or []}
         self._trace("fill", retry=retry, errors=errors,
                     fields=[{"n": f.n, "label": f.label, "action": actions.get(f.n, ""),
+                             "how": how.get(f.n, ""),
                              "holds_value": bool(str(f.value or "").strip())} for f in filled])
 
     def _review_page(self, digest: apply_form.FormDigest, answers: dict,
@@ -5165,6 +5199,14 @@ class _JobRun:
                 continue
             f = by_n.get(pf.n)
             text, note, record_note = None, "", ""
+            key = _draft_key(f if f is not None else pf)
+            if key in self._drafts_by_question:
+                # FILL-12: the same question read again (a page the form sent
+                # back, a re-read): its accepted draft, no second generation
+                pf.action, pf.value = "fill", self._drafts_by_question[key]
+                rows.append({"label": pf.label, "ok": True, "reused": True,
+                             "note": "the draft already made for this question"})
+                continue
             if self.gen_budget <= 0:
                 note = "generation budget exhausted"
             elif f is not None:
@@ -5182,6 +5224,7 @@ class _JobRun:
                     record_note = "no generator"
             if text:
                 pf.action, pf.value = "fill", str(text)
+                self._drafts_by_question[key] = str(text)
                 rows.append({"label": pf.label, "ok": True, "note": note or "generated"})
                 continue
             rows.append({"label": pf.label, "ok": False,

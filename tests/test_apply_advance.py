@@ -9,6 +9,9 @@
   its box names (FILL-05); a number box's number (FILL-06); an upload widget
   that resets its input, read from its chip and never uploaded twice
   (FILL-01); each verified in code. Escape only while a menu shows (FILL-08).
+- The fill's record: how each field was acted on and its error (FILL-15),
+  a draft made once per question (FILL-12), a page read again keeping its
+  listboxes' options (FILL-09).
 
 Headless Chromium through the module-scoped test browser; no network, no
 judge but `FakeJev` or a scripted one."""
@@ -333,3 +336,95 @@ def test_the_upload_reset_flow_uploads_once_and_reaches_the_gate(_browser, flow_
                    server=flow_server, workdir=tmp_path)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert [a.kind for a in r.actions].count("upload") == 1
+
+
+# === the fill's record (FILL-09, FILL-12, FILL-15) ==============================================
+
+def test_each_fields_act_is_recorded_with_how_and_its_error(browser_page, _browser, flow_server,
+                                                           tmp_path):
+    # FILL-15: the fill says how it acted on each field and the error's type
+    browser_page.set_content("""<body><form><label>Phone <input id="p" type="tel"
+      placeholder="(___) ___-____"></label><label>Name <input id="n"></label></form></body>""")
+    d = apply_form.extract(browser_page)
+    phone, name = _by_label(d, "Phone"), _by_label(d, "Name")
+    gone = PlannedField(n=9, locator=(0, "#nowhere"), label="Gone", required=False,
+                        fact_key="x", value="x", option=None, confidence=1.0, action="fill")
+    outcomes: list = []
+    apply_fill.apply(browser_page, FillPlan(fields=[
+        _planned(phone, "fill", "555-555-0100"), _planned(name, "fill", "Jane"), gone]),
+        outcomes=outcomes)
+    assert [(o["label"], o["how"], o["error"]) for o in outcomes] == [
+        ("Phone", "phone digits key by key", ""), ("Name", "fill", ""), ("Gone", "", "LookupError")]
+    # and the record carries them
+    r = h.run_flow(h.flow("masked_phone"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    record = (Path(r.trace).parent.parent / apply_run.RECORD_NAME).read_text(encoding="utf-8")
+    assert "- Fill outcomes:" in record and "  - Phone: phone digits key by key" in record
+    assert "  - Mobile number: phone national digits" in record
+
+
+def test_a_draft_is_made_once_per_question_and_reused_when_the_page_comes_back(tmp_path):
+    from unittest.mock import Mock
+    import apply_facts
+
+    class Gen:
+        calls = 0
+        last = None
+
+        def answer(self, field, catalog, judge, *, budget):
+            Gen.calls += 1
+            return "Two years of ingestion pipelines at Acme Corp."
+    runner = apply_run.Runner(jev=jev.FakeJev(), context=Mock(), run_context={},
+                              sleep=lambda s: None, answergen=Gen())
+    run = apply_run._JobRun(runner, Mock(), {"job_posting_id": "s",
+                                             "apply_url": "https://x.example/1"})
+    run.catalog = apply_facts.build(h.write_job_folder(tmp_path / "job"), answers=h.bank())
+    essay = apply_form.Field(0, (0, "#q"), "Why this role?", "textarea", True,
+                             help="Max 500 characters.")
+    digest = apply_form.FormDigest("x.example", "Apply", "", fields=[essay])
+
+    def plan():
+        return FillPlan(fields=[PlannedField(n=0, locator=essay.locator, label=essay.label,
+                                             required=True, fact_key="needs_generation",
+                                             value="", option=None, confidence=0.9,
+                                             action="generate")])
+    pages = []
+    for _ in range(2):
+        rec = {"generated": []}
+        p = plan()
+        run._resolve_generation(digest, p, rec)
+        assert p.fields[0].action == "fill" and p.fields[0].value.startswith("Two years")
+        pages.append(rec)
+    assert Gen.calls == 1 and run.gen_budget == apply_run.GENERATE_MAX - 1
+    assert pages[1]["generated"][0]["reused"] is True
+    assert apply_run.generated_count(pages) == 1
+
+
+def test_a_page_read_again_takes_its_listboxes_options_without_opening_them(browser_page):
+    from unittest.mock import Mock
+    # the menu is drawn on the click and taken away when it closes
+    browser_page.set_content("""<body><form><div><label for="t">Team</label>
+      <button type="button" id="t" aria-haspopup="listbox">Select...</button></div></form>
+      <script>
+      document.getElementById('t').addEventListener('click', () => {
+        window.opens = (window.opens || 0) + 1;
+        const m = document.createElement('div');
+        m.id = 'm'; m.setAttribute('role', 'listbox');
+        m.innerHTML = '<div role="option">Data</div><div role="option">Platform</div>';
+        document.body.appendChild(m);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && document.getElementById('m')) document.getElementById('m').remove();
+      });</script></body>""")
+    run = apply_run._JobRun(apply_run.Runner(jev=jev.FakeJev(), context=Mock(), run_context={},
+                                             sleep=lambda s: None), Mock(),
+                            {"job_posting_id": "s", "apply_url": "https://x.example/1"})
+    run.page = browser_page
+    for _ in range(2):
+        d = apply_form.extract(browser_page)
+        assert _by_label(d, "Team").options == []
+        run._discover_listbox_options(d)
+        assert _by_label(d, "Team").options == ["Data", "Platform"]
+    assert browser_page.evaluate("window.opens") == 1
+
+

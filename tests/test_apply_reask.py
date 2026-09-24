@@ -61,8 +61,7 @@ def _digest():
         _f(0, "Are you authorized to work in the US?", "select", options=("Yes", "No")),
         _f(1, "Will you now or in the future require sponsorship?", "radio",
            options=("Yes", "No")),
-        _f(2, "I certify that the information provided is accurate", "checkbox",
-           options=("checked",)),
+        _f(2, "I consent to a background check", "checkbox", options=("checked",)),
         _f(3, "Anything else?", "textarea", required=False),
         _f(4, "What is your favourite colour?", "text"),
         _f(5, "Social Security Number", "text"),
@@ -94,6 +93,13 @@ def test_the_second_look_takes_a_dropped_or_weak_source_and_a_consent_under_its_
     answers["field_1_pick"] = _choice("No", 0.5)
     plan = apply_judge.plan(digest, catalog, answers)
     assert apply_judge.reask_targets(digest, catalog, answers, plan, what="pick") == [1]
+    # a routine consent (SP5 round 2) at 0.80 ticks: it is no target
+    routine = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "I certify that the information provided is accurate", "checkbox",
+           options=("checked",))])
+    answers = {"field_0_source": _choice("consent_attest", 0.80)}
+    plan = apply_judge.plan(routine, catalog, answers)
+    assert apply_judge.reask_targets(routine, catalog, answers, plan, what="source") == []
 
 
 def test_a_quick_map_field_gets_its_pick_asked_again_never_its_source(catalog):
@@ -317,7 +323,8 @@ def test_a_question_the_data_cannot_answer_still_parks_after_the_second_look(
 
 def test_a_consent_tick_read_under_its_floor_is_ticked_after_a_sure_second_look(
         _browser, flow_server, tmp_path):
-    judge = ScaleFirst(jev.FakeJev(), "certify")
+    # a routine consent's floor is the mapping floor (SP5 round 2): read under it
+    judge = ScaleFirst(jev.FakeJev(), "certify", conf=0.60)
     r = _run("greenhouse_embed", judge, _browser, flow_server, tmp_path)
     assert judge.done
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
@@ -327,15 +334,22 @@ def test_a_consent_tick_read_under_its_floor_is_ticked_after_a_sure_second_look(
 
 # --- a consent tick's second look stands alone (review I1) -------------------------------------
 
-@pytest.mark.parametrize("second, ticked", [
-    (("consent_attest", 0.90), True),
-    (("consent_attest", 0.84), False),      # under the floor: parks, however the first look read
-    (("leave_blank", 0.95), False),
+_CERTIFY = "I certify that the information provided is accurate"      # routine
+_BACKGROUND_CHECK = "I consent to a background check"                    # a commitment
+
+
+@pytest.mark.parametrize("label, second, ticked", [
+    (_BACKGROUND_CHECK, ("consent_attest", 0.90), True),
+    # under the floor: parks, however the first look read
+    (_BACKGROUND_CHECK, ("consent_attest", 0.84), False),
+    (_CERTIFY, ("consent_attest", 0.72), True),         # a routine consent's floor is 0.70
+    (_CERTIFY, ("consent_attest", 0.68), False),
+    (_CERTIFY, ("leave_blank", 0.95), False),
 ])
-def test_a_consent_ticks_second_look_stands_alone_against_its_floor(catalog, second, ticked):
+def test_a_consent_ticks_second_look_stands_alone_against_its_floor(catalog, label, second,
+                                                                    ticked):
     digest = FormDigest(url_host="x", title="t", text="", fields=[
-        _f(0, "I certify that the information provided is accurate", "checkbox",
-           options=("checked",))])
+        _f(0, label, "checkbox", options=("checked",))])
     pf = apply_judge.plan(digest, catalog, {"field_0_source": _choice(*second)}).fields[0]
     assert (pf.action == "select" and pf.option == "checked") is ticked
 
@@ -388,7 +402,8 @@ def test_a_borderline_commitment_read_under_the_floor_twice_still_parks(
 
 
 def test_a_certify_box_read_under_its_floor_on_both_looks_parks(_browser, flow_server, tmp_path):
-    r = _run("greenhouse_embed", ConsentEvery(jev.FakeJev(), "certify", 0.80), _browser,
+    # read under a routine consent's floor (the mapping floor) on both looks
+    r = _run("greenhouse_embed", ConsentEvery(jev.FakeJev(), "certify", 0.66), _browser,
              flow_server, tmp_path)
     assert (r.status, r.reason) == ("needs_human", "required field without an answer: I "
                                                    "certify that the information provided is "

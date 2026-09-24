@@ -108,7 +108,9 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 #   FIELD_MAP_MIN_CONF 0.70    49 answers, min 0.69 (a login wall's Email box, which
 #                              the accounts hook fills and `plan` never reads); the
 #                              mappings a fill depends on sit at 0.84 and above.
-#   CONSENT_MIN_CONF 0.85      no fixture checkbox; unexercised, kept.
+#   CONSENT_MIN_CONF 0.85      no fixture checkbox; unexercised, kept. Since SP5 round 2 it
+#                              holds only a consent that is not routine (`CONSENT_RULES`):
+#                              a routine one ticks at FIELD_MAP_MIN_CONF.
 #   OPTION_MIN_CONF 0.70       2 real picks (`field_{n}_pick`), 0.89 and 1.00.
 #   BUTTON_SUBMIT_MIN_CONF 0.90 6 answers, min 0.95.
 #   BUTTON_ADVANCE_MIN_CONF 0.75 14 answers, all 1.00 (0.66 on a wizard's Continue
@@ -241,6 +243,98 @@ SPECIAL_DESCRIPTIONS: dict[str, Any] = {
                         "a draft is written for it",
     "leave_blank": "No source applies; the box is left blank",
 }
+
+# --- consent ticks: routine or not (controller decision, SP5 round 2) ----------------------------
+# `CONSENT_MIN_CONF` was never calibrated, and under the noise model it parked
+# every third required privacy box; a live judge reads some routine boxes under
+# it too. A `consent_attest` read whose box's own label names only routine
+# things (the application's privacy notice, policy or statement; the site's
+# terms of use or terms and conditions; the processing or storing of the
+# application's data; that the information given is true, accurate or
+# complete; contact about this application or role) ticks at
+# `FIELD_MAP_MIN_CONF`. A label that names a commitment (the words below and
+# the `not_for` list of `consent_attest`), or anything else, keeps
+# `CONSENT_MIN_CONF`. "Names only" is read word by word: every word of the label
+# is a routine word, a word of assent or a function word, or a name
+# (capitalised, followed by a possessive or a routine noun: "Fabrikam's
+# Privacy Policy", "the Adatum Privacy Notice"); one other word and it is no
+# routine consent.
+CONSENT_RULES: dict[str, Any] = {
+    # at least one routine thing is named
+    "routine": re.compile(
+        r"\bprivacy\b|\bterms\b|\bconditions\b|\b(process|stor|retain|retention|collect)\w*"
+        r"|\b(true|truthful|accurate|complete|correct)\b|\bcontact\w*", re.I),
+    # a commitment: any of these words keeps CONSENT_MIN_CONF
+    "commitment": re.compile(
+        r"background|criminal|\bcredit\b|\bdrug|\bage\b|\baged\b|\b18\b|\bminors?\b"
+        r"|non[\s-]?compet|relocat|arbitrat|\bsms\b|\btext(s|ing)?\b|marketing|newsletter"
+        r"|\bmedical\b|\bphysical\b|\bscreening\b|\bmonitor\w*|\bsurveillance\b", re.I),
+    # the words a routine label may use
+    "words": frozenset("""
+        i we you me my our your us the a an to of for and or in on with by at from that this
+        these those it its is are be been being am was were have has had hereby here herein
+        above below all any as such so s which who how what where when per under via within
+        agree agreed agreeing agrees accept accepted accepting acknowledge acknowledged
+        acknowledging consent consented consenting confirm confirmed confirming certify
+        certified certifying attest attested affirm affirmed declare declared understand
+        understood read reviewed review check checking box ticking tick clicking click
+        submit submitting
+        privacy notice notices policy policies statement statements terms term conditions
+        condition use usage service services legal
+        data personal information info details application applications applying apply
+        candidate candidates applicant applicants candidacy recruitment recruiting hiring
+        process processes processed processing store stores stored storing storage retain
+        retained retaining retention collect collects collected collecting collection handle
+        handled handling used using keep kept
+        true truthful accurate complete correct best knowledge provided given supplied
+        submitted entered contained stated
+        contact contacted contacting reach email emails phone call regarding about concerning
+        role position job opening vacancy
+        describes explains sets out outlined described
+        """.split()),
+    # the nouns a name may stand before ("Fabrikam's", "the Adatum Privacy Notice")
+    "named": frozenset("s privacy notice policy statement terms candidate candidates applicant "
+                       "applicants recruitment careers career".split()),
+    # a label longer than this is read as more than a routine box
+    "max_chars": 300,
+}
+
+
+def routine_consent(label: str) -> bool:
+    """Whether a consent box's own label names only routine things
+    (`CONSENT_RULES`): such a `consent_attest` read ticks at
+    `FIELD_MAP_MIN_CONF`; any other keeps `CONSENT_MIN_CONF`."""
+    text = " ".join(str(label or "").split())
+    rules = CONSENT_RULES
+    if not text or len(text) > rules["max_chars"] or not rules["routine"].search(text) \
+            or rules["commitment"].search(text):
+        return False
+    tokens = re.findall(r"[A-Za-z0-9]+", text)
+    for i, token in enumerate(tokens):
+        if token.lower() in rules["words"]:
+            continue
+        if token[0].isupper() and _names_before(tokens, i):
+            continue
+        return False
+    return True
+
+
+def _names_before(tokens: list[str], i: int) -> bool:
+    """Whether `tokens[i]` (capitalised) is a name: it and the capitalised
+    words after it stand before a possessive "s" or a routine noun."""
+    j = i + 1
+    while j < len(tokens) and tokens[j][0].isupper() \
+            and tokens[j].lower() not in CONSENT_RULES["words"]:
+        j += 1
+    return j < len(tokens) and tokens[j].lower() in CONSENT_RULES["named"]
+
+
+def consent_floor(label: str) -> float:
+    """The confidence a `consent_attest` read of the box needs to tick it:
+    `FIELD_MAP_MIN_CONF` for a routine consent (`routine_consent`), else
+    `CONSENT_MIN_CONF`."""
+    return FIELD_MAP_MIN_CONF if routine_consent(label) else CONSENT_MIN_CONF
+
 
 # A login wall's sign-in button and a signup form's create-account button are
 # `advance` (spec 3.5): they move the flow forward without sending the
@@ -1406,8 +1500,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     the same rule; `signature_today` fills today's date for a date control or
     a label with `date` / `dated` / `today` as a whole word, else the typed
     name; `consent_attest` (a checkbox's attestation, privacy or contact
-    consent) is `select` with option `checked` at or above `CONSENT_MIN_CONF`,
-    and below it follows the unanswerable rule; a sensitive box is never
+    consent) is `select` with option `checked` at or above its floor
+    (`consent_floor`: `FIELD_MAP_MIN_CONF` for a routine consent, else
+    `CONSENT_MIN_CONF`), and below it follows the unanswerable rule; a sensitive box is never
     answered, and a password box is `PASSWORD_ACTION`, with no value. Buttons
     keep the highest-confidence n per role. The one
     park reason is a required field without an answer; the flags are recorded only. A
@@ -1430,7 +1525,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
                           f.n, f.label, quick, model_key, model_conf)
         elif model_key is None or model_key == "leave_blank" or model_conf < FIELD_MAP_MIN_CONF:
             fact_key, conf = None, model_conf
-        elif model_key == "consent_attest" and model_conf < CONSENT_MIN_CONF:
+        elif model_key == "consent_attest" and model_conf < consent_floor(f.label):
             fact_key, conf = None, model_conf
         else:
             fact_key, conf = model_key, model_conf
@@ -1556,12 +1651,12 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
     With `what` "source": no `field_{n}_source` answer came back (the first
     look dropped it), its mapping sits under `FIELD_MAP_MIN_CONF` (an unsure
     `leave_blank` too: an unsure "nothing fits" is no answer), or a
-    `consent_attest` tick under `CONSENT_MIN_CONF`; a field `quick_map`
+    `consent_attest` tick under its floor (`consent_floor`); a field `quick_map`
     settles is never one. With "pick": its fact is known and has a value,
     the field has options and its pick is missing or under
     `OPTION_MIN_CONF`. A confident `leave_blank` or a confident `no_match` is
     the data's own answer: that field parks as it did. A consent tick's
-    second look stands alone against `CONSENT_MIN_CONF` (review I1)."""
+    second look stands alone against its floor (review I1)."""
     if what not in REASK_WHAT:
         raise ValueError(f"unknown re-ask {what!r}")
     by_n = {f.n: f for f in digest.fields}
@@ -1578,7 +1673,7 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
                 continue
             key, conf = _choice_of(answers, f"field_{f.n}_source")
             if key is None or conf < FIELD_MAP_MIN_CONF \
-                    or (key == "consent_attest" and conf < CONSENT_MIN_CONF):
+                    or (key == "consent_attest" and conf < consent_floor(f.label)):
                 out.append(f.n)
             continue
         if not (f.options and pf.fact_key and pf.fact_key not in SPECIAL_SOURCES

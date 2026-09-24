@@ -307,14 +307,18 @@ def test_plan_consent_attest_checks_the_box(catalog):
                                          "Subscribe to job alerts"]
 
 
+_ARBITRATION = "I agree to the terms, including the arbitration agreement"
+
+
 @pytest.mark.parametrize("conf,expected", [(0.8, "skip"), (0.9, "select"), (0.85, "select")])
 def test_plan_consent_attest_needs_its_own_higher_floor(catalog, conf, expected):
     """Ticking a box the loop cannot take back needs more than the ordinary
-    mapping floor: below `CONSENT_MIN_CONF` (0.85, above `FIELD_MAP_MIN_CONF`)
-    the ordinary unanswerable rule applies."""
+    mapping floor: a consent that names a commitment, below `CONSENT_MIN_CONF`
+    (0.85, above `FIELD_MAP_MIN_CONF`), follows the ordinary unanswerable
+    rule."""
     assert apply_judge.CONSENT_MIN_CONF == 0.85 > apply_judge.FIELD_MAP_MIN_CONF
     digest = FormDigest(url_host="x", title="t", text="", fields=[
-        _f(0, "I agree to the terms", "checkbox", required=True)])
+        _f(0, _ARBITRATION, "checkbox", required=True)])
     p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("consent_attest", conf)}))
     box = p.fields[0]
     assert box.action == expected and box.confidence == conf
@@ -323,8 +327,72 @@ def test_plan_consent_attest_needs_its_own_higher_floor(catalog, conf, expected)
         assert p.park_reason == "" and p.missing == []
     else:
         assert box.fact_key is None and box.option is None and box.value == ""
-        assert p.park_reason == "required field without an answer: I agree to the terms"
-        assert p.missing == [("I agree to the terms", "checkbox")]
+        assert p.park_reason == f"required field without an answer: {_ARBITRATION}"
+        assert p.missing == [(_ARBITRATION, "checkbox")]
+
+
+# --- routine consents tick at the mapping floor (controller decision, SP5 round 2) --------------
+
+@pytest.mark.parametrize("label, conf, ticked", [
+    ("I agree to the privacy notice for candidates", 0.72, True),
+    ("I consent to a background check", 0.80, False),
+    (_ARBITRATION, 0.80, False),
+    ("I agree to receive SMS messages about my application", 0.80, False),
+    ("I agree to the privacy notice for candidates", 0.68, False),     # under the mapping floor
+])
+def test_a_routine_consent_ticks_at_the_mapping_floor_and_a_commitment_does_not(
+        catalog, label, conf, ticked):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, label, "checkbox", required=True)])
+    p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("consent_attest", conf)}))
+    box = p.fields[0]
+    assert (box.action == "select" and box.option == "checked") is ticked, (label, conf)
+    assert (p.park_reason == "") is ticked
+    # a routine tick under CONSENT_MIN_CONF is no target of the second look
+    targets = apply_judge.reask_targets(digest, catalog, _page_answers(
+        digest, {0: ("consent_attest", conf)}), p, what="source")
+    assert (targets == []) is ticked
+
+
+@pytest.mark.parametrize("label", [
+    "I agree to the privacy notice for candidates",
+    "I certify that the information provided is accurate",
+    "I agree with the terms and conditions of the application",
+    "I confirm that the information in this application is accurate",
+    "I have read and accept Fabrikam's Privacy Policy",
+    "I have read the Adatum Privacy Notice for Candidates",
+    "I consent to the processing and storage of my personal data for this application",
+    "I agree to be contacted about this role",
+    "By checking this box, I acknowledge that I have read the Terms of Use",
+    "I certify that the information in this application is true and complete to the best "
+    "of my knowledge",
+])
+def test_a_label_that_names_only_routine_things_is_a_routine_consent(label):
+    assert apply_judge.routine_consent(label), label
+
+
+@pytest.mark.parametrize("label", [
+    "I consent to a background check",
+    "I consent to a criminal record check",
+    "I consent to a credit check",
+    "I agree to a drug test",
+    "I am 18 years of age or older",
+    "I confirm I am of legal working age",
+    "I agree to the non-compete agreement",
+    "I am willing to relocate",
+    _ARBITRATION,
+    "I agree to receive SMS messages about my application",
+    "I agree to receive text messages about my application",
+    "I agree to receive marketing emails",
+    "Subscribe me to the newsletter",
+    "I agree to share my data with partners",
+    "I agree to be contacted about future opportunities",
+    "I agree to the privacy policy and to share my data with Partners",
+    "I agree",
+    "I Agree To Share My Data With Partners",
+])
+def test_a_label_that_names_a_commitment_or_anything_else_is_no_routine_consent(label):
+    assert not apply_judge.routine_consent(label), label
 
 
 def test_unbacked_file_specials_are_not_offered(catalog, tmp_path):

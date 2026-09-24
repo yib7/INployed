@@ -1948,11 +1948,14 @@ _THIRD_PARTY = apply_judge.THIRD_PARTY
 
 def step_position(digest: apply_form.FormDigest) -> tuple[int, int] | None:
     """(this step, the steps in all) when the page says so ("Step 2 of 4",
-    "Page 1 / 3"), else None."""
-    m = _STEP_OF.search(f"{digest.title or ''}\n{digest.text or ''}")
-    if not m:
+    "Page 1 / 3"), else None. A page that shows several different markers
+    (a progress list that names every step) says nothing of which one it
+    is on: None (SP6 review M5)."""
+    marks = {(int(m.group(1)), int(m.group(2)))
+             for m in _STEP_OF.finditer(f"{digest.title or ''}\n{digest.text or ''}")}
+    if len(marks) != 1:
         return None
-    here, total = int(m.group(1)), int(m.group(2))
+    here, total = next(iter(marks))
     return (here, total) if 0 < here <= total else None
 
 

@@ -142,6 +142,19 @@ def test_a_next_beside_a_submit_goes_on_unless_the_page_is_the_last_step(text, a
     assert (got, button[0]) == (step, 0 if step == "advance" else 1)
 
 
+def test_a_progress_list_that_names_every_step_is_no_step_marker():
+    # SP6 review M5: "Step 1 of 2 ... Step 2 of 2" says nothing of where the
+    # page is; the same marker twice (a title and a heading) still does
+    progress = "Step 1 of 2: About you\nStep 2 of 2: Documents\nResume *"
+    assert apply_run.step_position(_route_digest(progress)) is None
+    assert apply_run.step_position(_route_digest("Step 2 of 4\nStep 2 of 4: Documents")) == (2, 4)
+    # on the last step with the submit among the fields, the gate, never the Next
+    digest = _route_digest(progress, "Next", "Submit")
+    plan = FillPlan(buttons={"advance": (0, 0.9), "submit": (1, 0.9)})
+    got, button, _ = apply_run.form_route(digest, plan, park_mode=True, submit_apart=False)
+    assert (got, button[0]) == ("gate", 1)
+
+
 def test_a_step_read_as_a_review_goes_on_beside_another_boxs_submit_too():
     # the matrix's next_and_feedback_submit seed 8: the step read as a review
     digest = _route_digest("", "Next", "Submit")

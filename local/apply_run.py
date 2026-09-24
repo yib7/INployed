@@ -1730,6 +1730,10 @@ def posting_context(page, digest: apply_form.FormDigest,
     return apart, len(scan), scan
 
 
+_NEXT_WORDS = re.compile(r"\b(next|continue)\b", re.I)
+_WITH_WORDS = re.compile(r"\bwith\b|\bsign[\s-]*(in|up)\b|\blog[\s-]*in\b", re.I)
+
+
 def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
                park_mode: bool) -> tuple[str, tuple[int, float] | None, str]:
     """A filled page's way on, as (step, button, why): "advance" with the
@@ -1751,6 +1755,16 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
                        and not apply_judge.DECLINE_WORDS.search(b.text)
                        and "cookie" not in b.text.lower()
                        and not getattr(b, "chrome", False)), None)
+        if accept is None:
+            # the page's own Next or Continue when the judge named no way on
+            # (SP5: Workday's "Save and Continue" judged other while its
+            # header's buttons took the advance); never a "Continue with ..."
+            # sign-in, never a send
+            accept = next((b for b in digest.buttons if _NEXT_WORDS.search(b.text)
+                           and not _WITH_WORDS.search(b.text)
+                           and not apply_judge.DECLINE_WORDS.search(b.text)
+                           and not _submit_shaped(digest, b.n)
+                           and not getattr(b, "chrome", False)), None)
         if accept is not None:
             advance = (accept.n, apply_judge.BUTTON_ADVANCE_MIN_CONF)
     if advance is not None and (_submit_shaped(digest, advance[0])

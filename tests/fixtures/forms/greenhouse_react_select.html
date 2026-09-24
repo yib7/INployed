@@ -131,7 +131,10 @@
     }
     control.addEventListener('click', function () { input.focus(); open(); });
     input.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
-    input.addEventListener('blur', function () { setTimeout(close, 150); });
+    // the menu closes once the focus has left its field for good
+    input.addEventListener('blur', function () {
+      setTimeout(function () { if (document.activeElement !== input) close(); }, 150);
+    });
   });
   document.getElementById('application-form').addEventListener('submit', function (ev) {
     ev.preventDefault();

@@ -126,3 +126,21 @@ def test_an_account_screen_never_clicks_the_sites_header_sign_in():
     # two buttons of the screen's own that name the step: no guess
     digest.buttons.append(Button(n=3, locator=(0, "#l"), text="Sign in instead"))
     assert apply_run.account_advance(digest, FillPlan(buttons={"advance": (0, 0.95)})) is None
+
+
+def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():
+    import apply_run
+    from apply_judge import FillPlan
+    digest = FormDigest(url_host="x", title="My Information", text="Step 2 of 4", fields=[
+        _f(0, "First Name", required=True)], buttons=[
+        Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
+        Button(n=1, locator=(0, "#s"), text="Search for Jobs", chrome=True),
+        Button(n=2, locator=(0, "#g"), text="Continue with Google"),
+        Button(n=3, locator=(0, "#n"), text="Save and Continue")])
+    # the header's buttons judged the advance, the page's own Save and Continue other
+    plan = FillPlan(buttons={"advance": (1, 0.97), "other": (3, 0.9)})
+    assert apply_run.form_route(digest, plan, park_mode=True) == (
+        "advance", (3, apply_judge.BUTTON_ADVANCE_MIN_CONF), "")
+    # a sign-in's "Continue with ..." is never the way on
+    digest.buttons = digest.buttons[:3]
+    assert apply_run.form_route(digest, plan, park_mode=True)[0] == "stuck"

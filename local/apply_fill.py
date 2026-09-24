@@ -50,6 +50,7 @@ SETTLE_QUIET_S = 2.0           # _settle returns once nothing has moved for this
 SETTLE_MAX_S = 8.0             # _settle gives up on a page that keeps moving after this
 NETWORK_IDLE_MS = 3_000        # best-effort wait for the network to go quiet
 LISTBOX_WAIT_MS = 2_000        # for a combobox menu to render its options
+OPTION_CLICK_MS = 2_000        # an option's click; a menu that closed under it is opened again
 POLL_S = 0.25                  # click_button's DOM poll
 CHECKED_WORDS = ("checked", "yes", "true", "on", "1")
 UNCHECKED_WORDS = ("unchecked", "no", "false", "off", "0")
@@ -377,7 +378,17 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False) -> None:
     if i < 0:
         _close_menu(page, loc)
         raise LookupError(f"no option {want!r} among {texts}")
-    options.nth(i).click(timeout=ACTION_TIMEOUT_MS)
+    try:
+        options.nth(i).click(timeout=OPTION_CLICK_MS)
+    except Exception:       # noqa: BLE001  (the menu closed under the click: open it once more)
+        again = _open_menu(frame, loc, popup=popup)
+        if again is None:
+            raise
+        texts = [t.strip() for t in again.all_inner_texts()]
+        i = _ci_match(want, texts)
+        if i < 0:
+            raise
+        again.nth(i).click(timeout=ACTION_TIMEOUT_MS)
 
 
 # The matches a typeahead offers under its box (study G7: Lever's location has

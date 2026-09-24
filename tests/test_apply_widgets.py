@@ -1091,3 +1091,74 @@ def test_a_consent_read_in_part_in_another_script_named_or_optional_keeps_its_hi
     assert (plan.fields[0].action == "select") is ticked, f.label
     # the flag rides the digest's JSON
     assert apply_form.FormDigest.from_dict(d.to_dict()).fields[0].label_partial is partial
+
+
+# === SP5 review round 4 ============================================================================
+
+# --- R4-I1: a chrome word drops a popup only as its whole text ------------------------------------
+
+def test_a_popup_question_whose_words_hold_apply_next_more_or_back_is_a_field(browser_page):
+    # the words round 3's backspace bytes kept inert, live since 9a6c42c
+    browser_page.set_content("""<body><form>
+      <div><label for="m1">Which of these apply to you?</label>
+        <button type="button" id="m1" aria-haspopup="menu">Select...</button></div>
+      <div><label for="m2">Select all that apply</label>
+        <button type="button" id="m2" aria-haspopup="menu">Choose</button></div>
+      <div><label for="m3">Can you start within the next 30 days?</label>
+        <button type="button" id="m3" aria-haspopup="true">Select...</button></div>
+      <div><label for="m4">Tell us more about your availability</label>
+        <button type="button" id="m4" aria-haspopup="menu">Select...</button></div>
+      <div><label for="l1">Team</label>
+        <button type="button" id="l1" aria-haspopup="listbox">Back end</button></div>
+      <div><label for="l2">Experience</label>
+        <button type="button" id="l2" aria-haspopup="listbox">More than 5 years</button></div>
+      <div><label for="l3">Veteran status</label>
+        <button type="button" id="l3" aria-haspopup="listbox">Does not apply</button></div>
+      <div><label for="m5">Which language do you prefer for interviews?</label>
+        <button type="button" id="m5" aria-haspopup="menu">Select...</button></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.widget) for f in d.fields] == [
+        ("Which of these apply to you?", "popup"), ("Select all that apply", "popup"),
+        ("Can you start within the next 30 days?", "popup"),
+        ("Tell us more about your availability", "popup"), ("Team", "popup"),
+        ("Experience", "popup"), ("Veteran status", "popup"),
+        # a label that asks is a question, a chrome word in it or not
+        ("Which language do you prefer for interviews?", "popup")]
+
+
+def test_a_named_chrome_popup_is_still_no_field(browser_page):
+    # the chrome controls a page draws as popups: their whole text (or their
+    # label) is a chrome word, or their label names an account, a language,
+    # a share, a sort or a filter
+    browser_page.set_content("""<body><form>
+      <button type="button" aria-haspopup="menu" aria-label="More">More</button>
+      <button type="button" aria-haspopup="true" aria-label="Menu">Menu</button>
+      <button type="button" aria-haspopup="listbox">Apply</button>
+      <button type="button" aria-haspopup="listbox">Next</button>
+      <button type="button" aria-haspopup="listbox">Back</button>
+      <button type="button" aria-haspopup="menu" aria-label="Share this job">Share</button>
+      <button type="button" aria-haspopup="listbox">Sort by: Newest</button>
+      <div><label for="lang">Language</label>
+        <button type="button" id="lang" aria-haspopup="menu">English</button></div>
+      <div><label for="acct">Your account</label>
+        <button type="button" id="acct" aria-haspopup="true">Jane</button></div>
+      </form></body>""")
+    assert apply_form.extract(browser_page).fields == []
+
+
+# --- R4 Minor 1: every skipped subtree with words marks the label read in part --------------------
+
+@pytest.mark.parametrize("inner, partial", [
+    ('I agree to the Privacy Policy <span aria-hidden="true">and consent to a background '
+     'check</span>', True),
+    ('I agree to the Privacy Policy <span role="tooltip">and consent to a background '
+     'check</span>', True),
+    # a star is a marker, never words left out
+    ('I agree to the privacy notice for candidates <span aria-hidden="true">*</span>', False),
+])
+def test_a_labels_skipped_words_mark_it_read_in_part(browser_page, inner, partial):
+    browser_page.set_content(f"""<body><form><label><input type="checkbox" id="c" required>
+      {inner}</label></form></body>""")
+    f = apply_form.extract(browser_page).fields[0]
+    assert f.label_partial is partial, f.label

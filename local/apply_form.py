@@ -750,6 +750,11 @@ _EXTRACT_JS = r"""
   // a dropdown's words skipped inside it, a box's words past their cap): such a
   // label is read in part (`label_partial`, review R3-I1)
   const CUT = '\u0000cut';
+  // a skipped subtree whose shown words are more than a required marker
+  const wordsLeft = (n) => {
+    const t = norm(n.textContent);
+    return /\p{L}/u.test(t) && !MARK_CHARS.test(t);
+  };
   const NOT_REQ_CLASS = /not[\s_-]?required|optional/i;
   const MARK_CHARS = /^\s*(?:[*\u2731\uff0a]+|\(\s*required\s*\)|required)\s*$/i;
   const styledMark = (n) => {
@@ -781,11 +786,18 @@ _EXTRACT_JS = r"""
         return;
       }
       if (!top && n.getAttribute('aria-hidden') === 'true') {
-        // hidden from the reader, seen by the person: a marker there counts
-        if (marks && n.getClientRects().length) marks.push(norm(n.textContent));
+        // hidden from the reader, seen by the person: a marker there counts;
+        // words there are words the label leaves out (review R4, Minor 1)
+        if (marks && n.getClientRects().length) {
+          marks.push(norm(n.textContent));
+          if (wordsLeft(n)) marks.push(CUT);
+        }
         return;
       }
-      if (!top && QUIET_ROLES.test(n.getAttribute('role') || '')) return;
+      if (!top && QUIET_ROLES.test(n.getAttribute('role') || '')) {
+        if (marks && n.getClientRects().length && wordsLeft(n)) marks.push(CUT);
+        return;
+      }
       const st = getComputedStyle(n);
       // (a hidden element's mark is none: Breezy's conditional `span.ng-hide.required`,
       // review R2-I1)
@@ -1506,7 +1518,17 @@ _EXTRACT_JS = r"""
   const FIELD_SEL = 'input, select, textarea, [role=combobox], [role=listbox], [role=checkbox], '
     + '[role=switch], [role=textbox], [contenteditable], button[aria-haspopup], '
     + '[role=button][aria-haspopup], [aria-haspopup=listbox]';
-  const POPUP_NOT = /import|autofill|upload|attach|share|\bmenu\b|\bmore\b|options|settings|profile|account|language|sign in|log in|filter|sort|\bapply\b|submit|\bnext\b|continue|\bback\b|interested/i;
+  // a chrome control drawn as a popup (review R4-I1): its whole shown text,
+  // or its whole label, is a chrome word ("More", "Apply", "Sort by: Newest",
+  // "Import from LinkedIn"); a word inside a question's text or value never
+  // is ("Which of these apply to you?", "Back end", "Does not apply")
+  const POPUP_CHROME = /^(more( options| actions)?|menu|options|share( this job)?|settings|profile|(my |your )?account|sign in|log in|login|sign up|register|apply( now)?|next|back|continue|submit( application)?|languages?|filters?|sort( by)?|i'?m interested|interested)$/i;
+  const POPUP_TOOL = /^(import|autofill|upload|attach)\b|^(sort|filter)( by)?\s*[:\-]/i;
+  // a menu popup's label names the site's own chrome; a label that asks is
+  // a question, whatever words it holds
+  const POPUP_CHROME_LABEL = /\b(account|profile|settings|language|share|sort|filter)\b/i;
+  const ASKS = /\?\s*$|\ball that apply\b/i;
+  const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
   for (const el of all) {
     if (consumed.has(el) || !el.matches(FIELD_SEL)) continue;
     if (!usable(el)) continue;
@@ -1631,7 +1653,7 @@ _EXTRACT_JS = r"""
       // one holding its own text box is that box's (the box is the field)
       if (Array.from(el.querySelectorAll('input:not([type=hidden])')).some(visible)) continue;
       const text = norm(el.innerText) || norm(el.value);
-      if (POPUP_NOT.test(text)) continue;
+      if (chromePopup(text)) continue;
       const [label, req] = labelFor(el, marks);
       const scoped = !!closestC(el, 'form, dialog, [role=dialog], [aria-modal=true], fieldset');
       const placeholder = PLACEHOLDER_OPTION.test(text);
@@ -1639,7 +1661,8 @@ _EXTRACT_JS = r"""
       const named = !!labelElementFor(el) || !!el.getAttribute('aria-labelledby')
         || !!ariaWords(el.getAttribute('aria-label'))[0];
       if (pop !== 'listbox' && !(placeholder || named)) continue;
-      if (pop !== 'listbox' && POPUP_NOT.test(label)) continue;
+      if (pop !== 'listbox' && label && !ASKS.test(label)
+          && (chromePopup(label) || POPUP_CHROME_LABEL.test(label))) continue;
       if (pop === 'listbox' && !(scoped || named || placeholder)) continue;
       asButtons.add(el);
       push(el, describe(el, 'listbox', label || text, req || isRequired(el), locatorFor(el),

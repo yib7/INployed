@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Data Analyst - Northwind Traders</title>
+<!-- A synthetic phone mask (FILL-04): the Phone box takes keys one by one
+     and draws them as (555) 555-0100; a pasted value is refused, so a box
+     filled in one go stays empty. A second phone box sits beside a country
+     code picker and takes bare digits only (pattern \d{10}). The submit
+     checks both hold ten digits. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field label { display: block; font-weight: bold; }
+  .row { display: flex; gap: 6px; }
+  #thanks { display: none; }
+  .error { color: #b00; }
+</style>
+</head>
+<body>
+<h1>Data Analyst</h1>
+<p>Northwind Traders, Seattle, WA</p>
+<form id="application" novalidate>
+  <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="phone">Phone *</label>
+    <input id="phone" name="phone" type="tel" placeholder="(___) ___-____" autocomplete="off" required></div>
+  <div class="field"><label for="mobile">Mobile number *</label>
+    <div class="row">
+      <select id="dial" name="dial" aria-label="Country code"><option value="+1" selected>+1</option><option value="+44">+44</option></select>
+      <input id="mobile" name="mobile" type="tel" pattern="\d{10}" required>
+    </div></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file"></div>
+  <p class="error" id="err"></p>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  var digits = '';
+  var phone = document.getElementById('phone');
+  function draw() {
+    var d = digits;
+    var out = d.length ? '(' + d.slice(0, 3) : '';
+    if (d.length > 3) out += ') ' + d.slice(3, 6);
+    if (d.length > 6) out += '-' + d.slice(6, 10);
+    phone.value = out;
+  }
+  phone.addEventListener('beforeinput', function (e) {
+    e.preventDefault();
+    var t = e.inputType || '';
+    if (t.indexOf('delete') === 0) {
+      var all = phone.selectionStart === 0 && phone.selectionEnd === phone.value.length;
+      digits = all ? '' : digits.slice(0, -1);
+    } else if (t.indexOf('insert') === 0 && e.data && e.data.length === 1 && /\d/.test(e.data)) {
+      if (digits.length < 10) digits += e.data;
+    }
+    draw();
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var ok = digits.length === 10 && /^\d{10}$/.test(document.getElementById('mobile').value);
+    if (!ok) { document.getElementById('err').textContent = 'Please enter a valid phone number.'; return; }
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

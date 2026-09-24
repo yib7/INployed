@@ -959,6 +959,22 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", wrap=CommitmentUnderFloor,
          covers="a required background-check consent beside a routine privacy box, read as a "
                 "consent under 0.85 on every look: the run parks on it and never ticks it"),
+    # --- SP6: advancing and repair ---
+    Flow("masked_phone", "masked_phone.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a phone mask that takes keys only, a phone box beside a country code that "
+                "takes bare digits (FILL-04)"),
+    Flow("date_mmddyyyy", "date_mmddyyyy.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a signature date box that takes MM/DD/YYYY only (FILL-05)"),
+    Flow("upload_resets_input", "upload_resets_input.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="an upload widget that keeps the file, shows a chip and resets its input: "
+                "verified by the chip, uploaded once (FILL-01)"),
+    Flow("modal_with_combobox", "modal_with_combobox.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a form in a dialog that Escape closes, a typeahead that says expanded with "
+                "no menu: no Escape without a menu (FILL-08)"),
 )
 
 

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Support Engineer - Contoso</title>
+<!-- A synthetic application in a modal dialog (FILL-08): Escape closes the
+     dialog unless a list of options shows. The City box is a typeahead that
+     says aria-expanded="true" once clicked and shows its matches only after
+     typing, so an Escape pressed after the click, with no menu showing,
+     closes the dialog and the application with it. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  #backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); }
+  #dialog { position: fixed; left: 50%; top: 40px; width: 520px; margin-left: -260px;
+            background: #fff; padding: 20px; }
+  .field { margin: 12px 0; position: relative; }
+  .field label { display: block; font-weight: bold; }
+  [role=listbox] { border: 1px solid #555; background: #fff; width: 260px; position: absolute; z-index: 5; }
+  [role=option] { padding: 3px; cursor: pointer; }
+  .step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Support Engineer</h1>
+  <p>Contoso, Chicago, IL</p>
+  <p>Help our customers get the most out of the product.</p>
+  <p id="closed-note" style="display: none">You left the application.</p>
+</main>
+<div id="backdrop"></div>
+<div id="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+  <h2 id="dlg-title">Apply for Support Engineer</h2>
+  <form id="application" novalidate>
+    <div class="step1">
+      <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+      <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+      <div class="field"><label for="city">City *</label>
+        <input id="city" name="city" role="combobox" aria-expanded="false" aria-autocomplete="list"
+               aria-controls="city-list" autocomplete="off" required>
+        <div role="listbox" id="city-list" hidden></div></div>
+      <button type="button" id="next">Next</button>
+    </div>
+    <div class="step2">
+      <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+      <button type="submit" id="btn-submit">Submit application</button>
+    </div>
+  </form>
+  <section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+</div>
+<script>
+  var CITIES = ['Anytown, CA', 'Springfield, IL', 'Lakeside, WA'];
+  var city = document.getElementById('city');
+  var list = document.getElementById('city-list');
+  function closeList() { list.hidden = true; list.innerHTML = ''; }
+  city.addEventListener('click', function () { city.setAttribute('aria-expanded', 'true'); });
+  city.addEventListener('input', function () {
+    var q = city.value.toLowerCase();
+    list.innerHTML = '';
+    CITIES.filter(function (c) { return q && c.toLowerCase().indexOf(q) === 0; }).forEach(function (c) {
+      var o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = c;
+      o.addEventListener('click', function () {
+        city.value = c; closeList(); city.setAttribute('aria-expanded', 'false');
+      });
+      list.appendChild(o);
+    });
+    list.hidden = !list.children.length;
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (!list.hidden) { closeList(); city.setAttribute('aria-expanded', 'false'); return; }
+    var d = document.getElementById('dialog');
+    if (d) { d.remove(); document.getElementById('backdrop').remove();
+             document.getElementById('closed-note').style.display = 'block'; }
+  });
+  document.getElementById('next').addEventListener('click', function () {
+    if (!document.getElementById('name').value || !document.getElementById('email').value
+        || CITIES.indexOf(city.value) < 0) return;
+    document.querySelector('.step1').style.display = 'none';
+    document.querySelector('.step2').style.display = 'block';
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

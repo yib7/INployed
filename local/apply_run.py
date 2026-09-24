@@ -2304,6 +2304,43 @@ def _picks(plan: FillPlan) -> dict[int, tuple[str, bool]]:
             if pf.action == "select" and pf.option is not None}
 
 
+def _shaped(plan: FillPlan, digest: apply_form.FormDigest | None = None) -> dict[int, tuple[str, str]]:
+    """n -> (kind, the value planned) for every value whose shape the page
+    may change and code can compare (FILL-04, FILL-05, FILL-01): a phone
+    ("phone": its digits), a date ("date": the day it names, in any shape),
+    an upload ("upload": the file's name shown by the box or its widget).
+    Checked in code against the read-back (`shaped_holds`), never by the
+    judge against the sheet."""
+    types = {f.n: f.type for f in digest.fields} if digest is not None else {}
+    out: dict[int, tuple[str, str]] = {}
+    for pf in plan.fields:
+        if pf.action == "upload" and pf.value:
+            out[pf.n] = ("upload", str(pf.value))
+        elif pf.action != "fill" or not pf.value or pf.fact_key == "needs_generation":
+            continue
+        elif pf.fact_key == "phone" or (types.get(pf.n) == "tel"
+                                        and len(apply_fill.phone_digits(pf.value)) >= 7):
+            out[pf.n] = ("phone", str(pf.value))
+        elif apply_fill.parse_date(str(pf.value)) is not None:
+            out[pf.n] = ("date", str(pf.value))
+    return out
+
+
+def shaped_holds(value: str, kind: str, planned: str) -> bool:
+    """Does the read-back `value` hold the `planned` value in the page's
+    shape: a phone's digits (a leading US 1 aside), the same day in any
+    date shape, the uploaded file's name."""
+    if kind == "phone":
+        want = apply_fill.phone_digits(planned)
+        return bool(want) and apply_fill.phone_digits(value) == want
+    if kind == "date":
+        want = apply_fill.parse_date(planned)
+        return want is not None and apply_fill.parse_date(value) == want
+    if kind == "upload":
+        return bool(value) and Path(str(value)).name == Path(str(planned)).name
+    return False
+
+
 def pick_holds(value: str, option: str, group: bool = False) -> bool:
     """Does the read-back `value` show the planned `option` (FILL-13): a tick
     reads "checked"; any other pick reads the option (case, punctuation and
@@ -4189,8 +4226,9 @@ class _JobRun:
         if _fills_the_application(digest, plan, filled):
             self.form_filled = True
         drafts = _drafts(plan)
-        verification = self._verify(filled, drafts, _picks(plan))
-        verification = self._retry_failed(plan, filled, verification, drafts)
+        shaped = _shaped(plan, digest)
+        verification = self._verify(filled, drafts, _picks(plan), shaped)
+        verification = self._retry_failed(plan, filled, verification, drafts, shaped)
         self._record_fill(rec, digest, plan, filled, verification)
         self._trace("verify", results=[{"n": v.n, "label": v.label, "ok": v.ok,
                                         "p_correct": v.p_correct,
@@ -4415,24 +4453,30 @@ class _JobRun:
 
     def _verify(self, filled: list[apply_fill.Filled],
                 drafts: Mapping[int, str] | None = None,
-                picks: Mapping[int, tuple[str, bool]] | None = None) -> list[VerifyResult]:
+                picks: Mapping[int, tuple[str, bool]] | None = None,
+                shaped: Mapping[int, tuple[str, str]] | None = None) -> list[VerifyResult]:
         """The judge checks every typed fact against the sheet. A generated
         answer (`drafts`: n -> the accepted draft) is not on the sheet, and
         the grounding gate was its check; what is left is that the box holds
         the draft, which is a string comparison here, so no question carries
         the draft. A pick (`picks`: n -> the option planned: a select, a
         radio, a tick box) is checked in code too (FILL-13): the read-back
-        shows the option (`pick_holds`). Results keep the fill order."""
+        shows the option (`pick_holds`). So is a value the page reshapes
+        (`shaped`: a phone's digits, a date in the box's format, an
+        upload's file name, `shaped_holds`: FILL-01, FILL-04, FILL-05).
+        Results keep the fill order."""
         if not filled:
             return []
         drafts = drafts or {}
         picks = picks or {}
+        shaped = shaped or {}
         by_n: dict[int, VerifyResult] = {}
         rows = []
         for f in filled:
-            if f.n in drafts or f.n in picks:
+            if f.n in drafts or f.n in picks or f.n in shaped:
                 ok = (_same_text(f.value, drafts[f.n]) if f.n in drafts
-                      else pick_holds(f.value, *picks[f.n]))
+                      else pick_holds(f.value, *picks[f.n]) if f.n in picks
+                      else shaped_holds(f.value, *shaped[f.n]))
                 by_n[f.n] = VerifyResult(n=f.n, label=f.label, ok=ok,
                                          p_correct=1.0 if ok else 0.0, p_placeholder=0.0)
             else:
@@ -4446,7 +4490,8 @@ class _JobRun:
 
     def _retry_failed(self, plan: FillPlan, filled: list[apply_fill.Filled],
                       verification: list[VerifyResult],
-                      drafts: Mapping[int, str] | None = None) -> list[VerifyResult]:
+                      drafts: Mapping[int, str] | None = None,
+                      shaped: Mapping[int, tuple[str, str]] | None = None) -> list[VerifyResult]:
         """A required field that failed verification is filled once more with
         the same value (a read-back mismatch is usually widget timing)."""
         required = {pf.n for pf in plan.fields if pf.required}
@@ -4460,7 +4505,7 @@ class _JobRun:
         refilled = apply_fill.apply(self.page, retry, deadline=self.deadline, clock=self.r.clock,
                                     errors=errors)
         self._trace_fill(retry, refilled, errors, retry=True)
-        again = {v.n: v for v in self._verify(refilled, drafts, _picks(plan))}
+        again = {v.n: v for v in self._verify(refilled, drafts, _picks(plan), shaped)}
         by_n = {f.n: f for f in refilled}
         for i, f in enumerate(filled):
             if f.n in by_n:

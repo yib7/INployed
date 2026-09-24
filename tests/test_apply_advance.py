@@ -4,6 +4,11 @@
   own words hold confirm, finish, complete, done, send, submit or apply is
   opened; every send shape rounds 4 to 8 found stays refused; a note about
   required marks ("* Required field") is no question and no star.
+- Values the page reshapes: a masked phone typed key by key, a phone beside a
+  country code as its national digits (FILL-04); a text date in the format
+  its box names (FILL-05); a number box's number (FILL-06); an upload widget
+  that resets its input, read from its chip and never uploaded twice
+  (FILL-01); each verified in code. Escape only while a menu shows (FILL-08).
 
 Headless Chromium through the module-scoped test browser; no network, no
 judge but `FakeJev` or a scripted one."""
@@ -19,8 +24,33 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_fill  # noqa: E402
 import apply_form  # noqa: E402
+import apply_harness as h  # noqa: E402
+import apply_run  # noqa: E402
+import jev  # noqa: E402
+from apply_judge import FillPlan, PlannedField  # noqa: E402
 
 pytest_plugins = ["conftest_browser"]
+
+
+def _planned(f, action, value="", option=None, fact_key="x"):
+    return PlannedField(n=f.n, locator=f.locator, label=f.label, required=f.required,
+                        fact_key=fact_key, value=value, option=option, confidence=1.0,
+                        action=action, widget=f.widget, click_locator=f.click_locator,
+                        option_locators=list(f.option_locators), options=list(f.options),
+                        ident=f.ident)
+
+
+def _by_label(digest, label):
+    found = [f for f in digest.fields if f.label == label]
+    assert len(found) == 1, [(f.label, f.type) for f in digest.fields]
+    return found[0]
+
+
+def _fill(page, *planned):
+    errors: list = []
+    out = apply_fill.apply(page, FillPlan(fields=list(planned)), errors=errors)
+    assert not errors, errors
+    return {f.n: f.value for f in out}
 
 
 # === the popup guard reads a name (review round 9) ===================================================
@@ -168,3 +198,138 @@ def test_a_required_field_note_beside_a_menu_is_no_question_and_no_star(browser_
     assert [(f.label, f.required) for f in d.fields] == [
         ("Start month", True), ("Shift preference", False)]
     assert "More submit options" not in [f.label for f in d.fields]
+
+
+# === values the page reshapes (FILL-01, FILL-04, FILL-05, FILL-06, FILL-08) =============================
+
+def test_a_masked_phone_is_typed_key_by_key_and_verified_by_its_digits(browser_page, fixture_url):
+    browser_page.goto(fixture_url("masked_phone.html"))
+    d = apply_form.extract(browser_page)
+    phone, mobile = _by_label(d, "Phone"), _by_label(d, "Mobile number")
+    got = _fill(browser_page, _planned(phone, "fill", "555-555-0100", fact_key="phone"),
+                _planned(mobile, "fill", "555-555-0100", fact_key="phone"))
+    # the mask drew the keys; the box beside the country code holds bare digits
+    assert got[phone.n] == "(555) 555-0100"
+    assert got[mobile.n] == "5555550100"
+    assert browser_page.evaluate("document.getElementById('mobile').checkValidity()")
+    for n in (phone.n, mobile.n):
+        assert apply_run.shaped_holds(got[n], "phone", "555-555-0100")
+    assert not apply_run.shaped_holds("(555) 555-0199", "phone", "555-555-0100")
+
+
+def test_a_text_date_takes_the_format_its_box_names(browser_page):
+    browser_page.set_content("""<body><form>
+      <label>Date (MM/DD/YYYY) <input id="a" type="text"></label>
+      <label>Start <input id="b" type="text" placeholder="DD/MM/YYYY"></label>
+      <label>Signed on <input id="c" type="text" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}"></label>
+      <label>Plain <input id="e" type="text"></label>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    boxes = {f.locator[1]: f for f in d.fields}
+    got = _fill(browser_page, *[_planned(boxes[k], "fill", "2026-09-24") for k in
+                                ("#a", "#b", "#c", "#e")])
+    assert [got[boxes[k].n] for k in ("#a", "#b", "#c", "#e")] == [
+        "09/24/2026", "24/09/2026", "09/24/2026", "2026-09-24"]
+    assert all(apply_run.shaped_holds(got[boxes[k].n], "date", "2026-09-24")
+               for k in ("#a", "#c", "#e"))
+
+
+def test_a_number_box_takes_the_number(browser_page):
+    browser_page.set_content("""<body><form>
+      <label>Expected salary <input id="s" type="number"></label>
+      <label>Years of experience <input id="y" type="number"></label></form></body>""")
+    d = apply_form.extract(browser_page)
+    s, y = _by_label(d, "Expected salary"), _by_label(d, "Years of experience")
+    got = _fill(browser_page, _planned(s, "fill", "$120,000"), _planned(y, "fill", "5+"))
+    assert (got[s.n], got[y.n]) == ("120000", "5")
+
+
+def test_an_upload_the_widget_consumed_is_read_from_its_chip_and_never_sent_twice(
+        browser_page, fixture_url, tmp_path):
+    pdf = tmp_path / "Jane_Doe_Resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    browser_page.goto(fixture_url("upload_resets_input.html"))
+    d = apply_form.extract(browser_page)
+    resume = _by_label(d, "Resume")
+    assert resume.required
+    pf = _planned(resume, "upload", str(pdf), fact_key="resume_file")
+    got = _fill(browser_page, pf)
+    assert got[resume.n] == "Jane_Doe_Resume.pdf"
+    assert browser_page.evaluate("document.getElementById('resume').files.length") == 0
+    assert apply_run.shaped_holds(got[resume.n], "upload", str(pdf))
+    # the same plan again (a retry, a page read again): never a second upload
+    again = _fill(browser_page, pf)
+    assert again[resume.n] == "Jane_Doe_Resume.pdf"
+    assert browser_page.evaluate("document.body.dataset.uploads") == "1"
+
+
+def test_escape_is_pressed_only_while_a_menu_shows(browser_page, fixture_url):
+    browser_page.goto(fixture_url("modal_with_combobox.html"))
+    d = apply_form.extract(browser_page)
+    city = _by_label(d, "City")
+    # the typeahead says expanded after its click and shows nothing: no Escape
+    assert apply_fill.open_listbox_options(browser_page, city) == []
+    assert browser_page.locator("#dialog").count() == 1
+    got = _fill(browser_page, _planned(city, "fill", "Anytown", fact_key="address_city"))
+    assert got[city.n] == "Anytown, CA"
+    assert browser_page.locator("#dialog").count() == 1
+    # a menu that shows its options takes the Escape
+    browser_page.set_content("""<body><div role="dialog" aria-modal="true" id="dlg"><form>
+      <div><label for="m">Team</label><button type="button" id="m" aria-haspopup="menu"
+        onclick="document.getElementById('menu').hidden = false">Select...</button>
+      <div role="menu" id="menu" hidden><div role="menuitemradio">Data</div>
+        <div role="menuitemradio">Platform</div></div></div></form></div>
+      <script>document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const m = document.getElementById('menu');
+        if (!m.hidden) { m.hidden = true; return; }
+        document.getElementById('dlg').remove(); });</script></body>""")
+    team = _by_label(apply_form.extract(browser_page), "Team")
+    assert apply_fill.open_listbox_options(browser_page, team) == ["Data", "Platform"]
+    assert browser_page.locator("#menu").is_hidden()
+    assert browser_page.locator("#dlg").count() == 1
+
+
+def test_a_reshaped_value_is_verified_in_code_never_by_the_judge(tmp_path):
+    from unittest.mock import Mock
+
+    class Strict:
+        asked: list = []
+
+        def judge(self, state, questions):
+            self.asked.append(sorted(questions))
+            return {qid: jev.Answer(kind="noul", noul=0.1) for qid in questions}
+
+    judge = Strict()
+    run = apply_run._JobRun(apply_run.Runner(jev=judge, context=Mock(), run_context={},
+                                             sleep=lambda s: None), Mock(),
+                            {"job_posting_id": "s", "apply_url": "https://x.example/1"})
+    digest = apply_form.FormDigest("x.example", "Apply", "", fields=[
+        apply_form.Field(0, (0, "#p"), "Phone", "tel", True),
+        apply_form.Field(1, (0, "#d"), "Date (MM/DD/YYYY)", "text", True),
+        apply_form.Field(2, (0, "#r"), "Resume", "file", True)])
+    rows = [("phone", "fill", "555-555-0100"), ("today", "fill", "2026-09-24"),
+            ("resume_file", "upload", str(tmp_path / "Jane_Doe_Resume.pdf"))]
+    plan = FillPlan(fields=[PlannedField(n=i, locator=f.locator, label=f.label, required=True,
+                                         fact_key=k, value=v, option=None, confidence=1.0,
+                                         action=a)
+                            for i, (f, (k, a, v)) in enumerate(zip(digest.fields, rows))])
+    filled = [apply_fill.Filled(0, "Phone", "(555) 555-0100"),
+              apply_fill.Filled(1, "Date (MM/DD/YYYY)", "09/24/2026"),
+              apply_fill.Filled(2, "Resume", "Jane_Doe_Resume.pdf")]
+    got = run._verify(filled, {}, {}, apply_run._shaped(plan, digest))
+    assert [v.ok for v in got] == [True, True, True]
+    assert judge.asked == []
+    # a value the page changed is caught in code as well
+    wrong = [apply_fill.Filled(0, "Phone", "(555) 555-0199"),
+             apply_fill.Filled(1, "Date (MM/DD/YYYY)", "09/25/2026"),
+             apply_fill.Filled(2, "Resume", "")]
+    assert [v.ok for v in run._verify(wrong, {}, {}, apply_run._shaped(plan, digest))] == [
+        False, False, False]
+
+
+def test_the_upload_reset_flow_uploads_once_and_reaches_the_gate(_browser, flow_server, tmp_path):
+    r = h.run_flow(h.flow("upload_resets_input"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert [a.kind for a in r.actions].count("upload") == 1

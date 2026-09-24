@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Platform Engineer - Fabrikam</title>
+<!-- A synthetic upload widget that consumes the file (FILL-01): on change it
+     keeps the file, shows its name in a chip and resets the input, so the
+     input's own files are empty after every upload. Each upload adds an
+     attachment (the page counts them in data-uploads); the submit takes one
+     attached resume. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field label, .field .q { display: block; font-weight: bold; }
+  .drop { border: 2px dashed #888; padding: 12px; width: 360px; }
+  .chip { display: inline-block; background: #e6eef8; border-radius: 12px; padding: 2px 10px; margin: 4px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Platform Engineer</h1>
+<p>Fabrikam, Austin, TX</p>
+<form id="application" novalidate>
+  <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field" id="resume-field">
+    <span class="q" id="resume-q">Resume *</span>
+    <div class="drop" role="group" aria-labelledby="resume-q">
+      <p>Drop your file here or <label for="resume">browse</label></p>
+      <input id="resume" type="file" style="position: absolute; left: -9999px">
+      <div id="chips"></div>
+    </div>
+  </div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  var attached = [];
+  var input = document.getElementById('resume');
+  input.addEventListener('change', function () {
+    Array.from(input.files).forEach(function (f) {
+      attached.push(f.name);
+      var chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = f.name;
+      document.getElementById('chips').appendChild(chip);
+    });
+    document.body.setAttribute('data-uploads', String(attached.length));
+    input.value = '';
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (attached.length !== 1) return;
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

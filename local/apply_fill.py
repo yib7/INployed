@@ -164,16 +164,119 @@ def _kind(loc) -> dict[str, str]:
     return loc.first.evaluate(_KIND_JS, timeout=ACTION_TIMEOUT_MS)
 
 
+def parse_date(value: str):
+    """The date `value` names in ISO, the common US and long shapes, or
+    DD.MM.YYYY; None when it names none."""
+    v = (value or "").strip()
+    for shape in (*_DATE_SHAPES, "%d.%m.%Y"):
+        try:
+            return datetime.strptime(v, shape).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _date_value(value: str) -> str:
     """ISO `YYYY-MM-DD` for a native date control, from ISO or the common US
     and long shapes; anything unparsed goes through as given."""
-    v = (value or "").strip()
-    for shape in _DATE_SHAPES:
-        try:
-            return datetime.strptime(v, shape).date().isoformat()
-        except ValueError:
-            continue
-    return v
+    d = parse_date(value)
+    return d.isoformat() if d is not None else (value or "").strip()
+
+
+# A text box's own hints (FILL-04, FILL-05): its type, placeholder, pattern,
+# length cap, label and aria-label, input mode, autocomplete and mask
+# attribute, and whether a country-code control sits on its row (a select,
+# a dropdown or a box named for the country code or showing "+1").
+_HINTS_JS = r"""el => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const labels = el.labels ? Array.from(el.labels).map((l) => norm(l.innerText)).join(' ') : '';
+  const CC = /country\s*(code|dial)|dial(ing)?\s*code|calling\s*code|phone\s*(country\s*)?code|^\s*\+\d{1,3}\b/i;
+  let cc = false;
+  let p = el.parentElement;
+  for (let i = 0; p && i < 3 && !cc; i++, p = p.parentElement) {
+    if (p.matches('form, body, fieldset')) break;
+    for (const c of p.querySelectorAll('select, [role=combobox], [aria-haspopup], input')) {
+      if (c === el || c.type === 'hidden') continue;
+      const shown = c.tagName === 'SELECT' ? (c.selectedOptions[0] ? c.selectedOptions[0].text : '')
+        : (c.tagName === 'INPUT' ? c.value : c.innerText);
+      const t = [c.getAttribute('aria-label'), c.id, c.getAttribute('name'),
+                 c.labels ? Array.from(c.labels).map((l) => l.innerText).join(' ') : '',
+                 shown].map(norm).join(' | ');
+      if (t.split(' | ').some((part) => CC.test(part))) { cc = true; break; }
+    }
+  }
+  return {type: (el.getAttribute('type') || 'text').toLowerCase(), placeholder: norm(el.placeholder),
+          pattern: el.getAttribute('pattern') || '', maxlength: el.maxLength > 0 ? el.maxLength : 0,
+          label: labels, aria: norm(el.getAttribute('aria-label')),
+          name: (el.getAttribute('name') || '') + ' ' + (el.id || ''),
+          inputmode: (el.getAttribute('inputmode') || '').toLowerCase(),
+          autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
+          mask: el.getAttribute('data-mask') || el.getAttribute('data-inputmask')
+            || el.getAttribute('data-format') || el.getAttribute('data-date-format') || '',
+          cc: cc};
+}"""
+_DATE_FORMATS = (
+    # (a hint's words, the strftime shape): the first that the hints name
+    (re.compile(r"\byyyy\s*-\s*mm\s*-\s*dd\b", re.I), "%Y-%m-%d"),
+    (re.compile(r"\byyyy\s*/\s*mm\s*/\s*dd\b", re.I), "%Y/%m/%d"),
+    (re.compile(r"\bdd\s*/\s*mm\s*/\s*yyyy\b", re.I), "%d/%m/%Y"),
+    (re.compile(r"\bdd\s*\.\s*mm\s*\.\s*yyyy\b", re.I), "%d.%m.%Y"),
+    (re.compile(r"\bdd\s*-\s*mm\s*-\s*yyyy\b", re.I), "%d-%m-%Y"),
+    (re.compile(r"\bmm\s*/\s*dd\s*/\s*yyyy\b", re.I), "%m/%d/%Y"),
+    (re.compile(r"\bmm\s*-\s*dd\s*-\s*yyyy\b", re.I), "%m-%d-%Y"),
+    (re.compile(r"\bmm\s*/\s*dd\s*/\s*yy\b", re.I), "%m/%d/%y"),
+    (re.compile(r"\bm\s*/\s*d\s*/\s*yyyy\b", re.I), "M/D/YYYY"),
+    (re.compile(r"\bmm\s*/\s*yyyy\b", re.I), "%m/%Y"),
+    # a pattern attribute: two digits, two digits, four digits
+    (re.compile(r"^\^?(?:\\d|\[0-9\])\{2\}/(?:\\d|\[0-9\])\{2\}/(?:\\d|\[0-9\])\{4\}\$?$"),
+     "%m/%d/%Y"),
+    (re.compile(r"^\^?(?:\\d|\[0-9\])\{4\}-(?:\\d|\[0-9\])\{2\}-(?:\\d|\[0-9\])\{2\}\$?$"),
+     "%Y-%m-%d"),
+)
+_PHONE_WORDS = re.compile(r"\b(phone|mobile|cell|telephone)\b", re.I)
+_MASK_SHAPE = re.compile(r"[_#X9x]{2,}|\(\s*[_#X9x]{3}\s*\)")
+# a pattern attribute that takes bare digits only ("\d{10}", "[0-9]+")
+_DIGITS_ONLY = re.compile(r"^\^?(?:\\d|\[0-9\])(?:\{\d+(?:,\d*)?\}|\+|\*)\$?$")
+
+
+def date_format(hints: dict) -> str:
+    """The strftime shape the box's hints name (`_DATE_FORMATS`), or ""."""
+    for key in ("pattern", "mask", "placeholder", "label", "aria"):
+        text = str(hints.get(key) or "")
+        for shape, fmt in _DATE_FORMATS:
+            if text and shape.search(text):
+                return fmt
+    return ""
+
+
+def format_date(d, fmt: str) -> str:
+    if fmt == "M/D/YYYY":
+        return f"{d.month}/{d.day}/{d.year}"
+    return d.strftime(fmt)
+
+
+def phone_digits(value: str) -> str:
+    """A phone number's digits, the leading US country code off an
+    eleven-digit number (the national number)."""
+    digits = re.sub(r"\D", "", str(value or ""))
+    return digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
+
+
+def _phoneish(hints: dict) -> bool:
+    return (hints.get("type") == "tel" or str(hints.get("autocomplete") or "").startswith("tel")
+            or bool(_PHONE_WORDS.search(" ".join(str(hints.get(k) or "") for k in (
+                "label", "aria", "name", "placeholder")))))
+
+
+def _masked(hints: dict) -> bool:
+    return bool(hints.get("mask")) or bool(_MASK_SHAPE.search(str(hints.get("placeholder") or "")))
+
+
+def number_value(value: str) -> str:
+    """A number box's value (FILL-06): the first number in `value`, its
+    thousands separators and currency off ("$120,000" 120000, "5+" 5)."""
+    m = re.search(r"-?\d[\d,]*(?:\.\d+)?", str(value or ""))
+    return m.group(0).replace(",", "") if m else str(value or "").strip()
 
 
 def _ci_match(want: str, candidates: list[str]) -> int:
@@ -196,10 +299,57 @@ def _ci_match(want: str, candidates: list[str]) -> int:
 
 # --- the actions ------------------------------------------------------------------
 
+def _typed(loc, text: str) -> None:
+    """Clear the box and type `text` key by key (a masked box takes keys,
+    never a pasted value)."""
+    loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
+    loc.first.press_sequentially(text, delay=15, timeout=ACTION_TIMEOUT_MS)
+
+
 def _fill(loc, kind: dict[str, str], value: str) -> None:
+    """Type `value` into a text-like box in the shape the box asks for: a
+    native date control ISO; a number box the value's number (FILL-06); a
+    text box whose hints name a date format that format (FILL-05, "Date
+    (MM/DD/YYYY)"); a phone box its national digits when a country-code
+    control sits on its row or its pattern or length asks for bare digits,
+    typed key by key into a masked box, and typed again key by key when a
+    mask left the box holding other digits (FILL-04)."""
     if kind["tag"] == "INPUT" and kind["type"] == "date":
-        value = _date_value(value)
-    loc.first.fill(value, timeout=ACTION_TIMEOUT_MS)
+        loc.first.fill(_date_value(value), timeout=ACTION_TIMEOUT_MS)
+        return
+    if kind["tag"] == "INPUT" and kind["type"] == "number":
+        loc.first.fill(number_value(value), timeout=ACTION_TIMEOUT_MS)
+        return
+    if kind["tag"] != "INPUT" or kind["type"] in ("checkbox", "radio", "file", "password"):
+        loc.first.fill(value, timeout=ACTION_TIMEOUT_MS)
+        return
+    try:
+        hints = dict(loc.first.evaluate(_HINTS_JS, timeout=ACTION_TIMEOUT_MS) or {})
+    except Exception:       # noqa: BLE001  (the fill finds out)
+        hints = {}
+    d = parse_date(value)
+    fmt = date_format(hints) if d is not None else ""
+    if fmt:
+        loc.first.fill(format_date(d, fmt), timeout=ACTION_TIMEOUT_MS)
+        return
+    digits = phone_digits(value)
+    if not _phoneish(hints) or len(digits) < 7:
+        loc.first.fill(value, timeout=ACTION_TIMEOUT_MS)
+        return
+    bare = _DIGITS_ONLY.search(str(hints.get("pattern") or ""))
+    national = bool(hints.get("cc")) or bool(bare) or hints.get("maxlength") == len(digits)
+    text = digits if national else value
+    if _masked(hints):
+        _typed(loc, digits)
+        return
+    loc.first.fill(text, timeout=ACTION_TIMEOUT_MS)
+    try:
+        now = str(loc.first.input_value(timeout=ACTION_TIMEOUT_MS) or "")
+    except Exception:       # noqa: BLE001  (the read-back finds out)
+        return
+    if phone_digits(now) != digits:
+        # a mask that takes keys only, or mangled the pasted value
+        _typed(loc, digits)
 
 
 def _select_native(loc, want: str) -> None:
@@ -497,14 +647,20 @@ def _open_menu(frame, loc, *, popup: bool = False, face=None):
     return options
 
 
-def _close_menu(page, loc) -> None:
-    """Escape only while a menu is open (FILL-08): an Escape with nothing open
-    would close the dialog the form lives in."""
+def _menu_showing(options) -> bool:
     try:
-        expanded = loc.first.get_attribute("aria-expanded", timeout=1_000)
-    except Exception:       # noqa: BLE001
-        expanded = None
-    if expanded == "true":
+        return options is not None and options.count() > 0 and options.first.is_visible()
+    except Exception:       # noqa: BLE001  (gone)
+        return False
+
+
+def _close_menu(page, loc, options=None) -> None:
+    """Escape only while a menu of options shows (FILL-08): its options
+    (`options`, the locator the open returned) are visible. A box that says
+    `aria-expanded="true"` with nothing shown (a typeahead waiting for keys)
+    gets no Escape: with no menu to take it, an Escape closes the dialog
+    the form lives in."""
+    if _menu_showing(options):
         page.keyboard.press("Escape")
 
 
@@ -545,7 +701,7 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None
     texts = [t.strip() for t in options.all_inner_texts()]
     i = _ci_match(want, texts)
     if i < 0:
-        _close_menu(page, loc)
+        _close_menu(page, loc, options)
         raise LookupError(f"no option {want!r} among {texts}")
     try:
         options.nth(i).click(timeout=ACTION_TIMEOUT_MS)
@@ -681,6 +837,12 @@ def _act(page, pf: PlannedField, loc, kind: dict[str, str]) -> None:
     want = pf.option if pf.option is not None else pf.value
     tag, typ, role = kind["tag"], kind["type"], kind["role"]
     if pf.action == "upload":
+        if upload_shown(loc, pf.value):
+            # the box or its widget shows the file already: a second upload
+            # would attach it twice (FILL-01)
+            log.info("apply_fill: %r already holds %s; not uploaded again", pf.label,
+                     _file_name(pf.value))
+            return
         _upload(page, pf.locator, pf.value)
         return
     if pf.action not in ("fill", "select"):
@@ -763,10 +925,50 @@ def _read_widget(page, pf: PlannedField, loc) -> str:
     return ""
 
 
+# An upload's read-back (FILL-01): the input's file, else the widget's chip
+# (a box that consumes the file and resets the input shows its name) or,
+# unless `named`, its success note, in the box around the input that holds
+# no other file input (four levels up, never the form or the page). The
+# file's name when one of them shows it, else "".
+_FILE_READ_JS = r"""(el, [want, named]) => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  if (el.files && el.files.length) return el.files[0].name;
+  const DONE = /\b(successfully\s+uploaded|upload(ed)?\s+(complete|successful(ly)?|succeeded)|file\s+(uploaded|attached))\b/i;
+  let box = el.parentElement;
+  for (let i = 0; box && i < 4; i++, box = box.parentElement) {
+    if (box.matches('form, body, html, main, [role=main]')) break;
+    if (Array.from(box.querySelectorAll('input[type=file]')).some((f) => f !== el)) break;
+    const text = norm(box.innerText);
+    if (want && text.toLowerCase().includes(want.toLowerCase())) return want;
+    if (want && !named && DONE.test(text)) return want;
+  }
+  return '';
+}"""
+
+
+def upload_shown(loc, path: str) -> bool:
+    """Does the file box, or its widget's chip, already show the file
+    `path` names (its name, never a success note alone)? Such a file is
+    never uploaded again (FILL-01)."""
+    name = _file_name(path)
+    try:
+        return bool(name) and loc.first.evaluate(_FILE_READ_JS, [name, True],
+                                                  timeout=ACTION_TIMEOUT_MS) == name
+    except Exception:       # noqa: BLE001  (the upload finds out)
+        return False
+
+
+def _file_name(path: str) -> str:
+    return str(path or "").replace("\\", "/").rsplit("/", 1)[-1]
+
+
 def _read_back(loc, kind: dict[str, str] | None, page=None, pf: PlannedField | None = None) -> str:
     try:
         if loc.count() == 0:
             return ""
+        if pf is not None and pf.action == "upload" and kind and kind["type"] == "file":
+            return str(loc.first.evaluate(_FILE_READ_JS, [_file_name(pf.value), False],
+                                          timeout=ACTION_TIMEOUT_MS) or "")
         if pf is not None and pf.widget and pf.widget not in ("typeahead", "hidden_select") \
                 and page is not None:
             return _read_widget(page, pf, loc)
@@ -876,7 +1078,7 @@ def open_listbox_options(page, field) -> list[str]:
     frame = apply_form.frames(page)[int(field.locator[0])]
     options = _open_menu(frame, loc, popup=getattr(field, "widget", "") == "popup")
     texts = [t.strip() for t in options.all_inner_texts()] if options is not None else []
-    _close_menu(page, loc)
+    _close_menu(page, loc, options)
     return [t for t in texts if t]
 
 

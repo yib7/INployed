@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Operations Analyst - Contoso</title>
+<!-- A synthetic signature step (FILL-05): the date is a text box that takes
+     MM/DD/YYYY only (its label says so, its pattern checks it); an ISO date
+     fails the form's own validation. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field label { display: block; font-weight: bold; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Operations Analyst</h1>
+<p>Contoso, Chicago, IL</p>
+<form id="application">
+  <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+  <h2>Electronic signature</h2>
+  <div class="field"><label for="sig">Signature (type your full name) *</label><input id="sig" name="signature" type="text" required></div>
+  <div class="field"><label for="sigdate">Date (MM/DD/YYYY) *</label>
+    <input id="sigdate" name="signature_date" type="text" pattern="\d{2}/\d{2}/\d{4}" required></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

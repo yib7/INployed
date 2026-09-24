@@ -11,8 +11,12 @@
 </head>
 <body>
 <!-- NAV-04 / READ-02: an application that shows a loading skeleton
-     (aria-busy, skeleton blocks, a Cancel) for 3.5 s after load, then the
-     form. A read of the skeleton is no read of the page. -->
+     (aria-busy, skeleton blocks, a Cancel), then the form. A read of the
+     skeleton is no read of the page. The skeleton stays until the page has
+     been read once (the harness calls `__appRead` after each read: the
+     flow's `on_read`), then the form comes 800 ms later; with `?clear=now`
+     it comes during that first read, between the read and anything after
+     it. With no reader the form comes after a minute. -->
 <div id="app" aria-busy="true">
   <p>Loading your application. This can take a few seconds while we fetch the questions for this
      role, your saved answers and the documents you uploaded before. Please keep this window open;
@@ -21,7 +25,10 @@
   <button type="button" id="cancel">Cancel</button>
 </div>
 <script>
-  setTimeout(function () {
+  var shown = false;
+  function show() {
+    if (shown) return;
+    shown = true;
     var app = document.getElementById('app');
     app.removeAttribute('aria-busy');
     app.innerHTML = '<h1>Apply for Business Analyst</h1>'
@@ -32,7 +39,15 @@
       document.body.setAttribute('data-submitted', '1');
       app.innerHTML = '<h2 id="received">Application received</h2><p>Thank you for applying.</p>';
     });
-  }, 3500);
+  }
+  var read = false;
+  window.__appRead = function () {
+    if (read) return;
+    read = true;
+    if (/[?&]clear=now\b/.test(location.search)) show();
+    else setTimeout(show, 800);
+  };
+  setTimeout(show, 60000);
 </script>
 </body>
 </html>

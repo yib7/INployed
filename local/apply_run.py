@@ -3288,16 +3288,22 @@ class _JobRun:
         for row in open_page(self.page, url):
             self._decide_next(**row)
 
-    def _loading(self, digest: apply_form.FormDigest) -> bool:
-        """A page with no field whose loading placeholder still shows in the
-        viewport (an `aria-busy` region, a skeleton: `apply_fill`'s readiness
-        read): a skeleton is no read of the page (NAV-04, READ-02)."""
-        if digest.fields:
-            return False
+    def _busy(self) -> bool:
+        """Whether a loading placeholder shows in the viewport (an `aria-busy`
+        region, a skeleton: `apply_fill`'s readiness read)."""
         try:
             return bool(apply_fill.ready_snapshot(self.page)[1])
         except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
             return False
+
+    def _loading(self, digest: apply_form.FormDigest, busy: bool) -> bool:
+        """A read with no field taken while a loading placeholder showed
+        (`busy`, read before the extract): a skeleton is no read of the page
+        (NAV-04, READ-02). The placeholder is looked for before the read, so
+        a page that clears it between the read and the look is read again
+        (SP5 round 2: a busy machine read the skeleton, the form came, and
+        the look after the read saw no placeholder)."""
+        return busy and not digest.fields
 
     def _read_digest(self) -> apply_form.FormDigest:
         """The page's digest, read once more while it is still empty
@@ -3312,9 +3318,11 @@ class _JobRun:
         (M10: an ad's or a widget's placeholder may never clear; the trace
         says when it stayed up). The host is checked before every read
         again."""
-        digest = self._drop_foreign_controls(self._extract())
         url = str(self.page.url)
-        loading = url not in self._loading_waited and self._loading(digest)
+        watch = url not in self._loading_waited
+        busy = watch and self._busy()
+        digest = self._drop_foreign_controls(self._extract())
+        loading = watch and self._loading(digest, busy)
         empty = _empty_read(digest)
         if not empty and not loading:
             return digest
@@ -3332,10 +3340,11 @@ class _JobRun:
             # the page may have moved on while it settled or between reads:
             # a page off the allowed sites is never read, let alone judged
             self._check_host(self.page.url)
+            busy = loading and self._busy()
             digest = self._drop_foreign_controls(self._extract())
             now = time.monotonic()
             empty = _empty_read(digest)
-            loading = loading and self._loading(digest)
+            loading = loading and self._loading(digest, busy)
             if loading and now - start >= LOADING_WAIT_S:
                 # the placeholder had its one short wait: it no longer holds
                 # the read (the empty-read rules still do)

@@ -758,6 +758,24 @@ def test_a_loading_skeleton_is_waited_out_before_the_page_is_read(_browser, flow
     assert waited[0]["still_loading"] is False
 
 
+def test_a_skeleton_that_clears_right_after_it_was_read_is_read_again(_browser, flow_server,
+                                                                      tmp_path):
+    """SP5 round 2, the skeleton flake under load: the form came between the
+    read and the loading check, the check saw no placeholder, and the read of
+    the skeleton went to the judge. Here the form comes during the first read
+    itself (`?clear=now`), every time: the loading state is the one the read
+    was taken under, and the page is read again."""
+    import dataclasses
+    f = dataclasses.replace(h.flow("skeleton_then_form"),
+                            start="skeleton_then_form.html?clear=now")
+    r = h.run_flow(f, _SkeletonAsSignUp(), "skeleton-cleared-on-read", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, r
+    waited = _decisions(Path(r.trace), "reread_after_settle")
+    assert waited and waited[0]["why"].startswith("a loading placeholder"), waited
+    assert waited[0]["still_loading"] is False
+
+
 # --- study G13: a privacy step's accept is its way on, its decline never ---------------------------
 
 @pytest.mark.parametrize("buttons, roles, step", [

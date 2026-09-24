@@ -599,6 +599,10 @@ class Flow:
     # a wait that ends on its condition (a placeholder clearing) is given room
     # to, so a busy machine never ends it by its cap (SP5 review: the skeleton)
     timing: tuple = ()
+    # JS the run's page evaluates after every `apply_form.extract` of it: a
+    # fixture that moves on once it has been read (the skeleton, SP5 round 2)
+    # waits for that condition, never for a clock
+    on_read: str = ""
     covers: str = ""                # what the flow exercises
     # "<phase>: why": the fake judge does not reach the end yet; the matrix
     # reports the flow apart and leaves it out of the rates the floors read
@@ -859,11 +863,13 @@ FLOWS: tuple[Flow, ...] = (
          covers="a Next and a submit that each open a new tab: the thank-you tab is read"),
     Flow("skeleton_then_form", "skeleton_then_form.html", False, "ready_to_submit", _PARKED,
          confirm="#received:visible", gate="#btn-submit:visible",
-         # the read waits for the skeleton to clear, never for a clock: its
-         # caps sit far past the page's 3.5 s timer
+         # the skeleton stays until the run has read it, and the form comes
+         # 800 ms later: the read waits for the skeleton to clear, never for a
+         # clock, so its caps sit far past any busy machine's delay
          timing=((("apply_run", "LOADING_WAIT_S"), 30.0), (("apply_run", "EMPTY_READ_MAX_S"), 30.0)),
-         covers="a loading skeleton (aria-busy, a Cancel) for 3.5 s, then the form: the "
-                "skeleton is never read as the page"),
+         on_read="() => window.__appRead && window.__appRead()",
+         covers="a loading skeleton (aria-busy, a Cancel) that stays until the page is read, "
+                "then the form: the skeleton is never read as the page"),
     Flow("privacy_gate", "privacy_gate.html", False, "ready_to_submit", _PARKED,
          confirm="#received:visible", gate="#btn-submit:visible",
          covers="a privacy agreement as the first screen: its I Accept is the step's advance"),
@@ -1557,6 +1563,27 @@ def _fulfiller(body: str) -> Callable[[Any], None]:
     return _handle
 
 
+@contextmanager
+def _after_each_read(js: str):
+    """`apply_form.extract` followed by `js` in the page it read (`Flow.on_read`)."""
+    import apply_form
+    p = Patches()
+    real = apply_form.extract
+
+    def _extract(page, *a, **kw):
+        digest = real(page, *a, **kw)
+        try:
+            page.evaluate(js)
+        except Exception:       # noqa: BLE001  (a page mid-navigation)
+            pass
+        return digest
+    try:
+        p.setattr(apply_form, "extract", _extract)
+        yield
+    finally:
+        p.undo()
+
+
 def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServer,
              workdir: Path, fast: bool = True) -> RunResult:
     """`f` once under `judge`: a fresh context, queue, ledger and job folder;
@@ -1574,6 +1601,8 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
         stack.enter_context(hermetic(rundir, password=f.password))
         if fast:
             stack.enter_context(fast_timing(f.settle_s, f.timing))
+        if f.on_read:
+            stack.enter_context(_after_each_read(f.on_read))
         url = f.start_url(server.base)
         apply_queue.enqueue(apply_queue.new_entry(JOB_ID, company="Fabrikam",
                                                   title="Analytics Engineer", apply_url=url),

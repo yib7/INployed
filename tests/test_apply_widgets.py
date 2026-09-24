@@ -1020,3 +1020,24 @@ def test_react_selects_dummy_input_is_a_dropdown_opened_through_its_face(browser
     values = _fill(browser_page, _planned(gender, "select", "Female", "Female"))
     assert values[gender.n] == "Female"
     assert browser_page.inner_text("#g-shown") == "Female"
+
+
+# --- a popup button that names a menu or a step is no dropdown field (fix round 3) ---------------
+
+def test_a_popup_button_that_says_more_menu_apply_next_or_back_is_no_field(browser_page):
+    # SP5's extractor carried backspace bytes where `\b` belonged, so these
+    # words never matched (found in fix round 3)
+    browser_page.set_content("""<body><form>
+      <div><span id="src-l">How did you hear about us?</span>
+        <button type="button" aria-haspopup="listbox" aria-labelledby="src-l">Select One</button></div>
+      <div><button type="button" aria-haspopup="menu">More</button>
+        <button type="button" aria-haspopup="true">Menu</button>
+        <button type="button" aria-haspopup="true">Apply</button>
+        <button type="button" aria-haspopup="true">Next</button>
+        <button type="button" aria-haspopup="true">Back</button></div>
+      <div class="upload"><input type="file" id="cv" style="display:none">
+        <button type="button">CV</button></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.widget or f.type) for f in d.fields] == [
+        ("How did you hear about us?", "popup"), ("CV", "file")]

@@ -987,7 +987,7 @@ _EXTRACT_JS = r"""
       let box = up(el);
       for (let i = 0; box && i < 4; i++, box = up(box)) {
         const face = Array.from(box.querySelectorAll('button, [role=button], a[href]'))
-          .map((b) => norm(b.innerText)).find((t) => /upload|resume|cv|attach|file/i.test(t));
+          .map((b) => norm(b.innerText)).find((t) => /upload|resume|\bcv\b|attach|file/i.test(t));
         if (face) return tryText(face);
       }
       return ['', false];
@@ -1481,7 +1481,7 @@ _EXTRACT_JS = r"""
   const FIELD_SEL = 'input, select, textarea, [role=combobox], [role=listbox], [role=checkbox], '
     + '[role=switch], [role=textbox], [contenteditable], button[aria-haspopup], '
     + '[role=button][aria-haspopup], [aria-haspopup=listbox]';
-  const POPUP_NOT = /import|autofill|upload|attach|share|menu|more|options|settings|profile|account|language|sign in|log in|filter|sort|apply|submit|next|continue|back|interested/i;
+  const POPUP_NOT = /import|autofill|upload|attach|share|\bmenu\b|\bmore\b|options|settings|profile|account|language|sign in|log in|filter|sort|\bapply\b|submit|\bnext\b|continue|\bback\b|interested/i;
   for (const el of all) {
     if (consumed.has(el) || !el.matches(FIELD_SEL)) continue;
     if (!usable(el)) continue;

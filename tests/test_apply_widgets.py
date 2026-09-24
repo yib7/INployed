@@ -592,7 +592,10 @@ def test_a_moved_box_with_no_attributes_is_told_apart_by_its_label(browser_page)
     ("California", "CA", False, True), ("Select One", "Canada", False, False),
     # review M3: words that only contain the option are no pick of it
     ("Yes, but I will need sponsorship", "Yes", False, False),
-    ("SQL, Go", "Go", False, False)])
+    ("SQL, Go", "Go", False, False),
+    # review R2 Minor 4: a read-back shorter than the planned option neither
+    ("Yes", "Yes, I will need sponsorship", False, False),
+    ("No", "No, not at this time", False, False)])
 def test_a_pick_is_verified_in_code_against_the_read_back(value, option, group, ok):
     assert apply_run.pick_holds(value, option, group) is ok
 

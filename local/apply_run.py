@@ -1395,26 +1395,50 @@ _SIGN_UP_WORDS = re.compile(r"\bcreate\b|\bregister\b|\bsign[\s-]*up\b|\bjoin\b"
 _SIGN_IN_ONLY = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b", re.I)
 
 
+def password_step(digest: apply_form.FormDigest) -> str:
+    """What an account screen's password boxes say it is (review R2-I4):
+    "signup" for a `new-password` box or two boxes (a password and its
+    confirmation), "signin" for one box or `current-password` alone, "" with
+    no box or boxes that say both (a change of password)."""
+    boxes = [f for f in digest.fields
+             if apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete)]
+    if not boxes:
+        return ""
+    tokens = {str(f.autocomplete or "").lower() for f in boxes}
+    if "new-password" in tokens and "current-password" in tokens:
+        return ""
+    if "new-password" in tokens or len(boxes) >= 2:
+        return "signup"
+    return "signin"
+
+
 def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
                     signup: bool = False) -> tuple[int, float] | None:
     """The button an account screen's step clicks: the judged advance, else
     the judged submit, at `BUTTON_ADVANCE_MIN_CONF` or above, never one of
     the site's header (a header's "Sign In" on a sign-up screen, review
     M11), and never one whose words name the other step while the screen
-    has its own button that names this one (a sign-up screen's "Already
-    have an account? Sign In" beside its "Create Account"; a screen whose
-    only way on says "Sign in" is a sign-in whatever it was read as). With
-    neither: the screen's own buttons whose words name the account step
-    ("Create Account", "Sign in", "Continue"), one per text (Workday draws
-    "Create Account" twice, a click filter over the real button); a sign-up
-    takes the one that makes the account, a sign-in the one that signs in
-    (review M1); a lone one either way; at the advance floor. None when no
-    single button fits."""
-    fits = _SIGN_UP_WORDS if signup else _SIGN_IN_ONLY
-    other = _SIGN_IN_ONLY if signup else _SIGN_UP_WORDS
+    has its own button that names this one and its password boxes agree
+    with the read (`password_step`: a sign-up screen's "Already have an
+    account? Sign In" beside its "Create Account"; a screen whose only way
+    on says "Sign in" is a sign-in whatever it was read as; a sign-in read
+    as a sign-up keeps its judged Sign In, review R2-I4). With neither: the
+    screen's own buttons whose words name the account step ("Create
+    Account", "Sign in", "Continue"), one per text (Workday draws "Create
+    Account" twice, a click filter over the real button); a sign-up takes the
+    one that makes the account, a sign-in the one that signs in (review M1),
+    the step the password boxes say when they say one, else the read's; a
+    lone one either way; at the advance floor. None when no single button
+    fits."""
+    read = "signup" if signup else "signin"
+    boxes = password_step(digest)
+    step = boxes or read
+    fits = _SIGN_UP_WORDS if step == "signup" else _SIGN_IN_ONLY
+    other = _SIGN_IN_ONLY if step == "signup" else _SIGN_UP_WORDS
     own: dict[str, apply_form.Button] = {}
     for b in digest.buttons:
-        if getattr(b, "chrome", False) or getattr(b, "disabled", False)                 or not _ACCOUNT_BUTTON.search(b.text) or apply_judge.DECLINE_WORDS.search(b.text):
+        if getattr(b, "chrome", False) or getattr(b, "disabled", False) \
+                or not _ACCOUNT_BUTTON.search(b.text) or apply_judge.DECLINE_WORDS.search(b.text):
             continue
         own.setdefault(" ".join(b.text.lower().split()), b)
     buttons = list(own.values())
@@ -1422,10 +1446,11 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     text = {b.n: b.text for b in digest.buttons}
     for role in ("advance", "submit"):
         held = plan.buttons.get(role)
-        if held is None or held[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF                 or _chrome(digest, held[0]):
+        if held is None or held[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF \
+                or _chrome(digest, held[0]):
             continue
         words = text.get(held[0], "")
-        if fitting and other.search(words) and not fits.search(words):
+        if boxes == read and fitting and other.search(words) and not fits.search(words):
             # the judge rated the screen's own "Sign In" the advance above
             # "Create Account", and the sign-up clicked it and landed on the
             # sign-in screen (the fix round's Workday misses)
@@ -1760,7 +1785,10 @@ def posting_context(page, digest: apply_form.FormDigest,
 
 _NEXT_WORDS = re.compile(r"\b(next|continue)\b", re.I)
 # a Continue that leaves the application: "Continue later", "Continue browsing jobs"
-_NOT_NEXT = re.compile(r"\blater\b|\bbrows\w*|\bjobs?\b|\bsearch\w*|\bshopping\b", re.I)
+# (never one that goes on to the application: "Continue to job application", R2 Minor 5)
+_NOT_NEXT = re.compile(r"\blater\b|\bbrows\w*|\bsearch\w*|\bshopping\b"
+                       r"|\b(more|other|similar|all|saved)\s+(jobs|roles|openings|positions)\b",
+                       re.I)
 _WITH_WORDS = re.compile(r"\bwith\b|\bsign[\s-]*(in|up)\b|\blog[\s-]*in\b", re.I)
 
 
@@ -2238,19 +2266,24 @@ def _picks(plan: FillPlan) -> dict[int, tuple[str, bool]]:
 def pick_holds(value: str, option: str, group: bool = False) -> bool:
     """Does the read-back `value` show the planned `option` (FILL-13): a tick
     reads "checked"; any other pick reads the option (case, punctuation and
-    spacing aside) or a name it goes by (`apply_judge.match_option`: United
+    spacing aside) or a name it goes by (`apply_judge._alias_set`: United
     States of America for United States, CA for California); a question's
     tick boxes (`group`) read the option among the ticked ones ("A, B").
     Words that only contain the option never hold ("Yes, but I will need
-    sponsorship" is no "Yes", review M3)."""
+    sponsorship" is no "Yes", review M3), and neither do words the option
+    only starts with ("Yes" is no "Yes, I will need sponsorship", review R2
+    Minor 4)."""
     if str(option).strip().lower() == "checked":
         return str(value).strip().lower() == "checked"
     norm = apply_judge._norm_option
     parts = str(value).split(", ") if group else [str(value)]
     o = norm(option)
+    if not o:
+        return False
+    names = apply_judge._alias_set(str(option))
     for part in parts:
         v = norm(part)
-        if v and o and (v == o or apply_judge.match_option(part, [str(option)]) is not None):
+        if v and (v == o or v in names or o in apply_judge._alias_set(part)):
             return True
     return False
 

@@ -191,7 +191,8 @@ def test_each_capture_shows_the_fields_a_person_sees(_browser, capture):
         assert label not in labels, (capture, label, labels)
     for start in want.get("required", []):
         # (a question by its first words)
-        assert any(f.label.startswith(start) and f.required for f in d.fields),             (capture, start, [(f.label[:40], f.required) for f in d.fields])
+        want_req = (capture, start, [(f.label[:40], f.required) for f in d.fields])
+        assert any(f.label.startswith(start) and f.required for f in d.fields), want_req
     assert len(d.fields) >= want.get("min_fields", 0), (capture, labels)
     if "max_fields" in want:
         assert len(d.fields) <= want["max_fields"], (capture, labels)

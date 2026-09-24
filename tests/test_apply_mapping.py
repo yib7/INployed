@@ -34,6 +34,11 @@ def _f(n, label, type_="text", required=False, options=(), section=""):
                  options=list(options))
 
 
+def _pw(n, label, autocomplete=""):
+    return Field(n=n, locator=(0, f"#p{n}"), label=label, type="other", required=True,
+                 id_or_name=f"password{n}", autocomplete=autocomplete)
+
+
 def _strip_flags(state):
     out = copy.deepcopy(state)
     for b in out.get("buttons", []):
@@ -155,8 +160,10 @@ def test_an_account_step_never_takes_a_judged_button_that_names_the_other_step()
     # Account", and the sign-up clicked it and landed on the sign-in screen
     import apply_run
     from apply_judge import FillPlan
+    # the sign-up screen: a password and its confirmation (the boxes say sign-up)
     digest = FormDigest(url_host="x", title="Create Account", text="Create Account", fields=[
-        _f(0, "Email Address", required=True)], buttons=[
+        _f(0, "Email Address", required=True), _pw(1, "Password", "new-password"),
+        _pw(2, "Verify New Password")], buttons=[
         Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
         Button(n=1, locator=(0, "#c"), text="Create Account"),
         Button(n=2, locator=(0, "#i"), text="Sign In"),
@@ -164,9 +171,10 @@ def test_an_account_step_never_takes_a_judged_button_that_names_the_other_step()
     floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
     plan = FillPlan(buttons={"advance": (2, 0.95), "apply_entry": (3, 0.9)})
     assert apply_run.account_advance(digest, plan, signup=True) == (1, floor)
-    # a sign-in screen's judged "Create Account" is no way on for the sign-in
+    # the boxes say sign-up, the read says sign-in: they disagree, and the
+    # judged "Create Account" is taken as judged
     plan = FillPlan(buttons={"advance": (1, 0.95)})
-    assert apply_run.account_advance(digest, plan, signup=False) == (2, floor)
+    assert apply_run.account_advance(digest, plan, signup=False) == (1, 0.95)
     # a judged button that names neither step is taken as judged
     digest.buttons.append(Button(n=4, locator=(0, "#n"), text="Continue"))
     plan = FillPlan(buttons={"advance": (4, 0.9)})
@@ -181,6 +189,42 @@ def test_an_account_step_never_takes_a_judged_button_that_names_the_other_step()
         Button(n=0, locator=(0, "#s"), text="Sign in")])
     plan = FillPlan(buttons={"advance": (0, 0.77)})
     assert apply_run.account_advance(login, plan, signup=True) == (0, 0.77)
+
+
+def test_the_password_boxes_say_whether_an_account_screen_signs_in_or_signs_up():
+    """Review R2-I4: Workday's sign-in (its own "Sign In", a "Create Account",
+    one password box) read as a sign-up once took "Create Account", typed the
+    master password into the sign-in's box and parked on the sign-up that
+    followed. The other-step rule holds only when the password boxes agree
+    with the read: one box or `current-password` says sign-in, `new-password`
+    or two boxes say sign-up."""
+    import apply_run
+    from apply_judge import FillPlan
+    floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
+    signin = FormDigest(url_host="x", title="Sign In", text="Sign In", fields=[
+        _f(0, "Email Address", required=True), _pw(1, "Password", "current-password")],
+        buttons=[Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
+                 Button(n=1, locator=(0, "#s"), text="Sign In"),
+                 Button(n=2, locator=(0, "#c"), text="Create Account"),
+                 Button(n=3, locator=(0, "#f"), text="Forgot your password?")])
+    assert apply_run.password_step(signin) == "signin"
+    judged = FillPlan(buttons={"advance": (1, 0.93)})
+    # read as a sign-up: the boxes disagree, the judged Sign In is taken
+    assert apply_run.account_advance(signin, judged, signup=True) == (1, 0.93)
+    # nothing judged: the button that fits the boxes' step, never Create Account
+    assert apply_run.account_advance(signin, FillPlan(), signup=True) == (1, floor)
+    # read as a sign-in: the boxes agree, and a judged Create Account is skipped
+    assert apply_run.account_advance(signin, FillPlan(buttons={"advance": (2, 0.9)}),
+                                     signup=False) == (1, floor)
+    # the boxes' verdicts
+    one = FormDigest(url_host="x", title="t", text="", fields=[_pw(0, "Password")])
+    two = FormDigest(url_host="x", title="t", text="", fields=[
+        _pw(0, "Password"), _pw(1, "Confirm password")])
+    new = FormDigest(url_host="x", title="t", text="", fields=[_pw(0, "Password",
+                                                                   "new-password")])
+    none = FormDigest(url_host="x", title="t", text="", fields=[_f(0, "Email")])
+    assert [apply_run.password_step(d) for d in (one, two, new, none)] == [
+        "signin", "signup", "signup", ""]
 
 
 def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():
@@ -204,7 +248,10 @@ def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():
 @pytest.mark.parametrize("text, taken", [
     ("Save and Continue", True), ("Continue later", False), ("Save and continue later", False),
     ("Continue browsing jobs", False), ("Submit and continue", False),
-    ("Continue with LinkedIn", False)])
+    ("Continue with LinkedIn", False),
+    # review R2 Minor 5: a Next that goes on to the application names the job
+    ("Continue to job application", True), ("Next: job questions", True),
+    ("Continue to more jobs", False), ("Continue job search", False)])
 def test_the_pages_own_next_leaves_a_later_a_browse_and_a_send(text, taken):
     # review M2: only a Next that goes on with the application is taken
     import apply_run

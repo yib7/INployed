@@ -120,12 +120,67 @@ def test_an_account_screen_never_clicks_the_sites_header_sign_in():
         Button(n=2, locator=(0, "#c"), text="Create Account")])
     # the header's Sign In judged the advance, the screen's own button other
     plan = FillPlan(buttons={"advance": (0, 0.95), "other": (2, 0.9)})
-    assert apply_run.account_advance(digest, plan) == (2, apply_judge.BUTTON_ADVANCE_MIN_CONF)
+    assert apply_run.account_advance(digest, plan, signup=True) == (
+        2, apply_judge.BUTTON_ADVANCE_MIN_CONF)
     plan = FillPlan(buttons={"advance": (2, 0.9), "other": (0, 0.9)})
-    assert apply_run.account_advance(digest, plan) == (2, 0.9)
-    # two buttons of the screen's own that name the step: no guess
-    digest.buttons.append(Button(n=3, locator=(0, "#l"), text="Sign in instead"))
-    assert apply_run.account_advance(digest, FillPlan(buttons={"advance": (0, 0.95)})) is None
+    assert apply_run.account_advance(digest, plan, signup=True) == (2, 0.9)
+    # two buttons that name the step for the same screen: no guess
+    digest.buttons.append(Button(n=3, locator=(0, "#l"), text="Register now"))
+    assert apply_run.account_advance(digest, FillPlan(buttons={"advance": (0, 0.95)}),
+                                     signup=True) is None
+
+
+def test_workdays_account_screen_takes_the_button_that_fits_the_screen():
+    # review M1: the captured screen draws "Create Account" twice (a click
+    # filter over the real button) beside an in-page "Sign In"
+    import apply_run
+    from apply_judge import FillPlan
+    digest = FormDigest(url_host="x", title="Create Account", text="Create Account", fields=[
+        _f(0, "Email Address", required=True)], buttons=[
+        Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
+        Button(n=1, locator=(0, "#s"), text="Search for Jobs", chrome=True),
+        Button(n=2, locator=(0, "#b"), text="Back to Job Posting"),
+        Button(n=3, locator=(0, "#f"), text="Create Account"),
+        Button(n=4, locator=(0, "#c"), text="Create Account"),
+        Button(n=5, locator=(0, "#i"), text="Sign In")])
+    plan = FillPlan(buttons={"advance": (0, 0.97), "back": (2, 0.9)})
+    floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
+    assert apply_run.account_advance(digest, plan, signup=True) == (3, floor)
+    assert apply_run.account_advance(digest, plan, signup=False) == (5, floor)
+
+
+def test_an_account_step_never_takes_a_judged_button_that_names_the_other_step():
+    # the fix round's Workday misses: the judge rates the screen's own "Sign
+    # In" (its "Already have an account?" link) the advance above "Create
+    # Account", and the sign-up clicked it and landed on the sign-in screen
+    import apply_run
+    from apply_judge import FillPlan
+    digest = FormDigest(url_host="x", title="Create Account", text="Create Account", fields=[
+        _f(0, "Email Address", required=True)], buttons=[
+        Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
+        Button(n=1, locator=(0, "#c"), text="Create Account"),
+        Button(n=2, locator=(0, "#i"), text="Sign In"),
+        Button(n=3, locator=(0, "#b"), text="Back to Job Posting")])
+    floor = apply_judge.BUTTON_ADVANCE_MIN_CONF
+    plan = FillPlan(buttons={"advance": (2, 0.95), "apply_entry": (3, 0.9)})
+    assert apply_run.account_advance(digest, plan, signup=True) == (1, floor)
+    # a sign-in screen's judged "Create Account" is no way on for the sign-in
+    plan = FillPlan(buttons={"advance": (1, 0.95)})
+    assert apply_run.account_advance(digest, plan, signup=False) == (2, floor)
+    # a judged button that names neither step is taken as judged
+    digest.buttons.append(Button(n=4, locator=(0, "#n"), text="Continue"))
+    plan = FillPlan(buttons={"advance": (4, 0.9)})
+    assert apply_run.account_advance(digest, plan, signup=True) == (4, 0.9)
+    # the judged submit that fits stands in for an advance that does not
+    plan = FillPlan(buttons={"advance": (2, 0.95), "submit": (1, 0.9)})
+    assert apply_run.account_advance(digest, plan, signup=True) == (1, 0.9)
+    # a sign-in screen misread as a sign-up (login_wall_park at seed 17):
+    # its only way on says "Sign in", and the step takes it as judged
+    login = FormDigest(url_host="x", title="Sign in", text="Sign in", fields=[
+        _f(0, "Email", required=True)], buttons=[
+        Button(n=0, locator=(0, "#s"), text="Sign in")])
+    plan = FillPlan(buttons={"advance": (0, 0.77)})
+    assert apply_run.account_advance(login, plan, signup=True) == (0, 0.77)
 
 
 def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():
@@ -143,4 +198,24 @@ def test_a_forms_own_next_is_its_way_on_when_the_header_took_the_advance():
         "advance", (3, apply_judge.BUTTON_ADVANCE_MIN_CONF), "")
     # a sign-in's "Continue with ..." is never the way on
     digest.buttons = digest.buttons[:3]
+    assert apply_run.form_route(digest, plan, park_mode=True)[0] == "stuck"
+
+
+@pytest.mark.parametrize("text, taken", [
+    ("Save and Continue", True), ("Continue later", False), ("Save and continue later", False),
+    ("Continue browsing jobs", False), ("Submit and continue", False),
+    ("Continue with LinkedIn", False)])
+def test_the_pages_own_next_leaves_a_later_a_browse_and_a_send(text, taken):
+    # review M2: only a Next that goes on with the application is taken
+    import apply_run
+    from apply_judge import FillPlan
+    digest = FormDigest(url_host="x", title="My Information", text="Step 2 of 4", fields=[
+        _f(0, "First Name", required=True)], buttons=[
+        Button(n=0, locator=(0, "#h"), text="Sign In", chrome=True),
+        Button(n=1, locator=(0, "#n"), text=text)])
+    plan = FillPlan(buttons={"advance": (0, 0.97), "other": (1, 0.9)})
+    step, button, _ = apply_run.form_route(digest, plan, park_mode=True)
+    assert (step == "advance" and button[0] == 1) is taken, (step, button)
+    # a disabled Next waits
+    digest.buttons[1] = Button(n=1, locator=(0, "#n"), text="Save and Continue", disabled=True)
     assert apply_run.form_route(digest, plan, park_mode=True)[0] == "stuck"

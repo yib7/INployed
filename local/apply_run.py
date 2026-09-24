@@ -940,7 +940,7 @@ class _Accounts:
             plan = apply_judge.plan(digest, self.run.catalog, answers)
             rec = self.run.pages[-1] if self.run.pages else {"flags": {}}
             plan = self.run._complete_option_plan(digest, answers, plan, rec)
-            advance = account_advance(digest, plan)
+            advance = account_advance(digest, plan, signup=signup)
             if advance is None:
                 return False
             by_n = {pf.n: pf for pf in plan.fields}
@@ -1391,22 +1391,50 @@ _ACCOUNT_BUTTON = re.compile(r"\b(sign|log)[\s-]*(in|on|up)\b|\blogin\b|\bregist
                              r"|\bcreate\b.*\baccount\b|\b(continue|next)\b", re.I)
 
 
-def account_advance(digest: apply_form.FormDigest, plan: FillPlan) -> tuple[int, float] | None:
+_SIGN_UP_WORDS = re.compile(r"\bcreate\b|\bregister\b|\bsign[\s-]*up\b|\bjoin\b", re.I)
+_SIGN_IN_ONLY = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b", re.I)
+
+
+def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
+                    signup: bool = False) -> tuple[int, float] | None:
     """The button an account screen's step clicks: the judged advance, else
     the judged submit, at `BUTTON_ADVANCE_MIN_CONF` or above, never one of
     the site's header (a header's "Sign In" on a sign-up screen, review
-    M11); with neither, the one button of the screen's own whose words name
-    the account step ("Create Account", "Sign in", "Continue"), at the
-    advance floor. None when there is no such button."""
+    M11), and never one whose words name the other step while the screen
+    has its own button that names this one (a sign-up screen's "Already
+    have an account? Sign In" beside its "Create Account"; a screen whose
+    only way on says "Sign in" is a sign-in whatever it was read as). With
+    neither: the screen's own buttons whose words name the account step
+    ("Create Account", "Sign in", "Continue"), one per text (Workday draws
+    "Create Account" twice, a click filter over the real button); a sign-up
+    takes the one that makes the account, a sign-in the one that signs in
+    (review M1); a lone one either way; at the advance floor. None when no
+    single button fits."""
+    fits = _SIGN_UP_WORDS if signup else _SIGN_IN_ONLY
+    other = _SIGN_IN_ONLY if signup else _SIGN_UP_WORDS
+    own: dict[str, apply_form.Button] = {}
+    for b in digest.buttons:
+        if getattr(b, "chrome", False) or getattr(b, "disabled", False)                 or not _ACCOUNT_BUTTON.search(b.text) or apply_judge.DECLINE_WORDS.search(b.text):
+            continue
+        own.setdefault(" ".join(b.text.lower().split()), b)
+    buttons = list(own.values())
+    fitting = [b for b in buttons if fits.search(b.text)]
+    text = {b.n: b.text for b in digest.buttons}
     for role in ("advance", "submit"):
         held = plan.buttons.get(role)
-        if held is not None and held[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF \
-                and not _chrome(digest, held[0]):
-            return held
-    own = [b for b in digest.buttons if not getattr(b, "chrome", False)
-           and _ACCOUNT_BUTTON.search(b.text) and not apply_judge.DECLINE_WORDS.search(b.text)]
-    if len(own) == 1:
-        return own[0].n, apply_judge.BUTTON_ADVANCE_MIN_CONF
+        if held is None or held[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF                 or _chrome(digest, held[0]):
+            continue
+        words = text.get(held[0], "")
+        if fitting and other.search(words) and not fits.search(words):
+            # the judge rated the screen's own "Sign In" the advance above
+            # "Create Account", and the sign-up clicked it and landed on the
+            # sign-in screen (the fix round's Workday misses)
+            continue
+        return held
+    if len(buttons) > 1:
+        buttons = fitting
+    if len(buttons) == 1:
+        return buttons[0].n, apply_judge.BUTTON_ADVANCE_MIN_CONF
     return None
 
 
@@ -1731,6 +1759,8 @@ def posting_context(page, digest: apply_form.FormDigest,
 
 
 _NEXT_WORDS = re.compile(r"\b(next|continue)\b", re.I)
+# a Continue that leaves the application: "Continue later", "Continue browsing jobs"
+_NOT_NEXT = re.compile(r"\blater\b|\bbrows\w*|\bjobs?\b|\bsearch\w*|\bshopping\b", re.I)
 _WITH_WORDS = re.compile(r"\bwith\b|\bsign[\s-]*(in|up)\b|\blog[\s-]*in\b", re.I)
 
 
@@ -1765,8 +1795,10 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
             # never a send. An unjudged Next stays unclicked.
             b = next((x for x in digest.buttons if x.n == other[0]), None)
             if b is not None and _NEXT_WORDS.search(b.text) and not _WITH_WORDS.search(b.text) \
+                    and not _NOT_NEXT.search(b.text) \
                     and not apply_judge.DECLINE_WORDS.search(b.text) \
-                    and not _submit_shaped(digest, b.n) and not getattr(b, "chrome", False):
+                    and not _submit_shaped(digest, b.n) and not getattr(b, "chrome", False) \
+                    and not getattr(b, "disabled", False):
                 accept = b
         if accept is not None:
             advance = (accept.n, apply_judge.BUTTON_ADVANCE_MIN_CONF)
@@ -2194,31 +2226,33 @@ def _same_text(a: str, b: str) -> bool:
     return " ".join(str(a).split()) == " ".join(str(b).split())
 
 
-def _picks(plan: FillPlan) -> dict[int, str]:
-    """n -> the option planned, for every pick (a select, a radio group, a
-    tick box, a dropdown, a question's tick boxes): checked in code against
-    the read-back (FILL-13), never by the judge against the sheet."""
-    return {pf.n: str(pf.option) for pf in plan.fields
+def _picks(plan: FillPlan) -> dict[int, tuple[str, bool]]:
+    """n -> (the option planned, a question's tick boxes), for every pick (a
+    select, a radio group, a tick box, a dropdown, a question's tick boxes):
+    checked in code against the read-back (FILL-13), never by the judge
+    against the sheet."""
+    return {pf.n: (str(pf.option), pf.widget == "checkbox_group") for pf in plan.fields
             if pf.action == "select" and pf.option is not None}
 
 
-def pick_holds(value: str, option: str) -> bool:
+def pick_holds(value: str, option: str, group: bool = False) -> bool:
     """Does the read-back `value` show the planned `option` (FILL-13): a tick
-    reads "checked"; any other pick shows the option's words (case,
-    punctuation and spacing aside), a name it goes by
-    (`apply_judge.match_option`), or the option among a group's ticked ones
-    ("A, B")."""
+    reads "checked"; any other pick reads the option (case, punctuation and
+    spacing aside) or a name it goes by (`apply_judge.match_option`: United
+    States of America for United States, CA for California); a question's
+    tick boxes (`group`) read the option among the ticked ones ("A, B").
+    Words that only contain the option never hold ("Yes, but I will need
+    sponsorship" is no "Yes", review M3)."""
     if str(option).strip().lower() == "checked":
         return str(value).strip().lower() == "checked"
     norm = apply_judge._norm_option
-    v, o = norm(value), norm(option)
-    if not v or not o:
-        return False
-    if v == o or f" {o} " in f" {v} ":
-        return True
-    if apply_judge.match_option(str(value), [str(option)]) is not None:
-        return True
-    return any(norm(part) == o for part in str(value).split(","))
+    parts = str(value).split(", ") if group else [str(value)]
+    o = norm(option)
+    for part in parts:
+        v = norm(part)
+        if v and o and (v == o or apply_judge.match_option(part, [str(option)]) is not None):
+            return True
+    return False
 
 
 _TRACE_LINE = "- Trace: "
@@ -4277,7 +4311,7 @@ class _JobRun:
 
     def _verify(self, filled: list[apply_fill.Filled],
                 drafts: Mapping[int, str] | None = None,
-                picks: Mapping[int, str] | None = None) -> list[VerifyResult]:
+                picks: Mapping[int, tuple[str, bool]] | None = None) -> list[VerifyResult]:
         """The judge checks every typed fact against the sheet. A generated
         answer (`drafts`: n -> the accepted draft) is not on the sheet, and
         the grounding gate was its check; what is left is that the box holds
@@ -4294,7 +4328,7 @@ class _JobRun:
         for f in filled:
             if f.n in drafts or f.n in picks:
                 ok = (_same_text(f.value, drafts[f.n]) if f.n in drafts
-                      else pick_holds(f.value, picks[f.n]))
+                      else pick_holds(f.value, *picks[f.n]))
                 by_n[f.n] = VerifyResult(n=f.n, label=f.label, ok=ok,
                                          p_correct=1.0 if ok else 0.0, p_placeholder=0.0)
             else:

@@ -559,12 +559,17 @@ def test_a_stable_attribute_locates_a_control_and_a_moved_one_is_never_typed_int
 
 # --- FILL-13: picks are verified in code ---------------------------------------------------------
 
-@pytest.mark.parametrize("value, option, ok", [
-    ("checked", "checked", True), ("", "checked", False), ("Yes", "Yes", True),
-    ("No", "Yes", False), ("United States of America", "United States", True),
-    ("SQL, Go", "Go", True), ("California", "CA", True), ("Select One", "Canada", False)])
-def test_a_pick_is_verified_in_code_against_the_read_back(value, option, ok):
-    assert apply_run.pick_holds(value, option) is ok
+@pytest.mark.parametrize("value, option, group, ok", [
+    ("checked", "checked", False, True), ("", "checked", False, False),
+    ("Yes", "Yes", False, True), ("No", "Yes", False, False),
+    ("United States of America", "United States", False, True),
+    ("SQL, Go", "Go", True, True), ("SQL, Go", "Python", True, False),
+    ("California", "CA", False, True), ("Select One", "Canada", False, False),
+    # review M3: words that only contain the option are no pick of it
+    ("Yes, but I will need sponsorship", "Yes", False, False),
+    ("SQL, Go", "Go", False, False)])
+def test_a_pick_is_verified_in_code_against_the_read_back(value, option, group, ok):
+    assert apply_run.pick_holds(value, option, group) is ok
 
 
 # --- READ-05: the section headings go with the fields --------------------------------------------

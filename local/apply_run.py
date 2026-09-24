@@ -794,6 +794,19 @@ def _fields_sig(digest: apply_form.FormDigest) -> tuple:
     return tuple((" ".join((f.label or "").split()), f.type) for f in digest.fields)
 
 
+def _record_verification(rec: dict, verification: list[VerifyResult]) -> None:
+    """The page record's verification, merged by field (SP6 review M3): a
+    row for each field the page's fills verified, the latest read of each;
+    a sub-fill (a revealed field, a repair) or a re-verification (a value
+    the page changed, a retyped box) replaces its own fields' rows and
+    keeps the rest."""
+    rows = {int(r["n"]): r for r in rec.get("verification") or []}
+    for v in verification:
+        rows[v.n] = {"n": v.n, "label": v.label, "ok": v.ok, "p_correct": v.p_correct,
+                     "p_placeholder": v.p_placeholder}
+    rec["verification"] = list(rows.values())
+
+
 def _spare_judged(plan: FillPlan, judged: set[int]) -> None:
     """The fields of a repair's plan that only the judge's reading of a
     message named (`judged`, SP6 review M1) are asked as required but kept
@@ -4816,6 +4829,7 @@ class _JobRun:
                                                   _shaped(plan, digest))}
             self._last_filled.update({f.n: f for f in fixed})
             verification = [again.get(v.n, v) for v in verification]
+            _record_verification(rec, list(again.values()))
         if missed and depth == 0:
             # M1: the judge named a blank field that has no answer; its
             # messages are mapped once more without it (a fresh question)
@@ -5110,6 +5124,7 @@ class _JobRun:
                                                 _shaped(plan, digest))}
         self._last_filled.update({f.n: f for f in again})
         verification = [results.get(v.n, v) for v in verification]
+        _record_verification(rec, list(results.values()))
         still = [v.label for v in verification if not v.ok
                  and any(pf.n == v.n and pf.required for pf in plan.fields)]
         if still:
@@ -5509,9 +5524,7 @@ class _JobRun:
                 "autocomplete": df.autocomplete if df else "",
                 "upload": actions.get(f.n) == "upload",
                 "generated": f.n in generated})
-        rec["verification"] = [{"n": v.n, "label": v.label, "ok": v.ok,
-                                "p_correct": v.p_correct, "p_placeholder": v.p_placeholder}
-                               for v in verification]
+        _record_verification(rec, verification)
 
     def _click(self, digest: apply_form.FormDigest, n: int, role: str,
                rec: dict, *, conf: float | None = None,

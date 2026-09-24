@@ -514,3 +514,26 @@ def test_a_field_the_judge_named_that_has_no_answer_parks_only_when_nothing_else
     assert r.status == "needs_human" and not r.breaks, (r.status, r.reason, r.breaks)
     assert r.reason.startswith("required field without an answer: Badge number (the form says: "
                                "Before you go on"), r.reason
+
+
+# --- M3: the page record keeps every field's verification ---------------------------------------------
+
+def test_the_record_keeps_the_first_fills_verification_after_a_revealed_field(
+        _browser, flow_server, tmp_path):
+    r = h.run_flow(h.flow("conditional_fields"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    text = (Path(r.trace).parent.parent / "apply_record.md").read_text(encoding="utf-8")
+    block = text.split("- Verification:")[1].split("\n- ")[0]
+    for label in ("Full name", "Email", "LinkedIn profile URL"):
+        assert f"  - {label}: ok" in block, block
+
+
+def test_a_re_verification_replaces_its_own_rows_and_keeps_the_rest():
+    from apply_judge import VerifyResult
+    rec = {"verification": []}
+    apply_run._record_verification(rec, [VerifyResult(0, "Phone", False, 0.2, 0.1),
+                                         VerifyResult(1, "Email", True, 0.9, 0.1)])
+    apply_run._record_verification(rec, [VerifyResult(0, "Phone", True, 0.95, 0.05)])
+    assert [(r["label"], r["ok"]) for r in rec["verification"]] == [("Phone", True),
+                                                                  ("Email", True)]

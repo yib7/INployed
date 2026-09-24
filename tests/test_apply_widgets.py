@@ -1230,6 +1230,15 @@ def test_a_tick_or_a_toggle_that_says_confirm_is_no_click_outside_the_gate(brows
     breaks = h.invariant_breaks(out, rec, h.Sends(rec))
     assert len(breaks) == 1 and breaks[0].startswith("CLICK-OUTSIDE-GATE: clicked 'Submit "
                                                     "application'"), breaks
+    # review round 7, Minor 2: a toggle whose own name sends is no exemption
+    browser_page.evaluate("""() => document.querySelector('form').insertAdjacentHTML('beforeend',
+      '<button type="button" id="sendtoggle" aria-pressed="false">Submit application</button>')""")
+    rec = h.Recorder(None, park_mode=True)
+    with rec.recording():
+        browser_page.locator("#sendtoggle").click()
+    breaks = h.invariant_breaks(out, rec, h.Sends(rec))
+    assert len(breaks) == 1 and breaks[0].startswith("CLICK-OUTSIDE-GATE: clicked 'Submit "
+                                                    "application'"), breaks
 
 
 # --- R5 Minor 1: a menu label is chrome only when it names the chrome itself ----------------------

@@ -1103,14 +1103,14 @@ def submit_worded(text: str, *, park_mode: bool, account_step: bool = False,
     words to the submit gate); or in park mode a last-step word on anything
     but an account step (`apply_run._final_shaped`). A tick or a toggle
     (`toggle`: a checkbox, switch, radio or option, or an aria-pressed
-    button) never sends, whatever its words ("I confirm the information above
-    is complete"): the loop ticks it as an answer (review round 6, Minor 1)."""
-    if toggle:
-        return False
+    button) is left out of the last-step words only ("I confirm the
+    information above is complete" is an answer the loop ticks, review round
+    6, Minor 1); a toggle whose own name sends ("Submit application") still
+    reads as sending (review round 7, Minor 2)."""
     words = {w.lower() for w in SUBMIT_WORDS.findall(text or "")}
     if words - {"apply"} and not (account_step and apply_run.apply_judge.SIGN_IN_WORDS.search(text or "")):
         return True
-    return (park_mode and bool(FINAL_WORDS.search(text or ""))
+    return (park_mode and not toggle and bool(FINAL_WORDS.search(text or ""))
             and not apply_run._ACCOUNT_STEP_WORDS.search(text or ""))
 
 

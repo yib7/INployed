@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam</title>
+<!-- A synthetic one-page form whose answers reveal more of it (FILL-10,
+     study G10): "LinkedIn" as the source reveals a required "LinkedIn
+     profile URL" box half a second later, above the rest of the form; the
+     data-processing consent, once ticked, reveals the only submit button
+     (none shows before it). -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, New York, NY</p>
+<form id="application">
+  <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="source">How did you hear about us? *</label>
+    <select id="source" name="source" required>
+      <option value="">Select...</option>
+      <option>Job board</option>
+      <option>LinkedIn</option>
+      <option>Employee referral</option>
+      <option>Other</option>
+    </select></div>
+  <div id="slot"></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+  <div class="field consent"><label><input type="checkbox" id="consent" name="consent" required>
+    I agree to the processing of my application data *</label></div>
+  <div id="actions"></div>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  var shown = false;
+  document.getElementById('source').addEventListener('change', function (e) {
+    if (e.target.value !== 'LinkedIn' || shown) return;
+    shown = true;
+    setTimeout(function () {
+      document.getElementById('slot').innerHTML = '<div class="field" id="profile-box">'
+        + '<label for="profile">LinkedIn profile URL *</label>'
+        + '<input id="profile" name="profile" type="url" required></div>';
+    }, 500);
+  });
+  document.getElementById('consent').addEventListener('change', function (e) {
+    var actions = document.getElementById('actions');
+    if (e.target.checked && !actions.children.length) {
+      actions.innerHTML = '<button type="submit" id="btn-submit">Submit application</button>';
+    } else if (!e.target.checked) {
+      actions.innerHTML = '';
+    }
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

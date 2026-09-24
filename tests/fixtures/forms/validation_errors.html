@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam</title>
+<!-- A synthetic two-step form that validates in its own script (ADV-02):
+     Next refuses a phone with anything but digits (the box marked
+     aria-invalid, its message tied to it) and an empty "Years of
+     experience" (no star; its message beside the box, and a summary line
+     above the form that no control names). The submit refuses an empty
+     "Portfolio URL" (no star; its message beside the box): nothing is sent,
+     and the page shows the same form with the message. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  .error { color: #b00; }
+  #step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, New York, NY</p>
+<div id="summary" class="error-summary" role="alert"></div>
+<form id="application" novalidate>
+  <div id="step1">
+    <h2>Step 1 of 2: About you</h2>
+    <div class="field"><label for="first">First name *</label><input id="first" name="first_name" type="text" required></div>
+    <div class="field"><label for="last">Last name *</label><input id="last" name="last_name" type="text" required></div>
+    <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+    <div class="field"><label for="phone">Phone *</label>
+      <input id="phone" name="phone" type="text" aria-describedby="phone-error">
+      <div id="phone-error" class="error"></div></div>
+    <div class="field"><label for="years">Years of experience</label>
+      <input id="years" name="years" type="text">
+      <div class="error years-error"></div></div>
+    <button type="button" id="next">Next</button>
+  </div>
+  <div id="step2">
+    <h2>Step 2 of 2: Documents</h2>
+    <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+    <div class="field"><label for="portfolio">Portfolio URL</label>
+      <input id="portfolio" name="portfolio" type="url">
+      <div class="error portfolio-error"></div></div>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </div>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  function $(id) { return document.getElementById(id); }
+  $('next').addEventListener('click', function () {
+    var errors = 0;
+    var phone = $('phone');
+    if (!/^\d{10}$/.test(phone.value)) {
+      phone.setAttribute('aria-invalid', 'true');
+      $('phone-error').textContent = 'Phone number must contain digits only';
+      errors++;
+    } else {
+      phone.removeAttribute('aria-invalid');
+      $('phone-error').textContent = '';
+    }
+    var years = $('years');
+    document.querySelector('.years-error').textContent = years.value ? '' : 'This field is required';
+    if (!years.value) errors++;
+    $('summary').textContent = errors
+      ? 'Please correct ' + errors + ' error(s). Years of experience is required.' : '';
+    if (!errors && $('first').value && $('last').value && $('email').value) {
+      $('step1').style.display = 'none';
+      $('step2').style.display = 'block';
+    }
+  });
+  $('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!$('portfolio').value) {
+      document.querySelector('.portfolio-error').textContent = 'Portfolio URL is required';
+      return;
+    }
+    document.body.setAttribute('data-submitted', '1');
+    $('application').style.display = 'none';
+    $('summary').textContent = '';
+    $('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

@@ -2034,8 +2034,10 @@ def test_review_page_resolves_generation_then_fills_and_verifies_before_the_gate
                                           "Two years of ingestion pipelines at Acme Corp.")]
     verified = [VerifyResult(0, essay.label, True, 0.99, 0.01)]
     monkeypatch.setattr(apply_run.apply_fill, "apply", lambda *a, **kw: filled)
-    monkeypatch.setattr(run, "_verify", lambda actual, drafts=None, picks=None: verified)
-    monkeypatch.setattr(run, "_retry_failed", lambda p, actual, checks, drafts=None: checks)
+    monkeypatch.setattr(run, "_verify",
+                        lambda actual, drafts=None, picks=None, shaped=None: verified)
+    monkeypatch.setattr(run, "_retry_failed",
+                        lambda p, actual, checks, drafts=None, shaped=None: checks)
     gated = []
     monkeypatch.setattr(run, "_submit_gate",
                         lambda d, p, checks, r: gated.append((d, p, checks, r)))

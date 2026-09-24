@@ -33,7 +33,10 @@ the page's mapping on a page the run acts on (`_map`,
     job_posting            click the Apply entry, follow a popup (an email
                            Apply parks with its address)
     application_form       plan, fill, verify, type the keyring password into a
-                           password box, then advance, or the submit gate
+                           password box, read the page again (SP6: fields the
+                           fill revealed, values the page changed, buttons it
+                           enabled), then advance (a step the form refuses is
+                           repaired and clicked once more), or the submit gate
     review_page            fill and verify editable controls, then its advance
                            when it has no submit (a wizard step), else the gate
     login_wall / signup    fill the account email and hidden keyring password
@@ -134,6 +137,12 @@ LINKEDIN_CLICKS_MAX = 3            # offsite Apply clicks the handler makes per 
 CONSENT_MAX = 3                    # consent banners dismissed per job
 CONSENT_WAIT_S = 5                 # for a consent click's effect (the banner gone, a reload)
 CLICK_TIMEOUT_S = 20               # click_button's wait for a change
+FILL_ROUNDS_MAX = 3                # re-reads after a page's fill: revealed fields, the page's
+                                   # own changes (FILL-10, FILL-03)
+DISABLED_WAIT_S = 2.0              # a way on still disabled after the fill: waited on this long
+REPAIR_ROUNDS = 2                  # repairs of the fields a form refused, per step (ADV-02)
+BUSY_WAIT_S = 60                   # a loading indicator after a click: waited on this long (ADV-07)
+BUSY_POLL_S = 0.25
 SUBMIT_SETTLE_S = 10               # after a quiet submit click: wait this long for the page
 POST_SUBMIT_WAIT_S = 45            # after the submit click, the page is read again while a
                                    # request it sent is in flight or the page still moves
@@ -1144,6 +1153,17 @@ class _Parked(Exception):
         self.status = status
         self.reason = reason
         self.tab_note = tab_note
+
+
+class _Refused(Exception):
+    """The form refused the submit as typed and nothing left the page
+    (`_JobRun._not_sent`): `problems` are the form's messages, `park` the
+    park it would be without a repair (ADV-02)."""
+
+    def __init__(self, problems: list[dict[str, Any]], park: _Parked):
+        super().__init__(park.reason)
+        self.problems = problems
+        self.park = park
 
 
 def _host(url_or_netloc: str) -> str:
@@ -2341,6 +2361,42 @@ def shaped_holds(value: str, kind: str, planned: str) -> bool:
     return False
 
 
+_TYPED_TYPES = frozenset(("text", "email", "tel", "url", "number", "textarea", "date"))
+
+
+def _typed_box(digest: apply_form.FormDigest, n: int) -> bool:
+    """Is field `n` a plain box a person types into (no widget)?"""
+    f = next((x for x in digest.fields if x.n == n), None)
+    return f is not None and f.type in _TYPED_TYPES and not f.widget
+
+
+def new_fields(before: apply_form.FormDigest,
+               after: apply_form.FormDigest) -> list[apply_form.Field]:
+    """The fields of `after` that `before` did not have (FILL-10: a
+    follow-up question an answer revealed): matched by the control's
+    identity (`apply_form.same_ident`) in its frame, else by locator and
+    label."""
+    old = [(int(f.locator[0]), f.ident, f.locator[1], " ".join(f.label.split()))
+           for f in before.fields]
+    out = []
+    for f in after.fields:
+        idx, label = int(f.locator[0]), " ".join(f.label.split())
+        known = any(i == idx and ((ident and f.ident and apply_form.same_ident(ident, f.ident))
+                                  or (css == f.locator[1] and lab == label))
+                    for i, ident, css, lab in old)
+        if not known:
+            out.append(f)
+    return out
+
+
+def buttons_moved(before: apply_form.FormDigest, after: apply_form.FormDigest) -> bool:
+    """Did the fill change the page's buttons (study G10): a button shown,
+    gone, renamed, or enabled or disabled?"""
+    def row(d):
+        return [(" ".join(b.text.split()), bool(b.disabled), bool(b.chrome)) for b in d.buttons]
+    return row(before) != row(after)
+
+
 def pick_holds(value: str, option: str, group: bool = False) -> bool:
     """Does the read-back `value` show the planned `option` (FILL-13): a tick
     reads "checked"; any other pick reads the option (case, punctuation and
@@ -2834,6 +2890,15 @@ class _JobRun:
         # that an application is on the page, INV-01)
         self._filled_here: list[tuple[int, str]] = []
         self._filled_any = False        # a value went on a page of this job (the account step too)
+        # this page's fill as read back (n -> `apply_fill.Filled`), and the text
+        # boxes it left alone with their values before it: the re-read after
+        # the fill compares against both (FILL-03)
+        self._last_filled: dict[int, apply_fill.Filled] = {}
+        self._idle: list[tuple[Any, str | None]] = []
+        self._refilled: set[int] = set()    # fields put back once after the page changed them
+        self._repaired = False              # the last `_repair` acted on the page
+        self._submit_repairs = 0            # repairs after the form refused the submit (ADV-02)
+        self._gate_repairs = 0              # repairs of what the gate read invalid, this page
         self._code_sent = False         # the code step clicked on (a code can finish a send)
         self._send_watch: SendWatch | None = None     # the requests after the submit click
         self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
@@ -3026,7 +3091,9 @@ class _JobRun:
                 dropped[idx] = "gone"
                 continue
             url = self._frame_url(frames, idx)
-            host = _host(url)
+            # a blank document (about:blank written by the page's own
+            # script) belongs to no other site
+            host = "" if url.startswith("about:") else _host(url)
             if _is_captcha_url(url) or (host and not self._allowed_site(host)) \
                     or (idx > 0 and not on_linkedin and apply_linkedin.is_linkedin(host)):
                 dropped[idx] = host
@@ -3269,6 +3336,8 @@ class _JobRun:
             self._take_late_popup()
             self._check_host(self.page.url)
             self._filled_here = []
+            self._last_filled, self._idle, self._refilled = {}, [], set()
+            self._gate_repairs = 0
             if self._human_check_showing():
                 self._wait_for_human_check("a CAPTCHA challenge is showing")
             self._dismiss_consent()
@@ -4096,6 +4165,7 @@ class _JobRun:
         with self._password_guard() as guard:
             verification = self._fill_and_verify(digest, plan, rec)
             self._fill_passwords(digest, plan, rec, guard)
+            digest, plan, verification = self._after_fill(digest, plan, verification, rec)
             self._form_buttons(digest, plan, verification, rec)
 
     def _form_buttons(self, digest: apply_form.FormDigest, plan: FillPlan,
@@ -4117,8 +4187,11 @@ class _JobRun:
             self.log.info("job %s: %s; routing it through the submit gate", self.job_id, why)
             self._decide("to_gate", why, button=button[0] if button else None,
                          text=_button_text(digest, button[0]) if button else "")
+        if step in ("advance", "gate"):
+            digest, plan, verification = self._still_disabled(digest, plan, verification,
+                                                              button[0], rec)
         if step == "advance":
-            self._click(digest, button[0], "advance", rec, conf=button[1])
+            self._advance(digest, plan, verification, rec, button[0], button[1])
             return
         if step == "gate":
             plan.buttons["submit"] = button
@@ -4126,6 +4199,293 @@ class _JobRun:
             return
         raise _Parked("needs_human", f"no way forward on this page (buttons: "
                                      f"{self._buttons_seen(digest)})")
+
+    def _still_disabled(self, digest: apply_form.FormDigest, plan: FillPlan,
+                        verification: list[VerifyResult], n: int,
+                        rec: dict) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
+        """The way on the filled page chose (study G10): when its button is
+        still disabled once the fill settled, and stays so for
+        `DISABLED_WAIT_S`, the fields the form reports as invalid are
+        repaired (`_repair`, up to `REPAIR_ROUNDS`); a button that stays
+        disabled parks the job with the fields that keep it so as the
+        evidence: the form's own report (a control that would not validate,
+        a required control left empty) and the boxes the plan left blank.
+        Nothing is clicked."""
+        button = next((b for b in digest.buttons if b.n == n), None)
+        if button is None or not button.disabled:
+            return digest, plan, verification
+        for round_no in range(REPAIR_ROUNDS + 1):
+            loc = apply_form.resolve(self.page, button.locator)
+            deadline = time.monotonic() + DISABLED_WAIT_S
+            while True:
+                try:
+                    if loc.count() == 1 and loc.first.is_enabled():
+                        return digest, plan, verification
+                except Exception:       # noqa: BLE001  (a page double; the click finds out)
+                    return digest, plan, verification
+                if time.monotonic() >= deadline:
+                    break
+                self.page.wait_for_timeout(200)
+            invalid: list = []
+            empty: list = []
+            try:
+                invalid = apply_form.validity_report(self.page, button.locator,
+                                                     self._filled_here)["invalid"]
+                empty = [r for r in apply_form.control_scan(self.page,
+                                                            [int(button.locator[0])],
+                                                            required_only=True)
+                         if r.get("required") and r.get("empty")]
+            except Exception as e:      # noqa: BLE001  (a page double)
+                self._trace("error", step="still_disabled", error=type(e).__name__)
+            if invalid and round_no < REPAIR_ROUNDS:
+                problems = [{**r, "text": r.get("message") or "", "kind": "invalid"}
+                            for r in invalid]
+                digest, plan, verification = self._repair(digest, plan, verification,
+                                                          problems, rec, why="disabled")
+                if self._repaired:
+                    button = next((b for b in digest.buttons if b.text == button.text), button)
+                    continue
+            break
+        blank = [pf.label for pf in plan.fields if pf.action == "skip" and pf.label]
+        text = _cap(button.text, 60)
+        self._decide("still_disabled", f"the {text} button stays disabled after the fill",
+                     invalid=invalid[:5], empty=[r.get("label") for r in empty[:5]], blank=blank)
+        missing = [r for r in invalid if r.get("reason") == "valueMissing"] + empty
+        if missing:
+            label = " ".join(str(missing[0].get("label") or "a field").split())[:80]
+            raise _Parked("needs_human", f"required field without an answer: {label} (the "
+                                         f"{text} button stays disabled after the fill)")
+        rows = [_invalid_words(r) for r in invalid[:2]]
+        if blank:
+            rows.append(f"left blank: {_cap(', '.join(blank), 120)}")
+        raise _Parked("needs_human", f"the {text} button stays disabled after the fill"
+                                     + (f" ({_cap('; '.join(rows), 220)})" if rows else ""))
+
+    # -- the form's refusals and their repair (ADV-02, ADV-06) -------------------------------
+
+    def _form_state(self, digest: apply_form.FormDigest, n: int) -> dict[str, Any]:
+        """The page just before a click on button `n`: its URL, its form's
+        fields and the error texts it shows (a baseline for `_form_problems`)."""
+        button = next((b for b in digest.buttons if b.n == n), None)
+        try:
+            errors = {e["text"] for e in apply_form.validity_report(
+                self.page, button.locator if button is not None else None,
+                self._filled_here)["errors"]}
+        except Exception:       # noqa: BLE001  (a page double)
+            errors = set()
+        try:
+            values = apply_form.box_values(self.page, self._typed_boxes())
+        except Exception:       # noqa: BLE001  (a page double)
+            values = []
+        # the boxes' values stay in memory for the read after the click; they
+        # are never written to the trace or the record
+        return {"url": str(self.page.url), "fields": _fields_sig(digest), "errors": errors,
+                "values": values}
+
+    def _form_problems(self, digest: apply_form.FormDigest, n: int,
+                       before: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Did the form refuse the click on button `n` (ADV-02): the page is
+        the same form (the same URL and fields) and it reports a control that
+        would not validate or marked invalid, or shows an error text it did
+        not show before the click. Each problem: {label, message, reason,
+        text, ident, name, kind} ("invalid" or "error"); [] when the page
+        moved on or reports nothing."""
+        try:
+            if str(self.page.url) != str(before.get("url") or ""):
+                return []
+            fresh = self._drop_foreign_controls(self._extract())
+        except Exception:       # noqa: BLE001  (a page mid-navigation: it moved on)
+            return []
+        if _fields_sig(fresh) != tuple(before.get("fields") or ()):
+            return []
+        if any(before.get("values") or []) and not self._holds_typed(before):
+            # the same step back, emptied: the site took nothing and asks
+            # nothing of a field (READ-04's "did not advance"), never a refusal
+            return []
+        button = next((b for b in digest.buttons if b.n == n), None)
+        try:
+            report = apply_form.validity_report(
+                self.page, button.locator if button is not None else None, self._filled_here)
+        except Exception:       # noqa: BLE001  (a page double)
+            return []
+        old = before.get("errors") or set()
+        out = [{**r, "text": r.get("message") or "", "kind": "invalid"}
+               for r in report["invalid"]]
+        out += [{"label": "", "message": e["text"], "reason": "error", "text": e["text"],
+                 "ident": e.get("ident") or "", "name": e.get("name") or "", "kind": "error"}
+                for e in report["errors"] if e["text"] not in old]
+        return out
+
+    def _problem_fields(self, digest: apply_form.FormDigest,
+                        problems: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+        """n -> the problems that name field `n`. In code first: the
+        control's identity (`apply_form.same_ident`), its name or id, its
+        label. The messages no control names go to the judge in one request
+        (`apply_judge.error_questions`): a mapping at `FIELD_MAP_MIN_CONF` or
+        above names its field; one under it, `none` or a dropped one names
+        none, and the message is only evidence."""
+        out: dict[int, list[dict[str, Any]]] = {}
+        loose: list[dict[str, Any]] = []
+        for p in problems:
+            f = None
+            if p.get("ident"):
+                f = next((x for x in digest.fields if x.ident
+                          and apply_form.same_ident(x.ident, str(p["ident"]))), None)
+            if f is None and p.get("name"):
+                f = next((x for x in digest.fields if x.id_or_name == p["name"]), None)
+            if f is None and p.get("label") and p.get("shown", True):
+                # by its label only for a control a person sees: a hidden box
+                # behind a widget (a rich-text editor's textarea) is no field
+                # the run can put right through the widget's label
+                want = " ".join(str(p["label"]).split()).lower()
+                f = next((x for x in digest.fields
+                          if " ".join(x.label.split()).lower() == want), None)
+            if f is not None:
+                out.setdefault(f.n, []).append(p)
+            elif p.get("text"):
+                loose.append(p)
+        if loose and digest.fields:
+            state, questions = apply_judge.error_questions([p["text"] for p in loose],
+                                                           digest.fields)
+            got = {k: v for k, v in self.r.jev.judge(state, questions).items() if k in questions}
+            self.trace.add_answers(got)
+            named = apply_judge.read_error_fields(got, len(loose))
+            for i, p in enumerate(loose):
+                n, conf = named.get(i, (None, 0.0))
+                if n is not None and conf >= apply_judge.FIELD_MAP_MIN_CONF \
+                        and any(x.n == n for x in digest.fields):
+                    out.setdefault(n, []).append({**p, "mapped": round(conf, 2)})
+            self._decide("errors_mapped", f"{len(loose)} message(s) no control names, mapped by "
+                                          "the judge",
+                         messages=[_cap(p["text"], 80) for p in loose],
+                         fields={i: named.get(i, (None, 0.0))[0] for i in range(len(loose))})
+        return out
+
+    def _repair(self, digest: apply_form.FormDigest, plan: FillPlan,
+                verification: list[VerifyResult], problems: list[dict[str, Any]], rec: dict, *,
+                why: str = "") -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
+        self._repaired = False
+        return self._repair_named(digest, plan, verification, problems, rec, why=why)
+
+    def _repair_named(self, digest: apply_form.FormDigest, plan: FillPlan,
+                      verification: list[VerifyResult], problems: list[dict[str, Any]],
+                      rec: dict, *,
+                      why: str = "") -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
+        """ADV-02's repair of the fields the form refused: first the page is
+        read again (a field it revealed is filled, `_fill_revealed`); then
+        each field a problem names (`_problem_fields`): one the plan left
+        blank is asked again as required (its own mapping request, the
+        option picks, the second look) and filled, or the job parks on it
+        ("required field without an answer", with the form's words); one
+        the fill put a value in is typed again in the shape the message asks
+        (`apply_fill.repair`: bare digits, a date format, key by key) and
+        verified. Returns the page, its plan and its verification."""
+        fresh = self._drop_foreign_controls(self._extract())
+        revealed = new_fields(digest, fresh)
+        if revealed:
+            digest, plan, verification = self._fill_revealed(digest, fresh, revealed, plan,
+                                                             verification, rec)
+        named = self._problem_fields(digest, problems)
+        by_pf = {pf.n: pf for pf in plan.fields}
+        blank = [n for n in named if n in by_pf and by_pf[n].action not in _ACTED
+                 and by_pf[n].action != apply_judge.PASSWORD_ACTION]
+        typed = [n for n in named if n in by_pf and by_pf[n].action in _ACTED
+                 and by_pf[n].action != "upload"]
+        self._decide("repair", f"the form refused the step{f' ({why})' if why else ''}: "
+                               f"{len(problems)} problem(s); {len(blank)} blank and {len(typed)} "
+                               f"filled field(s) named",
+                     problems=[_cap(p.get("text") or p.get("label") or "", 80) for p in problems],
+                     blank=[by_pf[n].label for n in blank], typed=[by_pf[n].label for n in typed])
+        if not blank and not typed and not revealed:
+            return digest, plan, verification
+        self._repaired = True       # something on the page was acted on
+        if blank:
+            says = {n: _cap(named[n][0].get("text") or "", 100) for n in blank}
+            sub = dataclasses.replace(digest, buttons=[], fields=[
+                dataclasses.replace(f, required=True) for f in digest.fields if f.n in blank])
+            answers = self._map(sub, {}, "application_form", discover=False)
+            more = apply_judge.plan(sub, self.catalog, answers,
+                                    generation_enabled=bool(self.r.settings["auto_apply_generate"]),
+                                    company=self._company())
+            more = self._complete_option_plan(sub, answers, more, rec)
+            self._last_answers = {**self._last_answers, **answers}
+            try:
+                more_verification = self._fill_and_verify(sub, more, rec)
+            except _Parked as p:
+                n = next((pf.n for pf in more.fields if pf.label and pf.label in p.reason), None)
+                said = f" (the form says: {says[n]})" if n in says and says[n] else ""
+                raise _Parked(p.status, p.reason + said, p.tab_note) from None
+            done = {pf.n: pf for pf in more.fields}
+            plan = dataclasses.replace(plan, fields=[done.get(pf.n, pf) for pf in plan.fields])
+            verification = [v for v in verification if v.n not in done] + more_verification
+        if typed:
+            fixed = []
+            for n in typed:
+                pf = by_pf[n]
+                hint = " ".join(str(p.get("text") or "") for p in named[n])
+                fixed.append(apply_fill.repair(self.page, pf, hint))
+            self._trace_fill(FillPlan(fields=[by_pf[n] for n in typed]), fixed, [], retry=True)
+            again = {v.n: v for v in self._verify(fixed, _drafts(plan), _picks(plan),
+                                                  _shaped(plan, digest))}
+            self._last_filled.update({f.n: f for f in fixed})
+            verification = [again.get(v.n, v) for v in verification]
+        return digest, plan, verification
+
+    def _refused_words(self, problems: list[dict[str, Any]]) -> str:
+        """A park's evidence after the repair rounds: each problem in the
+        form's words (`_invalid_words`, or the error text)."""
+        rows = []
+        for p in problems[:3]:
+            if p.get("kind") == "invalid":
+                rows.append(_invalid_words(p))
+            else:
+                rows.append(f"the form says: {_cap(p.get('text') or '', 100)}")
+        return _cap("; ".join(rows), 260)
+
+    def _advance(self, digest: apply_form.FormDigest, plan: FillPlan,
+                 verification: list[VerifyResult], rec: dict, n: int, conf: float) -> None:
+        """Click the page's advance (`_click`) and read what the form said
+        (ADV-02, ADV-06): a form that refused the step (`_form_problems`) is
+        repaired (`_repair`) and the advance clicked once more, at most
+        `REPAIR_ROUNDS` times, never a second time on a click the form
+        refused without a repair; then the job parks naming each field and
+        its message ("required field without an answer" when one was left
+        empty)."""
+        text = _button_text(digest, n)
+        for round_no in range(REPAIR_ROUNDS + 1):
+            before = self._form_state(digest, n)
+            problems: list[dict[str, Any]] = []
+
+            def _check(d=digest, b=before, out=problems) -> bool:
+                out[:] = self._form_problems(d, n, b)
+                return bool(out)
+            self._click(digest, n, "advance", rec, conf=conf, refused_by_form=_check)
+            if not problems:
+                return
+            self._decide("form_refused", f"the form refused the {_cap(text, 40)} step "
+                                         f"(round {round_no + 1})",
+                         problems=[_cap(p.get("text") or p.get("label") or "", 80)
+                                   for p in problems])
+            if round_no == REPAIR_ROUNDS:
+                break
+            digest, plan, verification = self._repair(digest, plan, verification, problems, rec)
+            if not self._repaired:
+                # nothing the run can put right: never the same click again
+                # here; on a first refusal the loop reads the page as it now
+                # stands (its message too), as it did before SP6, and its own
+                # "page did not advance" ends a step that comes back the same
+                if round_no == 0:
+                    return
+                break
+            # the button as the page shows it now (a repair's re-read)
+            n = next((b.n for b in digest.buttons if b.text == text), n)
+        missing = [p for p in problems if p.get("reason") == "valueMissing"]
+        if missing:
+            label = " ".join(str(missing[0].get("label") or "a field").split())[:80]
+            raise _Parked("needs_human", f"required field without an answer: {label} (the form "
+                                         f"refused the {_cap(text, 40)} step)")
+        raise _Parked("needs_human", f"the form refused the {_cap(text, 40)} step after "
+                                     f"{REPAIR_ROUNDS} repair(s): {self._refused_words(problems)}")
 
     def _form_entry(self, digest: apply_form.FormDigest, plan: FillPlan, step: str,
                     button: tuple[int, float] | None) -> apply_form.Button | None:
@@ -4215,6 +4575,17 @@ class _JobRun:
             self._add_missing(question, context)
         if plan.park_reason:
             raise _Parked("needs_human", plan.park_reason)
+        # the text boxes the plan leaves alone, as they read before the fill:
+        # one the page writes into during the fill (a resume parser's guess)
+        # is checked after it (`_page_writes`, FILL-03)
+        idle = [pf for pf in plan.fields if pf.action not in _ACTED
+                and pf.action != apply_judge.PASSWORD_ACTION
+                and _typed_box(digest, pf.n)]
+        try:
+            idle_before = apply_form.box_values(self.page, [pf.locator for pf in idle])
+        except Exception:       # noqa: BLE001  (a page double)
+            idle_before = [None] * len(idle)
+        self._idle += list(zip(idle, idle_before))
         errors: list[dict] = []
         filled = apply_fill.apply(self.page, plan, deadline=self.deadline, clock=self.r.clock,
                                   errors=errors)
@@ -4229,6 +4600,7 @@ class _JobRun:
         shaped = _shaped(plan, digest)
         verification = self._verify(filled, drafts, _picks(plan), shaped)
         verification = self._retry_failed(plan, filled, verification, drafts, shaped)
+        self._last_filled.update({f.n: f for f in filled})
         self._record_fill(rec, digest, plan, filled, verification)
         self._trace("verify", results=[{"n": v.n, "label": v.label, "ok": v.ok,
                                         "p_correct": v.p_correct,
@@ -4239,6 +4611,184 @@ class _JobRun:
         if still:
             raise _Parked("needs_human", "could not verify: " + ", ".join(still))
         return verification
+
+    def _after_fill(self, digest: apply_form.FormDigest, plan: FillPlan,
+                    verification: list[VerifyResult],
+                    rec: dict) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
+        """The page read again once the fill settles, before a button is
+        chosen, up to `FILL_ROUNDS_MAX` times until it holds:
+
+        - a value the page changed after the fill put it in (FILL-03: a
+          resume parser, a profile lookup after the email) is put back once
+          and verified again (`_page_changes`); a text box the plan left
+          alone that the page wrote into during the fill is checked against
+          the sheet and cleared when it is wrong (`_page_writes`);
+        - a field the fill revealed (FILL-10: "Yes" opens "Please explain")
+          is mapped, planned, filled and verified like the page's own
+          (`_fill_revealed`);
+        - buttons the fill enabled, revealed or renamed (ADV-01, study G10:
+          a Next that waits for a privacy tick, a disabled Apply) are judged
+          again (`_judge_buttons`); unchanged ones keep their roles and take
+          the fresh read's locators.
+
+        Returns the page as it now stands, its plan and its verification."""
+        if self.page is None:           # a unit test's run with no page
+            return digest, plan, verification
+        url = str(self.page.url)
+        for _ in range(FILL_ROUNDS_MAX):
+            info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+            if str(self.page.url) != url:
+                self._check_host(self.page.url)     # the fill took the page elsewhere
+            fresh = self._drop_foreign_controls(self._extract())
+            verification = self._page_changes(digest, plan, verification, rec)
+            self._page_writes(rec)
+            revealed = new_fields(digest, fresh)
+            if revealed:
+                self._decide("revealed", f"the fill revealed {len(revealed)} field(s): "
+                                         f"{_cap(', '.join(f.label for f in revealed), 160)}; "
+                                         + settled_words(info),
+                             fields=[f.label for f in revealed])
+                digest, plan, verification = self._fill_revealed(digest, fresh, revealed, plan,
+                                                                 verification, rec)
+                continue
+            digest, plan = self._judge_buttons(digest, fresh, plan)
+            break
+        return digest, plan, verification
+
+    def _page_changes(self, digest: apply_form.FormDigest, plan: FillPlan,
+                      verification: list[VerifyResult], rec: dict) -> list[VerifyResult]:
+        """FILL-03: every value this page's fill put in, read again; the ones
+        the page changed since (an upload never counts: it is never sent
+        twice) are put in once more and verified again. A field the page
+        changes a second time keeps the page's value and its verification."""
+        by_n = {pf.n: pf for pf in plan.fields}
+        picks, shaped = _picks(plan), _shaped(plan, digest)
+
+        def holds(n: int, value: str, was: str) -> bool:
+            if n in picks:
+                return pick_holds(value, *picks[n])
+            if n in shaped:
+                return shaped_holds(value, *shaped[n])
+            return _same_text(value, was)
+        changed = []
+        for n, f in list(self._last_filled.items()):
+            pf = by_n.get(n)
+            if pf is None or pf.action == "upload" or n in self._refilled:
+                continue
+            if (n in picks or n in shaped) and not holds(n, f.value, f.value):
+                continue        # it never held: the fill's own retry had its turn
+            now = apply_fill.read_back(self.page, pf)
+            if not holds(n, now, f.value):
+                changed.append(pf)
+        if not changed:
+            return verification
+        self._refilled |= {pf.n for pf in changed}
+        self._decide("page_changed", f"the page changed {len(changed)} value(s) after the fill "
+                                     f"({_cap(', '.join(pf.label for pf in changed), 160)}); "
+                                     "put in once more", fields=[pf.label for pf in changed])
+        errors: list[dict] = []
+        again = apply_fill.apply(self.page, FillPlan(fields=changed), deadline=self.deadline,
+                                 clock=self.r.clock, errors=errors)
+        self._trace_fill(FillPlan(fields=changed), again, errors, retry=True)
+        results = {v.n: v for v in self._verify(again, _drafts(plan), _picks(plan),
+                                                _shaped(plan, digest))}
+        self._last_filled.update({f.n: f for f in again})
+        verification = [results.get(v.n, v) for v in verification]
+        still = [v.label for v in verification if not v.ok
+                 and any(pf.n == v.n and pf.required for pf in plan.fields)]
+        if still:
+            raise _Parked("needs_human", "could not verify: " + ", ".join(still)
+                          + " (the page changed the value after the fill)")
+        return verification
+
+    def _page_writes(self, rec: dict) -> None:
+        """FILL-03: a text box the plan left alone that the page wrote into
+        during the fill (a resume parser's guess at a middle name or a past
+        employer) is read against the sheet by the judge; one it reads as
+        wrong is cleared. A value the box held before the fill (the site's
+        own, an account's profile) is left as it is."""
+        if not self._idle:
+            return
+        idle, self._idle = self._idle, []
+        try:
+            now = apply_form.box_values(self.page, [pf.locator for pf, _ in idle])
+        except Exception:       # noqa: BLE001  (a page double)
+            return
+        wrote = [(pf, str(v)) for (pf, was), v in zip(idle, now)
+                 if v is not None and str(v).strip() and str(v) != str(was or "")]
+        if not wrote:
+            return
+        rows = [{"n": pf.n, "label": pf.label, "value": value} for pf, value in wrote]
+        state, questions = apply_judge.verify_questions(rows, self.catalog.verification_excerpt())
+        results = apply_judge.read_verification(rows, self.r.jev.judge(state, questions))
+        wrong = [pf for (pf, _), v in zip(wrote, results) if not v.ok]
+        self._decide("page_wrote", f"the page wrote into {len(wrote)} box(es) the plan left "
+                                   f"alone; {len(wrong)} read as wrong and cleared",
+                     fields=[pf.label for pf, _ in wrote], cleared=[pf.label for pf in wrong])
+        for pf in wrong:
+            try:
+                apply_form.resolve(self.page, pf.locator).first.fill(
+                    "", timeout=apply_fill.ACTION_TIMEOUT_MS)
+                rec.setdefault("cleared", []).append(pf.label)
+            except Exception as e:  # noqa: BLE001  (a box gone: nothing to clear)
+                self._trace("error", step="page_writes.clear", error=type(e).__name__)
+
+    def _fill_revealed(self, digest: apply_form.FormDigest, fresh: apply_form.FormDigest,
+                       revealed: list[apply_form.Field], plan: FillPlan,
+                       verification: list[VerifyResult],
+                       rec: dict) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
+        """FILL-10: the fields the fill revealed, numbered after the page's
+        own, mapped (their own request), planned (option picks and the
+        second look), filled and verified. The page's buttons come from the
+        fresh read (`_judge_buttons`)."""
+        base = max([f.n for f in digest.fields] + [-1]) + 1
+        extra = [dataclasses.replace(f, n=base + i) for i, f in enumerate(revealed)]
+        sub = dataclasses.replace(fresh, fields=extra, buttons=[])
+        answers = self._map(sub, {}, "application_form")
+        more = apply_judge.plan(sub, self.catalog, answers,
+                                generation_enabled=bool(self.r.settings["auto_apply_generate"]),
+                                company=self._company())
+        more = self._complete_option_plan(sub, answers, more, rec)
+        self._last_answers = {**self._last_answers, **answers}
+        more_verification = self._fill_and_verify(sub, more, rec)
+        merged = dataclasses.replace(digest, fields=[*digest.fields, *extra])
+        plan = dataclasses.replace(plan, fields=[*plan.fields, *more.fields],
+                                   missing=[*plan.missing, *more.missing])
+        merged, plan = self._judge_buttons(merged, fresh, plan)
+        return merged, plan, [*verification, *more_verification]
+
+    def _judge_buttons(self, digest: apply_form.FormDigest, fresh: apply_form.FormDigest,
+                       plan: FillPlan) -> tuple[apply_form.FormDigest, FillPlan]:
+        """The page's buttons after the fill (ADV-01, study G10). Unchanged
+        (the same texts, flags and order): the fresh read's buttons, which
+        carry the locators as they stand now, with the roles they had. Else
+        they are judged again, in a request of their own, and the plan takes
+        the new roles; the page's read keeps the new answers."""
+        if not buttons_moved(digest, fresh):
+            kept = [dataclasses.replace(new, n=old.n) for old, new in zip(digest.buttons,
+                                                                        fresh.buttons)]
+            return dataclasses.replace(digest, buttons=kept), plan
+        old = {tuple(b.locator): b for b in digest.buttons}
+        turned = [b for b in fresh.buttons if tuple(b.locator) in old
+                  and _send_worded(b.text) and not _send_worded(old[tuple(b.locator)].text)]
+        if turned:
+            # a button the page read before now says it sends (INV-04): the
+            # read the run judged stands, and the click's live check refuses
+            # it; a new judgment would route it to the gate as a submit
+            self._decide("button_turned_send", f"{_cap(turned[0].text, 40)} read "
+                                               f"{_cap(old[tuple(turned[0].locator)].text, 40)} "
+                                               "before the fill; its roles stand")
+            return digest, plan
+        sub = dataclasses.replace(fresh, fields=[])
+        answers = self._map(sub, {}, "job_posting", discover=False)
+        roles = apply_judge.plan(sub, self.catalog, answers, company=self._company())
+        self._last_answers = {**self._last_answers, **answers}
+        self._decide("buttons_after_fill", "the fill changed the page's buttons; judged again: "
+                     + _cap("; ".join(f"{b.text} {'(disabled) ' if b.disabled else ''}"
+                                      for b in fresh.buttons), 200),
+                     roles={k: v[0] for k, v in roles.buttons.items()})
+        return (dataclasses.replace(digest, buttons=list(fresh.buttons)),
+                dataclasses.replace(plan, buttons=dict(roles.buttons)))
 
     def _trace_fill(self, plan: FillPlan, filled: list[apply_fill.Filled], errors: list[dict],
                     *, retry: bool = False) -> None:
@@ -4260,13 +4810,16 @@ class _JobRun:
         with self._password_guard() as guard:
             verification = self._fill_and_verify(digest, plan, rec)
             self._fill_passwords(digest, plan, rec, guard)
+            digest, plan, verification = self._after_fill(digest, plan, verification, rec)
             step, button, why = review_route(digest, plan)
             if step == "advance":
                 self._decide("review_advance", "read as a review page with a confident advance "
                                                "and no submit button: a wizard step, its "
                                                "advance is clicked",
                              button=button[0], text=_button_text(digest, button[0]))
-                self._click(digest, button[0], "advance", rec, conf=button[1])
+                digest, plan, verification = self._still_disabled(digest, plan, verification,
+                                                                  button[0], rec)
+                self._advance(digest, plan, verification, rec, button[0], button[1])
                 return
             if step == "gate" and why:
                 self._decide("to_gate", why, button=button[0],
@@ -4531,7 +5084,8 @@ class _JobRun:
                                for v in verification]
 
     def _click(self, digest: apply_form.FormDigest, n: int, role: str,
-               rec: dict, *, conf: float | None = None) -> apply_fill.ClickResult:
+               rec: dict, *, conf: float | None = None,
+               refused_by_form: Callable[[], bool] | None = None) -> apply_fill.ClickResult:
         """Click button `n` in role `role` (judged at `conf`). A submit is
         clicked once whatever the page showed: a quiet page is no proof the
         click failed and a second click could send twice, so a
@@ -4541,13 +5095,20 @@ class _JobRun:
         A click that opens a new tab (NAV-05), right away or a moment after
         the click (the tabs are watched until the retry, which waits
         `POPUP_GRACE_S` for one first, review M5), is followed and never
-        clicked again."""
+        clicked again. `refused_by_form` (ADV-06): read after the first
+        click, changed or quiet; when it says the form refused the click
+        (its validation messages), the click is never made again here: the
+        caller repairs the fields first. A page that shows a loading
+        indicator after the click is waited on (ADV-07, `BUSY_WAIT_S`)."""
         button = next((b for b in digest.buttons if b.n == n), None)
         text = button.text if button else f"button {n}"
         rec["clicked"].append(f"{text} ({role})")
         self._last_click = (text, role)
         timeout = max(1.0, min(CLICK_TIMEOUT_S, self.deadline - self.r.clock()))
         check = self._live_check(role)
+        # a loading indicator already up before the click is the page's own
+        # (an ad's placeholder that never clears, M10): no wait for it after
+        busy_before = role != "submit" and self._busy()
         with _popups(self.page) as opened:
             result = apply_fill.click(self.page, digest, n, timeout_s=timeout, check=check)
             if (role != "submit" and not opened and not result.changed
@@ -4575,6 +5136,10 @@ class _JobRun:
                 self._trace("submit_settle", changed=changed, waited_s=SUBMIT_SETTLE_S)
                 return apply_fill.ClickResult(clicked=True, changed=changed, late=result.late)
             return result
+        if result.changed and not busy_before:
+            self._wait_while_busy(text)
+        if result.clicked and refused_by_form is not None and refused_by_form():
+            return result
         if result.changed:
             return result
         self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
@@ -4597,6 +5162,27 @@ class _JobRun:
             raise _Parked("needs_human", f"the {role} button ({text}) did nothing "
                                          f"({judged}clicked twice){ticked}")
         return result
+
+    def _wait_while_busy(self, text: str) -> None:
+        """ADV-07: after a click that changed the page, a loading indicator
+        still in view (`aria-busy`, a skeleton: `apply_fill.ready_snapshot`)
+        is waited on, up to `BUSY_WAIT_S` (a slow Workday or Taleo step can
+        take 30 s), then the page settles; the trace says how long."""
+        start = time.monotonic()
+        while time.monotonic() - start < BUSY_WAIT_S:
+            try:
+                if not apply_fill.ready_snapshot(self.page)[1]:
+                    break
+            except Exception:       # noqa: BLE001  (a page double, a page mid-navigation)
+                break
+            self.page.wait_for_timeout(int(BUSY_POLL_S * 1000))
+        waited = time.monotonic() - start
+        if waited >= BUSY_POLL_S:
+            info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+            self._decide("busy_after_click", f"a loading indicator showed after {_cap(text, 40)}; "
+                                             f"waited {waited:.1f} s, then "
+                                             + settled_words(info),
+                         waited_s=round(waited, 1), capped=waited >= BUSY_WAIT_S)
 
     def _adopt_click_popup(self, popup, text: str, role: str) -> bool:
         """A click that opened a new tab (NAV-05): True when the tab is now
@@ -4735,6 +5321,23 @@ class _JobRun:
         it is read by `_after_submit`."""
         self._no_form_on_linkedin("the submit gate")
         live = self._gate_read(digest, plan)
+        if live.get("invalid") and not live.get("no_application") \
+                and self._gate_repairs < REPAIR_ROUNDS and plan.buttons.get("submit"):
+            # ADV-02: the form reports a control that would not validate:
+            # it is repaired before the gate decides, never sent as it is
+            self._gate_repairs += 1
+            submit = plan.buttons["submit"]
+            text = _button_text(digest, submit[0])
+            problems = [{**r, "text": r.get("message") or "", "kind": "invalid"}
+                        for r in live["invalid"]]
+            digest, plan, verification = self._repair(digest, plan, verification, problems, rec,
+                                                      why="read at the gate")
+            if self._repaired:
+                n = next((b.n for b in digest.buttons if b.text == text), None)
+                if n is not None:
+                    plan.buttons["submit"] = (n, submit[1])
+                    self._submit_gate(digest, plan, verification, rec)
+                    return
         ok, why = can_submit(plan, verification, self.r.settings, live)
         submit = plan.buttons.get("submit")
         self._trace("gate", ok=ok, why=why, button=submit[0] if submit else None,
@@ -4817,7 +5420,23 @@ class _JobRun:
         account = bool(typed) and (any(pf.required for pf in typed)
                                    or bool(_ACCOUNT_STEP_WORDS.search(text)
                                            or apply_judge.SIGN_IN_WORDS.search(text)))
-        self._after_submit(account=account, handoff=self.handed_off)
+        try:
+            self._after_submit(account=account, handoff=self.handed_off)
+        except _Refused as refused:
+            # ADV-02: the form refused the send as typed and nothing left the
+            # page (`_not_sent`): its fields are repaired once and the page
+            # goes through the gate again, which decides as it did
+            self._submit_repairs += 1
+            submit = plan.buttons["submit"]
+            digest, plan, verification = self._repair(digest, plan, verification,
+                                                      refused.problems, rec,
+                                                      why="the submit was refused")
+            n = next((b.n for b in digest.buttons if b.text == text), None)
+            if not self._repaired or n is None:
+                raise refused.park from None
+            plan.buttons["submit"] = (n, submit[1])
+            rec["clicked"].append("the form refused the submit; repaired")
+            self._submit_gate(digest, plan, verification, rec)
 
     def _moved_during_wait(self, digest: apply_form.FormDigest) -> bool:
         """After the gate's wait for the person: did the page move on (a new
@@ -5101,15 +5720,24 @@ class _JobRun:
     def _not_sent(self, invalid: list, field_errors: list, watch: SendWatch) -> None:
         """Validation errors after the submit click: the form refused the
         send, so nothing went through (`submit_clicked` is reset); the job
-        waits for the person with the messages and the fields."""
+        waits for the person with the messages and the fields. When nothing
+        at all left the page (`SendWatch.any`), the form refused the send as
+        typed: the gate repairs it once (`_Refused`, ADV-02)."""
         self.submit_clicked = False
         rows = [_invalid_words(r) for r in invalid[:3]]
         rows += [f"the form says: {_cap(e['text'], 100)}" for e in field_errors[:2]]
         self._decide("after_submit", "validation errors after the submit click; nothing was "
                                      "sent", invalid=invalid[:5],
                      errors=[e["text"] for e in field_errors[:5]], request=watch.first())
-        raise _Parked("needs_human", f"{NOT_SENT_REASON}: validation errors "
-                                     f"({_cap('; '.join(rows), 260)})")
+        park = _Parked("needs_human", f"{NOT_SENT_REASON}: validation errors "
+                                      f"({_cap('; '.join(rows), 260)})")
+        if not watch.any() and self._submit_repairs < 1:
+            problems = [{**r, "text": r.get("message") or "", "kind": "invalid"} for r in invalid]
+            problems += [{"label": "", "message": e["text"], "reason": "error", "text": e["text"],
+                          "ident": e.get("ident") or "", "name": e.get("name") or "",
+                          "kind": "error"} for e in field_errors]
+            raise _Refused(problems, park)
+        raise park
 
     def _inconclusive(self, state: str, conf: float, digest: apply_form.FormDigest,
                       watch: SendWatch, before: Mapping[str, Any], handoff: bool) -> None:

@@ -24,6 +24,14 @@ clicking its match; a hidden select in place; a hidden tick box or radio
 through its label; a rich-text box by typing; date parts part by part. The
 control is checked to be the one planned for before the act (FILL-02).
 
+SP6: uploads go first and the page settles before the rest (a resume
+parser's writes land before the planned values); a value the page reshapes
+goes in its shape (a masked phone key by key, a phone's national digits, a
+text date in the format its box names, a number box's number); an upload is
+read from the widget's chip when the input was reset, and never sent twice;
+`repair(page, pf, hint)` types a value the form refused again in the shape
+its message asks; `apply` reports how it acted on each field (`outcomes`).
+
 `click_button(page, digest, n)` clicks a digest button and waits for a
 navigation or a DOM change (body length and the set of visible controls,
 polled every 250 ms), capped. `open_listbox_options(page, field)` reads a
@@ -1041,13 +1049,23 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
     (the job's wall clock belongs to the caller). A failed action lands in
     `errors` as `{n, label, action, error}` with the error's type name only
     (a Playwright message can quote the value). Before each act the control
-    is checked to be the one planned for (`_same_control`, FILL-02)."""
-    out: list[Filled] = []
-    for pf in plan.fields:
-        if pf.action not in ("fill", "select", "upload"):
-            continue
+    is checked to be the one planned for (`_same_control`, FILL-02). The
+    uploads go first and the page settles after them (FILL-03: a resume
+    parser writes its guesses then, and the planned values go in after
+    them); the result keeps the plan's order."""
+    done: dict[int, Filled] = {}
+    acted = [pf for pf in plan.fields if pf.action in ("fill", "select", "upload")]
+    order = [pf for pf in acted if pf.action == "upload"] + \
+        [pf for pf in acted if pf.action != "upload"]
+    uploads = len(acted) - sum(1 for pf in acted if pf.action != "upload")
+    for i, pf in enumerate(order):
+        if i == uploads and 0 < uploads < len(order):
+            try:
+                settle(page, SETTLE_MAX_S)
+            except Exception:       # noqa: BLE001  (a page double; the fill goes on)
+                pass
         if deadline is not None and clock() >= deadline:
-            _say(log, f"apply_fill: deadline passed before {pf.label!r}; {len(out)} filled")
+            _say(log, f"apply_fill: deadline passed before {pf.label!r}; {len(done)} filled")
             break
         loc = None
         kind = None
@@ -1067,8 +1085,74 @@ def apply(page, plan: FillPlan, *, log: Callable[[str], Any] | None = None,
                 errors.append({"n": pf.n, "label": pf.label, "action": pf.action,
                                "error": type(e).__name__})
         value = _read_back(loc, kind, page, pf) if loc is not None else ""
-        out.append(Filled(n=pf.n, label=pf.label, value=value))
-    return out
+        done[pf.n] = Filled(n=pf.n, label=pf.label, value=value)
+    return [done[pf.n] for pf in acted if pf.n in done]
+
+
+# a validation message that asks for bare digits
+_DIGITS_HINT = re.compile(r"\b(digits?|numbers?\s+only|numeric|numerals?|0\s*-\s*9)\b", re.I)
+
+
+def repair_value(pf: PlannedField, hint: str, hints: dict | None = None) -> str:
+    """The value a refused box takes on its repair (ADV-02): the planned
+    value in the shape the form's message asks: a date in the format the
+    message (or the box) names, bare digits when the message asks for
+    digits (a phone's national digits), else the value as planned."""
+    value = str(pf.value or "")
+    d = parse_date(value)
+    fmt = (date_format({"label": hint}) or date_format(hints or {})) if d is not None else ""
+    if d is not None and fmt:
+        return format_date(d, fmt)
+    if _DIGITS_HINT.search(hint or ""):
+        digits = phone_digits(value) if _phoneish(hints or {}) or len(phone_digits(value)) == 10 \
+            else re.sub(r"\D", "", value)
+        return digits or value
+    return value
+
+
+def repair(page, pf: PlannedField, hint: str = "") -> Filled:
+    """Put a value the form refused in again (ADV-02): a text box is cleared
+    and typed key by key with `repair_value` (a script that checks keys, a
+    mask, a format the message names); any other control is acted on its
+    own way once more. Returns the read-back."""
+    loc = None
+    kind = None
+    try:
+        loc = apply_form.resolve(page, pf.locator)
+        if loc.count() == 0:
+            raise LookupError(f"no element at {pf.locator}")
+        loc = _same_control(page, pf, loc)
+        kind = _kind(loc)
+        textish = (kind["tag"] == "TEXTAREA" or (kind["tag"] == "INPUT" and kind["type"] not in (
+            "checkbox", "radio", "file", "date", "hidden"))) and not pf.widget \
+            and kind["role"] not in ("combobox", "listbox")
+        if textish and pf.action == "fill":
+            try:
+                hints = dict(loc.first.evaluate(_HINTS_JS, timeout=ACTION_TIMEOUT_MS) or {})
+            except Exception:       # noqa: BLE001
+                hints = {}
+            value = repair_value(pf, hint, hints)
+            if kind["type"] == "number":
+                value = number_value(value)
+            _typed(loc, value)
+        else:
+            _act(page, pf, loc, kind)
+    except Exception as e:      # noqa: BLE001  (the read-back reports the outcome)
+        log.info("apply_fill: repair of %r failed: %s", pf.label, type(e).__name__)
+    value = _read_back(loc, kind, page, pf) if loc is not None else ""
+    return Filled(n=pf.n, label=pf.label, value=value)
+
+
+def read_back(page, pf: PlannedField) -> str:
+    """What the control `pf` names holds now, read the way `apply` reads it
+    after its act ("" when it is gone)."""
+    try:
+        loc = apply_form.resolve(page, pf.locator)
+        if loc.count() == 0:
+            return ""
+        return _read_back(loc, _kind(loc), page, pf)
+    except Exception:       # noqa: BLE001  (a frame or a control gone)
+        return ""
 
 
 def open_listbox_options(page, field) -> list[str]:

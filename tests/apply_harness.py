@@ -575,6 +575,50 @@ class CommitmentUnderFloor:
         return out
 
 
+class HeadlineLeftBlank:
+    """A judge that maps a "Headline" box to `leave_blank` at 0.95, and
+    reads any value in it as not the sheet's (0.10): the sheet names no
+    headline, as a real judge sees, where the fake one's word match takes a
+    fact and finds "form" and "field" in every sheet. The rest goes to the
+    judge it wraps."""
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        out = dict(self.inner.judge(state, questions))
+        for row in (state or {}).get("fields") or []:
+            qid = f"field_{row.get('n')}_source"
+            if str(row.get("label", "")).strip() == "Headline" and qid in out:
+                out[qid] = jev.Answer(kind="choice", choice="leave_blank", confidence=0.95,
+                                      probabilities={"leave_blank": 0.95, "full_name": 0.05})
+        for qid, q in questions.items():
+            instructions = q.get("instructions")
+            if qid.startswith("verify_") and isinstance(instructions, dict) \
+                    and instructions.get("field_label") == "Headline" and qid in out:
+                out[qid] = _noul(0.1)
+        return out
+
+
+class OptionalLeftBlank:
+    """A judge whose first look leaves the optional-looking "Years of
+    experience" and "Portfolio URL" boxes without a mapping (a read under
+    the floor, which an optional box gets no second look for); a request
+    that carries them as required (the repair's, after the form said so) is
+    the wrapped judge's."""
+    LABELS = ("Years of experience", "Portfolio URL")
+
+    def __init__(self, inner: Any):
+        self.inner = inner
+
+    def judge(self, state: Any, questions: dict) -> dict:
+        out = dict(self.inner.judge(state, questions))
+        for row in (state or {}).get("fields") or []:
+            if str(row.get("label", "")).strip() in self.LABELS and not row.get("required"):
+                out.pop(f"field_{row.get('n')}_source", None)
+        return out
+
+
 class VerifiedReadAsConfirmation:
     """A judge that reads an email-verified page as a confirmation at 0.90,
     its received Noul yes (the I5 shape: "Your email is verified, thank
@@ -975,6 +1019,31 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="a form in a dialog that Escape closes, a typeahead that says expanded with "
                 "no menu: no Escape without a menu (FILL-08)"),
+    Flow("conditional_fields", "conditional_fields.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", settle_s=0.8,
+         covers="a source answer that reveals a required box half a second later, a consent "
+                "tick that reveals the only submit (FILL-10, study G10)"),
+    Flow("resume_parse_autofill", "resume_parse_autofill.html", False, "ready_to_submit",
+         _PARKED, confirm="#thanks:visible",
+         gate="body[data-values-ok='1'] #btn-submit:visible", wrap=HeadlineLeftBlank,
+         covers="a resume parser that writes its guesses after the upload, a profile lookup "
+                "after the email: the sheet's values stand at the gate (FILL-03)"),
+    Flow("validation_errors", "validation_errors.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
+         covers="a Next the form refuses: a phone it wants in digits, a blank box it needs, a "
+                "summary no control names; repaired, then the gate (ADV-02)"),
+    Flow("validation_errors_submit", "validation_errors.html", True, "submitted", _SUBMITTED,
+         confirm="#thanks:visible", wrap=OptionalLeftBlank,
+         covers="the same, then a submit the form refuses with nothing sent: repaired once and "
+                "sent through the gate again (ADV-02)"),
+    # the chaos case: the form is drawn anew (the same markup, new nodes)
+    # right after the run first reads it, before any act
+    Flow("rerender_after_read", "lever_single.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         on_read="() => { if (window.__redrawn) return; window.__redrawn = 1; "
+                 "const a = document.getElementById('application'); a.innerHTML = a.innerHTML; }",
+         covers="the form drawn anew between the read and the fill: every act finds its "
+                "control again"),
 )
 
 

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Data Engineer - Contoso</title>
+<!-- A synthetic resume parser and profile lookup (FILL-03): an upload shows
+     "Reading your resume..." (aria-busy) for 1.2 s, then writes its guesses
+     into the name, phone and headline boxes; the email, once entered,
+     looks a profile up (aria-busy, 0.6 s) and writes the first name in
+     capitals, once. The submit's box shows only while every box holds what
+     the candidate's sheet says (body[data-values-ok]). -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  .busy { color: #555; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Data Engineer</h1>
+<p>Contoso, Chicago, IL</p>
+<form id="application">
+  <div class="field"><label for="first">First name *</label><input id="first" name="first_name" type="text" required></div>
+  <div class="field"><label>Headline <input class="headline" type="text"></label></div>
+  <div class="field"><label for="last">Last name *</label><input id="last" name="last_name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="tel"></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+  <div id="status"></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  function $(id) { return document.getElementById(id); }
+  function check() {
+    var ok = $('first').value === 'Jane' && $('last').value === 'Doering'
+      && $('email').value === 'jane.doe@example.com' && document.querySelector('.headline').value === ''
+      && $('phone').value.replace(/\D/g, '') === '5555550100';
+    if (ok) document.body.setAttribute('data-values-ok', '1');
+    else document.body.removeAttribute('data-values-ok');
+  }
+  function busy(text, ms, then) {
+    var b = document.createElement('div');
+    b.className = 'busy';
+    b.setAttribute('aria-busy', 'true');
+    b.textContent = text;
+    $('status').appendChild(b);
+    setTimeout(function () { then(); b.remove(); check(); }, ms);
+  }
+  $('resume').addEventListener('change', function () {
+    busy('Reading your resume...', 1200, function () {
+      $('first').value = 'J.';
+      $('last').value = 'Doering-Smith';
+      $('phone').value = '000 000 0000';
+      document.querySelector('.headline').value = 'SWE III';
+    });
+  });
+  var looked = false;
+  $('email').addEventListener('change', function () {
+    if (looked || !$('email').value) return;
+    looked = true;
+    busy('Looking up your profile...', 600, function () { $('first').value = 'JANE'; });
+  });
+  document.querySelectorAll('input').forEach(function (i) {
+    i.addEventListener('input', check);
+    i.addEventListener('change', check);
+  });
+  $('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    $('application').style.display = 'none';
+    $('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

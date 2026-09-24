@@ -480,7 +480,13 @@ _COHERENT_NO = (0.15, 0.40)
 # `submitted` without a confirmation on the page.
 CONFIRM_MISREADS = frozenset(("application_form", "review_page"))
 _CONFIRM_MISREAD_CONF = (0.40, 0.80)
-_DROPPED_PREFIX = "field_"      # the answers a drop may remove
+# the answers a drop may remove: a field's mapping, and a validation
+# message's field (`apply_judge.error_questions`, SP6)
+_DROPPED_PREFIXES = ("field_", "error_")
+# A validation message's field (SP6) is misread like a page state: with
+# chance `swap_p` it points at another option (another field, or `none`),
+# at a confidence from 0.30 to 0.60, the true one second.
+_ERROR_PREFIX = "error_"
 
 
 class NoisyJev:
@@ -500,8 +506,14 @@ class NoisyJev:
       that much probability and the rest spreads over the other options. A
       Noul (a verification, a flag) is left alone: it carries no confidence.
     - `drop_p` (default 0.05): each field answer (`field_{n}_source`,
-      `field_{n}_option`, `field_{n}_pick`) is dropped with this chance, as a
-      misread that leaves the box without a mapping.
+      `field_{n}_option`, `field_{n}_pick`) and each validation message's
+      field (`error_{i}_field`, SP6) is dropped with this chance, as a
+      misread that leaves the box or the message without a mapping.
+    - A validation message's field (`error_{i}_field`, SP6) is misread as
+      a page state is: with chance `swap_p` it names another option
+      (another field, or `none`) at a confidence from 0.30 to 0.60, the
+      true answer second; otherwise its confidence is scaled as every
+      choice's is.
     - `confirm_p` (default a third of `swap_p`, 0.05): a form or a review
       page not swapped otherwise is read as a confirmation
       (`CONFIRM_MISREADS`) at a confidence from 0.40 to 0.80, the true state
@@ -562,10 +574,12 @@ class NoisyJev:
                 continue
             a = answers[qid]
             rng = self._rng(key, qid)
-            if qid.startswith(_DROPPED_PREFIX) and rng.random() < self.drop_p:
+            if qid.startswith(_DROPPED_PREFIXES) and rng.random() < self.drop_p:
                 continue
             if a.kind == "noul" and qid in READ_NOULS:
                 out[qid] = self._read_noul(qid, a, rng, truth, misread)
+            elif a.kind == "choice" and qid.startswith(_ERROR_PREFIX):
+                out[qid] = self._error_field(a, rng)
             elif a.kind in ("choice", "score"):
                 out[qid] = self._scaled(a, rng)
             else:
@@ -616,6 +630,21 @@ class NoisyJev:
         return Answer(kind="choice", choice=winner,
                       probabilities=_spread(names, winner, conf, second),
                       confidence=conf)
+
+    def _error_field(self, a: Answer, rng) -> Answer:
+        """A validation message's field (SP6): with chance `swap_p` another
+        option (a field, or `none`) at a confidence from 0.30 to 0.60, the
+        true answer second; else the answer with its confidence scaled."""
+        names = list(a.probabilities) or [str(a.choice)]
+        truth = str(a.choice)
+        swap, pick, conf_draw = rng.random(), rng.random(), rng.random()
+        others = [n for n in names if n != truth]
+        if others and swap < self.swap_p:
+            winner = others[int(pick * len(others)) % len(others)]
+            conf = round(_between(_SWAPPED_CONF, conf_draw), 4)
+            return Answer(kind="choice", choice=winner,
+                          probabilities=_spread(names, winner, conf, truth), confidence=conf)
+        return self._scaled(a, rng)
 
     def _scaled(self, a: Answer, rng) -> Answer:
         conf = round(float(a.confidence if a.confidence is not None else 1.0)

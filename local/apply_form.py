@@ -2159,9 +2159,13 @@ def same_scope(page, button_locator: tuple[int, str],
 # `tied` when a control names it (`aria-describedby`, `aria-errormessage`).
 # Without a button, the forms of the filled fields (`fcss`) when there are
 # any. Returns {invalid: [{label, message, reason}], errors: [{text, field,
-# tied}]}.
+# tied}]}. SP6: each invalid row carries the control's identity
+# (`IDENT_FN_JS`), its name or id and whether it shows (`shown`); each error
+# text the identity and name of the control that names it, or of the one
+# control in its box, so the repair can find the field (ADV-02).
 _VALIDITY_JS = r"""({bcss, fcss}) => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const identOf = __IDENT__;
   const visible = (el) => {
     const st = getComputedStyle(el);
     if (st.display === 'none' || st.visibility === 'hidden') return false;
@@ -2225,7 +2229,8 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
     if (seen.has(key)) continue;
     seen.add(key);
     invalid.push({label: labelOf(el), message: norm(el.validationMessage).slice(0, 160),
-                  reason: REASONS.find((r) => el.validity[r]) || 'invalid'});
+                  reason: REASONS.find((r) => el.validity[r]) || 'invalid', ident: identOf(el),
+                  name: el.name || el.id || '', shown: visible(el)});
   }
   for (const el of document.querySelectorAll('[aria-invalid=true]')) {
     if (seen.has(el) || outside(el) || !visible(el) || !inScope(el)) continue;
@@ -2233,17 +2238,20 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
     const desc = el.getAttribute('aria-describedby') || el.getAttribute('aria-errormessage') || '';
     const msg = norm(desc.split(/\s+/).map((i) => { const n = document.getElementById(i);
       return n ? n.innerText : ''; }).join(' '));
-    invalid.push({label: labelOf(el), message: msg.slice(0, 160), reason: 'aria-invalid'});
+    invalid.push({label: labelOf(el), message: msg.slice(0, 160), reason: 'aria-invalid',
+                  ident: identOf(el), name: el.getAttribute('name') || el.id || '', shown: true});
   }
   const errors = [];
   const texts = new Set();
   const esel = '[role=alert], [aria-live=assertive], [class*=error i], [class*=invalid i], '
     + '[class*=danger i]';
   const SUCCESS = /alert-success|alert-info|\bsuccess\b/i;
-  const namedBy = (el) => !!el.id && Array.from(document.querySelectorAll(
-    '[aria-describedby], [aria-errormessage]')).some((c) => (
+  // the control that names an error text (aria-describedby, aria-errormessage)
+  const namer = (el) => !el.id ? null : Array.from(document.querySelectorAll(
+    '[aria-describedby], [aria-errormessage]')).find((c) => (
       (c.getAttribute('aria-describedby') || '') + ' ' + (c.getAttribute('aria-errormessage') || ''))
-      .split(/\s+/).includes(el.id));
+      .split(/\s+/).includes(el.id)) || null;
+  const namedBy = (el) => !!namer(el);
   for (const el of document.querySelectorAll(esel)) {
     if (outside(el) || !visible(el)) continue;
     if (el.matches('input, select, textarea, button, form, body')) continue;
@@ -2254,18 +2262,23 @@ _VALIDITY_JS = r"""({bcss, fcss}) => {
     if (Array.from(texts).some((t) => t.includes(text) || text.includes(t))) continue;
     texts.add(text);
     // a field's box: within two levels above, a box holding one to six
-    // controls that is no page, form or main region
+    // controls that is no page, form or main region; its control, when it
+    // holds one alone (or the control that names the text)
     let field = false;
+    let owner = namer(el);
     let p = el.parentElement;
     for (let i = 0; p && i < 2 && !field; i++, p = p.parentElement) {
       if (p.matches('body, html, form, main, [role=main]')) break;
-      const n = p.querySelectorAll('input:not([type=hidden]), select, textarea').length;
-      field = n >= 1 && n <= 6;
+      const ctrls = p.querySelectorAll('input:not([type=hidden]), select, textarea');
+      field = ctrls.length >= 1 && ctrls.length <= 6;
+      if (!owner && ctrls.length === 1) owner = ctrls[0];
     }
-    errors.push({text: text.slice(0, 200), field: field, tied: namedBy(el)});
+    errors.push({text: text.slice(0, 200), field: field, tied: !!namer(el),
+                 ident: owner ? identOf(owner) : '',
+                 name: owner ? (owner.getAttribute('name') || owner.id || '') : ''});
   }
   return {invalid: invalid.slice(0, 20), errors: errors.slice(0, 10)};
-}""".replace("__CONSENT__", CONSENT_ROOTS_JS)
+}""".replace("__CONSENT__", CONSENT_ROOTS_JS).replace("__IDENT__", IDENT_FN_JS)
 
 
 _VALUES_JS = r"""(css) => css.map((c) => {

@@ -1788,6 +1788,48 @@ def reask_questions(digest: FormDigest, catalog: FactCatalog, fill_plan: FillPla
     return state, questions
 
 
+# --- validation messages: which field each one names (ADV-02) --------------------------
+
+ERROR_FIELDS_CAP = 40           # fields offered per message
+ERROR_MESSAGE_CAP = 200         # characters of a message sent
+
+
+def error_questions(messages: list[str], fields) -> tuple[dict, dict]:
+    """One request for the validation messages the page showed that no
+    control names (ADV-02; a message tied to its control needs no judge):
+    per message `error_{i}_field`, a Choice over the page's fields (each
+    option its question's words) and `none` (the message names no one
+    field: a note about the whole page). The state is the messages alone,
+    the fields ride in the options, so each question is one small
+    judgment (the Jev guide, sections 3 and 7)."""
+    options: dict[str, Any] = {"none": None}
+    for f in list(fields)[:ERROR_FIELDS_CAP]:
+        label = " ".join(str(getattr(f, "label", "") or "").split())[:READ_TEXT_CAP]
+        if label:
+            options[f"q{f.n}"] = {"question": label}
+    state = {"messages": [" ".join(str(m or "").split())[:ERROR_MESSAGE_CAP] for m in messages]}
+    questions = {f"error_{i}_field": {
+        "type": "choice",
+        "instructions": f"Which entry of the form does the error message `messages[{i}]` "
+                        "point at?",
+        "criteria": dict(options)} for i in range(len(messages))}
+    return state, questions
+
+
+def read_error_fields(answers: Mapping[str, Answer], count: int) -> dict[int, tuple[int | None, float]]:
+    """i -> (the field `n` message `i` names, or None for `none`; its
+    confidence), for every message answered (a dropped answer is left
+    out)."""
+    out: dict[int, tuple[int | None, float]] = {}
+    for i in range(count):
+        choice, conf = _choice_of(answers, f"error_{i}_field")
+        if choice is None:
+            continue
+        n = int(choice[1:]) if choice.startswith("q") and choice[1:].isdigit() else None
+        out[i] = (n, conf)
+    return out
+
+
 # --- verification --------------------------------------------------------------------
 
 @dataclass(frozen=True)

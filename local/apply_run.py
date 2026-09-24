@@ -794,6 +794,34 @@ def _fields_sig(digest: apply_form.FormDigest) -> tuple:
     return tuple((" ".join((f.label or "").split()), f.type) for f in digest.fields)
 
 
+def _spare_judged(plan: FillPlan, judged: set[int]) -> None:
+    """The fields of a repair's plan that only the judge's reading of a
+    message named (`judged`, SP6 review M1) are asked as required but kept
+    optional in the plan: one without an answer stays blank, never the
+    plan's park reason and never a missing question for the person (a
+    confident wrong reading must not park on another field or ask for an
+    answer the form never asked for). `_repair_named` decides on them."""
+    if not judged:
+        return
+    labels = set()
+    for pf in plan.fields:
+        if pf.n in judged:
+            pf.required = False
+            if pf.action == "skip":
+                labels.add(pf.label)
+    plan.missing = [(q, c) for q, c in plan.missing if q not in labels]
+    head = "required field without an answer: "
+    if plan.park_reason.startswith(head) and plan.park_reason[len(head):] in labels:
+        hard = next((pf for pf in plan.fields if pf.action == "skip" and pf.required), None)
+        plan.park_reason = f"{head}{hard.label}" if hard is not None else ""
+
+
+def _label_key(label: str) -> str:
+    """A field's question words, spaces and case folded (the key the
+    messages' tried fields keep, M1)."""
+    return " ".join((label or "").split()).lower()
+
+
 class _AsForm(Exception):
     """Raised by the account step, before anything is typed, for an account
     screen that carries the application (a question only an application
@@ -3023,6 +3051,9 @@ class _JobRun:
         self._repaired = False              # the last `_repair` acted on the page
         self._submit_repairs = 0            # repairs after the form refused the submit (ADV-02)
         self._gate_repairs = 0              # repairs of what the gate read invalid, this page
+        # (the form's fields, a message no control names) -> the fields the
+        # judge named for it on that form: never offered for it again (M1)
+        self._error_tried: dict[tuple, set[str]] = {}
         self._code_sent = False         # the code step clicked on (a code can finish a send)
         self._send_watch: SendWatch | None = None     # the requests after the submit click
         self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
@@ -4619,7 +4650,15 @@ class _JobRun:
         label. The messages no control names go to the judge in one request
         (`apply_judge.error_questions`): a mapping at `FIELD_MAP_MIN_CONF` or
         above names its field; one under it, `none` or a dropped one names
-        none, and the message is only evidence."""
+        none, and the message is only evidence.
+
+        A confident wrong mapping is possible (SP6 review M1), so: a field
+        the judge named for a message on this form is never offered for it
+        again (a later round, the form still showing the message, asks a
+        fresh question without it); a message the first request maps to no
+        field gets one second look, asked in other words; and a problem the
+        judge mapped carries `mapped` (its confidence), which `_repair_named`
+        never parks on alone."""
         out: dict[int, list[dict[str, Any]]] = {}
         loose: list[dict[str, Any]] = []
         for p in problems:
@@ -4641,21 +4680,57 @@ class _JobRun:
             elif p.get("text"):
                 loose.append(p)
         if loose and digest.fields:
-            state, questions = apply_judge.error_questions([p["text"] for p in loose],
-                                                           digest.fields)
-            got = {k: v for k, v in self.r.jev.judge(state, questions).items() if k in questions}
-            self.trace.add_answers(got)
-            named = apply_judge.read_error_fields(got, len(loose))
+            sig = _fields_sig(digest)
+            keys = [(sig, " ".join(str(p["text"]).split())) for p in loose]
+            exclude = [{x.n for x in digest.fields
+                        if _label_key(x.label) in self._error_tried.get(k, set())} for k in keys]
+            named = self._map_messages(loose, digest, exclude)
+            unsure = [i for i in range(len(loose))
+                      if self._field_mapped(digest, named.get(i), exclude[i]) is None]
+            if unsure:
+                # the second look (M1): the messages mapped to no field, asked
+                # in other words, a fresh judgment
+                more = self._map_messages([loose[i] for i in unsure], digest,
+                                          [exclude[i] for i in unsure], again=True)
+                for j, i in enumerate(unsure):
+                    if j in more:
+                        named[i] = more[j]
+            fields: dict[int, int | None] = {}
             for i, p in enumerate(loose):
-                n, conf = named.get(i, (None, 0.0))
-                if n is not None and conf >= apply_judge.FIELD_MAP_MIN_CONF \
-                        and any(x.n == n for x in digest.fields):
-                    out.setdefault(n, []).append({**p, "mapped": round(conf, 2)})
+                n = self._field_mapped(digest, named.get(i), exclude[i])
+                fields[i] = n
+                if n is None:
+                    continue
+                out.setdefault(n, []).append({**p, "mapped": round(named[i][1], 2)})
+                label = next(x.label for x in digest.fields if x.n == n)
+                self._error_tried.setdefault(keys[i], set()).add(_label_key(label))
             self._decide("errors_mapped", f"{len(loose)} message(s) no control names, mapped by "
                                           "the judge",
-                         messages=[_cap(p["text"], 80) for p in loose],
-                         fields={i: named.get(i, (None, 0.0))[0] for i in range(len(loose))})
+                         messages=[_cap(p["text"], 80) for p in loose], fields=fields,
+                         looked_again=len(unsure),
+                         excluded={i: sorted(e) for i, e in enumerate(exclude) if e})
         return out
+
+    def _map_messages(self, loose: list[dict[str, Any]], digest: apply_form.FormDigest,
+                      exclude: list[set[int]], *,
+                      again: bool = False) -> dict[int, tuple[int | None, float]]:
+        """One request mapping the messages `loose` to the page's fields
+        (`apply_judge.error_questions`): i -> (n or None, confidence)."""
+        state, questions = apply_judge.error_questions([p["text"] for p in loose], digest.fields,
+                                                       exclude=exclude, again=again)
+        got = {k: v for k, v in self.r.jev.judge(state, questions).items() if k in questions}
+        self.trace.add_answers(got)
+        return apply_judge.read_error_fields(got, len(loose))
+
+    @staticmethod
+    def _field_mapped(digest: apply_form.FormDigest, got: tuple[int | None, float] | None,
+                      excluded: set[int]) -> int | None:
+        """The field a message's mapping names: one of the page's fields,
+        not excluded for the message, at `FIELD_MAP_MIN_CONF` or above."""
+        n, conf = got if got is not None else (None, 0.0)
+        if n is None or conf < apply_judge.FIELD_MAP_MIN_CONF or n in excluded:
+            return None
+        return n if any(x.n == n for x in digest.fields) else None
 
     def _repair(self, digest: apply_form.FormDigest, plan: FillPlan,
                 verification: list[VerifyResult], problems: list[dict[str, Any]], rec: dict, *,
@@ -4665,8 +4740,8 @@ class _JobRun:
 
     def _repair_named(self, digest: apply_form.FormDigest, plan: FillPlan,
                       verification: list[VerifyResult], problems: list[dict[str, Any]],
-                      rec: dict, *,
-                      why: str = "") -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
+                      rec: dict, *, why: str = "",
+                      depth: int = 0) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
         """ADV-02's repair of the fields the form refused: first the page is
         read again (a field it revealed is filled, `_fill_revealed`); then
         each field a problem names (`_problem_fields`): one the plan left
@@ -4675,7 +4750,14 @@ class _JobRun:
         ("required field without an answer", with the form's words); one
         the fill put a value in is typed again in the shape the message asks
         (`apply_fill.repair`: bare digits, a date format, key by key) and
-        verified. Returns the page, its plan and its verification."""
+        verified. Returns the page, its plan and its verification.
+
+        A blank field only the judge's reading of a message named (SP6
+        review M1: the reading can be confidently wrong) is filled when it
+        has an answer and never parked on at once when it has none: the
+        messages that named it are mapped once more without it (`depth`
+        1), and the job parks on it only when that finds nothing else on
+        the page to act on."""
         fresh = self._drop_foreign_controls(self._extract())
         revealed = new_fields(digest, fresh)
         if revealed:
@@ -4687,14 +4769,19 @@ class _JobRun:
                  and by_pf[n].action != apply_judge.PASSWORD_ACTION]
         typed = [n for n in named if n in by_pf and by_pf[n].action in _ACTED
                  and by_pf[n].action != "upload"]
+        # named by the judge's reading of a message alone (M1)
+        soft = {n for n in blank if all("mapped" in p for p in named[n])}
         self._decide("repair", f"the form refused the step{f' ({why})' if why else ''}: "
                                f"{len(problems)} problem(s); {len(blank)} blank and {len(typed)} "
                                f"filled field(s) named",
                      problems=[_cap(p.get("text") or p.get("label") or "", 80) for p in problems],
-                     blank=[by_pf[n].label for n in blank], typed=[by_pf[n].label for n in typed])
+                     blank=[by_pf[n].label for n in blank], typed=[by_pf[n].label for n in typed],
+                     judged=[by_pf[n].label for n in sorted(soft)], look=depth + 1)
         if not blank and not typed and not revealed:
             return digest, plan, verification
-        self._repaired = True       # something on the page was acted on
+        acted = bool(revealed) or bool(typed)
+        missed: list[int] = []
+        says: dict[int, str] = {}
         if blank:
             says = {n: _cap(named[n][0].get("text") or "", 100) for n in blank}
             sub = dataclasses.replace(digest, buttons=[], fields=[
@@ -4704,6 +4791,7 @@ class _JobRun:
                                     generation_enabled=bool(self.r.settings["auto_apply_generate"]),
                                     company=self._company())
             more = self._complete_option_plan(sub, answers, more, rec)
+            _spare_judged(more, soft)
             self._last_answers = {**self._last_answers, **answers}
             try:
                 more_verification = self._fill_and_verify(sub, more, rec)
@@ -4714,6 +4802,9 @@ class _JobRun:
             done = {pf.n: pf for pf in more.fields}
             plan = dataclasses.replace(plan, fields=[done.get(pf.n, pf) for pf in plan.fields])
             verification = [v for v in verification if v.n not in done] + more_verification
+            acted = acted or any(pf.action in _ACTED for pf in more.fields)
+            missed = [pf.n for pf in more.fields if pf.n in soft and pf.action not in _ACTED]
+        self._repaired = self._repaired or acted    # something on the page was acted on
         if typed:
             fixed = []
             for n in typed:
@@ -4725,6 +4816,24 @@ class _JobRun:
                                                   _shaped(plan, digest))}
             self._last_filled.update({f.n: f for f in fixed})
             verification = [again.get(v.n, v) for v in verification]
+        if missed and depth == 0:
+            # M1: the judge named a blank field that has no answer; its
+            # messages are mapped once more without it (a fresh question)
+            seen: set[str] = set()
+            again_problems = []
+            for n in missed:
+                for p in named[n]:
+                    if p["text"] not in seen:
+                        seen.add(p["text"])
+                        again_problems.append({k: v for k, v in p.items() if k != "mapped"})
+            digest, plan, verification = self._repair_named(
+                digest, plan, verification, again_problems, rec, why=why, depth=1)
+            if not self._repaired:
+                # nothing else on the page answers the message: the field the
+                # judge named is the evidence, in the policy's words
+                label = by_pf[missed[0]].label
+                said = f" (the form says: {says[missed[0]]})" if says.get(missed[0]) else ""
+                raise _Parked("needs_human", f"required field without an answer: {label}{said}")
         return digest, plan, verification
 
     def _refused_words(self, problems: list[dict[str, Any]]) -> str:
@@ -4748,9 +4857,14 @@ class _JobRun:
         its message ("required field without an answer" when one was left
         empty)."""
         text = _button_text(digest, n)
+        carried: set[str] = set()
         for round_no in range(REPAIR_ROUNDS + 1):
             who = self._button_identity(digest, n)
             before = self._form_state(digest, n)
+            # the messages the last round's repair answered are no baseline:
+            # one the form shows again after this click is its refusal still
+            # (a banner a page writes the same words into, SP6 review M1)
+            before["errors"] = set(before.get("errors") or set()) - carried
             problems: list[dict[str, Any]] = []
 
             def _check(d=digest, b=before, out=problems) -> bool:
@@ -4774,6 +4888,7 @@ class _JobRun:
                 if round_no == 0:
                     return
                 break
+            carried = {str(p.get("text") or "") for p in problems if p.get("kind") == "error"}
             # the same control as the page now numbers it (SP6 review I2)
             n = self._same_button(digest, who)
             if n is None:

@@ -602,11 +602,11 @@ class HeadlineLeftBlank:
 
 class OptionalLeftBlank:
     """A judge whose first look leaves the optional-looking "Years of
-    experience" and "Portfolio URL" boxes without a mapping (a read under
-    the floor, which an optional box gets no second look for); a request
-    that carries them as required (the repair's, after the form said so) is
-    the wrapped judge's."""
-    LABELS = ("Years of experience", "Portfolio URL")
+    experience", "Portfolio URL" and "Badge number" boxes without a mapping
+    (a read under the floor, which an optional box gets no second look
+    for); a request that carries them as required (the repair's, after the
+    form said so) is the wrapped judge's."""
+    LABELS = ("Years of experience", "Portfolio URL", "Badge number")
 
     def __init__(self, inner: Any):
         self.inner = inner
@@ -1036,6 +1036,14 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", wrap=OptionalLeftBlank,
          covers="the same, then a submit the form refuses with nothing sent: repaired once and "
                 "sent through the gate again (ADV-02)"),
+    Flow("validation_banner_only", "validation_banner_only.html", False, "ready_to_submit",
+         _PARKED, confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
+         covers="a Next refused with one banner no control names: the judge's mapping is the "
+                "only signal of the field it wants (SP6 review M1)"),
+    Flow("validation_banner_only_submit", "validation_banner_only.html", True, "submitted",
+         _SUBMITTED, confirm="#thanks:visible", wrap=OptionalLeftBlank,
+         covers="the same in submit mode: the banner's field repaired, then sent through the "
+                "gate (SP6 review M1)"),
     Flow("chat_launcher", "chat_launcher.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="body:not([data-chat-started]) #btn-submit:visible",
          covers="a chat panel fixed over the step's Next: closed by its own close button, the "

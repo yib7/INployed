@@ -485,8 +485,12 @@ _CONFIRM_MISREAD_CONF = (0.40, 0.80)
 _DROPPED_PREFIXES = ("field_", "error_")
 # A validation message's field (SP6) is misread like a page state: with
 # chance `swap_p` it points at another option (another field, or `none`),
-# at a confidence from 0.30 to 0.60, the true one second.
+# the true one second; a share of those flips (`error_sure_p`) lands at 0.70
+# to 0.90, above the field floor (`apply_judge.FIELD_MAP_MIN_CONF`), as a
+# confident wrong mapping the run acts on; the rest at 0.30 to 0.60 (SP6
+# review M1).
 _ERROR_PREFIX = "error_"
+_SURE_ERROR_CONF = (0.70, 0.90)
 
 
 class NoisyJev:
@@ -511,9 +515,11 @@ class NoisyJev:
       misread that leaves the box or the message without a mapping.
     - A validation message's field (`error_{i}_field`, SP6) is misread as
       a page state is: with chance `swap_p` it names another option
-      (another field, or `none`) at a confidence from 0.30 to 0.60, the
-      true answer second; otherwise its confidence is scaled as every
-      choice's is.
+      (another field, or `none`), the true answer second; with chance
+      `error_sure_p` (default 0.5) such a flip is read at 0.70 to 0.90,
+      above the field floor, a confident wrong mapping the run acts on, and
+      otherwise at 0.30 to 0.60; an answer not flipped has its confidence
+      scaled as every choice's is.
     - `confirm_p` (default a third of `swap_p`, 0.05): a form or a review
       page not swapped otherwise is read as a confirmation
       (`CONFIRM_MISREADS`) at a confidence from 0.40 to 0.80, the true state
@@ -539,7 +545,8 @@ class NoisyJev:
     def __init__(self, inner: Jev, seed: int, *, swap_p: float = 0.15,
                  conf_scale: float = 0.75, drop_p: float = 0.05,
                  role_p: float | None = None, confirm_p: float | None = None,
-                 noul_p: float | None = None, coherent_p: float = 0.5):
+                 noul_p: float | None = None, coherent_p: float = 0.5,
+                 error_sure_p: float = 0.5):
         if not 0.0 < conf_scale <= 1.0:
             raise ValueError("conf_scale must be in (0, 1]")
         self.inner = inner
@@ -551,6 +558,7 @@ class NoisyJev:
         self.confirm_p = self.swap_p / 3 if confirm_p is None else float(confirm_p)
         self.noul_p = self.swap_p if noul_p is None else float(noul_p)
         self.coherent_p = float(coherent_p)
+        self.error_sure_p = float(error_sure_p)
 
     def _rng(self, request_key: str, part: str):
         import random
@@ -633,15 +641,18 @@ class NoisyJev:
 
     def _error_field(self, a: Answer, rng) -> Answer:
         """A validation message's field (SP6): with chance `swap_p` another
-        option (a field, or `none`) at a confidence from 0.30 to 0.60, the
-        true answer second; else the answer with its confidence scaled."""
+        option (a field, or `none`), the true answer second: with chance
+        `error_sure_p` at 0.70 to 0.90 (above the field floor: a confident
+        wrong mapping, SP6 review M1), else at 0.30 to 0.60; else the answer
+        with its confidence scaled."""
         names = list(a.probabilities) or [str(a.choice)]
         truth = str(a.choice)
         swap, pick, conf_draw = rng.random(), rng.random(), rng.random()
         others = [n for n in names if n != truth]
         if others and swap < self.swap_p:
             winner = others[int(pick * len(others)) % len(others)]
-            conf = round(_between(_SWAPPED_CONF, conf_draw), 4)
+            span = _SURE_ERROR_CONF if rng.random() < self.error_sure_p else _SWAPPED_CONF
+            conf = round(_between(span, conf_draw), 4)
             return Answer(kind="choice", choice=winner,
                           probabilities=_spread(names, winner, conf, truth), confidence=conf)
         return self._scaled(a, rng)

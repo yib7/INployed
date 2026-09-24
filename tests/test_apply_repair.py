@@ -53,13 +53,17 @@ def _fill(page, *planned):
     return {f.n: f.value for f in out}
 
 
-def _decisions(r) -> list[dict]:
+def _events(r, kind: str) -> list[dict]:
     import json
     out = []
     for p in sorted(Path(r.trace).glob("*.json")):
         out += [e for e in json.loads(p.read_text(encoding="utf-8")).get("events", [])
-                if e.get("kind") == "decision"]
+                if e.get("kind") == kind]
     return out
+
+
+def _decisions(r) -> list[dict]:
+    return _events(r, "decision")
 
 
 # === the page read again after the fill (FILL-03, FILL-10, ADV-01, study G10) ============================
@@ -248,7 +252,7 @@ def test_the_noisy_judge_drops_flips_and_scales_a_messages_field():
     import apply_judge
     fields = _fields("Phone", "Years of experience", "Start date", "Email")
     msgs = ["Years of experience is required."]
-    dropped = flipped = kept = 0
+    dropped = unsure = sure = kept = 0
     for seed in range(1, 401):
         state, questions = apply_judge.error_questions(msgs, fields)
         out = jev.NoisyJev(jev.FakeJev(), seed).judge(state, questions)
@@ -258,15 +262,22 @@ def test_the_noisy_judge_drops_flips_and_scales_a_messages_field():
             continue
         assert a.probabilities[a.choice] == max(a.probabilities.values())
         if a.choice != "q1":
-            flipped += 1
-            assert 0.30 <= a.confidence <= 0.60
             assert a.probabilities["q1"] > 0      # the truth second
+            if a.confidence >= apply_judge.FIELD_MAP_MIN_CONF:
+                # a confident wrong mapping the run acts on (SP6 review M1)
+                sure += 1
+                assert 0.70 <= a.confidence <= 0.90
+            else:
+                unsure += 1
+                assert 0.30 <= a.confidence <= 0.60
         else:
             kept += 1
             assert 0.75 <= a.confidence <= 1.0
     # drop_p 0.05 and swap_p 0.15 over 400 draws: at least as hard as a
-    # field's mapping (drops) and a page state (flips, under the floor)
-    assert 8 <= dropped <= 35 and 35 <= flipped <= 90 and kept > 250, (dropped, flipped, kept)
+    # field's mapping (drops) and a page state (flips), and about half the
+    # flips land above the field floor on a wrong field
+    assert 8 <= dropped <= 35 and 12 <= unsure <= 50 and 12 <= sure <= 50 and kept > 250, \
+        (dropped, unsure, sure, kept)
 
 
 def test_a_message_the_judge_maps_under_its_floor_names_no_field(tmp_path):
@@ -418,3 +429,88 @@ def test_a_submit_disabled_until_the_captcha_tick_goes_the_gates_captcha_path(
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert r.policy is True
     assert any(d["what"] == "disabled_captcha" for d in _decisions(r))
+
+
+# --- M1: a confident wrong reading of a message no control names -------------------------------------
+
+def test_a_message_question_can_leave_fields_out_and_be_asked_again():
+    import apply_judge
+    fields = _fields("Phone", "Years of experience", "Start date")
+    msgs = ["Years of experience is required.", "Start date must be MM/DD/YYYY"]
+    state, questions = apply_judge.error_questions(msgs, fields, exclude=[{1}, set()])
+    assert set(questions["error_0_field"]["criteria"]) == {"none", "q0", "q2"}
+    assert set(questions["error_1_field"]["criteria"]) == {"none", "q0", "q1", "q2"}
+    again = apply_judge.error_questions(msgs, fields, again=True)[1]
+    assert again["error_0_field"]["instructions"] != questions["error_0_field"]["instructions"]
+    # a judge that scores words reads the second look as the first
+    got = apply_judge.read_error_fields(jev.FakeJev().judge(state, again), len(msgs))
+    assert got == {0: (1, 1.0), 1: (2, 1.0)}
+
+
+class MapsTheBannerTo:
+    """FakeJev, except that a message question offering the field `label`
+    (or `none` for None) is answered with it at 0.85: a confident wrong
+    reading (SP6 review M1), on every request that offers it, or on the
+    first look only (`first_only`); and "Badge number" never gets a source
+    (it has no answer)."""
+
+    def __init__(self, label, first_only=False):
+        self.inner, self.label, self.first_only = jev.FakeJev(), label, first_only
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        for qid, q in questions.items():
+            if not qid.startswith("error_"):
+                continue
+            if self.first_only and q["instructions"].startswith("Looking again"):
+                continue
+            crit = q["criteria"]
+            want = "none" if self.label is None else next(
+                (k for k, v in crit.items() if v and v.get("question") == self.label), None)
+            if want is None:
+                continue
+            probs = {k: round(0.15 / (len(crit) - 1), 4) for k in crit}
+            probs[want] = 0.85
+            out[qid] = jev.Answer(kind="choice", choice=want, probabilities=probs,
+                                  confidence=0.85)
+        for row in (state or {}).get("fields") or []:
+            if row.get("label") == "Badge number":
+                out.pop(f"field_{row.get('n')}_source", None)
+        return out
+
+
+@pytest.mark.parametrize("label,first_only,what", [
+    ("Email", False, "a filled field, every time it is offered: the next round asks without it"),
+    ("Badge number", False, "a blank field with no answer: asked again without it, never parked"),
+    (None, True, "no field at all: the second look finds it"),
+])
+def test_a_confident_wrong_reading_of_the_banner_still_reaches_the_gate(
+        _browser, flow_server, tmp_path, label, first_only, what):
+    r = h.run_flow(h.flow("validation_banner_only"), MapsTheBannerTo(label, first_only), "wrong",
+                   browser=_browser, server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks and r.status == "ready_to_submit", (what, r.status, r.reason)
+    # the banner's field was found in the end, and the box it never asked for stayed blank
+    mapped = [d for d in _decisions(r) if d["what"] == "errors_mapped"]
+    assert any(3 in d["fields"].values() for d in mapped), mapped
+    assert not any(row.get("label") == "Badge number" and row.get("holds_value")
+                   for e in _events(r, "fill") for row in e.get("fields") or []), what
+
+
+def test_a_field_the_judge_named_that_has_no_answer_parks_only_when_nothing_else_answers(
+        _browser, flow_server, tmp_path):
+    class OnlyBadge(MapsTheBannerTo):
+        """Every look names Badge number, or none once it is left out."""
+
+        def judge(self, state, questions):
+            out = super().judge(state, questions)
+            for qid, q in questions.items():
+                if qid.startswith("error_") and not any(
+                        v and v.get("question") == "Badge number" for v in q["criteria"].values()):
+                    out[qid] = jev.Answer(kind="choice", choice="none",
+                                          probabilities={"none": 0.9}, confidence=0.9)
+            return out
+    r = h.run_flow(h.flow("validation_banner_only"), OnlyBadge("Badge number"), "badge",
+                   browser=_browser, server=flow_server, workdir=tmp_path)
+    assert r.status == "needs_human" and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.reason.startswith("required field without an answer: Badge number (the form says: "
+                               "Before you go on"), r.reason

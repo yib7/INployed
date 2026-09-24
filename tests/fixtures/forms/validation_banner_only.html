@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Data Engineer - Northwind</title>
+<!-- A synthetic two-step form (SP6 review M1) whose Next refuses an empty
+     "Years of experience" (no star, no message beside the box, no
+     aria-invalid) with one banner above the form that no control names:
+     the judge's mapping of that banner is the only signal of which field the
+     form wants. An optional "Badge number" stays blank and the form never
+     asks for it. The submit takes the form as it is. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  #banner { color: #b00; }
+  #step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Data Engineer</h1>
+<p>Northwind, Denver, CO</p>
+<div id="banner" role="alert"></div>
+<form id="application" novalidate>
+  <div id="step1">
+    <h2>Step 1 of 2: About you</h2>
+    <div class="field"><label for="first">First name *</label><input id="first" name="first_name" type="text" required></div>
+    <div class="field"><label for="last">Last name *</label><input id="last" name="last_name" type="text" required></div>
+    <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+    <div class="field"><label for="years">Years of experience</label><input id="years" name="years" type="text"></div>
+    <div class="field"><label for="badge">Badge number</label><input id="badge" name="badge" type="text"></div>
+    <button type="button" id="next">Next</button>
+  </div>
+  <div id="step2">
+    <h2>Step 2 of 2: Documents</h2>
+    <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </div>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  function $(id) { return document.getElementById(id); }
+  $('next').addEventListener('click', function () {
+    var clicks = Number(document.body.getAttribute('data-next-clicks') || '0') + 1;
+    document.body.setAttribute('data-next-clicks', String(clicks));
+    if (!$('years').value) {
+      $('banner').textContent = 'Before you go on, tell us how many years of experience you have.';
+      return;
+    }
+    $('banner').textContent = '';
+    if ($('first').value && $('last').value && $('email').value) {
+      $('step1').style.display = 'none';
+      $('step2').style.display = 'block';
+    }
+  });
+  $('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    $('application').style.display = 'none';
+    $('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

@@ -1803,25 +1803,36 @@ ERROR_FIELDS_CAP = 40           # fields offered per message
 ERROR_MESSAGE_CAP = 200         # characters of a message sent
 
 
-def error_questions(messages: list[str], fields) -> tuple[dict, dict]:
+def error_questions(messages: list[str], fields, *, exclude=None,
+                    again: bool = False) -> tuple[dict, dict]:
     """One request for the validation messages the page showed that no
     control names (ADV-02; a message tied to its control needs no judge):
     per message `error_{i}_field`, a Choice over the page's fields (each
     option its question's words) and `none` (the message names no one
     field: a note about the whole page). The state is the messages alone,
     the fields ride in the options, so each question is one small
-    judgment (the Jev guide, sections 3 and 7)."""
-    options: dict[str, Any] = {"none": None}
-    for f in list(fields)[:ERROR_FIELDS_CAP]:
-        label = " ".join(str(getattr(f, "label", "") or "").split())[:READ_TEXT_CAP]
-        if label:
-            options[f"q{f.n}"] = {"question": label}
+    judgment (the Jev guide, sections 3 and 7).
+
+    `exclude` (per message, field numbers): the fields not offered for that
+    message, the ones an earlier look named for it on this form (SP6 review
+    M1). `again`: the second look for a message the first request mapped
+    to no field, a fresh question."""
     state = {"messages": [" ".join(str(m or "").split())[:ERROR_MESSAGE_CAP] for m in messages]}
-    questions = {f"error_{i}_field": {
-        "type": "choice",
-        "instructions": f"Which entry of the form does the error message `messages[{i}]` "
-                        "point at?",
-        "criteria": dict(options)} for i in range(len(messages))}
+    questions: dict[str, dict] = {}
+    for i in range(len(messages)):
+        skip = set(exclude[i]) if exclude is not None and i < len(exclude) and exclude[i] \
+            else set()
+        options: dict[str, Any] = {"none": None}
+        for f in [f for f in fields if f.n not in skip][:ERROR_FIELDS_CAP]:
+            label = " ".join(str(getattr(f, "label", "") or "").split())[:READ_TEXT_CAP]
+            if label:
+                options[f"q{f.n}"] = {"question": label}
+        # the second look adds words no form's question is likely to hold (a
+        # judge that scores words reads the options as it did the first time)
+        ask = f"{'Looking again, which' if again else 'Which'} entry of the form does the " \
+              f"error message `messages[{i}]` point at?"
+        questions[f"error_{i}_field"] = {"type": "choice", "instructions": ask,
+                                         "criteria": options}
     return state, questions
 
 

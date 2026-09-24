@@ -4325,8 +4325,9 @@ class _JobRun:
                          text=_button_text(digest, button[0]) if button else "")
         if step in ("advance", "gate"):
             self._unreadable(digest, button[0])
-            digest, plan, verification = self._still_disabled(digest, plan, verification,
-                                                              button[0], rec)
+            digest, plan, verification, n = self._still_disabled(digest, plan, verification,
+                                                                 button[0], rec)
+            button = (n, button[1])
         if step == "advance":
             self._advance(digest, plan, verification, rec, button[0], button[1])
             return
@@ -4422,8 +4423,8 @@ class _JobRun:
         return plan
 
     def _still_disabled(self, digest: apply_form.FormDigest, plan: FillPlan,
-                        verification: list[VerifyResult], n: int,
-                        rec: dict) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult]]:
+                        verification: list[VerifyResult], n: int, rec: dict
+                        ) -> tuple[apply_form.FormDigest, FillPlan, list[VerifyResult], int]:
         """The way on the filled page chose (study G10): when its button is
         still disabled once the fill settled, and stays so for
         `DISABLED_WAIT_S`, the fields the form reports as invalid are
@@ -4431,19 +4432,21 @@ class _JobRun:
         disabled parks the job with the fields that keep it so as the
         evidence: the form's own report (a control that would not validate,
         a required control left empty) and the boxes the plan left blank.
-        Nothing is clicked."""
+        Nothing is clicked. Returns the page, its plan, its verification and
+        the button's `n` as the page now numbers it (the same control,
+        `_same_button`)."""
         button = next((b for b in digest.buttons if b.n == n), None)
         if button is None or not button.disabled:
-            return digest, plan, verification
+            return digest, plan, verification, n
         for round_no in range(REPAIR_ROUNDS + 1):
             loc = apply_form.resolve(self.page, button.locator)
             deadline = time.monotonic() + DISABLED_WAIT_S
             while True:
                 try:
                     if loc.count() == 1 and loc.first.is_enabled():
-                        return digest, plan, verification
+                        return digest, plan, verification, button.n
                 except Exception:       # noqa: BLE001  (a page double; the click finds out)
-                    return digest, plan, verification
+                    return digest, plan, verification, button.n
                 if time.monotonic() >= deadline:
                     break
                 self.page.wait_for_timeout(200)
@@ -4461,10 +4464,14 @@ class _JobRun:
             if invalid and round_no < REPAIR_ROUNDS:
                 problems = [{**r, "text": r.get("message") or "", "kind": "invalid"}
                             for r in invalid]
+                who = self._button_identity(digest, button.n)
                 digest, plan, verification = self._repair(digest, plan, verification,
                                                           problems, rec, why="disabled")
                 if self._repaired:
-                    button = next((b for b in digest.buttons if b.text == button.text), button)
+                    n = self._same_button(digest, who)
+                    if n is None:
+                        raise self._button_lost(who)
+                    button = next(b for b in digest.buttons if b.n == n)
                     continue
             break
         blank = [pf.label for pf in plan.fields if pf.action == "skip" and pf.label]
@@ -4481,6 +4488,53 @@ class _JobRun:
             rows.append(f"left blank: {_cap(', '.join(blank), 120)}")
         raise _Parked("needs_human", f"the {text} button stays disabled after the fill"
                                      + (f" ({_cap('; '.join(rows), 220)})" if rows else ""))
+
+    # -- the same control after a repair (SP6 review I2) ---------------------------------------
+
+    def _button_identity(self, digest: apply_form.FormDigest, n: int) -> dict[str, Any] | None:
+        """Who button `n` is on the live page, read before a repair: its
+        locator, its text, its identity (`apply_form.IDENT_FN_JS`: tag, type,
+        id, name, aria-label, test attributes, its label or its box's words)
+        and its form (`apply_form.form_index`)."""
+        b = next((x for x in digest.buttons if x.n == n), None)
+        if b is None:
+            return None
+        who: dict[str, Any] = {"locator": tuple(b.locator), "text": " ".join(b.text.split()),
+                               "ident": "", "form": None}
+        try:
+            loc = apply_form.resolve(self.page, b.locator)
+            if loc.count() == 1:
+                who["ident"] = str(loc.first.evaluate(apply_form.IDENT_FN_JS, timeout=2_000))
+                who["form"] = apply_form.form_index(self.page, [b.locator])[0]
+        except Exception:       # noqa: BLE001  (a page double; `_same_button` finds none)
+            pass
+        return who
+
+    def _same_button(self, digest: apply_form.FormDigest, who: dict[str, Any] | None) -> int | None:
+        """The `n` of the button in `digest` that is the control `who`
+        (`_button_identity`) names: the same text, the same identity and the
+        same form, read live; the one at the same locator first. None when no
+        button is that control: another form's button with the same words
+        ("Submit" of a talent-community box) never is."""
+        if who is None or not who.get("ident"):
+            return None
+        rows = [b for b in digest.buttons if " ".join(b.text.split()) == who["text"]]
+        rows.sort(key=lambda b: tuple(b.locator) != who["locator"])
+        for b in rows:
+            live = self._button_identity(digest, b.n)
+            if live and live["ident"] and apply_form.same_ident(live["ident"], who["ident"])                     and live["form"] == who["form"]:
+                return b.n
+        return None
+
+    def _button_lost(self, who: dict[str, Any] | None) -> _Parked:
+        """The park when the control a step clicks cannot be found again after
+        a repair: nothing is clicked, never a look-alike."""
+        text = _cap((who or {}).get("text") or "the button", 60)
+        self._decide("button_lost", f"after the repair no button is the {text} the step "
+                                    "clicks (the same identity in the same form); nothing "
+                                    "was clicked")
+        return _Parked("needs_human", f"the {text} button could not be found again after the "
+                                      f"form's fields were repaired; nothing was clicked")
 
     # -- the form's refusals and their repair (ADV-02, ADV-06) -------------------------------
 
@@ -4674,6 +4728,7 @@ class _JobRun:
         empty)."""
         text = _button_text(digest, n)
         for round_no in range(REPAIR_ROUNDS + 1):
+            who = self._button_identity(digest, n)
             before = self._form_state(digest, n)
             problems: list[dict[str, Any]] = []
 
@@ -4698,8 +4753,10 @@ class _JobRun:
                 if round_no == 0:
                     return
                 break
-            # the button as the page shows it now (a repair's re-read)
-            n = next((b.n for b in digest.buttons if b.text == text), n)
+            # the same control as the page now numbers it (SP6 review I2)
+            n = self._same_button(digest, who)
+            if n is None:
+                raise self._button_lost(who)
         missing = [p for p in problems if p.get("reason") == "valueMissing"]
         if missing:
             label = " ".join(str(missing[0].get("label") or "a field").split())[:80]
@@ -5045,9 +5102,9 @@ class _JobRun:
                                                "and no submit button: a wizard step, its "
                                                "advance is clicked",
                              button=button[0], text=_button_text(digest, button[0]))
-                digest, plan, verification = self._still_disabled(digest, plan, verification,
-                                                                  button[0], rec)
-                self._advance(digest, plan, verification, rec, button[0], button[1])
+                digest, plan, verification, n = self._still_disabled(digest, plan, verification,
+                                                                     button[0], rec)
+                self._advance(digest, plan, verification, rec, n, button[1])
                 return
             if step == "gate" and why:
                 self._decide("to_gate", why, button=button[0],
@@ -5572,14 +5629,17 @@ class _JobRun:
             text = _button_text(digest, submit[0])
             problems = [{**r, "text": r.get("message") or "", "kind": "invalid"}
                         for r in live["invalid"]]
+            who = self._button_identity(digest, submit[0])
             digest, plan, verification = self._repair(digest, plan, verification, problems, rec,
                                                       why="read at the gate")
             if self._repaired:
-                n = next((b.n for b in digest.buttons if b.text == text), None)
-                if n is not None:
-                    plan.buttons["submit"] = (n, submit[1])
-                    self._submit_gate(digest, plan, verification, rec)
-                    return
+                # the same control, never another form's with the same words
+                n = self._same_button(digest, who)
+                if n is None:
+                    raise self._button_lost(who)
+                plan.buttons["submit"] = (n, submit[1])
+                self._submit_gate(digest, plan, verification, rec)
+                return
         ok, why = can_submit(plan, verification, self.r.settings, live)
         submit = plan.buttons.get("submit")
         self._trace("gate", ok=ok, why=why, button=submit[0] if submit else None,
@@ -5608,6 +5668,7 @@ class _JobRun:
             except Exception:       # noqa: BLE001  (a page double)
                 frame = None
         self._submit_at = button.locator if button is not None else None
+        who = self._button_identity(digest, submit_n)      # the control the gate clicks
         self._before_submit = self._submit_baseline(digest)
         watch = SendWatch(self, self.page, frame)
         self._send_watch = watch
@@ -5673,9 +5734,13 @@ class _JobRun:
             digest, plan, verification = self._repair(digest, plan, verification,
                                                       refused.problems, rec,
                                                       why="the submit was refused")
-            n = next((b.n for b in digest.buttons if b.text == text), None)
-            if not self._repaired or n is None:
+            if not self._repaired:
                 raise refused.park from None
+            # the control the gate clicked, never another form's with the
+            # same words (SP6 review I2)
+            n = self._same_button(digest, who)
+            if n is None:
+                raise self._button_lost(who)
             plan.buttons["submit"] = (n, submit[1])
             rec["clicked"].append("the form refused the submit; repaired")
             self._submit_gate(digest, plan, verification, rec)

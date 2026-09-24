@@ -286,3 +286,44 @@ def test_a_message_the_judge_maps_under_its_floor_names_no_field(tmp_path):
     assert list(run._problem_fields(digest, [tied])) == [0]
 
 
+
+
+# === SP6 review round 1 ====================================================================================
+
+# --- I2: after a repair the same control is clicked, never another form's -------------------------
+
+def test_a_repaired_submit_is_the_same_control_never_another_forms_with_its_words(
+        _browser, flow_server, tmp_path):
+    r = h.run_flow(h.flow("talent_beside_application"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    submits = [a for a in r.actions if a.kind == "click" and a.text == "Submit"]
+    assert len(submits) == 2 and all(a.in_gate for a in submits)
+    assert any(d["what"] == "repair" for d in _decisions(r))
+
+
+def test_a_control_gone_after_a_repair_is_never_replaced_by_a_look_alike(browser_page):
+    from unittest.mock import Mock
+    browser_page.set_content("""<body>
+      <form id="talent"><label>Your email <input type="email" name="t"></label>
+        <button type="submit">Submit</button></form>
+      <form id="application"><label>First name <input name="f"></label>
+        <label>Last name <input name="l"></label>
+        <button type="submit" id="app">Submit</button></form></body>""")
+    run = apply_run._JobRun(apply_run.Runner(jev=jev.FakeJev(), context=Mock(), run_context={},
+                                             sleep=lambda s: None), Mock(),
+                            {"job_posting_id": "s", "apply_url": "https://x.example/1"})
+    run.page = browser_page
+    d = apply_form.extract(browser_page)
+    app = next(b.n for b in d.buttons if b.locator[1] == "#app")
+    who = run._button_identity(d, app)
+    assert run._same_button(d, who) == app
+    # the application's Submit re-rendered: found again by its identity
+    browser_page.evaluate("""() => { const b = document.getElementById('app');
+      b.replaceWith(b.cloneNode(true)); }""")
+    assert run._same_button(apply_form.extract(browser_page), who) == app
+    # gone: the talent box's Submit never takes its place
+    browser_page.evaluate("document.getElementById('app').remove()")
+    assert run._same_button(apply_form.extract(browser_page), who) is None
+    with pytest.raises(apply_run._Parked, match="could not be found again"):
+        raise run._button_lost(who)

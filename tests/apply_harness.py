@@ -1058,6 +1058,13 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible",
          covers="Apply with LinkedIn beside the posting's own Apply, Continue with LinkedIn "
                 "above the step's Next: neither is taken (ADV-09)"),
+    # --- SP6 review round 1 ---
+    Flow("talent_beside_application", "talent_beside_application.html", True, "submitted",
+         _SUBMITTED, confirm="body:not([data-talent-sent]) #thanks:visible",
+         wrap=OptionalLeftBlank,
+         covers="a talent box's Submit above the application's own Submit, which refuses a "
+                "blank box: repaired, the application's Submit clicked again, the talent box "
+                "never sent (SP6 review I2)"),
     # the chaos case: the form is drawn anew (the same markup, new nodes)
     # right after the run first reads it, before any act
     Flow("rerender_after_read", "lever_single.html", False, "ready_to_submit", _PARKED,

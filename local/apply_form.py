@@ -1539,39 +1539,68 @@ _EXTRACT_JS = r"""
   // a send or go-on phrase, as a popup's own name ("More submit options",
   // "Save and continue", "Continue with", "Apply with", "Next step")
   const POPUP_WAY_ON = /\b(submit|send|finish|continue|apply with|next step)\b/i;
+  // A form's note about its required marks ("* Required field", "* indicates
+  // a required field", "Fields marked with * are required"): neither a
+  // question nor a star of any control (review round 9, Minor)
+  const REQ_NOTE = /^\s*(?:[*✱＊]\s*)?(?:(?:indicates|denotes|marks)\s+(?:an?\s+)?)?(?:required|mandatory)(?:\s+(?:fields?|questions?|information))?(?:\s+(?:are|is)\s+(?:marked|shown|indicated)(?:\s+(?:with|by)(?:\s+an?)?)?(?:\s+(?:asterisk|star|[*✱＊]))?)?\.?\s*$|^\s*(?:all\s+)?(?:fields|questions)\s+(?:marked|shown)\s+(?:with|by)\s+(?:an?\s+)?(?:[*✱＊]|asterisk|star)\s*(?:\(\s*[*✱＊]\s*\)\s*)?(?:are|is)\s+(?:required|mandatory)\.?\s*$/i;
+  // a star after the control in its box: a marker's own text node, or one
+  // drawn by CSS or a class, outside a note (the words before the control
+  // carry their own markers through `seen`)
+  const starAfter = (box, el) => {
+    for (const n of box.querySelectorAll('*')) {
+      if (n === el || el.contains(n) || n.contains(el)) continue;
+      if (!(el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      if (!n.getClientRects().length) continue;
+      let inNote = false;
+      for (let a = n; a && a !== box; a = a.parentElement) {
+        if (REQ_NOTE.test(norm(a.textContent))) { inNote = true; break; }
+      }
+      if (inNote) continue;
+      const own = norm(Array.from(n.childNodes).filter((c) => c.nodeType === 3)
+        .map((c) => c.data).join(' '));
+      if (own && REQ_MARK.test(own)) return true;
+      if (!own && !norm(n.textContent) && styledMark(n)) return true;
+    }
+    return false;
+  };
   // A popup's question from outside the control (review round 8): the words
   // of a label[for] or an aria-labelledby target outside it, else of its
   // question box (at most three boxes up, none a form or a fieldset, each
   // holding no other question), and whether that question is starred. Never
-  // the control's own words, never a fieldset's legend.
+  // the control's own words, never a fieldset's legend. The third entry
+  // says where the words came from: "label" or "box". A box's words that
+  // are only a note about required marks are no question, and its star is
+  // taken only from a marker beside the control, never from such a note
+  // (review round 9, Minor).
   const popupQuestion = (el) => {
     const marks = [];
     const lab = labelElementFor(el);
     if (lab && !lab.contains(el)) {
       const t = strip(labelText(lab, marks), marks);
-      if (t[0]) return t;
+      if (t[0]) return [t[0], t[1], 'label'];
     }
     const by = el.getAttribute('aria-labelledby');
     if (by) {
       const outside = by.split(/\s+/).map((id) => byIdIn(el, id))
         .filter((n) => n && n !== el && !el.contains(n));
       const t = strip(norm(outside.map((n) => labelText(n, marks)).join(' ')), marks);
-      if (t[0]) return t;
+      if (t[0]) return [t[0], t[1], 'label'];
     }
     let p = up(el);
     for (let i = 0; p && i < 3; i++, p = up(p)) {
       if (p.matches('body, html, form, fieldset, main, [role=main], dialog, [role=dialog]')) break;
       if (Array.from(p.querySelectorAll(QUESTION_CTRL)).some((c) => c !== el
           && !el.contains(c) && visible(c))) break;
-      // the words before the control, and a star anywhere in its box (before
-      // it, or a marker beside it after)
+      // the words before the control, and a star beside it (before it, or
+      // a marker after it)
       const mine = [];
-      const [words, starBefore] = strip(seen(p, mine, (n) => n === el || isCtrl(n)), mine);
-      const all = [];
-      const starAll = strip(seen(p, all), all)[1];
-      if (words || starBefore || starAll) return [words, starBefore || starAll];
+      const raw = seen(p, mine, (n) => n === el || isCtrl(n));
+      const note = REQ_NOTE.test(raw);
+      const [words, starBefore] = note ? ['', false] : strip(raw, mine);
+      const star = starBefore || starAfter(p, el);
+      if (words || star) return [words, star, 'box'];
     }
-    return ['', false];
+    return ['', false, ''];
   };
   // A popup's kind (review round 8): a field when it has a question from
   // outside it that is no chrome name, or when it is required by its own
@@ -1582,7 +1611,21 @@ _EXTRACT_JS = r"""
   // field when it names a question of its own (an aria-label) or shows a
   // placeholder, or is a listbox inside a form.
   const chromeName = (t) => !!t && !ASKS.test(t) && (chromePopup(t) || POPUP_CHROME_LABEL.test(t));
-  const popupKind = (el, pop, text, aria, question, required) => {
+  // A menu whose own name is chrome or a way on keeps that name over its
+  // box's words (review round 9, Minor): an aria-label that is chrome or a
+  // way on ("More submit options"), or a shown text that is a whole chrome
+  // word ("More"). A shown text with more words is an answer ("Continue
+  // studies"), and a value picker (listbox) shows its answer, so its box's
+  // words still ask.
+  const MENU_CHROME = /^(more( options| actions)?|menu|options|actions|share( this job)?|settings|profile|(my |your )?account)$/i;
+  const popupKind = (el, pop, text, aria, question, required, from) => {
+    const ariaName = ariaWords(aria)[0];
+    if (from === 'box' && pop !== 'listbox') {
+      if (ariaName && POPUP_WAY_ON.test(ariaName)) return 'button';
+      if (MENU_CHROME.test(ariaName || text)) {
+        return 'chrome';
+      }
+    }
     if ((question && !chromeName(question)) || required) return 'field';
     if (POPUP_WAY_ON.test(text) || POPUP_WAY_ON.test(aria)) return 'button';
     if (chromePopup(text) || chromeName(ariaWords(aria)[0]) || question) return 'chrome';
@@ -1717,9 +1760,9 @@ _EXTRACT_JS = r"""
       if (Array.from(el.querySelectorAll('input:not([type=hidden])')).some(visible)) continue;
       const text = norm(el.innerText) || norm(el.value);
       const aria = norm(el.getAttribute('aria-label'));
-      const [question, star] = popupQuestion(el);
+      const [question, star, from] = popupQuestion(el);
       const own = isRequired(el) || ariaWords(aria)[1] || star;
-      if (popupKind(el, pop, text, aria, question, own) !== 'field') continue;
+      if (popupKind(el, pop, text, aria, question, own, from) !== 'field') continue;
       const [label, req] = labelFor(el, marks);
       asButtons.add(el);
       push(el, describe(el, 'listbox', label || question || text, own || req, locatorFor(el),

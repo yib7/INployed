@@ -589,3 +589,68 @@ def test_the_mapping_sends_the_section_headings_with_the_fields(browser_page, fi
     s2, _ = apply_judge.reask_questions(d, catalog, plan, [4], what="source")
     assert s2["sections"] == [{"heading": "A few more questions", "fields": [4]}]
     json.dumps(state)
+
+
+# --- I6: a menu that closed under the option's click is opened once more -------------------------
+
+class _Options:
+    def __init__(self, texts, fail=False):
+        self.texts = texts
+        self.fail = fail
+        self.clicks: list[int] = []
+
+    def all_inner_texts(self):
+        return list(self.texts)
+
+    def nth(self, i):
+        outer = self
+
+        class _One:
+            def click(self, timeout=None):
+                outer.clicks.append(i)
+                if outer.fail:
+                    raise TimeoutError("the menu closed under the click")
+        return _One()
+
+
+def test_an_option_click_that_fails_opens_the_menu_once_more_and_clicks_again(monkeypatch):
+    first, second = _Options(["Remote", "Hybrid"], fail=True), _Options(["Remote", "Hybrid"])
+    menus = [first, second]
+    opened = []
+
+    def _open_menu(frame, loc, *, popup=False):
+        opened.append(popup)
+        return menus.pop(0) if menus else None
+    monkeypatch.setattr(apply_fill, "_open_menu", _open_menu)
+    apply_fill._pick_listbox(None, None, None, "Hybrid")
+    assert opened == [False, False]
+    assert (first.clicks, second.clicks) == ([1], [1])
+    # a second failure is the pick's failure
+    menus[:] = [_Options(["Remote"], fail=True), _Options(["Remote"], fail=True)]
+    with pytest.raises(TimeoutError):
+        apply_fill._pick_listbox(None, None, None, "Remote")
+
+
+# --- M8: a question's tick boxes take every chosen option ---------------------------------------
+
+def test_every_option_the_value_names_is_ticked(browser_page, fixture_url):
+    d = _open(browser_page, fixture_url, "lever_cards.html")
+    langs = _by_label(d, "Which languages do you write code in?")
+    values = _fill(browser_page, _planned(langs, "select", "Python, SQL and Rust", "Python"))
+    assert values[langs.n] == "Python, SQL, Rust"
+
+
+# --- M14: a choice never clicks a form's submit control -----------------------------------------
+
+def test_a_choice_option_that_is_a_forms_submit_is_never_clicked(browser_page):
+    browser_page.set_content("""<body><form onsubmit="event.preventDefault();
+        document.body.dataset.sent = 1"><p>Relocate?</p>
+      <div><button aria-pressed="false">Yes</button><button aria-pressed="false">No</button></div>
+      <input name="n"></form></body>""")
+    d = apply_form.extract(browser_page)
+    q = next(f for f in d.fields if f.widget == "choice")
+    errors: list = []
+    apply_fill.apply(browser_page, FillPlan(fields=[_planned(q, "select", "Yes", "Yes")]),
+                     errors=errors)
+    assert [e["error"] for e in errors] == ["LookupError"]
+    assert browser_page.evaluate("document.body.dataset.sent") is None

@@ -34,6 +34,7 @@ argument, so this module imports without it.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -50,7 +51,6 @@ SETTLE_QUIET_S = 2.0           # _settle returns once nothing has moved for this
 SETTLE_MAX_S = 8.0             # _settle gives up on a page that keeps moving after this
 NETWORK_IDLE_MS = 3_000        # best-effort wait for the network to go quiet
 LISTBOX_WAIT_MS = 2_000        # for a combobox menu to render its options
-OPTION_CLICK_MS = 2_000        # an option's click; a menu that closed under it is opened again
 POLL_S = 0.25                  # click_button's DOM poll
 CHECKED_WORDS = ("checked", "yes", "true", "on", "1")
 UNCHECKED_WORDS = ("unchecked", "no", "false", "off", "0")
@@ -270,20 +270,51 @@ def _check_box(page, loc, want: str, pf: PlannedField | None = None) -> None:
         loc.first.uncheck(timeout=ACTION_TIMEOUT_MS)
 
 
-def _choose(page, pf: PlannedField, want: str) -> None:
-    """A custom radio group or Yes / No buttons (widget "choice"), a question's
-    tick boxes (widget "checkbox_group"): the option's own element takes the
-    click, unless it is already chosen."""
+# a form's submit control: a <button> with no type or type=submit inside a
+# form, an input[type=submit]; `_choose` never clicks one (review M14)
+_SUBMITS_JS = """el => {
+  const form = el.form || el.closest('form');
+  if (!form) return false;
+  if (el.tagName === 'INPUT') return (el.getAttribute('type') || '').toLowerCase() === 'submit';
+  if (el.tagName !== 'BUTTON') return false;
+  const t = (el.getAttribute('type') || '').toLowerCase();
+  return !t || t === 'submit';
+}"""
+_PARTS = re.compile(r"\s*(?:[,;/]|\band\b)\s*", re.I)
+
+
+def _chosen(pf: PlannedField, want: str) -> list[int]:
+    """The options to choose: the planned one; for a question's tick boxes
+    also every option the value names ("Python, SQL": each is ticked, the
+    study's G8), in the options' order."""
     options = list(pf.options)
     i = _ci_match(want, options)
     if i < 0 and pf.widget == "checkbox_group" and len(options) == 1 \
             and str(want or "").strip().lower() in CHECKED_WORDS:
         i = 0
-    if i < 0 or i >= len(pf.option_locators):
-        raise LookupError(f"no option {want!r} among {options}")
-    target = _clicked(page, pf.locator[0], pf.option_locators[i])
-    if not _ticked(target):
-        target.click(timeout=ACTION_TIMEOUT_MS)
+    picked = [i] if i >= 0 else []
+    if pf.widget == "checkbox_group":
+        for part in _PARTS.split(str(pf.value or "")):
+            found = apply_judge.match_option(part, options) if part.strip() else None
+            if found is not None and options.index(found) not in picked:
+                picked.append(options.index(found))
+    return sorted(picked)
+
+
+def _choose(page, pf: PlannedField, want: str) -> None:
+    """A custom radio group or Yes / No buttons (widget "choice"), a question's
+    tick boxes (widget "checkbox_group", each chosen option ticked): the
+    option's own element takes the click, unless it is already chosen, and
+    never when it is a form's submit control."""
+    picked = _chosen(pf, want)
+    if not picked or any(i >= len(pf.option_locators) for i in picked):
+        raise LookupError(f"no option {want!r} among {list(pf.options)}")
+    for i in picked:
+        target = _clicked(page, pf.locator[0], pf.option_locators[i])
+        if target.evaluate(_SUBMITS_JS, timeout=ACTION_TIMEOUT_MS):
+            raise LookupError(f"the option {pf.options[i]!r} is a form's submit control")
+        if not _ticked(target):
+            target.click(timeout=ACTION_TIMEOUT_MS)
 
 
 def _aria_check(loc, want: str) -> None:
@@ -379,7 +410,7 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False) -> None:
         _close_menu(page, loc)
         raise LookupError(f"no option {want!r} among {texts}")
     try:
-        options.nth(i).click(timeout=OPTION_CLICK_MS)
+        options.nth(i).click(timeout=ACTION_TIMEOUT_MS)
     except Exception:       # noqa: BLE001  (the menu closed under the click: open it once more)
         again = _open_menu(frame, loc, popup=popup)
         if again is None:

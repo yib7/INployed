@@ -2144,6 +2144,36 @@ def same_scope(page, button_locator: tuple[int, str],
     return str(out.get("verdict") or "unclear"), str(out.get("why") or "")
 
 
+_FORM_INDEX_JS = r"""(css) => css.map((c) => {
+  let el = null;
+  try { el = document.querySelector(c); } catch (e) { return -2; }
+  if (!el) return -2;
+  const f = el.form || el.closest('form');
+  return f ? Array.from(document.forms).indexOf(f) : -1;
+})"""
+
+
+def form_index(page, locators: list[tuple[int, str]]) -> list[tuple[int, int]]:
+    """(frame, the index of its form among the frame's forms) for each
+    locator: -1 outside any form, -2 when the control is gone (ADV-08: a
+    sign-in and a sign-up side by side)."""
+    out: list[tuple[int, int]] = [(int(loc[0]), -2) for loc in locators]
+    by_frame: dict[int, list[int]] = {}
+    for i, loc in enumerate(locators):
+        by_frame.setdefault(int(loc[0]), []).append(i)
+    all_frames = frames(page)
+    for idx, rows in by_frame.items():
+        if not 0 <= idx < len(all_frames):
+            continue
+        try:
+            got = all_frames[idx].evaluate(_FORM_INDEX_JS, [str(locators[i][1]) for i in rows])
+        except Exception:       # noqa: BLE001  (a frame gone)
+            continue
+        for i, v in zip(rows, got or []):
+            out[i] = (idx, int(v))
+    return out
+
+
 # The validity of the controls a submit sends, read from `validity` (no
 # `invalid` event fires): its form's elements; for a submit outside any form
 # (a wizard's footer), the forms that own the fields this page filled
@@ -2347,7 +2377,10 @@ def validity_report(page, button_locator: tuple[int, str] | None = None,
 # The controls the extractor does not see as fields, in the composed tree
 # (open shadow roots walked): a native control inside a shadow root, an ARIA
 # textbox / radio / checkbox / switch / spinbutton that is no native control,
-# a contenteditable box; outside the site chrome, a consent banner and a
+# a contenteditable box, a custom element the run cannot read into (EXT-01,
+# kind "unreadable", `why`: a closed shadow root or a form-associated custom
+# element; required by its attributes, empty by its own validity or its
+# value, else read as empty); outside the site chrome, a consent banner and a
 # combobox widget (each read across shadow boundaries, so a shadow header's
 # search box is chrome too), visible only. Each with its label, whether it is
 # required (the attribute, aria-required, or a required radiogroup) and
@@ -2377,6 +2410,23 @@ _SCAN_JS = r"""(requiredOnly) => {
   const NATIVE = /^(INPUT|SELECT|TEXTAREA)$/;
   const SKIP = new Set(['hidden', 'submit', 'button', 'image', 'reset']);
   const ROLES = /^(textbox|radio|checkbox|switch|spinbutton)$/;
+  // a custom element the run cannot read into (EXT-01): form-associated (its
+  // value lives in the element's internals), or upgraded with a box, no open
+  // shadow root and nothing inside in the light DOM, and named or marked as a
+  // control (a name, required, a label, a control's role, a tab stop): a
+  // closed shadow root
+  const unreadable = (el) => {
+    if (!el.localName.includes('-')) return '';
+    const def = window.customElements && customElements.get(el.localName);
+    if (!def) return '';
+    if (def.formAssociated) return 'form-associated custom element';
+    if (el.shadowRoot || el.querySelector('input, select, textarea, [contenteditable]')) return '';
+    if (norm(el.innerText)) return '';
+    const named = ['name', 'required', 'aria-required', 'aria-label', 'label', 'placeholder']
+      .some((a) => el.hasAttribute(a)) || /^(textbox|combobox|listbox|radiogroup|checkbox|switch|spinbutton)$/
+      .test(el.getAttribute('role') || '') || (el.tabIndex >= 0 && el.hasAttribute('tabindex'));
+    return named ? 'closed shadow root' : '';
+  };
   const out = [];
   const groups = new Set();
   const radioNames = new Map();
@@ -2388,17 +2438,20 @@ _SCAN_JS = r"""(requiredOnly) => {
       if (el.shadowRoot) walk(el.shadowRoot, true);
       const role = el.getAttribute('role') || '';
       let kind = '';
+      let why = '';
       if (shadow && NATIVE.test(el.tagName)) {
         if (el.tagName === 'INPUT' && SKIP.has((el.getAttribute('type') || 'text').toLowerCase())) continue;
         kind = el.tagName.toLowerCase();
       } else if (ROLES.test(role) && !NATIVE.test(el.tagName)) kind = role;
       else if (el.isContentEditable && el.hasAttribute('contenteditable')) kind = 'contenteditable';
+      else if ((why = unreadable(el))) kind = 'unreadable';
       if (!kind) continue;
       const box = closestComposed(el, '[role=combobox]');
       if (closestComposed(el, CHROME) || consent.some((r) => insideComposed(el, r))
           || (box && box !== el)) continue;
       if (!visible(el)) continue;
-      let required = el.required === true || el.getAttribute('aria-required') === 'true';
+      let required = el.required === true || el.getAttribute('aria-required') === 'true'
+        || (kind === 'unreadable' && el.hasAttribute('required'));
       let empty;
       if (kind === 'radio') {
         const group = el.closest('[role=radiogroup]');
@@ -2429,14 +2482,27 @@ _SCAN_JS = r"""(requiredOnly) => {
       } else if (kind === 'spinbutton') {
         empty = !el.getAttribute('aria-valuenow') && !norm(el.getAttribute('aria-valuetext'))
           && !norm(el.innerText);
+      } else if (kind === 'unreadable') {
+        // its own validity when it has one (`:invalid` reads a form-associated
+        // element's internals), else its value when it shows one, else unknown:
+        // read as empty (the run cannot tell it holds an answer)
+        let invalid = false;
+        try { invalid = el.matches(':invalid'); } catch (e) { invalid = false; }
+        if (why === 'form-associated custom element') empty = invalid;
+        else empty = invalid || !('value' in el) || !norm(String(el.value || ''));
       } else if (NATIVE.test(el.tagName)) {
         empty = !norm(el.value);
       } else {
         empty = !norm(el.innerText);
       }
       if (requiredOnly && !(required && empty)) continue;
-      out.push({label: labelOf(el), kind: kind, required: !!required, empty: !!empty,
-                shadow: !!shadow});
+      const label = kind === 'unreadable'
+        ? norm(el.getAttribute('aria-label') || el.getAttribute('label')
+               || (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('placeholder')
+               || el.getAttribute('name') || el.localName).slice(0, 80)
+        : labelOf(el);
+      out.push({label: label, kind: kind, required: !!required, empty: !!empty,
+                shadow: !!shadow, why: why});
     }
   };
   walk(document, false);

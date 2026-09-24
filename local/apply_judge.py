@@ -759,6 +759,12 @@ PROFILE_APPLY = re.compile(
     r"easy\s*apply|apply\s+(with|using|via|through)\s+(your\s+)?"
     r"(linkedin|indeed|glassdoor|ziprecruiter|seek|xing|google|facebook|monster|dice)"
     r"|(1|one)[\s-]*click\s+apply", re.I)
+# A sign-in or a profile from another site ("Continue with LinkedIn", "Sign
+# in with Google", "Apply using Indeed"): never a step's way on or a
+# posting's entry (ADV-09); it leaves for that site
+THIRD_PARTY = re.compile(
+    r"\b(?:with|using|via|through)\s+(?:your\s+)?(?:linkedin|indeed|google|facebook|apple|"
+    r"microsoft|github|glassdoor|twitter|x|yahoo|amazon|okta|sso)\b", re.I)
 _APPLY_ENTRY_WORDS = re.compile(r"\bapply\b|\bi'?m interested\b|\bstart (?:your |an |the )?"
                                 r"application\b", re.I)
 # the loop's words for a send and for a sign-in's own button: one name each
@@ -1554,7 +1560,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     keep the highest-confidence n per role. The one
     park reason is a required field without an answer; the flags are recorded only. A
     button of the site's header or top bar (`Button.chrome`) holds a role only
-    when no button of the page's own was judged to it."""
+    when no button of the page's own was judged to it; a sign-in with another
+    site (`THIRD_PARTY`) never holds the advance or the Apply entry."""
     out = FillPlan()
     required_reason = ""
     sensitive_reason_ = ""
@@ -1654,6 +1661,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
         role, conf = _choice_of(answers, f"button_{b.n}_role")
         if role is None:
             continue
+        if role in ("advance", "apply_entry") and THIRD_PARTY.search(b.text or ""):
+            continue        # ADV-09: a sign-in with another site is no way on
         held = out.buttons.get(role)
         # the page's own button beats the site's header for any role (M11)
         if held is None or (b.n not in chrome, conf) > (held[0] not in chrome, held[1]):

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Customer Success Manager - Northwind Traders</title>
+<!-- A synthetic chat window over the way on (ADV-04): the step's action bar
+     is fixed to the bottom right, and a chat panel fixed over it takes every
+     click there until it is closed with its own close button. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  .actions { position: fixed; right: 40px; bottom: 40px; }
+  .actions button { padding: 10px 24px; }
+  #chat { position: fixed; right: 16px; bottom: 16px; width: 320px; height: 140px;
+          background: #fff; border: 1px solid #333; z-index: 100; }
+  #chat header { display: flex; justify-content: space-between; padding: 6px; background: #eef; }
+  #step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Customer Success Manager</h1>
+<p>Northwind Traders, Denver, CO</p>
+<form id="application" novalidate>
+  <div id="step1">
+    <h2>Step 1 of 2</h2>
+    <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+    <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+    <div class="actions"><button type="button" id="next">Next</button></div>
+  </div>
+  <div id="step2">
+    <h2>Step 2 of 2</h2>
+    <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </div>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<div id="chat" class="chat-widget" aria-label="Chat with us">
+  <header><strong>Questions? Chat with our team</strong>
+    <button type="button" id="chat-close" aria-label="Close chat">&times;</button></header>
+  <p>We usually reply in a few minutes.</p>
+  <button type="button" id="chat-start">Start chat</button>
+</div>
+<script>
+  document.getElementById('chat-close').addEventListener('click', function () {
+    document.getElementById('chat').remove();
+  });
+  document.getElementById('chat-start').addEventListener('click', function () {
+    document.body.setAttribute('data-chat-started', '1');
+  });
+  document.getElementById('next').addEventListener('click', function () {
+    if (!document.getElementById('name').value || !document.getElementById('email').value) return;
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

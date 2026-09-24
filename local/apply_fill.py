@@ -34,10 +34,12 @@ its message asks; `apply` reports how it acted on each field (`outcomes`).
 
 `click_button(page, digest, n)` clicks a digest button and waits for a
 navigation or a DOM change (body length and the set of visible controls,
-polled every 250 ms), capped. `open_listbox_options(page, field)` reads a
-React-select style menu on demand. `page_text(page)` is the capped visible
-text for the record writer. Playwright is reached only through the `page`
-argument, so this module imports without it.
+polled every 250 ms), capped; a click a banner, a chat window or a sticky
+bar took is made once more after `clear_overlay` put the cover away (a
+consent banner's reject, else a close). `open_listbox_options(page, field)`
+reads a React-select style menu on demand. `page_text(page)` is the capped
+visible text for the record writer. Playwright is reached only through the
+`page` argument, so this module imports without it.
 """
 from __future__ import annotations
 
@@ -1255,11 +1257,14 @@ class ClickResult:
     `(True, False)`; one that never landed is `(False, False)`. `refused`:
     the caller's live check (`click`'s `check`) stopped the click, and why;
     nothing was clicked. `late`: the error a dispatched click raised
-    afterwards. Truthiness is `changed`, the shape `click_button` returns."""
+    afterwards. `overlay`: what covered the control and how it was put away
+    before the click was made once more (ADV-04). Truthiness is `changed`,
+    the shape `click_button` returns."""
     clicked: bool
     changed: bool
     refused: str = ""
     late: str = ""
+    overlay: str = ""
 
     def __bool__(self) -> bool:
         return self.changed
@@ -1267,6 +1272,77 @@ class ClickResult:
 
 def _norm(text: str) -> str:
     return " ".join(str(text or "").split())
+
+
+# What covers a control a click was refused on (ADV-04): the element at the
+# control's centre, when it is neither the control nor inside it, climbed to
+# its overlay (the outermost fixed or sticky box, a dialog), which is marked
+# `data-apply-overlay`. Then the one control to put it away: in a cookie or
+# consent banner (`apply_form.CONSENT_ROOTS_JS`) its reject, decline or
+# necessary-only control, else its close; anywhere else a close, dismiss,
+# minimise or "no thanks" control of the overlay (never one that accepts,
+# allows, agrees, sends or applies); marked `data-apply-close`. Returns
+# {what, kind: consent|close|none, text} or null when nothing covers it.
+_OVERLAY_JS = r"""el => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  el.scrollIntoView({block: 'center', inline: 'center'});
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || hit === el || el.contains(hit)) return null;
+  let root = hit;
+  for (let n = hit; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+    const pos = getComputedStyle(n).position;
+    if (pos === 'fixed' || pos === 'sticky'
+        || n.matches('dialog, [role=dialog], [role=alertdialog], [aria-modal=true]')) root = n;
+  }
+  if (root.contains(el)) return null;
+  document.querySelectorAll('[data-apply-overlay], [data-apply-close]').forEach((n) => {
+    n.removeAttribute('data-apply-overlay'); n.removeAttribute('data-apply-close'); });
+  root.setAttribute('data-apply-overlay', '1');
+  const consent = (__CONSENT__)().some((c) => c === root || c.contains(root) || root.contains(c));
+  const REJECT = /^(reject|decline|refuse|deny)\b|\b(necessary|essential) only\b|\bonly (strictly )?(necessary|essential)\b|\b(necessary|essential) cookies only\b/i;
+  const CLOSE = /^(close|dismiss|hide|minimi[sz]e|no,? thanks|not now|maybe later|skip|×|✕|x)\b/i;
+  const CLOSE_ARIA = /\b(close|dismiss|hide|minimi[sz]e)\b/i;
+  const NEVER = /accept|allow|agree|submit|apply|send|sign ?up|subscribe|start chat|chat now/i;
+  const shown = (n) => { const b = n.getBoundingClientRect(); const st = getComputedStyle(n);
+    return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
+  let pick = null, kind = 'none';
+  const ctrls = Array.from(root.querySelectorAll(
+    'button, [role=button], input[type=button], input[type=submit], a:not([href]), a[href="#"]'));
+  for (const c of ctrls) {
+    if (!shown(c) || c.disabled) continue;
+    const text = norm(c.innerText) || norm(c.value);
+    const aria = norm(c.getAttribute('aria-label')) || norm(c.getAttribute('title'));
+    const label = text || aria;
+    if (!label || NEVER.test(label) || NEVER.test(aria)) continue;
+    if (consent && REJECT.test(label)) { pick = c; kind = 'consent'; break; }
+    if (!pick && (CLOSE.test(label) || CLOSE_ARIA.test(aria))) { pick = c; kind = consent ? 'consent' : 'close'; }
+  }
+  if (pick) pick.setAttribute('data-apply-close', '1');
+  const name = norm((root.id ? '#' + root.id + ' ' : '') + (root.getAttribute('aria-label') || '')
+    + ' ' + (root.innerText || '').slice(0, 60)).slice(0, 80);
+  return {what: name, kind: kind, text: pick ? (norm(pick.innerText) || norm(pick.value)
+    || norm(pick.getAttribute('aria-label'))).slice(0, 60) : ''};
+}""".replace("__CONSENT__", apply_form.CONSENT_ROOTS_JS)
+_INTERCEPTED = ("intercepts pointer events", "is not visible", "outside of the viewport")
+
+
+def clear_overlay(frame, target) -> dict:
+    """ADV-04: put away what covers `target` (an element handle or a
+    locator in `frame`): `_OVERLAY_JS` finds it and the control to click
+    (a consent banner's reject, else a close); that control is clicked, and
+    `target` is scrolled to the viewport's centre either way. Returns what
+    was found ({} when nothing covers it)."""
+    found = target.evaluate(_OVERLAY_JS)
+    if not found:
+        return {}
+    if found.get("kind") != "none":
+        try:
+            frame.locator("[data-apply-close='1']").first.click(timeout=ACTION_TIMEOUT_MS)
+            frame.wait_for_timeout(300)
+        except Exception as e:      # noqa: BLE001  (the overlay went away on its own)
+            found["error"] = type(e).__name__
+    return dict(found)
 
 
 # A capture listener on the element's window notes that a click reached the
@@ -1393,6 +1469,7 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
         frame = None
     requests: list[str] = []
     blocked: list[str] = []
+    overlays: list[dict] = []
 
     def _on_request(request) -> None:
         # a navigation or a send proves the dispatch; a GET for an image does not
@@ -1458,6 +1535,18 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
                         _refind()
                         target = _arm()
                         continue
+                    if attempt == 1 and frame is not None \
+                            and any(w in text for w in _INTERCEPTED) \
+                            and not _dispatched(frame, url0, page, requests, e):
+                        # ADV-04: a banner, a chat window or a sticky bar took
+                        # the click; the click never reached the button, so
+                        # it is made once more once the cover is put away
+                        found = clear_overlay(frame, target)
+                        if found:
+                            overlays.append(found)
+                            log.info("apply_fill: %r was covered by %r; %s %r", button.text,
+                                     found.get("what"), found.get("kind"), found.get("text"))
+                            continue
                     raise
             if frame is not None:
                 try:
@@ -1498,15 +1587,23 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
             handles.clear()
         landed.append(True)
 
+    def _cover() -> str:
+        if not overlays:
+            return ""
+        o = overlays[0]
+        return (f"{o.get('what') or 'an overlay'}: {o.get('kind')}"
+                + (f" {o.get('text')!r}" if o.get("text") else ""))[:160]
     try:
         changed = _await_change(page, _act, timeout_s)
     except Exception as e:      # noqa: BLE001
         if blocked:
             log.info("apply_fill: click on %r refused: %s", button.text, blocked[0])
-            return ClickResult(clicked=False, changed=False, refused=blocked[0])
+            return ClickResult(clicked=False, changed=False, refused=blocked[0], overlay=_cover())
         log.info("apply_fill: click on %r failed: %s", button.text, type(e).__name__)
-        return ClickResult(clicked=bool(landed), changed=False, late=late[0] if late else "")
-    return ClickResult(clicked=True, changed=changed, late=late[0] if late else "")
+        return ClickResult(clicked=bool(landed), changed=False, late=late[0] if late else "",
+                           overlay=_cover())
+    return ClickResult(clicked=True, changed=changed, late=late[0] if late else "",
+                       overlay=_cover())
 
 
 def click_button(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20) -> bool:

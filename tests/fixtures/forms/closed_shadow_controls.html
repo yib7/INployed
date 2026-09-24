@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Site Reliability Engineer - Contoso</title>
+<!-- A synthetic replica of controls the run cannot read into (EXT-01): a
+     required start date drawn inside a closed shadow root, and a
+     form-associated relocation choice whose value lives in its internals
+     (invalid until chosen). Neither is a field the extractor sees; the run
+     names them and parks on the required one, never skips it. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label, .field > .q { display: block; font-weight: bold; }
+  start-date, relocation-choice { display: inline-block; min-width: 200px; min-height: 28px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Site Reliability Engineer</h1>
+<p>Contoso, Austin, TX</p>
+<form id="application">
+  <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><span class="q">Earliest start date *</span>
+    <start-date aria-label="Earliest start date" required></start-date></div>
+  <div class="field"><span class="q">Open to relocation</span>
+    <relocation-choice name="relocation" aria-label="Open to relocation"></relocation-choice></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  customElements.define('start-date', class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({mode: 'closed'});
+      root.innerHTML = '<input type="date" aria-label="Start date">';
+      this._input = root.querySelector('input');
+    }
+    get value() { return this._input.value; }
+  });
+  customElements.define('relocation-choice', class extends HTMLElement {
+    static formAssociated = true;
+    constructor() {
+      super();
+      this._internals = this.attachInternals();
+      const root = this.attachShadow({mode: 'closed'});
+      root.innerHTML = '<select><option value="">Choose</option><option>Yes</option><option>No</option></select>';
+      const select = root.querySelector('select');
+      select.addEventListener('change', () => this._internals.setFormValue(select.value));
+      this._internals.setFormValue('');
+    }
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

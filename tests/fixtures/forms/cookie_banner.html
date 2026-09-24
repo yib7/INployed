@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Data Scientist - Contoso</title>
+<!-- A synthetic consent banner that shows only once the page scrolls (ADV-04,
+     the chaos case of an overlay that appears on scroll): fixed to the
+     bottom, over the step's Next, so the page is read without it and the
+     click finds it. It offers Accept, which the run never clicks, and
+     Reject all. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  .about { height: 1400px; }
+  #onetrust-consent-sdk { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 50; }
+  #onetrust-banner-sdk { position: absolute; left: 0; right: 0; bottom: 0; height: 180px;
+                         background: #fff; border-top: 2px solid #333; padding: 16px; }
+  #step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Data Scientist</h1>
+<p>Contoso, Chicago, IL</p>
+<form id="application" novalidate>
+  <div id="step1">
+    <h2>Step 1 of 2</h2>
+    <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+    <div class="about"><p>Tell us how to reach you below; your resume comes on the next step.</p></div>
+    <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+    <button type="button" id="next">Next</button>
+  </div>
+  <div id="step2">
+    <h2>Step 2 of 2</h2>
+    <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </div>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  function banner() {
+    if (document.getElementById('onetrust-consent-sdk') || document.body.dataset.consent) return;
+    var sdk = document.createElement('div');
+    sdk.id = 'onetrust-consent-sdk';
+    sdk.innerHTML = '<div id="onetrust-banner-sdk" role="region" aria-label="Cookie banner">'
+      + '<p>We use cookies to improve your experience. You can accept all cookies '
+      + 'or reject the ones that are not necessary.</p>'
+      + '<button type="button" id="onetrust-accept-btn-handler">Accept All Cookies</button> '
+      + '<button type="button" id="onetrust-reject-all-handler">Reject All</button></div>';
+    document.body.appendChild(sdk);
+    sdk.querySelector('#onetrust-accept-btn-handler').addEventListener('click', function () {
+      document.body.dataset.consent = 'accepted'; sdk.remove(); });
+    sdk.querySelector('#onetrust-reject-all-handler').addEventListener('click', function () {
+      document.body.dataset.consent = 'rejected'; sdk.remove(); });
+  }
+  window.addEventListener('scroll', function () { if (window.scrollY > 200) banner(); });
+  document.getElementById('next').addEventListener('click', function () {
+    if (!document.getElementById('name').value || !document.getElementById('email').value) return;
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+    window.scrollTo(0, 0);
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

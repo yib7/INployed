@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Candidate Home - Contoso Careers</title>
+<!-- A synthetic account screen with a sign-in and a sign-up side by side
+     (ADV-08, Taleo's and SuccessFactors' shape): returning candidates sign
+     in on the left, new ones create an account on the right. With no
+     account for the site, only the sign-up's boxes take the address and the
+     password, and its Create Account opens the application. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .cols { display: flex; gap: 48px; }
+  .cols form { border: 1px solid #aaa; padding: 16px; width: 320px; }
+  .field { margin: 10px 0; }
+  .field > label { display: block; font-weight: bold; }
+  #application, #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Contoso Careers</h1>
+<div class="cols" id="account">
+  <form id="signin" novalidate>
+    <h2>Returning candidates</h2>
+    <div class="field"><label for="si-email">Email address</label>
+      <input id="si-email" name="signin_email" type="email" autocomplete="username"></div>
+    <div class="field"><label for="si-pw">Password</label>
+      <input id="si-pw" name="signin_password" type="password" autocomplete="current-password"></div>
+    <button type="button" id="signin-btn">Sign In</button>
+    <p id="signin-error" class="error"></p>
+  </form>
+  <form id="signup" novalidate>
+    <h2>New candidates</h2>
+    <div class="field"><label for="su-email">Email address *</label>
+      <input id="su-email" name="signup_email" type="email" autocomplete="email" required></div>
+    <div class="field"><label for="su-pw">Create a password *</label>
+      <input id="su-pw" name="signup_password" type="password" autocomplete="new-password" required></div>
+    <div class="field"><label for="su-pw2">Confirm password *</label>
+      <input id="su-pw2" name="signup_password2" type="password" autocomplete="new-password" required></div>
+    <button type="button" id="signup-btn">Create Account</button>
+  </form>
+</div>
+<form id="application" novalidate>
+  <h2>Apply: Data Engineer</h2>
+  <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+  <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  function $(id) { return document.getElementById(id); }
+  $('signin-btn').addEventListener('click', function () {
+    $('signin-error').textContent = 'We could not find an account with that email.';
+  });
+  $('signup-btn').addEventListener('click', function () {
+    if (!$('su-email').value || !$('su-pw').value || $('su-pw').value !== $('su-pw2').value) return;
+    if ($('si-email').value || $('si-pw').value) document.body.setAttribute('data-signin-typed', '1');
+    $('account').style.display = 'none';
+    $('application').style.display = 'block';
+  });
+  $('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    $('application').style.display = 'none';
+    $('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

@@ -447,6 +447,32 @@ def _fills_the_application(digest, plan: FillPlan, filled) -> bool:
     return any(pf.n in done and pf.fact_key not in _ACCOUNT_FACTS for pf in plan.fields)
 
 
+def account_forms(page, digest) -> list:
+    """ADV-08: a sign-in and a sign-up side by side (Taleo, SuccessFactors):
+    when the page's password boxes sit in two forms or more, each such
+    form's own fields and buttons as a digest of their own; else []."""
+    if len(_password_boxes(digest)) < 2 or page is None:
+        return []
+    try:
+        where = apply_form.form_index(page, [f.locator for f in digest.fields]
+                                      + [b.locator for b in digest.buttons])
+    except Exception:       # noqa: BLE001  (a page double)
+        return []
+    fields_at = where[:len(digest.fields)]
+    buttons_at = where[len(digest.fields):]
+    pw_forms = []
+    for f, at in zip(digest.fields, fields_at):
+        if at[1] >= 0 and apply_form.is_password_field(f.type, f.id_or_name, f.label,
+                                                        f.autocomplete) and at not in pw_forms:
+            pw_forms.append(at)
+    if len(pw_forms) < 2:
+        return []
+    return [dataclasses.replace(
+        digest, fields=[f for f, at in zip(digest.fields, fields_at) if at == form],
+        buttons=[b for b, at in zip(digest.buttons, buttons_at) if at == form])
+        for form in pw_forms]
+
+
 def _credential_form(digest) -> bool:
     """A sign-in or sign-up screen by its boxes: a password box, or the
     address box of a two-step sign-in, and no file box (an account screen
@@ -814,6 +840,10 @@ class _Accounts:
             # the address screen of a two-step sign-in, or the password screen
             # after it: the next screen says whether the account exists
             return self._fill(page, digest, host, self._signup_email(), False)
+        if any(password_step(g) == "signup" for g in account_forms(page, digest)):
+            # ADV-08: a sign-up beside the sign-in, and no account in the
+            # ledger for the site: the sign-up's form is the step
+            return self._fill(page, digest, host, self._signup_email(), True)
         # Expose account-creation links as buttons to the same role judge.
         links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
         try:
@@ -942,6 +972,19 @@ class _Accounts:
         self.steps[site] = self.steps.get(site, 0) + 1
         if self.steps[site] > self.MAX_STEPS_PER_SITE:
             return False
+        groups = account_forms(page, digest)
+        if groups:
+            # ADV-08: a sign-in and a sign-up side by side: the sign-in when
+            # the ledger knows the account, else the sign-up; its own form's
+            # boxes and button alone are acted on
+            want = "signin" if ats_accounts.lookup(host) else "signup"
+            chosen = next((g for g in groups if password_step(g) == want), None)
+            if chosen is not None:
+                self.run._decide("account_form", f"a sign-in and a sign-up side by side; the "
+                                                 f"{'sign-in' if want == 'signin' else 'sign-up'} "
+                                                 "form is the step",
+                                 fields=[f.label for f in chosen.fields])
+                digest, signup = chosen, want == "signup"
         frames = apply_form.frames(page)
         guard = _NavGuard(self.run, page)
         try:
@@ -1478,7 +1521,8 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     """The button an account screen's step clicks: the judged advance, else
     the judged submit, at `BUTTON_ADVANCE_MIN_CONF` or above, never one of
     the site's header (a header's "Sign In" on a sign-up screen, review
-    M11), and never one whose words name the other step while the screen
+    M11), never a sign-in with another site ("Continue with Google",
+    ADV-09), and never one whose words name the other step while the screen
     has its own button that names this one and its password boxes say no
     other step than the read (`password_step`: a sign-up screen's "Already
     have an account? Sign In" beside its "Create Account"; a screen whose only way
@@ -1499,7 +1543,8 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     own: dict[str, apply_form.Button] = {}
     for b in digest.buttons:
         if getattr(b, "chrome", False) or getattr(b, "disabled", False) \
-                or not _ACCOUNT_BUTTON.search(b.text) or apply_judge.DECLINE_WORDS.search(b.text):
+                or not _ACCOUNT_BUTTON.search(b.text) or apply_judge.DECLINE_WORDS.search(b.text) \
+                or _THIRD_PARTY.search(b.text):
             continue
         own.setdefault(" ".join(b.text.lower().split()), b)
     buttons = list(own.values())
@@ -1508,7 +1553,7 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     for role in ("advance", "submit"):
         held = plan.buttons.get(role)
         if held is None or held[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF \
-                or _chrome(digest, held[0]):
+                or _chrome(digest, held[0]) or _THIRD_PARTY.search(text.get(held[0], "")):
             continue
         words = text.get(held[0], "")
         if step == read and fitting and other.search(words) and not fits.search(words):
@@ -1853,42 +1898,82 @@ _NOT_NEXT = re.compile(r"\blater\b|\bbrows\w*|\bsearch\w*|\bshopping\b"
 _WITH_WORDS = re.compile(r"\bwith\b|\bsign[\s-]*(in|up)\b|\blog[\s-]*in\b", re.I)
 
 
+_STEP_OF = re.compile(r"\b(?:step|page)\s+(\d+)\s*(?:of|/)\s*(\d+)\b", re.I)
+# a sign-in or a profile from another site: never a form's way on (ADV-09)
+_THIRD_PARTY = apply_judge.THIRD_PARTY
+
+
+def step_position(digest: apply_form.FormDigest) -> tuple[int, int] | None:
+    """(this step, the steps in all) when the page says so ("Step 2 of 4",
+    "Page 1 / 3"), else None."""
+    m = _STEP_OF.search(f"{digest.title or ''}\n{digest.text or ''}")
+    if not m:
+        return None
+    here, total = int(m.group(1)), int(m.group(2))
+    return (here, total) if 0 < here <= total else None
+
+
 def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
-               park_mode: bool) -> tuple[str, tuple[int, float] | None, str]:
+               park_mode: bool, submit_apart: bool = False,
+               judged: Mapping[int, str] | None = None) -> tuple[str, tuple[int, float] | None,
+                                                                  str]:
     """A filled page's way on, as (step, button, why): "advance" with the
     confident advance to click; "gate" with the button the submit gate
     judges (the judged submit, a submit-shaped advance, a final-shaped one
     in park mode, or a form's own submit-worded Apply); "stuck" when there
     is neither. `why` names a routing to the gate. An advance that reads as
-    declining ("I Decline", "Cancel") is never the way on; with no advance
-    and no submit, a step's own accept-worded button (study G13: a privacy
-    agreement's "I Accept") is, at the advance floor."""
+    declining ("I Decline", "Cancel"), or that signs in or applies with
+    another site ("Continue with LinkedIn", ADV-09), is never the way on;
+    with no advance and no submit, a step's own accept-worded button (study
+    G13: a privacy agreement's "I Accept") is, at the advance floor. With a
+    confident advance and a judged submit both (ADV-05), the advance is the
+    way on unless the page shows it is the last step: its step marker says
+    so, or, with no marker, the submit sits with the page's own fields
+    (`submit_apart` False: the caller reads the page).
+
+    The roles look exchanged (SP5, widened in SP6) when the judged advance
+    is no way on (the site's header, a decline, a sign-in elsewhere) or is
+    a stranger to the step (outside any form that holds the page's fields,
+    with no step's word: a chat window's "Start chat") while the page's own
+    Next or Continue was judged other: that button is the way on; never a
+    "Continue with ..." sign-in, never a send, never disabled. `judged`: the
+    role the judge gave each button (the runner's read); without it only
+    the plan's own "other" is looked at. An unjudged Next stays unclicked."""
     advance = plan.buttons.get("advance")
     submit = plan.buttons.get("submit")
     why = ""
+    by_n = {b.n: b for b in digest.buttons}
+    others = ([n for n, role in judged.items() if role == "other"] if judged is not None
+              else [plan.buttons["other"][0]] if plan.buttons.get("other") else [])
+    own_next = next((b for b in digest.buttons if b.n in others and _NEXT_WORDS.search(b.text)
+                     and not _WITH_WORDS.search(b.text) and not _NOT_NEXT.search(b.text)
+                     and not apply_judge.DECLINE_WORDS.search(b.text)
+                     and not _submit_shaped(digest, b.n) and not getattr(b, "chrome", False)
+                     and not getattr(b, "disabled", False)), None)
     header_advance = advance is not None and _chrome(digest, advance[0])
-    if advance is not None and (apply_judge.DECLINE_WORDS.search(_button_text(digest, advance[0]))
-                                or _chrome(digest, advance[0])):
-        advance = None          # a decline, or the site's header (M11), is no way on
+    excluded = advance is not None and (
+        apply_judge.DECLINE_WORDS.search(_button_text(digest, advance[0]))
+        or _THIRD_PARTY.search(_button_text(digest, advance[0])) or header_advance)
+    if excluded:
+        advance = None          # a decline, a sign-in elsewhere or the site's header (M11)
+    elif advance is not None and submit is None and own_next is not None \
+            and own_next.n != advance[0] and advance[0] in by_n \
+            and not by_n[advance[0]].in_form and own_next.in_form \
+            and not _NEXT_WORDS.search(by_n[advance[0]].text) \
+            and not _submit_shaped(digest, advance[0]):
+        # a stranger took the advance (a chat window's "Start chat") while
+        # the form's own Next was judged other: the roles look exchanged
+        advance = (own_next.n, apply_judge.BUTTON_ADVANCE_MIN_CONF)
     if advance is None and submit is None:
         accept = next((b for b in digest.buttons if apply_judge.ACCEPT_WORDS.search(b.text)
                        and not apply_judge.DECLINE_WORDS.search(b.text)
                        and "cookie" not in b.text.lower()
                        and not getattr(b, "chrome", False)), None)
-        other = plan.buttons.get("other")
-        if accept is None and header_advance and other is not None:
-            # the roles look exchanged (SP5): the header took the advance
-            # while the page's own Next or Continue was judged other
-            # (Workday's "Save and Continue" beside its header's Sign In).
-            # That button is the way on; never a "Continue with ..." sign-in,
-            # never a send. An unjudged Next stays unclicked.
-            b = next((x for x in digest.buttons if x.n == other[0]), None)
-            if b is not None and _NEXT_WORDS.search(b.text) and not _WITH_WORDS.search(b.text) \
-                    and not _NOT_NEXT.search(b.text) \
-                    and not apply_judge.DECLINE_WORDS.search(b.text) \
-                    and not _submit_shaped(digest, b.n) and not getattr(b, "chrome", False) \
-                    and not getattr(b, "disabled", False):
-                accept = b
+        if accept is None and excluded and own_next is not None:
+            # the header or a stranger took the advance while the page's own
+            # Next or Continue was judged other (Workday's "Save and
+            # Continue" beside its header's Sign In)
+            accept = own_next
         if accept is not None:
             advance = (accept.n, apply_judge.BUTTON_ADVANCE_MIN_CONF)
     if advance is not None and (_submit_shaped(digest, advance[0])
@@ -1897,6 +1982,13 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
         if submit is None:
             submit = advance
         advance = None
+    if submit is not None and advance is not None \
+            and advance[1] >= apply_judge.BUTTON_ADVANCE_MIN_CONF:
+        at = step_position(digest)
+        if (at is not None and at[0] < at[1]) or (at is None and submit_apart):
+            # ADV-05: a feedback box's or a talent network's Submit beside a
+            # step's Next; the step goes on, the gate waits for the last one
+            return "advance", advance, ""
     entry = plan.buttons.get("apply_entry")
     if submit is None and entry is not None and _submit_shaped(digest, entry[0]):
         why = "the apply_entry button on a form is submit-shaped"
@@ -1909,15 +2001,17 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
     return "stuck", None, why
 
 
-def review_route(digest: apply_form.FormDigest,
-                 plan: FillPlan) -> tuple[str, tuple[int, float] | None, str]:
+def review_route(digest: apply_form.FormDigest, plan: FillPlan, *, submit_apart: bool = False,
+                 judged: Mapping[int, str] | None = None
+                 ) -> tuple[str, tuple[int, float] | None, str]:
     """A page read as a review's way on (READ-06), as `form_route` gives it:
     with no submit, its confident advance is clicked (a wizard's middle step
     read as the review carries only Next); a submit, a submit-shaped advance
     and a final-shaped one ("Confirm") go to the gate in either mode, since
     on a review a last-step word is the send; "stuck" when there is
-    neither."""
-    return form_route(digest, plan, park_mode=True)
+    neither. A step's Next beside another box's Submit goes on as on a
+    form (ADV-05: `submit_apart`, the step marker)."""
+    return form_route(digest, plan, park_mode=True, submit_apart=submit_apart, judged=judged)
 
 
 def _entry_shaped(b: apply_form.Button | None) -> bool:
@@ -2657,10 +2751,19 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
     for row in live.get("invalid") or []:
         return False, _invalid_words(row)
     for row in live.get("required_empty") or []:
-        label = " ".join(str(row.get("label") or "a control").split())[:80]
-        return False, (f"required field without an answer: {label} (a {row.get('kind')} "
-                       f"control the run does not fill)")
+        return False, _control_words(row)
     return True, ""
+
+
+def _control_words(row: Mapping[str, Any]) -> str:
+    """A required control the extractor leaves out, still empty, as a park's
+    reason: one the run cannot read into (EXT-01) says why."""
+    label = " ".join(str(row.get("label") or "a control").split())[:80]
+    if row.get("kind") == "unreadable":
+        return (f"required field without an answer: {label} (a control the run cannot read: "
+                f"{row.get('why') or 'its inside is closed'})")
+    return (f"required field without an answer: {label} (a {row.get('kind')} control the run "
+            f"does not fill)")
 
 
 def hold_until_closed(ctx, *, sleep: Callable[[float], None] = time.sleep,
@@ -4174,7 +4277,10 @@ class _JobRun:
         (a final-shaped one in park mode) or a form's own Apply goes to the
         submit gate; otherwise a confident advance is clicked."""
         park_mode = not self.r.settings.get("auto_apply_submit", True)
-        step, button, why = form_route(digest, plan, park_mode=park_mode)
+        plan = self._own_submit(digest, plan)
+        step, button, why = form_route(digest, plan, park_mode=park_mode,
+                                       submit_apart=self._submit_apart(digest, plan),
+                                       judged=self._judged_roles(digest))
         b = self._form_entry(digest, plan, step, button)
         if b is not None:
             self._click_entry(rec, apply_form.resolve(self.page, b.locator), b.text,
@@ -4188,6 +4294,7 @@ class _JobRun:
             self._decide("to_gate", why, button=button[0] if button else None,
                          text=_button_text(digest, button[0]) if button else "")
         if step in ("advance", "gate"):
+            self._unreadable(digest, button[0])
             digest, plan, verification = self._still_disabled(digest, plan, verification,
                                                               button[0], rec)
         if step == "advance":
@@ -4199,6 +4306,90 @@ class _JobRun:
             return
         raise _Parked("needs_human", f"no way forward on this page (buttons: "
                                      f"{self._buttons_seen(digest)})")
+
+    def _unreadable(self, digest: apply_form.FormDigest, n: int) -> None:
+        """EXT-01: the controls of the way on's frame the run cannot read
+        into (a closed shadow root, a form-associated custom element) are
+        named in the page's trace, never skipped in silence; a required one
+        still empty parks the job before any click, naming it (the gate
+        reads the same, `_gate_read`)."""
+        button = next((b for b in digest.buttons if b.n == n), None)
+        frames_ = [int(button.locator[0])] if button is not None else None
+        try:
+            rows = [r for r in apply_form.control_scan(self.page, frames_)
+                    if r.get("kind") == "unreadable"]
+        except Exception:       # noqa: BLE001  (a page double)
+            return
+        if not rows:
+            return
+        self._decide("unreadable", f"{len(rows)} control(s) the run cannot read: "
+                                   + _cap("; ".join(f"{r.get('label')} ({r.get('why')})"
+                                                    for r in rows), 200),
+                     required=[r.get("label") for r in rows if r.get("required")])
+        blocking = [r for r in rows if r.get("required") and r.get("empty")]
+        if blocking:
+            raise _Parked("needs_human", _control_words(blocking[0]))
+
+    def _judged_roles(self, digest: apply_form.FormDigest) -> dict[int, str]:
+        """n -> the role the judge gave each of the page's buttons."""
+        out = {}
+        for b in digest.buttons:
+            role, _ = apply_judge._choice_of(self._last_answers, f"button_{b.n}_role")
+            if role:
+                out[b.n] = role
+        return out
+
+    def _required_filled(self, plan: FillPlan) -> list[tuple[int, str]]:
+        """The locators of the required fields this page's fill put a value in."""
+        acted = {tuple(loc) for loc in self._filled_here}
+        return [pf.locator for pf in plan.fields
+                if pf.required and tuple(pf.locator) in acted]
+
+    def _submit_apart(self, digest: apply_form.FormDigest, plan: FillPlan) -> bool:
+        """ADV-05: with both a judged advance and a judged submit, does the
+        submit sit apart from the required fields this page filled (another
+        form: a feedback box, a talent network sign-up)?"""
+        submit, advance = plan.buttons.get("submit"), plan.buttons.get("advance")
+        fields = self._required_filled(plan)
+        button = next((b for b in digest.buttons if submit and b.n == submit[0]), None)
+        if advance is None or button is None or not fields:
+            return False
+        try:
+            verdict, _ = apply_form.same_scope(self.page, button.locator, fields)
+        except Exception:       # noqa: BLE001  (a page double)
+            return False
+        return verdict == "apart"
+
+    def _own_submit(self, digest: apply_form.FormDigest, plan: FillPlan) -> FillPlan:
+        """ADV-05: of the buttons judged submit at `BUTTON_SUBMIT_MIN_CONF`
+        (a form's own and a feedback box's), the one that sits with the
+        required fields this page filled holds the role, whichever the
+        judge rated higher."""
+        fields = self._required_filled(plan)
+        held = plan.buttons.get("submit")
+        if not fields or held is None:
+            return plan
+        judged = [(b, conf) for b in digest.buttons
+                  for role, conf in [apply_judge._choice_of(self._last_answers,
+                                                            f"button_{b.n}_role")]
+                  if role == "submit" and conf >= apply_judge.BUTTON_SUBMIT_MIN_CONF]
+        if len(judged) < 2:
+            return plan
+        own = []
+        for b, conf in judged:
+            try:
+                verdict, _ = apply_form.same_scope(self.page, b.locator, fields)
+            except Exception:       # noqa: BLE001  (a page double)
+                return plan
+            if verdict == "same":
+                own.append((b, conf))
+        if len(own) == 1 and own[0][0].n != held[0]:
+            b, conf = own[0]
+            self._decide("own_submit", f"{_cap(b.text, 40)} sits with the page's fields; it "
+                                       f"holds the submit role over "
+                                       f"{_cap(_button_text(digest, held[0]), 40)}")
+            return dataclasses.replace(plan, buttons={**plan.buttons, "submit": (b.n, conf)})
+        return plan
 
     def _still_disabled(self, digest: apply_form.FormDigest, plan: FillPlan,
                         verification: list[VerifyResult], n: int,
@@ -4811,7 +5002,10 @@ class _JobRun:
             verification = self._fill_and_verify(digest, plan, rec)
             self._fill_passwords(digest, plan, rec, guard)
             digest, plan, verification = self._after_fill(digest, plan, verification, rec)
-            step, button, why = review_route(digest, plan)
+            plan = self._own_submit(digest, plan)
+            step, button, why = review_route(digest, plan,
+                                             submit_apart=self._submit_apart(digest, plan),
+                                             judged=self._judged_roles(digest))
             if step == "advance":
                 self._decide("review_advance", "read as a review page with a confident advance "
                                                "and no submit button: a wizard step, its "
@@ -5118,7 +5312,12 @@ class _JobRun:
                 self.page.wait_for_timeout(int(POPUP_GRACE_S * 1000))
         self._trace("click", n=n, text=text, role=role, confidence=conf,
                     clicked=result.clicked, changed=result.changed, url=str(self.page.url),
-                    refused=result.refused, late=result.late, popups=len(opened))
+                    refused=result.refused, late=result.late, popups=len(opened),
+                    overlay=result.overlay)
+        if result.overlay:
+            self._decide("overlay_cleared", f"{_cap(text, 40)} was covered ({result.overlay}); "
+                                            "the cover was put away and the click made once "
+                                            "more")
         if result.refused and role != "submit":
             self._refused_click(role, text, result.refused)
         if opened and not result.refused and (role == "submit" or not result.changed):

@@ -1036,6 +1036,28 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", wrap=OptionalLeftBlank,
          covers="the same, then a submit the form refuses with nothing sent: repaired once and "
                 "sent through the gate again (ADV-02)"),
+    Flow("chat_launcher", "chat_launcher.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="body:not([data-chat-started]) #btn-submit:visible",
+         covers="a chat panel fixed over the step's Next: closed by its own close button, the "
+                "Next clicked once more, the chat never started (ADV-04)"),
+    Flow("cookie_banner", "cookie_banner.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="body[data-consent='rejected'] #btn-submit:visible",
+         covers="a consent overlay that shows on scroll, over the Next: rejected, never "
+                "accepted, and the Next clicked once more (ADV-04)"),
+    Flow("next_and_feedback_submit", "next_and_feedback_submit.html", False, "ready_to_submit",
+         _PARKED, confirm="#thanks:visible",
+         gate="body:not([data-feedback]) #btn-submit:visible",
+         covers="a step's Next beside a feedback box's own Submit: the Next goes on, the "
+                "feedback is never sent, the gate waits for the last step (ADV-05)"),
+    Flow("two_forms", "two_forms.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="body:not([data-signin-typed]) #btn-submit:visible",
+         password=True,
+         covers="a sign-in and a sign-up side by side with no account in the ledger: the "
+                "sign-up's boxes alone take the address and the password (ADV-08)"),
+    Flow("apply_with_linkedin", "apply_with_linkedin.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="Apply with LinkedIn beside the posting's own Apply, Continue with LinkedIn "
+                "above the step's Next: neither is taken (ADV-09)"),
     # the chaos case: the form is drawn anew (the same markup, new nodes)
     # right after the run first reads it, before any act
     Flow("rerender_after_read", "lever_single.html", False, "ready_to_submit", _PARKED,
@@ -1044,6 +1066,12 @@ FLOWS: tuple[Flow, ...] = (
                  "const a = document.getElementById('application'); a.innerHTML = a.innerHTML; }",
          covers="the form drawn anew between the read and the fill: every act finds its "
                 "control again"),
+    Flow("closed_shadow_controls", "closed_shadow_controls.html", False, "needs_human",
+         r"^required field without an answer: Earliest start date \(a control the run cannot "
+         r"read: closed shadow root\)$",
+         confirm="#thanks:visible",
+         covers="a required start date inside a closed shadow root and a form-associated "
+                "relocation choice: named, and the job parks on the required one (EXT-01)"),
 )
 
 

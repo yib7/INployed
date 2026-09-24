@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Machine Learning Engineer - Northwind Traders</title>
+<!-- A synthetic posting and form with sign-ins from another site (ADV-09):
+     the posting offers "Apply with LinkedIn" beside its own "Apply for this
+     job"; the form's first step offers "Continue with LinkedIn" above its
+     own Next. Either would leave for linkedin.com; the run takes neither. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  a.btn, button { display: inline-block; padding: 8px 16px; margin: 4px; }
+  #posting, #application, #step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<section id="posting">
+  <h1>Machine Learning Engineer</h1>
+  <p>Northwind Traders, Seattle, WA</p>
+  <h2>About the role</h2>
+  <p>Build the models behind our demand forecasts and ship them to production.</p>
+  <h2>Qualifications</h2>
+  <ul><li>Python and SQL</li><li>Experience shipping models</li></ul>
+  <button type="button" id="li-apply"
+    onclick="location.href = 'https://www.linkedin.com/oauth/v2/authorization?client_id=nw'">Apply with LinkedIn</button>
+  <a class="btn" id="apply" href="?apply=1">Apply for this job</a>
+</section>
+<form id="application" novalidate>
+  <div id="step1">
+    <h2>Your details</h2>
+    <button type="button" id="li-continue"
+      onclick="location.href = 'https://www.linkedin.com/oauth/v2/authorization?client_id=nw'">Continue with LinkedIn</button>
+    <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+    <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+    <button type="button" id="next">Next</button>
+  </div>
+  <div id="step2">
+    <h2>Documents</h2>
+    <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </div>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  var applying = location.search.indexOf('apply=1') >= 0;
+  document.getElementById(applying ? 'application' : 'posting').style.display = 'block';
+  if (applying) document.getElementById('step1').style.display = 'block';
+  document.getElementById('next').addEventListener('click', function () {
+    if (!document.getElementById('name').value || !document.getElementById('email').value) return;
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

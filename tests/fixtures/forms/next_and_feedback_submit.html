@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Business Analyst - Fabrikam</title>
+<!-- A synthetic wizard step with a page-feedback box beside it (ADV-05): the
+     step's way on is Next; the feedback box has a Submit of its own, in a
+     form of its own, which sends only the feedback. The application's own
+     submit comes on the next step. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  aside { border: 1px solid #aaa; padding: 12px; margin-top: 24px; width: 360px; }
+  #step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Business Analyst</h1>
+<p>Fabrikam, Boston, MA</p>
+<form id="application" novalidate>
+  <div id="step1">
+    <div class="field"><label for="name">Full name *</label><input id="name" name="name" type="text" required></div>
+    <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+    <button type="button" id="next">Next</button>
+  </div>
+  <div id="step2">
+    <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </div>
+</form>
+<aside>
+  <form id="feedback">
+    <p>How was this page for you?</p>
+    <label><input type="radio" name="rating" value="good"> Good</label>
+    <label><input type="radio" name="rating" value="poor"> Poor</label>
+    <button type="submit" id="feedback-submit">Submit</button>
+  </form>
+</aside>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  document.getElementById('feedback').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-feedback', '1');
+  });
+  document.getElementById('next').addEventListener('click', function () {
+    if (!document.getElementById('name').value || !document.getElementById('email').value) return;
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+  });
+  document.getElementById('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    document.getElementById('application').style.display = 'none';
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

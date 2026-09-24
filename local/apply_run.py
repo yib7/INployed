@@ -4399,15 +4399,20 @@ class _JobRun:
         try:
             rows = [r for r in apply_form.control_scan(self.page, frames_)
                     if r.get("kind") == "unreadable"]
+            # the required empty ones from a scan of their own, whose filter
+            # runs before the scan's 40-row cut: no number of other controls
+            # before one hides it (SP6 review M6)
+            blocking = [r for r in apply_form.control_scan(self.page, frames_, required_only=True)
+                        if r.get("kind") == "unreadable" and r.get("required") and r.get("empty")]
         except Exception:       # noqa: BLE001  (a page double)
             return
+        rows += [r for r in blocking if r not in rows]
         if not rows:
             return
         self._decide("unreadable", f"{len(rows)} control(s) the run cannot read: "
                                    + _cap("; ".join(f"{r.get('label')} ({r.get('why')})"
                                                     for r in rows), 200),
                      required=[r.get("label") for r in rows if r.get("required")])
-        blocking = [r for r in rows if r.get("required") and r.get("empty")]
         if blocking:
             raise _Parked("needs_human", _control_words(blocking[0]))
 

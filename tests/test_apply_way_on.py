@@ -244,3 +244,28 @@ def test_a_form_associated_control_its_internals_mark_invalid_parks_naming_it(
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert r.sends == 0 and r.policy is True
     assert not any(a.kind == "click" and a.text == "Submit application" for a in r.actions)
+
+
+# --- SP6 review M6: a required unreadable control after forty others ---------------------------------
+
+def test_a_required_unreadable_control_after_forty_others_still_parks_the_step(browser_page):
+    picks = "".join(f'<x-pick aria-label="Option {i}"></x-pick>' for i in range(45))
+    browser_page.set_content(f"""<body><form id="f">
+      <label>Full name * <input name="name" required></label>{picks}
+      <x-pick aria-label="Preferred shift" aria-required="true"></x-pick>
+      <button type="button" id="next">Next</button></form><script>
+      customElements.define('x-pick', class extends HTMLElement {{
+        constructor() {{ super(); this.attachShadow({{mode: 'closed'}}).innerHTML =
+          '<select><option></option><option>Day</option></select>'; }} }});
+      </script></body>""")
+    digest = apply_form.extract(browser_page)
+    n = next(b.n for b in digest.buttons if b.text == "Next")
+    run = apply_run._JobRun(apply_run.Runner(jev=jev.FakeJev(), context=None, run_context={},
+                                             sleep=lambda s: None), None,
+                            {"job_posting_id": "s", "apply_url": "https://x.example/1"})
+    run.page = browser_page
+    assert len(apply_form.control_scan(browser_page)) == 40      # the cut
+    with pytest.raises(apply_run._Parked, match=r"^required field without an answer: Preferred "
+                                                r"shift \(a control the run cannot read: closed "
+                                                r"shadow root\)$"):
+        run._unreadable(digest, n)

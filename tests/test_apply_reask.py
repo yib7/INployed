@@ -490,6 +490,59 @@ def test_discovery_never_clicks_a_popup_whose_own_words_send(_browser, flow_serv
                 and not a.in_gate]
 
 
+# --- review round 8 (1): a misread send popup is never opened in a run -----------------------------
+
+_SEND_ARROW_PAGE = """<!doctype html><html><head><title>Apply - Fabrikam</title></head><body>
+<h1>Analytics Engineer</h1>
+<form id="app" onsubmit="event.preventDefault(); document.body.dataset.submitted = 1">
+  <label for="fn">First name *</label><input id="fn" name="first_name" required>
+  <label for="em">Email *</label><input id="em" name="email" type="email" required>
+  <button type="submit" id="btn-submit">Submit application</button>
+  __ARROW__
+</form></body></html>"""
+
+
+@pytest.mark.parametrize("shape", ["shown", "long", "legend"])
+def test_a_misread_send_popup_is_never_opened_in_a_run(_browser, flow_server, tmp_path,
+                                                       monkeypatch, shape):
+    """Review round 8: whatever the extractor decides, a popup whose own
+    words send is never opened; a misread one (added here as a dropdown
+    field) is left unopened and, optional, skipped."""
+    import dataclasses
+
+    import apply_form
+    import test_apply_widgets as tw
+    arrow = tw._SEND_POPUPS[shape].replace('id="btn-submit"', 'id="btn-submit-2"')
+    page = _SEND_ARROW_PAGE.replace("__ARROW__", arrow)
+    real = apply_form.extract
+
+    def _misread(p, *a, **kw):
+        d = real(p, *a, **kw)
+        if p.locator("#arrow").count() and not any(f.locator[1] == "#arrow" for f in d.fields):
+            d.fields.append(apply_form.Field(n=len(d.fields), locator=(0, "#arrow"),
+                                             label="Delivery options", type="listbox",
+                                             required=False, widget="popup"))
+        return d
+    monkeypatch.setattr(apply_form, "extract", _misread)
+    f = dataclasses.replace(h.flow("lever_single_park"), name=f"send_arrow_{shape}",
+                            start="https://careers.fabrikam.example/apply/42",
+                            routes=lambda base: {"https://careers.fabrikam.example/**": page})
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert not r.breaks, r.breaks
+    assert r.ok, (r.status, r.reason)
+
+
+def test_a_required_popup_the_guard_refused_parks_on_its_question(catalog):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Delivery options", "listbox", required=True)])
+    digest.fields[0].refused = "its text reads 'Submit', a send"
+    answers = {"field_0_source": _choice("full_name", 0.95)}
+    p = apply_judge.plan(digest, catalog, answers)
+    assert p.fields[0].action == "skip"
+    assert p.park_reason == "required field without an answer: Delivery options"
+
+
 # --- review round 3, M4: the commitment floor in the matrix ---------------------------------------
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])

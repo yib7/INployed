@@ -3010,6 +3010,11 @@ class _JobRun:
                 continue
             try:
                 control.options = apply_fill.open_listbox_options(self.page, control)
+            except apply_fill.PopupRefused as e:
+                # its own words send: never opened, left unanswered (round 8)
+                control.refused = str(e)
+                self._decide("popup_refused", f"a popup was left unopened: {e}",
+                             field=control.n)
             except Exception as e:      # noqa: BLE001  (a widget may detach while opening)
                 self.log.info("job %s: listbox %r did not expose options: %s",
                               self.job_id, control.label, type(e).__name__)

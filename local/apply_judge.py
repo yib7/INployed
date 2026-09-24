@@ -1592,6 +1592,15 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             fact_key, pf.fact_key = None, None
             out.fields.append(pf)
             continue
+        if getattr(f, "refused", ""):
+            # a popup whose own words send, never opened (review round 8): no
+            # answer, so a required one parks on its question
+            fact_key, pf.fact_key, pf.confidence = None, None, 0.0
+            out.fields.append(pf)
+            out.missing.append((f.label, f.help or f.placeholder or f.type))
+            if f.required and not required_reason:
+                required_reason = f"required field without an answer: {f.label}"
+            continue
         if is_sensitive_field(f.label, f.id_or_name):
             # an SSN, a birthdate, bank or card details: never answered, and
             # a masked "Passport number" box is one of these before it is a

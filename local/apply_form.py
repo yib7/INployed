@@ -63,6 +63,10 @@ class Field:
     # the label was read in part (review R3-I1): cut at its cap, or a button's or a
     # dropdown's words inside it left out; a consent so read is never routine
     label_partial: bool = False
+    # set by the run when the control's own words send and its open was
+    # refused (`apply_fill.PopupRefused`, review round 8): the plan leaves it
+    # unanswered, and a required one parks on its question
+    refused: str = ""
     ident: str = ""             # who the control is (tag|type|id|name|aria|...): read again
                                 # before every act (FILL-02)
 

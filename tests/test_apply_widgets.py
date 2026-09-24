@@ -1299,6 +1299,37 @@ _SEND_POPUPS = {
 }
 
 
+# --- R8 (1): no popup whose own words send is ever opened, however it was read --------------------
+
+@pytest.mark.parametrize("shape", sorted(_SEND_POPUPS))
+def test_a_popup_whose_own_words_send_is_never_opened(browser_page, shape):
+    browser_page.set_content(f"<body><form>{_SEND_POPUPS[shape]}</form></body>")
+    # read as a dropdown field whatever the extractor says: the open is refused
+    field = apply_form.Field(n=0, locator=(0, "#arrow"), label="Arrow", type="listbox",
+                             required=False, widget="popup")
+    with pytest.raises(apply_fill.PopupRefused):
+        apply_fill.open_listbox_options(browser_page, field)
+    assert browser_page.evaluate("document.body.dataset.opened") is None
+    # the fill's open too
+    errors: list = []
+    apply_fill.apply(browser_page, FillPlan(fields=[_planned(field, "select", "Yes", "Yes")]),
+                     errors=errors)
+    assert [e["error"] for e in errors] == ["PopupRefused"]
+    assert browser_page.evaluate("document.body.dataset.opened") is None
+
+
+def test_a_popup_whose_words_ask_is_opened(browser_page):
+    # Workday's question in the aria-label is no send
+    browser_page.set_content("""<body><form><div><button type="button" id="q"
+      aria-haspopup="listbox"
+      aria-label="Are you willing to submit to a background check? Select One Required"
+      onclick="document.body.dataset.opened = 1">Select One</button></div></form></body>""")
+    field = apply_form.Field(n=0, locator=(0, "#q"), label="Q", type="listbox", required=True,
+                             widget="popup")
+    apply_fill.open_listbox_options(browser_page, field)
+    assert browser_page.evaluate("document.body.dataset.opened") == "1"
+
+
 # --- R8 (2), (3): a popup is a field by a question from outside it, or by its own requirement -----
 
 @pytest.mark.parametrize("shape", sorted(_SEND_POPUPS))

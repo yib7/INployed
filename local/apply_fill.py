@@ -347,14 +347,62 @@ _MENU_OPTIONS = ("[role=option], [role=menuitemradio], [role=menuitem], "
                  "[role=menuitemcheckbox]")
 
 
+class PopupRefused(LookupError):
+    """A popup whose own words send was not opened (`popup_refusal`)."""
+
+
+# What a popup's own words must not say for the run to open it (review round
+# 8): a send or a last step, as the run's other clicks read them
+# (`apply_run._send_worded`), a leading "Apply" too ("Apply with LinkedIn");
+# never "Does not apply". A question the words ask ("... a background check?
+# Select One Required", Workday's aria-label) is no send.
+_POPUP_SEND = re.compile(r"\b(submit|send|finish|complete|confirm|finali[sz]e|done)\b"
+                         r"|^\s*apply\b", re.I)
+_POPUP_WORDS_JS = """el => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  return {shown: norm(el.innerText) || norm(el.value), aria: norm(el.getAttribute('aria-label')),
+          title: norm(el.getAttribute('title'))};
+}"""
+
+
+def popup_refusal(words: dict) -> str:
+    """Why a popup whose own words read `words` ({shown, aria, title}) must
+    not be opened, or "": its shown text, or its aria-label or title that
+    asks no question, reads as a send or a last step (review round 8)."""
+    for key in ("shown", "aria", "title"):
+        text = " ".join(str(words.get(key) or "").split())
+        if not text or (key != "shown" and "?" in text):
+            continue
+        if _POPUP_SEND.search(text):
+            return f"its {'text' if key == 'shown' else key} reads {text[:60]!r}, a send"
+    return ""
+
+
 def _open_menu(frame, loc, *, popup: bool = False, face=None):
     """Click the combobox (or `face`, the box a person clicks for it:
     react-select's dummy input) unless its menu is already open; return the
     visible options locator, or None when nothing rendered within
-    LISTBOX_WAIT_MS."""
+    LISTBOX_WAIT_MS. The control and the face are read on their element
+    handles just before the click, and the handle read is the one clicked:
+    one whose own words send is never opened, whatever the extractor made of
+    it (`PopupRefused`, review round 8)."""
     expanded = loc.first.get_attribute("aria-expanded", timeout=ACTION_TIMEOUT_MS)
     if expanded != "true":
-        (face if face is not None else loc.first).click(timeout=ACTION_TIMEOUT_MS)
+        handles = [loc.first.element_handle(timeout=ACTION_TIMEOUT_MS)]
+        if face is not None:
+            handles.append(face.element_handle(timeout=ACTION_TIMEOUT_MS))
+        try:
+            for handle in handles:
+                why = popup_refusal(dict(handle.evaluate(_POPUP_WORDS_JS)))
+                if why:
+                    raise PopupRefused(why)
+            handles[-1].click(timeout=ACTION_TIMEOUT_MS)
+        finally:
+            for handle in handles:
+                try:
+                    handle.dispose()
+                except Exception:   # noqa: BLE001
+                    pass
     options = frame.locator(_MENU_OPTIONS).filter(visible=True) if popup \
         else _options_locator(frame, loc)
     try:

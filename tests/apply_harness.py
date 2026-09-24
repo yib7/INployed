@@ -82,9 +82,10 @@ JOB_ID = "42"
 NOISY_SEEDS = tuple(range(1, 21))         # the script's seeds; the suite runs the first three
 SUITE_SEEDS = NOISY_SEEDS[:3]
 # The share of (flow, noisy seed) runs that reach their expected end, pinned
-# one run below what the matrix measures. Later phases raise it to 0.95.
-SUCCESS_FLOOR = 0.90                      # SP4: 154 of 169 suite runs (0.911); every miss
-                                          # left is a dropped field mapping (for SP5 to SP6)
+# under what the matrix measures, with room for a few timing misses.
+SUCCESS_FLOOR = 0.97                      # SP5: 204 of 205 suite runs (0.995); the misses
+                                          # left are a mapping dropped on both looks and a
+                                          # consent tick with one look under its floor
 # Under the fake judge every flow reaches its end but the known failing ones
 # (`Flow.known`), which the rates leave out.
 FAKE_SUCCESS_FLOOR = 1.0

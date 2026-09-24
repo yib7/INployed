@@ -1518,7 +1518,7 @@ def unsure_step(state: str, digest: apply_form.FormDigest,
 
 
 _SEND_ONLY_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
-_NEXT_WORDS = re.compile(r"\b(next|continue)\b", re.I)
+_NEXT_WORDS = apply_judge._ADVANCE_WORDS       # Next, Continue, I Accept (G13)
 
 
 def _runner_up(answers: Mapping[str, Any], exclude: str) -> tuple[str, float]:
@@ -1646,10 +1646,22 @@ def form_route(digest: apply_form.FormDigest, plan: FillPlan, *,
     confident advance to click; "gate" with the button the submit gate
     judges (the judged submit, a submit-shaped advance, a final-shaped one
     in park mode, or a form's own submit-worded Apply); "stuck" when there
-    is neither. `why` names a routing to the gate."""
+    is neither. `why` names a routing to the gate. An advance that reads as
+    declining ("I Decline", "Cancel") is never the way on; with no advance
+    and no submit, a step's own accept-worded button (study G13: a privacy
+    agreement's "I Accept") is, at the advance floor."""
     advance = plan.buttons.get("advance")
     submit = plan.buttons.get("submit")
     why = ""
+    if advance is not None and apply_judge.DECLINE_WORDS.search(_button_text(digest, advance[0])):
+        advance = None
+    if advance is None and submit is None:
+        accept = next((b for b in digest.buttons if apply_judge.ACCEPT_WORDS.search(b.text)
+                       and not apply_judge.DECLINE_WORDS.search(b.text)
+                       and "cookie" not in b.text.lower()
+                       and not getattr(b, "chrome", False)), None)
+        if accept is not None:
+            advance = (accept.n, apply_judge.BUTTON_ADVANCE_MIN_CONF)
     if advance is not None and (_submit_shaped(digest, advance[0])
                                 or (park_mode and _final_shaped(digest, advance[0]))):
         why = "the advance button is submit-shaped"

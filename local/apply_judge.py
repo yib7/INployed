@@ -512,7 +512,13 @@ _SEND_ONLY_WORDS = re.compile(r"\b(submit|send|finish)\b", re.I)
 _SIGN_IN_SEND = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b"
                            r"|\bsend\s+(me\s+)?(an?\s+|the\s+)?(verification\s+|sign[\s-]*in\s+)?"
                            r"(code|link)\b", re.I)
-_ADVANCE_WORDS = re.compile(r"\b(next|continue)\b", re.I)
+_ADVANCE_WORDS = re.compile(r"\b(next|continue)\b|^\s*(i\s+)?(accept|agree)\b", re.I)
+# A button that accepts an application's privacy agreement or data consent
+# step (study G13: Taleo's "I Accept", Jobvite's "Accept"), and one that
+# declines or leaves it: never a step's way on.
+ACCEPT_WORDS = re.compile(r"^\s*(i\s+)?(accept|agree)\b", re.I)
+DECLINE_WORDS = re.compile(r"\b(decline|disagree|reject|withdraw)\b|\bcancel\b"
+                           r"|\bdo(?:n'?t| not)\s+(?:agree|accept)\b|\bno,?\s+thanks\b", re.I)
 # the qualifier has to sit on the word "code": a Social Security Number box or
 # a work authorization box carries the qualifier and is no place for the code
 CODE_WORDS = re.compile(

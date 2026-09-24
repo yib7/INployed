@@ -556,3 +556,39 @@ def test_a_loading_skeleton_is_waited_out_before_the_page_is_read(_browser, flow
     waited = _decisions(Path(r.trace), "reread_after_settle")
     assert waited and waited[0]["why"].startswith("a loading placeholder"), waited
     assert waited[0]["still_loading"] is False
+
+
+# --- study G13: a privacy step's accept is its way on, its decline never ---------------------------
+
+@pytest.mark.parametrize("buttons, roles, step", [
+    (("I Accept", "I Decline"), {"advance": (1, 0.9), "other": (0, 0.9)}, ("advance", 0)),
+    (("I Accept", "I Decline"), {}, ("advance", 0)),
+    (("Accept all cookies", "Menu"), {}, ("stuck", None)),
+    (("Cancel", "Continue"), {"advance": (0, 0.9)}, ("stuck", None))])
+def test_a_decline_is_never_the_way_on_and_an_accept_is_when_nothing_else_is(buttons, roles, step):
+    plan = FillPlan(buttons=dict(roles))
+    got, button, _ = apply_run.form_route(_digest(buttons), plan, park_mode=False)
+    assert (got, button[0] if button else None) == step, (got, button)
+
+
+class _DeclineAsAdvance(jev.FakeJev):
+    """The fake, with the privacy step's two buttons' roles exchanged: I
+    Decline the advance, I Accept other (NoisyJev's advance / other trade)."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        for b in state.get("buttons") or []:
+            qid = f"button_{b['n']}_role"
+            role = {"I Decline": "advance", "I Accept": "other"}.get(b.get("text"))
+            if role and qid in out:
+                out[qid] = jev.Answer(kind="choice", choice=role, confidence=0.9,
+                                      probabilities={role: 0.9})
+        return out
+
+
+def test_a_privacy_step_whose_roles_are_exchanged_is_still_accepted(_browser, flow_server,
+                                                                    tmp_path):
+    r = _flow("privacy_gate", _browser, flow_server, tmp_path, _DeclineAsAdvance(), "exchanged")
+    assert r.ok and not r.breaks, r
+    clicked = [a.text for a in r.actions if a.kind == "click"]
+    assert "I Decline" not in clicked and "I Accept" in clicked, clicked

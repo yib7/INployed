@@ -1363,15 +1363,18 @@ def test_a_popup_with_its_star_beside_it_reads_required(browser_page):
 
 def test_an_optional_question_with_a_send_word_is_a_field_only_by_an_outside_label(browser_page):
     # the Minor's two cases: with a label of its own it is a question; named
-    # only by its own aria-label it is a button, which is never opened
+    # only by its own aria-label it is a question too since SP6 (review M2:
+    # the send rule reads "submit" there as a question's word, not a send),
+    # and a send named by its own aria-label stays a button
     browser_page.set_content("""<body><form>
       <div><label for="ref">Willing to submit references</label>
         <button type="button" id="ref" aria-haspopup="listbox">Select</button></div>
       <div><button type="button" id="ref2" aria-haspopup="listbox"
         aria-label="Willing to submit references">Select</button></div>
+      <div><button type="button" id="send" aria-haspopup="menu"
+        aria-label="Submit for review">Select</button></div>
       </form></body>""")
     d = apply_form.extract(browser_page)
-    assert [(f.label, f.locator[1]) for f in d.fields] == [("Willing to submit references",
-                                                            "#ref")]
-    # the aria-label-only one stays among the page's buttons (by its shown text)
-    assert "#ref2" in [b.locator[1] for b in d.buttons]
+    assert [(f.label, f.locator[1]) for f in d.fields] == [
+        ("Willing to submit references", "#ref"), ("Willing to submit references", "#ref2")]
+    assert "#send" in [b.locator[1] for b in d.buttons]

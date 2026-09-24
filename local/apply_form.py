@@ -1538,7 +1538,25 @@ _EXTRACT_JS = r"""
   const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
   // a send or go-on phrase, as a popup's own name ("More submit options",
   // "Save and continue", "Continue with", "Apply with", "Next step")
-  const POPUP_WAY_ON = /\b(submit|send|finish|continue|apply with|next step)\b/i;
+  // (SP6 review M2) the send part is `apply_fill.send_phrase`'s rule: a send
+  // or last-step verb leading a short name, or one followed by nothing or by
+  // the application or the send itself; "Expected finish date" and "Willing
+  // to submit references" name a question
+  const SEND_VERB = /^(submit|send|finish|complete|confirm|finali[sz]e|done)$/i;
+  const SEND_OBJECT = /^(applications?|forms?|answers?|responses?|options?|request|submission|now|here|everything|all|it|this|submit|send|finish|complete|confirm|finali[sz]e|done|apply)$/i;
+  const FILLER = /^(your|the|my|this|our|a|an|and|or)$/i;
+  const sendName = (t) => {
+    const words = (t || '').match(/[a-z]+/gi) || [];
+    if (words.length && SEND_VERB.test(words[0]) && words.length <= 6) return true;
+    for (let i = 0; i < words.length; i++) {
+      if (!SEND_VERB.test(words[i])) continue;
+      const rest = words.slice(i + 1).filter((w) => !FILLER.test(w));
+      if (!rest.length || SEND_OBJECT.test(rest[0])) return true;
+    }
+    return false;
+  };
+  const POPUP_GO_ON = /\b(continue|apply with|next step)\b/i;
+  const POPUP_WAY_ON = { test: (t) => sendName(t) || POPUP_GO_ON.test(t || '') };
   // A form's note about its required marks ("* Required field", "* indicates
   // a required field", "Fields marked with * are required"): neither a
   // question nor a star of any control (review round 9, Minor)

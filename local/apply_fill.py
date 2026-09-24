@@ -518,16 +518,26 @@ class PopupRefused(LookupError):
 # What a popup's own words must not say for the run to open it (review round
 # 8): a send or a last step, as the run's other clicks read them
 # (`apply_run._send_worded`), a leading "Apply" too ("Apply with LinkedIn");
-# never "Does not apply". SP6 (review round 9's false parks) reads them as a
-# name: a send or last-step verb counts when nothing follows it, or what
-# follows names the application or the send itself ("Submit ▾", "More
-# submit options", "Choose how to submit your application", "Confirm and
-# submit"), never another thing ("Submit a source", "Expected finish date",
-# "Finish month", "Apply a location", "Send by post"). A question the words
-# ask ("... a background check? Select One Required", Workday's aria-label,
-# "Please confirm you are at least 18 ... Select One Required") is no name,
-# and a shown value under a question is an answer ("I confirm", "Done").
+# never "Does not apply". SP6 reads them as a name (`send_phrase`, review
+# round 9 and SP6 review I1):
+# - a send or last-step verb that leads a short name names a send, whatever
+#   follows it ("Submit for review", "Submit resume", "Send to recruiter",
+#   "Finish month");
+# - anywhere else, a send or last-step verb names one when nothing follows
+#   it, or what follows names the application or the send itself ("Submit
+#   ▾", "More submit options", "Choose how to submit your application",
+#   "Confirm and submit"), never another thing ("Expected finish date",
+#   "Willing to submit references");
+# - a leading "Apply" names one alone or with "with", "now", "for"... ("Apply
+#   a location" is a placeholder).
+# Words that ask ("... a background check? Select One Required", Workday's
+# aria-label) are no name; a shown value or a title under an outside
+# question label is an answer ("I confirm" under "Do you agree to the
+# terms?", "Send by post" under "Delivery method"), and under a label that
+# names the application, a document, a step or an action ("Your
+# application", "Resume *", "Step 3", "Share your profile") it is read.
 _POPUP_VERB = re.compile(r"\b(submit|send|finish|complete|confirm|finali[sz]e|done)\b", re.I)
+_POPUP_LEAD_MAX = 6             # words: a name the leading verb makes a send whatever follows
 _POPUP_APPLY = re.compile(r"^\s*apply\b", re.I)
 # what a send's verb may be followed by and still name the send: the
 # application or its parts, the send's own words, a time, another send verb
@@ -540,40 +550,51 @@ _POPUP_APPLY_OBJECT = re.compile(r"^(with|using|via|through|now|here|for|to|onli
 _POPUP_FILLER = frozenset(("your", "the", "my", "this", "our", "a", "an", "and", "or", "&"))
 _POPUP_QUESTION_TAIL = re.compile(r"\b(select one|required)\s*$", re.I)
 _POPUP_WORD = re.compile(r"[a-z]+", re.I)
+# a label that asks: a "?", "all that apply", Workday's "Select One" tail, or
+# an interrogative first word
+_ASKS = re.compile(
+    r"\?|\ball that apply\b|\bselect one\b|^\s*(how|what|which|when|where|why|who|whom|whose|do|does"
+    r"|did|are|is|was|were|will|would|can|could|have|has|had|should|may|might|shall)\b", re.I)
+# a label that names the application, one of its documents, a step, or an
+# action (a card's heading, a section's name): no question of a value's
+_NAMES_THE_SEND = re.compile(
+    r"\b(applications?|applying|submissions?|resumes?|résumés?|cv|cover\s+letters?"
+    r"|documents?|attachments?|profiles?|candidacy|step\s*\d+)\b"
+    r"|^\s*(share|send|submit|apply|upload|attach|save|review|continue|complete|finish|confirm"
+    r"|finali[sz]e|proceed|next|done)\b", re.I)
 _POPUP_WORDS_JS = """el => {
   const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
   const root = el.getRootNode();
   const byId = (id) => (root && root.getElementById ? root.getElementById(id) : null)
     || document.getElementById(id);
-  // a question from outside the control: a label of it, or an
-  // aria-labelledby target outside it
+  // the words from outside the control that name or ask about it: its
+  // labels, and the aria-labelledby targets outside it
   const labels = (el.labels ? Array.from(el.labels) : []).filter((l) => !l.contains(el));
   const by = el.getAttribute('aria-labelledby');
   const named = by ? by.split(/\\s+/).map(byId).filter((n) => n && n !== el && !el.contains(n))
     : [];
-  const label = norm(labels.concat(named).map((n) => n.innerText).join(' '));
-  const labelled = !!label;
-  // a value picker in a question's box: the words before it in a box (three
+  // the question box's words: the words before the control in a box (three
   // levels up) that holds no other control
-  let boxed = false;
-  if ((el.getAttribute('aria-haspopup') || '').toLowerCase() === 'listbox') {
-    const CTRL = 'input:not([type=hidden]), select, textarea, button, [role=combobox], '
-      + '[aria-haspopup], [role=radio], [role=checkbox]';
-    let p = el.parentElement;
-    for (let i = 0; p && i < 3 && !boxed; i++, p = p.parentElement) {
-      if (p.matches('body, html, form, fieldset, main, dialog, [role=dialog]')) break;
-      if (Array.from(p.querySelectorAll(CTRL)).some((c) => c !== el && !el.contains(c))) break;
-      const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-      let t = '';
-      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-        if (el.contains(n)) break;
-        t += ' ' + n.data;
-      }
-      boxed = /[a-z]{3}/i.test(norm(t).replace(/^[*\\u2731\\s]+|[*\\u2731\\s]+$/g, ''));
+  const CTRL = 'input:not([type=hidden]), select, textarea, button, [role=combobox], '
+    + '[aria-haspopup], [role=radio], [role=checkbox]';
+  let box = '';
+  let p = el.parentElement;
+  for (let i = 0; p && i < 3 && !box; i++, p = p.parentElement) {
+    if (p.matches('body, html, form, fieldset, main, dialog, [role=dialog]')) break;
+    if (Array.from(p.querySelectorAll(CTRL)).some((c) => c !== el && !el.contains(c))) break;
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    let t = '';
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (el.contains(n)) break;
+      t += ' ' + n.data;
     }
+    t = norm(t).replace(/^[*\\u2731\\s]+|[*\\u2731\\s]+$/g, '');
+    if (/[a-z]{3}/i.test(t)) box = t;
   }
   return {shown: norm(el.innerText) || norm(el.value), aria: norm(el.getAttribute('aria-label')),
-          title: norm(el.getAttribute('title')), label: label, labelled: labelled, boxed: boxed};
+          title: norm(el.getAttribute('title')),
+          label: norm(labels.map((n) => n.innerText).join(' ')),
+          named: norm(named.map((n) => n.innerText).join(' ')), box: box};
 }"""
 
 
@@ -583,12 +604,28 @@ def _question_shaped(text: str) -> bool:
     return "?" in text or bool(_POPUP_QUESTION_TAIL.search(text))
 
 
+def question_label(text: str) -> bool:
+    """Is `text` (a label, a labelling element's or a question box's words)
+    a question a value answers: words that ask (`_ASKS`), or words that name
+    no application, document, step or action (`_NAMES_THE_SEND`: "Degree
+    status", "Delivery method" ask for a value; "Your application", "Resume
+    *", "Step 3", "Share your profile" name the thing a send sends)?"""
+    t = " ".join(str(text or "").split()).strip(" *✱＊")
+    if not t:
+        return False
+    return bool(_ASKS.search(t)) or not _NAMES_THE_SEND.search(t)
+
+
 def send_phrase(text: str) -> bool:
     """Do `text`'s words name a send or a last step (see `_POPUP_VERB`): a
-    send verb with nothing after it but fillers or symbols, or followed by
-    the application, the send's own words or another send verb; a leading
-    "Apply" alone or with "with", "now", "for"..."""
+    send or last-step verb that leads a name of at most `_POPUP_LEAD_MAX`
+    words, whatever follows it; elsewhere a send verb with nothing after it
+    but fillers or symbols, or followed by the application, the send's own
+    words or another send verb; a leading "Apply" alone or with "with",
+    "now", "for"..."""
     words = _POPUP_WORD.findall(str(text or ""))
+    if words and _POPUP_VERB.fullmatch(words[0]) and len(words) <= _POPUP_LEAD_MAX:
+        return True
     for i, w in enumerate(words):
         verb = bool(_POPUP_VERB.fullmatch(w))
         apply_lead = i == 0 and w.lower() == "apply" and bool(_POPUP_APPLY.search(text))
@@ -604,26 +641,28 @@ def send_phrase(text: str) -> bool:
 
 def popup_refusal(words: dict) -> str:
     """Why a popup whose own words read `words` ({shown, aria, title, label,
-    labelled, boxed}) must not be opened, or "": its aria-label, its title,
-    the label or labelling element that names it, or its shown text names a
-    send or a last step (`send_phrase`). Words that ask (`_question_shaped`)
-    are never read as a name; a shown text is never read under a question:
-    a label or a labelling element outside the control (`labelled`), a
-    question in its own aria-label, or a value picker's question box
-    (`boxed`): it is the answer (SP6, review round 9)."""
+    named, box}) must not be opened, or "": its aria-label, its title, the
+    element outside it that names it (`named`, aria-labelledby) or its shown
+    text names a send or a last step (`send_phrase`). Words that ask
+    (`_question_shaped`) are never read as a name. The shown text and the
+    title are never read under an outside question label (`question_label`
+    of its label, its labelling element or its question box's words) or a
+    question in its own aria-label: they are the answer. Under any other
+    outside label they are read (SP6 review I1)."""
     aria = " ".join(str(words.get("aria") or "").split())
-    answered = bool(words.get("labelled")) or bool(words.get("boxed")) \
-        or (bool(aria) and _question_shaped(aria))
-    for key in ("aria", "title", "label", "shown"):
+    answered = (bool(aria) and _question_shaped(aria)) or any(
+        question_label(words.get(key) or "") for key in ("label", "named", "box"))
+    for key in ("aria", "named", "title", "shown"):
         text = " ".join(str(words.get(key) or "").split())
         if not text:
             continue
-        if key == "shown" and answered:
+        if key in ("shown", "title") and answered:
             continue
         if key != "shown" and _question_shaped(text):
             continue
         if send_phrase(text):
-            return f"its {'text' if key == 'shown' else key} reads {text[:60]!r}, a send"
+            what = {"shown": "text", "named": "label"}.get(key, key)
+            return f"its {what} reads {text[:60]!r}, a send"
     return ""
 
 

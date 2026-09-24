@@ -2849,11 +2849,20 @@ class _JobRun:
         if any(_site(host) == _site(h) for h in self.ats_hosts):
             return
         if _site(host) not in ATS_SITES:
+            from_board = (self._aggregator_host and not self._aggregator_left
+                          and _host(source_url) == self._aggregator_host)
+            if (from_board and _aggregator(host) and _site(host) != _site(self._aggregator_host)
+                    and any(_site(host) == _site(b) for b in self._boards)):
+                # a board's company link back to a board already read (review
+                # R2-M3): the boards link to each other and to no company
+                # site, and reading them again would only loop
+                chain = " -> ".join([*self._boards, host])
+                raise _Parked("needs_human", f"{AGGREGATOR_REASON} on {host}: the job boards "
+                                             f"link to each other ({chain}) and to no company "
+                                             f"site", AGGREGATOR_NOTE)
             if host in self.allowed:
                 return
             from_linkedin = not self.ats_transition_used and apply_linkedin.is_linkedin(source_url)
-            from_board = (self._aggregator_host and not self._aggregator_left
-                          and _host(source_url) == self._aggregator_host)
             if _aggregator(host) and from_linkedin:
                 # a job board LinkedIn's Apply led to (NAV-08): the tab may
                 # stay there and follow its company-site link once; nothing

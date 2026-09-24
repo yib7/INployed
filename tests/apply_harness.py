@@ -429,14 +429,17 @@ def tracker_routes(base: str) -> dict[str, str]:
 
 def board_chain_routes(base: str, boards: tuple[str, ...] = ("www.dice.com",
                                                               "www.ziprecruiter.com"),
-                       *, plain_apply: bool = False) -> dict[str, str]:
+                       *, plain_apply: bool = False, loop: bool = False) -> dict[str, str]:
     """LinkedIn's Apply to a chain of job boards (`boards`, each a copy of
     `aggregator.html`), each board's company link to the next board and the
     last one's to the company's form (`lever_single.html`). `plain_apply`:
-    the last board's only off-site control reads "Apply now" (review M7)."""
+    the last board's only off-site control reads "Apply now" (review M7).
+    `loop`: the last board's company link goes back to the first board, and
+    no board links to the company (review R2-M3)."""
     page = (FIXTURES_DIR / "forms" / "aggregator.html").read_text(encoding="utf-8")
     targets = [f"https://{b}/job-detail/4438751519" for b in boards[1:]]
-    targets.append(f"{base}/forms/lever_single.html")
+    targets.append(f"https://{boards[0]}/job-detail/4438751519" if loop
+                   else f"{base}/forms/lever_single.html")
     routes = linkedin_job_routes("linkedin_posting.html",
                                  dest=lambda b: f"https://{boards[0]}/job-detail/4438751519")(base)
     for i, (board, target) in enumerate(zip(boards, targets)):

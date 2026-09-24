@@ -439,6 +439,26 @@ def test_a_chain_of_job_boards_past_the_bound_parks_and_no_board_is_the_applicat
     assert not [a for a in r.actions if a.kind in ("fill", "gate", "tick", "pick", "upload")]
 
 
+def test_two_job_boards_that_link_to_each_other_park_at_the_first_board_seen_again(
+        _browser, flow_server, tmp_path):
+    # review R2-M3: glassdoor -> ziprecruiter -> glassdoor; a board read once
+    # is never read again, and the page budget is never what ends it
+    flow = dataclasses.replace(
+        h.flow("aggregator_chain"), name="aggregator_loop", status="needs_human",
+        reason=r"^aggregator posting on www\.glassdoor\.com: the job boards link to each "
+               r"other \(www\.glassdoor\.com -> www\.ziprecruiter\.com -> "
+               r"www\.glassdoor\.com\)",
+        routes=lambda base: h.board_chain_routes(
+            base, ("www.glassdoor.com", "www.ziprecruiter.com"), loop=True))
+    r = h.run_flow(flow, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks and r.policy is True, r
+    boards = [a for a in r.actions if a.kind == "click"
+              and ("glassdoor.com" in a.url or "ziprecruiter.com" in a.url)]
+    assert [a.text for a in boards] == ["Apply on company site"] * 2, boards
+    assert not [a for a in r.actions if a.kind in ("fill", "gate", "tick", "pick", "upload")]
+
+
 def test_a_boards_lone_apply_link_off_the_board_is_its_company_link(
         _browser, flow_server, tmp_path):
     # review M7: the off-site control reads just "Apply now"

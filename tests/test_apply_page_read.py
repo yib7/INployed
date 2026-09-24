@@ -25,6 +25,7 @@ import apply_judge  # noqa: E402
 import apply_run  # noqa: E402
 import jev  # noqa: E402
 from apply_form import Button, Field, FormDigest  # noqa: E402
+from apply_judge import FillPlan  # noqa: E402
 
 
 def _f(n, label, type_="text", required=False, ident="", auto="", options=()):
@@ -268,22 +269,81 @@ def test_an_unsure_read_takes_the_structures_kind_when_its_guess_is_ruled_out():
     assert apply_run.unsure_step("other", home, apply_judge.page_facts(home)) == (None, "")
 
 
-def test_already_applied_needs_the_words_on_a_page_the_run_acts_on():
-    said = FormDigest(url_host="x", title="Apply", text="You have already applied to this job.",
-                      fields=FORM.fields, buttons=FORM.buttons)
-    facts = apply_judge.page_facts(said)
-    assert "already applied" in apply_judge.already_applied({}, facts, "application_form")
-    flipped = _nouls(page_already_applied=0.8)
-    plain = apply_judge.page_facts(FORM)
-    # the Noul alone never stops a page the run would act on
-    assert apply_judge.already_applied(flipped, plain, "application_form") == ""
-    assert apply_judge.already_applied(flipped, plain, "confirmation") == ""
-    assert apply_judge.already_applied(flipped, apply_judge.page_facts(POSTING), "other") == ""
-    # on a confirmation read with nothing to fill or click, it names the park
-    note = FormDigest(url_host="x", title="Status", text="Your application is on file.",
-                      fields=[], buttons=[])
-    assert apply_judge.already_applied(flipped, apply_judge.page_facts(note),
-                                       "confirmation").startswith("read as")
+STATUS = FormDigest(url_host="x", title="Application status",
+                    text="You have already applied to this job. We will be in touch.",
+                    fields=[], buttons=[])
+# I1's shapes: a sign-in's prompt and a screening question, both questions
+SIGN_IN_STATUS = FormDigest(url_host="x", title="Sign in",
+                            text="Already applied? Sign in to check the status of your "
+                                 "application.",
+                            fields=LOGIN.fields, buttons=[_b(0, "Sign in")])
+SCREENING = FormDigest(url_host="x", title="Apply",
+                       text="Apply for Analytics Engineer. Have you already applied to Fabrikam "
+                            "in the last 12 months?",
+                       fields=[_f(0, "First name", required=True),
+                               _f(1, "Have you already applied to Fabrikam in the last 12 months?",
+                                  "radio", required=True, options=("Yes", "No"))],
+                       buttons=[_b(0, "Continue")])
+
+
+def test_already_applied_is_the_pages_own_statement_on_a_page_with_nothing_to_fill_or_open():
+    facts = apply_judge.page_facts(STATUS)
+    assert "already applied" in apply_judge.already_applied({}, facts, "confirmation")
+    for digest, state in ((SIGN_IN_STATUS, "login_wall"), (SCREENING, "application_form")):
+        facts = apply_judge.page_facts(digest)
+        assert facts.already_applied == "", digest.title
+        step = apply_run.loop_step("https://x.example/p", digest,
+                                   FillPlan(buttons={"advance": (0, 0.9)}), state, 0.9)
+        assert "already applied" not in step, step
+    # the words beside an Apply entry, or a form's own box, never park
+    posting = FormDigest(url_host="x", title="Analyst", text="You have already applied.",
+                         fields=[], buttons=[_b(0, "Apply now")])
+    assert apply_judge.page_facts(posting).already_applied == ""
+    boxed = FormDigest(url_host="x", title="Apply", text="You have already applied.",
+                       fields=FORM.fields, buttons=FORM.buttons)
+    assert apply_judge.page_facts(boxed).already_applied == ""
+    # a label that says it, with no "?", is a field's words
+    labelled = FormDigest(url_host="x", title="Status", text="Already applied to Fabrikam",
+                          fields=[_f(0, "Already applied to Fabrikam", "checkbox")], buttons=[])
+    assert apply_judge.page_facts(labelled).already_applied == ""
+
+
+def test_the_already_applied_noul_alone_never_parks_a_pre_submit_thanks_page():
+    thanks = FormDigest(url_host="x", title="Thanks", text="Thanks for your interest in us.",
+                        fields=[], buttons=[])
+    answers = {"page_state": _choice("confirmation", 0.9),
+               **_nouls(page_already_applied=0.8)}
+    facts = apply_judge.page_facts(thanks)
+    assert apply_judge.already_applied(answers, facts, "confirmation") == ""
+    step = apply_run.loop_step("https://x.example/thanks", thanks, FillPlan(), "confirmation",
+                               0.9, answers=answers)
+    assert step.startswith("park: a confirmation page before any submit"), step
+
+
+# I2: an open posting's boilerplate (synthetic wording of the shape)
+OPEN_UNTIL_FILLED = FormDigest(
+    url_host="x", title="Data Engineer",
+    text="About the role: build the pipelines. The role stays open until the position is "
+         "filled. Qualifications: SQL.",
+    fields=[], buttons=[_b(0, "Apply for this job online")])
+
+
+def test_an_open_posting_that_stays_open_until_the_position_is_filled_is_no_closed_page():
+    facts = apply_judge.page_facts(OPEN_UNTIL_FILLED)
+    assert facts.closed == ""
+    assert apply_judge.structural_kind(facts, strict=True) == "job_posting"
+    plan = FillPlan(buttons={"apply_entry": (0, 0.9)})
+    for state, conf in (("other", 0.55), ("job_posting", 0.30)):
+        step = apply_run.loop_step("https://x.example/jobs/1", OPEN_UNTIL_FILLED, plan, state,
+                                   conf, answers={"page_state": _choice(state, conf)})
+        assert "closed" not in step and "click the Apply entry" in step, step
+    # past-tense words beside an Apply entry are no closed page either
+    filled = FormDigest(url_host="x", title="Data Engineer",
+                        text="This position has been filled.", fields=[],
+                        buttons=[_b(0, "Apply now")])
+    facts = apply_judge.page_facts(filled)
+    assert apply_judge.closed_posting(_nouls(page_closed=0.9), facts, "other") == ""
+    assert apply_judge.closed_posting(_nouls(page_closed=0.9), facts, "error_or_dead") == ""
 
 
 def test_a_closed_posting_is_told_apart_from_an_error():
@@ -292,10 +352,15 @@ def test_a_closed_posting_is_told_apart_from_an_error():
     facts = apply_judge.page_facts(closed)
     assert "no longer accepting" in apply_judge.closed_posting({}, facts, "error_or_dead").lower()
     assert apply_judge.closed_posting({}, facts, "application_form") == ""
-    plain = apply_judge.page_facts(POSTING)
     flipped = _nouls(page_closed=0.8)
-    assert apply_judge.closed_posting(flipped, plain, "other") == ""
-    assert apply_judge.closed_posting(flipped, plain, "error_or_dead").startswith("read as")
+    # the Noul alone: on a page read as an error, never on `other`, never
+    # beside an Apply entry
+    gone = apply_judge.page_facts(FormDigest(url_host="x", title="Job", text="Sorry.",
+                                             fields=[], buttons=[]))
+    assert apply_judge.closed_posting(flipped, gone, "other") == ""
+    assert apply_judge.closed_posting(flipped, gone, "error_or_dead").startswith("read as")
+    assert apply_judge.closed_posting(flipped, apply_judge.page_facts(POSTING),
+                                      "error_or_dead") == ""
 
 
 @pytest.mark.parametrize("text, entry", [
@@ -303,9 +368,23 @@ def test_a_closed_posting_is_told_apart_from_an_error():
     ("I'm interested", True), ("I’m interested", True), ("Start your application", True),
     ("Applying tips", False), ("Apply filters", False), ("Applied", False),
     ("Easy Apply", False), ("Apply with LinkedIn", False), ("Submit application", False),
-    ("How to apply", False), ("Application status", False)])
+    ("How to apply", False), ("Application status", False),
+    ("Apply Later", False), ("Save for later", False)])
 def test_an_apply_entry_is_read_by_its_words(text, entry):
     assert apply_judge.entry_worded(text) is entry
+
+
+def test_a_recaptcha_notice_is_no_bot_check():
+    # M1: the invisible check's notice asks nothing of the person
+    signin = FormDigest(url_host="x", title="Sign in",
+                        text="Sign in. This site is protected by reCAPTCHA and the Google Privacy "
+                             "Policy and Terms of Service apply.",
+                        fields=LOGIN.fields, buttons=[_b(0, "Sign in")])
+    facts = apply_judge.page_facts(signin)
+    assert facts.captcha == ""
+    assert apply_judge.structural_kind(facts, strict=True) == "login_wall"
+    assert apply_run.unsure_step("login_wall", signin, facts) == ("login_wall", "guess")
+    assert apply_judge.page_facts(CAPTCHA).captcha == "Verify you are human"
 
 
 # --- NoisyJev misreads the read's Nouls ----------------------------------------------------------

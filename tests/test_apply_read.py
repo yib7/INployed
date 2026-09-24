@@ -295,7 +295,7 @@ def test_an_unsure_read_goes_on_as_the_kind_the_structure_settles(context, flow_
 _APPLIED = ("<!doctype html><html><head><title>Data Engineer - Fabrikam</title></head><body>"
             "<h1>Data Engineer</h1><p>You have already applied to this job. We will be in "
             "touch.</p><h2>About the role</h2><p>Build the pipelines.</p>"
-            "<a class=\"btn\" href=\"/apply\">Apply now</a></body></html>")
+            "<a href=\"/jobs\">See other jobs</a></body></html>")
 _CLOSED = ("<!doctype html><html><head><title>Data Engineer - Fabrikam</title></head><body>"
            "<h1>Data Engineer</h1><p>This job is no longer available.</p>"
            "<a href=\"/jobs\">See other jobs</a></body></html>")

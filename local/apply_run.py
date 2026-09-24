@@ -3070,7 +3070,7 @@ class _JobRun:
                 reason = _PARK_STATES.get(state, state)
                 if state == "payment_request":
                     reason += (f" (page_payment p="
-                               f"{apply_judge._noul_of(answers, 'page_payment'):.2f})")
+                               f"{apply_judge.noul_of(answers, 'page_payment'):.2f})")
                 elif state == "other":
                     reason += self._reads_suffix()
                 raise _Parked("needs_human", reason)

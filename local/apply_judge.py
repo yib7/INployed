@@ -295,7 +295,7 @@ def apply_worded(text: str) -> bool:
 def read_sends(answers: Mapping[str, Answer], n: int) -> float:
     """The `button_{n}_sends` Noul: clicking the Apply-worded button `n`
     sends the finished application (0.0 when it was not asked)."""
-    return _noul_of(answers, f"button_{n}_sends")
+    return noul_of(answers, f"button_{n}_sends")
 
 # Which sources a control can take, by its type. A file input takes a file
 # and nothing else; a select / radio / listbox never takes a name, an email,
@@ -477,10 +477,11 @@ ALREADY_APPLIED_WORDS = re.compile(
     r"already (?:applied|submitted (?:an|your) application|have an application)"
     r"|you(?:'ve| have) (?:previously|already) applied"
     r"|application (?:is )?already on file|you applied (?:for|to) this", re.I)
+# (the past tense only: "open until the position is filled" is an open posting)
 CLOSED_WORDS = re.compile(
     r"no longer (?:accepting|taking) applications|no longer (?:available|open|active|posted)"
-    r"|(?:position|job|role|posting|requisition) (?:has been|is|was) (?:filled|closed|expired"
-    r"|removed)|(?:this|the) (?:job|position|posting) (?:has )?expired"
+    r"|(?:position|job|role|posting|requisition) (?:has been|was) (?:filled|closed|removed)"
+    r"|(?:this|the) (?:job|position|posting) (?:has )?(?:expired|closed)\b"
     r"|job (?:not found|no longer exists)|page (?:not found|doesn't exist|does not exist)", re.I)
 # a job description's headings: the posting's own words
 DESCRIPTION_WORDS = re.compile(
@@ -492,9 +493,11 @@ REVIEW_WORDS = re.compile(
 ERROR_WORDS = re.compile(
     r"something went wrong|an (?:unexpected )?error (?:has )?occurred|(?:internal )?server error"
     r"|access denied", re.I)
+# (a challenge's own words; never "This site is protected by reCAPTCHA", the
+# notice of an invisible check that asks nothing of the person)
 CAPTCHA_WORDS = re.compile(
-    r"captcha|not a robot|verify (?:that )?you(?:'re| are) (?:a )?human|are you (?:a )?human"
-    r"|human verification", re.I)
+    r"not a robot|verify (?:that )?you(?:'re| are) (?:a )?human|are you (?:a )?human"
+    r"|human verification|complete the (?:security )?(?:check|challenge)|captcha challenge", re.I)
 # An Apply that sends a stored profile from another site instead of opening
 # the company's form: Easy Apply (LinkedIn's, or a board's "Easy apply"),
 # "Apply with LinkedIn / Indeed / Glassdoor / ZipRecruiter ...", and a
@@ -557,18 +560,39 @@ def confirmation_words(text: str) -> set[str]:
 
 
 _NOT_ENTRY = re.compile(r"\bapplied\b|\bapply\s+(filters?|changes|coupon|promo|discount)\b"
-                        r"|\bhow\s+to\s+apply\b|\bapplication\s+status\b", re.I)
+                        r"|\bhow\s+to\s+apply\b|\bapplication\s+status\b"
+                        r"|\bapply\s+later\b|\bsave\s+for\s+later\b", re.I)
 
 
 def entry_worded(text: str) -> bool:
     """Does a control's text read as a posting's Apply entry (READ-09): the
     word "apply" ("Apply", "Apply now", "Apply for this job"), "I'm
     interested" (SmartRecruiters) or "Start application"; never "Applying
-    tips" or "Apply filters", "Applied", a profile Apply (`PROFILE_APPLY`)
-    or a send word ("Submit application")."""
+    tips" or "Apply filters", "Applied", "Apply Later" or "Save for later"
+    (study G4), a profile Apply (`PROFILE_APPLY`) or a send word ("Submit
+    application")."""
     text = str(text or "").translate(_APOSTROPHES)
     return (bool(_APPLY_ENTRY_WORDS.search(text)) and not _NOT_ENTRY.search(text)
             and not PROFILE_APPLY.search(text) and not _SEND_ONLY_WORDS.search(text))
+
+
+def statement_words(pattern: re.Pattern, text: str, labels=()) -> str:
+    """The first match of `pattern` in `text` the page states itself: never
+    one inside a field's label (`labels`) and never one in a question (its
+    sentence ends with "?": "Already applied? Sign in", "Have you already
+    applied to us before?"); "" when there is none."""
+    plain = str(text or "").translate(_APOSTROPHES)
+    own = [" ".join(str(label or "").translate(_APOSTROPHES).lower().split())
+           for label in labels]
+    for m in pattern.finditer(plain):
+        rest = re.match(r"[^.!?\n]*([.!?\n]|$)", plain[m.end():])
+        if rest is not None and rest.group(1) == "?":
+            continue
+        words = " ".join(m.group(0).lower().split())
+        if any(words in label for label in own):
+            continue
+        return " ".join(m.group(0).split())
+    return ""
 
 
 def _first_words(pattern: re.Pattern, text: str) -> str:
@@ -721,6 +745,14 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
     text = f"{digest.title}\n{digest.text or ''}"
     entries = [b for b in buttons if entry_worded(b.text) and not b.in_form]
     received = sorted(confirmation_words(text))
+    labels = [f.label for f in digest.fields]
+    # a page's own word that the job was applied to, or is closed, counts only
+    # where no application box and no Apply entry is offered (I1, I2): a
+    # sign-in's "Already applied? Sign in", a screening question, an open
+    # posting's "until the position is filled" never do
+    plain_page = not app and not any(f.type == "file" for f in digest.fields) and not entries
+    applied_words = statement_words(ALREADY_APPLIED_WORDS, text, labels) if plain_page else ""
+    closed_words = statement_words(CLOSED_WORDS, text, labels) if not entries else ""
     return PageFacts(
         app_fields=app, files=sum(1 for f in digest.fields if f.type == "file"),
         passwords=len(passwords), new_password="new password" in kinds,
@@ -732,8 +764,8 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
         send_buttons=len(sends),
         advance_buttons=sum(1 for b in buttons if _ADVANCE_WORDS.search(b.text)),
         received=received[0] if received else "",
-        already_applied=_first_words(ALREADY_APPLIED_WORDS, text),
-        closed=_first_words(CLOSED_WORDS, text), review=_first_words(REVIEW_WORDS, text),
+        already_applied=applied_words,
+        closed=closed_words, review=_first_words(REVIEW_WORDS, text),
         description=_first_words(DESCRIPTION_WORDS, text),
         error=_first_words(ERROR_WORDS, text),
         captcha="a bot-check frame" if captcha_frame else _first_words(CAPTCHA_WORDS, text),
@@ -1041,20 +1073,18 @@ def read_answer(read: PageRead) -> Answer:
 def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
     """The page kind the structure alone gives, for a read that stayed under
     the floor after its second look (the unsure fallback): a bot-check frame,
-    or a bot-check's words with no application box, is the check; a closed
-    posting's words a dead end; a code box with no password box the code
-    step; a password box with no file box an account screen (a sign-up when
-    a box makes the password, a sign-in when the box is the current
-    password); an address screen with nothing else a sign-in's first step;
-    application boxes a form; an Apply entry with no application box a
-    posting; a page whose only way on is a Next or a Continue a step of the
-    application; else None. `strict`: only a kind the structure settles (a
+    or a bot-check's words with no application box, is the check; a code box
+    with no password box the code step; a password box with no file box an
+    account screen (a sign-up when a box makes the password, a sign-in when
+    the box is the current password); an Apply entry with no application box
+    a posting; a closed posting's words (and no Apply entry) a dead end; an
+    address screen with nothing else a sign-in's first step; application
+    boxes a form; a page whose only way on is a Next or a Continue a step of
+    the application; else None. `strict`: only a kind the structure settles (a
     lone password box with no autocomplete, a page with a Next alone and a
     single application box settle nothing)."""
     if facts.captcha == "a bot-check frame" or (facts.captcha and not facts.app_fields):
         return "captcha_or_bot_check"
-    if facts.closed and not facts.app_fields and not facts.files:
-        return "error_or_dead"
     if facts.code_box and not facts.passwords:
         return "code_gate"
     if facts.passwords and not facts.files:
@@ -1065,6 +1095,8 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
         return None
     if facts.apply_entries and not facts.app_fields and not facts.files:
         return "job_posting"
+    if facts.closed and not facts.app_fields and not facts.files:
+        return "error_or_dead"      # after the Apply-entry rule: an Apply is no closed page
     if facts.email_first:
         return "login_wall"
     if facts.files or facts.app_fields >= 2:
@@ -1084,29 +1116,28 @@ def structure_against(facts: PageFacts, state: str) -> bool:
 
 def already_applied(answers: Mapping[str, Answer], facts: PageFacts, state: str) -> str:
     """The evidence that the job was applied to before (TERM-04, READ-07), or
-    "": the page's words, or the judge's `page_already_applied` on a page
-    read as a confirmation with nothing to fill or click on (a page the run
-    parks on before any submit all the same: a flipped Noul never stops a
-    page the run would act on)."""
-    if facts.already_applied:
-        return f"the page says {facts.already_applied!r}"
-    p = _noul_of(answers, "page_already_applied")
-    if (p >= READ_NOUL_MIN and state == "confirmation" and not facts.app_fields
-            and not facts.files and not facts.send_buttons and not facts.advance_buttons
-            and not facts.apply_entries):
-        return f"read as already applied ({p:.2f})"
-    return ""
+    "": the page's own words (`page_facts`: a statement, on a page with no
+    application box and no Apply entry), with the judge's
+    `page_already_applied` named beside them. The Noul alone never parks: a
+    pre-submit thanks page keeps SP3's "a confirmation page before any
+    submit; check whether ..." (`confirmation_step`)."""
+    if not facts.already_applied:
+        return ""
+    p = noul_of(answers, "page_already_applied")
+    said = f"; read as already applied {p:.2f}" if "page_already_applied" in answers else ""
+    return f"the page says {facts.already_applied!r}{said}"
 
 
 def closed_posting(answers: Mapping[str, Answer], facts: PageFacts, state: str) -> str:
     """The evidence that a page the run parks on (`error_or_dead`, `other`)
     is a closed posting (READ-08), or "": the page's words, or on a page read
-    as an error or a dead end the judge's `page_closed`."""
-    if state not in ("error_or_dead", "other"):
-        return ""
+    as an error or a dead end the judge's `page_closed`; never a page that
+    offers an Apply entry."""
+    if state not in ("error_or_dead", "other") or facts.apply_entries:
+        return ""           # an Apply to open is no closed posting (I2)
     if facts.closed:
         return f"the page says {facts.closed!r}"
-    p = _noul_of(answers, "page_closed")
+    p = noul_of(answers, "page_closed")
     return (f"read as closed ({p:.2f})" if state == "error_or_dead" and p >= READ_NOUL_MIN
             else "")
 
@@ -1153,7 +1184,7 @@ def _choice_of(answers: Mapping[str, Answer], qid: str) -> tuple[str | None, flo
     return str(a.choice), float(a.confidence or 0.0)
 
 
-def _noul_of(answers: Mapping[str, Answer], qid: str) -> float:
+def noul_of(answers: Mapping[str, Answer], qid: str) -> float:
     a = answers.get(qid)
     return float(a.noul) if a is not None and a.noul is not None else 0.0
 
@@ -1309,12 +1340,12 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
         if role not in out.buttons or conf > out.buttons[role][1]:
             out.buttons[role] = (b.n, conf)
 
-    out.flags = {qid: _noul_of(answers, qid)
+    out.flags = {qid: noul_of(answers, qid)
                  for qid in ("asks_for_prohibited", "requires_account", "has_captcha")}
     if "requires_account" not in answers:
         # the page read asks the sign-in and the sign-up apart (SP4)
-        out.flags["requires_account"] = max(_noul_of(answers, "page_sign_in"),
-                                            _noul_of(answers, "page_create_account"))
+        out.flags["requires_account"] = max(noul_of(answers, "page_sign_in"),
+                                            noul_of(answers, "page_create_account"))
     out.park_reason = sensitive_reason_ or required_reason
     return out
 
@@ -1384,8 +1415,8 @@ def read_verification(filled: list[Mapping[str, Any]],
     out = []
     for f in filled:
         n = int(f["n"])
-        p_correct = _noul_of(answers, f"verify_{n}")
-        p_placeholder = _noul_of(answers, f"placeholder_{n}")
+        p_correct = noul_of(answers, f"verify_{n}")
+        p_placeholder = noul_of(answers, f"placeholder_{n}")
         out.append(VerifyResult(n=n, label=str(f.get("label", "")),
                                 ok=p_correct >= VERIFY_MIN and p_placeholder <= PLACEHOLDER_MAX,
                                 p_correct=p_correct, p_placeholder=p_placeholder))
@@ -1454,8 +1485,8 @@ def read_inbox(answers: Mapping[str, Answer],
     best_n, best_p = None, 0.0
     for m in messages:
         n = int(m["n"])
-        from_site = _noul_of(answers, f"msg_{n}_from_site")
-        has_code = _noul_of(answers, f"msg_{n}_has_code")
+        from_site = noul_of(answers, f"msg_{n}_from_site")
+        has_code = noul_of(answers, f"msg_{n}_has_code")
         if from_site <= INBOX_MIN or has_code <= INBOX_MIN:
             continue
         p = from_site * has_code
@@ -1504,6 +1535,6 @@ def read_grounding(answers: Mapping[str, Answer], sentences: list[str]) -> tuple
     """(every sentence at or above `GROUNDING_MIN`, the weakest probability)."""
     if not sentences:
         return True, 1.0
-    probs = [_noul_of(answers, f"grounded_{i}") for i in range(len(sentences))]
+    probs = [noul_of(answers, f"grounded_{i}") for i in range(len(sentences))]
     weakest = min(probs)
     return weakest >= GROUNDING_MIN, weakest

@@ -4,6 +4,20 @@
   clicks the advance (a wizard's middle step misread as the review), a review
   with its submit goes to the gate, a final-shaped advance on a review goes
   to the gate in either mode.
+- The page read: its own request, the mapping only on a page the run acts
+  on; a misread Choice gives way to the Nouls and the page's structure (the
+  sign-up behind a login wall's link, NAV-03; a sign-up read as a sign-in;
+  a code screen after the submit; a bot check read as `other`); an unsure
+  read goes on as the kind the structure settles; a sure `other` whose
+  structure settles a kind is that kind; a job the site says was applied to
+  and a closed posting park with their own reasons (TERM-04, READ-08); an
+  Apply apart from a job-alert box is the entry (READ-09).
+- READ-04 (a ticker never makes a page new), NAV-07 (tracker hops), NAV-08
+  (job boards), NAV-09 (an email Apply), ALLOW-01, ALLOW-02, NAV-05 (a step
+  in a new tab), NAV-04 (a loading skeleton).
+- Study G9 (a modal, a content frame first), G4 (header chrome, unnamed
+  icons), G14 (a frame found by its URL), G13 (a privacy step's accept, never
+  its decline).
 
 Headless Chromium through the module-scoped test browser; the fixtures are
 served by the flow server, fake hosts are routed; the judge is `FakeJev`,

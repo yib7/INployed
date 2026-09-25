@@ -173,12 +173,22 @@ def test_gitattributes_forces_line_endings_for_the_scripts_that_break_without_it
 
 
 _BINARY_PROBE = 8000     # the bytes git reads to tell a binary file (a NUL among them)
+# the byte order marks: UTF-8's, UTF-16's (LE, BE) and UTF-32 BE's (UTF-32
+# LE's starts with UTF-16 LE's)
+_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")
 
 
 def _binary(raw: bytes) -> bool:
     """git's own test for a binary file: a NUL byte in its first block, so a
-    new fixture type (a font, an image, an archive) needs no list."""
-    return b"\x00" in raw[:_BINARY_PROBE]
+    new fixture type (a font, an image, an archive) needs no list. A file
+    that starts with a byte order mark is text: a UTF-16 or UTF-32 file's
+    NULs are its encoding's, and the sweeps flag it (SP8a review R2-M1)."""
+    return not raw.startswith(_BOMS) and b"\x00" in raw[:_BINARY_PROBE]
+
+
+def _with_bom(files) -> list[str]:
+    """The files that start with a byte order mark (`_BOMS`)."""
+    return [rel for rel, raw in files if raw.startswith(_BOMS)]
 
 
 def _text_files(root: Path, rels) -> list[tuple[str, bytes]]:
@@ -205,12 +215,11 @@ def _control_bytes(files) -> dict[str, list[str]]:
     return offenders
 
 
-def test_no_tracked_text_file_carries_a_utf8_bom():
-    offenders = [rel for rel, raw in _text_files(REPO, _tracked_files())
-                 if raw.startswith(b"\xef\xbb\xbf")]
+def test_no_tracked_text_file_carries_a_bom():
+    offenders = _with_bom(_text_files(REPO, _tracked_files()))
     assert not offenders, (
-        "a UTF-8 BOM breaks json.loads, a shell shebang and PowerShell parsing: "
-        f"{offenders}")
+        "a byte order mark: UTF-8's breaks json.loads, a shell shebang and PowerShell "
+        f"parsing, and a UTF-16 or UTF-32 file breaks the UTF-8 policy: {offenders}")
 
 
 def test_no_tracked_text_file_carries_a_control_byte():
@@ -231,6 +240,17 @@ def test_a_binary_file_of_any_type_is_left_out_of_the_text_sweeps(tmp_path):
     files = _text_files(tmp_path, ["font.woff2", "shot.webp", "page.html"])
     assert [rel for rel, _ in files] == ["page.html"]
     assert _control_bytes(files) == {"page.html": ["0xb"]}
+
+
+def test_a_utf16_text_file_goes_through_the_text_sweeps(tmp_path):
+    # SP8a review R2-M1: a UTF-16 file's NUL bytes are its encoding's, so its
+    # byte order mark tells it as text, and the sweeps flag it (the policy is
+    # UTF-8; PowerShell 5.1's Out-File writes UTF-16 LE)
+    (tmp_path / "le.txt").write_bytes("﻿notes\n".encode("utf-16-le"))
+    (tmp_path / "be.txt").write_bytes("﻿notes\n".encode("utf-16-be"))
+    files = _text_files(tmp_path, ["le.txt", "be.txt"])
+    assert [rel for rel, _ in files] == ["le.txt", "be.txt"]
+    assert _with_bom(files) == ["le.txt", "be.txt"]
 
 
 def test_ps1_scripts_are_pure_ascii():

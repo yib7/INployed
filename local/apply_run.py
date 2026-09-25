@@ -4865,12 +4865,14 @@ class _JobRun:
         as having another way on (a control it does not know) so still ends
         with the clear SSO reason (SP7 review R3-I1). The main check's
         guards hold: never after the submit or a code step was clicked, nor
-        on LinkedIn (SP7 review R4-I1). Only the park's words change: the
-        run never clicks one of those sign-ins."""
+        on LinkedIn (SP7 review R4-I1), and a CAPTCHA box or challenge
+        waiting for the person keeps the account step's park, since it may
+        be what held the screen (SP7 review R4-M2). Only the park's words
+        change: the run never clicks one of those sign-ins."""
         guarded = self.submit_clicked or self._code_sent or self._on_linkedin()
         sites = (sso_fallback_sites(digest)
                  if reason.startswith(ACCOUNT_PARK_REASONS) and not guarded else [])
-        if not sites:
+        if not sites or self._human_check_showing(checkbox=True):
             return _Parked("needs_human", reason, LOGIN_NOTE)
         self._decide("sso_fallback", f"{_cap(reason, 200)}; the screen's only way on is a "
                                      f"sign-in with {', '.join(sites)}")

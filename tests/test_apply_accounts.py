@@ -916,12 +916,13 @@ def test_an_account_park_falls_back_to_sso_only_where_the_screen_has_no_way_on_o
     assert run._account_park(boxed, reason).reason == reason
 
 
-@pytest.mark.parametrize("guard", ["submit_clicked", "_code_sent", "linkedin"])
+@pytest.mark.parametrize("guard", ["submit_clicked", "_code_sent", "linkedin", "captcha"])
 def test_an_account_park_after_a_send_may_have_gone_or_on_linkedin_keeps_its_own_words(
         tmp_path, monkeypatch, guard):
     # R4-I1: the main SSO check's guards. After the submit or a code step
     # was clicked a send may have gone, so no park invites a Re-queue there;
-    # LinkedIn's own pages are never an ATS sign-in
+    # LinkedIn's own pages are never an ATS sign-in. R4-M2: a CAPTCHA box
+    # or challenge waiting for the person may be what held the screen
     form = apply_run.apply_form
     digest = form.FormDigest("127.0.0.1", "Sign in", "", buttons=[
         form.Button(0, (0, "#b0"), "Sign in"), form.Button(1, (0, "#b1"), _G)])
@@ -929,6 +930,8 @@ def test_an_account_park_after_a_send_may_have_gone_or_on_linkedin_keeps_its_own
     assert run._account_park(digest, _WALL).tab_note == apply_run.SSO_NOTE
     if guard == "linkedin":
         monkeypatch.setattr(run, "_on_linkedin", lambda: True)
+    elif guard == "captcha":
+        monkeypatch.setattr(run, "_human_check_showing", lambda checkbox=False: checkbox)
     else:
         setattr(run, guard, True)
     parked = run._account_park(digest, _WALL)

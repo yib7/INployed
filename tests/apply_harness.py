@@ -1208,12 +1208,21 @@ class Send:
     accepted: bool = True       # the site took it (a refused post is still a send)
 
 
+# a request that failed before any connection was made never reached the site
+# (SP8a review R2-M2); a reset or a bare failure may have after it left
+_NO_CONNECTION = re.compile(r"ERR_(?:CONNECTION_REFUSED|ADDRESS_UNREACHABLE|NAME_NOT_RESOLVED|"
+                            r"NAME_RESOLUTION_FAILED|BLOCKED_BY_CLIENT)\b")
+
+
 class Sends:
-    """Every send of one run (see the module docstring)."""
+    """Every send of one run (see the module docstring). A send request
+    that fails before any connection (`_NO_CONNECTION`) stays counted as an
+    attempt and is marked not accepted."""
 
     def __init__(self, recorder: Recorder | None = None):
         self.recorder = recorder
         self.events: list[Send] = []
+        self._requests: list[tuple[Any, Send]] = []
 
     def _in_gate(self) -> bool:
         return bool(self.recorder and self.recorder.gate_depth > 0)
@@ -1227,6 +1236,8 @@ class Sends:
         context.add_init_script(_SEND_JS)
         for glob in flow.send_urls:
             context.route(glob, self._request)
+        if flow.send_urls:
+            context.on("requestfailed", self._failed)
         if server is not None:
             server.on_post = lambda name: self.events.append(
                 Send("post", f"/submit/{name}", self._in_gate(), name not in server.rejects))
@@ -1243,8 +1254,23 @@ class Sends:
         self.events.append(Send("dom", url, self._in_gate()))
 
     def _request(self, route, request) -> None:
-        self.events.append(Send("request", f"{request.method} {request.url}", self._in_gate()))
+        send = Send("request", f"{request.method} {request.url}", self._in_gate())
+        self.events.append(send)
+        self._requests.append((request, send))
         route.fallback()
+
+    def _failed(self, request) -> None:
+        """A send request the network dropped: not accepted when no
+        connection was made (a later route's abort, SP8a review R2-M2)."""
+        try:
+            failure = str(request.failure or "")
+        except Exception:       # noqa: BLE001  (a request gone with its page)
+            return
+        if not _NO_CONNECTION.search(failure):
+            return
+        for seen, send in self._requests:
+            if seen is request:
+                send.accepted = False
 
 
 # --- the action recorder --------------------------------------------------------------------
@@ -1649,6 +1675,9 @@ def _text_files(paths: Iterable[Path]) -> Iterable[Path]:
             yield path
 
 
+_NOTHING_SENT = "nothing was sent"
+
+
 def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str]:
     """Every invariant the run broke, one line each; [] when it held them all."""
     breaks: list[str] = []
@@ -1669,7 +1698,11 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
     if status == "ready_to_submit" and sends.count:
         breaks.append(f"READY-AFTER-SEND: ready_to_submit ({reason}) after {sends.count} "
                       "send(s): a review would send it again")
-    if reason.startswith(apply_run.NOT_SENT_REASON) and any(s.accepted for s in sends.events):
+    # the run says nothing went: the submit that did not go through, a send
+    # that never made its connection, a post the navigation guard stopped
+    # (SP8a review R2-M2)
+    nothing_sent = reason.startswith(apply_run.NOT_SENT_REASON) or _NOTHING_SENT in reason
+    if nothing_sent and any(s.accepted for s in sends.events):
         breaks.append(f"NOT-SENT-AFTER-SEND: {reason[:80]!r} after a send the site accepted: "
                       "a retry would send it twice")
     for a in recorder.actions:

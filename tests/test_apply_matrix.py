@@ -228,7 +228,9 @@ def test_a_clean_run_breaks_nothing():
     ("password_in_log", "PASSWORD-LEAK"),
     ("ready_after_send", "READY-AFTER-SEND"),
     ("captcha_touch", "CAPTCHA-TOUCH"),
-    ("not_sent_after_send", "NOT-SENT-AFTER-SEND")])
+    ("not_sent_after_send", "NOT-SENT-AFTER-SEND"),
+    ("unsent_after_send", "NOT-SENT-AFTER-SEND"),
+    ("guard_unsent_after_send", "NOT-SENT-AFTER-SEND")])
 def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code):
     park = plant in ("park_send",)
     rec, sends = _clean(park=park)
@@ -271,6 +273,17 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
         # a send the site accepted, then the run says nothing went through
         sends.events.append(h.Send("post", "/submit/ajax_reset", True))
         out = _Out("needs_human", apply_run.NOT_SENT_REASON + ": validation errors (x)")
+    elif plant == "unsent_after_send":
+        # SP8a review R2-M2: the error page's "no connection was made" after
+        # a send the site took
+        sends.events.append(h.Send("post", "/submit/post_redirect", True))
+        out = _Out("needs_human", "error or dead page: POST http://127.0.0.1/submit failed on "
+                                  "the network (net::ERR_CONNECTION_REFUSED); no connection "
+                                  "was made, so nothing was sent")
+    elif plant == "guard_unsent_after_send":
+        sends.events.append(h.Send("post", "/submit/post_redirect", True))
+        out = _Out("needs_human", "the form posts to evil.example.net, outside the allowed "
+                                  "sites; the run stopped it and nothing was sent")
     elif plant == "captcha_touch":
         rec.actions.append(h.Action("click", "https://www.google.com/recaptcha/api2/anchor?k=x",
                                     text="I'm not a robot"))
@@ -278,6 +291,29 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
     assert code in _codes(breaks), breaks
     with pytest.raises(AssertionError, match=code):
         h.assert_invariants(out, rec, sends)
+
+
+def test_a_send_that_never_made_its_connection_is_one_the_site_did_not_accept():
+    # SP8a review R2-M2: a send whose request failed before any connection
+    # (refused, unreachable, a name that did not resolve, blocked in the
+    # browser) never reached the site; one reset after it left may have
+    import types
+
+    class _Route:
+        def fallback(self):
+            pass
+    sends = h.Sends()
+    requests = [types.SimpleNamespace(method="POST", url=f"http://127.0.0.1/submit/{n}",
+                                      failure=f"net::{failure}")
+                for n, failure in enumerate(("ERR_CONNECTION_REFUSED", "ERR_NAME_NOT_RESOLVED",
+                                             "ERR_ADDRESS_UNREACHABLE", "ERR_BLOCKED_BY_CLIENT",
+                                             "ERR_CONNECTION_RESET", "ERR_FAILED"))]
+    for request in requests:
+        sends._request(_Route(), request)
+    for request in reversed(requests):
+        sends._failed(request)
+    assert [s.accepted for s in sends.events] == [False, False, False, False, True, True]
+    assert sends.count == 6         # each is still an attempt
 
 
 def test_a_submitted_unconfirmed_with_a_send_is_within_the_invariants():

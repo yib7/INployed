@@ -4027,16 +4027,38 @@ class Runner:
     def _not_started(self, ctx, entry: Mapping, e: Exception) -> Outcome:
         """A job whose run could not even be set up (RES-09): the entry
         leaves `in_progress` as `failed`, with the error's type and no
-        value, and the drain goes on."""
+        value, and the drain goes on. The log gets the traceback's frames,
+        never the message (RES-05, SP8a review M10)."""
         job_id = str(entry.get("job_posting_id", "")) if isinstance(entry, Mapping) else ""
         reason = f"{type(e).__name__} while the job was set up"
-        self.log.error("job %s: %s", job_id, reason, exc_info=True)
-        try:
-            apply_queue.finish(job_id, "failed", notes=reason, path=self.queue_path)
-        except Exception as err:    # noqa: BLE001  (the queue write must not end the drain)
-            self.log.error("job %s: queue finish failed (%s)", job_id, type(err).__name__)
+        self.log.error("job %s: %s; traceback (the message left out):\n  %s", job_id, reason,
+                       "\n  ".join(error_frames(e)))
+        self._queue_write(job_id, "finish", lambda: apply_queue.finish(
+            job_id, "failed", notes=reason, path=self.queue_path))
         return Outcome(job_id=job_id, status="failed", reason=reason, record_path="",
                        pages=0, jev_usage={}, browser_closed=_context_gone(ctx))
+
+    def _queue_write(self, job_id: str, what: str, write: Callable[[], Any],
+                     left: str = "the entry stays in_progress") -> bool:
+        """One queue write (`write`, an `apply_queue` call), once more after
+        `FINISH_RETRY_S` when it raises (a lock held by the dashboard), then
+        an error naming the job and `left`; the drain goes on (SP8a review
+        M11). The log keeps the error's message: a queue file's error ("disk
+        full", a denied lock) carries no page text. True when the write went
+        through."""
+        for attempt in (1, 2):
+            try:
+                write()
+                return True
+            except Exception as e:      # noqa: BLE001  (the queue write must not end the drain)
+                if attempt == 1:
+                    self.log.warning("job %s: queue %s failed (%s: %s); retrying in %s s",
+                                     job_id, what, type(e).__name__, e, FINISH_RETRY_S)
+                    self.sleep(FINISH_RETRY_S)
+                else:
+                    self.log.error("job %s: queue %s failed twice (%s: %s); %s", job_id, what,
+                                   type(e).__name__, e, left)
+        return False
 
 
 # --- one job ---------------------------------------------------------------------------------
@@ -4814,19 +4836,8 @@ class _JobRun:
         self._flush_decisions()
         self.trace.finish("queued", reason, self.page,
                           extra_mask=self._secret_masks(self.page) if self.page is not None else [])
-        for attempt in (1, 2):
-            try:
-                apply_queue.unclaim(self.job_id, notes=reason, give_back=not refused,
-                                    path=self.r.queue_path)
-                break
-            except Exception as e:      # noqa: BLE001  (the queue write must not end the drain)
-                if attempt == 1:
-                    self.log.warning("job %s: queue unclaim failed (%s); retrying in %s s",
-                                     self.job_id, type(e).__name__, FINISH_RETRY_S)
-                    self.r.sleep(FINISH_RETRY_S)
-                else:
-                    self.log.error("job %s: queue unclaim failed twice (%s); the entry stays "
-                                   "in_progress", self.job_id, type(e).__name__)
+        self.r._queue_write(self.job_id, "unclaim", lambda: apply_queue.unclaim(
+            self.job_id, notes=reason, give_back=not refused, path=self.r.queue_path))
         self._close_job_pages()
         self.log.warning("job %s: %s", self.job_id, reason)
         return Outcome(job_id=self.job_id, status="queued", reason=reason, record_path="",
@@ -8429,7 +8440,9 @@ class _JobRun:
                     trace_dir=self.trace.rel_dir if self.trace.enabled else "",
                     attempt=self.trace.attempt if self.trace.enabled else 0))
             except Exception as e:      # noqa: BLE001  (a record failure must not lose the finish)
-                self.log.warning("job %s: record not written: %s", self.job_id, e)
+                # the error's type, never its message (RES-05, SP8a review M10)
+                self.log.warning("job %s: record not written (%s)", self.job_id,
+                                 type(e).__name__)
         if not tab_note and self.page is not None and status != "submitted":
             try:
                 tab_note = f"{self.page.url} | {self.page.title()}"
@@ -8460,23 +8473,13 @@ class _JobRun:
 
 
     def _finish_entry(self, status: str, tab_note: str, record: str, reason: str) -> None:
-        """`apply_queue.finish`, once more after `FINISH_RETRY_S` when it
-        raises (a lock held by the dashboard), then an error naming the job;
-        the drain goes on and the entry stays `in_progress` for the human."""
-        for attempt in (1, 2):
-            try:
-                apply_queue.finish(self.job_id, status, tab_note=tab_note, record=record,
-                                   notes=reason, path=self.r.queue_path)
-                return
-            except Exception as e:      # noqa: BLE001  (the queue write must not end the drain)
-                if attempt == 1:
-                    self.log.warning("job %s: queue finish failed (%s); retrying in %s s",
-                                     self.job_id, e, FINISH_RETRY_S)
-                    self.r.sleep(FINISH_RETRY_S)
-                else:
-                    self.log.error("job %s: queue finish failed twice (%s: %s); the entry "
-                                   "stays in_progress with status %s unrecorded",
-                                   self.job_id, type(e).__name__, e, status)
+        """`apply_queue.finish` through the runner's retrying queue write
+        (`Runner._queue_write`): the drain goes on, and an entry it could not
+        write stays `in_progress` for the human."""
+        self.r._queue_write(self.job_id, "finish", lambda: apply_queue.finish(
+            self.job_id, status, tab_note=tab_note, record=record, notes=reason,
+            path=self.r.queue_path),
+            f"the entry stays in_progress with status {status} unrecorded")
 
 
 # --- the summary and the CLI ---------------------------------------------------------------

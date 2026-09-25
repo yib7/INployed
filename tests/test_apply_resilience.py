@@ -345,6 +345,46 @@ def test_an_entry_the_run_cannot_set_up_ends_failed_and_the_drain_goes_on(_brows
     assert "secret" not in jobs["a"]["notes"]
 
 
+_SET_UP_ERROR = "the set-up broke at /private/queue/path"
+
+
+def test_a_job_that_cannot_be_set_up_logs_its_frames_and_retries_its_queue_write(
+        _browser, tmp_path, monkeypatch, caplog):
+    # SP8a review M10, M11: the frames and never the message, and the one
+    # retrying queue write
+    import logging
+
+    import apply_run
+    queue, apply_queue = _queue(tmp_path, _plain("a", tmp_path / "a"))
+
+    def _init(self, runner, ctx, entry):
+        raise RuntimeError(_SET_UP_ERROR)
+    monkeypatch.setattr(apply_run._JobRun, "__init__", _init)
+    real, tries = apply_queue.finish, []
+
+    def _finish(job_id, *a, **kw):
+        tries.append(job_id)
+        if len(tries) == 1:
+            raise OSError("the queue is locked")
+        return real(job_id, *a, **kw)
+    monkeypatch.setattr(apply_queue, "finish", _finish)
+    ctx = _browser.new_context()
+    sleeps: list[float] = []
+    try:
+        runner = _runner_for(queue, ctx, tmp_path)
+        runner.sleep = sleeps.append
+        with caplog.at_level(logging.INFO, logger="apply_run"):
+            outcomes = runner.drain(cap=5)
+    finally:
+        ctx.close()
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "failed")]
+    assert tries == ["a", "a"] and sleeps == [apply_run.FINISH_RETRY_S]
+    assert apply_queue.load(queue)["jobs"][0]["status"] == "failed"
+    assert "private" not in caplog.text and "Traceback" not in caplog.text
+    assert "RuntimeError while the job was set up" in caplog.text
+    assert "test_apply_resilience.py:" in caplog.text     # the frames
+
+
 def test_a_malformed_entry_is_a_dead_end_inside_the_policy():
     import apply_run
     assert h.policy_park("failed", f"{apply_run.MALFORMED_REASON}: ats is a list, "

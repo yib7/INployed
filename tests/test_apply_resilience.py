@@ -595,6 +595,51 @@ def test_an_outage_while_the_inbox_is_read_reaches_the_run(browser_page, fixture
     assert len(browser_page.context.pages) == 1     # its tab closed all the same
 
 
+def _account_run(**kw):
+    """A stand-in `_JobRun` for `_Accounts`: no account in the ledger, a
+    clock inside the budget, and whatever `kw` adds (`_map`)."""
+    import types
+    run = types.SimpleNamespace(
+        r=types.SimpleNamespace(clock=lambda: 0.0), deadline=1e9, pages=[], catalog=None,
+        errors=[], _account_for=lambda host: None, _company=lambda: "",
+        _decide=lambda *a, **k: None)
+    run._trace = lambda kind, **k: run.errors.append((kind, k.get("error")))
+    for name, value in kw.items():
+        setattr(run, name, value)
+    return run
+
+
+def _down(*a, **k):
+    raise jev.JudgeOutage("_Busy 529")
+
+
+@pytest.mark.parametrize("step", ["login", "fill"])
+def test_an_outage_inside_the_account_step_reaches_the_run(step, monkeypatch):
+    """The account step's catch-all (ACC-10) lets a judge outage through to
+    the run's breaker (RES-02); it is never noted as the step's own error."""
+    import apply_run
+    from apply_form import Field, FormDigest
+    monkeypatch.setattr(apply_run.ats_accounts, "has_password", lambda: True)
+    monkeypatch.setattr(apply_run, "account_forms", lambda page, digest: [])
+    monkeypatch.setattr(apply_run.apply_form, "frames", lambda page: [])
+    run = _account_run(_map=_down)
+    accounts = apply_run._Accounts(run)
+    digest = FormDigest(url_host="jobs.example.com", title="Sign in", text="Sign in", fields=[
+        Field(n=0, locator=(0, "#email"), label="Email", type="email", required=True),
+        Field(n=1, locator=(0, "#password"), label="Password", type="other", required=True,
+              autocomplete="current-password")])
+    if step == "login":     # the sign-up link's judge request, the judge down
+        monkeypatch.setattr(apply_run._Accounts, "_signup_link", _down)
+        blank = FormDigest(url_host="jobs.example.com", title="Sign in", text="Sign in")
+        call = lambda: accounts.login(object(), blank, "jobs.example.com")  # noqa: E731
+    else:                   # the account form's mapping request
+        call = lambda: accounts._fill(object(), digest, "jobs.example.com",  # noqa: E731
+                                      "jane@example.com", False)
+    with pytest.raises(jev.JudgeOutage):
+        call()
+    assert run.errors == [] and accounts.last_error == ""
+
+
 # --- a tab the site closes (RES-06), one tab per job (RES-07) ---------------------------------
 
 _CAREERS = "https://careers.fabrikam.example"

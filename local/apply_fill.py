@@ -1030,6 +1030,10 @@ _FILE_STATE_JS = r"""el => {
 }"""
 _UPLOAD_DONE = re.compile(r"\b(successfully\s+uploaded|upload(ed)?\s+(complete|successful(ly)?"
                           r"|succeeded)|file\s+(uploaded|attached))\b", re.I)
+# words a widget shows when it did not take the file
+_UPLOAD_FAILED = re.compile(
+    r"\b(could\s*n[o']t|cannot|can't|failed|failure|errors?|invalid|too\s+large|not\s+supported"
+    r"|unsupported|try\s+again|rejected)\b", re.I)
 # Per page (a job's tab): the box words before this run's upload into a box,
 # and the (box, file name) pairs this run uploaded and saw verified
 _BEFORE_UPLOAD: "weakref.WeakKeyDictionary[Any, dict]" = weakref.WeakKeyDictionary()
@@ -1067,9 +1071,11 @@ def _upload_state(loc) -> dict:
 def upload_read(state: dict, name: str, before: str | None) -> str:
     """An upload's read-back (FILL-01, SP6 review I5): the box's own file,
     else the file's name when the box's words show it more often than
-    before this run's upload (a chip the upload added), or a success note
-    that was not there before; "" when neither. With no upload by this run
-    (`before` None) the name shown counts only as the box's own words."""
+    before this run's upload (a chip the upload added), a success note that
+    was not there before, or words that changed and still show it with no
+    failure among them (a widget that replaced a kept chip of the same name,
+    SP6 review R2-M1); "" when none. With no upload by this run (`before`
+    None) the name shown counts only as the box's own words."""
     if state.get("file"):
         return str(state["file"])
     now, was, want = (str(state.get("text") or "").lower(), str(before or "").lower(),
@@ -1079,6 +1085,9 @@ def upload_read(state: dict, name: str, before: str | None) -> str:
     if now.count(want) > was.count(want):
         return name
     if _UPLOAD_DONE.search(now) and not _UPLOAD_DONE.search(was):
+        return name
+    if before is not None and now != was and want in now \
+            and not (_UPLOAD_FAILED.search(now) and not _UPLOAD_FAILED.search(was)):
         return name
     return ""
 

@@ -554,3 +554,28 @@ def test_an_upload_is_skipped_only_after_this_run_uploaded_and_saw_it(browser_pa
     # the same plan again (a retry, the page read again): this run's verified upload stands
     assert _fill(browser_page, pf)[resume.n] == "Jane_Doe_Resume.pdf"
     assert browser_page.evaluate("document.body.dataset.uploads") == "1"
+
+
+# --- SP6 review R2-M1: a widget that replaces the kept chip in place --------------------------------------
+
+def test_an_upload_that_replaced_a_kept_chip_of_its_name_is_verified_and_made_once(
+        _browser, flow_server, tmp_path):
+    r = h.run_flow(h.flow("upload_profile_replace"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert [a.kind for a in r.actions].count("upload") == 1
+
+
+@pytest.mark.parametrize("before, now, got", [
+    # the box's words changed and still name the file: the upload shows
+    ("Resume * Jane_Doe_Resume.pdf (uploaded 2026-08-02)", "Resume * Jane_Doe_Resume.pdf",
+     "Jane_Doe_Resume.pdf"),
+    # unchanged: no evidence of this upload
+    ("Resume * Jane_Doe_Resume.pdf (uploaded 2026-08-02)",
+     "Resume * Jane_Doe_Resume.pdf (uploaded 2026-08-02)", ""),
+    # changed, but into an error beside the kept name: no evidence either
+    ("Resume * Jane_Doe_Resume.pdf (uploaded 2026-08-02)",
+     "Resume * Jane_Doe_Resume.pdf (uploaded 2026-08-02) The file could not be uploaded", ""),
+])
+def test_an_upload_read_back_takes_a_change_that_still_names_the_file(before, now, got):
+    assert apply_fill.upload_read({"file": "", "text": now}, "Jane_Doe_Resume.pdf", before) == got

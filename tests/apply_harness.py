@@ -1090,6 +1090,10 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="body[data-uploads='1'] #btn-submit:visible",
          covers="a returning candidate's page showing a kept resume of the same file name: "
                 "this job's resume is uploaded, exactly once (SP6 review I5)"),
+    Flow("upload_profile_replace", "upload_profile_replace.html", False, "ready_to_submit",
+         _PARKED, confirm="#thanks:visible", gate="body[data-uploads='1'] #btn-submit:visible",
+         covers="a widget that replaces a kept resume's chip with this upload's, of the same "
+                "name: verified by the change, uploaded once (SP6 review R2-M1)"),
     Flow("form_associated_invalid", "form_associated_invalid.html", True, "needs_human",
          r"^required field without an answer: Preferred shift \(a control the run cannot "
          r"read: form-associated custom element\)$", confirm="#thanks:visible",

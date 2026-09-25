@@ -1039,6 +1039,24 @@ def test_a_judge_down_after_the_submit_sent_ends_the_job_submitted_unconfirmed(
     assert reason.endswith(f"(after POST {_CAREERS}/post/submit)"), reason
 
 
+def test_a_judge_down_at_the_first_look_after_the_submit_still_reads_the_confirmation(
+        _browser, tmp_path, monkeypatch):
+    # SP8a review M8: received words the page did not show before the click
+    # need no judge
+    posts: list[str] = []
+    judge = _GoesDown()
+    _down_from(monkeypatch, judge, "_after_submit")
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/apply"),
+                                                   ("b", f"{_CAREERS}/apply")], {
+        f"{_CAREERS}/apply": _POST_FORM,
+        f"{_CAREERS}/post/submit": _sink(posts, h.CONFIRMATION_HTML)},
+        submit=True, judge=judge)
+    _one_send_and_the_drain_stopped(outcomes, _entries(tmp_path), posts)
+    assert outcomes[0].status == "submitted", outcomes
+    assert outcomes[0].reason.startswith("confirmation page"), outcomes[0].reason
+    assert "unconfirmed" not in outcomes[0].reason
+
+
 def test_a_judge_down_after_the_submit_with_no_send_seen_on_the_sites_asks_the_person(
         _browser, tmp_path, monkeypatch):
     import apply_run

@@ -4737,6 +4737,9 @@ class _JobRun:
                 done = self._confirmed_elsewhere() if tab else None
                 if done is not None:
                     return done
+                done = self._confirmed_here() if down and self.submit_clicked else None
+                if done is not None:
+                    return done
                 if self.submit_clicked:
                     self.browser_closed = closed
                     why = (CLOSED_REASON if closed else TAB_CLOSED_REASON if tab
@@ -4955,6 +4958,20 @@ class _JobRun:
         self.page = page
         return self._finish("submitted", f"confirmation page (in the tab that opened the job's "
                                          f"closed tab: {marker!r})")
+
+    def _confirmed_here(self) -> Outcome | None:
+        """The judge went down after the submit click (SP8a review M8): the
+        job's page is still read for received words it did not show before
+        the click (`new_confirmation`, which needs no judge), and they end
+        the job `submitted`. None when it shows none."""
+        before = self._before_submit or {}
+        marker = new_confirmation(str(before.get("text") or ""), self._page_text())
+        if not marker:
+            return None
+        self._decide("after_submit", f"confirmation: the page shows {marker!r}, which it did "
+                                     f"not before the click; read while the judge was down")
+        return self._finish("submitted", f"confirmation page ({marker!r}, read while the judge "
+                                         f"was down)")
 
     def _leave(self, source, popup) -> None:
         """The run left `source` for `popup`. A LinkedIn tab closes (RES-07:

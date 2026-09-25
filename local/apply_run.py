@@ -850,6 +850,11 @@ def _ident_attrs(ident: str) -> str:
     return str(ident).rsplit("|", 1)[0]
 
 
+def _message_key(text: str) -> str:
+    """A form's message, spaces folded (the key of `_JobRun._spared`)."""
+    return " ".join(str(text or "").split())
+
+
 def _label_key(label: str) -> str:
     """A field's question words, spaces and case folded (the key the
     messages' tried fields keep, M1)."""
@@ -3091,6 +3096,10 @@ class _JobRun:
         # (the form's fields, a message no control names) -> the fields the
         # judge named for it on that form: never offered for it again (M1)
         self._error_tried: dict[tuple, set[str]] = {}
+        # a message's words -> (the field only the judge named for it, which
+        # had no answer; the form's words): the park when the rounds end with
+        # the message still shown (SP6 review R2-I4); this page's
+        self._spared: dict[str, tuple[str, str]] = {}
         self._code_sent = False         # the code step clicked on (a code can finish a send)
         self._send_watch: SendWatch | None = None     # the requests after the submit click
         self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
@@ -3545,6 +3554,7 @@ class _JobRun:
             self._filled_here = []
             self._last_filled, self._idle, self._refilled = {}, [], set()
             self._gate_repairs = 0
+            self._spared = {}
             if self._human_check_showing():
                 self._wait_for_human_check("a CAPTCHA challenge is showing")
             self._dismiss_consent()
@@ -4703,8 +4713,8 @@ class _JobRun:
                 for e in report["errors"] if e["text"] not in old]
         return out
 
-    def _problem_fields(self, digest: apply_form.FormDigest,
-                        problems: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    def _problem_fields(self, digest: apply_form.FormDigest, problems: list[dict[str, Any]],
+                        actable: set[int] | None = None) -> dict[int, list[dict[str, Any]]]:
         """n -> the problems that name field `n`. In code first: the
         control's identity (`apply_form.same_ident`), its name or id, its
         label. The messages no control names go to the judge in one request
@@ -4718,7 +4728,9 @@ class _JobRun:
         fresh question without it); a message the first request maps to no
         field gets one second look, asked in other words; and a problem the
         judge mapped carries `mapped` (its confidence), which `_repair_named`
-        never parks on alone."""
+        never parks on alone. With `actable` (the fields a repair can put
+        right), a judged field outside it (an upload made, a password) counts
+        as no mapping: the second look asks without it (SP6 review R2)."""
         out: dict[int, list[dict[str, Any]]] = {}
         loose: list[dict[str, Any]] = []
         for p in problems:
@@ -4745,6 +4757,11 @@ class _JobRun:
             exclude = [{x.n for x in digest.fields
                         if _label_key(x.label) in self._error_tried.get(k, set())} for k in keys]
             named = self._map_messages(loose, digest, exclude)
+            if actable is not None:
+                for i in range(len(loose)):
+                    n = self._field_mapped(digest, named.get(i), exclude[i])
+                    if n is not None and n not in actable:
+                        exclude[i] = exclude[i] | {n}
             unsure = [i for i in range(len(loose))
                       if self._field_mapped(digest, named.get(i), exclude[i]) is None]
             if unsure:
@@ -4823,8 +4840,10 @@ class _JobRun:
         if revealed:
             digest, plan, verification = self._fill_revealed(digest, fresh, revealed, plan,
                                                              verification, rec)
-        named = self._problem_fields(digest, problems)
         by_pf = {pf.n: pf for pf in plan.fields}
+        named = self._problem_fields(digest, problems, actable={
+            n for n, pf in by_pf.items()
+            if pf.action not in ("upload", apply_judge.PASSWORD_ACTION)})
         blank = [n for n in named if n in by_pf and by_pf[n].action not in _ACTED
                  and by_pf[n].action != apply_judge.PASSWORD_ACTION]
         typed = [n for n in named if n in by_pf and by_pf[n].action in _ACTED
@@ -4879,7 +4898,13 @@ class _JobRun:
             _record_verification(rec, list(again.values()))
         if missed and depth == 0:
             # M1: the judge named a blank field that has no answer; its
-            # messages are mapped once more without it (a fresh question)
+            # messages are mapped once more without it (a fresh question).
+            # The field is kept: a message still shown when the rounds end
+            # parks on it (R2-I4)
+            for n in missed:
+                for p in named[n]:
+                    self._spared[_message_key(p.get("text") or "")] = (by_pf[n].label,
+                                                                      says.get(n, ""))
             seen: set[str] = set()
             again_problems = []
             for n in missed:
@@ -4896,6 +4921,21 @@ class _JobRun:
                 said = f" (the form says: {says[missed[0]]})" if says.get(missed[0]) else ""
                 raise _Parked("needs_human", f"required field without an answer: {label}{said}")
         return digest, plan, verification
+
+    def _spared_park(self, texts: list[str]) -> _Parked | None:
+        """SP6 review R2-I4: the rounds are over and the form still shows a
+        message whose field only the judge named and the sheet cannot answer
+        (`_spared`): the park names that field, in the policy's words."""
+        for text in texts:
+            got = self._spared.get(_message_key(text or ""))
+            if got:
+                label, says = got
+                self._decide("spared_field", f"the form still shows {_cap(text, 80)!r}; the "
+                                             f"field the judge named for it, {label}, has no "
+                                             "answer")
+                said = f" (the form says: {says})" if says else ""
+                return _Parked("needs_human", f"required field without an answer: {label}{said}")
+        return None
 
     def _refused_words(self, problems: list[dict[str, Any]]) -> str:
         """A park's evidence after the repair rounds: each problem in the
@@ -4959,6 +4999,9 @@ class _JobRun:
             label = " ".join(str(missing[0].get("label") or "a field").split())[:80]
             raise _Parked("needs_human", f"required field without an answer: {label} (the form "
                                          f"refused the {_cap(text, 40)} step)")
+        spared = self._spared_park([str(p.get("text") or "") for p in problems])
+        if spared is not None:
+            raise spared
         raise _Parked("needs_human", f"the form refused the {_cap(text, 40)} step after "
                                      f"{REPAIR_ROUNDS} repair(s): {self._refused_words(problems)}")
 
@@ -6266,7 +6309,8 @@ class _JobRun:
                           "ident": e.get("ident") or "", "name": e.get("name") or "",
                           "kind": "error"} for e in field_errors]
             raise _Refused(problems, park)
-        raise park
+        spared = self._spared_park([str(e.get("text") or "") for e in field_errors])
+        raise spared if spared is not None else park
 
     def _inconclusive(self, state: str, conf: float, digest: apply_form.FormDigest,
                       watch: SendWatch, before: Mapping[str, Any], handoff: bool) -> None:

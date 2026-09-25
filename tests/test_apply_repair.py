@@ -591,3 +591,78 @@ def test_a_quiet_first_click_is_retried_beside_the_pages_own_telemetry(_browser,
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert not _events(r, "step_settle"), _events(r, "step_settle")
     assert any(e.get("retry") and e.get("text") == "Next" for e in _events(r, "click"))
+
+
+# --- R2-I4: the field only the judge named, with no answer, is kept for the last park ---------------
+
+class YearsThen:
+    """FakeJev, except that "Years of experience" and "Badge number" never get
+    a source (the sheet answers neither), and a banner's field is read as
+    "Years of experience" while it is offered, then as `then` (a label, or
+    None for `none`; `none` too once `then` is no longer offered)."""
+
+    def __init__(self, inner, then):
+        self.inner, self.then = inner, then
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        for row in (state or {}).get("fields") or []:
+            if row.get("label") in ("Years of experience", "Badge number"):
+                out.pop(f"field_{row.get('n')}_source", None)
+        for qid, q in questions.items():
+            if not qid.startswith("error_"):
+                continue
+            by_label = {v.get("question"): k for k, v in q["criteria"].items() if v}
+            want = by_label.get("Years of experience") or by_label.get(self.then) or "none"
+            out[qid] = jev.Answer(kind="choice", choice=want, probabilities={want: 0.9},
+                                  confidence=0.9)
+        return out
+
+
+@pytest.mark.parametrize("then", [None, "Badge number", "Email"])
+def test_a_spared_field_without_an_answer_is_the_park_when_its_message_stays(
+        _browser, flow_server, tmp_path, then):
+    import dataclasses
+    f = dataclasses.replace(h.flow("validation_banner_only"),
+                            wrap=lambda inner: YearsThen(inner, then))
+    r = h.run_flow(f, jev.FakeJev(), f"then-{then}", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.status == "needs_human" and not r.breaks and r.policy is True, (r.status, r.reason)
+    assert r.reason == ("required field without an answer: Years of experience (the form says: "
+                        "Before you go on, tell us how many years of experience you have.)"), \
+        r.reason
+    assert r.sends == 0
+
+
+class ResumeThenTruth:
+    """FakeJev, except that a message's field is read as "Resume" (an upload
+    the run made, nothing a repair can put right) while it is offered."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        for qid, q in questions.items():
+            if not qid.startswith("error_"):
+                continue
+            resume = next((k for k, v in q["criteria"].items()
+                           if v and v.get("question") == "Resume"), None)
+            if resume:
+                out[qid] = jev.Answer(kind="choice", choice=resume, probabilities={resume: 0.85},
+                                      confidence=0.85)
+        return out
+
+
+def test_a_message_read_as_a_field_no_repair_can_touch_gets_the_second_look(
+        _browser, flow_server, tmp_path):
+    # the submit's own box says "Portfolio URL is required"; the first look
+    # names the uploaded Resume, which no repair can put right, so the second
+    # asks without it and finds the Portfolio URL
+    import dataclasses
+    f = dataclasses.replace(h.flow("validation_in_button_box_submit"),
+                            wrap=lambda inner: ResumeThenTruth(h.OptionalLeftBlank(inner)))
+    r = h.run_flow(f, jev.FakeJev(), "resume-first", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks and r.status == "submitted", (r.status, r.reason, r.breaks)
+    assert r.sends == 1

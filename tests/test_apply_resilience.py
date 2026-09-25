@@ -736,3 +736,53 @@ def test_the_linkedin_tab_closes_once_the_company_tab_is_adopted_and_each_job_ke
     assert sorted(left) == sorted([f"{flow_server.base}/forms/lever_single.html",
                                    f"{flow_server.base}/forms/ashby_steps.html"]), left
     assert "source_tab_closed" in _trace_of(tmp_path, "a")
+
+
+# --- the drain's summary table ---------------------------------------------------------------
+
+_GONE = """<!doctype html><html><head><title>Job closed</title></head><body>
+<h1>This job is no longer available</h1><p>The position has been filled. Thank you for your
+interest in Fabrikam; see our other openings.</p></body></html>"""
+
+
+def test_a_drain_prints_one_table_over_its_jobs_and_writes_it_beside_the_job_folders(
+        _browser, tmp_path, capsys):
+    import re
+
+    import apply_run
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/jobs/a"),
+                                                   ("b", f"{_CAREERS}/jobs/b")], {
+        f"{_CAREERS}/jobs/a": (_FORMS / "lever_single.html").read_text(encoding="utf-8"),
+        f"{_CAREERS}/jobs/b": _GONE})
+    assert [o.job_id for o in outcomes] == ["a", "b"], outcomes
+    assert outcomes[0].status == "ready_to_submit", outcomes
+    out = capsys.readouterr().out
+    reports = list(tmp_path.glob(f"{apply_run.DRAIN_REPORT_PREFIX}*.md"))
+    assert len(reports) == 1, list(tmp_path.iterdir())     # beside the job folders a/ and b/
+    assert re.fullmatch(r"apply_drain-\d{8}-\d{6}\.md", reports[0].name), reports
+    assert f"drain report: {reports[0]}" in out
+    text = reports[0].read_text(encoding="utf-8")
+    assert apply_run.summary_line(outcomes) in text
+    for table, linked in ((out, False), (text, True)):
+        rows = [ln for ln in table.splitlines() if re.match(r"\| \d+ \| ", ln)]
+        assert len(rows) == 2, table
+        for i, (o, row) in enumerate(zip(outcomes, rows), 1):
+            cells = [c.strip() for c in row.strip("|").split(" | ")]
+            assert cells[:4] == [str(i), o.job_id, o.status, str(o.pages)], row
+            assert cells[4] == apply_run._cell(o.reason, apply_run.REASON_CELL_MAX), row
+            assert o.trace_dir and Path(o.trace_dir).is_dir(), o
+            if linked:          # relative to the report, and it resolves
+                target = re.fullmatch(r"\[[^]]+\]\(<([^>]+)/>\)", cells[5]).group(1)
+                assert not Path(target).is_absolute(), target
+                assert (reports[0].parent / target).resolve() == Path(o.trace_dir).resolve()
+            else:
+                assert cells[5] == Path(o.trace_dir).as_posix(), row
+
+
+def test_a_reason_with_a_bar_or_a_line_break_stays_in_its_cell(tmp_path):
+    import apply_run
+    o = apply_run.Outcome(job_id="x", status="needs_human", reason="a | b\nc", record_path="",
+                          pages=0)
+    row = apply_run.drain_table([o]).splitlines()[2]
+    assert row == "| 1 | x | needs_human | 0 | a \\| b c | - |", row
+    assert apply_run.drain_report_dir([o], tmp_path / "q" / "queue.json") == tmp_path / "q"

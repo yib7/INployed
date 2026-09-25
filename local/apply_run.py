@@ -1579,6 +1579,7 @@ class Outcome:
     jev_usage: dict[str, Any] = field(default_factory=dict)
     browser_closed: bool = False    # the window closed under the job: the drain stops
     judge_down: bool = False        # the judge went down under the job: the drain stops (RES-02)
+    trace_dir: str = ""             # this attempt's trace folder, when one was written
 
 
 def _closed_error(e: BaseException) -> bool:
@@ -3935,8 +3936,25 @@ class Runner:
                                      outcome.job_id)
                     break
             self.log.info(summary_line(outcomes))
+            self._report(outcomes)
             return outcomes
         return self._with_browser(_work)
+
+    def _report(self, outcomes: list[Outcome]) -> None:
+        """The drain's table (per job: end, pages, reason, trace) on stdout
+        and in `apply_drain-<stamp>.md` beside the job folders
+        (`write_drain_report`), so a live run reports its own rate. A report
+        that cannot be written is logged; the drain's outcomes stand."""
+        if not outcomes:
+            return
+        try:
+            _say(drain_table(outcomes))
+            path = write_drain_report(outcomes, self.queue_path)
+        except Exception as e:      # noqa: BLE001  (a report is never the drain's end)
+            self.log.warning("the drain report was not written (%s)", type(e).__name__)
+            return
+        _say(f"drain report: {path}")
+        self.log.info("drain report: %s", path)
 
     def run_job(self, entry: dict) -> Outcome:
         """One claimed entry through the state machine (opens the browser
@@ -4720,7 +4738,12 @@ class _JobRun:
         self._close_job_pages()
         self.log.warning("job %s: %s", self.job_id, reason)
         return Outcome(job_id=self.job_id, status="queued", reason=reason, record_path="",
-                       pages=len(self.pages), jev_usage=usage, judge_down=True)
+                       pages=len(self.pages), jev_usage=usage, judge_down=True,
+                       trace_dir=self._trace_dir())
+
+    def _trace_dir(self) -> str:
+        """This attempt's trace folder, or "" when no trace was written."""
+        return str(self.trace.dir) if self.trace.enabled and self.trace.dir else ""
 
     def _close_job_pages(self, keep=None) -> None:
         """Close the job's tabs but `keep` (RES-07: one tab per job)."""
@@ -8316,7 +8339,8 @@ class _JobRun:
         self.log.info("job %s: %s (%s)", self.job_id, status, reason)
         return Outcome(job_id=self.job_id, status=status, reason=reason, record_path=record,
                        pages=len(self.pages), jev_usage=usage,
-                       browser_closed=self.browser_closed, judge_down=bool(self._judge_down()))
+                       browser_closed=self.browser_closed, judge_down=bool(self._judge_down()),
+                       trace_dir=self._trace_dir())
 
 
     def _finish_entry(self, status: str, tab_note: str, record: str, reason: str) -> None:
@@ -8356,6 +8380,72 @@ def summary_line(outcomes: list[Outcome]) -> str:
             f"ready_to_submit {counts['ready_to_submit']}, needs_human {counts['needs_human']}, "
             f"failed {counts['failed']}{back}; Jev {requests} requests, {tokens} tokens, "
             f"${usd:.4f}")
+
+
+DRAIN_REPORT_PREFIX = "apply_drain-"    # apply_drain-<YYYYMMDD-HHMMSS>.md, beside the job folders
+REASON_CELL_MAX = 200                   # a reason's characters in the drain's table
+
+
+def _cell(text: Any, limit: int) -> str:
+    """One table cell: one line, at most `limit` characters, its bars escaped."""
+    return _cap(str(text or ""), limit).replace("|", "\\|")
+
+
+def drain_table(outcomes: list[Outcome], base: Path | None = None) -> str:
+    """One markdown table over the jobs a drain worked: the job, its end, its
+    pages, the reason and its trace folder. With `base` the trace is a link
+    relative to it (the report file's folder); without, the folder's path."""
+    rows = ["| # | job | end | pages | reason | trace |",
+            "|--:|-----|-----|------:|--------|-------|"]
+    for i, o in enumerate(outcomes, 1):
+        trace = "-"
+        if o.trace_dir:
+            where = Path(o.trace_dir)
+            trace = where.as_posix()
+            if base is not None:
+                try:
+                    rel = Path(os.path.relpath(where, base)).as_posix()
+                except ValueError:      # another drive: the full path
+                    rel = trace
+                trace = f"[{where.parent.parent.name}/{where.name}](<{rel}/>)"
+        rows.append(f"| {i} | {_cell(o.job_id, 40)} | {o.status} | {o.pages} | "
+                    f"{_cell(o.reason, REASON_CELL_MAX)} | {trace} |")
+    return "\n".join(rows)
+
+
+def drain_report_dir(outcomes: list[Outcome], queue_path: Path | None = None) -> Path:
+    """Where a drain's report goes: beside the job folders whose traces it
+    links (`<folder>/apply_trace/attempt-<n>`), when they share one parent;
+    else the queue file's folder."""
+    parents = {Path(o.trace_dir).parent.parent.parent for o in outcomes if o.trace_dir}
+    if len(parents) == 1:
+        return parents.pop()
+    return apply_queue.queue_path(queue_path).parent
+
+
+def write_drain_report(outcomes: list[Outcome], queue_path: Path | None = None, *,
+                       now: datetime | None = None) -> Path:
+    """`apply_drain-<stamp>.md` in `drain_report_dir`: the drain's summary
+    line and its table, the traces linked relative to the file."""
+    where = drain_report_dir(outcomes, queue_path)
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    path, n = where / f"{DRAIN_REPORT_PREFIX}{stamp}.md", 2
+    while path.exists():
+        path, n = where / f"{DRAIN_REPORT_PREFIX}{stamp}-{n}.md", n + 1
+    where.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# Apply drain {stamp}\n\n{summary_line(outcomes)}\n\n"
+                    f"{drain_table(outcomes, base=where)}\n", encoding="utf-8")
+    return path
+
+
+def _say(text: str) -> None:
+    """`text` on stdout, in whatever the console can show (a cp1252 console
+    and a page's curly quote in a reason)."""
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(enc, "replace").decode(enc), flush=True)
 
 
 def _load_env() -> None:

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Adatum</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+  .skeleton-line { height: 14px; background: #ddd; margin: 8px 0; width: 70%; }
+</style>
+</head>
+<body>
+<!-- SP8a, R2-M4: a single-page wizard (Workday's /apply/applyManually) whose
+     every step loads behind a skeleton (aria-busy, skeleton blocks, a Cancel)
+     at the same URL. Each skeleton stays until the page has been read once
+     (the harness calls `__appRead` after each read: the flow's `on_read`),
+     then its step comes 800 ms later. Step 1 asks a first name and goes on
+     with Next; step 2 asks an email and ends with the submit. -->
+<div id="app"></div>
+<script>
+  var SKELETON = '<p>Loading your application. This can take a few seconds while we fetch the '
+    + 'questions for this role, your saved answers and the documents you uploaded before. '
+    + 'Please keep this window open; closing it now would lose the answers you have not saved '
+    + 'yet.</p><div class="skeleton-line"></div><div class="skeleton-line"></div>'
+    + '<div class="skeleton-line"></div><button type="button" id="cancel">Cancel</button>';
+  var app = document.getElementById('app');
+  var step = 0;             // the step the skeleton up now leads to
+  var pending = false;      // a read came and the step is on its way
+
+  function skeleton(next) {
+    step = next;
+    pending = false;
+    app.setAttribute('aria-busy', 'true');
+    app.innerHTML = SKELETON;
+  }
+
+  function show() {
+    app.removeAttribute('aria-busy');
+    if (step === 1) {
+      app.innerHTML = '<h1>Apply for Business Analyst</h1><p>Step 1 of 2</p>'
+        + '<label for="first_name">First name *</label>'
+        + '<input id="first_name" name="first_name" required>'
+        + '<p><button type="button" id="next">Next</button></p>';
+      document.getElementById('next').addEventListener('click', function () {
+        skeleton(2);
+      });
+    } else {
+      app.innerHTML = '<h1>Apply for Business Analyst</h1><p>Step 2 of 2</p>'
+        + '<label for="email">Email *</label><input id="email" name="email" type="email" required>'
+        + '<p><button type="button" id="btn-submit">Submit application</button></p>';
+      document.getElementById('btn-submit').addEventListener('click', function () {
+        document.body.setAttribute('data-submitted', '1');
+        app.innerHTML = '<h2 id="received">Application received</h2><p>Thank you for applying.</p>';
+      });
+    }
+  }
+
+  window.__appRead = function () {
+    if (pending || !app.hasAttribute('aria-busy')) return;
+    pending = true;
+    setTimeout(show, 800);
+  };
+  skeleton(1);
+</script>
+</body>
+</html>

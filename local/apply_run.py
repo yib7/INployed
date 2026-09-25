@@ -4014,7 +4014,10 @@ class _JobRun:
         self.browser_closed = False
         self._last_answers: Mapping[str, Any] = {}   # the page read the loop acts on
         self._facts = apply_judge.PageFacts()        # the last read page's structure
-        self._loading_waited: set[str] = set()       # pages whose placeholder was waited on
+        # steps whose placeholder was waited on: (URL, the step before it's
+        # signature), so a single-page wizard's steps at one URL each get one
+        # wait (R2-M4)
+        self._loading_waited: set[tuple[str, tuple | None]] = set()
         # the second look's answers per page (its URL path and fields) and kind:
         # a re-read of the same page reuses them, never asks again (review M11)
         self._reask_cache: dict[tuple, dict[str, Any]] = {}
@@ -5095,19 +5098,21 @@ class _JobRun:
         same for `EMPTY_READ_STABLE_S` (a short page that is done), or
         `EMPTY_READ_MAX_S` has passed (G5: content arrives 0.3 to 1.7 s after
         `load` on SPA postings). A read that is only loading is read again
-        every `EMPTY_READ_POLL_S` for at most `LOADING_WAIT_S`, once per page
+        every `EMPTY_READ_POLL_S` for at most `LOADING_WAIT_S`, once per step
         (M10: an ad's or a widget's placeholder may never clear; the trace
-        says when it stayed up). The host is checked before every read
-        again."""
-        url = str(self.page.url)
-        watch = url not in self._loading_waited
+        says when it stayed up). A step is its URL and the step before it
+        (`last_sig`): a single-page wizard shows every step at one URL, each
+        behind its own skeleton (R2-M4). The host is checked before every
+        read again."""
+        step = (str(self.page.url), self.last_sig)
+        watch = step not in self._loading_waited
         digest, busy = self._read_busy(watch)
         loading = watch and self._loading(digest, busy)
         empty = _empty_read(digest)
         if not empty and not loading:
             return digest
         if loading:
-            self._loading_waited.add(url)
+            self._loading_waited.add(step)
         first = (f"{len(digest.fields)} field(s), {len(digest.buttons)} button(s), "
                  f"{len((digest.text or '').strip())} characters")
         what = "an empty read" if empty else "a loading placeholder"

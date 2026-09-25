@@ -790,6 +790,7 @@ class _ScriptedRead:
 
     _read_busy = apply_run._JobRun._read_busy
     _loading = apply_run._JobRun._loading
+    last_sig = None
 
     def __init__(self, looks, reads):
         self.page = _ReadPage()
@@ -834,6 +835,56 @@ def test_a_skeleton_seen_before_or_after_the_read_is_read_again(looks):
     what, why, kw = run.decisions[0]
     assert what == "reread_after_settle" and why.startswith("a loading placeholder"), why
     assert kw["still_loading"] is False
+
+
+_STEP_TWO = FormDigest(url_host="jobs.example.com", title="Apply", text="Step 2 of 2",
+                       fields=[Field(n=0, locator=(0, "#email"), label="Email", type="email",
+                                     required=True)],
+                       buttons=[Button(n=0, locator=(0, "#submit"), text="Submit application")])
+
+
+def test_each_step_of_a_wizard_at_one_url_gets_its_own_placeholder_wait():
+    """R2-M4: the placeholder's one wait is per step (the URL and the step
+    before it). A single-page wizard's second step loads behind a skeleton
+    at the first step's URL, and it is waited out like the first."""
+    # each step: the placeholder is up at the first look and gone at the next
+    run = _ScriptedRead([True, False, True, False], [_SKELETON, _FORM, _SKELETON, _STEP_TWO])
+    first = apply_run._JobRun._read_digest(run)
+    assert first.fields, "the first step's skeleton went on as the page"
+    run.last_sig = apply_run.page_signature(run.page.url, first)    # the loop's next step
+    second = apply_run._JobRun._read_digest(run)
+    assert [f.label for f in second.fields] == ["Email"], "the second step's skeleton went on"
+    assert [(w, why.split(" (")[0]) for w, why, _ in run.decisions] == [
+        ("reread_after_settle", "a loading placeholder")] * 2, run.decisions
+
+
+def test_a_placeholder_that_stays_up_on_one_step_is_waited_on_once(monkeypatch):
+    """M10 still holds within a step: a re-read of the same step (the loop's
+    `_reread`, `last_sig` unchanged) does not wait on the placeholder again."""
+    monkeypatch.setattr(apply_run, "LOADING_WAIT_S", 0.0)     # the wait runs out at once
+    run = _ScriptedRead([True, True, True], [_SKELETON] * 3)
+    apply_run._JobRun._read_digest(run)
+    apply_run._JobRun._read_digest(run)
+    assert len(run.decisions) == 1 and run.decisions[0][2]["still_loading"] is True, \
+        run.decisions
+    assert not run.reads and run.looks == [True], "the re-read looked for a placeholder again"
+
+
+def test_a_wizard_whose_second_step_loads_at_the_same_url_waits_out_both_skeletons(
+        _browser, flow_server, tmp_path):
+    """R2-M4 end to end: `skeleton_wizard.html` keeps one URL and shows each
+    step behind a skeleton that stays until it is read. The click's own busy
+    wait (ADV-07) is cut short here, so the second skeleton reaches the read."""
+    f = dataclasses.replace(
+        h.flow("skeleton_then_form"), name="skeleton_wizard", start="skeleton_wizard.html",
+        timing=(*h.flow("skeleton_then_form").timing, (("apply_run", "BUSY_WAIT_S"), 0.3)))
+    r = h.run_flow(f, _SkeletonAsSignUp(), "skeleton-wizard", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, r
+    waited = [w for w in _decisions(Path(r.trace), "reread_after_settle")
+              if w["why"].startswith("a loading placeholder")]
+    assert len(waited) == 2, [w["why"] for w in _decisions(Path(r.trace), "reread_after_settle")]
+    assert not any(w["still_loading"] for w in waited), waited
 
 
 # --- study G13: a privacy step's accept is its way on, its decline never ---------------------------

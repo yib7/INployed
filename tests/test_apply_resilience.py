@@ -698,10 +698,12 @@ def _counter(posts: list):
     return _handle
 
 
-def _drain_jobs(browser, tmp_path, jobs, routes, *, submit=False):
-    """A drain of `jobs` ((id, url) pairs) under the fake judge on an offline
-    context with `routes` (a glob -> HTML or a handler, the later winning):
-    the outcomes, and the URLs of the tabs left open."""
+def _drain_jobs(browser, tmp_path, jobs, routes, *, submit=False, judge=None, inbox=None):
+    """A drain of `jobs` ((id, url) pairs) under `judge` (the fake one by
+    default) on an offline context with `routes` (a glob -> HTML or a
+    handler, the later winning), `inbox` standing in for the mailbox when
+    given: the outcomes, and the URLs of the tabs left open. The queue is
+    `tmp_path / "queue.json"` (`_entries`)."""
     import apply_queue
     import apply_run
     queue = tmp_path / "queue.json"
@@ -721,16 +723,23 @@ def _drain_jobs(browser, tmp_path, jobs, routes, *, submit=False):
             ctx.route(glob, body if callable(body) else h._fulfiller(body))
         try:
             runner = apply_run.Runner(
-                jev=jev.FakeJev(), queue_path=queue, profile_dir=tmp_path / "p",
+                jev=judge if judge is not None else jev.FakeJev(), queue_path=queue,
+                profile_dir=tmp_path / "p",
                 settings={"auto_apply_headless": True, "auto_apply_jev_mode": "fake",
                           "auto_apply_submit": submit, "auto_apply_generate": True},
                 context=ctx, run_context={"signup_email": h.SIGNUP_EMAIL, "inbox_url": ""},
-                sleep=lambda s: None)
+                inbox=inbox, sleep=lambda s: None)
             outcomes = runner.drain(cap=5)
             left = [str(p.url) for p in ctx.pages if not p.is_closed()]
         finally:
             ctx.close()
     return outcomes, left
+
+
+def _entries(tmp_path) -> dict[str, dict]:
+    """The queue `_drain_jobs` worked, its entries by id."""
+    import apply_queue
+    return {e["job_posting_id"]: e for e in apply_queue.load(tmp_path / "queue.json")["jobs"]}
 
 
 def _trace_of(tmp_path, jid: str) -> str:
@@ -796,6 +805,176 @@ def test_the_linkedin_tab_closes_once_the_company_tab_is_adopted_and_each_job_ke
     assert sorted(left) == sorted([f"{flow_server.base}/forms/lever_single.html",
                                    f"{flow_server.base}/forms/ashby_steps.html"]), left
     assert "source_tab_closed" in _trace_of(tmp_path, "a")
+
+
+# --- the judge down once something may have been sent (RES-02, SP8a review I1) ---------------
+
+class _GoesDown(jev.FakeJev):
+    """The fake judge until `off` is set, then a service that stays down (a
+    529 on every try): `jev.Guarded`'s retries run out and its breaker opens."""
+
+    off = False
+
+    def judge(self, state, questions):
+        if self.off:
+            raise _Busy(529)
+        return super().judge(state, questions)
+
+
+def _down_from(monkeypatch, judge: _GoesDown, step: str, *, after: bool = False) -> None:
+    """The judge goes down as the run enters `step` (a `_JobRun` method), or
+    once that step returns (`after`)."""
+    import apply_run
+    real = getattr(apply_run._JobRun, step)
+
+    def _step(self, *a, **kw):
+        judge.off = judge.off or not after
+        result = real(self, *a, **kw)
+        judge.off = True
+        return result
+    monkeypatch.setattr(apply_run._JobRun, step, _step)
+
+
+_WAIT = """<!doctype html><html><head><title>Next</title></head><body>
+<p>Please wait while we process your details.</p></body></html>"""
+
+
+def _sink(posts: list, body: str = _WAIT):
+    """A route handler that counts each request it answers (`posts`) and
+    answers with `body`."""
+    def _handle(route, request) -> None:
+        posts.append(str(request.method))
+        route.fulfill(body=body, content_type="text/html")
+    return _handle
+
+
+# The form's own script sends the answers to a form service on another host
+# and shows the wait: no request to the application's sites
+_FORM_SERVICE = "https://forms.backend.example/submit"
+_OFF_SITE_FORM = _POST_FORM.replace('<form method="post" action="/post/submit">', "<form>").replace(
+    'type="submit"', 'type="button"').replace("</form>", (
+        "</form><p id='wait' hidden>Please wait while we process your details.</p>"
+        "<script>document.getElementById('btn-submit').addEventListener('click', function () {"
+        f" fetch('{_FORM_SERVICE}', {{method: 'POST', body: 'a'}}).catch(function () {{}});"
+        " document.querySelector('form').hidden = true;"
+        " document.getElementById('wait').hidden = false; });</script>"))
+# The application's first step, then a code step whose Verify sends
+_STEP_ONE = """<!doctype html><html><head><title>Apply for Analytics Engineer</title></head>
+<body><h1>Apply for Analytics Engineer</h1><p>Fabrikam, Remote</p>
+<label>First name * <input name="first_name" required></label>
+<label>Last name * <input name="last_name" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<button type="button" onclick="location.href='/apply/verify'">Continue</button>
+</body></html>"""
+_CODE_STEP = (_FORMS / "code_gate.html").read_text(encoding="utf-8").replace(
+    "window.location.href = 'confirmation.html';",
+    "fetch('/post/verify', {method: 'POST', body: 'c'}).then(function () {"
+    " location.href = '/post/next'; });")
+
+
+class _Mailbox:
+    """The inbox's code, with no mailbox page read."""
+
+    def fetch_code(self, page, site, inbox_url):
+        return "MKPZ3QRA"
+
+
+def _one_send_and_the_drain_stopped(outcomes, jobs, posts) -> None:
+    """Something may have been sent: the job ended, never back in the queue
+    with its attempt given back; exactly one send reached the site; the drain
+    stopped with the next job still queued."""
+    assert [o.job_id for o in outcomes] == ["a"], outcomes
+    assert outcomes[0].judge_down
+    assert posts == ["POST"], posts
+    a, b = jobs["a"], jobs["b"]
+    assert a["status"] == outcomes[0].status != "queued", a
+    assert a["attempts"] == 1
+    assert (b["status"], b["attempts"]) == ("queued", 0)
+
+
+def test_a_judge_down_after_the_submit_sent_ends_the_job_submitted_unconfirmed(
+        _browser, tmp_path, monkeypatch):
+    import apply_run
+    posts: list[str] = []
+    judge = _GoesDown()
+    _down_from(monkeypatch, judge, "_after_submit")
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/apply"),
+                                                   ("b", f"{_CAREERS}/apply")], {
+        f"{_CAREERS}/apply": _POST_FORM, f"{_CAREERS}/post/submit": _sink(posts)},
+        submit=True, judge=judge)
+    _one_send_and_the_drain_stopped(outcomes, _entries(tmp_path), posts)
+    reason = outcomes[0].reason
+    assert outcomes[0].status == "submitted", outcomes
+    assert reason.startswith(f"submitted (unconfirmed): {apply_run.JUDGE_DOWN_REASON}: "
+                             f"_Busy 529 at "), reason
+    assert reason.endswith(f"(after POST {_CAREERS}/post/submit)"), reason
+
+
+def test_a_judge_down_after_the_submit_with_no_send_seen_on_the_sites_asks_the_person(
+        _browser, tmp_path, monkeypatch):
+    import apply_run
+    posts: list[str] = []
+    judge = _GoesDown()
+    _down_from(monkeypatch, judge, "_after_submit")
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/apply"),
+                                                   ("b", f"{_CAREERS}/apply")], {
+        f"{_CAREERS}/apply": _OFF_SITE_FORM, _FORM_SERVICE: _sink(posts, "ok")},
+        submit=True, judge=judge)
+    _one_send_and_the_drain_stopped(outcomes, _entries(tmp_path), posts)
+    reason = outcomes[0].reason
+    assert outcomes[0].status == "needs_human", outcomes
+    assert reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the submit "
+                             f"click ({apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
+    assert reason.endswith(f"; a request left: POST {_FORM_SERVICE}"), reason
+    assert h.policy_park(outcomes[0].status, reason) is True
+
+
+def test_a_judge_down_after_the_code_step_of_a_filled_application_asks_the_person(
+        _browser, tmp_path, monkeypatch):
+    import apply_run
+    posts: list[str] = []
+    judge = _GoesDown()
+    _down_from(monkeypatch, judge, "_code_gate", after=True)
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/apply"),
+                                                   ("b", f"{_CAREERS}/apply")], {
+        f"{_CAREERS}/apply": _STEP_ONE, f"{_CAREERS}/apply/verify": _CODE_STEP,
+        f"{_CAREERS}/post/verify": _sink(posts, "ok"), f"{_CAREERS}/post/next": _WAIT},
+        submit=True, judge=judge, inbox=_Mailbox())
+    _one_send_and_the_drain_stopped(outcomes, _entries(tmp_path), posts)
+    reason = outcomes[0].reason
+    assert outcomes[0].status == "needs_human", outcomes
+    assert reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the code "
+                             f"step ({apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
+    assert h.policy_park(outcomes[0].status, reason) is True
+
+
+def test_a_park_a_step_reached_with_the_judge_down_after_the_submit_click_stands(
+        _browser, tmp_path, monkeypatch):
+    # a step that noted the outage and went on to a park of its own (the
+    # run's `_Parked` branch): the park stands, the job is never re-queued
+    import apply_run
+    posts: list[str] = []
+    judge = _GoesDown()
+
+    def _swallowed(self, watch, before, account, handoff):
+        judge.off = True
+        try:
+            self.r.jev.judge({"page": "after the submit"}, {"q": {"type": "noul",
+                                                                  "instructions": "x"}})
+        except jev.JudgeOutage:
+            pass
+        raise apply_run._Parked("needs_human", f"the site showed an error after the submit "
+                                               f"click (Something went wrong); "
+                                               f"{apply_run.CHECK_SENT_REASON}")
+    monkeypatch.setattr(apply_run._JobRun, "_read_after_submit", _swallowed)
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/apply"),
+                                                   ("b", f"{_CAREERS}/apply")], {
+        f"{_CAREERS}/apply": _POST_FORM, f"{_CAREERS}/post/submit": _sink(posts)},
+        submit=True, judge=judge)
+    _one_send_and_the_drain_stopped(outcomes, _entries(tmp_path), posts)
+    assert outcomes[0].status == "needs_human", outcomes
+    assert outcomes[0].reason.startswith("the site showed an error after the submit click"), \
+        outcomes[0].reason
 
 
 # --- the drain's summary table ---------------------------------------------------------------

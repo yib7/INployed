@@ -192,8 +192,11 @@ def test_fetch_code_hands_the_ats_and_company_to_the_from_site_question(browser_
     assert "Greenhouse" in blob and "Fabrikam" in blob and "127.0.0.1" in blob
 
 
-def test_no_code_polls_are_bounded(browser_page, fixtures_server):
+def test_no_code_polls_are_bounded(browser_page, fixtures_server, monkeypatch):
     inbox = _inbox()
+    # an inbox with no row at all: each poll's wait for rows (ACC-08) is cut
+    # short here, the polls and their waits are what this test counts
+    monkeypatch.setattr(inbox, "ROWS_WAIT_MS", 200)
     class Clock:
         now = 0
         waits = []
@@ -284,3 +287,119 @@ def test_a_subject_selector_drift_keeps_the_rows_that_carry_a_sender(browser_pag
 ])
 def test_provider_for_reads_the_inbox_host(url, expected):
     assert _inbox().provider_for(url) == expected
+
+
+# === SP7: a slow inbox, stale and used codes, verification links (ACC-05, 07, 08) ==========
+
+def test_a_slow_inbox_is_read_once_its_rows_render(browser_page, fixtures_server):
+    """ACC-08: the list renders 1.5 s after the page loads; the one poll
+    waits for its rows instead of reading an empty list."""
+    inbox = _inbox()
+    code = inbox.fetch_code(browser_page, "127.0.0.1", fixtures_server + "/inbox/slow_list.html",
+                            jev=jev.FakeJev(), polls=1, ats="greenhouse")
+    assert code == "MKPZ3QRA"
+
+
+def test_a_code_older_than_the_job_is_never_used(browser_page, fixtures_server):
+    """ACC-07: an earlier Greenhouse code sits above the fresh one; the rows
+    whose time is before the job's start are never offered."""
+    from datetime import datetime, timedelta
+    inbox = _inbox()
+    url = fixtures_server + "/inbox/stale_list.html"
+    since = datetime.now() - timedelta(minutes=1)
+    assert inbox.fetch_code(browser_page, "127.0.0.1", url, jev=jev.FakeJev(), polls=1,
+                            ats="greenhouse", since=since) == "MKPZ3QRA"
+    # with no start time nothing is ruled stale, and the top row's code wins
+    assert inbox.fetch_code(browser_page, "127.0.0.1", url, jev=jev.FakeJev(), polls=1,
+                            ats="greenhouse") == "OLD7C0DE"
+
+
+def test_a_code_used_once_in_the_job_is_never_offered_again(browser_page, fixtures_server):
+    """ACC-07: a code the run typed (by its hash) is never picked again: a
+    gate that comes back wants a new code."""
+    inbox = _inbox()
+    used = {inbox.code_hash("MKPZ3QRA")}
+    assert inbox.fetch_code(browser_page, "127.0.0.1",
+                            fixtures_server + "/inbox/outlook_list.html", jev=jev.FakeJev(),
+                            polls=1, ats="greenhouse", used=used) is None
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Mon 1/5/2026 9:12 AM", (2026, 1, 5, 9, 12)),
+    ("Thu, Sep 24, 2026, 10:42 PM", (2026, 9, 24, 22, 42)),
+    ("2026-09-24T10:42:00", (2026, 9, 24, 10, 42)),
+    ("1/5/2026", (2026, 1, 5, 0, 0)),
+    ("Sep 3", (2026, 9, 3, 0, 0)),
+    ("10:42 AM", (2026, 9, 24, 10, 42)),
+    ("22:05", (2026, 9, 24, 22, 5)),
+    ("Tue", (2026, 9, 22, 0, 0)),
+    ("Yesterday", (2026, 9, 23, 0, 0)), ("", None), ("soon", None),
+])
+def test_parse_when_reads_a_rows_time(text, expected):
+    from datetime import datetime
+    now = datetime(2026, 9, 24, 23, 0)      # a Thursday
+    got = _inbox().parse_when(text, now)
+    assert (got.timetuple()[:5] if got else None) == expected
+
+
+def test_fetch_link_takes_the_verification_link_on_the_application_site(
+        browser_page, fixtures_server):
+    """ACC-05: the account check's message among decoys; of its links only
+    the one that verifies, on the application's own host, is handed back
+    (never the careers link, the privacy page or the unsubscribe)."""
+    inbox = _inbox()
+    browser_page.goto(fixtures_server + "/forms/code_gate.html")
+    refused: list = []
+    link = inbox.fetch_link(browser_page, "127.0.0.1", fixtures_server + "/inbox/link_list.html",
+                            jev=jev.FakeJev(), allowed=lambda host: host == "127.0.0.1",
+                            polls=1, ats="workday", company="Fabrikam", refused=refused)
+    assert link == fixtures_server + "/forms/workday_account_verified.html?token=6f1c2e9a0b7d4e35"
+    assert refused == []
+    assert len(browser_page.context.pages) == 1     # the inbox tab is gone, the job's stays
+
+
+def test_fetch_link_never_opens_a_link_outside_the_allowed_hosts(browser_page, fixtures_server):
+    """ACC-05: a verification link through a mail tracker's host is named
+    and never requested."""
+    inbox = _inbox()
+    asked: list = []
+    browser_page.context.on("request", lambda r: asked.append(r.url))
+    refused: list = []
+    link = inbox.fetch_link(browser_page, "127.0.0.1",
+                            fixtures_server + "/inbox/link_outside_list.html", jev=jev.FakeJev(),
+                            allowed=lambda host: host == "127.0.0.1", polls=1, ats="workday",
+                            company="Fabrikam", refused=refused)
+    assert link is None
+    assert refused == ["click.mailtrack.invalid"]
+    assert not any("mailtrack" in u or "mailer.example" in u for u in asked), asked
+
+
+def test_verification_links_keep_the_allowed_verify_links_and_name_the_rest():
+    inbox = _inbox()
+    refused: list = []
+    links = [("Verify Account", "https://acme.wd5.myworkdayjobs.com/verify?t=1"),
+             ("Fabrikam Careers", "https://acme.wd5.myworkdayjobs.com/careers"),
+             ("Confirm your email", "https://click.tracker.invalid/c?u=2"),
+             ("here", "https://acme.wd5.myworkdayjobs.com/activate/3"),
+             ("Verify Account", "https://acme.wd5.myworkdayjobs.com/verify?t=1"),
+             ("Verify", "mailto:help@acme.example")]
+    got = inbox.verification_links(links, lambda host: host.endswith("myworkdayjobs.com"),
+                                   refused)
+    assert got == [("Verify Account", "https://acme.wd5.myworkdayjobs.com/verify?t=1"),
+                   ("here", "https://acme.wd5.myworkdayjobs.com/activate/3")]
+    assert refused == ["click.tracker.invalid"]
+
+
+def test_the_link_pick_names_each_link_by_its_text_and_host_never_its_url():
+    import apply_judge
+    state, questions = apply_judge.link_pick_questions(
+        [("Verify Account", "acme.wd5.myworkdayjobs.com"), ("here", "acme.wd5.myworkdayjobs.com")],
+        "Open the link below to verify your email address.")
+    assert set(questions["link_pick"]["criteria"]) == {"link_0", "link_1", "none"}
+    assert "?" not in json.dumps(state)          # no URL, so no token, reaches the judge
+    pick = jev.Answer(kind="choice", choice="link_1", probabilities={"link_1": 1.0},
+                      confidence=1.0)
+    assert apply_judge.read_link_pick({"link_pick": pick}, 2) == 1
+    assert apply_judge.read_link_pick({"link_pick": pick}, 1) is None
+    none = jev.Answer(kind="choice", choice="none", probabilities={"none": 1.0}, confidence=1.0)
+    assert apply_judge.read_link_pick({"link_pick": none}, 2) is None

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-provider="outlook">
+<title>Inbox</title>
+<body>
+<!-- A slow webmail (ACC-08): the page loads with a spinner and its message
+     list renders 1.5 s later. -->
+<p id="loading">Loading your mail...</p>
+<div id="list" role="listbox" aria-label="Message list"></div>
+<script>
+  window.setTimeout(function () {
+    document.getElementById('loading').remove();
+    document.getElementById('list').innerHTML =
+      '<div role="option" onclick="location.href=\'order_message.html\'">' +
+      '<span data-testid="sender">orders@shopfront.example</span>' +
+      '<span data-testid="subject">Order #48213 confirmed</span>' +
+      '<span data-testid="preview">Your order number is 48213 and it ships on Tuesday.</span></div>' +
+      '<div role="option" onclick="location.href=\'outlook_message.html\'">' +
+      '<span data-testid="sender">no-reply@greenhouse.io</span>' +
+      '<span data-testid="subject">Your Greenhouse security code</span>' +
+      '<span data-testid="preview">Message sent by Greenhouse. Your security code is MKPZ3QRA.</span></div>';
+  }, 1500);
+</script>
+</body></html>

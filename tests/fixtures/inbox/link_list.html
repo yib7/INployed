@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-provider="outlook">
+<title>Inbox</title>
+<body>
+<!-- ACC-05: a Workday tenant's account check is a link, among decoys: an
+     order, another site's code, a newsletter. -->
+<div role="listbox" aria-label="Message list">
+
+<div role="option" onclick="location.href='order_message.html'">
+<span data-testid="sender">orders@shopfront.example</span>
+<span data-testid="subject">Order #48213 confirmed</span>
+<span data-testid="preview">Your order number is 48213 and it ships on Tuesday.</span></div>
+
+<div role="option" onclick="location.href='ashby_message.html'">
+<span data-testid="sender">no-reply@ashbyhq.com</span>
+<span data-testid="subject">Verify your email for Ashby</span>
+<span data-testid="preview">Your Ashby verification code is Q7R2XK.</span></div>
+
+<div role="option" onclick="location.href='link_message.html'">
+<span data-testid="sender">fabrikam@myworkday.com</span>
+<span data-testid="subject">Fabrikam: verify your candidate account</span>
+<span data-testid="preview">Message sent by Workday for Fabrikam. Open the link below to verify your email address and activate your account.</span></div>
+
+<div role="option" onclick="location.href='plain_message.html'">
+<span data-testid="sender">newsletter@weekly.example</span>
+<span data-testid="subject">This week in analytics</span>
+<span data-testid="preview">Five charts worth a second look.</span></div>
+
+</div></body></html>

@@ -255,6 +255,9 @@ FAST_TIMING = {
     ("apply_run", "POST_SUBMIT_WAIT_S"): 10.0,
     ("apply_run", "POST_SUBMIT_POLL_S"): 0.2,
     ("apply_run", "POST_SUBMIT_QUIET_S"): 0.3,
+    # an inbox page's rows: the slow inbox fixture renders them 1.5 s after
+    # its load; an inbox with no row at all is read as empty after this
+    ("apply_inbox", "ROWS_WAIT_MS"): 4_000,
 }
 
 

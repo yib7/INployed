@@ -1915,14 +1915,25 @@ ATS_NAMES: dict[str, str] = {
 }
 
 
+_INBOX_WANTS = {
+    "code": "Does `messages[{i}]` carry a verification code or a security code for the reader "
+            "to enter on a website?",
+    # ACC-05: an account check by link (Workday, SuccessFactors, iCIMS)
+    "link": "Does `messages[{i}]` ask the reader to open a link to verify an email address or "
+            "to activate an account?",
+}
+
+
 def inbox_questions(messages: list[Mapping[str, Any]], site: str, *, ats: str = "",
-                    company: str = "") -> tuple[dict, dict]:
+                    company: str = "", want: str = "code") -> tuple[dict, dict]:
     """Two Nouls per message, one yes/no each: `msg_{n}_from_site` (sent by
     `site`, or by the applicant tracking service `ats` that handles
     `company`'s applications, when the system is a known one) and
-    `msg_{n}_has_code` (carries a verification or security code).
-    `read_inbox` combines them. The site alone is the form's host, which
-    rarely sends the mail; the ATS name is what the sender address shows."""
+    `msg_{n}_has_{want}`: with `want` "code", carries a verification or
+    security code; with "link", asks for a link to be opened to verify the
+    address or activate the account (ACC-05). `read_inbox` combines them.
+    The site alone is the form's host, which rarely sends the mail; the ATS
+    name is what the sender address shows."""
     rows = [{"n": int(m["n"]), "sender": str(m.get("sender", "")),
              "subject": str(m.get("subject", "")), "preview": str(m.get("preview", ""))}
             for m in messages]
@@ -1948,29 +1959,53 @@ def inbox_questions(messages: list[Mapping[str, Any]], site: str, *, ats: str = 
                             "judging by the sender address and the message text?",
             }
         questions[f"msg_{n}_from_site"] = {"type": "noul", "instructions": from_site}
-        questions[f"msg_{n}_has_code"] = {
+        questions[f"msg_{n}_has_{want}"] = {
             "type": "noul",
-            "instructions": f"Does `messages[{i}]` carry a verification code or a security "
-                            "code for the reader to enter on a website?",
+            "instructions": _INBOX_WANTS[want].format(i=i),
         }
     return state, questions
 
 
 def read_inbox(answers: Mapping[str, Answer],
-               messages: list[Mapping[str, Any]]) -> int | None:
-    """The n of the message maximising `from_site * has_code`, with both above
-    `INBOX_MIN`; None when no message qualifies."""
+               messages: list[Mapping[str, Any]], want: str = "code") -> int | None:
+    """The n of the message maximising `from_site * has_{want}`, with both
+    above `INBOX_MIN`; None when no message qualifies."""
     best_n, best_p = None, 0.0
     for m in messages:
         n = int(m["n"])
         from_site = noul_of(answers, f"msg_{n}_from_site")
-        has_code = noul_of(answers, f"msg_{n}_has_code")
-        if from_site <= INBOX_MIN or has_code <= INBOX_MIN:
+        has = noul_of(answers, f"msg_{n}_has_{want}")
+        if from_site <= INBOX_MIN or has <= INBOX_MIN:
             continue
-        p = from_site * has_code
+        p = from_site * has
         if p > best_p:
             best_n, best_p = n, p
     return best_n
+
+
+def link_pick_questions(links: list[tuple[str, str]], body: str) -> tuple[dict, dict]:
+    """ACC-05: one Choice `link_pick` over a message's verification links
+    (each its text and its host, never its URL: a token rides there) plus
+    `none`."""
+    rows = [{"n": i, "text": str(text)[:READ_TEXT_CAP], "host": str(host)}
+            for i, (text, host) in enumerate(links)]
+    state = {"body": str(body or "")[:2000], "links": rows}
+    criteria: dict[str, Any] = {f"link_{r['n']}": f"{r['text']} ({r['host']})" for r in rows}
+    criteria["none"] = "No listed link verifies the address or activates the account"
+    questions = {"link_pick": {
+        "type": "choice",
+        "instructions": "Which link in `links` verifies the email address or activates the "
+                        "account that `body` asks the reader to confirm?",
+        "criteria": criteria,
+    }}
+    return state, questions
+
+
+def read_link_pick(answers: Mapping[str, Answer], count: int) -> int | None:
+    """The picked link's index, or None (`none`, or no pick)."""
+    choice, _ = _choice_of(answers, "link_pick")
+    m = re.fullmatch(r"link_(\d+)", str(choice or ""))
+    return int(m.group(1)) if m and int(m.group(1)) < count else None
 
 
 def code_pick_questions(candidates: list[str], body: str) -> tuple[dict, dict]:

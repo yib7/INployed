@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-provider="outlook">
+<title>Inbox</title>
+<body>
+<!-- ACC-07: an earlier code from the same ATS still sits among the newest
+     rows, above the code this sign-up just asked for. The fresh row's time
+     is the time the page was opened; the stale one's is a date long past. -->
+<div role="listbox" aria-label="Message list">
+
+<div role="option" onclick="location.href='stale_message.html'">
+<span data-testid="sender">no-reply@greenhouse.io</span>
+<span data-testid="subject">Your Greenhouse security code</span>
+<span data-testid="preview">Message sent by Greenhouse. Your security code is OLD7C0DE.</span>
+<span data-testid="date" title="Mon 1/5/2026 9:12 AM">1/5/2026</span></div>
+
+<div role="option" onclick="location.href='plain_message.html'">
+<span data-testid="sender">nina@friends.example</span>
+<span data-testid="subject">Dinner on Friday</span>
+<span data-testid="preview">Seven works for us if it works for you.</span>
+<span data-testid="date" title="Sun 1/4/2026 6:40 PM">1/4/2026</span></div>
+
+<div role="option" onclick="location.href='outlook_message.html'">
+<span data-testid="sender">no-reply@greenhouse.io</span>
+<span data-testid="subject">Your Greenhouse security code</span>
+<span data-testid="preview">Message sent by Greenhouse. Your security code is MKPZ3QRA.</span>
+<span data-testid="date" id="fresh-date"></span></div>
+
+</div>
+<script>
+  (function () {
+    var now = new Date();
+    var h = now.getHours(), m = now.getMinutes();
+    var clock = ((h % 12) || 12) + ':' + (m < 10 ? '0' : '') + m + (h < 12 ? ' AM' : ' PM');
+    var day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][now.getDay()];
+    var el = document.getElementById('fresh-date');
+    el.textContent = clock;
+    el.title = day + ' ' + (now.getMonth() + 1) + '/' + now.getDate() + '/' + now.getFullYear()
+      + ' ' + clock;
+  })();
+</script>
+</body></html>

@@ -2,6 +2,14 @@
 
 - The ledger's account for a sign-in host that names no tenant, found by
   the job's own hosts (ACC-13).
+- The account check by code in one-character boxes (ACC-06), never with a
+  code older than the job (ACC-07), or by a link in the email opened on an
+  allowed host only (ACC-05); the Workday account path to the gate.
+- A create-account button (ACC-01), one sign-in without a ledger entry
+  (ACC-02), an account that exists (ACC-03), password rules (ACC-04), a
+  slow sign-up (ACC-09), an account step's error (ACC-10), a sign-in only
+  with another site (ACC-11), a sign-up shown again (ACC-12).
+- The password invariants the harness asserts on every run.
 
 Headless Chromium through the module-scoped test browser for the flows; no
 network, no judge but `FakeJev`, `NoisyJev` or a scripted one; the master
@@ -696,3 +704,12 @@ def test_the_create_account_button_is_the_one_that_makes_an_account(browser_page
     digest = apply_form.extract(browser_page)
     assert run.accounts._signup_button(browser_page, digest, "127.0.0.1") is True
     assert browser_page.evaluate("document.body.dataset.took") == "create"
+
+
+def test_a_sign_ins_box_that_came_back_is_never_typed_again(tmp_path):
+    # ACC-12 re-types a sign-up's emptied boxes only: a sign-in's box that came
+    # back is a rejected password, and a second typing moves toward a lockout
+    run = _job_run(tmp_path, "127.0.0.1")
+    digest = _boxes_digest(("Password", "current-password"))
+    assert run.accounts._retype("127.0.0.1", [object()], digest) is False
+    assert run.accounts.retyped == set()

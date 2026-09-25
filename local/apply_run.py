@@ -1009,7 +1009,9 @@ class _Accounts:
         password boxes emptied (the site cleared them after an error in
         another box) takes the master password once more, once per site;
         a screen that kept them, or a third showing, never does."""
-        if site in self.retyped or not passwords:
+        if site in self.retyped or not passwords or password_step(digest) == "signin":
+            # a sign-in's box that came back is a rejected password, never
+            # typed again (a lockout)
             return False
         try:
             empty = all(int(loc.evaluate("el => (el.value || '').length")) == 0
@@ -5986,19 +5988,24 @@ class _JobRun:
             return
         self.form_had_password = True
         host = digest.url_host or _host(self.page.url)
-        if _site(host) in self.form_password_sites and not self._form_retype(host, digest, boxes):
-            # a second form page asking for the password on the same site is
-            # the first one rejected (a wrong password): typing it again only
-            # moves the account toward a lockout
-            says = page_problem(digest)
-            raise _Parked("needs_human", f"the form on {host} asked for the master password "
-                                         "again" + (f" (the page says {says!r})" if says else ""),
-                          LOGIN_NOTE)
         fields = {f.n: f for f in digest.fields}
+        # the page makes the password (an account made inside the
+        # application) rather than signs in with it
         making = len(boxes) > 1 or any(
             str(f.autocomplete or "").lower() == "new-password"
             or _NEW_PASSWORD.search(f"{f.label or ''} {f.id_or_name or ''}")
             for f in (fields.get(pf.n) for pf in boxes) if f is not None)
+        if _site(host) in self.form_password_sites \
+                and not (making and self._form_retype(host, digest, boxes)):
+            # a second form page asking for the password on the same site is
+            # the first one rejected (a wrong password): typing it again only
+            # moves the account toward a lockout. A form that makes the
+            # account, shown again with its password emptied, is no sign-in
+            # and takes it once more (ACC-12)
+            says = page_problem(digest)
+            raise _Parked("needs_human", f"the form on {host} asked for the master password "
+                                         "again" + (f" (the page says {says!r})" if says else ""),
+                          LOGIN_NOTE)
         if making and ats_accounts.has_password():
             self._check_password_rules(digest, host)       # ACC-04, before anything is typed
         frames = apply_form.frames(self.page)
@@ -6062,9 +6069,11 @@ class _JobRun:
                 self._record_account(account_host, email)
 
     def _form_retype(self, host: str, digest: apply_form.FormDigest, boxes: list) -> bool:
-        """ACC-12: the form page that took the master password, shown again
-        with the same boxes and its password boxes emptied (the site cleared
-        them after an error elsewhere), takes it once more, once per site."""
+        """ACC-12: the form page that made an account with the master
+        password (the caller's check: a new-password box, or a second box to
+        confirm it; a sign-in's box never), shown again with the same boxes
+        and its password boxes emptied (the site cleared them after an error
+        elsewhere), takes it once more, once per site."""
         site = _site(host)
         if site in self._form_retyped or self._form_password_sigs.get(site) != _fields_sig(digest):
             return False

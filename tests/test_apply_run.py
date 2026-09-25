@@ -1409,9 +1409,11 @@ def test_a_form_gets_the_master_password_once_per_site(
                       {"STATE": "application_form", "CONF": 0.9})()
     out = runner.drain(cap=1)[0]
     assert typed == [1], out
+    # SP7 (ACC-12): the park names what the page says about it; a sign-in's
+    # box is never typed again, whatever the page says
     assert (out.status, out.reason) == (
         "needs_human", "the form on careers.fabrikam.example asked for the master password "
-                       "again"), out
+                       "again (the page says 'That password is not right. Try again.')"), out
 
 
 _SIGN_UP_THEN_APPLY = """<!doctype html><html><head><title>Create account</title></head><body>

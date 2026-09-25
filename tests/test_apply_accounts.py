@@ -563,6 +563,14 @@ def test_a_portal_that_signs_in_only_with_another_site_parks_and_clicks_none(
     (["Sign in with Google"], [("Email", "email")], []),         # a box to fill
     (["Apply with LinkedIn", "Apply"], [], []),                  # a posting's own Apply
     (["Log in using your SSO account", "Help"], [], ["SSO"]),
+    # M4 (SP7 review): a control that may show the screen's own way on
+    (["Sign in with Google", "More options"], [], []),
+    (["Sign in with Google", "Use another method"], [], []),
+    (["Continue with Microsoft", "Show more"], [], []),
+    (["Sign in with Google", "Other ways to sign in"], [], []),
+    # help, a way back, a cancel, a close or a notice is no way on
+    (["Sign in with Google", "Help", "Back", "Cancel", "Close", "Privacy policy",
+      "Cookie settings"], [], ["Google"]),
 ])
 def test_sso_only_reads_a_screen_whose_one_way_on_is_another_sites_sign_in(buttons, fields,
                                                                          sites):

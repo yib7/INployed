@@ -2077,12 +2077,21 @@ _SSO_NAME = re.compile(r"\b(?:with|using|via|through)\s+(?:your\s+)?([a-z]+)\b",
 _SSO_NAMES = {"linkedin": "LinkedIn", "github": "GitHub", "sso": "SSO", "x": "X"}
 
 
+# the controls a screen of sign-ins with other sites may hold beside them,
+# none a way on of its own: help, a way back, a cancel, a close, the site's
+# privacy, terms and cookie notices
+_SSO_ASIDE = re.compile(r"\bhelp\b|\bback\b|\bcancel\b|\bclose\b|\bdismiss\b|\bprivacy\b"
+                        r"|\bterms\b|\bcookies?\b", re.I)
+
+
 def sso_only(digest: apply_form.FormDigest) -> list[str]:
     """ACC-11: the sites a screen offers to sign in with, when that is its
     only way on: no box to fill but tick boxes, at least one sign-in with
-    another site's account (`THIRD_PARTY`), and no button of its own that
-    goes on (an Apply, a Next, a sign-in or a sign-up of its own, a send);
-    [] else. The site's header never counts."""
+    another site's account (`THIRD_PARTY`), and no other control but help,
+    a way back, a cancel, a close or a notice (`_SSO_ASIDE`): an Apply, a
+    Next, a sign-in or a sign-up of its own, a send, or a control that may
+    show the screen's own way on ("More options", "Use another method")
+    means []. The site's header never counts."""
     if any(f.type != "checkbox" for f in digest.fields):
         return []
     names: list[str] = []
@@ -2099,7 +2108,8 @@ def sso_only(digest: apply_form.FormDigest) -> list[str]:
                     names.append(name)
             continue
         if apply_judge.entry_worded(text) or apply_judge.ADVANCE_WORDS.search(text) \
-                or _ACCOUNT_BUTTON.search(text) or apply_judge.SEND_WORDS.search(text):
+                or _ACCOUNT_BUTTON.search(text) or apply_judge.SEND_WORDS.search(text) \
+                or not _SSO_ASIDE.search(text):
             return []
     return names
 

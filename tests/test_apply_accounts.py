@@ -753,7 +753,8 @@ def test_a_portal_whose_other_control_leads_nowhere_ends_with_the_sso_park(
     # R3-I1 (SP7 review): "Skip for now" is a control the run does not know,
     # so the screen is not read as SSO-only at once; the account step finds
     # no box to sign in with, and its login-wall park falls back to the SSO
-    # reason. No sign-in with another site is clicked and nothing is sent
+    # reason, its own words kept (R4-I1). No sign-in with another site is
+    # clicked and nothing is sent
     import dataclasses
     f = dataclasses.replace(h.flow("sso_buttons"), name="sso_buttons_skip",
                             routes=lambda base: {f"{base}/forms/sso_buttons.html": _SSO_SKIP})
@@ -762,9 +763,10 @@ def test_a_portal_whose_other_control_leads_nowhere_ends_with_the_sso_park(
                                              for t in ("Sign in with Google", "Skip for now")])) == []
     r = _run(f, tmp_path, _browser, flow_server, _SignInAsLoginWall())
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
-    assert r.reason == ("sign-in only through another site (Google, Microsoft, LinkedIn, "
-                        "Apple); the run never signs in with another site, and nothing else on "
-                        "the screen took it on"), r.reason
+    assert r.reason.startswith("sign-in only through another site (Google, Microsoft, LinkedIn, "
+                               "Apple); the run never signs in with another site, and nothing "
+                               "else on the screen took it on; the account step's park: login "
+                               "wall (read as login_wall "), r.reason
     assert r.policy is True
     assert not [a for a in r.actions
                 if a.kind == "click" and apply_run._THIRD_PARTY.search(a.text or "")], r.actions
@@ -781,34 +783,156 @@ def _sso_with(control: str) -> str:
         "</button>")
 
 
-@pytest.mark.parametrize("control, dead_end", [
-    ("Skip for now", "page did not advance (read as "),
-    ("Candidate login", "no way forward on this page (buttons: "),
-    ("Create one", "the advance button (Create one) did nothing ("),
-])
-def test_a_portal_whose_other_control_does_nothing_ends_with_the_sso_park(
-        _browser, flow_server, tmp_path, control, dead_end):
-    # R3-I1 (SP7 review, round 3 addition): a control beside the sign-ins
-    # with other sites that does nothing ends the run at a dead end (the page
-    # stayed put, no way on, the way on did nothing). On a screen with no box
-    # to fill the dead end parks with the SSO reason, under the plain fake.
-    # No sign-in with another site is clicked and nothing is sent
+def _careers(title: str, main: str, script: str = "") -> str:
+    return ("<!doctype html><html lang='en'><head><meta charset='utf-8'><title>" + title
+            + "</title></head><body><header><a href='#'>Fabrikam Careers</a></header><main>"
+            + main + "</main>" + script + "</body></html>")
+
+
+_REVIEW_STEP = ("<h1>Step 3 of 4: Review your application</h1><p>Analytics Engineer. Check your "
+                "details, then go on.</p><button type='button'>Back</button><button type='button' "
+                "id='nx'>Next</button><button type='button'>Sign in with Google to save your "
+                "progress</button>")
+# a dead end beside sign-ins with other sites, and an account park on a
+# screen with a way on of its own: the fake's end, which is its own park
+_DEAD_ENDS = {
+    # sso_buttons.html with one more control that does nothing
+    "skip": (_sso_with("Skip for now"), r"^page did not advance \(read as application_form "),
+    "candidate_login": (_sso_with("Candidate login"),
+                        r"^no way forward on this page \(buttons: .*Candidate login other"),
+    "create_one": (_sso_with("Create one"),
+                   r"^the advance button \(Create one\) did nothing \(judged advance [\d.]+, "
+                   r"clicked twice\)$"),
+    # R4-I1 (SP7 review): the review's four screens with a way on of their own
+    "review_next": (_careers("Review - Fabrikam Careers", _REVIEW_STEP),
+                    r"^the advance button \(Next\) did nothing \(judged advance [\d.]+, clicked "
+                    r"twice\)$"),
+    "review_next_saves": (_careers(
+        "Review - Fabrikam Careers", _REVIEW_STEP,
+        "<script>document.getElementById('nx').addEventListener('click', function () { "
+        "fetch('/api/step', {method: 'POST', body: 'x'}).catch(function () {}); });</script>"),
+        r"^the advance button \(Next\) did nothing \(judged advance [\d.]+, its request left: "
+        r"POST \S+/api/step; it was not clicked again\)$"),
+    "posting_apply": (_careers(
+        "Analytics Engineer - Fabrikam Careers",
+        "<h1>Analytics Engineer</h1><p>Remote. Build the data models behind our reporting.</p>"
+        "<button type='button'>Apply now</button><button type='button'>Sign in with "
+        "LinkedIn</button>"),
+        r"^login wall \(read as login_wall .*Apply now apply_entry"),
+    "portal_email": (_careers(
+        "Sign in - Fabrikam Careers",
+        "<h1>Sign in to apply</h1><p>Continue your application for Analytics Engineer.</p>"
+        "<button type='button'>Continue with Google</button><button type='button'>Continue "
+        "with Microsoft</button><button type='button'>Continue with email</button>"),
+        r"^the advance button \(Continue with email\) did nothing \(judged advance [\d.]+, "
+        r"clicked twice\)$"),
+}
+
+
+@pytest.mark.parametrize("name", list(_DEAD_ENDS))
+def test_a_dead_end_beside_sign_ins_with_other_sites_keeps_its_own_park(
+        _browser, flow_server, tmp_path, name):
+    # R4-I1 (SP7 review): a dead end (the page did not advance, no way
+    # forward, a way on that did nothing, a step save whose request left)
+    # keeps its own park and reason, and so does an account park on a screen
+    # with a way on of its own ("Apply now"): the words of a dead control
+    # cannot tell the page's own way on from a sign-in's. The harness counts
+    # each outside the policy, so the matrix sees it. No sign-in with
+    # another site is clicked and nothing is sent
     import dataclasses
-    page = _sso_with(control)
-    f = dataclasses.replace(h.flow("sso_buttons"), name="sso_buttons_dead_end",
+    page, reason = _DEAD_ENDS[name]
+    f = dataclasses.replace(h.flow("sso_buttons"), name=f"sso_dead_end_{name}", reason=reason,
                             routes=lambda base: {f"{base}/forms/sso_buttons.html": page})
-    r = _run(f, tmp_path, _browser, flow_server, jev.FakeJev())
+    r = _run(f, tmp_path, _browser, flow_server)
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert r.status == "needs_human"
-    assert r.reason == ("sign-in only through another site (Google, Microsoft, LinkedIn, "
-                        "Apple); the run never signs in with another site, and nothing else on "
-                        "the screen took it on"), r.reason
-    assert r.policy is True
+    assert r.policy is False, r.reason
     assert not [a for a in r.actions
                 if a.kind == "click" and apply_run._THIRD_PARTY.search(a.text or "")], r.actions
     assert r.sends == 0
-    fallback = [e for e in _events(r, "decision") if e["what"] == "sso_fallback"]
-    assert len(fallback) == 1 and fallback[0]["why"].startswith(dead_end), fallback
+    assert not [e for e in _events(r, "decision") if e["what"] == "sso_fallback"]
+
+
+_G = "Sign in with Google"
+_WALL = "login wall (read as login_wall 0.90; master password stored: no; boxes: none)"
+_SIGNUP = "account signup needed (read as signup 0.90; the create-account link led nowhere)"
+# R4-I1: the account parks and dead ends `_account_park` is handed, over the
+# screens of the review's probes: the SSO park only where the screen's only
+# way on is a sign-in with another site
+_ACCOUNT_PARKS = [
+    # beside the sign-ins, the site's own sign-in or sign-up, chrome, or a
+    # control the run does not know: the SSO park
+    (["Sign in", _G], _WALL, True),
+    (["Skip for now", _G], _WALL, True),
+    (["Candidate login", "Create one", "Help", _G], _SIGNUP, True),
+    (["Register", "Forgot password?", "Continue with Google"], _SIGNUP, True),
+    # a way on of its own: an Apply, a Next or a Continue, a send, another
+    # way to sign in
+    (["Next", _G], _WALL, False),
+    (["Continue", "Continue with Google"], _WALL, False),
+    (["Apply now", "Sign in with LinkedIn"], _WALL, False),
+    (["Continue with email", "Continue with Google", "Continue with Microsoft"], _WALL, False),
+    (["Use your phone number", _G], _WALL, False),
+    (["Email me a sign-in link", _G], _WALL, False),
+    (["More sign-in options", _G], _WALL, False),
+    (["Submit", _G], _SIGNUP, False),
+    (["I agree", _G], _SIGNUP, False),
+    # a dead end keeps its own park, whatever the screen holds
+    (["Skip for now", _G], "page did not advance (read as application_form 0.60 again after Skip "
+                           "for now (apply_entry))", False),
+    (["Candidate login", _G], "no way forward on this page (buttons: Sign in with Google advance "
+                              "1.00; Candidate login other 1.00)", False),
+    (["Create one", _G], "the advance button (Create one) did nothing (judged advance 1.00, "
+                         "clicked twice)", False),
+    (["Continue", "Continue with Google"], "the advance button (Continue) did nothing (judged "
+                                           "advance 0.90, its request left: POST "
+                                           "https://ats.example/api/step; it was not clicked "
+                                           "again)", False),
+]
+
+
+@pytest.mark.parametrize("buttons, reason, relabelled", _ACCOUNT_PARKS,
+                         ids=[f"{'+'.join(b)}|{r.split(' (')[0]}" for b, r, _ in _ACCOUNT_PARKS])
+def test_an_account_park_falls_back_to_sso_only_where_the_screen_has_no_way_on_of_its_own(
+        tmp_path, buttons, reason, relabelled):
+    import dataclasses
+    form = apply_run.apply_form
+    tick = form.Field(0, (0, "#t"), "Remember me", "checkbox", False)
+    digest = form.FormDigest("127.0.0.1", "Sign in", "", fields=[tick], buttons=[
+        form.Button(i, (0, f"#b{i}"), t) for i, t in enumerate(buttons)])
+    run = _job_run(tmp_path, "127.0.0.1")
+    parked = run._account_park(digest, reason)
+    site = "LinkedIn" if "LinkedIn" in " ".join(buttons) else "Google"
+    if relabelled:
+        assert parked.reason == (f"sign-in only through another site ({site}); the run never "
+                                 "signs in with another site, and nothing else on the screen "
+                                 f"took it on; the account step's park: {reason}")
+        assert parked.tab_note == apply_run.SSO_NOTE
+    else:
+        assert (parked.reason, parked.tab_note) == (reason, apply_run.LOGIN_NOTE)
+    # a box to fill is the account step's to fill: never the SSO park
+    boxed = dataclasses.replace(digest, fields=[form.Field(1, (0, "#p"), "Password", "password",
+                                                           True)])
+    assert run._account_park(boxed, reason).reason == reason
+
+
+@pytest.mark.parametrize("guard", ["submit_clicked", "_code_sent", "linkedin"])
+def test_an_account_park_after_a_send_may_have_gone_or_on_linkedin_keeps_its_own_words(
+        tmp_path, monkeypatch, guard):
+    # R4-I1: the main SSO check's guards. After the submit or a code step
+    # was clicked a send may have gone, so no park invites a Re-queue there;
+    # LinkedIn's own pages are never an ATS sign-in
+    form = apply_run.apply_form
+    digest = form.FormDigest("127.0.0.1", "Sign in", "", buttons=[
+        form.Button(0, (0, "#b0"), "Sign in"), form.Button(1, (0, "#b1"), _G)])
+    run = _job_run(tmp_path, "127.0.0.1")
+    assert run._account_park(digest, _WALL).tab_note == apply_run.SSO_NOTE
+    if guard == "linkedin":
+        monkeypatch.setattr(run, "_on_linkedin", lambda: True)
+    else:
+        setattr(run, guard, True)
+    parked = run._account_park(digest, _WALL)
+    assert (parked.reason, parked.tab_note) == (_WALL, apply_run.LOGIN_NOTE)
 
 
 # ACC-11: the controls beside two sign-ins with other sites, over every list

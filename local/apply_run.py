@@ -90,6 +90,7 @@ import posixpath
 import re
 import sys
 import time
+import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1851,6 +1852,36 @@ def entry_problem(entry: Any) -> str:
         except (TypeError, ValueError):
             return "attempts is not a number"
     return ""
+
+
+_HERE = os.path.normcase(os.path.abspath(__file__))
+ERROR_FRAMES = 12                  # the innermost frames of an error the trace keeps
+
+
+def error_step(e: BaseException) -> str:
+    """The run's own step an error came out of (RES-05): the innermost
+    function of this module on its traceback, without the leading
+    underscore ("run" when none is)."""
+    step = ""
+    tb = e.__traceback__
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        try:
+            if os.path.normcase(os.path.abspath(code.co_filename)) == _HERE:
+                step = code.co_name
+        except (TypeError, ValueError):
+            pass
+        tb = tb.tb_next
+    return step.lstrip("_") or "run"
+
+
+def error_frames(e: BaseException) -> list[str]:
+    """The innermost `ERROR_FRAMES` frames of an error's traceback (file,
+    line, function and the source line): the code's words, never the
+    error's message or a value (RES-05)."""
+    rows = traceback.extract_tb(e.__traceback__)[-ERROR_FRAMES:]
+    return [f"{Path(f.filename).name}:{f.lineno} {f.name}: {(f.line or '').strip()[:160]}"
+            for f in rows]
 
 
 def _error_page(url: str) -> bool:
@@ -4533,16 +4564,25 @@ class _JobRun:
                 # the site closed its own popup) ends this job only
                 closed = self._window_closed()
                 tab = not closed and (_closed_error(e) or self._tab_closed())
-                self._trace("exception", error=type(e).__name__, closed=closed, tab_closed=tab)
+                # RES-05: the reason names the error's type and the run's step,
+                # never its message (a Playwright call log carries selectors,
+                # the page's words and the values typed); the traceback's
+                # frames go to the trace and the job's log, both local
+                step = error_step(e)
+                frames = error_frames(e)
+                self._trace("exception", error=type(e).__name__, step=step, closed=closed,
+                            tab_closed=tab, frames=frames)
                 if closed or tab:
                     self.log.warning("job %s: the browser %s closed (%s)", self.job_id,
                                      "window" if closed else "tab", type(e).__name__)
                 else:
-                    self.log.exception("job %s: unexpected error", self.job_id)
+                    self.log.error("job %s: unexpected error %s at %s; traceback (the message "
+                                   "left out):\n  %s", self.job_id, type(e).__name__, step,
+                                   "\n  ".join(frames))
                 if self.submit_clicked:
                     self.browser_closed = closed
                     why = (CLOSED_REASON if closed else TAB_CLOSED_REASON if tab
-                           else f"{type(e).__name__}: {e}")
+                           else f"{type(e).__name__} at {step}")
                     watch = self._send_watch
                     if watch is not None and watch.sent:
                         return self._finish("submitted", f"submitted (unconfirmed): {why} "
@@ -4560,7 +4600,8 @@ class _JobRun:
                     return self._closed(type(e).__name__)
                 if tab:
                     return self._tab_gone(type(e).__name__)
-                return self._finish("failed", f"{type(e).__name__}: {e}")
+                return self._finish("failed", f"{type(e).__name__} at {step} "
+                                              f"(page {len(self.pages)})")
         finally:
             self._unlisten_loads()
             self.trace.close()

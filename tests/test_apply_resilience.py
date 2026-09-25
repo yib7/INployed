@@ -275,3 +275,32 @@ def test_a_malformed_entry_is_a_dead_end_inside_the_policy():
     import apply_run
     assert h.policy_park("failed", f"{apply_run.MALFORMED_REASON}: ats is a list, "
                                    f"not a mapping") is True
+
+
+# --- an unexpected error's reason (RES-05) -----------------------------------------------------
+
+_CALL_LOG = ("Locator.fill: Timeout 5000ms exceeded.\nCall log:\n  - waiting for "
+             "locator(\"#first_name\")\n  - fill(\"Jane Doe\") on <input id=first_name>")
+
+
+def test_an_unexpected_error_names_its_type_and_step_and_never_its_message(
+        _browser, flow_server, tmp_path, monkeypatch):
+    import apply_fill
+
+    def _broken(*a, **kw):
+        raise RuntimeError(_CALL_LOG)
+    monkeypatch.setattr(apply_fill, "apply", _broken)
+    r = _run(h.flow("lever_single_park"), _browser, flow_server, tmp_path)
+    assert r.status == "failed", r
+    assert r.reason == "RuntimeError at fill_and_verify (page 1)", r.reason
+    run = (Path(r.trace) / "run.json").read_text(encoding="utf-8")
+    pages = "".join(p.read_text(encoding="utf-8") for p in Path(r.trace).glob("page-*.json"))
+    for text in (run, pages, r.reason):
+        assert "Jane Doe" not in text and "Call log" not in text
+    # the step and the code's frames in the trace and the job's log, the message nowhere
+    assert '"step": "fill_and_verify"' in pages + run
+    assert "apply_run.py:" in pages + run
+    log = (Path(r.trace) / "job.log").read_text(encoding="utf-8")
+    assert "RuntimeError at fill_and_verify" in log and "apply_run.py:" in log
+    assert "Jane Doe" not in log and "Call log" not in log
+

@@ -787,26 +787,43 @@ class SendWatch:
         except Exception:       # noqa: BLE001  (a request that cannot be read counts as nothing)
             pass
 
-    def carried_get(self, row: str, action: str = "") -> bool:
-        """May the GET `row` ("GET bare-url") have carried the send? Always
-        when its URL without the query is the submit form's `action` (a GET
-        form's send, after a draft's POST too, SP8a review M6), and when it
-        is among the requests the click caused (`caused`, up to and with the
-        click's first navigation) or is the first seen: a script can send
-        the answers by a GET to any address after a draft's save came back,
-        and the network cannot tell that from a thank-you page loaded after
-        a fetch send (R3-I1). A GET after the click's first navigation
-        carried it unless a send is known to have left before it
-        (`sent_left`), such as a POST form's answer sending the tab on. The
-        risk left: a page after the click's first navigation (an
-        interstitial) that sends the answers by a script GET, after a POST
-        to the application's sites came back, has that GET loaded again when
-        the network drops it."""
+    def carried_get(self, row: str, action: str = "", url: str = "") -> bool:
+        """May the GET `row` ("GET bare-url"; `url` in full) have carried the
+        send? Always when its URL without the query is the submit form's
+        `action` (a GET form's send, after a draft's POST too, SP8a review
+        M6), and when it is among the requests the click caused (`caused`,
+        up to and with the click's first navigation) or is the first seen: a
+        script can send the answers by a GET to any address after a draft's
+        save came back, and the network cannot tell that from a thank-you
+        page loaded after a fetch send (R3-I1). A GET after the click's
+        first navigation carried it unless the answer of a send that came
+        back led to it (`led_on`, R4-M1)."""
         if action and row == f"GET {self._bare(action)}":
             return True
         if row in self.caused or self.first() == row:
             return True
-        return not self.sent_left(row)
+        return not self.led_on(row, url)
+
+    def led_on(self, row: str, url: str = "") -> bool:
+        """Did the answer of a send that came back lead to the GET `row`
+        (`url` in full, else the address it was requested at)? When an HTTP
+        redirect from that send led to it (`redirected_from`), or when such
+        a send came back before it (`sent_left`) and its address has no
+        query: a script GET send carries the answers in its query, as an
+        interstitial page's GET form does, so a GET with one is never loaded
+        again (SP8a review R4-M1). A POST form's thank-you page (no query,
+        or its HTTP redirect) is loaded again. The risk left: a page after
+        the click's first navigation that sends by a GET with no query (the
+        answers in a path token) after a POST to the application's sites
+        came back."""
+        at = self._last(row)
+        if at < 0:
+            return False
+        request = self._order[at][0]
+        if self._redirected_from_answered(request):
+            return True
+        full = str(url or getattr(request, "url", "") or "")
+        return not urlsplit(full).query and self.sent_left(row)
 
     def sent_left(self, row: str) -> bool:
         """Is a send known to have left before the load `row`: a POST, PUT
@@ -815,13 +832,37 @@ class SendWatch:
         another host (a beacon `_tracking` does not know may be one), a send
         whose answer never came, and anything when `row` was never seen are
         no such send."""
-        rows = [r for _, _, r in self._order]
-        if row not in rows:
-            return False
-        end = len(rows) - 1 - rows[::-1].index(row)
-        return any(kind == "sent" and r.split(" ", 1)[0] in self._SEND_METHODS
-                   and id(request) in self.answered
-                   for request, kind, r in self._order[:end])
+        at = self._last(row)
+        return at >= 0 and any(self._answered_send(request, kind, r)
+                               for request, kind, r in self._order[:at])
+
+    def _last(self, row: str) -> int:
+        """Where `row` last stands in `_order`, or -1."""
+        for i in range(len(self._order) - 1, -1, -1):
+            if self._order[i][2] == row:
+                return i
+        return -1
+
+    def _answered_send(self, request, kind: str, row: str) -> bool:
+        return (kind == "sent" and row.split(" ", 1)[0] in self._SEND_METHODS
+                and id(request) in self.answered)
+
+    _REDIRECT_HOPS = 20
+
+    def _redirected_from_answered(self, request) -> bool:
+        """Did an HTTP redirect chain from a send `_answered_send` holds lead
+        to `request`?"""
+        for _ in range(self._REDIRECT_HOPS):
+            try:
+                request = request.redirected_from
+            except Exception:   # noqa: BLE001  (a request that cannot be read counts as nothing)
+                return False
+            if request is None:
+                return False
+            if any(held is request and self._answered_send(held, kind, r)
+                   for held, kind, r in self._order):
+                return True
+        return False
 
     def _done(self, request) -> None:
         self.pending.discard(id(request))
@@ -4496,9 +4537,10 @@ class _JobRun:
         GET that may have carried the send (`SendWatch.carried_get`): at
         most one send per job, so a GET the click caused (up to and with its
         first navigation) or one to the submit form's action is never loaded
-        again, and a later GET only when a send to the application's sites
-        came back before it (`SendWatch.sent_left`; SP8a review M6, R2-M4,
-        R3-I1). A send that never reached the site
+        again, and a later GET only when the answer of a send to the
+        application's sites that came back led to it (`SendWatch.led_on`:
+        its HTTP redirect, or an address with no query; SP8a review M6,
+        R2-M4, R3-I1, R4-M1). A send that never reached the site
         (`_no_connection`) and was the one request seen parks as nothing
         sent (`_Unsent`, SP8a review M7). A retry that lands on the error page again parks, as does an
         error page whose address is unknown (`_held_load`). An address off
@@ -4525,7 +4567,7 @@ class _JobRun:
         watch = self._send_watch
         row = f"{method} {bare}"
         action = str((self._before_submit or {}).get("action") or "")
-        carried = watch is not None and (method != "GET" or watch.carried_get(row, action))
+        carried = watch is not None and (method != "GET" or watch.carried_get(row, action, url))
         if self.submit_clicked and carried and _no_connection(failure) and watch.only(row):
             # the send never reached the site and nothing else left: the job
             # is no possible send, and the load is still never made again

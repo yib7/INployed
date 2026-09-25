@@ -4,9 +4,10 @@
   network dropped) reads as a failed load: one retry of a GET on the allowed
   sites, never "left the allowed sites: chromewebdata". After the submit
   click a GET up to the click's first navigation is never loaded again, and
-  a later one only when a send to the application's sites came back before
-  it: a GET that may have carried the send and any POST never are (at most
-  one send per job).
+  a later one only when the answer of a send to the application's sites
+  that came back led to it (its HTTP redirect, or an address with no
+  query): a GET that may have carried the send and any POST never are (at
+  most one send per job).
 
 Headless Chromium through the module-scoped test browser, the flow harness
 (`apply_harness.run_flow`) and the fake judge; no network but the local
@@ -331,6 +332,76 @@ def test_a_script_get_send_after_a_draft_save_that_came_back_is_never_loaded_aga
     assert r.sends == 1 and r.breaks == []
 
 
+# A POST form whose answer is an interstitial page: its script sends the
+# answers again by a GET form on the same host
+_INTER_FORM = _POST_FORM.replace('action="/post/submit"', 'action="/inter/submit"')
+_INTERSTITIAL = """<!doctype html><html><head><title>One moment</title></head><body>
+<p>One moment</p><form id="g" method="get" action="/inter/send">
+<input type="hidden" name="first_name" value="Jane"><input type="hidden" name="last_name" value="Doe">
+</form><script>document.getElementById('g').submit()</script></body></html>"""
+
+
+def test_a_script_get_send_from_the_page_a_post_led_to_is_never_loaded_again(
+        _browser, flow_server, tmp_path):
+    # SP8a review R4-M1: after the click's first navigation a GET is loaded
+    # again only when an HTTP redirect from the send led to it, or when its
+    # address has no query; a GET send carries the answers in its query
+    posts: list[str] = []
+    send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
+    f = h.Flow("interstitial_get", f"{_POST_SITE}/inter/apply", True, "submitted",
+               r"^submitted \(unconfirmed\): ", send_urls=(f"{_POST_SITE}/inter/send**",),
+               routes=lambda b: {f"{_POST_SITE}/inter/apply": _INTER_FORM,
+                                 f"{_POST_SITE}/inter/submit": _sink(posts, _INTERSTITIAL),
+                                 f"{_POST_SITE}/inter/send**": send})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert posts == ["POST"]
+    assert send.seen == ["GET"], (send.seen, r.status, r.reason, r.sends, r.breaks)
+    assert r.status == "submitted", r
+    assert r.reason.startswith("submitted (unconfirmed): error or dead page: GET "), r.reason
+    assert "carried the send" in r.reason
+    assert r.sends == 1 and r.breaks == []
+
+
+def _closed_port() -> int:
+    """A local port nothing listens on: a load of it is refused at once."""
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_after_a_post_send_the_page_its_http_redirect_led_to_is_loaded_again(
+        _browser, flow_server, tmp_path):
+    # SP8a review R4-M1: the POST's answer is a 303 to a thank-you address
+    # with a query. The routes never see a redirect their own answer made, so
+    # the redirected load goes to a closed local port and fails; the retry
+    # is a new load, which the routes answer
+    site = f"http://127.0.0.1:{_closed_port()}"
+    posts: list[str] = []
+    thanks: list[str] = []
+
+    def _submit(route, request) -> None:
+        posts.append(str(request.method))
+        route.fulfill(status=303, headers={"location": f"{site}/redir/thanks?ref=apply"}, body="")
+
+    def _thanks(route, request) -> None:
+        thanks.append(str(request.method))
+        route.fulfill(body=h.CONFIRMATION_HTML, content_type="text/html")
+    f = h.Flow("post_http_redirect", f"{site}/redir/apply", True, "submitted",
+               r"^confirmation page", confirm="body[data-confirmed]",
+               send_urls=(f"{site}/redir/submit",),
+               routes=lambda b: {
+                   f"{site}/redir/apply": _POST_FORM.replace('action="/post/submit"',
+                                                             'action="/redir/submit"'),
+                   f"{site}/redir/submit": _submit, f"{site}/redir/thanks**": _thanks})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert posts == ["POST"]
+    assert thanks == ["GET"], (thanks, r.status, r.reason)
+    assert r.status == "submitted" and r.ok, (r.status, r.reason)
+    assert r.sends == 1 and r.breaks == []
+    assert "error_page_retry" in _trace_text(r)
+
+
 # A form whose button posts an analytics beacon to a host `_tracking` does not
 # know, then sends the answers by a script GET to an address other than the
 # form's action
@@ -370,15 +441,18 @@ def test_a_script_get_send_after_a_beacon_is_never_loaded_again(
     assert r.sends == 1 and r.breaks == []
 
 
-def test_a_get_after_the_clicks_navigation_is_loaded_again_only_after_a_send_came_back():
-    # SP8a review R2-M4 addition and R3-I1: `sent_left` decides only for a GET
-    # after the click's first navigation (`caused` holds a POST form's own
-    # navigation here); the click's own rows are always carried
+def test_a_get_after_the_clicks_navigation_is_loaded_again_only_when_the_sends_answer_led_to_it():
+    # SP8a review R2-M4 addition, R3-I1 and R4-M1: `led_on` decides only for
+    # a GET after the click's first navigation (`caused` holds a POST form's
+    # own navigation here): an HTTP redirect from a send that came back, or
+    # an address with no query after one came back; the click's own rows
+    # are always carried
     from unittest.mock import Mock
 
     import apply_run
     site = "https://careers.fabrikam.example"
-    beacon, post, get, late = Mock(), Mock(), Mock(), Mock()
+    beacon, post, late = (Mock(redirected_from=None) for _ in range(3))
+    get = Mock(url=f"{site}/thanks", redirected_from=None)
     watch = apply_run.SendWatch(Mock(), Mock())
     watch._order = [(beacon, "possible", f"POST {_BEACON}"), (post, "sent", f"POST {site}/submit"),
                     (get, "sent", f"GET {site}/thanks"), (late, "sent", f"POST {site}/late")]
@@ -388,9 +462,15 @@ def test_a_get_after_the_clicks_navigation_is_loaded_again_only_after_a_send_cam
     watch.answered |= {id(beacon), id(late)}            # another host's, and one after the GET
     assert watch.sent_left(thanks) is False
     assert watch.carried_get(thanks) is True
+    get.redirected_from = beacon                        # a redirect from another host's
+    assert watch.carried_get(thanks, url=f"{site}/thanks?ref=a") is True
     watch.answered.add(id(post))
     assert watch.sent_left(thanks) is True
-    assert watch.carried_get(thanks) is False
+    get.redirected_from = None
+    assert watch.carried_get(thanks) is False           # no query: the site's own page
+    assert watch.carried_get(thanks, url=f"{site}/thanks?first_name=Jane") is True
+    get.redirected_from = post                          # the answered POST's own redirect
+    assert watch.carried_get(thanks, url=f"{site}/thanks?first_name=Jane") is False
     assert watch.carried_get(thanks, f"{site}/thanks?x=1") is True     # the form's action
     assert watch.carried_get(f"GET {site}/never-seen") is True
     watch.caused.append(thanks)             # the click's first navigation after the POSTs

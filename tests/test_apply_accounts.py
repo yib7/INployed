@@ -639,6 +639,50 @@ def test_a_portal_with_page_chrome_beside_its_sso_buttons_parks_as_sso(
     assert not [a for a in r.actions if a.kind == "click"]
 
 
+_SSO_SKIP = (h.FIXTURES_DIR / "forms" / "sso_buttons.html").read_text(encoding="utf-8").replace(
+    "<p>By signing in you agree to our Terms of Use.</p>",
+    '<p>By signing in you agree to our Terms of Use.</p><button type="button" id="skip">Skip for '
+    "now</button><script>document.getElementById('skip').addEventListener('click', function () "
+    "{ document.body.setAttribute('data-skipped', '1'); });</script>")
+
+
+class _SignInAsLoginWall(jev.FakeJev):
+    """The fake, reading the screen of sign-ins with other sites as a login
+    wall at 0.90, as a judge that sees a sign-in screen would."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        text = str((state.get("page") or {}).get("headline_text") or "")
+        if "page_state" in out and "Fabrikam" in text:
+            h.read_as(out, "login_wall", 0.90)
+        return out
+
+
+def test_a_portal_whose_other_control_leads_nowhere_ends_with_the_sso_park(
+        _browser, flow_server, tmp_path):
+    # R3-I1 (SP7 review): "Skip for now" is a control the run does not know,
+    # so the screen is not read as SSO-only at once; the account step finds
+    # no box to sign in with, and its login-wall park falls back to the SSO
+    # reason. No sign-in with another site is clicked and nothing is sent
+    import dataclasses
+    f = dataclasses.replace(h.flow("sso_buttons"), name="sso_buttons_skip",
+                            routes=lambda base: {f"{base}/forms/sso_buttons.html": _SSO_SKIP})
+    assert apply_run.sso_only(apply_run.apply_form.FormDigest(
+        "127.0.0.1", "Sign in", "", buttons=[apply_run.apply_form.Button(0, (0, "#b"), t)
+                                             for t in ("Sign in with Google", "Skip for now")])) == []
+    r = _run(f, tmp_path, _browser, flow_server, _SignInAsLoginWall())
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.reason == ("sign-in only through another site (Google, Microsoft, LinkedIn, "
+                        "Apple); the run never signs in with another site, and nothing else on "
+                        "the screen took it on"), r.reason
+    assert r.policy is True
+    assert not [a for a in r.actions
+                if a.kind == "click" and apply_run._THIRD_PARTY.search(a.text or "")], r.actions
+    assert r.sends == 0
+    fallback = [e for e in _events(r, "decision") if e["what"] == "sso_fallback"]
+    assert len(fallback) == 1 and fallback[0]["why"].startswith("login wall ("), fallback
+
+
 # ACC-11: the controls beside two sign-ins with other sites, over every list
 # the SP7 reviews probed (M4, N2, R3-I1, R3-M4). Known page chrome leaves the
 # screen SSO-only; any other control may be a way on, and a screen read so

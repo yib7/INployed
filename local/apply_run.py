@@ -230,6 +230,9 @@ LINK_REASON = "emailed verification link needed"
 ACCOUNT_EXISTS_REASON = "an account exists"
 SSO_REASON = "sign-in only through another site"
 SSO_NOTE = "sign in once in the auto-apply profile, then Re-queue"
+# the parks of an account screen the run could not pass, which fall back to
+# the SSO one on a screen of sign-ins with other sites (`_account_park`)
+ACCOUNT_PARK_REASONS = ("login wall", "account signup needed")
 PASSWORD_RULE_REASON = "the master password does not meet the password rules"
 PASSWORD_RULE_NOTE = ("make the account yourself with another password, or change the "
                       "master password, then Re-queue")
@@ -1248,15 +1251,13 @@ class _Accounts:
         # a park from here names the sign-up page and its own evidence: its
         # read, boxes and buttons (the stored answers are its answers now)
         if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
-            raise _Parked("needs_human", f"login wall (the create-account link led to "
-                                         f"{_cap(page.url, 120)}: "
-                                         f"{self.run._account_evidence(state, fresh)})",
-                          LOGIN_NOTE)
+            raise self.run._account_park(fresh, f"login wall (the create-account link led to "
+                                                f"{_cap(page.url, 120)}: "
+                                                f"{self.run._account_evidence(state, fresh)})")
         if not self.signup(page, fresh, fresh.url_host or _host(page.url)):
-            raise _Parked("needs_human", f"account signup needed (the create-account link "
-                                         f"led to {_cap(page.url, 120)}: "
-                                         f"{self.run._account_evidence(state, fresh)})",
-                          LOGIN_NOTE)
+            raise self.run._account_park(fresh, f"account signup needed (the create-account "
+                                                f"link led to {_cap(page.url, 120)}: "
+                                                f"{self.run._account_evidence(state, fresh)})")
         return True
 
     def signup(self, page, digest, host: str) -> bool:
@@ -4753,13 +4754,11 @@ class _JobRun:
         try:
             if state == "login_wall":
                 if not self.accounts.login(self.page, digest, host):
-                    raise _Parked("needs_human", self._login_wall_reason(state, digest, host),
-                                  LOGIN_NOTE)
+                    raise self._account_park(digest, self._login_wall_reason(state, digest, host))
             elif not self.accounts.signup(self.page, digest, host):
-                raise _Parked("needs_human", f"account signup needed "
-                                             f"({self._account_evidence(state, digest)}"
-                                             f"{self._account_error()})",
-                              LOGIN_NOTE)
+                raise self._account_park(digest, f"account signup needed "
+                                                 f"({self._account_evidence(state, digest)}"
+                                                 f"{self._account_error()})")
         except _AsForm as form:
             self.log.info("job %s: the account screen carries the application; it is the "
                           "form", self.job_id)
@@ -4785,6 +4784,24 @@ class _JobRun:
         if not_taken is not None and _site(host) in getattr(self.accounts, "attempted", ()):
             return not_taken(_site(host), host, "login")
         return f"login wall ({self._account_evidence(state, digest)}{self._account_error()})"
+
+    def _account_park(self, digest: apply_form.FormDigest, reason: str) -> _Parked:
+        """The park for an account screen the run could not pass, `reason`:
+        a "login wall" or "account signup needed" on a screen with no box to
+        fill that offers a sign-in with another site's account (`sso_sites`)
+        parks as ACC-11's dead end, with its reason and note. A screen
+        `sso_only` read as having another way on (a control it does not
+        know) still ends with the clear SSO reason once no way on took the
+        run past it (SP7 review R3-I1). The run never clicks one of those
+        sign-ins."""
+        sites = sso_sites(digest) if reason.startswith(ACCOUNT_PARK_REASONS) else []
+        if not sites:
+            return _Parked("needs_human", reason, LOGIN_NOTE)
+        self._decide("sso_fallback", f"{_cap(reason, 200)}; the screen's only sign-ins are with "
+                                     f"{', '.join(sites)}")
+        return _Parked("needs_human", f"{SSO_REASON} ({', '.join(sites)}); the run never signs "
+                                      "in with another site, and nothing else on the screen "
+                                      "took it on", SSO_NOTE)
 
     def _human_check_showing(self, *, checkbox: bool = False) -> bool:
         """Is a bot check waiting for the person on the page: a frame from a

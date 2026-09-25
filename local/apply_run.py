@@ -558,7 +558,10 @@ def _credential_form(digest) -> bool:
     return bool(_password_boxes(digest)) or _email_first(digest)
 
 
-# Armed, it costs ~0.35 s a 150-request page, no HTTP cache, ~0.2 s per 5 MB posted (RES-10)
+# Armed, the route turns Chromium's HTTP cache off (RES-10, measured on a local server): the
+# worst cases were +2.07 s for a 20 MB body posted from page memory and +0.9 s for a warm
+# page of 150 subresources at 30 ms each; a 150-request page costs about +0.35 s, a 5 MB
+# file box sent as FormData +2 ms. Only a page with the master password on it arms it.
 class _NavGuard:
     """While the credentials are on the page, the page and the frames that
     hold them (`frames`, by id) may not navigate off the application's sites:

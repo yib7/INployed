@@ -584,3 +584,27 @@ def test_a_refused_post_then_not_sent_is_within_the_invariants():
     sends.events.append(h.Send("post", "/submit/server_validation", True, accepted=False))
     out = _Out("needs_human", apply_run.NOT_SENT_REASON + ": validation errors (x)")
     assert h.invariant_breaks(out, rec, sends) == []
+
+
+def test_the_fixture_server_takes_a_burst_of_connects_while_it_is_busy():
+    # SP8a: Chromium opens a connection per request (the handler speaks
+    # HTTP/1.0), and under the matrix's --jobs 8 load the accept loop falls
+    # behind. A listen backlog of 5 (the socketserver default) turns the
+    # sixth pending connect into a refusal, and the tab lands on Chrome's
+    # own error page. The server here never accepts, like one whose accept
+    # loop is starved.
+    import http.server
+    import socket
+    server = h.FixtureHTTPServer(("127.0.0.1", 0), http.server.BaseHTTPRequestHandler)
+    port = server.server_address[1]
+    socks = []
+    try:
+        for _ in range(40):
+            c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            c.settimeout(3)
+            socks.append(c)
+            c.connect(("127.0.0.1", port))
+    finally:
+        for c in socks:
+            c.close()
+        server.server_close()

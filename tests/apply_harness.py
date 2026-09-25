@@ -294,6 +294,16 @@ def _page(name: str) -> Callable[[], str]:
     return lambda: (FIXTURES_DIR / "forms" / name).read_text(encoding="utf-8")
 
 
+class FixtureHTTPServer(http.server.ThreadingHTTPServer):
+    """The fixture pages' server. The handler speaks HTTP/1.0, so Chromium
+    opens one connection per request; under the matrix's `--jobs 8` load the
+    accept loop falls behind, and the socketserver default backlog of 5 made
+    Windows refuse the sixth pending connect, which left the tab on Chrome's
+    own error page ("left the allowed sites: chromewebdata", SP8a)."""
+    request_queue_size = 128
+    daemon_threads = True
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     server_version = "FlowServer"
 
@@ -347,8 +357,7 @@ class FlowServer:
 
     def start(self) -> str:
         handler = partial(_Handler, directory=str(self.root))
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        server.daemon_threads = True
+        server = FixtureHTTPServer(("127.0.0.1", 0), handler)
         server.flow_server = self
         self._server = server
         self._thread = threading.Thread(target=server.serve_forever, name="flow-server",
@@ -664,7 +673,7 @@ class Flow:
     confirm: str = ""               # the confirmation marker (a Playwright selector)
     gate: str = ""                  # park mode: shown on the page the run stopped at
     send_urls: tuple[str, ...] = ()  # requests that are the send (globs)
-    routes: Callable[[str], dict[str, str]] = _no_routes
+    routes: Callable[[str], dict[str, Any]] = _no_routes   # a glob -> HTML or a route handler
     password: bool = False          # a synthetic master password is stored
     inbox: bool = False             # the fixture inbox is the run's inbox
     inbox_page: str = "outlook_list.html"   # which one, under tests/fixtures/inbox/
@@ -1999,7 +2008,9 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
         offline(context)
         context.route(f"http://{INBOX_HOST}/**", _inbox_server(server.base))
         for glob, body in f.routes(server.base).items():
-            context.route(glob, _fulfiller(body))
+            # a page's HTML, or a route handler of its own (a load the
+            # network drops once, SP8a)
+            context.route(glob, body if callable(body) else _fulfiller(body))
         sends.install(context, f, server)
         stack.enter_context(recorder.recording())
         inbox = inbox_url(f.inbox_page) if f.inbox else "https://mail.example.com/inbox"

@@ -47,9 +47,9 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
 
 @pytest.fixture(scope="session")
 def fixtures_server():
+    import apply_harness                # its backlog outlasts a burst of connects (SP8a)
     handler = functools.partial(_QuietHandler, directory=str(FIXTURES_DIR))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    server.daemon_threads = True
+    server = apply_harness.FixtureHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, name="fixtures-http", daemon=True)
     thread.start()
     try:

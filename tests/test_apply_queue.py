@@ -515,19 +515,37 @@ def test_requeue_clears_the_right_fields_keeps_attempts(tmp_path):
 
 def test_unclaim_gives_the_attempt_back_and_counts_the_outage_only_when_asked(tmp_path):
     # SP8a review M1: a judge the service could not answer gives the attempt
-    # back and counts an outage; a refused key keeps the attempt counted
+    # back and counts an outage; a refused key keeps the attempt counted; an
+    # outage the runner does not count (review R2-I1) gives the attempt back
     q = _q(tmp_path)
     apply_queue.enqueue(_entry("1"), path=q)
-    queued_at = apply_queue.claim(claimed_by="w", path=q)["queued_at"]
+    apply_queue.claim(claimed_by="w", path=q)
     got = apply_queue.unclaim("1", notes="judge down", path=q)
     assert (got["status"], got["attempts"], got["outages"]) == ("queued", 0, 1)
-    assert got["queued_at"] == queued_at        # its place in the FIFO kept
     apply_queue.claim(claimed_by="w", path=q)
     got = apply_queue.unclaim("1", give_back=False, path=q)
     assert (got["status"], got["attempts"], got["outages"]) == ("queued", 1, 1)
     apply_queue.claim(claimed_by="w", path=q)
+    got = apply_queue.unclaim("1", outage=False, path=q)
+    assert (got["attempts"], got["outages"]) == (1, 1)
+    apply_queue.claim(claimed_by="w", path=q)
     got = apply_queue.unclaim("1", path=q)
     assert (got["attempts"], got["outages"]) == (1, 2)
+
+
+def test_unclaim_sends_the_job_behind_the_others(tmp_path):
+    # SP8a review R2-I1: a job handed back goes to the back of the FIFO, so the
+    # next drain starts on another job, even one queued in the same second
+    q = _q(tmp_path)
+    for jid in ("1", "2", "3"):
+        apply_queue.enqueue(_entry(jid), path=q)
+    order = []
+    for _ in range(4):
+        got = apply_queue.claim(claimed_by="w", path=q)
+        order.append(got["job_posting_id"])
+        back = apply_queue.unclaim(got["job_posting_id"], path=q)
+        assert back["queued_at"] >= got["queued_at"]
+    assert order == ["1", "2", "3", "1"]
 
 
 def test_requeue_starts_the_outage_count_over(tmp_path):

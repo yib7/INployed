@@ -218,8 +218,11 @@ class Guarded:
     says it was the key (no wait mends that), and every later request
     raises `JudgeOutage` at once, so the run can hand its job back to the
     queue and stop the drain. Any other error (a request the service
-    rejected, a bug) passes through as it was. Attributes other than `judge`
-    are the wrapped judge's."""
+    rejected, a bug) passes through as it was. `answers` counts the
+    requests answered (the runner sets it to 0 at each drain's start: an
+    outage counts toward a job's cap only after the judge answered in the
+    drain, SP8a review R2-I1). Attributes other than `judge` are the
+    wrapped judge's."""
 
     def __init__(self, inner: Any, *, sleep: Callable[[float], None] = time.sleep,
                  delays: tuple[float, ...] = RETRY_DELAYS_S,
@@ -230,6 +233,7 @@ class Guarded:
         self.log = logger if logger is not None else log
         self.down = ""
         self.refused = False
+        self.answers = 0
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         if self.down:
@@ -245,7 +249,9 @@ class Guarded:
         tries = len(self.delays) + 1
         for n in range(tries):
             try:
-                return self.inner.judge(state, questions)
+                got = self.inner.judge(state, questions)
+                self.answers += 1
+                return got
             except JudgeOutage:
                 raise
             except Exception as e:      # noqa: BLE001  (sorted below; the rest pass through)

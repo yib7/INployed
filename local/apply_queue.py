@@ -494,16 +494,19 @@ def outages(entry: Dict[str, Any]) -> int:
 
 
 def unclaim(job_id: str, *, notes: Optional[str] = None, give_back: bool = True,
-            path: Optional[Path] = None) -> Dict[str, Any]:
+            outage: bool = True, path: Optional[Path] = None) -> Dict[str, Any]:
     """Hand an `in_progress` entry back to "queued": `claimed_by`,
-    `started_at` and the run's `missing_answers` are cleared, and
-    `queued_at` is kept, so the job keeps its place in the FIFO and the next
-    run lists its own. The runner calls it when the judge went down under
-    the job before anything could be sent (RES-02). With `give_back` (the
-    judge's service could not answer: a busy status, a 5xx, a timeout, a
-    dropped connection) the attempt the claim counted is taken back and the
-    outage is counted in `outages` (the runner parks a job at its second,
-    SP8a review M1); without it (the judge refused the key) the attempt
+    `started_at` and the run's `missing_answers` are cleared, and the job
+    goes to the back of the FIFO (`queued_at` re-stamped and the entry moved
+    last in the list, so a job queued in the same second is claimed first):
+    the next drain starts on another job (SP8a review R2-I1). The runner
+    calls it when the judge went down under the job before anything could
+    be sent (RES-02). With `give_back` (the judge's service could not
+    answer: a busy status, a 5xx, a timeout, a dropped connection) the
+    attempt the claim counted is taken back, and with `outage` as well the
+    outage is counted in `outages` (the runner counts one only when the
+    judge answered earlier in the drain and parks a job at its second, SP8a
+    review M1); without `give_back` (the judge refused the key) the attempt
     stays counted and no outage is. An entry in any other status (moved from
     the dashboard meanwhile) is left as it is."""
     with locked(path):
@@ -518,13 +521,16 @@ def unclaim(job_id: str, *, notes: Optional[str] = None, give_back: bool = True,
             except (TypeError, ValueError):
                 prior = 1
             e["attempts"] = max(0, prior - 1)
-            e["outages"] = outages(e) + 1
+            if outage:
+                e["outages"] = outages(e) + 1
         e["claimed_by"] = ""
         e["started_at"] = ""
         e["missing_answers"] = []
         if notes is not None:
             e["notes"] = str(notes)
+        e["queued_at"] = _now()
         e["updated_at"] = _now()
+        data["jobs"] = [j for j in data["jobs"] if j is not e] + [e]
         _save(data, path)
         return dict(e)
 

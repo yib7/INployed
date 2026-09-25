@@ -303,7 +303,9 @@ REQUEUED_NOTE = "re-queued, this attempt not counted"
 # it: the job goes back with this attempt counted and no outage (SP8a review M1)
 KEY_REFUSED_NOTE = "re-queued, this attempt counted (the judge refused the key or the account)"
 # The judge down under the same job a second time parks it (M1): a failure
-# its own request causes would otherwise stop every drain at the queue's head
+# its own request causes would otherwise stop every drain at the queue's head.
+# An outage counts only after the judge answered in the drain (R2-I1): one
+# down for every job is no job's doing, and the park's reason names the count
 OUTAGES_MAX = 2
 OUTAGES_PARKED = (f"the judge went down under this job {OUTAGES_MAX} times; parked so the "
                   f"queue moves on")
@@ -3967,10 +3969,12 @@ class Runner:
         drain: the job it ended is `needs_human` (`CLOSED_REASON`) and
         nothing more is claimed, so the rest stay queued with their attempt
         counts untouched. A judge that stays down (`jev.Guarded`'s breaker,
-        RES-02) stops it too: the job it was on goes back to `queued` with
-        its attempt not counted, unless something may have been sent."""
+        RES-02) stops it too: the job it was on goes back to `queued`,
+        behind the others, with its attempt not counted, unless something
+        may have been sent."""
         limit = int(cap if cap is not None else self.settings["auto_apply_batch_cap"])
-        self.jev.down, self.jev.refused = "", False     # a new drain tries the judge again
+        # a new drain tries the judge again and counts its answers from 0 (R2-I1)
+        self.jev.down, self.jev.refused, self.jev.answers = "", False, 0
 
         def _work(ctx) -> list[Outcome]:
             outcomes: list[Outcome] = []
@@ -4829,18 +4833,27 @@ class _JobRun:
         """RES-02: the judge went down under the job before anything could
         have been sent. The entry goes back to `queued`
         (`apply_queue.unclaim`), the job's tabs close, and the drain stops
-        (`Outcome.judge_down`). After an error the service may get over (a
-        busy status, a 5xx, a timeout, a dropped connection) the attempt the
-        claim counted is taken back and the outage counted; the job's
-        `OUTAGES_MAX`th outage parks it instead (`OUTAGES_PARKED`, inside the
-        policy), so a failure its own request causes never holds the queue's
-        head. After a refused key (`jev.Guarded.refused`) the attempt stays
-        counted and no outage is (SP8a review M1). No record is written for
-        a re-queue (the job has not ended); the trace ends with the reason."""
+        (`Outcome.judge_down`), behind the others, so the next drain starts
+        on another job. After an error the service may get over (a busy
+        status, a 5xx, a timeout, a dropped connection) the attempt the claim
+        counted is taken back; the outage counts only when the judge
+        answered earlier in the drain (`jev.Guarded.answers`), so an outage
+        for every job never does (SP8a review R2-I1). The job's
+        `OUTAGES_MAX`th counted outage parks it instead (`OUTAGES_PARKED`,
+        inside the policy), so a failure its own request causes never holds
+        the queue's head. After a refused key (`jev.Guarded.refused`) the
+        attempt stays counted and no outage is (SP8a review M1). No record
+        is written for a re-queue (the job has not ended); the trace ends
+        with the reason."""
         at = f" at {step}" if step else ""
-        down = f"{JUDGE_DOWN_REASON}: {self._judge_down()}{at}"
+        answers = getattr(self.r.jev, "answers", 0)
+        answers = answers if isinstance(answers, int) else 0
+        after = f" after {answers} answer{'' if answers == 1 else 's'} in this drain" \
+            if answers else ""
+        down = f"{JUDGE_DOWN_REASON}: {self._judge_down()}{at}{after}"
         refused = getattr(self.r.jev, "refused", False) is True
-        if not refused and apply_queue.outages(self.entry) + 1 >= OUTAGES_MAX:
+        counted = not refused and answers > 0
+        if counted and apply_queue.outages(self.entry) + 1 >= OUTAGES_MAX:
             return self._finish("needs_human", f"{down}; {OUTAGES_PARKED}", OUTAGES_NOTE)
         reason = f"{down}; {KEY_REFUSED_NOTE if refused else REQUEUED_NOTE}"
         usage = _usage_delta(self.usage_before, jev.usage())
@@ -4850,7 +4863,8 @@ class _JobRun:
         self.trace.finish("queued", reason, self.page,
                           extra_mask=self._secret_masks(self.page) if self.page is not None else [])
         self.r._queue_write(self.job_id, "unclaim", lambda: apply_queue.unclaim(
-            self.job_id, notes=reason, give_back=not refused, path=self.r.queue_path))
+            self.job_id, notes=reason, give_back=not refused, outage=counted,
+            path=self.r.queue_path))
         self._close_job_pages()
         self.log.warning("job %s: %s", self.job_id, reason)
         return Outcome(job_id=self.job_id, status="queued", reason=reason, record_path="",

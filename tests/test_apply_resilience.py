@@ -630,6 +630,31 @@ def test_a_request_the_service_rejects_passes_through_without_a_retry():
     assert sleeps == [] and guarded.down == ""
 
 
+def test_the_guard_counts_the_requests_the_judge_answered():
+    # SP8a review R2-I1: an outage counts toward a job's cap only after the
+    # judge answered in the drain, so the guard keeps the count
+    guarded = jev.Guarded(_Flaky([_Busy(503)], inner=_Answers()), sleep=lambda s: None)
+    assert guarded.answers == 0
+    guarded.judge({}, {"q": {"type": "noul", "instructions": "x"}})
+    guarded.judge({}, {"q": {"type": "noul", "instructions": "x"}})
+    assert guarded.answers == 2
+    down = jev.Guarded(_Flaky([_Busy(529)] * 9), sleep=lambda s: None)
+    with pytest.raises(jev.JudgeOutage):
+        down.judge({}, {})
+    assert down.answers == 0
+
+
+def test_a_new_drain_starts_the_answer_count_over(tmp_path):
+    import apply_run
+    guarded = jev.Guarded(_Answers(), sleep=lambda s: None)
+    guarded.judge({}, {"q": {"type": "noul", "instructions": "x"}})
+    runner = apply_run.Runner(jev=guarded, queue_path=tmp_path / "queue.json",
+                              context=object(), run_context={}, drain_report=False)
+    guarded.down, guarded.refused = "_Busy 529", False
+    assert runner.drain(cap=1) == []
+    assert (guarded.answers, guarded.down) == (0, "")
+
+
 def test_a_runner_holds_its_judge_behind_the_guard_whoever_sets_it():
     import apply_run
     judge = jev.FakeJev()
@@ -648,18 +673,19 @@ def test_a_judge_busy_for_a_while_lets_the_run_go_on(_browser, flow_server, tmp_
     assert flaky.calls > 2
 
 
-def _two_jobs(judges, browser, server, tmp_path, sleeps):
-    """Drains of two queued jobs on the fixture form, one drain under each of
-    `judges` in turn: each drain's outcomes, the queue's entries by id after
-    the last, and the tabs left open."""
+def _two_jobs(judges, browser, server, tmp_path, sleeps, ids=("a", "b")):
+    """Drains of two queued jobs (or `ids`) on the fixture form, one drain
+    under each of `judges` in turn: each drain's outcomes, the queue's
+    entries by id after the last, and the tabs left open. Each job's
+    company is "Fabrikam", its id upper-cased after it ("Fabrikam B")."""
     import apply_queue
     import apply_run
     queue = tmp_path / "queue.json"
     url = f"{server.base}/forms/lever_single.html"
     with h.hermetic(tmp_path), h.fast_timing():
-        for jid in ("a", "b"):
+        for jid in ids:
             folder = h.write_job_folder(tmp_path / jid)
-            apply_queue.enqueue(apply_queue.new_entry(jid, company="Fabrikam",
+            apply_queue.enqueue(apply_queue.new_entry(jid, company=f"Fabrikam {jid.upper()}",
                                                       title="Analytics Engineer", apply_url=url),
                                 path=queue)
             apply_queue.set_artifacts(jid, {"folder": str(folder),
@@ -703,8 +729,11 @@ def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
     a, b = jobs["a"], jobs["b"]
     assert (a["status"], a["attempts"], a["claimed_by"], a["started_at"]) == ("queued", 0, "", "")
     assert a["notes"] == reason
-    assert a["outages"] == 1                # counted (SP8a review M1)
+    # the judge answered nothing in the drain: a global outage, no job's
+    # doing, counts toward no cap, and the job goes behind the next (R2-I1)
+    assert a.get("outages", 0) == 0
     assert (b["status"], b["attempts"]) == ("queued", 0)
+    assert a["queued_at"] >= b["queued_at"]
     # no park: no tab left open, no record; the trace ends with the reason
     assert left == []
     assert not list((tmp_path / "a").glob("application_record*"))
@@ -730,24 +759,70 @@ def test_a_refused_key_hands_the_job_back_with_its_attempt_counted(
     assert (b["status"], b["attempts"]) == ("queued", 0)
 
 
-def test_a_second_outage_under_the_same_job_parks_it_and_the_queue_moves_on(
+class _DownFor:
+    """The fake judge, except that a request about a job of `companies`
+    fails with a 529 the way a busy service's does: a failure that job's
+    own request causes."""
+
+    def __init__(self, companies):
+        self.companies = set(companies)
+        self.inner = jev.FakeJev()
+
+    def judge(self, state, questions):
+        if str((state.get("job") or {}).get("company") or "") in self.companies:
+            raise _Busy(529)
+        return self.inner.judge(state, questions)
+
+
+def test_a_judge_down_for_every_job_parks_none_and_the_queue_turns(
         _browser, flow_server, tmp_path):
-    # SP8a review M1: a judge failure the job's own request causes would
-    # otherwise stop every drain at the queue's head
+    # SP8a review R2-I1: a long outage for everyone is no job's doing: drain
+    # after drain each job goes back with nothing counted, behind the next
+    sleeps: list[float] = []
+    runs, jobs, _ = _two_jobs([_Flaky([_Busy(529)] * 20) for _ in range(4)], _browser,
+                              flow_server, tmp_path, sleeps)
+    assert [[(o.job_id, o.status) for o in run] for run in runs] == [
+        [("a", "queued")], [("b", "queued")], [("a", "queued")], [("b", "queued")]], runs
+    assert all(o.judge_down for run in runs for o in run)
+    for e in jobs.values():
+        assert (e["status"], e["attempts"], e.get("outages", 0)) == ("queued", 0, 0), e
+
+
+def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves_on(
+        _browser, flow_server, tmp_path):
+    # SP8a review M1 and R2-I1: the judge answers the other jobs and fails on
+    # this one's request in two drains: it parks at the cap; without the cap
+    # it would stop every drain once it reached the queue's head
     import apply_run
     sleeps: list[float] = []
-    runs, jobs, _ = _two_jobs([_Flaky([_Busy(529)] * 20), _Flaky([_Busy(529)] * 20),
-                               jev.FakeJev()], _browser, flow_server, tmp_path, sleeps)
+    judge = _DownFor({"Fabrikam B"})
+    runs, jobs, _ = _two_jobs([judge, judge, judge], _browser, flow_server, tmp_path, sleeps,
+                              ids=("a", "b", "c"))
     first, second, third = runs
-    assert [(o.job_id, o.status) for o in first] == [("a", "queued")], first
-    assert [(o.job_id, o.status) for o in second] == [("a", "needs_human")], second
-    reason = second[0].reason
+    assert [(o.job_id, o.status) for o in first] == [("a", "ready_to_submit"),
+                                                     ("b", "queued")], first
+    assert [(o.job_id, o.status) for o in second] == [("c", "ready_to_submit"),
+                                                      ("b", "needs_human")], second
+    reason = second[1].reason
     assert reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
     assert reason.endswith(apply_run.OUTAGES_PARKED), reason
     assert h.policy_park("needs_human", reason) is True
-    assert second[0].judge_down                  # the drain stopped all the same
-    assert [(o.job_id, o.status) for o in third] == [("b", "ready_to_submit")], third
-    assert (jobs["a"]["status"], jobs["a"]["attempts"]) == ("needs_human", 1)
+    assert second[1].judge_down                  # the drain stopped all the same
+    assert third == []
+    assert (jobs["b"]["status"], jobs["b"]["attempts"], jobs["b"]["outages"]) == (
+        "needs_human", 1, 1)
+
+
+def test_a_cap_park_while_the_judge_answered_nothing_is_outside_the_policy():
+    # SP8a review R2-I1: the harness accepts the cap's park only after the
+    # judge answered in the drain; a park in a global outage is no dead end
+    import apply_run
+    down = f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at fill"
+    assert h.policy_park("needs_human", f"{down}; {apply_run.OUTAGES_PARKED}") is False
+    assert h.policy_park("needs_human", f"{down} after 0 answers in this drain; "
+                                        f"{apply_run.OUTAGES_PARKED}") is False
+    assert h.policy_park("needs_human", f"{down} after 3 answers in this drain; "
+                                        f"{apply_run.OUTAGES_PARKED}") is True
 
 
 def test_a_request_the_judge_rejects_ends_that_job_and_the_drain_goes_on(

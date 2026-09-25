@@ -234,6 +234,8 @@ PASSWORD_RULE_REASON = "the master password does not meet the password rules"
 PASSWORD_RULE_NOTE = ("make the account yourself with another password, or change the "
                       "master password, then Re-queue")
 LINK_NOTE = "open the verification link in the email, then Re-queue"
+# the server redirects a verification link may take, as a browser's limit (ACC-05)
+LINK_MOVES_MAX = 20
 # a verification link's page that refused it (ACC-05)
 LINK_FAILED_WORDS = re.compile(
     r"\b(?:link|token|code)\s+(?:has\s+|is\s+)?(?:expired|invalid|no longer valid)\b"
@@ -7295,15 +7297,25 @@ class _JobRun:
 
     def _open_link(self, link: str) -> str:
         """The emailed verification link in a new tab of the job's context,
-        every main-frame navigation of it held to `_link_ok`: a script's or
-        a meta refresh's by the tab's route, each hop of a server's redirect
-        by the tab's requests (a route sees a redirect's first URL only),
-        and the URL the tab settled on. Once the tab is on any other host
-        nothing more of it loads and nothing of it is read. The tab's text
-        once it settled (a park when it was refused, left the allowed hosts
-        or did not load), and the tab closed."""
-        tab = self.page.context.new_page()
+        every main-frame navigation of it held to `_link_ok` before it is
+        sent. The tab's route fetches each one itself with no redirect
+        followed (the browser follows a server's redirect with no route
+        seeing the hop): a redirect to another host is never asked for,
+        and one to an allowed host goes to the page as a script's move, so
+        the route sees that hop too. A script's or a meta refresh's move
+        is held the same way, and so is the URL the tab settled on. Once
+        the tab is headed for any other host nothing more of it loads and
+        nothing of it is read. A page the tab opens (a popup) loads nothing
+        and is closed. The tab's text once it settled (a park when it was
+        refused, left the allowed hosts or did not load), and the tab
+        closed."""
+        context = self.page.context
+        known = list(context.pages)
+        tab = context.new_page()
         stopped: list[str] = []
+        moves: list[str] = []           # the redirects handed to the page as a script's move
+        landed = [False]                # a page that is no redirect was handed to the tab
+        broken: list[str] = []          # why the route could not answer a navigation
 
         def main_frame(request) -> bool:
             try:
@@ -7324,31 +7336,90 @@ class _JobRun:
             if stopped:
                 route.abort()       # the tab left the allowed hosts: nothing more of it loads
                 return
-            if request.is_navigation_request() and main_frame(request) and left(request.url):
+            if not (request.is_navigation_request() and main_frame(request)):
+                route.fallback()
+                return
+            if left(request.url):
                 route.abort()
                 return
-            route.fallback()
+            if len(moves) >= LINK_MOVES_MAX:
+                broken.append("TooManyRedirects")
+                route.abort()
+                return
+            try:
+                answer = route.fetch(max_redirects=0, timeout=GOTO_TIMEOUT_MS)
+            except Exception as e:  # noqa: BLE001  (a network error may quote the link's token)
+                broken.append(type(e).__name__)
+                route.abort()
+                return
+            where = answer.headers.get("location", "") if 300 <= answer.status < 400 else ""
+            if not where:
+                landed[0] = True
+                route.fulfill(response=answer)
+                return
+            where = urljoin(request.url, where)
+            if left(where):
+                route.abort()       # the other host is never asked
+                return
+            moves.append(where)
+            landed[0] = False
+            # the response's cookies are already the context's: the route's
+            # fetch shares the context's cookie jar
+            route.fulfill(status=200, content_type="text/html", body=(
+                "<!doctype html><script>location.replace("
+                + json.dumps(where).replace("<", "\\u003c") + ")</script>"))
 
         def hop(request) -> None:
-            # a server's redirect (a 302) is a request of its own that no
-            # route sees: its host is checked here
+            # a server's redirect the route did not fetch itself (none is
+            # expected) is still checked here
             if request.is_navigation_request() and main_frame(request):
                 left(request.url)
+
+        def fresh(route) -> None:
+            # a page made while the link is open is the tab's popup: nothing
+            # of it loads (a popup's first request comes before its page)
+            request = route.request
+            if request.is_navigation_request():
+                try:
+                    page = request.frame.page
+                except Exception:   # noqa: BLE001  (a page still being made)
+                    page = None
+                if page is None or (page is not tab and page not in known):
+                    route.abort()
+                    return
+            route.fallback()
+
+        def close(page) -> None:
+            try:
+                page.close()
+            except Exception:       # noqa: BLE001
+                pass
         error, text = "", ""
         try:
+            context.route("**/*", fresh)
+            tab.on("popup", close)
             tab.on("request", hop)
             tab.route("**/*", guard)
             tab.goto(link, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+            end = time.monotonic() + GOTO_TIMEOUT_MS / 1000
+            while moves and not landed[0] and not stopped and not broken \
+                    and time.monotonic() < end:
+                tab.wait_for_timeout(100)   # the script's move to the redirect's target
+            if broken and not stopped:
+                raise RuntimeError(broken[0])
             if not stopped and not left(tab.url):
                 apply_fill.settle(tab, CLICK_TIMEOUT_S)
             if not stopped and not left(tab.url):
                 text = apply_fill.page_text(tab)
                 left(tab.url)       # a redirect while it was read: the text is dropped
         except Exception as e:      # noqa: BLE001  (an error may quote the link's token)
-            error = type(e).__name__
+            error = broken[0] if broken else type(e).__name__
         finally:
+            for page in [p for p in context.pages if p is not tab and p not in known]:
+                close(page)         # the tab's popups, whatever the event saw
+            close(tab)
             try:
-                tab.close()
+                context.unroute("**/*", fresh)
             except Exception:       # noqa: BLE001
                 pass
         if stopped:

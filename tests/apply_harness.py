@@ -1867,11 +1867,18 @@ def offline_contexts():
     own context, and `BrowserType.launch_persistent_context`. The browser
     tests' conftest turns it on for each module's browser, so a route a
     test forgot, or a fix reverted during a RED proof, cannot reach a real
-    site."""
-    from playwright.sync_api import Browser, BrowserType
+    site. A route's own fetch (`Route.fetch`, which no route sees: the run
+    fetches an emailed link's pages so) is held to the local hosts too."""
+    from playwright.sync_api import Browser, BrowserType, Route
     p = Patches()
     new_context, new_page = Browser.new_context, Browser.new_page
     persistent = BrowserType.launch_persistent_context
+    fetch = Route.fetch
+
+    def _fetch(self, **kw):
+        if _host(kw.get("url") or self.request.url) not in _LOCAL_HOSTS:
+            raise RuntimeError("offline: a route's fetch off the local hosts")
+        return fetch(self, **kw)
 
     def _new_context(self, *a, **kw):
         ctx = new_context(self, *a, **kw)
@@ -1891,6 +1898,7 @@ def offline_contexts():
         p.setattr(Browser, "new_context", _new_context)
         p.setattr(Browser, "new_page", _new_page)
         p.setattr(BrowserType, "launch_persistent_context", _persistent)
+        p.setattr(Route, "fetch", _fetch)
         yield
     finally:
         p.undo()

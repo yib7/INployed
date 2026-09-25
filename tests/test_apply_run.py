@@ -136,6 +136,24 @@ def test_this_modules_browser_context_is_offline(context):
         page.goto("http://192.0.2.1/", timeout=4_000)
 
 
+def test_a_routes_own_fetch_in_this_modules_browser_is_offline(context):
+    # a route's fetch passes no route (the run fetches an emailed link's
+    # pages so): the conftest holds it to the local hosts too
+    page = context.new_page()
+    failed: list[str] = []
+
+    def _fetch(route):
+        try:
+            route.fetch(max_redirects=0, timeout=4_000)
+        except Exception as e:  # noqa: BLE001
+            failed.append(str(e))
+        route.abort()
+    page.route("**/*", _fetch)
+    with pytest.raises(Exception):
+        page.goto("http://192.0.2.1/", timeout=4_000)
+    assert failed == ["offline: a route's fetch off the local hosts"]
+
+
 def _enqueue(job_folder, url, jid="42", **kw):
     e = apply_queue.new_entry(jid, company="Fabrikam", title="Analytics Engineer",
                               apply_url=url, **kw)

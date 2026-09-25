@@ -1977,7 +1977,8 @@ def real_judge(mode: str, cache: Path = REAL_CACHE, cap_usd: float | None = None
                *, live: Callable[[], Any] | None = None) -> RealJudge:
     """The real judge's column's judge for `mode` (`REAL_MODES`). `live`
     makes the live judge in `record` (`jev.TypeSafeJev` when None); the cap
-    is `cap_usd`, else `AUTO_APPLY_RECORD_USD_CAP`, else 1.00 USD."""
+    is `cap_usd`, else `AUTO_APPLY_RECORD_USD_CAP`, else
+    `jev.DEFAULT_RECORD_CAP_USD`."""
     if mode not in REAL_MODES:
         raise ValueError(f"unknown real-judge mode {mode!r}; expected one of "
                          f"{', '.join(REAL_MODES)}")

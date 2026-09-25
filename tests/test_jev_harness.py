@@ -9,6 +9,8 @@ answers in `tmp_path`. The fixture and hook tests run an inner pytest through
 `pytester` in-process, with the plugin loaded exactly as the runner test
 modules load it."""
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -72,8 +74,8 @@ def test_cache_path_comes_from_the_env_else_the_tracked_fixture_file(tmp_path):
     assert jev_harness.cache_path_from({jev.CACHE_ENV: str(tmp_path / "c.json")}) == tmp_path / "c.json"
 
 
-def test_cap_comes_from_the_env_and_defaults_to_one_dollar():
-    assert jev_harness.cap_from({}) == 1.0
+def test_cap_comes_from_the_env_and_defaults_to_what_the_approval_has_left():
+    assert jev_harness.cap_from({}) == jev_harness.DEFAULT_CAP_USD == 0.93
     assert jev_harness.cap_from({jev_harness.CAP_ENV: "0.25"}) == 0.25
 
 
@@ -264,8 +266,92 @@ def test_dry_run_answers_like_the_fake_and_counts_each_request_at_its_estimate()
     assert jev.usage() == {"requests": 1, "input_tokens": size, "usd": jev.usd_for(size)}
 
 
+class _BilledThenFailed:
+    """A live judge whose request the service may have billed, then the
+    answer never came back (a timeout, a 5xx): it raises before counting."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def judge(self, state, questions):
+        self.calls += 1
+        raise TimeoutError("the service timed out after the request left")
+
+
+def test_spend_cap_counts_a_request_that_failed_after_it_left():
+    # SP8b review M4: a request that raised before the counter saw it counts
+    # at its estimate, so the cap never runs behind the bill
+    one = _one_request_usd()
+    live = _BilledThenFailed()
+    cap = jev.SpendCap(live, cap_usd=one * 1.5)
+    with pytest.raises(TimeoutError):
+        cap.judge(STATE, QUESTIONS)
+    assert cap.spent_usd == pytest.approx(one) and cap.requests == 1 and cap.failed == 1
+    with pytest.raises(jev.SpendCapReached):
+        cap.judge(STATE, QUESTIONS)         # the failed one's estimate plus this one's
+    assert live.calls == 1
+
+
+def test_spend_cap_counts_a_counted_request_that_then_failed_once():
+    # the counter saw it (the answer failed to parse after the count): no
+    # second count
+    class _CountedThenFailed(_Sized):
+        def judge(self, state, questions):
+            super().judge(state, questions)
+            raise ValueError("an answer the parser could not read")
+    cap = jev.SpendCap(_CountedThenFailed(), cap_usd=1.0)
+    with pytest.raises(ValueError):
+        cap.judge(STATE, QUESTIONS)
+    assert cap.spent_usd == pytest.approx(_one_request_usd()) and cap.failed == 0
+    assert cap.requests == 1
+
+
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf", "0", "0.0", "-0.05", "cheap"])
+def test_the_cap_refuses_a_value_that_is_no_amount_above_zero(raw):
+    # SP8b review M3: a NaN cap never stops (no sum is greater than NaN)
+    with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):
+        jev.record_cap({jev.RECORD_CAP_ENV: raw})
+    with pytest.raises(ValueError):
+        jev.SpendCap(_Sized(), cap_usd=float(raw) if raw != "cheap" else raw)
+
+
+def _record_script(tmp_path, *args):
+    """scripts/jev_record.ps1 run from a copy under `tmp_path`: its root
+    holds no .env and the environment no key, so no run can reach the
+    judge; the script stops at its cap check or at the missing key."""
+    (tmp_path / "scripts").mkdir()
+    shutil.copy2(REPO / "scripts" / "jev_record.ps1", tmp_path / "scripts" / "jev_record.ps1")
+    env = {k: v for k, v in os.environ.items()
+           if k not in (jev.KEY_ENV, jev.RECORD_CAP_ENV)}
+    return subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(tmp_path / "scripts" / "jev_record.ps1"), *args],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          cwd=str(tmp_path), env=env, timeout=60)
+
+
+@pytest.mark.skipif(sys.platform != "win32" or shutil.which("powershell") is None,
+                    reason="scripts/jev_record.ps1 is a Windows PowerShell script")
+@pytest.mark.parametrize("args,said", [
+    ((), "needs -Cap"),                                     # a live recording names its cap
+    (("-Target", "matrix"), "needs -Cap"),
+    (("-Cap", "NaN"), "finite USD amount above 0"),
+    (("-Cap", "0"), "finite USD amount above 0"),
+    (("-Cap", "-0.05"), "finite USD amount above 0"),
+    (("-Cap", "0.05"), "TYPESAFE_API_KEY is not set"),     # past the cap check: the key's
+])
+def test_the_record_script_takes_a_live_recording_only_with_a_cap_above_zero(tmp_path, args,
+                                                                             said):
+    # SP8b review M3: one run with -Cap left out could spend the whole
+    # approval; the cap is checked before the key is read
+    res = _record_script(tmp_path, *args)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert said in res.stdout, res.stdout + res.stderr
+
+
 def test_the_cap_env_parses_and_defaults():
-    assert jev.record_cap({}) == 1.0
+    # the default is what the cycle's approval had left under its limit
+    # after SP8b, never the whole approval
+    assert jev.record_cap({}) == jev.DEFAULT_RECORD_CAP_USD == 0.93
     assert jev.record_cap({jev.RECORD_CAP_ENV: " 0.35 "}) == 0.35
     assert jev_harness.dry_from({jev_harness.DRY_ENV: "1"})
     assert jev_harness.dry_from({jev_harness.DRY_ENV: "Yes"})

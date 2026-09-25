@@ -9,7 +9,7 @@
   cache. Needs `TYPESAFE_API_KEY` in the environment (the fixture skips with
   the reason when it is unset). `jev.SpendCap` refuses a live request whose
   estimated cost would take the session's spend past
-  `AUTO_APPLY_RECORD_USD_CAP` (default 1.00 USD); the test it stops skips
+  `AUTO_APPLY_RECORD_USD_CAP` (default `jev.DEFAULT_RECORD_CAP_USD`); the test it stops skips
   with the reason, and so does every test after it.
 - `record` with `AUTO_APPLY_RECORD_DRY=1`: the dry run. The fake answers in
   place of the live model and each request counts at its estimated size

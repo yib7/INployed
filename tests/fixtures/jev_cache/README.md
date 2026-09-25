@@ -68,11 +68,16 @@ against the page-read gate):
 
 ## Cost guard
 
-Every live entry point honours `AUTO_APPLY_RECORD_USD_CAP` (default 1.00 USD;
-`-Cap` sets it). `jev.SpendCap` checks each request before it leaves: when the
-spend so far plus the request's estimated cost (chars/3 tokens at 0.042 USD
-per million input tokens) would pass the cap, the request is refused and every
-later one too. A runner test the cap stops skips with the reason; the matrix
+Every live entry point honours `AUTO_APPLY_RECORD_USD_CAP` (`-Cap` sets it,
+and a live recording through `jev_record.ps1` must pass one; without the
+variable the Python entry points take 0.93 USD, what the cycle's approval had
+left under its limit after SP8b). A cap that is no finite amount above 0
+(NaN, inf, 0) is refused. `jev.SpendCap` checks each request before it
+leaves: when the spend so far plus the request's estimated cost (chars/3
+tokens at 0.042 USD per million input tokens) would pass the cap, the request
+is refused and every later one too. A request that fails after it left (a
+timeout, a server error) counts at its estimate, since the service may have
+billed it. A runner test the cap stops skips with the reason; the matrix
 lists the flows it left unrecorded; a capture read skips. The cache keeps
 every answer recorded before the stop. Before the tests run, one line states
 how many tests use the `jev_judge` fixture, how many requests are already
@@ -90,8 +95,9 @@ company (`apply_judge.ATS_NAMES`), the page state sends each button as
 option pick only where `quick_map` has the value, and a generated answer is
 verified against its draft in code. The SP8b recordings added five: the
 "sends" criterion names a click that also creates the account, a pasted cover
-letter and a search box's match are compared in code, two sources that type
-the same words pool their probability (`apply_judge.pooled_confidence`), and
+letter and a search box's match are compared in code, two name sources that
+type the same words pool their probability (`apply_judge.pooled_confidence`;
+an answer-bank entry, a Yes or a number never pools), and
 the GitHub fact's description names a portfolio. The thresholds header in
 `local/apply_judge.py` records the live distribution per gate.
 

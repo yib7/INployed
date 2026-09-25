@@ -17,7 +17,9 @@
 # Record mode reads TYPESAFE_API_KEY from the environment, else from the one row
 # in .env, and exports it to this one process only; the value is never printed.
 # Every live entry point stops at the cap (AUTO_APPLY_RECORD_USD_CAP, from -Cap):
-# a request whose estimated cost would pass it is never sent. -Dry answers with
+# a request whose estimated cost would pass it is never sent. A live recording
+# must pass -Cap (no default); a dry run or a replay spends nothing and takes
+# 0.93 when it is left out. -Dry answers with
 # the fake at each request's estimated size into a temp copy of the cache, with
 # no key: the request count and the spend a recording would make. When the run
 # ends, the variables this script set are removed, so a later plain pytest stays
@@ -29,7 +31,7 @@ param(
     [string]$Mode = "record",
     [ValidateSet("runner", "matrix", "captures")]
     [string]$Target = "runner",
-    [double]$Cap = 1.00,
+    [double]$Cap = 0.93,
     [string]$Cache = "",
     [string]$Flows = "",
     [string]$Json = "",
@@ -41,6 +43,16 @@ $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 $live = ($Mode -eq "record") -and (-not $Dry)
+# A live recording names its own cap: what the spend ledger has left under the
+# cycle's limit. Checked before the key is read. A NaN cap never stops.
+if ($live -and -not $PSBoundParameters.ContainsKey("Cap")) {
+    Write-Host "A live recording needs -Cap <USD>: at most what the spend ledger has left under the limit."
+    exit 2
+}
+if ([double]::IsNaN($Cap) -or [double]::IsInfinity($Cap) -or $Cap -le 0) {
+    Write-Host "-Cap must be a finite USD amount above 0."
+    exit 2
+}
 $loadedKey = $false
 if ($live -and -not $env:TYPESAFE_API_KEY) {
     $envFile = Join-Path $root ".env"

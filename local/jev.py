@@ -977,17 +977,35 @@ class ReplayJev:
 # --- a recording's spend cap (SP8b) ------------------------------------------------------
 
 RECORD_CAP_ENV = "AUTO_APPLY_RECORD_USD_CAP"
-DEFAULT_RECORD_CAP_USD = 1.00
+# What cycle 17's 1.00 USD approval had left under its 0.95 limit after SP8b
+# (0.95 - 0.0694, rounded down). `scripts/jev_record.ps1` takes no default for
+# a live recording: its `-Cap` is required there.
+DEFAULT_RECORD_CAP_USD = 0.93
 
 
 class SpendCapReached(JevUnavailable):
     """A recording reached its spend cap: no more live requests leave."""
 
 
+def checked_cap(value: Any, *, source: str = RECORD_CAP_ENV) -> float:
+    """`value` as a cap in USD, or ValueError when it is no finite amount
+    above 0: a NaN cap never stops (no sum is greater than NaN), and an
+    infinite one is none."""
+    try:
+        cap = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{source}={value!r}: expected a USD amount above 0") from None
+    if not math.isfinite(cap) or cap <= 0:
+        raise ValueError(f"{source}={value!r}: expected a finite USD amount above 0")
+    return cap
+
+
 def record_cap(env: Mapping[str, str] | None = None) -> float:
-    """The recording's cap in USD: `AUTO_APPLY_RECORD_USD_CAP`, else 1.00."""
+    """The recording's cap in USD: `AUTO_APPLY_RECORD_USD_CAP`, else
+    `DEFAULT_RECORD_CAP_USD`; ValueError for a value that is no finite amount
+    above 0 (`checked_cap`)."""
     raw = ((os.environ if env is None else env).get(RECORD_CAP_ENV) or "").strip()
-    return float(raw) if raw else DEFAULT_RECORD_CAP_USD
+    return checked_cap(raw) if raw else DEFAULT_RECORD_CAP_USD
 
 
 class SpendCap:
@@ -996,24 +1014,30 @@ class SpendCap:
     (`usage()`), and a request whose estimated cost (`request_size`, the
     whole request, at `PRICE_USD_PER_MTOK`) would take that spend past
     `cap_usd` raises `SpendCapReached` before it leaves; so does every
-    request after. `reached` says the cap stopped a request; `refused`
-    counts them; `reason` is the first refusal's text."""
+    request after. A request that raised before the counter saw it (a
+    timeout or a server error after the service may have billed it) counts
+    at its estimate (`unbilled_usd`), so the cap never runs behind.
+    `reached` says the cap stopped a request; `refused` counts them;
+    `reason` is the first refusal's text. `cap_usd` must be a finite amount
+    above 0 (`checked_cap`)."""
 
     def __init__(self, inner: Jev, cap_usd: float):
         self.inner = inner
-        self.cap_usd = float(cap_usd)
+        self.cap_usd = checked_cap(cap_usd, source="cap_usd")
         self._start = usage()
         self.reached = False
         self.refused = 0
         self.reason = ""
+        self.failed = 0             # requests that raised with no count of their own
+        self.unbilled_usd = 0.0     # their estimated cost
 
     @property
     def spent_usd(self) -> float:
-        return max(0.0, usage()["usd"] - self._start["usd"])
+        return max(0.0, usage()["usd"] - self._start["usd"]) + self.unbilled_usd
 
     @property
     def requests(self) -> int:
-        return max(0, usage()["requests"] - self._start["requests"])
+        return max(0, usage()["requests"] - self._start["requests"]) + self.failed
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         spent = self.spent_usd
@@ -1026,7 +1050,17 @@ class SpendCap:
             if not self.reached:
                 self.reached, self.reason = True, reason
             raise SpendCapReached(reason)
-        return self.inner.judge(state, questions)
+        before = usage()["requests"]
+        try:
+            return self.inner.judge(state, questions)
+        except SpendCapReached:
+            raise
+        except BaseException:
+            if usage()["requests"] == before:
+                # the request may have been billed before it failed
+                self.failed += 1
+                self.unbilled_usd += next_usd
+            raise
 
 
 class DryRun:

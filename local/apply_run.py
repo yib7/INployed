@@ -786,16 +786,21 @@ class SendWatch:
     def carried_get(self, row: str, action: str = "") -> bool:
         """May the GET `row` ("GET bare-url") have carried the send? Always
         when its URL without the query is the submit form's `action` (a GET
-        form's send, after a draft's POST too, SP8a review M6), or when it is
-        the first request the click caused (`caused`; the first seen when the
-        job's page saw none of its own). Any other GET too, unless a send is
-        known to have left before it (`sent_left`): a script can send the
-        answers by a GET to any address (R2-M4). A GET after a send that
-        came back is the site's own, such as the thank-you page a script
-        loads after a fetch sent the answers."""
+        form's send, after a draft's POST too, SP8a review M6), and when it
+        is among the requests the click caused (`caused`, up to and with the
+        click's first navigation) or is the first seen: a script can send
+        the answers by a GET to any address after a draft's save came back,
+        and the network cannot tell that from a thank-you page loaded after
+        a fetch send (R3-I1). A GET after the click's first navigation
+        carried it unless a send is known to have left before it
+        (`sent_left`), such as a POST form's answer sending the tab on. The
+        risk left: a page after the click's first navigation (an
+        interstitial) that sends the answers by a script GET, after a POST
+        to the application's sites came back, has that GET loaded again when
+        the network drops it."""
         if action and row == f"GET {self._bare(action)}":
             return True
-        if (self.caused[:1] or [self.first()]) == [row]:
+        if row in self.caused or self.first() == row:
             return True
         return not self.sent_left(row)
 
@@ -4476,11 +4481,11 @@ class _JobRun:
         `GOTO_RETRY_S` when it is a GET on the allowed sites. A POST, PUT or
         PATCH is never sent again, and after the submit click neither is a
         GET that may have carried the send (`SendWatch.carried_get`): at
-        most one send per job, so after the click a GET is loaded again only
-        when a send to the application's sites came back before it
-        (`SendWatch.sent_left`), and never when it goes to the submit form's
-        action or was the first request the click caused (SP8a review M6,
-        R2-M4). A send that never reached the site
+        most one send per job, so a GET the click caused (up to and with its
+        first navigation) or one to the submit form's action is never loaded
+        again, and a later GET only when a send to the application's sites
+        came back before it (`SendWatch.sent_left`; SP8a review M6, R2-M4,
+        R3-I1). A send that never reached the site
         (`_no_connection`) and was the one request seen parks as nothing
         sent (`_Unsent`, SP8a review M7). A retry that lands on the error page again parks, as does an
         error page whose address is unknown (`_held_load`). An address off

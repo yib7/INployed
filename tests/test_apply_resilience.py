@@ -3,9 +3,10 @@
 - Chrome's own error page (`chrome-error://chromewebdata/`, a load the
   network dropped) reads as a failed load: one retry of a GET on the allowed
   sites, never "left the allowed sites: chromewebdata". After the submit
-  click a GET is loaded again only when a send to the application's sites
-  came back before it: a GET that may have carried the send and any POST
-  never are (at most one send per job).
+  click a GET up to the click's first navigation is never loaded again, and
+  a later one only when a send to the application's sites came back before
+  it: a GET that may have carried the send and any POST never are (at most
+  one send per job).
 
 Headless Chromium through the module-scoped test browser, the flow harness
 (`apply_harness.run_flow`) and the fake judge; no network but the local
@@ -273,22 +274,60 @@ _SPA_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</t
     location.href = '/spa/thanks'; }); });</script></body></html>"""
 
 
-def test_after_a_fetch_send_the_thank_you_page_the_script_led_to_is_loaded_again(
+def test_after_a_fetch_send_the_thank_you_page_the_script_led_to_is_never_loaded_again(
         _browser, flow_server, tmp_path):
-    # SP8a review R2-M4: a GET counts as the send only when it goes to the
-    # submit form's action or is the first request the click caused; the
-    # thank-you page a script loads after the fetch is the site's own
+    # SP8a review R3-I1: every GET up to the click's first navigation may be
+    # the send, so the thank-you page a script loads after the fetch is never
+    # loaded again (the network cannot tell it from a script GET send after
+    # a draft's save): the job ends "submitted (unconfirmed)", sent once
     posts: list[str] = []
     thanks = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
-    f = h.Flow("spa_fetch", f"{_POST_SITE}/spa/apply", True, "submitted", r"^confirmation page",
-               confirm="body[data-confirmed]", send_urls=(f"{_POST_SITE}/spa/submit",),
+    f = h.Flow("spa_fetch", f"{_POST_SITE}/spa/apply", True, "submitted",
+               r"^submitted \(unconfirmed\): ", send_urls=(f"{_POST_SITE}/spa/submit",),
                routes=lambda b: {f"{_POST_SITE}/spa/apply": _SPA_FORM,
                                  f"{_POST_SITE}/spa/submit": _sink(posts, '{"ok": true}'),
                                  f"{_POST_SITE}/spa/thanks": thanks})
     r = _run(f, _browser, flow_server, tmp_path)
     assert posts == ["POST"]
-    assert thanks.seen == ["GET", "GET"], (thanks.seen, r.status, r.reason)
-    assert r.status == "submitted" and r.ok, (r.status, r.reason)
+    assert thanks.seen == ["GET"], (thanks.seen, r.status, r.reason)
+    assert r.status == "submitted", r
+    assert r.reason.startswith("submitted (unconfirmed): error or dead page: GET "), r.reason
+    assert "carried the send" in r.reason
+    assert r.sends == 1 and r.breaks == []
+
+
+# A form whose button saves a draft on the application's own host, then sends
+# the answers by a script GET to an address other than the form's action
+_DRAFT_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</title></head>
+<body><h1>Apply for Analytics Engineer</h1><p>Fabrikam, Remote</p>
+<form id="f" onsubmit="return false">
+<label>First name * <input name="first_name" required></label>
+<label>Last name * <input name="last_name" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<button type="button" id="btn-submit">Submit application</button>
+</form><script>document.getElementById('btn-submit').addEventListener('click', function () {
+  fetch('/draft/save', {method: 'POST', body: 'draft'}).then(function () {
+    location.href = '/draft/send?' + new URLSearchParams(new FormData(document.getElementById('f')));
+  }); });</script></body></html>"""
+
+
+def test_a_script_get_send_after_a_draft_save_that_came_back_is_never_loaded_again(
+        _browser, flow_server, tmp_path):
+    # SP8a review R3-I1: the draft's POST to the application's host came back
+    # before the GET, which is still the click's own first navigation
+    saves: list[str] = []
+    send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
+    f = h.Flow("draft_then_get", f"{_POST_SITE}/draft/apply", True, "submitted",
+               r"^submitted \(unconfirmed\): ", send_urls=(f"{_POST_SITE}/draft/send**",),
+               routes=lambda b: {f"{_POST_SITE}/draft/apply": _DRAFT_FORM,
+                                 f"{_POST_SITE}/draft/save": _sink(saves, '{"ok": true}'),
+                                 f"{_POST_SITE}/draft/send**": send})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert saves == ["POST"]
+    assert send.seen == ["GET"], (send.seen, r.status, r.reason, r.sends, r.breaks)
+    assert r.status == "submitted", r
+    assert r.reason.startswith("submitted (unconfirmed): error or dead page: GET "), r.reason
+    assert "carried the send" in r.reason
     assert r.sends == 1 and r.breaks == []
 
 
@@ -313,9 +352,8 @@ _BEACON_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer
 
 def test_a_script_get_send_after_a_beacon_is_never_loaded_again(
         _browser, flow_server, tmp_path):
-    # SP8a review R2-M4 addition: a failed GET after the click is loaded
-    # again only when a send to the application's sites is known to have
-    # left before it; a beacon to another host that came back is no such send
+    # SP8a review R2-M4 addition and R3-I1: the GET is the click's own first
+    # navigation, so it may be the send, a beacon that came back before it or not
     beacons: list[str] = []
     send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
     f = h.Flow("beacon_then_get", f"{_POST_SITE}/beacon/apply", True, "submitted",
@@ -332,7 +370,10 @@ def test_a_script_get_send_after_a_beacon_is_never_loaded_again(
     assert r.sends == 1 and r.breaks == []
 
 
-def test_a_get_is_loaded_again_only_after_a_send_to_the_application_came_back_before_it():
+def test_a_get_after_the_clicks_navigation_is_loaded_again_only_after_a_send_came_back():
+    # SP8a review R2-M4 addition and R3-I1: `sent_left` decides only for a GET
+    # after the click's first navigation (`caused` holds a POST form's own
+    # navigation here); the click's own rows are always carried
     from unittest.mock import Mock
 
     import apply_run
@@ -352,6 +393,9 @@ def test_a_get_is_loaded_again_only_after_a_send_to_the_application_came_back_be
     assert watch.carried_get(thanks) is False
     assert watch.carried_get(thanks, f"{site}/thanks?x=1") is True     # the form's action
     assert watch.carried_get(f"GET {site}/never-seen") is True
+    watch.caused.append(thanks)             # the click's first navigation after the POSTs
+    assert watch.sent_left(thanks) is True
+    assert watch.carried_get(thanks) is True
 
 
 # --- a malformed queue entry (RES-09)-------------------------------------------------------

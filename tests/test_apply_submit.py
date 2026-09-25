@@ -223,6 +223,45 @@ def test_a_slow_confirmation_after_a_sending_page_is_waited_for(context, flow_se
     assert (out.status, out.reason) == ("submitted", "confirmation page"), out
 
 
+def test_a_confirmation_that_came_with_the_answer_during_a_look_is_read(
+        context, flow_server, tmp_path, monkeypatch):
+    # SP6 review R2-M2: the POST's answer lands while one of the wait's later
+    # looks is under way (after its read of the page, before its exit test,
+    # the "Sending..." page long quiet), as a loaded machine makes it; the
+    # page is read once more before the ruling
+    import time
+    real = apply_run._JobRun._post_submit_validity
+    held, looks = [], []
+
+    def slow_look(self, as_before):
+        looks.append(time.monotonic())
+        watch = self._send_watch
+        if not held and watch is not None and watch.pending and looks[-1] - looks[0] >= 0.6:
+            held.append(True)
+            t0 = time.monotonic()
+            while watch is not None and watch.pending and time.monotonic() - t0 < 8:
+                self.page.wait_for_timeout(50)
+            self.page.wait_for_timeout(300)     # the page shows the answer
+        return real(self, as_before)
+    monkeypatch.setattr(apply_run._JobRun, "_post_submit_validity", slow_look)
+    flow_server.answers["slow_fetch_look"] = (2.0, '{"ok": true}')
+    url = flow_server.url("slow_fetch_look_page.html")
+    context.route(url, lambda route: route.fulfill(content_type="text/html", body=_form(
+        "Submit application", """
+      document.getElementById('go').onclick = function () {
+        document.getElementById('app').outerHTML = '<p id="wait">Sending your details...</p>';
+        fetch('/submit/slow_fetch_look', {method: 'POST', body: '{}'}).then(function () {
+          document.getElementById('wait').outerHTML = '<h2>Thanks for applying!</h2>';
+        });
+      };""")))
+    try:
+        out, _, _ = _drain(context, tmp_path, url)
+    finally:
+        flow_server.answers.pop("slow_fetch_look", None)
+    assert held, "the wait never looked at the page"
+    assert (out.status, out.reason) == ("submitted", "confirmation page"), out
+
+
 def test_a_crash_after_the_submit_click_with_nothing_seen_leaving_claims_no_send(
         context, tmp_path, monkeypatch):
     _Posts(context, {"/apply/42": _form("Submit application", """

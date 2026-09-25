@@ -6141,7 +6141,11 @@ class _JobRun:
         state, conf, answers = "other", 0.0, {}
         rec: dict = {}
         code_entered = False
+        answers_seen, late_look = 0, False
         while True:
+            # a request in flight as this look begins, and done by its end:
+            # its answer may have changed the page after the look read it
+            in_flight = bool(watch.pending)
             digest = self._post_submit_digest(watch)
             now = time.monotonic()
             seen = json.dumps(digest.to_dict(), sort_keys=True)
@@ -6218,6 +6222,18 @@ class _JobRun:
                                              f"({conf:.2f}; {_cap(digest.title, 80)}); "
                                              f"{CHECK_SENT_REASON}")
             busy = bool(watch.pending) or now - changed_at < POST_SUBMIT_QUIET_S
+            if in_flight and not watch.pending and not late_look:
+                # SP6 review R2-M2: the answer came during this look; the page
+                # is read again (a confirmation that came with it) before any
+                # ruling, the quiet window counted from the answer; past the
+                # wait's end, once more only
+                answers_seen += 1
+                if answers_seen == 1:
+                    self._decide("after_submit", "a request's answer came during the look; "
+                                                 "the page is read once more")
+                changed_at = time.monotonic()
+                late_look = now - start >= POST_SUBMIT_WAIT_S
+                continue
             if not busy or now - start >= POST_SUBMIT_WAIT_S:
                 break
             self.page.wait_for_timeout(int(POST_SUBMIT_POLL_S * 1000))

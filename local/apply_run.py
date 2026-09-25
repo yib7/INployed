@@ -1911,7 +1911,7 @@ _RULE_MIN = (
                r"\s+(\d{1,2})\s*(?:characters|chars)\b", re.I),
     re.compile(r"\b(\d{1,2})\s*(?:or\s+more|\+)\s*(?:characters|chars)\b", re.I),
     re.compile(r"\b(\d{1,2})\s+characters\s+(?:or\s+(?:more|longer)|minimum)\b", re.I))
-_RULE_RANGE = re.compile(r"\b(?:between\s+)?(\d{1,2})\s*(?:-|to|and|–)\s*(\d{1,3})\s*"
+_RULE_RANGE = re.compile(r"\b(?:between\s+)?(\d{1,2})\s*(?:-|to|and|\u2013)\s*(\d{1,3})\s*"
                          r"(?:characters|chars)\b", re.I)
 _RULE_MAX = re.compile(r"(?:at\s+most|a\s+maximum\s+of|maximum(?:\s+of)?|max\.?|no\s+more\s+than"
                        r"|up\s+to|not\s+(?:exceed|be\s+longer\s+than))\s+(\d{1,3})\s*"

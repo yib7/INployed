@@ -402,6 +402,17 @@ def test_the_run_maps_a_long_form_in_parts_and_plans_every_field(tmp_path):
     assert "asks_for_prohibited" in answers
 
 
+def test_the_module_docstring_names_the_wall_clock_by_its_constant():
+    # RES-08: the docstring once said eight minutes while the constant said 15
+    import re
+
+    import apply_run
+    doc = apply_run.__doc__ or ""
+    assert "JOB_WALL_CLOCK_S" in doc
+    assert not re.search(r"\b(?:eight|8)[- ]minute", doc, re.I)
+    assert apply_run.JOB_WALL_CLOCK_S == 15 * 60
+
+
 # --- the judge's outage (RES-02) ---------------------------------------------------------------
 
 class _Busy(Exception):

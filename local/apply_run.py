@@ -1938,29 +1938,83 @@ _RULE_CLASSES = {
 }
 _RULE_FORBIDDEN = re.compile(
     r"(?:cannot|can't|must\s+not|may\s+not|should\s+not|do\s+not)\s+(?:contain|include|use)\s+"
-    r"(?:the\s+)?(?:following\s+)?(?:characters?|symbols?)?\s*:?\s*((?:[^\w\s]\s*){1,20})", re.I)
+    r"(?:the\s+)?(?:following\s+)?(?:characters?|symbols?)?\s*:?\s*"
+    r"((?:(?:[^\w\s]|\b(?:and|or)\b)\s*){1,30})", re.I)
+# "at least 3 of the following", "three of these", "3 out of 4": a count
+# of the classes the rules name
+_RULE_SOME = re.compile(r"\b([1-4]|one|two|three|four)\s+(?:out\s+)?of\s+(?:the\s+)?"
+                        r"(?:following|these|those|(?:\d|two|three|four|five)\b)", re.I)
+_RULE_COUNTS = {"one": 1, "two": 2, "three": 3, "four": 4}
+_PASSWORD_WORD = re.compile(r"\bpassword", re.I)
+
+
+def _bare_label(text: str) -> str:
+    """A label's words as a line of the page shows them: lower case, the
+    required mark ("*", "(required)") left off."""
+    text = " ".join(str(text or "").lower().split())
+    return re.sub(r"\s*(?:\*|\(required\)|\(optional\))$", "", text)
+
+
+def _forbidden_chars(listed: str) -> str:
+    """The characters a forbidden list names, its separators left out: a
+    comma, a semicolon, a slash, a full stop, "and", "or"; a character in
+    quotes is the character. A separator the site forbids is left for the
+    site to judge."""
+    chars: set[str] = set()
+    for token in listed.split():
+        if token.lower() in ("and", "or"):
+            continue
+        token = re.sub(r"[,;/.]", "", token)
+        if len(token) == 3 and token[0] == token[2] and token[0] in "\"'`":
+            token = token[1]
+        chars.update(token)
+    return "".join(sorted(chars))
+
+
+def _rule_lines(digest: apply_form.FormDigest, boxes: list) -> list[str]:
+    """The words a screen ties to its password boxes: each box's own help
+    (its aria-describedby, its maxlength) and a hint in it that reads as a
+    rule, and the rules list under a line that names the password (its
+    label, "Password requirements:"): the lines that follow it while they
+    read as rules. A line that reads as no rule, or another field's label,
+    ends the list; a line that names the password starts one of its own."""
+    parts = [" ".join(str(f.help or "").split()) for f in boxes if f.help]
+    parts += [" ".join(f.placeholder.split()) for f in boxes
+              if f.placeholder and _RULE_LINE.search(f.placeholder)]
+    labels = {_bare_label(f.label) for f in digest.fields if f.label}
+    lines = [" ".join(line.split()) for line in (digest.text or "").splitlines()]
+    for i, line in enumerate(lines):
+        if not _PASSWORD_WORD.search(line):
+            continue
+        for j, near in enumerate(lines[i:i + 9]):
+            if not near:
+                continue
+            named = _PASSWORD_WORD.search(near)
+            if _bare_label(near) in labels:
+                if named:
+                    continue        # a password box's own label ("Confirm password")
+                break               # another field's label: the password's block ends
+            if _RULE_LINE.search(near):
+                parts.append(near)
+            elif not (j == 0 or named):
+                break               # a line that is no rule ends the list
+    return parts
 
 
 def password_rules(digest: apply_form.FormDigest) -> tuple[dict[str, Any], str]:
     """ACC-04: (the password rules an account screen states, the words
-    they were read from). The words are the password boxes' help and the
-    lines of the page's text from a line that names the password on, eight
-    at most, that read as a rule (a field's own label never does): a
-    length (at least, at most, a range), an uppercase letter, a lowercase
-    letter, a digit, a special character, characters it must not hold."""
+    they were read from). The words are the ones the screen ties to its
+    password boxes (`_rule_lines`), never another field's hint ("Up to 20
+    characters" under a name) or a line further down: a length (at least,
+    at most, a range), an uppercase letter, a lowercase letter, a digit, a
+    special character, a count of those ("3 of the following":
+    `classes_needed`), characters it must not hold. A rule the words leave
+    unclear is not read: the master password is typed and the site judges
+    it."""
     boxes = _password_boxes(digest)
     if not boxes:
         return {}, ""
-    parts = [" ".join(str(f.help or "").split()) for f in boxes if f.help]
-    labels = {" ".join((f.label or "").lower().split()) for f in digest.fields}
-    lines = [" ".join(line.split()) for line in (digest.text or "").splitlines()]
-    for i, line in enumerate(lines):
-        if not re.search(r"\bpassword", line, re.I):
-            continue
-        for near in lines[i:i + 9]:
-            if near and near.lower() not in labels and _RULE_LINE.search(near):
-                parts.append(near)
-    said = " ".join(dict.fromkeys(p for p in parts if p))
+    said = " ".join(dict.fromkeys(p for p in _rule_lines(digest, boxes) if p))
     rules: dict[str, Any] = {}
     m = _RULE_RANGE.search(said)
     if m and int(m.group(1)) <= int(m.group(2)):
@@ -1973,12 +2027,23 @@ def password_rules(digest: apply_form.FormDigest) -> tuple[dict[str, Any], str]:
     m = _RULE_MAX.search(said)
     if m:
         rules["max_length"] = int(m.group(1))
-    for key, pattern in _RULE_CLASSES.items():
-        if pattern.search(said):
-            rules[key] = True
+    if rules.get("min_length", 0) > rules.get("max_length", 1000):
+        rules.pop("min_length")         # lengths that cannot both hold: unclear
+        rules.pop("max_length")
+    named = [key for key, pattern in _RULE_CLASSES.items() if pattern.search(said)]
+    m = _RULE_SOME.search(said)
+    need = (int(m.group(1)) if m.group(1).isdigit() else _RULE_COUNTS[m.group(1).lower()]) \
+        if m else len(named)
+    if need <= len(named):
+        rules.update(dict.fromkeys(named, True))
+        if need < len(named):
+            rules["classes_needed"] = need      # "3 of the following" four
+    # fewer classes named than the count asks for: the list was not read
+    # whole, and no class is taken for a rule
     m = _RULE_FORBIDDEN.search(said)
-    if m:
-        rules["forbidden"] = "".join(sorted(set(re.sub(r"\s+", "", m.group(1)))))
+    banned = _forbidden_chars(m.group(1)) if m else ""
+    if banned:
+        rules["forbidden"] = banned
     return rules, said
 
 

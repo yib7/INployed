@@ -256,7 +256,8 @@ def has_password() -> bool:
 
 def unmet_rules(rules: Dict[str, Any]) -> Optional[List[str]]:
     """The password rules a site states (ACC-04: `min_length`, `max_length`,
-    `upper`, `lower`, `digit`, `special`, `forbidden` characters) that the
+    `upper`, `lower`, `digit`, `special`, `classes_needed` of those when the
+    site asks for a count of them, `forbidden` characters) that the
     stored master password does not meet, each in words ("at least 12
     characters"); [] when it meets them all, None when no password is stored.
     Counted here from the password's length and character classes: the
@@ -271,14 +272,18 @@ def unmet_rules(rules: Dict[str, Any]) -> Optional[List[str]]:
         out.append(f"at least {int(low)} characters")
     if high and len(password) > int(high):
         out.append(f"at most {int(high)} characters")
-    if rules.get("upper") and not any(c.isupper() for c in password):
-        out.append("an uppercase letter")
-    if rules.get("lower") and not any(c.islower() for c in password):
-        out.append("a lowercase letter")
-    if rules.get("digit") and not any(c.isdigit() for c in password):
-        out.append("a digit")
-    if rules.get("special") and all(c.isalnum() for c in password):
-        out.append("a special character")
+    classes = [(words, any(test(c) for c in password)) for key, words, test in (
+        ("upper", "an uppercase letter", str.isupper),
+        ("lower", "a lowercase letter", str.islower),
+        ("digit", "a digit", str.isdigit),
+        ("special", "a special character", lambda c: not c.isalnum())) if rules.get(key)]
+    need = int(rules.get("classes_needed") or 0)
+    if 0 < need < len(classes):
+        # "3 of the following": a count of the classes named
+        if sum(1 for _, held in classes if held) < need:
+            out.append(f"at least {need} of: {', '.join(words for words, _ in classes)}")
+    else:
+        out += [words for words, held in classes if not held]
     banned = str(rules.get("forbidden") or "")
     if banned and any(c in banned for c in password):
         out.append(f"none of these characters: {' '.join(banned)}")

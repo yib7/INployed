@@ -219,6 +219,17 @@ def test_unmet_rules_names_each_missing_class(kr):
         "an uppercase letter", "a digit", "a special character"]
 
 
+@pytest.mark.parametrize("need, unmet", [
+    (1, []), (2, []),
+    (3, ["at least 3 of: an uppercase letter, a lowercase letter, a digit, a special character"]),
+])
+def test_unmet_rules_counts_the_classes_a_count_rule_asks_for(kr, need, unmet):
+    # "3 of the following" (SP7 review I2): lowercase and a hyphen are two
+    kr.set_password(ats_accounts.SERVICE, "master", "all-lowercase")
+    assert ats_accounts.unmet_rules({"upper": True, "lower": True, "digit": True,
+                                     "special": True, "classes_needed": need}) == unmet
+
+
 def test_unmet_rules_without_a_stored_password_is_none(kr):
     assert ats_accounts.unmet_rules({"min_length": 8}) is None
 

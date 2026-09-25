@@ -682,6 +682,70 @@ def test_password_rules_read_a_sign_ups_stated_rules(text, help_, rules):
     assert got == rules, said
 
 
+# I2 (SP7 review): the phrasings the review's probe read as rules the site
+# never set; each is read as the site means it
+_OVER_READ = [
+    # a count of the classes: any three of the four
+    ("Password\nMust contain at least 3 of the following: an uppercase letter, a lowercase "
+     "letter, a number, a special character",
+     {"upper": True, "lower": True, "digit": True, "special": True, "classes_needed": 3}),
+    # another field's hint below the password's boxes
+    ("Password\nConfirm password\nPreferred name\nUp to 20 characters", {}),
+    ("Password\nConfirm password\nTell us about yourself\nAt least 50 characters", {}),
+    # the commas between the characters are no character of the list
+    ("Password\nCannot contain the following characters: <, >, &", {"forbidden": "&<>"}),
+    ("Password\nMust not include the characters \"<\", \">\" or \"&\".", {"forbidden": "&<>"}),
+    # a phone's line: its "number" is no digit rule
+    ("Password\nConfirm password\nMobile phone\nEnter a number we can reach you at", {}),
+]
+
+
+def _rules_digest(text: str, *others: tuple[str, str]):
+    form = apply_run.apply_form
+    return form.FormDigest("127.0.0.1", "Create Account", text, fields=[
+        form.Field(0, (0, "#p"), "Password", "other", True, id_or_name="password"),
+        form.Field(1, (0, "#c"), "Confirm password", "other", True, id_or_name="confirm"),
+        *[form.Field(i + 2, (0, f"#o{i}"), label, kind, False)
+          for i, (label, kind) in enumerate(others)]])
+
+
+@pytest.mark.parametrize("text, rules", _OVER_READ)
+@pytest.mark.parametrize("labelled", [False, True])
+def test_password_rules_never_read_a_rule_the_site_did_not_set(text, rules, labelled):
+    # with the other field's words as its label and as a heading alone
+    others = [("Preferred name", "text"), ("Tell us about yourself", "textarea"),
+              ("Mobile phone", "tel")] if labelled else []
+    got, said = apply_run.password_rules(_rules_digest(text, *others))
+    assert got == rules, said
+
+
+@pytest.mark.parametrize("text, password", [
+    (_OVER_READ[0][0], "lowercase-and-12"),         # three of the four: no uppercase
+    (_OVER_READ[0][0], "Lowercase12345"),           # three of the four: no special
+    (_OVER_READ[1][0], "Twenty-Four-Chars-Long-1"),
+    (_OVER_READ[2][0], "Short-Pass-12"),
+    (_OVER_READ[3][0], "Comma,Pass-12"),
+    (_OVER_READ[5][0], "No-Digits-Here"),
+])
+def test_a_screen_that_would_take_the_password_never_parks_on_a_misread_rule(
+        tmp_path, monkeypatch, text, password):
+    # the run parked with "does not meet the password rules" on each of these
+    # screens (a park the harness counts inside the policy); the site takes
+    # the password. The value is a test's own, never the stored one
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: password)
+    run = _job_run(tmp_path, "127.0.0.1")
+    run._check_password_rules(_rules_digest(text), "127.0.0.1")
+
+
+def test_a_count_of_classes_the_password_misses_still_parks(tmp_path, monkeypatch):
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "onlylowercase-")
+    run = _job_run(tmp_path, "127.0.0.1")
+    with pytest.raises(apply_run._Parked, match=r"it needs at least 3 of: an uppercase letter, "
+                                                r"a lowercase letter, a digit, a special "
+                                                r"character \(the site asks"):
+        run._check_password_rules(_rules_digest(_OVER_READ[0][0]), "127.0.0.1")
+
+
 # === the password invariants (SP7) ===========================================================================
 
 def _recorder(tmp_path):

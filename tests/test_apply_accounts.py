@@ -773,6 +773,44 @@ def test_a_portal_whose_other_control_leads_nowhere_ends_with_the_sso_park(
     assert len(fallback) == 1 and fallback[0]["why"].startswith("login wall ("), fallback
 
 
+def _sso_with(control: str) -> str:
+    """sso_buttons.html with one more control, `control`, that does nothing."""
+    return (h.FIXTURES_DIR / "forms" / "sso_buttons.html").read_text(encoding="utf-8").replace(
+        "<p>By signing in you agree to our Terms of Use.</p>",
+        f'<p>By signing in you agree to our Terms of Use.</p><button type="button">{control}'
+        "</button>")
+
+
+@pytest.mark.parametrize("control, dead_end", [
+    ("Skip for now", "page did not advance (read as "),
+    ("Candidate login", "no way forward on this page (buttons: "),
+    ("Create one", "the advance button (Create one) did nothing ("),
+])
+def test_a_portal_whose_other_control_does_nothing_ends_with_the_sso_park(
+        _browser, flow_server, tmp_path, control, dead_end):
+    # R3-I1 (SP7 review, round 3 addition): a control beside the sign-ins
+    # with other sites that does nothing ends the run at a dead end (the page
+    # stayed put, no way on, the way on did nothing). On a screen with no box
+    # to fill the dead end parks with the SSO reason, under the plain fake.
+    # No sign-in with another site is clicked and nothing is sent
+    import dataclasses
+    page = _sso_with(control)
+    f = dataclasses.replace(h.flow("sso_buttons"), name="sso_buttons_dead_end",
+                            routes=lambda base: {f"{base}/forms/sso_buttons.html": page})
+    r = _run(f, tmp_path, _browser, flow_server, jev.FakeJev())
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.status == "needs_human"
+    assert r.reason == ("sign-in only through another site (Google, Microsoft, LinkedIn, "
+                        "Apple); the run never signs in with another site, and nothing else on "
+                        "the screen took it on"), r.reason
+    assert r.policy is True
+    assert not [a for a in r.actions
+                if a.kind == "click" and apply_run._THIRD_PARTY.search(a.text or "")], r.actions
+    assert r.sends == 0
+    fallback = [e for e in _events(r, "decision") if e["what"] == "sso_fallback"]
+    assert len(fallback) == 1 and fallback[0]["why"].startswith(dead_end), fallback
+
+
 # ACC-11: the controls beside two sign-ins with other sites, over every list
 # the SP7 reviews probed (M4, N2, R3-I1, R3-M4). Known page chrome leaves the
 # screen SSO-only; any other control may be a way on, and a screen read so

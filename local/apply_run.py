@@ -230,9 +230,12 @@ LINK_REASON = "emailed verification link needed"
 ACCOUNT_EXISTS_REASON = "an account exists"
 SSO_REASON = "sign-in only through another site"
 SSO_NOTE = "sign in once in the auto-apply profile, then Re-queue"
-# the parks of an account screen the run could not pass, which fall back to
-# the SSO one on a screen of sign-ins with other sites (`_account_park`)
+# the parks of an account screen the run could not pass, and of a dead end (a
+# page that stayed put, no way on, a way on that did nothing), which fall back
+# to the SSO one on a screen of sign-ins with other sites (`_account_park`)
 ACCOUNT_PARK_REASONS = ("login wall", "account signup needed")
+DEAD_END_REASONS = ("page did not advance", "no way forward on this page",
+                    "the advance button (")
 PASSWORD_RULE_REASON = "the master password does not meet the password rules"
 PASSWORD_RULE_NOTE = ("make the account yourself with another password, or change the "
                       "master password, then Re-queue")
@@ -4351,8 +4354,8 @@ class _JobRun:
             if sig == self.last_sig:
                 after = (f" after {self._last_click[0]} ({self._last_click[1]})"
                          if self._last_click else "")
-                raise _Parked("needs_human", f"page did not advance (read as {state} "
-                                             f"{conf:.2f} again{after})")
+                raise self._account_park(digest, f"page did not advance (read as {state} "
+                                                 f"{conf:.2f} again{after})", note="")
             self.last_sig = sig
             unsure = conf < apply_judge.PAGE_STATE_MIN_CONF
             applied = apply_judge.already_applied(answers, facts, state)
@@ -4830,18 +4833,22 @@ class _JobRun:
             return not_taken(_site(host), host, "login")
         return f"login wall ({self._account_evidence(state, digest)}{self._account_error()})"
 
-    def _account_park(self, digest: apply_form.FormDigest, reason: str) -> _Parked:
-        """The park for an account screen the run could not pass, `reason`:
-        a "login wall" or "account signup needed" on a screen with no box to
-        fill that offers a sign-in with another site's account (`sso_sites`)
-        parks as ACC-11's dead end, with its reason and note. A screen
-        `sso_only` read as having another way on (a control it does not
-        know) still ends with the clear SSO reason once no way on took the
-        run past it (SP7 review R3-I1). The run never clicks one of those
-        sign-ins."""
-        sites = sso_sites(digest) if reason.startswith(ACCOUNT_PARK_REASONS) else []
+    def _account_park(self, digest: apply_form.FormDigest, reason: str,
+                      note: str = LOGIN_NOTE) -> _Parked:
+        """The park for an account screen the run could not pass or a dead
+        end, `reason` with `note`: a "login wall", an "account signup
+        needed" or a dead end (`DEAD_END_REASONS`: the page did not advance,
+        no way forward, the advance button did nothing) on a screen with no
+        box to fill that offers a sign-in with another site's account
+        (`sso_sites`) parks as ACC-11's dead end, with its reason and note.
+        A screen `sso_only` read as having another way on (a control it does
+        not know) still ends with the clear SSO reason once no way on took
+        the run past it (SP7 review R3-I1). Only the park's words change:
+        the run never clicks one of those sign-ins."""
+        sites = (sso_sites(digest) if reason.startswith(ACCOUNT_PARK_REASONS + DEAD_END_REASONS)
+                 else [])
         if not sites:
-            return _Parked("needs_human", reason, LOGIN_NOTE)
+            return _Parked("needs_human", reason, note)
         self._decide("sso_fallback", f"{_cap(reason, 200)}; the screen's only sign-ins are with "
                                      f"{', '.join(sites)}")
         return _Parked("needs_human", f"{SSO_REASON} ({', '.join(sites)}); the run never signs "
@@ -5255,8 +5262,8 @@ class _JobRun:
             plan.buttons["submit"] = button
             self._submit_gate(digest, plan, verification, rec)
             return
-        raise _Parked("needs_human", f"no way forward on this page (buttons: "
-                                     f"{self._buttons_seen(digest)})")
+        raise self._account_park(digest, f"no way forward on this page (buttons: "
+                                         f"{self._buttons_seen(digest)})", note="")
 
     def _unreadable(self, digest: apply_form.FormDigest, n: int) -> None:
         """EXT-01: the controls of the way on's frame the run cannot read
@@ -6591,9 +6598,10 @@ class _JobRun:
                                               sent=result.sent)
             if role == "advance":
                 judged = f"judged {role} {conf:.2f}, " if conf is not None else ""
-                raise _Parked("needs_human", f"the {role} button ({text}) did nothing ({judged}"
-                                             f"its request left: {_cap(went[0], 100)}; it was "
-                                             "not clicked again)")
+                raise self._account_park(digest, f"the {role} button ({text}) did nothing "
+                                                 f"({judged}its request left: "
+                                                 f"{_cap(went[0], 100)}; it was not clicked "
+                                                 "again)", note="")
             return result
         self.log.info("job %s: %s click changed nothing; retrying once", self.job_id, role)
         with _popups(self.page) as opened:
@@ -6612,8 +6620,12 @@ class _JobRun:
             judged = f"judged {role} {conf:.2f}, " if conf is not None else ""
             ticked = ("; a CAPTCHA checkbox on the page is unticked: tick it, then Re-queue"
                       if self._human_check_showing(checkbox=True) else "")
-            raise _Parked("needs_human", f"the {role} button ({text}) did nothing "
-                                         f"({judged}clicked twice){ticked}")
+            dead = f"the {role} button ({text}) did nothing ({judged}clicked twice){ticked}"
+            if ticked:
+                # the unticked CAPTCHA box may be what holds the page: its
+                # park says so, whatever sign-ins the screen offers
+                raise _Parked("needs_human", dead)
+            raise self._account_park(digest, dead, note="")
         return result
 
     def _wait_while_busy(self, text: str) -> None:

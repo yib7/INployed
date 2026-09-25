@@ -4951,8 +4951,9 @@ class _JobRun:
         answered earlier in the drain (`jev.Guarded.answers`), so an outage
         for every job never does (SP8a review R2-I1), and only for an error
         the job's request may have caused (`jev.Guarded.request_fault`: a
-        5xx other than 503 and 529, a timeout, a dropped connection; never
-        a busy or overloaded service or a long Retry-After, R3-M1). The job's
+        5xx other than 503 and 529 or a timeout; never a busy or overloaded
+        service, a long Retry-After (R3-M1) or a dropped connection, most
+        often the network's (R4-M2)). The job's
         `OUTAGES_MAX`th counted outage parks it instead (`OUTAGES_PARKED`,
         inside the policy), so a failure its own request causes never holds
         the queue's head. After a refused key (`jev.Guarded.refused`) the

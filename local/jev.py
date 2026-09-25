@@ -189,13 +189,14 @@ def _transient(e: BaseException) -> bool:
 
 def request_fault(e: BaseException) -> bool:
     """Could the request itself have caused the error: a 5xx other than
-    503 and 529, a timeout (408 too) or a dropped connection? A busy or
-    overloaded service (409, 425, 429, 503, 529) never did (SP8a review
-    R3-M1)."""
+    503 and 529, or a timeout (408 too; a large request can time out)? A
+    busy or overloaded service (409, 425, 429, 503, 529) never did (SP8a
+    review R3-M1), and a dropped connection is most often the network's (a
+    laptop off its Wi-Fi, R4-M2)."""
     status = getattr(e, "status", None)
     if isinstance(status, int):
         return status == 408 or (status >= 500 and status not in _OVERLOADED_STATUS)
-    return isinstance(e, (ConnectionError, TimeoutError))
+    return isinstance(e, TimeoutError)
 
 
 def retry_after_s(e: BaseException) -> float | None:

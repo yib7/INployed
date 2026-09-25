@@ -805,14 +805,15 @@ def test_the_guard_counts_the_requests_the_judge_answered():
 
 @pytest.mark.parametrize("errors, fault", [
     ([_Busy(500)] * 4, True), ([_Busy(502)] * 4, True), ([_Busy(408)] * 4, True),
-    ([ConnectionError("reset")] * 4, True), ([TimeoutError()] * 4, True),
+    ([TimeoutError()] * 4, True),
+    ([ConnectionError("reset")] * 4, False), ([ConnectionResetError()] * 4, False),
     ([_Busy(529)] * 4, False), ([_Busy(503)] * 4, False), ([_Busy(429)] * 4, False),
     ([_Busy(409)] * 4, False), ([_Busy(500, retry_after_ms=600_000)], False),
     ([_Busy(529), _Busy(500), _Busy(500), _Busy(500)], False), ([_Busy(401)], False)])
 def test_only_an_error_a_request_can_cause_is_the_requests_fault(errors, fault):
-    # SP8a review R3-M1: a 5xx other than 503 and 529, a timeout or a dropped
-    # connection on every try; never a busy or overloaded service, a long
-    # Retry-After or a refused key
+    # SP8a review R3-M1 and R4-M2: a 5xx other than 503 and 529 or a timeout
+    # on every try; never a busy or overloaded service, a dropped connection
+    # (most often the network's), a long Retry-After or a refused key
     guarded = jev.Guarded(_Flaky(errors), sleep=lambda s: None)
     assert guarded.request_fault is False
     with pytest.raises(jev.JudgeOutage):
@@ -937,17 +938,18 @@ def test_a_refused_key_hands_the_job_back_with_its_attempt_counted(
 
 class _DownFor:
     """The fake judge, except that a request about a job of `companies`
-    fails with `status`: a 500 by default, a failure that job's own request
-    causes (SP8a review R3-M1)."""
+    fails with `status` (a 500 by default, a failure that job's own request
+    causes, SP8a review R3-M1), or with what `error` makes."""
 
-    def __init__(self, companies, status: int = 500):
+    def __init__(self, companies, status: int = 500, error=None):
         self.companies = set(companies)
         self.status = status
+        self.error = error
         self.inner = jev.FakeJev()
 
     def judge(self, state, questions):
         if str((state.get("job") or {}).get("company") or "") in self.companies:
-            raise _Busy(self.status)
+            raise self.error() if self.error is not None else _Busy(self.status)
         return self.inner.judge(state, questions)
 
 
@@ -990,14 +992,17 @@ def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves
         "needs_human", 1, 1)
 
 
-@pytest.mark.parametrize("status", [529, 503, 429])
-def test_a_busy_service_under_the_same_job_twice_never_parks_it(
-        _browser, flow_server, tmp_path, status):
-    # SP8a review R3-M1: a busy or overloaded service is no request's doing,
-    # even when it answered the other jobs: the job goes back each time
-    # with no outage counted
+@pytest.mark.parametrize("error", [lambda: _Busy(529), lambda: _Busy(503), lambda: _Busy(429),
+                                   lambda: ConnectionError("reset")],
+                         ids=["529", "503", "429", "dropped"])
+def test_a_busy_service_or_a_dropped_connection_under_the_same_job_twice_never_parks_it(
+        _browser, flow_server, tmp_path, error):
+    # SP8a review R3-M1 and R4-M2: a busy or overloaded service, or a
+    # network that drops the connection, is no request's doing, even when the
+    # judge answered the other jobs: the job goes back each time with no
+    # outage counted
     sleeps: list[float] = []
-    judge = _DownFor({"Fabrikam B"}, status=status)
+    judge = _DownFor({"Fabrikam B"}, error=error)
     runs, jobs, _ = _two_jobs([judge, judge, judge], _browser, flow_server, tmp_path, sleeps,
                               ids=("a", "b", "c"))
     assert [[(o.job_id, o.status) for o in run] for run in runs] == [
@@ -1022,10 +1027,12 @@ def test_the_harness_accepts_a_cap_park_only_for_a_requests_error_after_an_answe
     assert cap("_Busy 500", " after 0 answers in this drain") is False
     assert cap("_Busy 500") is True
     assert cap("_Busy 502", " after 1 answer in this drain") is True
-    assert cap("_Busy 408") is True
-    assert cap("ConnectionError") is True and cap("TimeoutError") is True
+    assert cap("_Busy 408") is True and cap("TimeoutError") is True
     for status in (529, 503, 429, 409, 425):
         assert cap(f"_Busy {status}") is False, status
+    # R4-M2: a dropped connection is most often the network's
+    for kind in ("ConnectionError", "ConnectionResetError", "BrokenPipeError"):
+        assert cap(kind) is False, kind
 
 
 def test_a_request_the_judge_rejects_ends_that_job_and_the_drain_goes_on(

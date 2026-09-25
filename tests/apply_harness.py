@@ -1851,9 +1851,10 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # Only after the judge answered in the drain (R2-I1): a park while it
     # answered nothing (an outage for every job) is outside the policy. Only
     # for an error a request can cause (R3-M1): a 5xx other than 503 and
-    # 529, a 408, or an error with no status (a timeout, a dropped connection)
-    "^" + re.escape(apply_run.JUDGE_DOWN_REASON) + r": \S+(?: (?:408|5(?!03|29)\d\d))? "
-    r"(?:at .+ )?after [1-9]\d* answers? in this drain; "
+    # 529, a 408, or an error with no status (a timeout), never a dropped
+    # connection, most often the network's (R4-M2)
+    "^" + re.escape(apply_run.JUDGE_DOWN_REASON) + r": (?!Connection|BrokenPipe)\S+"
+    r"(?: (?:408|5(?!03|29)\d\d))? (?:at .+ )?after [1-9]\d* answers? in this drain; "
     + re.escape(apply_run.OUTAGES_PARKED) + "$"))
 
 

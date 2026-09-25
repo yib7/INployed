@@ -711,7 +711,9 @@ class SendWatch:
         self.caused: list[str] = []
         self._navigated = False            # the click's own navigation was seen
         self._order: list[tuple[Any, str, str]] = []   # (request, kind, row)
-        self.answered: set[int] = set()    # the requests whose answer came back
+        # the ids of requests `_order` holds (so no other request has them)
+        # whose answer came back, and of those still in flight
+        self.answered: set[int] = set()
         self.pending: set[int] = set()
         self._targets: list = []
         self._before: set[int] = set()     # the context's tabs before `start`
@@ -822,15 +824,23 @@ class SendWatch:
     def _done(self, request) -> None:
         self.pending.discard(id(request))
 
+    def _answer(self, request) -> None:
+        """`request`'s answer came back: kept only for a request `_order`
+        holds, whose id no other request can have while it is held (the
+        context reports every tab's answers, and a freed request's id is
+        reused; SP8a review R3-M2)."""
+        if any(held is request for held, _, _ in self._order):
+            self.answered.add(id(request))
+
     def _finished(self, request) -> None:
         self.pending.discard(id(request))
-        self.answered.add(id(request))
+        self._answer(request)
 
     def _answered(self, response) -> None:
         """A response's headers came back: its request reached the site,
         even when its body is cut off after."""
         try:
-            self.answered.add(id(response.request))
+            self._answer(response.request)
         except Exception:       # noqa: BLE001  (a response that cannot be read counts as nothing)
             pass
 

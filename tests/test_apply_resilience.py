@@ -398,6 +398,25 @@ def test_a_get_after_the_clicks_navigation_is_loaded_again_only_after_a_send_cam
     assert watch.carried_get(thanks) is True
 
 
+def test_an_answer_counts_only_for_a_request_the_watch_holds():
+    # SP8a review R3-M2: the context reports every tab's answers; the id of a
+    # request the watch does not hold may be reused by a later one
+    from unittest.mock import Mock
+
+    import apply_run
+    held, stranger = Mock(), Mock()
+    watch = apply_run.SendWatch(Mock(), Mock())
+    watch._order = [(held, "sent", "POST https://careers.fabrikam.example/submit")]
+    watch._finished(stranger)
+    watch._answered(Mock(request=stranger))
+    assert watch.answered == set()
+    watch._answered(Mock(request=held))
+    assert watch.answered == {id(held)}
+    watch.answered.clear()
+    watch._finished(held)
+    assert watch.answered == {id(held)}
+
+
 # --- a malformed queue entry (RES-09)-------------------------------------------------------
 
 def _queue(tmp_path, *entries):

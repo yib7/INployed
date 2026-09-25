@@ -1149,15 +1149,15 @@ FLOWS: tuple[Flow, ...] = (
                 "Account button, the password rules, the account checked by a link in the "
                 "email, the sign-in after it, then the wizard (ACC-01, ACC-04, ACC-05)"),
     Flow("signup_exists", "signup_exists.html", False, "ready_to_submit", _PARKED,
-         confirm="#received:visible", gate="#btn-submit:visible", password=True,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-up that says the address has an account: one sign-in instead, never a "
                 "second sign-up, then the wizard (ACC-03)"),
     Flow("password_rules", "password_rules.html", False, "ready_to_submit", _PARKED,
-         confirm="#received:visible", gate="#btn-submit:visible", password=True,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-up that states its password rules beside the box: read, met by the "
                 "stored password, then the wizard (ACC-04)"),
     Flow("slow_signup", "slow_signup.html", False, "ready_to_submit", _PARKED,
-         confirm="#received:visible", gate="#btn-submit:visible", password=True, suite_seeds=1,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True, suite_seeds=1,
          covers="a sign-up that posts and then shows nothing for 8 s: waited for, clicked "
                 "once (ACC-09)"),
     Flow("sso_buttons", "sso_buttons.html", True, "needs_human",

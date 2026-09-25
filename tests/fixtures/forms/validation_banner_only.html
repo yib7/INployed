@@ -7,7 +7,8 @@
      "Years of experience" (no star, no message beside the box, no
      aria-invalid) with one banner above the form that no control names:
      the judge's mapping of that banner is the only signal of which field the
-     form wants. An optional "Badge number" stays blank and the form never
+     form wants (its words hold no field's whole label, so the label rule
+     never stands in for the judge). An optional "Badge number" stays blank and the form never
      asks for it. The submit takes the form as it is. -->
 <style>
   body { font-family: sans-serif; margin: 24px; }
@@ -44,7 +45,7 @@
     var clicks = Number(document.body.getAttribute('data-next-clicks') || '0') + 1;
     document.body.setAttribute('data-next-clicks', String(clicks));
     if (!$('years').value) {
-      $('banner').textContent = 'Before you go on, tell us how many years of experience you have.';
+      $('banner').textContent = 'Before you go on, tell us your years of work experience.';
       return;
     }
     $('banner').textContent = '';

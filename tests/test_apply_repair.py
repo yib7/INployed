@@ -629,7 +629,7 @@ def test_a_spared_field_without_an_answer_is_the_park_when_its_message_stays(
                    workdir=tmp_path)
     assert r.status == "needs_human" and not r.breaks and r.policy is True, (r.status, r.reason)
     assert r.reason == ("required field without an answer: Years of experience (the form says: "
-                        "Before you go on, tell us how many years of experience you have.)"), \
+                        "Before you go on, tell us your years of work experience.)"), \
         r.reason
     assert r.sends == 0
 
@@ -666,3 +666,65 @@ def test_a_message_read_as_a_field_no_repair_can_touch_gets_the_second_look(
                    workdir=tmp_path)
     assert r.ok and not r.breaks and r.status == "submitted", (r.status, r.reason, r.breaks)
     assert r.sends == 1
+
+
+# --- round 2's addition: a message both looks leave unmapped names the field whose label it holds ---
+
+@pytest.mark.parametrize("message, labels, want", [
+    ("Portfolio URL is required", ("Resume", "Portfolio URL"), 1),
+    # case and quotes folded: still the literal label
+    ("“portfolio url” is required", ("Resume", "Portfolio URL *"), 1),
+    # two labels named: neither
+    ("First name and Last name are required", ("First name", "Last name"), None),
+    # a label only inside a longer word: no
+    ("Username is required", ("Name", "Email"), None),
+    # a label inside another field's label is ambiguous and never names one
+    ("Email is required", ("Email", "Email confirmation"), None),
+    ("Email confirmation must match", ("Email", "Email confirmation"), 1),
+    ("There is a problem with this page", ("Resume", "Portfolio URL"), None),
+])
+def test_a_message_names_a_field_only_by_one_whole_literal_label(message, labels, want):
+    assert apply_run.field_named_in(message, _fields(*labels)) == want
+
+
+@pytest.mark.parametrize("seed", [2, 14])
+def test_a_refused_submit_whose_message_both_looks_miss_is_repaired_by_its_label(
+        _browser, flow_server, tmp_path, seed):
+    # the seeds whose two looks leave "Portfolio URL is required" unmapped
+    r = h.run_flow(h.flow("validation_in_button_box_submit"), jev.NoisyJev(jev.FakeJev(), seed),
+                   f"noisy-{seed}", browser=_browser, server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks and r.status == "submitted", (r.status, r.reason, r.breaks)
+    assert r.sends == 1
+    assert any(d.get("by_label") for d in _decisions(r) if d["what"] == "errors_mapped")
+
+
+def test_a_field_named_only_by_its_label_is_never_parked_on(_browser, flow_server, tmp_path):
+    # both looks miss the banner, whose words hold "Badge number", a field the
+    # sheet cannot answer: the run tries it, never parks on it by name
+    import dataclasses
+
+    class Misses:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def judge(self, state, questions):
+            out = dict(self.inner.judge(state, questions))
+            for row in (state or {}).get("fields") or []:
+                if row.get("label") in ("Years of experience", "Badge number"):
+                    out.pop(f"field_{row.get('n')}_source", None)
+            for qid in questions:
+                if qid.startswith("error_"):
+                    out[qid] = jev.Answer(kind="choice", choice="none",
+                                          probabilities={"none": 0.9}, confidence=0.9)
+            return out
+    page = (h.FIXTURES_DIR / "forms" / "validation_banner_only.html").read_text(encoding="utf-8")
+    page = page.replace("tell us your years of work experience.",
+                        "your Badge number is required.")
+    f = dataclasses.replace(h.flow("validation_banner_only"), name="banner_names_badge",
+                            wrap=Misses, routes=lambda base: {
+                                f"{base}/forms/validation_banner_only.html": page})
+    r = h.run_flow(f, jev.FakeJev(), "misses", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert not r.breaks and r.sends == 0, r.breaks
+    assert "Badge number" not in r.reason, r.reason
+    assert any(d.get("by_label") for d in _decisions(r) if d["what"] == "errors_mapped")

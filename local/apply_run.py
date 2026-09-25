@@ -850,6 +850,34 @@ def _ident_attrs(ident: str) -> str:
     return str(ident).rsplit("|", 1)[0]
 
 
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+                         "\u00ab": '"', "\u00bb": '"', "`": "'"})
+
+
+def _plain(text: str) -> str:
+    """Words for a literal label match: case folded, curly quotes made
+    straight, spaces folded, a required mark at either end dropped."""
+    t = " ".join(str(text or "").translate(_QUOTES).lower().split())
+    return t.strip(" *\u2731\uff0a:")
+
+
+def field_named_in(message: str, fields) -> int | None:
+    """The one field whose whole label `message` holds, literally, after
+    `_plain` (a label inside a longer word never counts: "Name" in
+    "Username"); None when no label or more than one does. A label that also
+    appears inside another field's label ("Email" in "Email confirmation")
+    is ambiguous and never names a field. SP6 review, round 2's addition."""
+    labels = {f.n: _plain(f.label) for f in fields if _plain(f.label)}
+    text = _plain(message)
+    found = []
+    for n, label in labels.items():
+        if any(m != n and label in other for m, other in labels.items()):
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(label)}(?![a-z0-9])", text):
+            found.append(n)
+    return found[0] if len(found) == 1 else None
+
+
 def _message_key(text: str) -> str:
     """A form's message, spaces folded (the key of `_JobRun._spared`)."""
     return " ".join(str(text or "").split())
@@ -4728,7 +4756,9 @@ class _JobRun:
         fresh question without it); a message the first request maps to no
         field gets one second look, asked in other words; and a problem the
         judge mapped carries `mapped` (its confidence), which `_repair_named`
-        never parks on alone. With `actable` (the fields a repair can put
+        never parks on alone. A message both looks leave unmapped names the
+        field whose whole label its own words hold, when exactly one does
+        (`field_named_in`): `by_label`, for a repair only, never a park. With `actable` (the fields a repair can put
         right), a judged field outside it (an upload made, a password) counts
         as no mapping: the second look asks without it (SP6 review R2)."""
         out: dict[int, list[dict[str, Any]]] = {}
@@ -4773,18 +4803,31 @@ class _JobRun:
                     if j in more:
                         named[i] = more[j]
             fields: dict[int, int | None] = {}
+            by_label: list[int] = []
             for i, p in enumerate(loose):
                 n = self._field_mapped(digest, named.get(i), exclude[i])
+                row = {**p, "mapped": round(named[i][1], 2)} if n is not None else None
+                if n is None:
+                    # both looks named no field: the message's own words, when
+                    # they name exactly one field's whole label, for a repair
+                    # only, never a park (`by_label`)
+                    n = field_named_in(str(p.get("text") or ""), digest.fields)
+                    if n is not None and (n in exclude[i]
+                                          or (actable is not None and n not in actable)):
+                        n = None
+                    row = {**p, "mapped": 0.0, "by_label": True} if n is not None else None
+                    if n is not None:
+                        by_label.append(i)
                 fields[i] = n
                 if n is None:
                     continue
-                out.setdefault(n, []).append({**p, "mapped": round(named[i][1], 2)})
+                out.setdefault(n, []).append(row)
                 label = next(x.label for x in digest.fields if x.n == n)
                 self._error_tried.setdefault(keys[i], set()).add(_label_key(label))
             self._decide("errors_mapped", f"{len(loose)} message(s) no control names, mapped by "
                                           "the judge",
                          messages=[_cap(p["text"], 80) for p in loose], fields=fields,
-                         looked_again=len(unsure),
+                         looked_again=len(unsure), by_label=by_label,
                          excluded={i: sorted(e) for i, e in enumerate(exclude) if e})
         return out
 
@@ -4882,7 +4925,8 @@ class _JobRun:
             plan = dataclasses.replace(plan, fields=[done.get(pf.n, pf) for pf in plan.fields])
             verification = [v for v in verification if v.n not in done] + more_verification
             acted = acted or any(pf.action in _ACTED for pf in more.fields)
-            missed = [pf.n for pf in more.fields if pf.n in soft and pf.action not in _ACTED]
+            missed = [pf.n for pf in more.fields if pf.n in soft and pf.action not in _ACTED
+                      and not all(p.get("by_label") for p in named[pf.n])]
         self._repaired = self._repaired or acted    # something on the page was acted on
         if typed:
             fixed = []

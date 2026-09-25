@@ -1071,6 +1071,80 @@ def test_a_choice_of_classes_the_password_holds_none_of_still_parks(tmp_path, mo
         run._check_password_rules(_rules_digest(_READ_AS_MEANT[4][0]), "127.0.0.1")
 
 
+# R3-M3 (SP7 review round 3): the pre-check blocks only on a rule it reads
+# with certainty. A rule's phrase with a choice or advice word ("or",
+# "and/or", "a mix of", "any", "avoid", "recommended", "should", "(0-9) or")
+# adds no class the password needs; the certain rules beside it still hold.
+# Every phrasing of the round-3 probe, in both directions
+_READ_WITH_CERTAINTY = [
+    # a choice the reader does not read whole, advice: no class needed
+    ("Password\nMust contain an uppercase letter and/or a number", {}),
+    ("Password\nUse 8 or more characters with a mix of letters, numbers & symbols",
+     {"min_length": 8}),
+    ("Password\nMust contain a digit (0-9) or a special character", {}),
+    ("Password\nAvoid using your phone number", {}),
+    ("Password\nA symbol is recommended", {}),
+    ("Password\nUse any combination of uppercase letters, numbers and symbols", {}),
+    ("Password\nYour password should include a number", {}),
+    ("Password\nShould contain numbers or symbols. Must contain an uppercase letter.",
+     {"upper": True}),
+    # a choice read whole: any one of it, and the certain classes beside it
+    ("Password\nMust contain letters and numbers or symbols",
+     {"digit": True, "special": True, "classes_needed": 1}),
+    ("Password\nMust include one uppercase letter, and either a number or a symbol",
+     {"upper": True}),
+    # "8 or more" is a count, no choice: the class beside it holds
+    ("Password\nMust be 8 or more characters and contain a number",
+     {"min_length": 8, "digit": True}),
+    # a prohibition beside a rule: the rule after "and must" holds
+    ("Password\nMust not be the same as your email and must include a symbol",
+     {"special": True}),
+    # read looser than meant, which the site judges: a prohibition's clause
+    # that runs on, "No fewer than", a head that is no rule
+    ("Password\nNo special characters required, but must contain a number", {}),
+    ("Password\nNo fewer than 8 characters, including one uppercase letter", {"min_length": 8}),
+    ("Password\nNote: must contain an uppercase letter", {}),
+    # another field's label with its own hint ends the password's rules
+    ("Password\nMinimum 8 characters\nDisplay name (shown to recruiters)", {"min_length": 8}),
+    ("Password\nNickname (up to 20 characters)", {}),
+]
+
+
+@pytest.mark.parametrize("text, rules", _READ_WITH_CERTAINTY)
+def test_password_rules_read_only_what_the_site_says_with_certainty(text, rules):
+    got, said = apply_run.password_rules(_rules_digest(text, ("Nickname", "text")))
+    assert got == rules, said
+
+
+@pytest.mark.parametrize("text, password", [
+    (_READ_WITH_CERTAINTY[0][0], "only-lowercase-here"),  # and/or: an uppercase, a number
+    (_READ_WITH_CERTAINTY[1][0], "OnlyLettersHere"),      # a mix of: a number, a symbol
+    (_READ_WITH_CERTAINTY[2][0], "OnlyLettersHere"),      # (0-9) or: a digit, a symbol
+    (_READ_WITH_CERTAINTY[3][0], "No-Digits-Here"),       # avoid: the phone's number
+    (_READ_WITH_CERTAINTY[4][0], "NoSymbolsHere1"),       # recommended: a symbol
+    (_READ_WITH_CERTAINTY[5][0], "lowercaseonly"),        # any combination of three
+    (_READ_WITH_CERTAINTY[6][0], "No-Digits-Here"),       # should: a number
+])
+def test_a_rule_read_without_certainty_never_parks(tmp_path, monkeypatch, text, password):
+    # each parked with "does not meet the password rules" before; the value
+    # is a test's own, never the stored one
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: password)
+    run = _job_run(tmp_path, "127.0.0.1")
+    run._check_password_rules(_rules_digest(text), "127.0.0.1")
+
+
+@pytest.mark.parametrize("text, password, needs", [
+    (_READ_WITH_CERTAINTY[7][0], "no-uppercase-12", "an uppercase letter"),
+    (_READ_WITH_CERTAINTY[10][0], "No-Digits-Here", "a digit"),
+])
+def test_a_certain_rule_beside_advice_or_a_count_still_parks(tmp_path, monkeypatch, text,
+                                                             password, needs):
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: password)
+    run = _job_run(tmp_path, "127.0.0.1")
+    with pytest.raises(apply_run._Parked, match=rf"it needs {needs} \(the site asks"):
+        run._check_password_rules(_rules_digest(text), "127.0.0.1")
+
+
 # === the password invariants (SP7) ===========================================================================
 
 def _recorder(tmp_path):

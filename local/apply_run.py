@@ -2014,6 +2014,15 @@ _RULE_CLASS_WORD = (r"(?:" + "|".join(f"(?:{p.pattern})" for p in _RULE_CLASSES.
 _RULE_EITHER = re.compile(
     _RULE_CLASS_WORD + r"(?:\s*,\s*(?:an?\s+|one\s+)?" + _RULE_CLASS_WORD + r")*"
     r"\s*,?\s+or\s+(?:an?\s+|one\s+)?" + _RULE_CLASS_WORD, re.I)
+# a rule's words the reader cannot read with certainty (SP7 review R3-M3):
+# advice ("avoid", "recommended", "should") is no rule at all, and a choice
+# ("or", "and/or", "a mix of", "any") that `_RULE_EITHER` does not read
+# whole ("a digit (0-9) or a special character") makes its sentence's
+# classes no class the password needs. "8 or more" is a count, no choice
+_RULE_ADVICE = re.compile(r"\b(?:avoid\w*|recommend\w*|suggest\w*|should|ideally|prefer\w*"
+                          r"|encourag\w*|consider\w*|optional\w*|tips?)\b", re.I)
+_RULE_CHOICE = re.compile(r"\bor\b|\b(?:mix|mixture|combination|variety)\s+of\b|\bany\b", re.I)
+_RULE_OR_COUNT = re.compile(r"\bor\s+(?:more|longer|greater|fewer|less|above|higher)\b", re.I)
 # a line's head before "(" or ":" that is no rule ("Nickname (up to 20
 # characters)", "Bio: at least 50 characters"): another field's label
 _RULE_HEAD = re.compile(r"^([^(:]*)[(:]")
@@ -2086,12 +2095,18 @@ def _rule_lines(digest: apply_form.FormDigest, boxes: list) -> list[str]:
 
 def _class_rules(parts: list[str]) -> dict[str, Any]:
     """The character classes the rules' words ask for, their prohibitions
-    already left out: with a count ("3 of the following"), the classes
-    named and `classes_needed`; else each sentence's classes, where classes
-    joined by "or" are any one of them (`classes_needed` 1 when that one
-    choice is all the rules ask). A choice beside other classes, or two
-    choices, is unclear and no rule: the site judges it."""
-    said = " ".join(parts)
+    already left out, and only the ones read with certainty (SP7 review
+    R3-M3): a sentence of advice (`_RULE_ADVICE`) is no rule. With a count
+    ("3 of the following"), the classes named and `classes_needed`; else
+    each sentence's classes, where classes joined by "or" are any one of
+    them (`classes_needed` 1 when that one choice is all the rules ask). A
+    sentence with a choice `_RULE_EITHER` did not read whole ("and/or", "a
+    mix of", "any", "(0-9) or": `_RULE_CHOICE`) needs none of its classes.
+    A choice beside other classes, or two choices, is unclear and no rule:
+    the site judges it."""
+    sentences = [s for p in parts for s in re.split(r"[.;!](?:\s+|$)", p)
+                 if s.strip() and not _RULE_ADVICE.search(s)]
+    said = " ".join(sentences)
     named = [key for key, pattern in _RULE_CLASSES.items() if pattern.search(said)]
     m = _RULE_SOME.search(said)
     if m:
@@ -2102,11 +2117,13 @@ def _class_rules(parts: list[str]) -> dict[str, Any]:
                 **({"classes_needed": need} if need < len(named) else {})}
     required: set[str] = set()
     choices: list[set[str]] = []
-    for sentence in (s for p in parts for s in re.split(r"[.;!](?:\s+|$)", p)):
+    for sentence in sentences:
         here = {key for key, pattern in _RULE_CLASSES.items() if pattern.search(sentence)}
         joined = {key for e in _RULE_EITHER.finditer(sentence)
                   for key, pattern in _RULE_CLASSES.items() if pattern.search(e.group(0))}
-        required |= here - joined if len(joined) > 1 else here
+        unread = _RULE_EITHER.sub(" ", _RULE_OR_COUNT.sub(" ", sentence))
+        if not _RULE_CHOICE.search(unread):
+            required |= here - joined if len(joined) > 1 else here
         if len(joined) > 1:
             choices.append(joined)
     if required:

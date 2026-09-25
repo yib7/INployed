@@ -929,7 +929,16 @@ class _Accounts:
     address went in on the same site this job, or when the ledger knows the
     account. Other boxes on an account screen (a name, a phone, a privacy
     checkbox) are filled from the user's facts through the ordinary plan; one
-    the facts cannot answer parks the job with its question, like any form."""
+    the facts cannot answer parks the job with its question, like any form.
+
+    SP7: with no account in the ledger, a sign-in screen's way to a sign-up
+    is taken, a link or a button (ACC-01); with none, one sign-in with the
+    master password is tried (ACC-02). A sign-up that says the address has
+    an account signs in instead (ACC-03); the site's password rules are
+    checked before the password makes an account (ACC-04); a sign-up shown
+    again with its password boxes emptied takes it once more (ACC-12); a
+    click that set a request going is waited on (ACC-09); a step that
+    raised names its error in the park (ACC-10)."""
 
     MAX_STEPS_PER_SITE = 4      # account screens handled per site before the job parks
 

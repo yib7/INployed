@@ -1381,7 +1381,8 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
     """The page kind the structure alone gives, for a read that stayed under
     the floor after its second look (the unsure fallback): a bot-check frame,
     or a bot-check's words with no application box, is the check; a code box
-    with no password box the code step; a password box with no file box an
+    with no password box, or a page that says a verification link was emailed
+    (`link_sent`, ACC-05), the code step; a password box with no file box an
     account screen (a sign-up when a box makes the password, a sign-in when
     the box is the current password); an Apply entry with no application box
     a posting; a closed posting's words (and no Apply entry) a dead end; an

@@ -325,8 +325,11 @@ class _RedirectingSite:
     302 to an address with no host. `/cf` is a bot check (a 403 with
     `cf-mitigated: challenge`) whose script, once it runs, sets a cookie and
     goes on to `/landed` (the link used); `/hopcf` is a 302 to it; `/busy`
-    and `/down` answer 429 and 503; `/gone` is a 403 that says the link
-    expired; `/human` is a 200 page of a bot check, `/hophuman` a 302 to it.
+    and `/down` answer 429 and 503, `/maint` a 503 for maintenance,
+    `/denied` and `/empty403` a bare 403; `/bot403` is a 403 whose page
+    asks for a bot check; `/gone` is a 403 that says the link expired and
+    `/already` one that says the address is verified already; `/human` is
+    a 200 page of a bot check, `/hophuman` a 302 to it.
     `/verified_widget` and `/verified_box` are verified pages whose sign-in
     carries a CAPTCHA widget in a frame or a "Verify you are human" box.
     Every path asked for is kept in `asked`."""
@@ -359,7 +362,14 @@ class _RedirectingSite:
                                        "'solved=1'; location.href = '/landed';</script>"),
                           "/busy": (429, "<h1>Too many requests</h1>"),
                           "/down": (503, "<h1>Service unavailable</h1>"),
-                          "/gone": (403, "<h1>This link has expired</h1>")}
+                          "/gone": (403, "<h1>This link has expired</h1>"),
+                          "/maint": (503, "<h1>Down for maintenance</h1><p>Back soon.</p>"),
+                          "/denied": (403, "<h1>Access denied</h1>"),
+                          "/empty403": (403, ""),
+                          "/bot403": (403, "<h1>Please verify you are human</h1><p>Press and "
+                                           "hold the button.</p>"),
+                          "/already": (403, "<h1>This email address has already been "
+                                            "verified.</h1>")}
                 if self.path in checks:
                     status, page = checks[self.path]
                     data = f"<!doctype html><html><body>{page}</body></html>".encode()
@@ -520,7 +530,7 @@ def test_a_verification_link_redirected_to_an_address_with_no_host_names_its_sch
 
 @pytest.mark.parametrize("path, said", [
     ("/cf", "cf-mitigated: challenge"),
-    ("/busy", "HTTP 429"), ("/down", "HTTP 503"),
+    ("/bot403", "HTTP 403; the page says 'verify you are human'"),
     ("/human", "the page says 'Verify you are human'")])
 def test_a_verification_link_answered_by_a_bot_check_parks_for_the_person(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
@@ -568,6 +578,37 @@ def test_a_verified_page_whose_sign_in_carries_a_captcha_is_read(
     run, read = _link_run(tmp_path, browser_page, monkeypatch)
     assert run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}").startswith(shown)
     assert read == [f"http://127.0.0.1:{redirecting_site.port}{path}"]
+
+
+@pytest.mark.parametrize("path, said", [
+    ("/busy", "HTTP 429 (the page says 'Too many requests')"),
+    ("/down", "HTTP 503 (the page says 'Service unavailable')"),
+    ("/maint", "HTTP 503 (the page says 'Down for maintenance')"),
+    ("/denied", "HTTP 403"), ("/empty403", "HTTP 403")])
+def test_a_verification_link_answered_by_a_bare_status_parks_naming_it(
+        browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
+    # R4-M1 (SP7 review): a 403, 429 or 503 is a bot check only with a
+    # check's header or words; any other is named by its status and the
+    # page's words when it says the site is down or busy. Its page never
+    # runs, and the person opens the link again
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    with pytest.raises(apply_run._Parked) as parked:
+        run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}")
+    assert parked.value.reason == ("emailed verification link needed: the emailed link's page "
+                                   f"answered {said}")
+    assert parked.value.tab_note == apply_run.LINK_NOTE
+    assert read == []
+
+
+def test_a_verification_link_answered_by_a_403_that_says_the_address_is_verified_is_read(
+        browser_page, tmp_path, monkeypatch, redirecting_site):
+    # R4-M1: the page's own words first. A 403 that says the address is
+    # verified already is the link's work done: it is read as the link's
+    # page and the run goes on to the job's page
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    assert run._open_link(f"http://127.0.0.1:{redirecting_site.port}/already") == (
+        "This email address has already been verified.")
+    assert read == [f"http://127.0.0.1:{redirecting_site.port}/already"]
 
 
 def test_a_verification_link_the_site_answers_with_a_403_that_names_the_link_is_refused(

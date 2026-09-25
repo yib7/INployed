@@ -93,6 +93,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urljoin, urlsplit
@@ -249,8 +250,20 @@ LINK_FAILED_WORDS = re.compile(
     r"|\b(?:expired|invalid)\s+(?:link|token)\b|\balready\s+been\s+used\b"
     r"|\bcould\s+not\s+(?:be\s+)?verif", re.I)
 # a verification link's page that is the site's bot check (SP7 review R3-M2):
-# the answer's statuses (`_link_challenge`), and the words of a check's page
+# the statuses a check answers with (`_link_challenge`: a status alone is no
+# check, SP7 review R4-M1), and the words of a check's page
 LINK_CHALLENGE_STATUS = (403, 429, 503)
+# the words of such a status's page that say what it is first (SP7 review
+# R4-M1): the address verified already (the link's work done), and the site
+# down or busy
+LINK_VERIFIED_WORDS = re.compile(
+    r"\balready\s+(?:been\s+)?(?:verified|confirmed|activated)\b"
+    r"|\b(?:e-?mail(?:\s+address)?|address|account)\s+(?:(?:has|have)\s+(?:now\s+)?been\s+"
+    r"|is\s+(?:now\s+)?|was\s+)?(?:successfully\s+)?(?:verified|confirmed|activated)\b", re.I)
+LINK_DOWN_WORDS = re.compile(
+    r"\b(?:down\s+for\s+|under\s+|scheduled\s+)?maintenance\b"
+    r"|\b(?:temporarily|service)\s+unavailable\b|\btoo\s+many\s+requests\b"
+    r"|\btry\s+again\s+later\b", re.I)
 LINK_BOT_WORDS = re.compile(
     r"\bverify(?:ing)?\s+(?:that\s+)?you\s+are\s+(?:a\s+)?human\b"
     r"|\bchecking\s+(?:your\s+browser|if\s+the\s+site\s+connection\s+is\s+secure)\b"
@@ -1635,24 +1648,38 @@ def _is_captcha_url(url: str) -> bool:
     return _site(host) == "google.com" and parts.path.startswith("/recaptcha")
 
 
-def _link_challenge(answer) -> str:
-    """What says the answer to a verification link's fetch is the site's bot
-    check in place of the link's page (SP7 review R3-M2): Cloudflare's
-    `cf-mitigated: challenge` header, or a 403, 429 or 503 whose page does
-    not say the link itself was refused (`LINK_FAILED_WORDS`); "" for any
-    other answer."""
+def _link_challenge(answer) -> tuple[str, str]:
+    """What the answer to a verification link's fetch is in place of the
+    link's page: ("check", what) for the site's bot check (SP7 review
+    R3-M2), Cloudflare's `cf-mitigated: challenge` header or a 403, 429 or
+    503 whose page asks for one (`LINK_BOT_WORDS`); ("status", what) for
+    any other 403, 429 or 503, with the page's words when it says the site
+    is down or busy (`LINK_DOWN_WORDS`, read before a check's words); ("",
+    "") for any other answer, and for a 403, 429 or 503 whose page says the
+    link was refused (`LINK_FAILED_WORDS`) or the address is verified
+    already (`LINK_VERIFIED_WORDS`): that page loads and is read as the
+    link's own (SP7 review R4-M1)."""
     headers = {str(k).lower(): str(v) for k, v in dict(answer.headers or {}).items()}
     if headers.get("cf-mitigated", "").strip().lower() == "challenge":
-        return "cf-mitigated: challenge"
+        return "check", "cf-mitigated: challenge"
     if answer.status not in LINK_CHALLENGE_STATUS:
-        return ""
+        return "", ""
     try:
         body = answer.text()
     except Exception:           # noqa: BLE001  (a body that does not decode says nothing)
         body = ""
-    if LINK_FAILED_WORDS.search(re.sub(r"<[^>]*>", " ", body)):
-        return ""
-    return f"HTTP {answer.status}"
+    body = re.sub(r"(?is)<(script|style)\b.*?</\1\s*>", " ", body)
+    words = " ".join(unescape(re.sub(r"<[^>]*>", " ", body)).split())
+    if LINK_FAILED_WORDS.search(words) or LINK_VERIFIED_WORDS.search(words):
+        return "", ""
+    status = f"HTTP {answer.status}"
+    down = LINK_DOWN_WORDS.search(words)
+    if down:
+        return "status", f"{status} (the page says {down.group(0)!r})"
+    bot = LINK_BOT_WORDS.search(words)
+    if bot:
+        return "check", f"{status}; the page says {bot.group(0)!r}"
+    return "status", status
 
 
 # a verification link's settled page as a bot check reads it (SP7 review
@@ -7548,15 +7575,17 @@ class _JobRun:
         nothing of it is read. A navigation answered by the site's bot
         check (`_link_challenge`) goes no further: the check's page never
         runs, and the park asks the person to open the link (SP7 review
-        R3-M2); so does a settled page that reads as one: `LINK_BOT_WORDS`
-        in its main frame, on a page with no box to fill
-        (`_link_check_text`). On the link's own address the link is not
-        used; a check on a later hop comes after that address answered, so
-        the park says the link may have been used and asks for a Re-queue
-        first (SP7 review R4-I2). A page the tab opens (a popup) loads nothing
-        and is closed. The tab's text once it settled (a park when it was
-        refused, left the allowed hosts, asked for a bot check or did not
-        load), and the tab closed."""
+        R3-M2). A 403, 429 or 503 that is no check goes no further either,
+        and its park names the status (SP7 review R4-M1). A settled page
+        parks as a check when its main frame says so (`LINK_BOT_WORDS`) on a
+        page with no box to fill (`_link_check_text`). On the link's own
+        address the link is not used; an answer held on a later hop comes
+        after that address answered, so the park says the link may have
+        been used and asks for a Re-queue first (SP7 review R4-I2). A page
+        the tab opens (a popup) loads nothing and is closed. The tab's text
+        once it settled (a park when it was refused, left the allowed hosts,
+        asked for a bot check, was held by its status or did not load), and
+        the tab closed."""
         context = self.page.context
         known = list(context.pages)
         tab = context.new_page()
@@ -7564,9 +7593,10 @@ class _JobRun:
         moves: list[str] = []           # the redirects handed to the page as a script's move
         landed = [False]                # a page that is no redirect was handed to the tab
         broken: list[str] = []          # why the route could not answer a navigation
-        # what said a navigation's answer was a bot check, and whether a hop
-        # of the link had answered before it (the link may have been used)
-        challenged: list[tuple[str, bool]] = []
+        # what held a navigation's answer (`_link_challenge`: a bot check or a
+        # status), and whether a hop of the link had answered before it (the
+        # link may have been used)
+        challenged: list[tuple[str, str, bool]] = []
 
         def main_frame(request) -> bool:
             try:
@@ -7608,10 +7638,10 @@ class _JobRun:
                 broken.append(type(e).__name__)
                 route.abort()
                 return
-            challenge = _link_challenge(answer)
-            if challenge:
-                challenged.append((challenge, bool(moves)))
-                route.abort()       # the check's page never runs (on the link's own
+            kind, what = _link_challenge(answer)
+            if kind:
+                challenged.append((kind, what, bool(moves)))
+                route.abort()       # the answer's page never runs (on the link's own
                 return              # address, the link is not used)
             where = answer.headers.get("location", "") if 300 <= answer.status < 400 else ""
             if not where:
@@ -7690,16 +7720,17 @@ class _JobRun:
                                          "run stopped it", LINK_NOTE)
         bot = LINK_BOT_WORDS.search(check)
         if bot and not challenged:
-            challenged.append((f"the page says {' '.join(bot.group(0).split())!r}", bool(moves)))
+            challenged.append(("check", f"the page says {' '.join(bot.group(0).split())!r}",
+                               bool(moves)))
         if challenged:
-            what, hopped = challenged[0]
+            kind, what, hopped = challenged[0]
+            said = f"asked for a bot check ({what})" if kind == "check" else f"answered {what}"
             if hopped:
-                raise _Parked("needs_human", f"{LINK_REASON}: the emailed link's page asked for a "
-                                             f"bot check ({what}) after the link's own address "
-                                             "had answered, so the link may have been used",
-                              LINK_USED_NOTE)
-            raise _Parked("needs_human", f"{LINK_REASON}: the emailed link's page asked for a bot "
-                                         f"check ({what})", LINK_BOT_NOTE)
+                raise _Parked("needs_human", f"{LINK_REASON}: the emailed link's page {said} after "
+                                             "the link's own address had answered, so the link "
+                                             "may have been used", LINK_USED_NOTE)
+            raise _Parked("needs_human", f"{LINK_REASON}: the emailed link's page {said}",
+                          LINK_BOT_NOTE if kind == "check" else LINK_NOTE)
         if error:
             raise _Parked("needs_human", f"{LINK_REASON}: the emailed link did not open "
                                          f"({error})", LINK_NOTE)

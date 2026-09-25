@@ -69,16 +69,31 @@ def code_hash(code: str) -> str:
 
 _MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+# an ISO time with its zone, lower case: "2026-09-24t14:42:00.000z",
+# "2026-09-24 10:42-04:00" (a `<time datetime>` is often in UTC)
+_ZONED = re.compile(r"\b(\d{4}-\d{2}-\d{2})[t ](\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?\s*"
+                    r"(z|[+-]\d{2}:?\d{2})(?![\w:])")
 
 
 def _when(text: str, now: datetime) -> tuple[datetime | None, bool]:
-    """(the time a row's words name, whether they name a clock time): an ISO
-    date, a US M/D/Y date or a month and day, else a weekday (the last one
-    before today) or "yesterday", else today when a clock time alone shows;
-    (None, False) for words that name no time."""
+    """(the time a row's words name, in local time, whether they name a
+    clock time): an ISO time with a zone ("...Z", "...-04:00") turned to
+    local time, an ISO date, a US M/D/Y date or a month and day, else a
+    weekday (the last one before today) or "yesterday", else today when a
+    clock time alone shows; (None, False) for words that name no time."""
     t = " ".join(str(text or "").split()).lower()
     if not t:
         return None, False
+    zoned = _ZONED.search(t)
+    if zoned:
+        zone = "+00:00" if zoned[4] == "z" else zoned[4]
+        if ":" not in zone:
+            zone = f"{zone[:3]}:{zone[3:]}"
+        try:
+            stamp = datetime.fromisoformat(f"{zoned[1]}T{int(zoned[2]):02d}:{zoned[3]}{zone}")
+            return stamp.astimezone().replace(tzinfo=None), True
+        except ValueError:
+            pass                # a zone out of range: the time is read without it
     day = None
     clock = None
     m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})(?:[t ](\d{1,2}):(\d{2}))?", t)

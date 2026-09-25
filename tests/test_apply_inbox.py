@@ -342,6 +342,31 @@ def test_parse_when_reads_a_rows_time(text, expected):
     assert (got.timetuple()[:5] if got else None) == expected
 
 
+def test_a_rows_time_with_a_zone_is_read_in_local_time():
+    """M1 (SP7 review): a `<time datetime>` in UTC ("...Z") or with an
+    offset is turned to local time; read as local, a code from before the
+    job's start looked newer than the start (ACC-07)."""
+    from datetime import datetime, timedelta, timezone
+    inbox = _inbox()
+    since = datetime.now().replace(second=0, microsecond=0)
+    before = (since - timedelta(hours=1)).astimezone()      # an hour before the start, local
+
+    def row(when: str):
+        return inbox.Message(0, "Greenhouse", "Your security code", "", "#m0", when=when)
+    utc = before.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    assert inbox.parse_when(utc) == since - timedelta(hours=1)
+    assert inbox._stale(row(utc), since)
+    # a zone three hours ahead of this machine's: its own clock reads two
+    # hours after the start, and the moment is an hour before it
+    ahead = before.astimezone(timezone(before.utcoffset() + timedelta(hours=3)))
+    assert inbox._stale(row(ahead.isoformat(timespec="seconds")), since)
+    assert inbox._stale(row(ahead.strftime("%Y-%m-%d %H:%M%z")), since)
+    # the same moments an hour after the start are fresh
+    later = before + timedelta(hours=2)
+    assert not inbox._stale(row(later.astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")), since)
+
+
 def test_fetch_link_takes_the_verification_link_on_the_application_site(
         browser_page, fixtures_server):
     """ACC-05: the account check's message among decoys; of its links only

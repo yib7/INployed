@@ -846,6 +846,26 @@ def test_plan_pools_neither_other_words_nor_a_shared_yes(catalog):
                              "Signature (type your full name)")
 
 
+def test_a_portfolio_box_takes_the_github_fact_when_no_website_is_stored(tmp_path):
+    # SP8b, live 2026-09-25 (validation_errors.html's required Portfolio URL):
+    # with no website stored, `quick_map`'s website_url has no value and the
+    # box goes to the judge, which read it leave_blank at 0.54 to 0.65 while
+    # the GitHub fact said "GitHub profile URL"; the sheet's row is "GitHub /
+    # Portfolio", and its description now says so
+    (tmp_path / "apply.md").write_text(apply_data.build_markdown(_MASTER, _JOB, _bank()),
+                                       encoding="utf-8")
+    cat = apply_facts.build(tmp_path, answers=_bank(), today=date(2026, 9, 21))
+    assert not cat.has("website_url")
+    assert "portfolio" in cat.to_criteria()["github_url"].lower()
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Portfolio URL", "url", required=True, ident="portfolio")])
+    state, questions = apply_judge.page_questions(digest, cat, _JOB)
+    p = apply_judge.plan(digest, cat, jev.FakeJev().judge(state, questions))
+    assert (p.fields[0].action, p.fields[0].fact_key, p.fields[0].value) == (
+        "fill", "github_url", "https://github.com/janedoe")
+    assert p.park_reason == ""
+
+
 def test_plan_special_source_without_a_file_follows_the_blank_rule(catalog, tmp_path):
     bare = tmp_path / "bare"
     bare.mkdir()

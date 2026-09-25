@@ -279,6 +279,97 @@ def test_answer_returns_none_when_the_judge_fails_and_names_only_the_error_type(
     assert "AQ.secret" not in out.note
 
 
+# --- a transient model error: one more draft call (RES-04) -----------------------------
+
+def _busy_then(monkeypatch, errors, reply=GROUNDED):
+    """`llm.call` raising `errors` in turn, then answering `reply`; the calls."""
+    calls = []
+    errors = list(errors)
+
+    def fake_call(system, user, tier, **kw):
+        calls.append(tier)
+        if errors:
+            raise errors.pop(0)
+        return reply
+    monkeypatch.setattr(llm, "call", fake_call)
+    return calls
+
+
+def test_a_busy_model_gets_one_more_draft_call_after_a_wait(monkeypatch):
+    calls = _busy_then(monkeypatch, [llm.LLMError("503 UNAVAILABLE", kind="overload")])
+    sleeps = []
+    out = apply_answergen.attempt(_field(), _Catalog(), _Counting(), budget=3,
+                                  sleep=sleeps.append)
+    assert out.text == GROUNDED and out.ok
+    assert calls == ["flash_lite", "flash_lite"] and out.calls == 2
+    assert sleeps == [apply_answergen.DRAFT_RETRY_S]
+    assert out.note.endswith(", after one more draft call)")
+
+
+@pytest.mark.parametrize("error", [TimeoutError("read timed out"),
+                                   ConnectionError("reset by peer"),
+                                   llm.LLMError("429 RESOURCE_EXHAUSTED", kind="rotate")])
+def test_a_timeout_a_dropped_connection_or_a_quota_gets_the_retry(monkeypatch, error):
+    calls = _busy_then(monkeypatch, [error])
+    out = apply_answergen.attempt(_field(), _Catalog(), _Counting(), budget=2,
+                                  sleep=lambda s: None)
+    assert out.text == GROUNDED and len(calls) == 2
+
+
+def test_a_model_busy_twice_is_not_called_a_third_time(monkeypatch):
+    calls = _busy_then(monkeypatch, [llm.LLMError("503 UNAVAILABLE", kind="overload")] * 5)
+    out = apply_answergen.attempt(_field(), _Catalog(), _Counting(), budget=3,
+                                  sleep=lambda s: None)
+    assert out.text is None and len(calls) == 2 and out.calls == 2
+    assert out.note == "draft failed: LLMError (tried twice)"
+
+
+def test_the_last_draft_of_the_budget_is_never_retried(monkeypatch):
+    calls = _busy_then(monkeypatch, [llm.LLMError("503 UNAVAILABLE", kind="overload")])
+    sleeps = []
+    out = apply_answergen.attempt(_field(), _Catalog(), _Counting(), budget=1,
+                                  sleep=sleeps.append)
+    assert out.text is None and len(calls) == 1 and sleeps == []
+    assert out.note == "draft failed: LLMError"
+
+
+@pytest.mark.parametrize("error", [llm.LLMError("empty response", kind="empty"),
+                                   llm.LLMError("no key", kind="config"),
+                                   ValueError("a bug")])
+def test_an_unusable_reply_or_a_bug_is_not_retried(monkeypatch, error):
+    calls = _busy_then(monkeypatch, [error])
+    out = apply_answergen.attempt(_field(), _Catalog(), _Counting(), budget=3,
+                                  sleep=lambda s: None)
+    assert out.text is None and len(calls) == 1
+
+
+def test_a_retried_draft_call_spends_a_draft_of_the_jobs_budget(monkeypatch):
+    from unittest.mock import Mock
+
+    import apply_run
+    from apply_judge import FillPlan, PlannedField
+    calls = _busy_then(monkeypatch, [llm.LLMError("503 UNAVAILABLE", kind="overload")])
+    runner = apply_run.Runner(jev=jev.FakeJev(), context=Mock(), run_context={},
+                              sleep=lambda s: None,
+                              answergen=apply_answergen.Generator(sleep=lambda s: None))
+    run = apply_run._JobRun(runner, Mock(), {"job_posting_id": "s",
+                                             "apply_url": "https://x.example/1"})
+    run.catalog = _Catalog()
+    fields = [apply_form.Field(n, (0, f"#q{n}"), f"{QUESTION} ({n})", "textarea", False,
+                               help="Max 500 characters.") for n in range(3)]
+    digest = apply_form.FormDigest("x.example", "Apply", "", fields=fields)
+    plan = FillPlan(fields=[PlannedField(n=f.n, locator=f.locator, label=f.label,
+                                         required=False, fact_key="needs_generation", value="",
+                                         option=None, confidence=0.9, action="generate")
+                            for f in fields])
+    run._resolve_generation(digest, plan, {"generated": []})
+    # the first field's draft took two calls, the second's one: the job's
+    # three drafts are spent and the third field gets none
+    assert len(calls) == apply_run.GENERATE_MAX == 3
+    assert run.gen_budget == 0
+    assert [pf.action for pf in plan.fields] == ["fill", "fill", "skip"]
+
+
 def test_the_generator_hook_keeps_the_last_attempt():
     gen = apply_answergen.Generator(llm_call=lambda *a, **k: UNGROUNDED)
     assert gen.last is None

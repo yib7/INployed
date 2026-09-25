@@ -6831,6 +6831,11 @@ class _JobRun:
                 last = getattr(self.r.answergen, "last", None)
                 if last is not None:
                     note = str(getattr(last, "note", "") or "")
+                    extra = getattr(last, "calls", 1)
+                    if isinstance(extra, int) and extra > 1:
+                        # RES-04: a retried draft call spends a draft too, so
+                        # a job never makes more than GENERATE_MAX calls
+                        self.gen_budget = max(0, self.gen_budget - (extra - 1))
                 elif not text:
                     # a hook that keeps no attempt (NotConfigured, a bare injected
                     # hook) made no draft to reject; the record says so and the

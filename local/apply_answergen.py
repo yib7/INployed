@@ -12,7 +12,9 @@ the whole draft. The runner then leaves an optional field blank and flagged,
 or parks a required one with the note.
 
 Every draft is a Gemini call and every gate is a Jev call, so a field gets
-one attempt and a job gets `apply_run.GENERATE_MAX` drafts.
+one attempt and a job gets `apply_run.GENERATE_MAX` drafts. A transient
+model error gets one more draft call after a wait, which spends a draft of
+that budget (RES-04).
 
 `resume_tailor` is imported lazily inside `_llm_call` and `_rules_prompt`:
 its `config.py` loads `.env` at import, so the runner must be importable
@@ -23,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -70,12 +73,42 @@ _SUFFIX_RE = re.compile(r"(?:^|\s)(?:Inc|Ltd|Co|Corp|Jr|Sr)\.$", re.I)
 
 @dataclass
 class Attempt:
-    """One field's generation attempt. `text` is the accepted answer, else None."""
+    """One field's generation attempt. `text` is the accepted answer, else None;
+    `calls` counts the draft calls it made (2 after a retry, RES-04)."""
     text: str | None
     ok: bool
     note: str
     weakest: float | None = None
     sentences: int = 0
+    calls: int = 1
+
+
+# --- a transient model error (RES-04) ------------------------------------------------
+
+DRAFT_RETRY_S = 10.0     # the wait before the one retry of a draft call
+# the model's own verdicts on a reply that arrived (`resume_tailor.llm.LLMError.kind`):
+# asking again changes nothing
+_LOCAL_KINDS = frozenset(("bad_json", "empty", "config"))
+_BUSY_KINDS = frozenset(("overload", "rotate"))
+_BUSY_CODES = frozenset((408, 429, 500, 502, 503, 504))
+_BUSY_NAMES = ("Timeout", "Unavailable", "ResourceExhausted", "ServerError", "Connection")
+
+
+def transient(e: BaseException) -> bool:
+    """A model error that another call a little later may not meet: the
+    service busy, out of quota for the minute, or unreachable. `llm.call`
+    has already waited out its own retries when this is raised."""
+    kind = getattr(e, "kind", None)
+    if kind in _LOCAL_KINDS:
+        return False
+    if kind in _BUSY_KINDS:
+        return True
+    code = getattr(e, "code", None)
+    if isinstance(code, int) and not isinstance(code, bool):
+        return code in _BUSY_CODES
+    if isinstance(e, (TimeoutError, ConnectionError)):
+        return True
+    return any(word in type(e).__name__ for word in _BUSY_NAMES)
 
 
 # --- the draft --------------------------------------------------------------------------
@@ -234,40 +267,55 @@ def question_for(field: Any) -> str:
 
 
 def attempt(field: Any, catalog: Any, jev: Any, *, budget: int,
-            llm_call: Callable[..., Any] | None = None) -> Attempt:
+            llm_call: Callable[..., Any] | None = None,
+            sleep: Callable[[float], None] = time.sleep) -> Attempt:
     """One draft and one grounding gate for `field`. No budget, an empty draft,
     a failed call or a rejected draft all come back with `text` None and a
-    note the runner writes into the record."""
+    note the runner writes into the record. A transient model error
+    (`transient`) is met with one more draft call after `DRAFT_RETRY_S`
+    when `budget` holds a second draft (RES-04): at most one extra paid
+    call, and `calls` tells the runner to spend it."""
     if budget <= 0:
         return Attempt(None, False, "generation budget exhausted")
     label = getattr(field, "label", "")
     sheet = catalog.sheet_excerpt()
-    try:
-        text = draft(question_for(field), sheet, char_limit_for(field), llm_call=llm_call)
-    except Exception as e:      # noqa: BLE001  (a model failure parks or flags the field)
-        log.warning("generation for %r failed: %s", label, type(e).__name__)
-        return Attempt(None, False, f"draft failed: {type(e).__name__}")
+    calls = 0
+    while True:
+        calls += 1
+        try:
+            text = draft(question_for(field), sheet, char_limit_for(field), llm_call=llm_call)
+            break
+        except Exception as e:      # noqa: BLE001  (a model failure parks or flags the field)
+            if calls == 1 and budget >= 2 and transient(e):
+                log.warning("generation for %r failed: %s; one more draft in %.0f s", label,
+                            type(e).__name__, DRAFT_RETRY_S)
+                sleep(DRAFT_RETRY_S)
+                continue
+            log.warning("generation for %r failed: %s", label, type(e).__name__)
+            twice = " (tried twice)" if calls > 1 else ""
+            return Attempt(None, False, f"draft failed: {type(e).__name__}{twice}", calls=calls)
     if not text:
         log.info("generation for %r: the model returned nothing", label)
-        return Attempt(None, False, "empty draft")
+        return Attempt(None, False, "empty draft", calls=calls)
     try:
         ok, weakest = grounded(text, sheet, jev)
     except JudgeOutage:
         raise       # the run hands the job back to the queue, never parks it (RES-02)
     except Exception as e:      # noqa: BLE001  (a judge error can quote the sheet)
         log.warning("grounding for %r failed: %s", label, type(e).__name__)
-        return Attempt(None, False, f"grounding failed: {type(e).__name__}")
+        return Attempt(None, False, f"grounding failed: {type(e).__name__}", calls=calls)
     count = len(sentences(text))
     if not ok:
         log.info("generation for %r rejected: weakest of %d sentences grounded %.2f",
                  label, count, weakest)
         return Attempt(None, False,
                        f"draft rejected: weakest sentence grounded {weakest:.2f}, "
-                       f"below {apply_judge.GROUNDING_MIN:.2f}", weakest, count)
+                       f"below {apply_judge.GROUNDING_MIN:.2f}", weakest, count, calls)
     log.info("generation for %r accepted: %d sentences, weakest %.2f, %d chars",
              label, count, weakest, len(text))
-    return Attempt(text, True, f"generated ({count} sentences, weakest {weakest:.2f})",
-                   weakest, count)
+    again = ", after one more draft call" if calls > 1 else ""
+    return Attempt(text, True, f"generated ({count} sentences, weakest {weakest:.2f}{again})",
+                   weakest, count, calls)
 
 
 def answer(field: Any, catalog: Any, jev: Any, *, budget: int,
@@ -280,10 +328,13 @@ class Generator:
     """The hook object `apply_run.Runner(answergen=...)` takes. `last` keeps
     the most recent `Attempt` so the runner can write its note."""
 
-    def __init__(self, llm_call: Callable[..., Any] | None = None):
+    def __init__(self, llm_call: Callable[..., Any] | None = None,
+                 sleep: Callable[[float], None] = time.sleep):
         self.llm_call = llm_call
+        self.sleep = sleep
         self.last: Attempt | None = None
 
     def answer(self, field: Any, catalog: Any, judge: Any, *, budget: int) -> str | None:
-        self.last = attempt(field, catalog, judge, budget=budget, llm_call=self.llm_call)
+        self.last = attempt(field, catalog, judge, budget=budget, llm_call=self.llm_call,
+                            sleep=self.sleep)
         return self.last.text

@@ -990,6 +990,76 @@ def test_the_linkedin_tab_closes_once_the_company_tab_is_adopted_and_each_job_ke
     assert "source_tab_closed" in _trace_of(tmp_path, "a")
 
 
+def _bare_run(tmp_path):
+    """A `_JobRun` with no browser, the company's site allowed."""
+    import apply_run
+    runner = apply_run.Runner(jev=jev.FakeJev(), profile_dir=tmp_path / "p", settings={},
+                              context=object(), run_context={"inbox_url": ""})
+    run = apply_run._JobRun(runner, None, {"job_posting_id": "42"})
+    run.allowed.add("careers.fabrikam.example")
+    return run
+
+
+class _Tab:
+    """A tab double: its address, open."""
+
+    def __init__(self, url: str):
+        self.url = url
+
+    def is_closed(self) -> bool:
+        return False
+
+    def wait_for_timeout(self, ms) -> None:
+        pass
+
+
+def test_a_left_tab_whose_clock_or_relative_time_ticks_has_not_moved_on(_browser):
+    # SP8a review M3: the print leaves out what changes while a page stands
+    # still (`_VOLATILE_TEXT`), and keeps a step marker and the words
+    import apply_run
+    page = _browser.new_page()
+    try:
+        def _print(body: str) -> str:
+            page.set_content(f"<h1>Apply for Analytics Engineer</h1>{body}")
+            return apply_run._page_print(page)[0]
+        before = _print("<p>Posted 3 minutes ago</p><p>Your session ends at 12:04</p>"
+                        "<p>Step 1 of 3</p>")
+        assert _print("<p>Posted 4 minutes ago</p><p>Your session ends at 12:05</p>"
+                      "<p>Step 1 of 3</p>") == before
+        assert _print("<p>Posted 4 minutes ago</p><p>Your session ends at 12:05</p>"
+                      "<p>Step 2 of 3</p>") != before
+        assert _print("<p>Thank you for applying</p>") != before
+    finally:
+        page.close()
+
+
+def test_a_linkedin_tab_is_never_taken_over_as_the_flow(tmp_path, monkeypatch):
+    # SP8a review M4: LinkedIn is an allowed site, and never the company's flow
+    import apply_run
+    monkeypatch.setattr(apply_run, "TAKEOVER_WAIT_S", 0)
+    monkeypatch.setattr(apply_run, "_page_print", lambda page: ("moved", "text now"))
+    run = _bare_run(tmp_path)
+    linkedin = _Tab("https://www.linkedin.com/jobs/view/4000000001/")
+    company = _Tab(f"{_CAREERS}/apply/step-2")
+    run._left_pages = [(linkedin, "then", "text then")]
+    assert run._moved_on() is None
+    run._left_pages = [(company, "then", "text then"), (linkedin, "then", "text then")]
+    assert run._moved_on() == (company, "text then", "text now")
+
+
+def test_a_new_tabs_failed_first_load_is_taken_only_when_it_is_the_one_held(tmp_path):
+    # SP8a review M5: a new tab's first load has no frame to tie it to its
+    # tab; with two held, the one that failed in this tab is not known
+    import apply_run
+    run = _bare_run(tmp_path)
+    run._unplaced_loads = [(f"{_CAREERS}/apply", "GET", "net::ERR_CONNECTION_RESET"),
+                           ("https://ads.example.net/x", "GET", "net::ERR_CONNECTION_RESET")]
+    with pytest.raises(apply_run._Parked) as parked:
+        run._recover_error_page(_Tab("chrome-error://chromewebdata/"))
+    assert parked.value.reason == (f"{apply_run.ERROR_PAGE_REASON}: the tab shows Chrome's "
+                                   f"error page and the address that failed is not known")
+
+
 # --- the judge down once something may have been sent (RES-02, SP8a review I1) ---------------
 
 class _GoesDown(jev.FakeJev):

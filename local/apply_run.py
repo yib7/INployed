@@ -2054,13 +2054,19 @@ def _page_closed(page) -> bool:
 
 def _page_print(page) -> tuple[str, str]:
     """(a tab's address and visible text hashed, the text): whether it moved
-    on after the run left it, and what it showed (RES-06). ("", "") for a
-    tab that cannot be read."""
+    on after the run left it, and what it showed (RES-06). The hash leaves
+    out what changes while a page stands still (`_VOLATILE_TEXT`: a relative
+    time, a clock, a count) and keeps its step markers (`_STEP_MARKER`), as
+    `page_signature` does (SP8a review M3). ("", "") for a tab that cannot
+    be read."""
     try:
         text = apply_fill.page_text(page)
-        seen = f"{page.url}\n{text}"
+        url = str(page.url)
     except Exception:       # noqa: BLE001  (a closed tab, a page double)
         return "", ""
+    steps = " ".join(" ".join(m.group(0).lower().split()) for m in _STEP_MARKER.finditer(text))
+    steady = " ".join(_VOLATILE_TEXT.sub(" ", text).split())
+    seen = f"{url}\n{steps}\n{steady}"
     return hashlib.sha256(seen.encode("utf-8", "replace")).hexdigest(), text
 
 
@@ -4374,7 +4380,8 @@ class _JobRun:
         again. A send that never reached the site (`_no_connection`) and was
         the one request seen parks as nothing sent (`_Unsent`, SP8a review
         M7). A retry that lands on the error page again parks, as does an
-        error page whose address is unknown. An address off the allowed sites
+        error page whose address is unknown (a new tab's first load held
+        beside another's, SP8a review M5). An address off the allowed sites
         parks as the site it names, but with `transition`: the page an Apply
         or a redirect led to, which `_admit_ats_transition` judges once it
         has loaded. True when the address was loaded again, False when the
@@ -4386,7 +4393,10 @@ class _JobRun:
         if not _error_page(now):
             return False
         failed = self._failed_loads.pop(id(page), None)
-        if failed is None and self._unplaced_loads:
+        if failed is None and len(self._unplaced_loads) == 1:
+            # a new tab's first load, which no frame ties to its tab: taken
+            # only when it is the one held; with more, which one failed here
+            # is not known (SP8a review M5)
             failed = self._unplaced_loads.pop()
         if failed is None:
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: the tab shows Chrome's error "
@@ -4924,7 +4934,8 @@ class _JobRun:
         its text then; its text now), looked at every `TAKEOVER_POLL_S` for
         up to `TAKEOVER_WAIT_S` (the closing tab's script may have set it
         going the moment before), else None. A tab that could not be read
-        either time is never taken."""
+        either time is never taken, nor is a LinkedIn tab, which is never
+        the company's flow (SP8a review M4)."""
         rows = [row for row in reversed(self._left_pages)
                 if row[1] and not _page_closed(row[0])]
         if not rows:
@@ -4935,7 +4946,7 @@ class _JobRun:
                 url = str(getattr(page, "url", ""))
                 host = _host(url)
                 if _page_closed(page) or not host or _error_page(url) \
-                        or not self._allowed_site(host):
+                        or apply_linkedin.is_linkedin(host) or not self._allowed_site(host):
                     continue
                 now, text = _page_print(page)
                 if now and now != before:

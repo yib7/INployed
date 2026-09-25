@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam</title>
+<!-- A synthetic two-step form (SP6 review R2-I2) whose page posts its own
+     telemetry to its own host every half second, and whose Next is ready
+     only after the first click (a late hydration: the first click lands
+     before the page's script is). The telemetry is no request of the
+     click's: the quiet first click gets its one retry, which goes on. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .field { margin: 12px 0; }
+  .field > label { display: block; font-weight: bold; }
+  #step2, #thanks { display: none; }
+</style>
+</head>
+<body>
+<h1>Analytics Engineer</h1>
+<p>Fabrikam, New York, NY</p>
+<form id="application" novalidate>
+  <div id="step1">
+    <h2>Step 1 of 2</h2>
+    <div class="field"><label for="first">First name *</label><input id="first" name="first_name" type="text" required></div>
+    <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+    <button type="button" id="next">Next</button>
+  </div>
+  <div id="step2">
+    <h2>Step 2 of 2</h2>
+    <div class="field"><label for="resume">Resume *</label><input id="resume" name="resume" type="file" required></div>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </div>
+</form>
+<section id="thanks"><h2>Application received</h2><p>Thank you for applying.</p></section>
+<script>
+  function $(id) { return document.getElementById(id); }
+  setInterval(function () {
+    fetch('/api/events', {method: 'POST', body: '{}'}).catch(function () {});
+  }, 500);
+  $('next').addEventListener('click', function arm() {
+    $('next').removeEventListener('click', arm);
+    setTimeout(function () {
+      $('next').addEventListener('click', function () {
+        $('step1').style.display = 'none';
+        $('step2').style.display = 'block';
+      });
+    }, 200);
+  });
+  $('application').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.body.setAttribute('data-submitted', '1');
+    $('application').style.display = 'none';
+    $('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

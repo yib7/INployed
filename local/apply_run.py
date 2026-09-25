@@ -3129,6 +3129,9 @@ class _JobRun:
                     and self.trace.nav(frame.url))
         except Exception:       # noqa: BLE001  (a page double)
             pass
+        # the page's own sends from its first request: a click's evidence
+        # leaves them out (SP6 review R2-I2)
+        apply_fill.watch_requests(page)
 
     def _reads(self, answers: Mapping[str, Any] | None = None) -> str:
         """The judge's most probable reads of the page state (its own pick,
@@ -3251,6 +3254,7 @@ class _JobRun:
         frame read first only when it is the page's site, an ATS platform or
         the admitted application (`content_frame_site`)."""
         page = page if page is not None else self.page
+        apply_fill.watch_requests(page)
         return apply_form.extract(page, content_site=lambda url: content_frame_site(
             url, str(page.url), self.ats_hosts))
 

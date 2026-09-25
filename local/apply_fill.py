@@ -1379,10 +1379,11 @@ class ClickResult:
     the caller's live check (`click`'s `check`) stopped the click, and why;
     nothing was clicked. `late`: the error a dispatched click raised
     afterwards. `overlay`: what covered the control and how it was put away
-    before the click was made once more (ADV-04). `sent`: every navigation,
-    POST, PUT or PATCH the page made from the click to the end of its wait
-    ("METHOD url", no query): a click that set one going reached the page
-    (SP6 review I3). Truthiness is `changed`, the shape `click_button`
+    before the click was made once more (ADV-04). `sent`: what the click set
+    going, from the click to the end of its wait ("METHOD url", no query): a
+    navigation of the page or of the button's frame, or a POST, PUT or PATCH
+    from either that the page was not already sending by itself (SP6 review
+    I3, R2-I2). Truthiness is `changed`, the shape `click_button`
     returns."""
     clicked: bool
     changed: bool
@@ -1541,6 +1542,50 @@ _UNSEEN_JS = "() => { window.__applyClickSeen = false; window.__applyClickBlocke
 _DISARM_JS = ("() => { if (window.__applyClickMark) { window.removeEventListener('click', "
               "window.__applyClickMark, true); window.__applyClickMark = null; } }")
 _DISPATCH_METHODS = ("POST", "PUT", "PATCH")
+# The page's own requests, logged from the moment the run starts watching it
+# (`watch_requests`): the POST, PUT or PATCH pairs a page sends by itself (its
+# telemetry, an autosave, a keep-alive) are no evidence a click set anything
+# going (SP6 review R2-I2)
+_REQUEST_LOG: "weakref.WeakKeyDictionary[Any, list]" = weakref.WeakKeyDictionary()
+_REQUEST_LOG_CAP = 400
+BACKGROUND_S = 120.0            # how far back the page's own requests are looked for
+
+
+def watch_requests(page) -> None:
+    """Start logging `page`'s POST, PUT and PATCH requests (once per page):
+    (when, method, URL without its query). `click` reads the log to leave
+    out what the page was already sending before the click."""
+    try:
+        if page in _REQUEST_LOG:
+            return
+        log_: list = []
+        _REQUEST_LOG[page] = log_
+    except TypeError:       # a page double that takes no weak reference
+        return
+
+    def _on(request) -> None:
+        try:
+            method = str(request.method).upper()
+            if method in _DISPATCH_METHODS:
+                log_.append((time.monotonic(), method, str(request.url).split("?")[0]))
+                del log_[:-_REQUEST_LOG_CAP]
+        except Exception:       # noqa: BLE001
+            pass
+    try:
+        page.on("request", _on)
+    except Exception:       # noqa: BLE001  (a page double)
+        pass
+
+
+def background_sends(page, *, before: float | None = None) -> set[tuple[str, str]]:
+    """The (method, URL) pairs `page` sent by itself in the `BACKGROUND_S`
+    before `before` (now by default)."""
+    end = time.monotonic() if before is None else before
+    try:
+        rows = list(_REQUEST_LOG.get(page) or [])
+    except TypeError:
+        return set()
+    return {(m, u) for t, m, u in rows if end - BACKGROUND_S <= t <= end}
 
 
 class _ClickStopped(Exception):
@@ -1642,10 +1687,20 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
             pass
 
     def _on_sent(request) -> None:
+        # what the click set going (SP6 review R2-I2): a navigation of the
+        # page or of the button's frame, or a POST, PUT or PATCH from either
+        # that the page was not already sending by itself (`background`); a
+        # beacon (`ping`) is never one
         try:
             method = str(request.method).upper()
-            if method in _DISPATCH_METHODS or request.is_navigation_request():
-                sent.append(f"{method} {str(request.url).split('?')[0]}")
+            url = str(request.url).split("?")[0]
+            mine = request.frame in (main, frame) if main is not None else True
+            if request.is_navigation_request():
+                if mine:
+                    sent.append(f"{method} {url}")
+            elif method in _DISPATCH_METHODS and mine and request.resource_type != "ping" \
+                    and (method, url) not in background:
+                sent.append(f"{method} {url}")
         except Exception:       # noqa: BLE001
             pass
 
@@ -1762,6 +1817,12 @@ def click(page, digest: apply_form.FormDigest, n: int, *, timeout_s: float = 20,
         o = overlays[0]
         return (f"{o.get('what') or 'an overlay'}: {o.get('kind')}"
                 + (f" {o.get('text')!r}" if o.get("text") else ""))[:160]
+    watch_requests(page)
+    background = background_sends(page)
+    try:
+        main = page.main_frame
+    except Exception:       # noqa: BLE001  (a page double)
+        main = None
     try:
         page.on("request", _on_sent)
     except Exception:       # noqa: BLE001  (a page double)

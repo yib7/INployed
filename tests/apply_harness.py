@@ -1044,6 +1044,11 @@ FLOWS: tuple[Flow, ...] = (
          _SUBMITTED, confirm="#thanks:visible", wrap=OptionalLeftBlank,
          covers="the same, and a submit refused with its message in its own box: repaired and "
                 "sent through the gate again (SP6 review R2-I1)"),
+    Flow("hydration_beacon", "hydration_beacon.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible",
+         covers="a first Next click before the page's script is ready, on a page that posts its "
+                "own telemetry: the telemetry is no request of the click's, so the quiet click "
+                "gets its retry (SP6 review R2-I2)"),
     Flow("validation_banner_only", "validation_banner_only.html", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
          covers="a Next refused with one banner no control names: the judge's mapping is the "

@@ -580,3 +580,14 @@ def test_a_footer_button_outside_any_form_is_matched_by_its_box_never_another_bo
     assert set(live["home"]) & set(who["home"]) and "t" not in live["home"]
     browser_page.evaluate("document.querySelector('#bar button').remove()")
     assert run._same_button(apply_form.extract(browser_page), who) is None
+
+
+# --- R2-I2: the page's own telemetry is no request of the click's ----------------------------------------
+
+def test_a_quiet_first_click_is_retried_beside_the_pages_own_telemetry(_browser, flow_server,
+                                                                        tmp_path):
+    r = h.run_flow(h.flow("hydration_beacon"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert not _events(r, "step_settle"), _events(r, "step_settle")
+    assert any(e.get("retry") and e.get("text") == "Next" for e in _events(r, "click"))

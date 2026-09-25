@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create an account - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<!-- ACC-09: a sign-up that posts its request and then shows nothing for 8 s
+     (no spinner, no change) before it moves on to the application. -->
+<h1>Create an account</h1>
+<p>An account lets you track the status of your application.</p>
+<label for="signup_email">Email</label><input id="signup_email" name="email" type="email" autocomplete="username">
+<label for="signup_password">Password</label><input id="signup_password" name="password" type="password" autocomplete="new-password">
+<label for="signup_confirm">Confirm password</label><input id="signup_confirm" name="password_confirmation" type="password" autocomplete="new-password">
+<p><button type="button" id="btn-create">Create account</button></p>
+<p>Already have an account? <a href="login_wall.html">Sign in</a></p>
+<script>
+  var sent = false;
+  document.getElementById('btn-create').addEventListener('click', function () {
+    var p = document.getElementById('signup_password').value;
+    if (sent || !p || p !== document.getElementById('signup_confirm').value) return;
+    sent = true;
+    fetch(location.pathname, {method: 'POST', body: 'create'}).catch(function () {});
+    window.setTimeout(function () { window.location.href = 'ashby_steps.html'; }, 8000);
+  });
+</script>
+</body>
+</html>

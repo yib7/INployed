@@ -227,6 +227,12 @@ EASY_APPLY_NOTE = apply_linkedin.EASY_APPLY_NOTE
 LINKEDIN_RETURN_REASON = "the application went back to LinkedIn after the company's form"
 CODE_NOTE = "enter the emailed code manually, then Re-queue"
 LINK_REASON = "emailed verification link needed"
+ACCOUNT_EXISTS_REASON = "an account exists"
+SSO_REASON = "sign-in only through another site"
+SSO_NOTE = "sign in once in the auto-apply profile, then Re-queue"
+PASSWORD_RULE_REASON = "the master password does not meet the password rules"
+PASSWORD_RULE_NOTE = ("make the account yourself with another password, or change the "
+                      "master password, then Re-queue")
 LINK_NOTE = "open the verification link in the email, then Re-queue"
 # a verification link's page that refused it (ACC-05)
 LINK_FAILED_WORDS = re.compile(
@@ -936,6 +942,8 @@ class _Accounts:
         # typing it again only moves the account toward a lockout
         self.password_typed: set[tuple[str, str]] = set()
         self.attempted: set[str] = set()    # sites of the one sign-in without an account (ACC-02)
+        self.exists: set[str] = set()       # sites whose sign-up said the account exists (ACC-03)
+        self.retyped: set[str] = set()      # sites whose sign-up took the password twice (ACC-12)
         self.pending: dict[str, tuple[str, str]] = {}   # site -> (host, email) of that sign-in
         self.last_error = ""                # the account step's exception (ACC-10)
 
@@ -969,16 +977,111 @@ class _Accounts:
             return went
         return self._attempt_sign_in(page, digest, host)
 
-    def _not_taken(self, site: str, host: str, kind: str) -> str:
+    def _not_taken(self, site: str, host: str, kind: str, digest=None) -> str:
         """Why a second password screen of the same kind parks: after the
         one sign-in tried without an account in the ledger (ACC-02), no
-        account on the site takes the master password; else the step did
-        not take it."""
+        account on the site takes the master password; after a sign-up that
+        said the address has an account (ACC-03), that account has another
+        password; else the step did not take it, with what the page says
+        about it (ACC-12)."""
+        if kind == "login" and site in self.exists:
+            return (f"{ACCOUNT_EXISTS_REASON} on {host} with another password: reset it to the "
+                    f"master password, then Re-queue")
         if kind == "login" and site in self.attempted:
             return (f"no account on {host} took the master password (one sign-in was tried "
                     f"with the sign-up address) and the screen offers no sign-up: create the "
                     f"account or reset its password, then Re-queue")
-        return f"the {kind} on {host} did not take the master password"
+        says = page_problem(digest) if digest is not None else ""
+        return (f"the {kind} on {host} did not take the master password"
+                + (f" (the page says {says!r})" if says else ""))
+
+    def _retype(self, site: str, passwords: list, digest) -> bool:
+        """ACC-12: the same create-account screen shown again with its
+        password boxes emptied (the site cleared them after an error in
+        another box) takes the master password once more, once per site;
+        a screen that kept them, or a third showing, never does."""
+        if site in self.retyped or not passwords:
+            return False
+        try:
+            empty = all(int(loc.evaluate("el => (el.value || '').length")) == 0
+                        for loc in passwords)
+        except Exception:       # noqa: BLE001  (a box that cannot be read is no emptied box)
+            empty = False
+        if not empty:
+            return False
+        self.retyped.add(site)
+        says = page_problem(digest)
+        self.run._decide("password_retyped", "the sign-up came back with its password boxes "
+                                             "emptied; the master password is typed once more"
+                                             + (f" (the page says {says!r})" if says else ""))
+        return True
+
+    def _to_sign_in(self, page, digest, host: str, exists: str) -> bool:
+        """ACC-03: from a sign-up that says the address has an account, the
+        screen's own way to the sign-in (the first button or link that says
+        sign in, none in the header, none with another site, none that
+        sends), clicked through the live click guard; with none, the job
+        parks naming the account."""
+        own: dict[str, apply_form.Button] = {}
+        for b in digest.buttons:
+            text = b.text or ""
+            if b.chrome or b.disabled or not _SIGN_IN_ONLY.search(text) \
+                    or _THIRD_PARTY.search(text) or _NOT_ACCOUNT_STEP.search(text) \
+                    or _send_worded(text, account=True):
+                continue
+            own.setdefault(" ".join(text.lower().split()), b)
+        if not own:
+            raise _Parked("needs_human", f"{ACCOUNT_EXISTS_REASON} on {host} ({exists!r}) and "
+                                         f"the page offers no way to sign in: sign in, then "
+                                         f"Re-queue", LOGIN_NOTE)
+        # every one of them leads to the sign-in ("Sign in instead" in the
+        # message, "Already have an account? Sign in" below the form): the
+        # first on the page
+        button = next(iter(own.values()))
+        rec = self.run.pages[-1] if self.run.pages else None
+        if rec is not None:
+            rec["clicked"].append(f"{button.text} (to the sign-in)")
+        self.run._last_click = (button.text, "advance")
+        result = self._click(page, digest, button.n)
+        if result.refused:
+            raise _Parked("needs_human", f"the account step's button ({_cap(button.text, 60)}) "
+                                         f"changed before the click: {result.refused}; nothing "
+                                         f"was clicked", LOGIN_NOTE)
+        self.run._check_host(page.url)
+        return bool(result.changed)
+
+    def _click(self, page, digest, n: int) -> apply_fill.ClickResult:
+        """An account step's click (ACC-09), through the live click guard:
+        its wait is the loop's click budget (at least the five seconds an
+        action gets); a quiet click that set a request going (a slow
+        sign-up) is waited on `STEP_SETTLE_S` more, never made again; a
+        loading indicator after it is waited on (`_wait_while_busy`)."""
+        timeout = max(1.0, min(max(5.0, CLICK_TIMEOUT_S),
+                               self.run.deadline - self.run.r.clock()))
+        text = next((b.text for b in digest.buttons if b.n == n), "")
+        result = apply_fill.click(page, digest, n, timeout_s=timeout,
+                                  check=self.run._live_check("advance", account=True))
+        self.run._trace("click", n=n, text=text, role="advance", account=True,
+                        clicked=result.clicked, changed=result.changed, url=str(page.url),
+                        refused=result.refused, late=result.late)
+        if result.refused or not result.clicked:
+            return result
+        if not result.changed:
+            went = [row for row in result.sent if not _tracking(row.split(" ", 1)[-1])
+                    and not _is_captcha_url(row.split(" ", 1)[-1])]
+            if not went:
+                return result
+            self.run.log.info("job %s: the account click set %s going; waiting up to %s s",
+                              self.run.job_id, went[0], STEP_SETTLE_S)
+            changed = apply_fill.wait_for_change(page, timeout_s=STEP_SETTLE_S)
+            self.run._trace("step_settle", changed=changed, waited_s=STEP_SETTLE_S,
+                            sent=went[:3])
+            if not changed:
+                return result
+            result = dataclasses.replace(result, changed=True)
+        if page is self.run.page:
+            self.run._wait_while_busy(text)
+        return result
 
     def _failed(self, step: str, e: BaseException) -> None:
         """An account step that raised (ACC-10): its step and the exception's
@@ -1017,11 +1120,7 @@ class _Accounts:
         if rec is not None:
             rec["clicked"].append(f"{button.text} (to the sign-up)")
         self.run._last_click = (button.text, "advance")
-        result = apply_fill.click(page, digest, button.n, timeout_s=self._click_timeout(),
-                                  check=self.run._live_check("advance", account=True))
-        self.run._trace("click", n=button.n, text=button.text, role="advance",
-                        clicked=result.clicked, changed=result.changed, url=str(page.url),
-                        refused=result.refused)
+        result = self._click(page, digest, button.n)
         if result.refused:
             raise _Parked("needs_human", f"the account step's button ({_cap(button.text, 60)}) "
                                          f"changed before the click: {result.refused}; nothing "
@@ -1058,11 +1157,6 @@ class _Accounts:
             self.run._decide("account_recorded", f"the sign-in on {host} led on; the account is "
                                                  "in the ledger")
             del self.pending[site]
-
-    def _click_timeout(self) -> float:
-        """Seconds for an account click's wait (ACC-09): the loop's own click
-        budget, inside the job's clock."""
-        return max(1.0, min(CLICK_TIMEOUT_S, self.run.deadline - self.run.r.clock()))
 
     def _signup_link(self, page, digest, host: str) -> bool | None:
         """The sign-in page's one create-account link, taken once the judge
@@ -1188,6 +1282,15 @@ class _Accounts:
         self.steps[site] = self.steps.get(site, 0) + 1
         if self.steps[site] > self.MAX_STEPS_PER_SITE:
             return False
+        exists = account_exists(digest) if signup and (site, "signup") in self.password_typed \
+            else ""
+        if exists:
+            # ACC-03: the sign-up says the address has an account: one
+            # sign-in with the master password instead, never a second sign-up
+            self.exists.add(site)
+            self.run._decide("account_exists", f"the sign-up says {exists!r}; the sign-in is "
+                                               "the step")
+            return self._to_sign_in(page, digest, host, exists)
         groups = account_forms(page, digest)
         if groups:
             # ADV-08: a sign-in and a sign-up side by side: the sign-in when
@@ -1285,9 +1388,13 @@ class _Accounts:
                     raise _Parked("needs_human",
                                   f"a sign-in on {outside[0]}, outside the application site",
                                   LOGIN_NOTE)
+                if signup or password_step(digest) == "signup":
+                    self.run._check_password_rules(digest, host)
                 kind = "signup" if signup else "login"
                 if (site, kind) in self.password_typed:
-                    raise _Parked("needs_human", self._not_taken(site, host, kind), LOGIN_NOTE)
+                    if not (signup and self._retype(site, passwords, digest)):
+                        raise _Parked("needs_human", self._not_taken(site, host, kind, digest),
+                                      LOGIN_NOTE)
             guard.start()
             try:
                 for loc in emails:
@@ -1313,9 +1420,7 @@ class _Accounts:
                 # an aborted navigation leaves the tab on a browser error page,
                 # so the note for the human names the page before the click
                 before = f"{page.url} | {page.title()}"
-                result = apply_fill.click(page, digest, advance[0],
-                                          timeout_s=self._timeout() / 1000,
-                                          check=self.run._live_check("advance", account=True))
+                result = self._click(page, digest, advance[0])
             finally:
                 guard.stop()
             if result.refused:
@@ -1759,6 +1864,145 @@ def password_step(digest: apply_form.FormDigest) -> str:
 
 
 _FORGOT = re.compile(r"\bforgot(ten)?\s+(your\s+)?password\b", re.I)
+
+# ACC-03: a sign-up's statement that the address has an account already
+# ("An account with this email already exists"; never the question "Already
+# have an account? Sign in")
+ACCOUNT_EXISTS_WORDS = re.compile(
+    r"\b(?:account|user|profile|e-?mail(?:\s+address)?|username)\b[^.!?\n]{0,60}?\b(?:already\s+"
+    r"(?:exists?|registered|in\s+use|taken|been\s+(?:registered|used|taken)|associated)"
+    r"|is\s+already\s+(?:registered|in\s+use|taken))"
+    r"|\balready\s+(?:have|has)\s+an\s+account\s+with\s+(?:this|that|the)\b", re.I)
+
+
+_PROBLEM_WORDS = re.compile(r"\berror\b|\binvalid\b|\bincorrect\b|\bwrong\b|\bnot\s+match"
+                            r"|\btry\s+again\b|\bfailed\b|\bunable\b|\balready\b|\bnot\s+valid\b",
+                            re.I)
+
+
+def page_problem(digest: apply_form.FormDigest | None) -> str:
+    """The first line of a page's text that reads as a problem (an error, a
+    refusal, a mismatch, an address in use), capped: never a field's label
+    or a question ("Already have an account?"); "" with none (ACC-12)."""
+    if digest is None:
+        return ""
+    labels = {" ".join((f.label or "").lower().split()) for f in digest.fields}
+    for line in (digest.text or "").splitlines():
+        line = " ".join(line.split())
+        if line and "?" not in line and line.lower() not in labels \
+                and _PROBLEM_WORDS.search(line):
+            return _cap(line, 120)
+    return ""
+
+
+def account_exists(digest: apply_form.FormDigest) -> str:
+    """The words a page states that the address has an account already
+    (ACC-03), or ""; a question or a condition never counts
+    (`apply_judge.statement_words`)."""
+    return apply_judge.statement_words(ACCOUNT_EXISTS_WORDS, digest.text or "",
+                                       [f.label for f in digest.fields])
+
+
+# ACC-04: the password rules a sign-up states, read by code
+_RULE_LINE = re.compile(r"character|letter|number|digit|numeric|symbol|upper|lower|special|length"
+                        r"|\blong\b|at least|minimum|maximum|must|contain|include", re.I)
+_RULE_MIN = (
+    re.compile(r"(?:at\s+least|a\s+minimum\s+of|minimum(?:\s+of)?|min\.?|no\s+(?:fewer|less)\s+than)"
+               r"\s+(\d{1,2})\s*(?:characters|chars)\b", re.I),
+    re.compile(r"\b(\d{1,2})\s*(?:or\s+more|\+)\s*(?:characters|chars)\b", re.I),
+    re.compile(r"\b(\d{1,2})\s+characters\s+(?:or\s+(?:more|longer)|minimum)\b", re.I))
+_RULE_RANGE = re.compile(r"\b(?:between\s+)?(\d{1,2})\s*(?:-|to|and|–)\s*(\d{1,3})\s*"
+                         r"(?:characters|chars)\b", re.I)
+_RULE_MAX = re.compile(r"(?:at\s+most|a\s+maximum\s+of|maximum(?:\s+of)?|max\.?|no\s+more\s+than"
+                       r"|up\s+to|not\s+(?:exceed|be\s+longer\s+than))\s+(\d{1,3})\s*"
+                       r"(?:characters|chars)\b", re.I)
+_RULE_CLASSES = {
+    "upper": re.compile(r"upper\s*-?\s*case|capital\s+letter", re.I),
+    "lower": re.compile(r"lower\s*-?\s*case", re.I),
+    "digit": re.compile(r"\b(?:number|numeral|digit|numeric)", re.I),
+    "special": re.compile(r"special\s+character|\bsymbol|non-?\s*alpha|punctuation", re.I),
+}
+_RULE_FORBIDDEN = re.compile(
+    r"(?:cannot|can't|must\s+not|may\s+not|should\s+not|do\s+not)\s+(?:contain|include|use)\s+"
+    r"(?:the\s+)?(?:following\s+)?(?:characters?|symbols?)?\s*:?\s*((?:[^\w\s]\s*){1,20})", re.I)
+
+
+def password_rules(digest: apply_form.FormDigest) -> tuple[dict[str, Any], str]:
+    """ACC-04: (the password rules an account screen states, the words
+    they were read from). The words are the password boxes' help and the
+    lines of the page's text from a line that names the password on, eight
+    at most, that read as a rule (a field's own label never does): a
+    length (at least, at most, a range), an uppercase letter, a lowercase
+    letter, a digit, a special character, characters it must not hold."""
+    boxes = _password_boxes(digest)
+    if not boxes:
+        return {}, ""
+    parts = [" ".join(str(f.help or "").split()) for f in boxes if f.help]
+    labels = {" ".join((f.label or "").lower().split()) for f in digest.fields}
+    lines = [" ".join(line.split()) for line in (digest.text or "").splitlines()]
+    for i, line in enumerate(lines):
+        if not re.search(r"\bpassword", line, re.I):
+            continue
+        for near in lines[i:i + 9]:
+            if near and near.lower() not in labels and _RULE_LINE.search(near):
+                parts.append(near)
+    said = " ".join(dict.fromkeys(p for p in parts if p))
+    rules: dict[str, Any] = {}
+    m = _RULE_RANGE.search(said)
+    if m and int(m.group(1)) <= int(m.group(2)):
+        rules["min_length"], rules["max_length"] = int(m.group(1)), int(m.group(2))
+    for pattern in _RULE_MIN:
+        m = pattern.search(said)
+        if m:
+            rules["min_length"] = max(int(m.group(1)), int(rules.get("min_length") or 0))
+            break
+    m = _RULE_MAX.search(said)
+    if m:
+        rules["max_length"] = int(m.group(1))
+    for key, pattern in _RULE_CLASSES.items():
+        if pattern.search(said):
+            rules[key] = True
+    m = _RULE_FORBIDDEN.search(said)
+    if m:
+        rules["forbidden"] = "".join(sorted(set(re.sub(r"\s+", "", m.group(1)))))
+    return rules, said
+
+
+# ACC-11: a sign-in with another site's account ("Sign in with Google",
+# "Continue with Microsoft"): the run never takes one
+_SSO_SIGN_IN = re.compile(r"\b(?:sign|log)[\s-]*(?:in|on|up)\b|\bcontinue\b|\bregister\b"
+                          r"|\bsign[\s-]*up\b", re.I)
+_SSO_NAME = re.compile(r"\b(?:with|using|via|through)\s+(?:your\s+)?([a-z]+)\b", re.I)
+_SSO_NAMES = {"linkedin": "LinkedIn", "github": "GitHub", "sso": "SSO", "x": "X"}
+
+
+def sso_only(digest: apply_form.FormDigest) -> list[str]:
+    """ACC-11: the sites a screen offers to sign in with, when that is its
+    only way on: no box to fill but tick boxes, at least one sign-in with
+    another site's account (`THIRD_PARTY`), and no button of its own that
+    goes on (an Apply, a Next, a sign-in or a sign-up of its own, a send);
+    [] else. The site's header never counts."""
+    if any(f.type != "checkbox" for f in digest.fields):
+        return []
+    names: list[str] = []
+    for b in digest.buttons:
+        if b.chrome or b.disabled:
+            continue
+        text = " ".join((b.text or "").split())
+        if _THIRD_PARTY.search(text):
+            if _SSO_SIGN_IN.search(text):
+                m = _SSO_NAME.search(text)
+                word = (m.group(1) if m else "another site").lower()
+                name = _SSO_NAMES.get(word, word.capitalize())
+                if name not in names:
+                    names.append(name)
+            continue
+        if apply_judge.entry_worded(text) or apply_judge.ADVANCE_WORDS.search(text) \
+                or _ACCOUNT_BUTTON.search(text) or apply_judge.SEND_WORDS.search(text):
+            return []
+    return names
+
+
 # an account screen's controls that are no way on for its step: a password
 # reset, a resend, a cancel, a way back, help
 _NOT_ACCOUNT_STEP = re.compile(r"\bforgot|\breset\b|\bresend\b|\bcancel\b|\bback\b|\bhelp\b"
@@ -3239,6 +3483,8 @@ class _JobRun:
         self.submit_clicked = False
         self.form_filled = False      # the application's answers went on a page (`_fills_the_application`)
         self.form_password_sites: set[str] = set()  # sites whose form took the password
+        self._form_password_sigs: dict[str, tuple] = {}     # that form's boxes, per site (ACC-12)
+        self._form_retyped: set[str] = set()        # sites whose form took it twice (ACC-12)
         self.form_had_password = False  # a form page carried a password box, typed or not
         self.handed_off = False         # the page at the gate came from the account step
         self.gen_budget = GENERATE_MAX
@@ -3471,6 +3717,22 @@ class _JobRun:
             if named:
                 target = named[0]
         ats_accounts.record(target, email, **extra)
+
+    def _check_password_rules(self, digest: apply_form.FormDigest, host: str) -> None:
+        """ACC-04: before the master password makes an account, the rules
+        the screen states (`password_rules`) against the stored password,
+        counted in `ats_accounts` (never the value here): one it misses
+        parks, nothing typed."""
+        rules, said = password_rules(digest)
+        if not rules:
+            return
+        unmet = ats_accounts.unmet_rules(rules) or []
+        self._decide("password_rules", f"the screen's password rules: {_cap(said, 160)}",
+                     rules=sorted(rules), unmet=unmet)
+        if unmet:
+            raise _Parked("needs_human", f"{PASSWORD_RULE_REASON} on {host}: it needs "
+                                         f"{', '.join(unmet)} (the site asks: {_cap(said, 160)})",
+                          PASSWORD_RULE_NOTE)
 
     def _password_ok(self, host: str) -> bool:
         """May the master password be typed on `host`? Only on the application
@@ -3852,6 +4114,16 @@ class _JobRun:
                                   CHECK_SENT_NOTE if step == "park" else "")
             if state in _LINKEDIN_FORM_STATES:
                 self._no_form_on_linkedin(f"read as {state} ({conf:.2f})")
+            if state != "confirmation" and not self.submit_clicked and not self._code_sent \
+                    and not self._on_linkedin():
+                sites = sso_only(digest)
+                if sites:
+                    # ACC-11: the only way on is a sign-in with another site's
+                    # account, which the run never uses: a dead end
+                    self._decide("sso_only", f"read as {state} ({conf:.2f}); its only way on "
+                                             f"signs in with {', '.join(sites)}")
+                    raise _Parked("needs_human", f"{SSO_REASON} ({', '.join(sites)}); the run "
+                                                 "never signs in with another site", SSO_NOTE)
             if unsure:
                 state = self._check_unsure(digest, state, conf)
                 if state in _LINKEDIN_FORM_STATES:
@@ -5702,13 +5974,21 @@ class _JobRun:
             return
         self.form_had_password = True
         host = digest.url_host or _host(self.page.url)
-        if _site(host) in self.form_password_sites:
+        if _site(host) in self.form_password_sites and not self._form_retype(host, digest, boxes):
             # a second form page asking for the password on the same site is
             # the first one rejected (a wrong password): typing it again only
             # moves the account toward a lockout
+            says = page_problem(digest)
             raise _Parked("needs_human", f"the form on {host} asked for the master password "
-                                         "again", LOGIN_NOTE)
+                                         "again" + (f" (the page says {says!r})" if says else ""),
+                          LOGIN_NOTE)
         fields = {f.n: f for f in digest.fields}
+        making = len(boxes) > 1 or any(
+            str(f.autocomplete or "").lower() == "new-password"
+            or _NEW_PASSWORD.search(f"{f.label or ''} {f.id_or_name or ''}")
+            for f in (fields.get(pf.n) for pf in boxes) if f is not None)
+        if making and ats_accounts.has_password():
+            self._check_password_rules(digest, host)       # ACC-04, before anything is typed
         frames = apply_form.frames(self.page)
         stored = ats_accounts.has_password()
         account_host = ""
@@ -5759,6 +6039,7 @@ class _JobRun:
             pf.action = "skip"
         if account_host:
             self.form_password_sites.add(_site(host))
+            self._form_password_sigs[_site(host)] = _fields_sig(digest)
             # a page that makes an account asks for a new password or its
             # confirmation; a sign-in read as the form makes none
             makes = len(typed) > 1 or any(
@@ -5767,6 +6048,28 @@ class _JobRun:
             email = self.catalog.value("email")
             if makes and email and not self._account_for(account_host):
                 self._record_account(account_host, email)
+
+    def _form_retype(self, host: str, digest: apply_form.FormDigest, boxes: list) -> bool:
+        """ACC-12: the form page that took the master password, shown again
+        with the same boxes and its password boxes emptied (the site cleared
+        them after an error elsewhere), takes it once more, once per site."""
+        site = _site(host)
+        if site in self._form_retyped or self._form_password_sigs.get(site) != _fields_sig(digest):
+            return False
+        try:
+            empty = all(int(apply_form.resolve(self.page, pf.locator).first.evaluate(
+                "el => (el.value || '').length", timeout=5_000)) == 0 for pf in boxes)
+        except Exception:       # noqa: BLE001  (a box that cannot be read is no emptied box)
+            empty = False
+        if not empty:
+            return False
+        self._form_retyped.add(site)
+        self.form_password_sites.discard(site)
+        says = page_problem(digest)
+        self._decide("password_retyped", "the form came back with its password boxes emptied; "
+                                         "the master password is typed once more"
+                                         + (f" (the page says {says!r})" if says else ""))
+        return True
 
     def _resolve_generation(self, digest: apply_form.FormDigest, plan: FillPlan,
                             rec: dict | None = None) -> None:

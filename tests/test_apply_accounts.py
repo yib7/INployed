@@ -322,3 +322,349 @@ def test_a_page_that_says_a_link_was_emailed_reads_as_the_account_check(fields, 
         assert apply_run.unsure_acts("code_gate", digest)
     else:
         assert not facts.link_sent
+
+
+
+# === an account that exists, password rules, re-typing, a slow sign-up (ACC-03, 04, 09, 12) ===========
+
+def _run(f, tmp_path, _browser, flow_server, judge=None):
+    return h.run_flow(f, judge or jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                      workdir=tmp_path)
+
+
+def test_a_sign_up_that_says_the_account_exists_signs_in_instead(_browser, flow_server, tmp_path):
+    r = _run(h.flow("signup_exists"), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    decided = [e["what"] for e in _events(r, "decision")]
+    assert "account_exists" in decided
+    secret = [(a.account.split("#")[0], a.type) for a in r.actions if a.secret]
+    # two boxes of the one sign-up, then one sign-in: never a second sign-up
+    assert secret == [("signup", "password"), ("signup", "password"), ("login", "password")], secret
+
+
+def test_an_existing_account_with_another_password_parks_after_one_sign_in(
+        _browser, flow_server, tmp_path):
+    import dataclasses
+    body = (h.FIXTURES_DIR / "forms" / "signup_exists.html").read_text(encoding="utf-8").replace(
+        "<body>", "<body data-reject>", 1)
+    f = dataclasses.replace(h.flow("signup_exists"), name="signup_exists_other_password",
+                            status="needs_human", reason=r"^an account exists",
+                            routes=lambda base: {f"{base}/forms/signup_exists.html": body})
+    r = _run(f, tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.reason == ("an account exists on 127.0.0.1 with another password: reset it to the "
+                        "master password, then Re-queue")
+    assert sum(1 for a in r.actions if a.secret and a.account.startswith("login")) == 1
+
+
+def test_a_sign_ups_password_rules_are_read_and_met(_browser, flow_server, tmp_path):
+    r = _run(h.flow("password_rules"), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    rules = [e for e in _events(r, "decision") if e["what"] == "password_rules"]
+    assert len(rules) == 1 and rules[0]["unmet"] == [], rules
+    assert rules[0]["rules"] == ["digit", "lower", "max_length", "min_length", "special", "upper"]
+
+
+def test_a_stored_password_that_misses_a_rule_parks_before_anything_is_typed(
+        _browser, flow_server, tmp_path, monkeypatch):
+    import dataclasses
+    monkeypatch.setattr(h, "PASSWORD", "Short-Pw1")        # nine characters
+    f = dataclasses.replace(h.flow("password_rules"), status="needs_human",
+                            reason=r"^the master password does not meet the password rules")
+    r = _run(f, tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.reason.startswith("the master password does not meet the password rules on "
+                               "127.0.0.1: it needs at least 12 characters (the site asks: Your "
+                               "password must be 12 to 64 characters long"), r.reason
+    assert not any(a.secret for a in r.actions)
+    assert not any(a.kind == "click" for a in r.actions)
+
+
+_REFUSE_ONCE = (
+    "    if (!window.__refused) { window.__refused = 1;"
+    " document.getElementById('signup_password').value = '';"
+    " document.getElementById('signup_confirm').value = '';"
+    " document.getElementById('signup').insertAdjacentHTML('afterbegin',"
+    " '<p role=alert>Something went wrong, try again.</p>'); return; }\n")
+_REFUSE_ALWAYS = (
+    "    document.getElementById('signup_password').value = '';"
+    " document.getElementById('signup_confirm').value = '';"
+    " window.__n = (window.__n || 0) + 1;"
+    " document.getElementById('signup').insertAdjacentHTML('afterbegin',"
+    " '<p role=alert>Something went wrong (' + window.__n + '), try again.</p>'); return;\n")
+_LOGGED_IN = "    document.body.setAttribute('data-logged-in', '1');"
+
+
+def _refusing_signup(name: str, refuse: str, **kw) -> h.Flow:
+    import dataclasses
+    body = (h.FIXTURES_DIR / "forms" / "signup.html").read_text(encoding="utf-8")
+    assert body.count(_LOGGED_IN) == 1
+    body = body.replace(_LOGGED_IN, refuse + _LOGGED_IN)
+    return dataclasses.replace(h.flow("signup_park"), name=name,
+                               routes=lambda base: {f"{base}/forms/signup.html": body}, **kw)
+
+
+def test_a_sign_up_shown_again_with_its_boxes_emptied_takes_the_password_once_more(
+        _browser, flow_server, tmp_path):
+    # ACC-12: the first Create account is refused for another reason (the
+    # boxes emptied, a note shown); the second goes through
+    r = _run(_refusing_signup("signup_retype", _REFUSE_ONCE), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    retyped = [e for e in _events(r, "decision") if e["what"] == "password_retyped"]
+    assert len(retyped) == 1 and "Something went wrong, try again." in retyped[0]["why"]
+    assert sum(1 for a in r.actions if a.secret) == 4
+
+
+def test_a_sign_up_refused_twice_parks_with_what_the_page_says(_browser, flow_server, tmp_path):
+    f = _refusing_signup("signup_refused", _REFUSE_ALWAYS, status="needs_human",
+                         reason=r"^the signup on 127\.0\.0\.1")
+    r = _run(f, tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.reason == ("the signup on 127.0.0.1 did not take the master password (the page "
+                        "says 'Something went wrong (2), try again.')"), r.reason
+    assert sum(1 for a in r.actions if a.secret) == 4     # typed twice, never a third time
+
+
+def test_a_slow_sign_up_is_waited_for_and_clicked_once(_browser, flow_server, tmp_path):
+    r = _run(h.flow("slow_signup"), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert [a.text for a in r.actions if a.kind == "click"].count("Create account") == 1
+    settles = _events(r, "step_settle")
+    assert len(settles) == 1 and settles[0]["changed"], settles
+
+
+# === a sign-in only with another site (ACC-11) ================================================================
+
+def test_a_portal_that_signs_in_only_with_another_site_parks_and_clicks_none(
+        _browser, flow_server, tmp_path):
+    r = _run(h.flow("sso_buttons"), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.reason == ("sign-in only through another site (Google, Microsoft, LinkedIn, "
+                        "Apple); the run never signs in with another site")
+    assert r.policy is True
+    assert not [a for a in r.actions if a.kind == "click"]
+
+
+@pytest.mark.parametrize("buttons, fields, sites", [
+    (["Sign in with Google", "Continue with Microsoft"], [], ["Google", "Microsoft"]),
+    (["Sign in with Google", "Sign in with email"], [], []),     # an own way on
+    (["Sign in with Google"], [("Email", "email")], []),         # a box to fill
+    (["Apply with LinkedIn", "Apply"], [], []),                  # a posting's own Apply
+    (["Log in using your SSO account", "Help"], [], ["SSO"]),
+])
+def test_sso_only_reads_a_screen_whose_one_way_on_is_another_sites_sign_in(buttons, fields,
+                                                                         sites):
+    form = apply_run.apply_form
+    digest = form.FormDigest("127.0.0.1", "Sign in", "Sign in to apply", fields=[
+        form.Field(i, (0, f"#f{i}"), label, kind, False) for i, (label, kind) in enumerate(fields)],
+        buttons=[form.Button(i, (0, f"#b{i}"), t) for i, t in enumerate(buttons)])
+    assert apply_run.sso_only(digest) == sites
+
+
+# --- the same two rules where the application's own form makes the account (ACC-04, ACC-12) -------
+
+_FORM_ACCOUNT = """<!doctype html><html><head><title>Apply - Fabrikam Careers</title></head><body>
+<h1>Apply for Analytics Engineer</h1>
+<div id="step1">
+<p id="note"></p>
+<label>First name * <input name="first" required></label>
+<label>Last name * <input name="last" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<label>Resume * <input type="file" name="resume" required></label>
+<label>Choose a password * <input type="password" id="pw" name="pw" autocomplete="new-password"
+  required></label>
+<p>__RULES__</p>
+<button type="button" id="next">Next</button>
+</div>
+<div id="step2" style="display: none"><h2>Review your application</h2>
+<p>Please review your application before you submit it.</p>
+<button type="button" id="btn-submit">Submit application</button></div>
+<script>
+  var refused = __REFUSE__;
+  document.getElementById('next').addEventListener('click', function () {
+    var pw = document.getElementById('pw');
+    if (!pw.value) return;
+    if (refused > 0) {
+      refused -= 1;
+      pw.value = '';
+      // in words: a page's signature leaves its numbers out
+      window.__tries = (window.__tries || 0) + 1;
+      document.getElementById('note').textContent = 'Something went wrong on the '
+        + ['first', 'second', 'third', 'fourth', 'fifth'][window.__tries - 1] + ' try.';
+      return;
+    }
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.dataset.submitted = 1;
+    document.body.innerHTML = '<h1 id=received>Application received</h1>';
+  });
+</script></body></html>"""
+
+
+def _form_account(name: str, *, rules: str = "", refuse: int = 0, **kw) -> h.Flow:
+    careers = "https://careers.fabrikam.example"
+    body = _FORM_ACCOUNT.replace("__RULES__", rules).replace("__REFUSE__", str(refuse))
+    fields = dict(confirm="#received:visible", gate="#btn-submit:visible", password=True,
+                  routes=lambda base: {f"{careers}/**": body})
+    fields.update(kw)
+    return h.Flow(name, f"{careers}/apply/42", False, fields.pop("status", "ready_to_submit"),
+                  fields.pop("reason", h._PARKED), **fields)
+
+
+def test_an_application_form_that_makes_the_account_checks_the_password_rules_first(
+        _browser, flow_server, tmp_path):
+    f = _form_account("form_account_rules", rules="Your password must be at least 30 characters.",
+                      status="needs_human",
+                      reason=r"^the master password does not meet the password rules on "
+                             r"careers\.fabrikam\.example: it needs at least 30 characters")
+    r = _run(f, tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert not any(a.secret for a in r.actions)
+
+
+def test_an_application_form_shown_again_with_its_password_emptied_takes_it_once_more(
+        _browser, flow_server, tmp_path):
+    r = _run(_form_account("form_account_retype", refuse=1), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert sum(1 for a in r.actions if a.secret) == 2
+    retyped = [e for e in _events(r, "decision") if e["what"] == "password_retyped"]
+    assert len(retyped) == 1, retyped
+
+
+def test_an_application_form_asking_for_the_password_a_third_time_parks(
+        _browser, flow_server, tmp_path):
+    f = _form_account("form_account_refused", refuse=5, status="needs_human",
+                      reason=r"^the form on careers\.fabrikam\.example asked for the master "
+                             r"password again \(the page says 'Something went wrong on the "
+                             r"second try\.'\)$")
+    r = _run(f, tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert sum(1 for a in r.actions if a.secret) == 2
+
+
+@pytest.mark.parametrize("text, help_, rules", [
+    # Workday's list under its heading, each rule a line of its own
+    ("Create Account\nPassword\nVerify New Password\nPassword Requirements:\na lowercase character\n"
+     "an uppercase character\na numeric character\na special character\n"
+     "a minimum of 8 characters", "",
+     {"lower": True, "upper": True, "digit": True, "special": True, "min_length": 8}),
+    ("Password\nMust be 12 to 64 characters long.", "",
+     {"min_length": 12, "max_length": 64}),
+    ("Password\nConfirm password", "Use at least 10 characters. Maximum of 20 characters.",
+     {"min_length": 10, "max_length": 20}),
+    ("Password\nYour password cannot contain the following characters: < > &", "",
+     {"forbidden": "&<>"}),
+    # a phone box's label beside the password is no rule; words far below are not read
+    ("Password\nConfirm password\nPhone number\n\n\n\n\n\n\n\n\nOur office has 12 characters", "",
+     {}),
+])
+def test_password_rules_read_a_sign_ups_stated_rules(text, help_, rules):
+    form = apply_run.apply_form
+    digest = form.FormDigest("127.0.0.1", "Create Account", text, fields=[
+        form.Field(0, (0, "#p"), "Password", "other", True, id_or_name="password", help=help_),
+        form.Field(1, (0, "#c"), "Confirm password", "other", True, id_or_name="confirm"),
+        form.Field(2, (0, "#t"), "Phone number", "tel", False)])
+    got, said = apply_run.password_rules(digest)
+    assert got == rules, said
+
+
+# === the password invariants (SP7) ===========================================================================
+
+def _recorder(tmp_path):
+    rec = h.Recorder(h.flow("signup_park"), park_mode=True, password=h.PASSWORD)
+    rec.final = {"confirmed": False, "at_gate": True}
+    rec.app_hosts = {"127.0.0.1"}
+    return rec, h.Sends(rec)
+
+
+class _Parked:
+    status = "ready_to_submit"
+    reason = "auto_apply_submit is off"
+
+
+_APP = "http://127.0.0.1:8000/forms/signup.html"
+
+
+@pytest.mark.parametrize("plant, code", [
+    ("typed_into_a_text_box", "PASSWORD-NOT-A-PASSWORD-BOX"),
+    ("typed_by_the_keyboard", "PASSWORD-NOT-A-PASSWORD-BOX"),
+    ("typed_in_the_inbox", "PASSWORD-OFF-SITE"),
+    ("two_sign_ins", "PASSWORD-RETRY"),
+    ("three_sign_ups", "PASSWORD-RETRY"),
+    ("seven_typings", "PASSWORD-RETRY"),
+    ("in_the_trace", "PASSWORD-LEAK"),
+    ("in_the_ledger", "PASSWORD-LEAK"),
+    ("a_ledger_password_key", "LEDGER-PASSWORD-KEY"),
+    ("a_jsonl_file", "PASSWORD-LEAK"),
+    ("a_judge_request", "PASSWORD-TO-JUDGE"),
+    ("a_log_line", "PASSWORD-LEAK"),
+    ("a_sign_in_with_google", "OTHER-SITE-CLICK"),
+])
+def test_each_password_invariant_fails_on_its_planted_breach(tmp_path, plant, code):
+    rec, sends = _recorder(tmp_path)
+
+    def typed(url=_APP, type_="password", how="Locator.fill", account=""):
+        rec.actions.append(h.Action("fill", url, tag="input", type=type_, how=how, secret=True,
+                                    account=account))
+    if plant == "typed_into_a_text_box":
+        typed(type_="text")
+    elif plant == "typed_by_the_keyboard":
+        typed(how="Keyboard.type")
+    elif plant == "typed_in_the_inbox":
+        typed(url=h.inbox_url("link_list.html"))
+    elif plant == "two_sign_ins":
+        typed(account="login#1")
+        typed(account="login#2")
+    elif plant == "three_sign_ups":
+        for n in (1, 2, 3):
+            typed(account=f"signup#{n}")
+    elif plant == "seven_typings":
+        for _ in range(7):
+            typed()
+    elif plant == "in_the_trace":
+        trace = tmp_path / "job" / "apply_trace" / "attempt-1"
+        trace.mkdir(parents=True)
+        (trace / "page-2.json").write_text('{"value": "%s"}' % h.PASSWORD, encoding="utf-8")
+        rec.files = [tmp_path / "job"]
+    elif plant == "in_the_ledger":
+        rec.ledger = tmp_path / "accounts.json"
+        rec.ledger.write_text('{"127.0.0.1": {"note": "%s"}}' % h.PASSWORD, encoding="utf-8")
+        rec.files = [rec.ledger]
+    elif plant == "a_ledger_password_key":
+        rec.ledger = tmp_path / "accounts.json"
+        rec.ledger.write_text('{"127.0.0.1": {"email": "a@b.c", "password_hint": "x"}}',
+                              encoding="utf-8")
+    elif plant == "a_jsonl_file":
+        (tmp_path / "outcomes.jsonl").write_text(h.PASSWORD, encoding="utf-8")
+        rec.files = [tmp_path]
+    elif plant == "a_judge_request":
+        rec.judge_requests.append('{"fields": [{"value": "%s"}]}' % h.PASSWORD)
+    elif plant == "a_log_line":
+        rec.logs.append(f"filled {h.PASSWORD}")
+    elif plant == "a_sign_in_with_google":
+        rec.actions.append(h.Action("click", _APP, text="Sign in with Google", tag="button"))
+    breaks = h.invariant_breaks(_Parked(), rec, sends)
+    assert code in {b.split(":")[0] for b in breaks}, breaks
+
+
+def test_the_typings_a_sign_up_path_makes_hold_the_password_invariants(tmp_path):
+    # one sign-up (two boxes), its one re-type (two), one sign-in: within
+    rec, sends = _recorder(tmp_path)
+    for account in ("signup#1", "signup#1", "signup#2", "signup#2", "login#3"):
+        rec.actions.append(h.Action("fill", _APP, tag="input", type="password", secret=True,
+                                    account=account))
+    assert h.invariant_breaks(_Parked(), rec, sends) == []
+
+
+def test_the_recorder_marks_the_master_passwords_typings_and_no_other(
+        _browser, flow_server, tmp_path):
+    # the Workday path end to end: the sign-up's two boxes and the sign-in's
+    # one carry the flag, every other typing (the address, the names) none
+    r = _run(h.flow("workday_signin_modal"), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    secret = [(a.account.split("#")[0], a.type, a.host) for a in r.actions if a.secret]
+    assert secret == [("signup", "password", "127.0.0.1")] * 2 + [
+        ("login", "password", "127.0.0.1")], secret
+    assert any(a.kind == "fill" and not a.secret for a in r.actions)

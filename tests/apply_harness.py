@@ -1148,6 +1148,23 @@ FLOWS: tuple[Flow, ...] = (
          covers="Workday's start popup, a Sign In dialog whose way to an account is a Create "
                 "Account button, the password rules, the account checked by a link in the "
                 "email, the sign-in after it, then the wizard (ACC-01, ACC-04, ACC-05)"),
+    Flow("signup_exists", "signup_exists.html", False, "ready_to_submit", _PARKED,
+         confirm="#received:visible", gate="#btn-submit:visible", password=True,
+         covers="a sign-up that says the address has an account: one sign-in instead, never a "
+                "second sign-up, then the wizard (ACC-03)"),
+    Flow("password_rules", "password_rules.html", False, "ready_to_submit", _PARKED,
+         confirm="#received:visible", gate="#btn-submit:visible", password=True,
+         covers="a sign-up that states its password rules beside the box: read, met by the "
+                "stored password, then the wizard (ACC-04)"),
+    Flow("slow_signup", "slow_signup.html", False, "ready_to_submit", _PARKED,
+         confirm="#received:visible", gate="#btn-submit:visible", password=True, suite_seeds=1,
+         covers="a sign-up that posts and then shows nothing for 8 s: waited for, clicked "
+                "once (ACC-09)"),
+    Flow("sso_buttons", "sso_buttons.html", True, "needs_human",
+         r"^sign-in only through another site \(Google, Microsoft, LinkedIn, Apple\)",
+         password=True,
+         covers="a portal whose only way on is a sign-in with Google, Microsoft, LinkedIn or "
+                "Apple: parks at once, none clicked (ACC-11)"),
 )
 
 
@@ -1333,6 +1350,8 @@ class Action:
     junk: str = ""      # a box no person fills: read-only, or a honeypot (SP5, study G3)
     toggle: bool = False    # a tick or a toggle (a checkbox, switch, radio or option role,
                             # aria-pressed): it never sends (review round 6, Minor 1)
+    secret: bool = False    # the value typed is the master password (SP7: never the value)
+    account: str = ""       # the account step's kind ("login" | "signup") and call, "login#2"
 
     @property
     def host(self) -> str:
@@ -1356,7 +1375,10 @@ class Recorder:
         self.files: list[Path] = []       # scanned for the password after the run
         self.judge_requests: list[str] = []   # every request the judge got, as JSON
         self.app_hosts: set[str] = set()  # where the master password may be typed
+        self.ledger: Path | None = None   # the run's account ledger (SP7: no password key)
         self._keyboards: dict[int, Any] = {}
+        self._account_calls = 0
+        self._account_kind: list[str] = []    # the running account step's "login#n" / "signup#n"
 
     def _live(self, target) -> dict:
         try:
@@ -1372,7 +1394,10 @@ class Recorder:
                     continue
             return {}
 
-    def _add(self, kind: str, how: str, info: dict, key: str = "") -> None:
+    def _add(self, kind: str, how: str, info: dict, key: str = "", value: Any = None) -> None:
+        # whether the value typed is the master password: a boolean, never
+        # the value (the recorder keeps no typed value at all)
+        secret = bool(self.password) and isinstance(value, str) and value == self.password
         self.actions.append(Action(kind=kind, how=how, url=str(info.get("url", "")),
                                    text=str(info.get("text", "")), role=str(info.get("role", "")),
                                    tag=str(info.get("tag", "")), type=str(info.get("type", "")),
@@ -1381,7 +1406,8 @@ class Recorder:
                                    aria=str(info.get("aria", "")),
                                    in_account=self.account_depth > 0,
                                    junk=str(info.get("junk", "")),
-                                   toggle=bool(info.get("toggle", False))))
+                                   toggle=bool(info.get("toggle", False)), secret=secret,
+                                   account=self._account_kind[-1] if self._account_kind else ""))
 
     @staticmethod
     def focused(page) -> dict:
@@ -1436,8 +1462,10 @@ class Recorder:
 
                     def _on(target, *a, _orig=orig, _kind=kind, _name=name, _label=label, **kw):
                         key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
+                        value = (a[0] if a else kw.get("value", kw.get("text"))) \
+                            if _kind == "fill" else None
                         rec._add(rec._kind(_kind, _name, a, kw), f"{_label}.{_name}",
-                                 rec._live(target), key)
+                                 rec._live(target), key, value)
                         return _orig(target, *a, **kw)
                     p.setattr(cls, name, _on)
             for cls, label in ((Frame, "Frame"), (Page, "Page")):
@@ -1454,7 +1482,10 @@ class Recorder:
                             info = {}
                         info.setdefault("url", str(getattr(owner, "url", "")))
                         key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
-                        rec._add(rec._kind(_kind, _name, a, kw), f"{_label}.{_name}", info, key)
+                        value = (a[0] if a else kw.get("value", kw.get("text"))) \
+                            if _kind == "fill" else None
+                        rec._add(rec._kind(_kind, _name, a, kw), f"{_label}.{_name}", info, key,
+                                 value)
                         return _orig(owner, selector, *a, **kw)
                     p.setattr(cls, name, _sel)
 
@@ -1474,7 +1505,8 @@ class Recorder:
                     page = rec._keyboards.get(id(kb))
                     info = rec.focused(page) if page is not None else {}
                     key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
-                    rec._add(_kind, f"Keyboard.{_name}", info, key)
+                    value = (a[0] if a else kw.get("text")) if _kind == "fill" else None
+                    rec._add(_kind, f"Keyboard.{_name}", info, key, value)
                     return _orig(kb, *a, **kw)
                 p.setattr(Keyboard, name, _key)
 
@@ -1498,11 +1530,16 @@ class Recorder:
             account_fill = apply_run._Accounts._fill
 
             def _account(accounts, *a, **kw):
+                # `_fill(page, digest, host, email, signup)`: its kind and call
+                signup = a[4] if len(a) > 4 else kw.get("signup", False)
+                rec._account_calls += 1
+                rec._account_kind.append(f"{'signup' if signup else 'login'}#{rec._account_calls}")
                 rec.account_depth += 1
                 try:
                     return account_fill(accounts, *a, **kw)
                 finally:
                     rec.account_depth -= 1
+                    rec._account_kind.pop()
             p.setattr(apply_run._Accounts, "_fill", _account)
 
             finish = apply_run._JobRun._finish
@@ -1585,12 +1622,15 @@ class _ListHandler(logging.Handler):
 
 # --- the invariants -------------------------------------------------------------------------
 
+_TEXT_SUFFIXES = (".md", ".json", ".jsonl", ".log", ".txt", ".html", ".csv", ".yaml", ".yml")
+
+
 def _text_files(paths: Iterable[Path]) -> Iterable[Path]:
     for path in paths:
         path = Path(path)
         if path.is_dir():
             for child in sorted(path.rglob("*")):
-                if child.is_file() and child.suffix.lower() in (".md", ".json", ".log", ".txt"):
+                if child.is_file() and child.suffix.lower() in _TEXT_SUFFIXES:
                     yield child
         elif path.is_file():
             yield path
@@ -1644,6 +1684,15 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
         if a.kind in ("fill", "tick", "pick", "upload") and a.junk:
             breaks.append(f"JUNK-FILL: a {a.kind} into a box no person fills ({a.junk}) on "
                           f"{a.host}")
+        if a.kind == "click" and _OTHER_SITE_SIGN_IN.search(f"{a.text} {a.aria}"):
+            breaks.append(f"OTHER-SITE-CLICK: clicked {a.text or a.aria!r} on {a.host}: the run "
+                          "never signs in or applies with another site's account (ACC-11)")
+        if a.secret and recorder.app_hosts and a.host not in recorder.app_hosts:
+            breaks.append(f"PASSWORD-OFF-SITE: the master password typed on {a.host}")
+        if a.secret and (a.type != "password" or a.how.startswith("Keyboard.")):
+            breaks.append(f"PASSWORD-NOT-A-PASSWORD-BOX: the master password typed into a "
+                          f"{a.tag or 'focused'} {a.type or 'element'} on {a.host}")
+    breaks += _password_tries(recorder.actions)
     if recorder.password:
         for path in _text_files(recorder.files):
             try:
@@ -1656,7 +1705,52 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
             breaks.append("PASSWORD-LEAK: the master password is in the log")
         if any(recorder.password in blob for blob in recorder.judge_requests):
             breaks.append("PASSWORD-TO-JUDGE: the master password reached the judge")
+    if recorder.ledger is not None and recorder.ledger.is_file():
+        try:
+            ledger = json.loads(recorder.ledger.read_text(encoding="utf-8"))
+        except ValueError:
+            ledger = {}
+        keys = [str(k) for rec in (ledger.values() if isinstance(ledger, dict) else [])
+                if isinstance(rec, dict) for k in rec]
+        bad = sorted({k for k in keys if _PASSWORD_KEY.search(k)})
+        if bad:
+            breaks.append(f"LEDGER-PASSWORD-KEY: the account ledger holds {bad[0]!r}")
     return breaks
+
+
+# a sign-in or an apply with another site's account (`apply_judge.THIRD_PARTY`)
+_OTHER_SITE_SIGN_IN = apply_run.apply_judge.THIRD_PARTY
+_PASSWORD_KEY = re.compile(r"pass|pwd|secret|token|credential", re.I)
+# SP7: the master password goes into one sign-in per site (a second is a
+# rejected password: typing it again moves toward a lockout), a sign-up's
+# boxes twice at most (the one re-type of a form the site emptied, ACC-12),
+# and no more than this many boxes on one site in all
+PASSWORD_TYPINGS_MAX = 6
+
+
+def _password_tries(actions: list[Action]) -> list[str]:
+    """The password invariants over the typings: one sign-in per site, two
+    sign-ups per site, `PASSWORD_TYPINGS_MAX` boxes per site."""
+    out: list[str] = []
+    calls: dict[tuple[str, str], set[str]] = {}
+    boxes: dict[str, int] = {}
+    for a in actions:
+        if not a.secret:
+            continue
+        boxes[a.host] = boxes.get(a.host, 0) + 1
+        if a.account:
+            kind = a.account.split("#", 1)[0]
+            calls.setdefault((a.host, kind), set()).add(a.account)
+    for (host, kind), seen in sorted(calls.items()):
+        allowed = 1 if kind == "login" else 2
+        if len(seen) > allowed:
+            out.append(f"PASSWORD-RETRY: the master password went into {len(seen)} {kind} "
+                       f"screens on {host} (at most {allowed})")
+    for host, n in sorted(boxes.items()):
+        if n > PASSWORD_TYPINGS_MAX:
+            out.append(f"PASSWORD-RETRY: the master password was typed {n} times on {host} (at "
+                       f"most {PASSWORD_TYPINGS_MAX})")
+    return out
 
 
 def assert_invariants(outcome: Any, recorder: Recorder, sends: Sends) -> None:
@@ -1693,7 +1787,12 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     "^" + re.escape(apply_run.MAILTO_REASON) + " to ",
     # a real dead end (SP6 review I4): a way on still disabled once every
     # field is answered, and no field the form or the plan names as blank
-    r"^the .{1,80} button stays disabled after the fill( \(|$)"))
+    r"^the .{1,80} button stays disabled after the fill( \(|$)",
+    # SP7's dead ends: a portal whose only way on is a sign-in with another
+    # site's account, which the run never uses (ACC-11); a site whose
+    # password rules the stored master password cannot meet (ACC-04)
+    "^" + re.escape(apply_run.SSO_REASON) + " ",
+    "^" + re.escape(apply_run.PASSWORD_RULE_REASON) + " on "))
 
 
 def policy_park(status: str, reason: str) -> bool | None:
@@ -1902,7 +2001,10 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
             context=context, run_context={"signup_email": SIGNUP_EMAIL, "inbox_url": inbox},
             sleep=lambda s: None)
         outcomes = runner.drain(cap=1)
-    recorder.files = [folder, queue]
+    # the record, the trace, the queue and the ledger: none may hold the
+    # master password, and the ledger no password-shaped key (SP7)
+    recorder.ledger = rundir / "accounts.json"
+    recorder.files = [folder, queue, recorder.ledger]
     seconds = round(time.monotonic() - start, 2)
     if not outcomes:
         return RunResult(f.name, judge_name, "", "no outcome", False,

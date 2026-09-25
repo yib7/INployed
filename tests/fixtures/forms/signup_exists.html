@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create an account - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<!-- ACC-03: the address has an account already (the user made it by hand
+     with the master password). Create account says so and offers the
+     sign-in; the sign-in takes a password of the account's length (the
+     account keeps no more than that). A body with data-reject refuses every
+     sign-in: the account has another password. -->
+<div id="signup">
+  <h1>Create an account</h1>
+  <p>An account lets you track the status of your application.</p>
+  <div id="exists" role="alert" style="display: none">
+    <p>An account with this email address already exists.</p>
+    <p><button type="button" id="signin-instead">Sign in instead</button></p>
+  </div>
+  <label for="signup_email">Email</label><input id="signup_email" name="email" type="email" autocomplete="username">
+  <label for="signup_password">Password</label><input id="signup_password" name="password" type="password" autocomplete="new-password">
+  <label for="signup_confirm">Confirm password</label><input id="signup_confirm" name="password_confirmation" type="password" autocomplete="new-password">
+  <p><button type="button" id="btn-create">Create account</button></p>
+  <p>Already have an account? <a href="#" id="to-signin">Sign in</a></p>
+</div>
+<div id="signin" style="display: none">
+  <h1>Sign in to continue your application</h1>
+  <p id="signin-error" role="alert" style="display: none">Wrong email or password.</p>
+  <label for="login_email">Email</label><input id="login_email" name="email" type="email" autocomplete="username">
+  <label for="login_password">Password</label><input id="login_password" name="password" type="password" autocomplete="current-password">
+  <p><button type="button" id="btn-signin">Sign in</button></p>
+</div>
+<script>
+  var tried = 0;
+  function toSignin(e) {
+    if (e) e.preventDefault();
+    document.getElementById('signup').style.display = 'none';
+    document.getElementById('signin').style.display = 'block';
+  }
+  document.getElementById('btn-create').addEventListener('click', function () {
+    var p = document.getElementById('signup_password');
+    if (!document.getElementById('signup_email').value || !p.value
+        || p.value !== document.getElementById('signup_confirm').value) return;
+    // the address is taken: the boxes are emptied and the page says so
+    p.value = '';
+    document.getElementById('signup_confirm').value = '';
+    document.getElementById('exists').style.display = 'block';
+  });
+  document.getElementById('signin-instead').addEventListener('click', toSignin);
+  document.getElementById('to-signin').addEventListener('click', toSignin);
+  document.getElementById('btn-signin').addEventListener('click', function () {
+    tried += 1;
+    var p = document.getElementById('login_password');
+    if (!p.value || document.body.hasAttribute('data-reject')) {
+      p.value = '';
+      var err = document.getElementById('signin-error');
+      err.style.display = 'block';
+      err.textContent = 'Wrong email or password (' + tried + ').';
+      return;
+    }
+    window.location.href = 'ashby_steps.html';
+  });
+</script>
+</body>
+</html>

@@ -158,6 +158,71 @@ def test_serialized_ledger_never_has_password_like_key(ledger):
         assert not ats_accounts._FORBIDDEN_KEY_RE.search(key), key
 
 
+@pytest.mark.parametrize("host,key", [
+    ("cboe.wd1.myworkdayjobs.com", "myworkdayjobs.com/cboe"),
+    ("https://SPGI.wd5.myworkdayjobs.com/en-US/SPGI_Careers", "myworkdayjobs.com/spgi"),
+    ("careers-gtsx.icims.com", "icims.com/gtsx"),
+    ("uscareers-gdit.icims.com", "icims.com/gdit"),
+    ("gdit.icims.com", "icims.com/gdit"),
+    ("login.icims.com", ""),            # a sign-in host every tenant shares names none
+    ("www.icims.com", ""),
+    ("careers.fabrikam.example", ""),
+    ("", ""),
+])
+def test_tenant_key_names_a_multi_tenant_ats_hosts_tenant(host, key):
+    assert ats_accounts.tenant_key(host) == key
+
+
+def test_lookup_finds_an_account_by_its_tenant_on_another_host_of_the_site(ledger):
+    # ACC-13: the account made on the careers host of an iCIMS tenant is found
+    # from that tenant's other hosts, never from another tenant's
+    ats_accounts.record("careers-gtsx.icims.com", email="me@example.com")
+    assert ats_accounts.lookup("gtsx.icims.com")["email"] == "me@example.com"
+    assert ats_accounts.lookup("uscareers-gtsx.icims.com")["email"] == "me@example.com"
+    assert ats_accounts.lookup("careers-other.icims.com") is None
+    assert ats_accounts.lookup("login.icims.com") is None
+
+
+def test_lookup_takes_the_jobs_own_hosts_for_a_shared_sign_in_host(ledger):
+    # ACC-13: a sign-in on login.icims.com (no tenant in its name) for a job
+    # whose careers host holds the account; a related host of another tenant
+    # never lends its account to this one
+    ats_accounts.record("careers-gtsx.icims.com", email="me@example.com")
+    assert ats_accounts.lookup("login.icims.com",
+                               related=["careers-gtsx.icims.com"])["email"] == "me@example.com"
+    assert ats_accounts.lookup("careers-other.icims.com",
+                               related=["careers-gtsx.icims.com"]) is None
+    assert ats_accounts.lookup("login.icims.com", related=["careers-other.icims.com"]) is None
+
+
+@pytest.mark.parametrize("rules,unmet", [
+    ({}, []),
+    ({"min_length": 8, "upper": True, "lower": True, "digit": True, "special": True}, []),
+    ({"min_length": 30}, ["at least 30 characters"]),
+    ({"max_length": 16}, ["at most 16 characters"]),
+    ({"forbidden": "-"}, ["none of these characters: -"]),
+    ({"forbidden": "<>&"}, []),
+])
+def test_unmet_rules_reads_the_stored_password_in_process(kr, rules, unmet):
+    # ACC-04: the rules the stored password misses, in words; the value never
+    # comes back (SECRET is 20 characters, upper, lower, digits, a hyphen)
+    kr.set_password(ats_accounts.SERVICE, "master", SECRET)
+    got = ats_accounts.unmet_rules(rules)
+    assert got == unmet
+    assert SECRET not in repr(got)
+
+
+def test_unmet_rules_names_each_missing_class(kr):
+    kr.set_password(ats_accounts.SERVICE, "master", "alllowercase")
+    assert ats_accounts.unmet_rules({"upper": True, "lower": True, "digit": True,
+                                     "special": True}) == [
+        "an uppercase letter", "a digit", "a special character"]
+
+
+def test_unmet_rules_without_a_stored_password_is_none(kr):
+    assert ats_accounts.unmet_rules({"min_length": 8}) is None
+
+
 def test_ledger_env_override_read_at_call_time(tmp_path, monkeypatch):
     monkeypatch.setenv("ATS_ACCOUNTS_PATH", str(tmp_path / "l.json"))
     assert ats_accounts.ledger_path() == tmp_path / "l.json"

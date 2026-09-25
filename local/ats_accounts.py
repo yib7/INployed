@@ -2,20 +2,20 @@
 
 Job portals (Workday, iCIMS, ...) force per-company accounts. The design here
 keeps ONE master password in the Windows Credential Manager (service
-"inployed-ats", via keyring) and a JSON ledger of which domains have accounts —
+"inployed-ats", via keyring) and a JSON ledger of which domains have accounts:
 the ledger records email + method + timestamps and NEVER a password (enforced
 in code: a password-shaped field name is rejected on write).
 
 The password's ONLY exit from the keyring is the clipboard
-(`copy_password_to_clipboard`), so an agent can tell a human — or a signup
-form — to paste it without the secret ever appearing in chat logs, stdout, or
+(`copy_password_to_clipboard`), so an agent can tell a human (or a signup
+form) to paste it without the secret ever appearing in chat logs, stdout, or
 a file. `clear_clipboard_if_password` wipes it afterwards, and only when the
 clipboard still holds the password, so unrelated user clipboard content is
 never clobbered. No function in this module returns or prints the password;
 the getter is module-private.
 
 keyring is imported lazily so this module (and the dashboard importing it)
-still loads where keyring isn't installed — password_exists() just reports
+still loads where keyring isn't installed; password_exists() just reports
 False there.
 """
 from __future__ import annotations
@@ -38,15 +38,15 @@ if str(HERE) not in sys.path:
 from jsonutil import atomic_write_json  # noqa: E402  (needs HERE on sys.path)
 
 __all__ = [
-    "SERVICE", "ledger_path", "record", "lookup", "list_accounts",
+    "SERVICE", "ledger_path", "record", "lookup", "list_accounts", "tenant_key",
     "password_exists", "has_password", "fill_password", "set_master_password",
-    "copy_password_to_clipboard", "clear_clipboard_if_password", "main",
+    "unmet_rules", "copy_password_to_clipboard", "clear_clipboard_if_password", "main",
 ]
 
 SERVICE = "inployed-ats"          # keyring service name (Windows Credential Manager)
 _MASTER_USER = "master"           # single shared master-password slot
 
-# Field names that must never land in the ledger — the ledger is plaintext JSON.
+# Field names that must never land in the ledger: the ledger is plaintext JSON.
 _FORBIDDEN_KEY_RE = re.compile(r"pass|pwd|secret|token|credential", re.IGNORECASE)
 
 _getpass = getpass.getpass        # test seam (monkeypatched to feed answers)
@@ -118,10 +118,66 @@ def record(domain_or_url: str, email: str, method: str = "master_password",
     return dict(rec)
 
 
-def lookup(domain_or_url: str, path: Optional[Path] = None
-           ) -> Optional[Dict[str, Any]]:
-    """The ledger entry for a domain/URL, or None."""
-    rec = _load_ledger(path).get(_netloc(domain_or_url))
+# Multi-tenant ATS hosts (ACC-13): the tenant a host names, with its site. A
+# tenant's sign-in can sit on another host of the same site than its careers
+# pages (iCIMS: careers-<tenant>.icims.com, <tenant>.icims.com), and one site
+# holds every company's tenant, so the site alone never finds an account.
+_TENANT_HOSTS = (
+    ("myworkdayjobs.com", re.compile(r"^([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com$")),
+    ("myworkdaysite.com", re.compile(r"^([a-z0-9-]+)\.wd\d+\.myworkdaysite\.com$")),
+    ("icims.com", re.compile(r"^(?:(?:careers|jobs|uscareers|external|internal|campus)-)?"
+                             r"([a-z0-9-]+)\.icims\.com$")),
+)
+# host labels every tenant of a site shares: they name no tenant
+_SHARED_LABELS = frozenset(("login", "www", "api", "cdn", "static", "auth", "sso", "accounts",
+                            "secure", "app", "apps", "mail"))
+
+
+def tenant_key(domain_or_url: str) -> str:
+    """"<site>/<tenant>" for a host of a multi-tenant ATS that names its
+    tenant (`cboe.wd1.myworkdayjobs.com` -> "myworkdayjobs.com/cboe",
+    `careers-gtsx.icims.com` -> "icims.com/gtsx"); "" for any other host and
+    for a host every tenant shares (`login.icims.com`)."""
+    host = _netloc(domain_or_url).split(":")[0]
+    for site, pattern in _TENANT_HOSTS:
+        m = pattern.match(host)
+        if m and m.group(1) not in _SHARED_LABELS:
+            return f"{site}/{m.group(1)}"
+    return ""
+
+
+def _find(ledger: Dict[str, Dict[str, Any]], host: str) -> Optional[Dict[str, Any]]:
+    """The entry for `host`: by its netloc, else by its tenant (ACC-13)."""
+    rec = ledger.get(_netloc(host))
+    if rec:
+        return rec
+    key = tenant_key(host)
+    if key:
+        for stored, entry in ledger.items():
+            if tenant_key(stored) == key and entry:
+                return entry
+    return None
+
+
+def lookup(domain_or_url: str, path: Optional[Path] = None, *,
+           related: Any = ()) -> Optional[Dict[str, Any]]:
+    """The ledger entry for a domain/URL, or None. A host of a multi-tenant
+    ATS finds the account of its tenant on any host of that tenant
+    (`tenant_key`). `related`: the job's own hosts on the same site (its
+    careers host beside a shared sign-in host, `login.icims.com`), looked up
+    the same way when the host itself finds nothing; one that names another
+    tenant than the host never lends its account (ACC-13)."""
+    ledger = _load_ledger(path)
+    rec = _find(ledger, domain_or_url)
+    if rec is None:
+        own = tenant_key(domain_or_url)
+        for other in related or ():
+            theirs = tenant_key(other)
+            if own and theirs != own:
+                continue
+            rec = _find(ledger, other)
+            if rec is not None:
+                break
     return dict(rec) if rec else None
 
 
@@ -133,7 +189,7 @@ def list_accounts(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
 # ── keyring master password ──────────────────────────────────────────────────
 
 def _keyring():
-    """The keyring module, or None where it isn't installed / importable —
+    """The keyring module, or None where it isn't installed / importable:
     lazy so this module always imports."""
     try:
         import keyring
@@ -156,7 +212,7 @@ def password_exists() -> bool:
 def set_master_password(password: Optional[str] = None) -> bool:
     """Store the master password in the Credential Manager.
 
-    password=None is the interactive path (getpass twice, must match — the CLI);
+    password=None is the interactive path (getpass twice, must match: the CLI);
     a str is the programmatic path (the dashboard QInputDialog hands the typed value in,
     no prompt ever fires). A programmatic empty/whitespace-only value raises
     ValueError. The value is never echoed, printed, or returned either way."""
@@ -196,6 +252,37 @@ def _get_master_password() -> Optional[str]:
 def has_password() -> bool:
     """Report availability without exposing the stored password."""
     return bool(_get_master_password())
+
+
+def unmet_rules(rules: Dict[str, Any]) -> Optional[List[str]]:
+    """The password rules a site states (ACC-04: `min_length`, `max_length`,
+    `upper`, `lower`, `digit`, `special`, `forbidden` characters) that the
+    stored master password does not meet, each in words ("at least 12
+    characters"); [] when it meets them all, None when no password is stored.
+    Counted here from the password's length and character classes: the
+    value, and anything read from it but those words, never leaves this
+    module."""
+    password = _get_master_password()
+    if not password:
+        return None
+    out: List[str] = []
+    low, high = rules.get("min_length"), rules.get("max_length")
+    if low and len(password) < int(low):
+        out.append(f"at least {int(low)} characters")
+    if high and len(password) > int(high):
+        out.append(f"at most {int(high)} characters")
+    if rules.get("upper") and not any(c.isupper() for c in password):
+        out.append("an uppercase letter")
+    if rules.get("lower") and not any(c.islower() for c in password):
+        out.append("a lowercase letter")
+    if rules.get("digit") and not any(c.isdigit() for c in password):
+        out.append("a digit")
+    if rules.get("special") and all(c.isalnum() for c in password):
+        out.append("a special character")
+    banned = str(rules.get("forbidden") or "")
+    if banned and any(c in banned for c in password):
+        out.append(f"none of these characters: {' '.join(banned)}")
+    return out
 
 
 def fill_password(page_or_frame, locator) -> bool:
@@ -330,7 +417,7 @@ def copy_password_to_clipboard() -> bool:
 
 
 def clear_clipboard_if_password() -> bool:
-    """Clear the clipboard ONLY if it still holds the master password — a user's
+    """Clear the clipboard ONLY if it still holds the master password; a user's
     unrelated clipboard content is never clobbered. True when cleared."""
     pw = _get_master_password()
     if not pw:
@@ -348,7 +435,7 @@ def clear_clipboard_if_password() -> bool:
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 # Verbs whose code path touches the secret: an unexpected exception there is
-# reported by CLASS NAME ONLY — str(e) from a keyring/clipboard backend could
+# reported by CLASS NAME ONLY: str(e) from a keyring/clipboard backend could
 # carry the password itself.
 _SECRET_VERBS = frozenset(("set-password", "clip-password", "clip-clear"))
 
@@ -406,7 +493,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return _run_verb(args)
     except Exception as exc:
-        # Anything unexpected: one line on stderr, exit 1 — and for verbs that
+        # Anything unexpected: one line on stderr, exit 1; for verbs that
         # touch the secret, the exception CLASS name only (str(e) from a
         # keyring/clipboard backend could carry the password).
         detail = type(exc).__name__

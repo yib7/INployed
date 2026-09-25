@@ -926,7 +926,7 @@ class _Accounts:
         self.password_typed: set[tuple[str, str]] = set()
 
     def login(self, page, digest, host: str) -> bool:
-        account = ats_accounts.lookup(host)
+        account = self.run._account_for(host)
         if account:
             if account.get("method") != "master_password":
                 return False
@@ -1074,7 +1074,7 @@ class _Accounts:
             # ADV-08: a sign-in and a sign-up side by side: the sign-in when
             # the ledger knows the account, else the sign-up; its own form's
             # boxes and button alone are acted on
-            want = "signin" if ats_accounts.lookup(host) else "signup"
+            want = "signin" if self.run._account_for(host) else "signup"
             chosen = next((g for g in groups if password_step(g) == want), None)
             if chosen is not None:
                 self.run._decide("account_form", f"a sign-in and a sign-up side by side; the "
@@ -1155,7 +1155,7 @@ class _Accounts:
                 raise _Parked("needs_human", f"the sign-in's button reads as sending the "
                                              f"application ({text})", LOGIN_NOTE)
             if passwords and not emails and not signup \
-                    and site not in self.email_sites and not ats_accounts.lookup(host):
+                    and site not in self.email_sites and not self.run._account_for(host):
                 return False
             if passwords:
                 # the last word before the password is typed: the page and
@@ -1210,7 +1210,7 @@ class _Accounts:
                 # the page did next; a ledger entry for an account that was
                 # never created costs one failed login, a missing one costs a
                 # second signup with the same address
-                ats_accounts.record(host, email)
+                self.run._record_account(host, email)
             if guard.blocked:
                 raise _Parked("needs_human", f"left the allowed sites: {guard.blocked[0]}", before)
             if emails:
@@ -3271,6 +3271,30 @@ class _JobRun:
         host = _host(url)
         if host and not self._allowed_site(host):
             raise _Parked("needs_human", f"left the allowed sites: {host}")
+
+    def _related_hosts(self, host: str) -> list[str]:
+        """The job's own ATS hosts on `host`'s site, other than `host`: a
+        shared sign-in host (`login.icims.com`) finds the tenant's account
+        by them (ACC-13)."""
+        site, own = _site(host), _host(host)
+        return sorted(h for h in self.ats_hosts if _site(h) == site and _host(h) != own)
+
+    def _account_for(self, host: str) -> dict | None:
+        """The ledger's account for `host`: by the host, by its tenant, or
+        by the job's own hosts on its site (`ats_accounts.lookup`, ACC-13)."""
+        return ats_accounts.lookup(host, related=self._related_hosts(host))
+
+    def _record_account(self, host: str, email: str, **extra: Any) -> None:
+        """The account made or signed in to on `host`, in the ledger: under
+        `host`, or, when `host` names no tenant and a job host on its site
+        does, under that host (a sign-in host every tenant shares must never
+        hand one company's account to another, ACC-13)."""
+        target = host
+        if not ats_accounts.tenant_key(host):
+            named = [h for h in self._related_hosts(host) if ats_accounts.tenant_key(h)]
+            if named:
+                target = named[0]
+        ats_accounts.record(target, email, **extra)
 
     def _password_ok(self, host: str) -> bool:
         """May the master password be typed on `host`? Only on the application
@@ -5525,8 +5549,8 @@ class _JobRun:
                 str(f.autocomplete or "").lower() == "new-password"
                 or _NEW_PASSWORD.search(f"{f.label or ''} {f.id_or_name or ''}") for f in typed)
             email = self.catalog.value("email")
-            if makes and email and not ats_accounts.lookup(account_host):
-                ats_accounts.record(account_host, email)
+            if makes and email and not self._account_for(account_host):
+                self._record_account(account_host, email)
 
     def _resolve_generation(self, digest: apply_form.FormDigest, plan: FillPlan,
                             rec: dict | None = None) -> None:

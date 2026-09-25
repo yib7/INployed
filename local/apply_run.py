@@ -329,6 +329,8 @@ _PARK_STATES = {
 # A tab on Chrome's own error page after a load the network dropped parks
 # with the error state's words once its one retry is spent (SP8a)
 ERROR_PAGE_REASON = _PARK_STATES["error_or_dead"]
+# The send that never reached the site (SP8a review M7): nothing was sent
+UNSENT_NOTE = "nothing was sent: Re-queue once the site answers again"
 # A page read below `apply_judge.PAGE_STATE_MIN_CONF` is still acted on as one
 # of these (`_JobRun._check_unsure`): each step has gates of its own (the Apply
 # entry's confidence, the fill plan's, the submit gate, the accounts hook's
@@ -836,6 +838,11 @@ class SendWatch:
 
     def first(self) -> str:
         return (self.sent or self.possible or self.unplaced_sends() or [""])[0]
+
+    def only(self, row: str) -> bool:
+        """Is `row` the one request seen that may have been the send?"""
+        rows = self.sent + self.possible + self.unplaced_sends()
+        return rows == [row]
 
 
 def new_confirmation(before: str, after: str) -> str:
@@ -1638,6 +1645,25 @@ class _Parked(Exception):
         self.status = status
         self.reason = reason
         self.tab_note = tab_note
+
+
+class _Unsent(_Parked):
+    """A park after the submit click whose send never reached the site (a
+    refused connection, a name that did not resolve: `_no_connection`, SP8a
+    review M7): it stands as raised, never read as a possible send."""
+
+
+# Chrome's errors for a request that never reached its site: the connection
+# was refused or its address unreachable, or the name did not resolve (SP8a
+# review M7). A reset, a timeout or an empty answer may come after the request
+# left, so none of them is here.
+_NO_CONNECTION = ("ERR_CONNECTION_REFUSED", "ERR_ADDRESS_UNREACHABLE", "ERR_NAME_NOT_RESOLVED",
+                  "ERR_NAME_RESOLUTION_FAILED")
+
+
+def _no_connection(failure: str) -> bool:
+    """Did the load fail before any connection to its site was made?"""
+    return any(code in str(failure or "") for code in _NO_CONNECTION)
 
 
 class _Refused(Exception):
@@ -4320,7 +4346,9 @@ class _JobRun:
         GET the click itself caused (`SendWatch.caused`: the navigation it
         started, and any request before it, SP8a review M6): at most one
         send per job, so the page the send led to is the only one loaded
-        again. A retry that lands on the error page again parks, as does an
+        again. A send that never reached the site (`_no_connection`) and was
+        the one request seen parks as nothing sent (`_Unsent`, SP8a review
+        M7). A retry that lands on the error page again parks, as does an
         error page whose address is unknown. An address off the allowed sites
         parks as the site it names, but with `transition`: the page an Apply
         or a redirect led to, which `_admit_ats_transition` judges once it
@@ -4344,13 +4372,23 @@ class _JobRun:
             raise _Parked("needs_human", f"left the allowed sites: {host}")
         bare = SendWatch._bare(url)
         what = f"{method} {_cap(bare, 120)} failed on the network ({_cap(failure, 60)})"
+        watch = self._send_watch
+        row = f"{method} {bare}"
+        carried = watch is not None and (method != "GET" or watch.first() == row
+                                         or watch.caused_by_click(row))
+        if self.submit_clicked and carried and _no_connection(failure) and watch.only(row):
+            # the send never reached the site and nothing else left: the job
+            # is no possible send, and the load is still never made again
+            # (SP8a review M7)
+            self.submit_clicked = False
+            self._decide("after_submit", f"{what}; no connection was made and no other request "
+                                         f"left, so nothing was sent")
+            raise _Unsent("needs_human", f"{ERROR_PAGE_REASON}: {what}; no connection was "
+                                         f"made, so nothing was sent", UNSENT_NOTE)
         if method != "GET":
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}; a {method} is never "
                                          f"sent again")
-        watch = self._send_watch
-        row = f"GET {bare}"
-        if self.submit_clicked and watch is not None and (watch.first() == row
-                                                          or watch.caused_by_click(row)):
+        if self.submit_clicked and carried:
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}; that load carried the "
                                          f"send, so it is never loaded again")
         if url in self._error_retried:
@@ -7693,7 +7731,7 @@ class _JobRun:
         try:
             self._read_after_submit(watch, before, account, handoff)
         except _Parked as p:
-            if p.status != "needs_human":
+            if p.status != "needs_human" or isinstance(p, _Unsent):
                 raise
             raise self._send_evidence(p, watch, when="during the wait" if during_wait
                                       else "after the click") from None
@@ -7975,10 +8013,13 @@ class _JobRun:
         A page that left the allowed sites after the submit click is read no
         further: "submitted (unconfirmed)" when a request to the
         application's sites left first, else the person checks. Either way
-        the queue never sends it again."""
+        the queue never sends it again. A send that never reached the site
+        (`_Unsent`) stands as raised."""
         try:
             self._check_host(self.page.url)
             return self._drop_foreign_controls(self._extract())
+        except _Unsent:
+            raise
         except _Parked as p:
             if watch is not None and watch.sent:
                 raise _Parked("submitted", f"submitted (unconfirmed): {p.reason} (after "

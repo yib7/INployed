@@ -108,9 +108,10 @@ def test_a_load_the_network_drops_twice_parks_as_an_error_page_inside_the_policy
 def test_after_the_send_the_get_that_carried_it_is_never_loaded_again(
         _browser, flow_server, tmp_path):
     # the submit_code noisy-14 end: the submit's own GET (the harness counts
-    # it as the send) was dropped; loading it again would send twice
+    # it as the send) was dropped after it left; loading it again would send
+    # twice
     base = h.flow("submit_code")
-    drop = _drop_first()
+    drop = _drop_first("connectionreset")
     f = dataclasses.replace(base, routes=lambda b: {"**/forms/code_gate.html": drop})
     r = _run(f, _browser, flow_server, tmp_path)
     assert r.status == "submitted", r
@@ -186,6 +187,43 @@ def test_after_the_send_a_post_the_network_dropped_is_never_sent_again(
     assert r.breaks == []
 
 
+@pytest.mark.parametrize("error, failure", [("connectionrefused", "ERR_CONNECTION_REFUSED"),
+                                            ("namenotresolved", "ERR_NAME_NOT_RESOLVED")])
+def test_a_send_that_never_made_its_connection_parks_as_nothing_sent(
+        _browser, flow_server, tmp_path, error, failure):
+    # SP8a review M7: a refused connection or a name that did not resolve
+    # means nothing left the machine: the job is never "submitted
+    # (unconfirmed)", and the POST is still never sent again
+    posts: list[str] = []
+
+    def _submit(route, request) -> None:
+        posts.append(str(request.method))
+        route.abort(error)
+    r = _run(_post_flow(_submit, h.CONFIRMATION_HTML), _browser, flow_server, tmp_path)
+    assert r.status == "needs_human", r
+    assert r.reason.startswith("error or dead page: POST "), r.reason
+    assert failure in r.reason
+    assert "nothing was sent" in r.reason
+    assert h.policy_park(r.status, r.reason) is True
+    assert posts == ["POST"]
+    assert r.sends == 1         # the harness counts the attempt at its route
+    assert r.breaks == []
+
+
+def test_a_get_send_that_never_made_its_connection_parks_as_nothing_sent_and_is_not_loaded_again(
+        _browser, flow_server, tmp_path):
+    base = h.flow("submit_code")
+    drop = _drop_first("connectionrefused")
+    f = dataclasses.replace(base, routes=lambda b: {"**/forms/code_gate.html": drop})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert r.status == "needs_human", r
+    assert r.reason.startswith("error or dead page: GET "), r.reason
+    assert "nothing was sent" in r.reason
+    assert h.policy_park(r.status, r.reason) is True
+    assert drop.seen == ["GET"]
+    assert r.breaks == []
+
+
 # A GET form whose button saves a draft (a POST) before it sends: the send is
 # the second request the click caused
 _GET_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</title></head>
@@ -204,7 +242,7 @@ def test_after_the_send_the_get_that_carried_it_is_never_loaded_again_when_a_pos
         _browser, flow_server, tmp_path):
     # SP8a review M6: every request the submit click caused counts as the
     # send, the draft's POST before it too
-    send = _drop_first(body=h.CONFIRMATION_HTML)
+    send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
     saves: list[str] = []
     f = h.Flow("get_after_autosave", f"{_POST_SITE}/get/apply", True, "submitted",
                r"^submitted \(unconfirmed\): ", send_urls=(f"{_POST_SITE}/get/send**",),

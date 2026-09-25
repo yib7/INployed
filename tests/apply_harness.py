@@ -1805,7 +1805,9 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # site's account, which the run never uses (ACC-11); a site whose
     # password rules the stored master password cannot meet (ACC-04)
     "^" + re.escape(apply_run.SSO_REASON) + " ",
-    "^" + re.escape(apply_run.PASSWORD_RULE_REASON) + " on "))
+    "^" + re.escape(apply_run.PASSWORD_RULE_REASON) + " on ",
+    # SP8a: a queue entry the run cannot work (RES-09), which the user fixes
+    "^" + re.escape(apply_run.MALFORMED_REASON) + ": "))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

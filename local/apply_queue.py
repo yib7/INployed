@@ -400,7 +400,11 @@ def claim(claimed_by: str = "agent", path: Optional[Path] = None, *,
             return None
         _normalize(best)                     # hand-edited entries: full schema
         best["status"] = "in_progress"
-        best["attempts"] = int(best.get("attempts", 0)) + 1
+        try:
+            prior = int(best.get("attempts") or 0)
+        except (TypeError, ValueError):
+            prior = 0       # a hand-edited count that is no number starts over (RES-09)
+        best["attempts"] = prior + 1
         best["claimed_by"] = str(claimed_by or "")
         best["started_at"] = _now()
         best["updated_at"] = _now()

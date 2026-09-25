@@ -183,3 +183,95 @@ def test_after_the_send_a_post_the_network_dropped_is_never_sent_again(
     assert r.sends == 1
     assert r.breaks == []
 
+
+# --- a malformed queue entry (RES-09) -------------------------------------------------------
+
+def _queue(tmp_path, *entries):
+    """A queue file holding `entries` as written, hand-edited ones included."""
+    import json
+
+    import apply_queue
+    path = tmp_path / "queue.json"
+    path.write_text(json.dumps({"version": 1, "jobs": list(entries)}), encoding="utf-8")
+    return path, apply_queue
+
+
+def _plain(jid: str, folder: Path, **extra) -> dict:
+    import apply_queue
+    e = apply_queue.new_entry(jid, company="Fabrikam", title="Analytics Engineer",
+                              apply_url="https://careers.fabrikam.example/apply")
+    e["artifacts"]["folder"] = str(folder)
+    e["artifacts"]["apply_md"] = str(folder / "apply.md")
+    e.update(extra)
+    return e
+
+
+def _runner_for(queue, ctx, tmp_path):
+    import apply_run
+    return apply_run.Runner(jev=jev.FakeJev(), queue_path=queue, profile_dir=tmp_path / "p",
+                            settings={"auto_apply_headless": True, "auto_apply_jev_mode": "fake"},
+                            context=ctx, run_context={"inbox_url": ""}, sleep=lambda s: None)
+
+
+def test_a_malformed_entry_ends_that_job_failed_and_the_drain_goes_on(_browser, tmp_path,
+                                                                        monkeypatch):
+    import apply_run
+    monkeypatch.chdir(tmp_path)
+    bad = _plain("bad", tmp_path / "bad")
+    bad["artifacts"]["apply_md"] = {"path": "x"}         # hand-edited into a mapping
+    good = _plain("good", tmp_path / "good")               # no apply.md: fails fast
+    queue, apply_queue = _queue(tmp_path, bad, good)
+    ctx = _browser.new_context()
+    try:
+        outcomes = _runner_for(queue, ctx, tmp_path).drain(cap=5)
+    finally:
+        ctx.close()
+    assert [o.job_id for o in outcomes] == ["bad", "good"]
+    first = outcomes[0]
+    assert first.status == "failed"
+    assert first.reason == (f"{apply_run.MALFORMED_REASON}: artifacts.apply_md is a dict, "
+                            f"not text")
+    assert outcomes[1].reason == "no apply.md"
+    jobs = {e["job_posting_id"]: e for e in apply_queue.load(queue)["jobs"]}
+    assert jobs["bad"]["status"] == "failed" and jobs["good"]["status"] == "failed"
+    # nothing written where the malformed path would point (the working dir)
+    assert not (tmp_path / "apply_trace").exists()
+    assert not list(tmp_path.glob("application_record*"))
+
+
+def test_a_malformed_attempts_count_is_claimed_as_a_first_attempt(tmp_path):
+    bad = _plain("bad", tmp_path / "bad", attempts="twice")
+    queue, apply_queue = _queue(tmp_path, bad)
+    got = apply_queue.claim("apply_run", path=queue)
+    assert got["job_posting_id"] == "bad"
+    assert got["status"] == "in_progress" and got["attempts"] == 1
+
+
+def test_an_entry_the_run_cannot_set_up_ends_failed_and_the_drain_goes_on(_browser, tmp_path,
+                                                                          monkeypatch):
+    import apply_run
+    queue, apply_queue = _queue(tmp_path, _plain("a", tmp_path / "a"),
+                                _plain("b", tmp_path / "b"))
+    real = apply_run._JobRun.__init__
+
+    def _init(self, runner, ctx, entry):
+        if entry["job_posting_id"] == "a":
+            raise RuntimeError("the set-up broke at /secret/path")
+        real(self, runner, ctx, entry)
+    monkeypatch.setattr(apply_run._JobRun, "__init__", _init)
+    ctx = _browser.new_context()
+    try:
+        outcomes = _runner_for(queue, ctx, tmp_path).drain(cap=5)
+    finally:
+        ctx.close()
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "failed"), ("b", "failed")]
+    assert outcomes[0].reason == "RuntimeError while the job was set up"
+    jobs = {e["job_posting_id"]: e for e in apply_queue.load(queue)["jobs"]}
+    assert jobs["a"]["status"] == "failed"
+    assert "secret" not in jobs["a"]["notes"]
+
+
+def test_a_malformed_entry_is_a_dead_end_inside_the_policy():
+    import apply_run
+    assert h.policy_park("failed", f"{apply_run.MALFORMED_REASON}: ats is a list, "
+                                   f"not a mapping") is True

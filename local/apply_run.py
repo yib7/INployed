@@ -1813,6 +1813,46 @@ def _dropped_load(e: BaseException) -> bool:
     return "net::ERR_" in text or "chrome-error://" in text
 
 
+MALFORMED_REASON = "malformed queue entry"
+# the entry's values the run reads as text: a path, an address, a host
+_ENTRY_TEXT = (("artifacts", ("apply_md", "folder", "resume_pdf", "cover_letter_pdf")),
+               ("ats", ("domain", "system")))
+
+
+def entry_problem(entry: Any) -> str:
+    """What makes a queue entry one the run cannot work (RES-09), in words
+    that carry no value of it, or "" for a sound one: `artifacts` or `ats`
+    that is no mapping, a path, address or host that is no text (or holds a
+    NUL, which no path takes), an `apply_url` that is no text, `attempts`
+    that is no number."""
+    if not isinstance(entry, Mapping):
+        return f"the entry is a {type(entry).__name__}, not a mapping"
+    for key, names in _ENTRY_TEXT:
+        value = entry.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, Mapping):
+            return f"{key} is a {type(value).__name__}, not a mapping"
+        for name in names:
+            v = value.get(name)
+            if v is None:
+                continue
+            if not isinstance(v, str):
+                return f"{key}.{name} is a {type(v).__name__}, not text"
+            if "\x00" in v:
+                return f"{key}.{name} holds a NUL character"
+    url = entry.get("apply_url")
+    if url is not None and not isinstance(url, str):
+        return f"apply_url is a {type(url).__name__}, not text"
+    attempts = entry.get("attempts")
+    if attempts is not None:
+        try:
+            int(attempts)
+        except (TypeError, ValueError):
+            return "attempts is not a number"
+    return ""
+
+
 def _error_page(url: str) -> bool:
     """Chrome's own error page (`chrome-error://chromewebdata/`), shown after
     a load the network dropped: never a site of the flow."""
@@ -3835,8 +3875,25 @@ class Runner:
         return self._with_browser(lambda ctx: self._run_job(ctx, entry))
 
     def _run_job(self, ctx, entry: dict) -> Outcome:
-        job = _JobRun(self, ctx, entry)
+        try:
+            job = _JobRun(self, ctx, entry)
+        except Exception as e:      # noqa: BLE001  (RES-09: one entry never ends the drain)
+            return self._not_started(ctx, entry, e)
         return job.run()
+
+    def _not_started(self, ctx, entry: Mapping, e: Exception) -> Outcome:
+        """A job whose run could not even be set up (RES-09): the entry
+        leaves `in_progress` as `failed`, with the error's type and no
+        value, and the drain goes on."""
+        job_id = str(entry.get("job_posting_id", "")) if isinstance(entry, Mapping) else ""
+        reason = f"{type(e).__name__} while the job was set up"
+        self.log.error("job %s: %s", job_id, reason, exc_info=True)
+        try:
+            apply_queue.finish(job_id, "failed", notes=reason, path=self.queue_path)
+        except Exception as err:    # noqa: BLE001  (the queue write must not end the drain)
+            self.log.error("job %s: queue finish failed (%s)", job_id, type(err).__name__)
+        return Outcome(job_id=job_id, status="failed", reason=reason, record_path="",
+                       pages=0, jev_usage={}, browser_closed=_context_gone(ctx))
 
 
 # --- one job ---------------------------------------------------------------------------------
@@ -3876,7 +3933,8 @@ class _JobRun:
         # the wall-clock start: mail from before it is never the job's (ACC-07)
         self.started_at = datetime.now()
         self.deadline = self.start + JOB_WALL_CLOCK_S
-        self.folder = self._folder()
+        # a malformed entry's paths are never used: `run` ends it (RES-09)
+        self.folder = None if entry_problem(entry) else self._folder()
         self.accounts = runner.accounts if runner.accounts is not None else _Accounts(self)
         self.inbox = runner.inbox if runner.inbox is not None else _Inbox(self)
         # the trace (`apply_trace`); off until `run` starts it, so a test that
@@ -4435,6 +4493,11 @@ class _JobRun:
     def run(self) -> Outcome:
         try:
             try:
+                problem = entry_problem(self.entry)
+                if problem:
+                    # RES-09: the job ends here and the drain goes on; no
+                    # trace or record goes where a malformed path points
+                    raise _Parked("failed", f"{MALFORMED_REASON}: {problem}")
                 self._start_trace()
                 self._listen_loads()
                 self.log.info("job %s: start (%s)", self.job_id, self.entry.get("apply_url", ""))

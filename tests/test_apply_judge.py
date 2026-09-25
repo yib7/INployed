@@ -165,7 +165,7 @@ def test_threshold_constants_match_the_spec_table():
     assert apply_judge.PAGE_STATE_MIN_CONF == 0.40
     assert apply_judge.FIELD_MAP_MIN_CONF == 0.70
     assert apply_judge.OPTION_MIN_CONF == 0.70
-    assert apply_judge.BUTTON_SUBMIT_MIN_CONF == 0.75
+    assert apply_judge.BUTTON_SUBMIT_MIN_CONF == 0.50
     assert apply_judge.BUTTON_ADVANCE_MIN_CONF == 0.50
     assert apply_judge.VERIFY_MIN == 0.80
     # the flags park nothing on their own since 2026-09-22, so they have no gate
@@ -805,6 +805,45 @@ def test_plan_signature_today_decides_by_whole_token_or_control_type(catalog, la
     digest = FormDigest(url_host="x", title="t", text="", fields=[_f(0, label, type_)])
     p = apply_judge.plan(digest, catalog, _page_answers(digest, {0: ("signature_today", 0.9)}))
     assert p.fields[0].value == expected and p.fields[0].action == "fill"
+
+
+def _split(pick, conf, probs):
+    return jev.Answer(kind="choice", choice=pick, probabilities=dict(probs), confidence=conf)
+
+
+def test_plan_pools_the_sources_that_type_the_same_words(catalog):
+    # SP8b, live 2026-09-25 (date_mmddyyyy.html): the judge split a signature
+    # box between the full name (0.61, confidence 0.59) and the typed
+    # signature (0.29); both type the name, so the mapping stands at 0.90
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Signature (type your full name)", required=True)])
+    answers = _page_answers(digest, {})
+    answers["field_0_source"] = _split("full_name", 0.59, {
+        "full_name": 0.61, "signature_today": 0.29, "leave_blank": 0.09, "email": 0.01})
+    p = apply_judge.plan(digest, catalog, answers)
+    assert (p.fields[0].action, p.fields[0].value) == ("fill", "Jane Doe")
+    assert p.fields[0].fact_key == "full_name"
+    assert p.fields[0].confidence == pytest.approx(0.90)
+    assert p.park_reason == "" and p.missing == []
+
+
+def test_plan_pools_neither_other_words_nor_a_shared_yes(catalog):
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, "Signature (type your full name)", required=True),
+        _f(1, "Are you willing to relocate?", "text", required=True)])
+    answers = _page_answers(digest, {})
+    # the first name types other words than the full name: no pooling
+    answers["field_0_source"] = _split("full_name", 0.59, {
+        "full_name": 0.61, "first_name": 0.30, "leave_blank": 0.09})
+    # two Yes/No facts that both hold "Yes" never pool: a Yes to one
+    # question is no answer to another
+    assert catalog.value("work_authorized") == catalog.value("willing_to_relocate") == "Yes"
+    answers["field_1_source"] = _split("willing_to_relocate", 0.45, {
+        "willing_to_relocate": 0.45, "work_authorized": 0.40, "leave_blank": 0.15})
+    p = apply_judge.plan(digest, catalog, answers)
+    assert [pf.action for pf in p.fields] == ["skip", "skip"]
+    assert p.park_reason == ("required field without an answer: "
+                             "Signature (type your full name)")
 
 
 def test_plan_special_source_without_a_file_follows_the_blank_rule(catalog, tmp_path):

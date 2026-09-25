@@ -65,7 +65,7 @@ from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer, request_fits
 
 log = logging.getLogger("apply_judge")
 
-# --- thresholds (tuned 2026-09-22 against the recorded live answers) ----------------
+# --- thresholds (tuned 2026-09-25 against the recorded live answers) ----------------
 
 PAGE_STATE_MIN_CONF = 0.40      # below it: park needs_human (the best guess wins above it)
 CONFIRMATION_MIN_CONF = 0.60    # after the submit click, a confirmation read with no
@@ -76,9 +76,9 @@ CONFIRMATION_MIN_CONF = 0.60    # after the submit click, a confirmation read wi
 FIELD_MAP_MIN_CONF = 0.70       # below it: optional -> blank + flagged; required -> park
 CONSENT_MIN_CONF = 0.85         # consent_attest needs this much: a tick cannot be taken back
 OPTION_MIN_CONF = 0.70          # the same rule for select / radio picks
-BUTTON_SUBMIT_MIN_CONF = 0.75   # a click on a submit-role button needs this
+BUTTON_SUBMIT_MIN_CONF = 0.50   # a click on a submit-role button needs this
 BUTTON_ADVANCE_MIN_CONF = 0.50
-BUTTON_SENDS_MIN = 0.80         # an "Apply"-worded button is the submit only with this
+BUTTON_SENDS_MIN = 0.40         # an "Apply"-worded button is the submit only with this
                                 # `button_{n}_sends` Noul (and the DOM evidence the runner
                                 # reads): an Apply entry or "Apply Manually" opens a form
 VERIFY_MIN = 0.80               # every filled required field must verify above this
@@ -96,38 +96,72 @@ PAGE_TEXT_CAP = 4000            # the extractor's cap on the page's visible text
 # chose to share, so a question it cannot answer is the required-field park,
 # and a captcha widget that does not block the page is no reason to stop.
 
-# How each gate was read (SP8, 2026-09-22): `scripts/jev_thresholds.py` over the
-# committed cache, 38 live requests and 224 answers from jev-1.13.0 over every
-# runner fixture. Every value stays at the design table's number; the data
-# put every answer on the right side of its gate with margin once four
-# question shapes were fixed (the ATS-aware inbox question, the button text
-# without the extractor's kind_hint, no speculative option pick, generated
-# answers verified in code). Per gate:
-#   (2026-09-22, after the first live runs: PAGE_STATE_MIN_CONF 0.60 -> 0.40,
-#   BUTTON_SUBMIT_MIN_CONF 0.90 -> 0.75, BUTTON_ADVANCE_MIN_CONF 0.75 -> 0.50 and
-#   MAX_PAGES 12 -> 20 at the user's call to stop only where the run cannot go
-#   on; PROHIBITED_MAX and CAPTCHA_MAX went with the flag parks. LinkedIn's live
-#   posting read job_posting at 0.72 and 0.78.)
-#   PAGE_STATE_MIN_CONF 0.60   28 answers, min 0.90, median 1.00; seven states seen.
-#   FIELD_MAP_MIN_CONF 0.70    49 answers, min 0.69 (a login wall's Email box, which
-#                              the accounts hook fills and `plan` never reads); the
-#                              mappings a fill depends on sit at 0.84 and above.
-#   CONSENT_MIN_CONF 0.85      no fixture checkbox; unexercised, kept. Since SP5 round 2 it
-#                              holds only a consent that is not routine (`CONSENT_RULES`):
-#                              a required, whole, routine one ticks at FIELD_MAP_MIN_CONF.
-#   OPTION_MIN_CONF 0.70       2 real picks (`field_{n}_pick`), 0.89 and 1.00.
-#   BUTTON_SUBMIT_MIN_CONF 0.90 6 answers, min 0.95.
-#   BUTTON_ADVANCE_MIN_CONF 0.75 14 answers, all 1.00 (0.66 on a wizard's Continue
-#                              while the state still carried `kind_hint: submit`).
-#   VERIFY_MIN 0.80            11 typed facts, min 0.98 (the essays that read 0.05 to
-#                              0.20 were generated text checked against a sheet that
-#                              holds no essay; they are compared in code now).
-#   PLACEHOLDER_MAX 0.50       11 answers, max 0.17.
-#   PROHIBITED_MAX 0.30        28 answers, max 0.04; no fixture asks for an SSN.
-#   CAPTCHA_MAX 0.30           captcha.html 0.99, every other page 0.01 to 0.02.
-#   GROUNDING_MIN 0.70         grounded sentence 0.98, the invented one 0.02.
-#   INBOX_MIN 0.50             the ATS's code mail from_site 0.85 / has_code 0.98; the
-#                              decoys 0.06 to 0.12 (another ATS's code mail 0.12).
+# How each gate was read (SP8b, 2026-09-25): `scripts/jev_thresholds.py` over
+# the two committed caches (the runner tests' `cache.json`, 72 requests, and
+# the flow matrix's `matrix_cache.json`, 322 requests: 3,241 answers from the
+# live judge over every runner fixture and all 107 matrix flows) and the page
+# reads of the matrix's real column (237) and the 60 local captures. A floor
+# moved only where a right answer fell under it (a real miss) or a wrong one
+# cleared it (a real false pass). Per gate:
+#   PAGE_STATE_MIN_CONF 0.40   297 combined reads, min 0.46, median 1.00; none under
+#                              the gate. The captures' 60 labelled pages: 54 right
+#                              (min 0.47), 6 wrong at 0.58 to 1.00 (three closed UKG
+#                              postings read as postings, two email-first sign-in
+#                              screens read as forms, a bot block read as dead). No
+#                              floor separates those, so it stays.
+#   CONFIRMATION_MIN_CONF 0.60 23 real confirmation reads, min 0.71.
+#   FIELD_MAP_MIN_CONF 0.70    373 answers, median 1.00; 12 under the gate, none a
+#                              fill the run needed: 7 on boxes `quick_map` answers
+#                              first (City 0.48 and 0.49, State 0.65, a state question
+#                              0.55, three email boxes 0.46 to 0.66), a password box
+#                              (no fact ever lands in one), three optional boxes whose
+#                              top pick is leave_blank (a cover letter file 0.37,
+#                              pronouns 0.67, Headline 0.59), and a signature that
+#                              split full_name 0.61 / signature_today 0.29 (both type
+#                              the name: `pooled_confidence` fills it at 0.90). At or
+#                              above it one wrong pick, a "Create a password" box read
+#                              as email at 0.80, which the password rule overrides.
+#   CONSENT_MIN_CONF 0.85      9 answers: eight real consents at 0.92 to 1.00, and a
+#                              text-message opt-in at 0.62 the gate rightly held off.
+#   OPTION_MIN_CONF 0.70       26 answers, median 1.00; under it "United States of
+#                              America" 0.57 (the long list is matched in code first)
+#                              and an optional country code "+1" 0.51 (left blank).
+#   BUTTON_SUBMIT_MIN_CONF 0.50 (0.90 -> 0.75 on 2026-09-22, 0.75 -> 0.50 now) 74
+#                              submit picks: a single-page form's "Submit application"
+#                              0.60 (0.70 and 0.74 in the first recording, and 0.71 on
+#                              the runner's quiet-submit form), then 0.78 and above.
+#                              Each low read parked a true submit, 23 matrix flows and
+#                              3 runner tests: a real miss. No other button was picked
+#                              submit; the highest submit probability on one was 0.31
+#                              ("Notify me", picked other).
+#   BUTTON_ADVANCE_MIN_CONF 0.50 72 answers, median 1.00; one under it, Workday's "Use
+#                              My Last Application" 0.35, which the run must not click.
+#   BUTTON_SENDS_MIN 0.40      (0.80 -> 0.40 now) 18 answers: every posting's Apply
+#                              entry and "Apply Manually" 0.08 to 0.15; the true sends
+#                              a signup form's "Create account and apply" 0.48 and a
+#                              form's own "Apply" 0.55 and 0.67, real misses at 0.80
+#                              before and after the true criterion named the account
+#                              click. The DOM rule still holds an entry off: an Apply
+#                              counts as the submit only beside the fields this run
+#                              filled or on a review page after the filled form.
+#   VERIFY_MIN 0.80            46 answers, 45 at 0.90 and above; the one no (0.05) is a
+#                              headline the site's resume parse typed, which the
+#                              sheet does not hold. Pasted letters and search boxes'
+#                              matches are compared in code (`shaped_holds`).
+#   PLACEHOLDER_MAX 0.50       46 answers, max 0.20.
+#   GROUNDING_MIN 0.70         grounded sentences 0.98, the invented one 0.02.
+#   INBOX_MIN 0.50             22 answers: the site's code or link mail from_site 0.81
+#                              to 0.89, has_code 0.97 and 0.98, has_link 0.99; every
+#                              decoy's from_site 0.05 to 0.11 (another ATS's code mail
+#                              0.11, its has_code 0.98, so the pair holds it off). The
+#                              link pick chose the account's link at 1.00 over the job
+#                              alerts' link, and both code picks were 1.00.
+#   `asks_for_prohibited` (no gate): 126 answers, 0.13 at most but for the SSN
+#                              page's 0.99.
+# (SP8, 2026-09-22, on 38 requests: PAGE_STATE_MIN_CONF 0.60 -> 0.40,
+# BUTTON_ADVANCE_MIN_CONF 0.75 -> 0.50 and MAX_PAGES 12 -> 20 at the user's call
+# to stop only where the run cannot go on; PROHIBITED_MAX and CAPTCHA_MAX went
+# with the flag parks.)
 
 HEADLINE_CHARS = 1200           # of the page text sent as `page.headline_text` (600
                                 # until 2026-09-22: LinkedIn's posting began past it)
@@ -420,7 +454,8 @@ NO_MATCH_DESCRIPTION = "nothing listed fits"
 # The subtle boundary of `button_{n}_sends` (the Jev guide: a Noul's
 # true / false criteria pin it down).
 _SENDS_CRITERIA = {
-    "true": "clicking it sends the finished application to the employer",
+    "true": "clicking it sends the finished application to the employer, also when the "
+            "same click creates the candidate's account",
     "false": "it opens, starts or continues the application, or leaves the page",
 }
 
@@ -1620,6 +1655,32 @@ def _action_for(f) -> str:
     return "fill"
 
 
+def _typed_words(f, catalog: FactCatalog, key: str) -> str:
+    """The words source `key` would type into field `f`, whitespace folded
+    and lowercased; "" for a source that types no plain text (a Yes/No, a
+    list answer, a file, a date, the specials other than the typed name)."""
+    if key == "signature_today":
+        key = "today" if _wants_date(f) else "signature_name"
+    fact = catalog.facts.get(key)
+    if fact is None or fact.kind != "text" or not fact.value:
+        return ""
+    return " ".join(fact.value.split()).lower()
+
+
+def pooled_confidence(f, catalog: FactCatalog, answer: Answer | None, key: str) -> float:
+    """The judge's probability that field `f` gets the words `key` types:
+    the sum over every text source that types the same words. A signature
+    box read live as the full name at 0.61 and as the typed signature at
+    0.29 (2026-09-25) is one answer at 0.90, since both type the name. Plain
+    text only: a Yes shared by two questions of different meaning never
+    pools. 0.0 when `key` types no plain text."""
+    want = _typed_words(f, catalog, key)
+    if not want or answer is None:
+        return 0.0
+    return sum(float(p or 0.0) for k, p in (answer.probabilities or {}).items()
+               if _typed_words(f, catalog, k) == want)
+
+
 def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer], *,
          generation_enabled: bool = True, company: str = "") -> FillPlan:
     """Turn the page answers into a `FillPlan`.
@@ -1627,7 +1688,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     Per field: a `quick_map` hit whose fact has a value wins over the model's
     mapping (a disagreement is logged at DEBUG; an empty fact falls through to
     the model's mapping); a mapping below `FIELD_MAP_MIN_CONF` or equal to
-    `leave_blank` is `skip`, and when the field is required the plan carries
+    `leave_blank` is `skip` (a text source's mapping counts the probability
+    of every text source that types the same words, `pooled_confidence`),
+    and when the field is required the plan carries
     `park_reason` and a `missing` entry (an optional skip is a `missing` entry
     only); `needs_generation` is `generate` when generation is enabled, else
     the same rule; an option pick below `OPTION_MIN_CONF` or `no_match` follows
@@ -1655,11 +1718,20 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             log.debug("field %d %r: quick_map %s has no value; using the model's mapping",
                       f.n, f.label, quick)
             quick = None
+        pooled = 0.0
+        if not quick and model_key not in (None, "leave_blank") \
+                and model_conf < FIELD_MAP_MIN_CONF:
+            pooled = pooled_confidence(f, catalog, answers.get(f"field_{f.n}_source"), model_key)
         if quick:
             fact_key, conf = quick, 1.0
             if model_key and model_key != quick:
                 log.debug("field %d %r: quick_map %s, model %s (%.2f); keeping quick_map",
                           f.n, f.label, quick, model_key, model_conf)
+        elif pooled >= FIELD_MAP_MIN_CONF:
+            # sources that type the same words: one answer at their sum
+            fact_key, conf = model_key, pooled
+            log.debug("field %d %r: %s at %.2f, %.2f with the sources that type the same words",
+                      f.n, f.label, model_key, model_conf, pooled)
         elif model_key is None or model_key == "leave_blank" or model_conf < FIELD_MAP_MIN_CONF:
             fact_key, conf = None, model_conf
         elif model_key == "consent_attest" and model_conf < consent_floor(

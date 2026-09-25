@@ -1883,6 +1883,10 @@ def test_a_code_gate_before_any_submit_never_clicks_a_button_that_sends(
 
 @pytest.mark.parametrize("sends, read, status", [
     (0.9, "review_page", "ready_to_submit"), (0.1, "review_page", "needs_human"),
+    # the live judge read a form's own "Apply" and a signup form's "Create
+    # account and apply" as sending at 0.67 and 0.48, and every posting's
+    # Apply entry at 0.15 or less (SP8b)
+    (0.48, "review_page", "ready_to_submit"), (0.30, "review_page", "needs_human"),
     # the controller's ruling: a fieldless page's Apply after an earlier fill
     # counts only on a page read as a review or a form
     (0.9, "job_posting", "needs_human")])
@@ -2009,9 +2013,15 @@ def test_can_submit_submit_button():
     del plan.buttons["submit"]
     assert apply_run.can_submit(plan, _ok_verification(), _ON) == (False, "no submit button")
     plan = _ok_plan()
-    plan.buttons["submit"] = (3, 0.70)
+    plan.buttons["submit"] = (3, 0.45)
     assert apply_run.can_submit(plan, _ok_verification(), _ON) == (
-        False, "submit button confidence 0.70 below 0.75")
+        False, "submit button confidence 0.45 below 0.50")
+    # the live judge's lowest reads of a true submit (the single-page form's
+    # "Submit application": 0.70 and 0.74 in the first recording, 0.60 in
+    # the second, 2026-09-25) clear the gate
+    for conf in (0.60, 0.70):
+        plan.buttons["submit"] = (3, conf)
+        assert apply_run.can_submit(plan, _ok_verification(), _ON) == (True, "")
 
 
 # --- the review page resolves generation before the gate ---------------------------------

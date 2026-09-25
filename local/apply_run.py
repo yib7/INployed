@@ -3581,13 +3581,23 @@ def _picks(plan: FillPlan) -> dict[int, tuple[str, bool]]:
             if pf.action == "select" and pf.option is not None}
 
 
+_SUGGESTION_WIDGETS = frozenset(("typeahead", "combo"))
+
+
 def _shaped(plan: FillPlan, digest: apply_form.FormDigest | None = None) -> dict[int, tuple[str, str]]:
     """n -> (kind, the value planned) for every value whose shape the page
     may change and code can compare (FILL-04, FILL-05, FILL-01): a phone
     ("phone": its digits), a date ("date": the day it names, in any shape),
-    an upload ("upload": the file's name shown by the box or its widget).
-    Checked in code against the read-back (`shaped_holds`), never by the
-    judge against the sheet."""
+    an upload ("upload": the file's name shown by the box or its widget),
+    the cover letter pasted whole ("text": the same words, its line breaks
+    aside), a value typed into a search box that takes one of its matches
+    ("suggestion": a typeahead's or a list box's match, "Anytown, California,
+    United States" for "Anytown, CA"). Checked in code against the read-back
+    (`shaped_holds`), never by the judge against the sheet; a suggestion the
+    words do not show goes to the judge as before. The judge read the cover
+    letter's read-back, the sheet's own words, at 0.79 to 0.88 and a match
+    at 0.20 and 0.44 (live, 2026-09-25): a string comparison is exact where
+    the judge was not."""
     types = {f.n: f.type for f in digest.fields} if digest is not None else {}
     out: dict[int, tuple[str, str]] = {}
     for pf in plan.fields:
@@ -3595,18 +3605,59 @@ def _shaped(plan: FillPlan, digest: apply_form.FormDigest | None = None) -> dict
             out[pf.n] = ("upload", str(pf.value))
         elif pf.action != "fill" or not pf.value or pf.fact_key == "needs_generation":
             continue
+        elif pf.fact_key == "cover_letter_text":
+            out[pf.n] = ("text", str(pf.value))
         elif pf.fact_key == "phone" or (types.get(pf.n) == "tel"
                                         and len(apply_fill.phone_digits(pf.value)) >= 7):
             out[pf.n] = ("phone", str(pf.value))
         elif apply_fill.parse_date(str(pf.value)) is not None:
             out[pf.n] = ("date", str(pf.value))
+        elif pf.widget in _SUGGESTION_WIDGETS or types.get(pf.n) == "listbox":
+            out[pf.n] = ("suggestion", str(pf.value))
     return out
 
 
-def shaped_holds(value: str, kind: str, planned: str) -> bool:
+_PLACE_FACTS = ("location", "address_city", "address_state", "address_country")
+
+
+def _place_parts(text: str) -> list[str]:
+    return [p for p in (apply_judge._norm_option(x) for x in str(text or "").split(",")) if p]
+
+
+def place_words(catalog: Any) -> frozenset[str]:
+    """Every comma part of the candidate's own place facts (the location,
+    the city, the state, the country), in `_norm_option`'s words: what a
+    search box's match may add to the value typed."""
+    return frozenset(p for key in _PLACE_FACTS for p in _place_parts(catalog.value(key)))
+
+
+def _same_place(a: str, b: str) -> bool:
+    return a == b or b in apply_judge._alias_set(a)
+
+
+def suggestion_holds(value: str, planned: str, places: frozenset[str] = frozenset()) -> bool:
+    """Does the match a search box took (`value`) name the value typed
+    (`planned`): its first comma part the same words or a name they go by
+    (CA for California), every further part of the planned value among the
+    match's parts, and every part the match adds one of the candidate's own
+    place words (`places`, `place_words`). With the candidate in Anytown,
+    California, "Anytown, California, United States" holds "Anytown, CA"
+    and "Anytown"; "Anytown, Texas" holds neither, nor "Springfield"."""
+    want, got = _place_parts(planned), _place_parts(value)
+    if not want or not got or not _same_place(want[0], got[0]):
+        return False
+    if not all(any(_same_place(w, g) for g in got) for w in want[1:]):
+        return False
+    return all(any(_same_place(g, w) for w in want) or any(_same_place(g, p) for p in places)
+               for g in got[1:])
+
+
+def shaped_holds(value: str, kind: str, planned: str,
+                 places: frozenset[str] = frozenset()) -> bool:
     """Does the read-back `value` hold the `planned` value in the page's
     shape: a phone's digits (a leading US 1 aside), the same day in any
-    date shape, the uploaded file's name."""
+    date shape, the uploaded file's name, the same words (`_same_text`),
+    a match that names the value (`suggestion_holds` over `places`)."""
     if kind == "phone":
         want = apply_fill.phone_digits(planned)
         return bool(want) and apply_fill.phone_digits(value) == want
@@ -3615,6 +3666,10 @@ def shaped_holds(value: str, kind: str, planned: str) -> bool:
         return want is not None and apply_fill.parse_date(value) == want
     if kind == "upload":
         return bool(value) and Path(str(value)).name == Path(str(planned)).name
+    if kind == "text":
+        return bool(str(value or "").strip()) and _same_text(value, planned)
+    if kind == "suggestion":
+        return _same_text(value, planned) or suggestion_holds(value, planned, places)
     return False
 
 
@@ -6974,9 +7029,9 @@ class _JobRun:
         def holds(n: int, value: str, was: str) -> bool:
             if n in picks:
                 return pick_holds(value, *picks[n])
-            if n in shaped:
+            if n in shaped and shaped[n][0] != "suggestion":
                 return shaped_holds(value, *shaped[n])
-            return _same_text(value, was)
+            return _same_text(value, was)     # a match the fill took: kept as it was
         changed = []
         for n, f in list(self._last_filled.items()):
             pf = by_n.get(n)
@@ -7381,20 +7436,27 @@ class _JobRun:
         radio, a tick box) is checked in code too (FILL-13): the read-back
         shows the option (`pick_holds`). So is a value the page reshapes
         (`shaped`: a phone's digits, a date in the box's format, an
-        upload's file name, `shaped_holds`: FILL-01, FILL-04, FILL-05).
-        Results keep the fill order."""
+        upload's file name, the cover letter's words, `shaped_holds`: FILL-01,
+        FILL-04, FILL-05). A search box's match that does not name the value
+        typed (`suggestion_holds`) is the judge's to read. Results keep the
+        fill order."""
         if not filled:
             return []
         drafts = drafts or {}
         picks = picks or {}
         shaped = shaped or {}
+        places = (place_words(self.catalog) if self.catalog is not None
+                  and any(kind == "suggestion" for kind, _ in shaped.values()) else frozenset())
         by_n: dict[int, VerifyResult] = {}
         rows = []
         for f in filled:
-            if f.n in drafts or f.n in picks or f.n in shaped:
+            if f.n in shaped and shaped[f.n][0] == "suggestion" \
+                    and not shaped_holds(f.value, *shaped[f.n], places):
+                rows.append(f.to_dict())
+            elif f.n in drafts or f.n in picks or f.n in shaped:
                 ok = (_same_text(f.value, drafts[f.n]) if f.n in drafts
                       else pick_holds(f.value, *picks[f.n]) if f.n in picks
-                      else shaped_holds(f.value, *shaped[f.n]))
+                      else shaped_holds(f.value, *shaped[f.n], places))
                 by_n[f.n] = VerifyResult(n=f.n, label=f.label, ok=ok,
                                          p_correct=1.0 if ok else 0.0, p_placeholder=0.0)
             else:

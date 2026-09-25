@@ -48,7 +48,10 @@ DESCRIPTIONS: dict[str, str] = {
     "address_zip": "ZIP or postal code of the mailing address",
     "address_country": "Country of the mailing address",
     "linkedin_url": "The candidate's LinkedIn profile URL",
-    "github_url": "The candidate's GitHub profile URL",
+    # the sheet's "GitHub / Portfolio" row: a form's Portfolio URL takes it
+    # (the live judge left "Portfolio URL" blank at 0.54 to 0.65 while this
+    # said "GitHub profile URL" only, 2026-09-25)
+    "github_url": "The candidate's GitHub or portfolio URL",
     "website_url": "The candidate's personal website or portfolio URL",
     "work_authorized": "Whether the candidate is legally authorized to work in the "
                        "United States",

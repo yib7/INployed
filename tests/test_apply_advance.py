@@ -427,6 +427,80 @@ def test_a_reshaped_value_is_verified_in_code_never_by_the_judge(tmp_path):
         False, False, False]
 
 
+def test_a_pasted_cover_letter_and_a_search_boxs_match_are_verified_in_code(tmp_path):
+    # SP8b, live 2026-09-25: the judge read the cover letter's read-back, the
+    # sheet's own words with its line breaks folded, at 0.79 (the gate needs
+    # 0.80) and parked native_required_submit on "could not verify"; it read
+    # "Anytown, California, United States", the match a City list box took
+    # for "Anytown", at 0.20 and Lever's "Anytown, CA, United States" for
+    # "Anytown, CA" at 0.44. A string comparison settles all three.
+    from unittest.mock import Mock
+
+    import apply_facts
+
+    class Strict:
+        asked: list = []
+
+        def judge(self, state, questions):
+            self.asked.append(sorted(questions))
+            return {qid: jev.Answer(kind="noul", noul=0.1) for qid in questions}
+
+    judge = Strict()
+    run = apply_run._JobRun(apply_run.Runner(jev=judge, context=Mock(), run_context={},
+                                             sleep=lambda s: None), Mock(),
+                            {"job_posting_id": "s", "apply_url": "https://x.example/1"})
+    run.catalog = apply_facts.FactCatalog([
+        apply_facts.Fact("location", "Anytown, CA", ""),
+        apply_facts.Fact("address_city", "Anytown", ""),
+        apply_facts.Fact("address_state", "California", ""),
+        apply_facts.Fact("address_country", "United States", "")])
+    letter = "Dear hiring team,\n\nI am writing to apply."
+    digest = apply_form.FormDigest("x.example", "Apply", "", fields=[
+        apply_form.Field(0, (0, "#c"), "Cover letter", "textarea", True, widget="editable"),
+        apply_form.Field(1, (0, "#city"), "City", "listbox", True),
+        apply_form.Field(2, (0, "#loc"), "Current location", "listbox", True,
+                         widget="typeahead")])
+    rows = [("cover_letter_text", letter), ("address_city", "Anytown"),
+            ("location", "Anytown, CA")]
+    plan = FillPlan(fields=[PlannedField(n=i, locator=f.locator, label=f.label, required=True,
+                                         fact_key=k, value=v, option=None, confidence=1.0,
+                                         action="fill", widget=f.widget)
+                            for i, (f, (k, v)) in enumerate(zip(digest.fields, rows))])
+    shaped = apply_run._shaped(plan, digest)
+    assert [kind for kind, _ in shaped.values()] == ["text", "suggestion", "suggestion"]
+    filled = [apply_fill.Filled(0, "Cover letter", "Dear hiring team, I am writing to apply."),
+              apply_fill.Filled(1, "City", "Anytown, California, United States"),
+              apply_fill.Filled(2, "Current location", "Anytown, CA, United States")]
+    assert [v.ok for v in run._verify(filled, {}, {}, shaped)] == [True, True, True]
+    assert judge.asked == []
+    # a letter the box cut is caught in code; a match that names another
+    # place is the judge's to read, and it says no here
+    wrong = [apply_fill.Filled(0, "Cover letter", "Dear hiring team,"),
+             apply_fill.Filled(1, "City", "Anytown, Texas, United States"),
+             apply_fill.Filled(2, "Current location", "Springfield, IL")]
+    assert [v.ok for v in run._verify(wrong, {}, {}, shaped)] == [False, False, False]
+    assert judge.asked == [["placeholder_1", "placeholder_2", "verify_1", "verify_2"]]
+
+
+def test_a_search_boxs_match_names_the_value_typed():
+    import apply_facts
+    places = apply_run.place_words(apply_facts.FactCatalog([
+        apply_facts.Fact("location", "Anytown, CA", ""),
+        apply_facts.Fact("address_city", "Anytown", ""),
+        apply_facts.Fact("address_state", "California", ""),
+        apply_facts.Fact("address_country", "United States", "")]))
+    holds = apply_run.suggestion_holds
+    assert holds("Anytown, CA", "Anytown, CA", places)
+    assert holds("Anytown, California, United States", "Anytown, CA", places)
+    assert holds("Anytown, California, United States", "Anytown", places)
+    assert holds("Anytown, CA, USA", "Anytown", places)
+    assert not holds("Anytown, Texas", "Anytown, CA", places)
+    assert not holds("Anytown, Texas", "Anytown", places)        # a state not the candidate's
+    assert not holds("Springfield, IL", "Anytown, CA", places)
+    assert not holds("Anytownship, CA", "Anytown", places)
+    assert not holds("", "Anytown", places)
+
+
 def test_the_upload_reset_flow_uploads_once_and_reaches_the_gate(_browser, flow_server, tmp_path):
     r = h.run_flow(h.flow("upload_resets_input"), jev.FakeJev(), "fake", browser=_browser,
                    server=flow_server, workdir=tmp_path)

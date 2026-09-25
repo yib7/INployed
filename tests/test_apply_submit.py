@@ -488,7 +488,7 @@ def test_the_page_request_asks_whether_an_apply_button_sends(tmp_path):
     assert {k for k in q if k.endswith("_sends")} == {"button_0_sends", "button_3_sends"}
     assert q["button_0_sends"]["type"] == "noul"
     assert "`buttons[0]`" in q["button_0_sends"]["instructions"]
-    assert apply_judge.BUTTON_SENDS_MIN == 0.80
+    assert apply_judge.BUTTON_SENDS_MIN == 0.40
 
 
 @pytest.mark.parametrize("html, verdict", [

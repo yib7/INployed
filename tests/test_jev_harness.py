@@ -688,7 +688,7 @@ def test_thresholds_helper_reads_todays_question_ids_over_several_caches(tmp_pat
     out = proc.stdout
     assert "jev answers: 8 over 2 request(s)" in out
     assert "read page_applicant_details: 1 answer(s); gate READ_NOUL_MIN = 0.50" in out
-    assert "button sends: 1 answer(s); gate BUTTON_SENDS_MIN = 0.80" in out
+    assert "button sends: 1 answer(s); gate BUTTON_SENDS_MIN = 0.40" in out
     assert "error field: 1 answer(s); gate FIELD_MAP_MIN_CONF = 0.70" in out
     assert "1 of 1 below the gate" in out
     assert "inbox: 2 answer(s)" in out and "link pick: 1 answer(s)" in out

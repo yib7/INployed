@@ -310,6 +310,105 @@ def test_a_verification_link_the_site_refuses_parks_with_its_words(_browser, flo
                         "('link has expired')")
 
 
+class _RedirectingSite:
+    """A real local server (a redirect a route fulfils can behave otherwise):
+    on 127.0.0.1, `/go` answers with a 302 to `/landed` on `localhost` (the
+    other host), `/stay` with a 302 to its own `/landed`, `/meta` and `/js`
+    move to the other host from the page; `/landed` asks for `/pixel`.
+    Every path asked for is kept in `asked`."""
+
+    def __init__(self):
+        import http.server
+        import threading
+        site = self
+
+        class _H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                site.asked.append(f"{self.headers.get('Host', '').split(':')[0]}{self.path}")
+                other = f"http://localhost:{site.port}/landed"
+                own = f"http://127.0.0.1:{site.port}/landed"
+                if self.path in ("/go", "/stay"):
+                    self.send_response(302)
+                    self.send_header("Location", other if self.path == "/go" else own)
+                    self.end_headers()
+                    return
+                body = {"/meta": f'<meta http-equiv="refresh" content="0;url={other}">Moving',
+                        "/js": f"<script>location.href = '{other}';</script>Moving",
+                        "/landed": '<h1>Your account is verified</h1><img src="/pixel">',
+                        }.get(self.path, "")
+                data = f"<!doctype html><html><body>{body}</body></html>".encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+        self.asked: list[str] = []
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _H)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def redirecting_site():
+    site = _RedirectingSite()
+    yield site
+    site.close()
+
+
+def _link_run(tmp_path, page, monkeypatch) -> tuple["apply_run._JobRun", list[str]]:
+    """A `_JobRun` on `page` whose one allowed host is 127.0.0.1, and the
+    URLs of every tab whose text the run read."""
+    run = _job_run(tmp_path, "127.0.0.1")
+    run.page = page
+    read: list[str] = []
+    real = apply_run.apply_fill.page_text
+
+    def _page_text(tab, *a, **kw):
+        read.append(tab.url)
+        return real(tab, *a, **kw)
+    monkeypatch.setattr(apply_run.apply_fill, "page_text", _page_text)
+    return run, read
+
+
+def test_a_verification_link_a_server_redirects_to_another_host_is_never_read(
+        browser_page, tmp_path, monkeypatch, redirecting_site):
+    # I1 (SP7 review): the link is on the allowed host, and its server's 302
+    # sends the tab to another host. That page is never read, nothing more
+    # of it loads, and the park names the host
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    with pytest.raises(apply_run._Parked, match=r"the emailed link went on to localhost, outside "
+                                                r"the application's sites; the run stopped it"):
+        run._open_link(f"http://127.0.0.1:{redirecting_site.port}/go")
+    assert read == []
+    assert "localhost/pixel" not in redirecting_site.asked, redirecting_site.asked
+
+
+@pytest.mark.parametrize("path", ["/meta", "/js"])
+def test_a_verification_link_whose_page_moves_to_another_host_is_stopped(
+        browser_page, tmp_path, monkeypatch, redirecting_site, path):
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    with pytest.raises(apply_run._Parked, match=r"went on to localhost, outside"):
+        run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}")
+    assert not [u for u in read if "localhost" in u], read
+    assert not [p for p in redirecting_site.asked if p.startswith("localhost")]
+
+
+def test_a_verification_link_redirected_on_its_own_host_is_read(
+        browser_page, tmp_path, monkeypatch, redirecting_site):
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    assert run._open_link(f"http://127.0.0.1:{redirecting_site.port}/stay") == (
+        "Your account is verified")
+    assert read == [f"http://127.0.0.1:{redirecting_site.port}/landed"]
+
+
 @pytest.mark.parametrize("fields, text, said", [
     ([], "Verify Your Account. We sent a verification email to your address. Click the link in "
          "the email to activate your account.", "verification email"),

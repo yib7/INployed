@@ -7196,29 +7196,55 @@ class _JobRun:
 
     def _open_link(self, link: str) -> str:
         """The emailed verification link in a new tab of the job's context,
-        every main-frame navigation of it held to `_link_ok`; the tab's text
+        every main-frame navigation of it held to `_link_ok`: a script's or
+        a meta refresh's by the tab's route, each hop of a server's redirect
+        by the tab's requests (a route sees a redirect's first URL only),
+        and the URL the tab settled on. Once the tab is on any other host
+        nothing more of it loads and nothing of it is read. The tab's text
         once it settled (a park when it was refused, left the allowed hosts
         or did not load), and the tab closed."""
         tab = self.page.context.new_page()
         stopped: list[str] = []
 
+        def main_frame(request) -> bool:
+            try:
+                return request.frame.parent_frame is None
+            except Exception:       # noqa: BLE001  (a frame gone: the tab's own)
+                return True
+
+        def left(url: str) -> bool:
+            """Is `url` off the allowed hosts? Its host joins `stopped`."""
+            if self._link_ok(_host(url)):
+                return False
+            if _host(url) not in stopped:
+                stopped.append(_host(url))
+            return True
+
         def guard(route) -> None:
             request = route.request
-            try:
-                main = request.frame.parent_frame is None
-            except Exception:       # noqa: BLE001  (a frame gone: the tab's own)
-                main = True
-            if request.is_navigation_request() and main and not self._link_ok(_host(request.url)):
-                stopped.append(_host(request.url))
+            if stopped:
+                route.abort()       # the tab left the allowed hosts: nothing more of it loads
+                return
+            if request.is_navigation_request() and main_frame(request) and left(request.url):
                 route.abort()
                 return
             route.fallback()
+
+        def hop(request) -> None:
+            # a server's redirect (a 302) is a request of its own that no
+            # route sees: its host is checked here
+            if request.is_navigation_request() and main_frame(request):
+                left(request.url)
         error, text = "", ""
         try:
+            tab.on("request", hop)
             tab.route("**/*", guard)
             tab.goto(link, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
-            apply_fill.settle(tab, CLICK_TIMEOUT_S)
-            text = apply_fill.page_text(tab)
+            if not stopped and not left(tab.url):
+                apply_fill.settle(tab, CLICK_TIMEOUT_S)
+            if not stopped and not left(tab.url):
+                text = apply_fill.page_text(tab)
+                left(tab.url)       # a redirect while it was read: the text is dropped
         except Exception as e:      # noqa: BLE001  (an error may quote the link's token)
             error = type(e).__name__
         finally:

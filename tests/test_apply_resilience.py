@@ -186,6 +186,40 @@ def test_after_the_send_a_post_the_network_dropped_is_never_sent_again(
     assert r.breaks == []
 
 
+# A GET form whose button saves a draft (a POST) before it sends: the send is
+# the second request the click caused
+_GET_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</title></head>
+<body><h1>Apply for Analytics Engineer</h1><p>Fabrikam, Remote</p>
+<form id="f" method="get" action="/get/send">
+<label>First name * <input name="first_name" required></label>
+<label>Last name * <input name="last_name" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<button type="button" id="btn-submit">Submit application</button>
+</form><script>document.getElementById('btn-submit').addEventListener('click', function () {
+  fetch('/get/autosave', {method: 'POST', body: 'draft'}).then(function () {
+    document.getElementById('f').submit(); }); });</script></body></html>"""
+
+
+def test_after_the_send_the_get_that_carried_it_is_never_loaded_again_when_a_post_went_first(
+        _browser, flow_server, tmp_path):
+    # SP8a review M6: every request the submit click caused counts as the
+    # send, the draft's POST before it too
+    send = _drop_first(body=h.CONFIRMATION_HTML)
+    saves: list[str] = []
+    f = h.Flow("get_after_autosave", f"{_POST_SITE}/get/apply", True, "submitted",
+               r"^submitted \(unconfirmed\): ", send_urls=(f"{_POST_SITE}/get/send**",),
+               routes=lambda b: {f"{_POST_SITE}/get/apply": _GET_FORM,
+                                 f"{_POST_SITE}/get/autosave": _sink(saves, "ok"),
+                                 f"{_POST_SITE}/get/send**": send})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert send.seen == ["GET"], (send.seen, r.status, r.reason)
+    assert saves == ["POST"]
+    assert r.status == "submitted", r
+    assert r.reason.startswith("submitted (unconfirmed): error or dead page: GET "), r.reason
+    assert "carried the send" in r.reason
+    assert r.sends == 1 and r.breaks == []
+
+
 # --- a malformed queue entry (RES-09) -------------------------------------------------------
 
 def _queue(tmp_path, *entries):

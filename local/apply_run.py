@@ -669,7 +669,10 @@ class SendWatch:
     is served from it) never count. Each row
     keeps the method and the URL without its query (a GET form puts the
     answers there); `pending` keeps the read waiting while one of the job's
-    page is in flight."""
+    page is in flight. `caused` keeps the rows the click itself caused: each
+    one up to the first navigation of the job's page, that navigation too
+    (a GET form's send after a draft's POST, SP8a review M6); a navigation
+    after it is the site's own (a POST's answer sending the tab on)."""
 
     _SEND_METHODS = ("POST", "PUT", "PATCH")
 
@@ -682,6 +685,8 @@ class SendWatch:
                 self.frames.add(id(f))
         self.sent: list[str] = []
         self.possible: list[str] = []
+        self.caused: list[str] = []
+        self._navigated = False            # the click's own navigation was seen
         self.pending: set[int] = set()
         self._targets: list = []
         self._before: set[int] = set()     # the context's tabs before `start`
@@ -711,21 +716,21 @@ class SendWatch:
         except Exception:       # noqa: BLE001
             return "other"
 
-    def _kind(self, request, owner: str) -> str:
+    def _navigation(self, request) -> bool:
+        """A navigation of the job's page's main frame or of the submit's frame."""
+        try:
+            return bool(request.is_navigation_request()) and id(request.frame) in self.frames
+        except Exception:       # noqa: BLE001
+            return False
+
+    def _kind(self, request, navigation: bool) -> str:
         url = str(request.url)
         host = _host(url)
         if not host or _is_captcha_url(url) or apply_linkedin.is_linkedin(host) or _tracking(url):
             return ""
         if self._inbox and host == self._inbox:
             return ""
-        method = str(request.method).upper()
-        navigation = False
-        if owner == "job":
-            try:
-                navigation = request.is_navigation_request() and id(request.frame) in self.frames
-            except Exception:       # noqa: BLE001
-                navigation = False
-        send = method in self._SEND_METHODS
+        send = str(request.method).upper() in self._SEND_METHODS
         if self.run._allowed_site(host) and (navigation or send):
             return "sent"
         return "possible" if send else ""
@@ -735,10 +740,14 @@ class SendWatch:
             owner = self._owner(request)
             if owner == "other":
                 return
-            kind = self._kind(request, owner)
+            navigation = owner == "job" and self._navigation(request)
+            kind = self._kind(request, navigation)
+            row = f"{str(request.method).upper()} {self._bare(request.url)}"
+            if owner == "job" and not self._navigated and (kind or navigation):
+                self.caused.append(row)
+                self._navigated = navigation
             if not kind:
                 return
-            row = f"{str(request.method).upper()} {self._bare(request.url)}"
             if owner == "unknown":
                 self._unplaced.append((self._bare(request.url), kind, row))
                 return
@@ -746,6 +755,11 @@ class SendWatch:
             self.pending.add(id(request))
         except Exception:       # noqa: BLE001  (a request that cannot be read counts as nothing)
             pass
+
+    def caused_by_click(self, row: str) -> bool:
+        """Was `row` ("METHOD bare-url") among the requests the click itself
+        caused (`caused`)?"""
+        return row in self.caused
 
     def _done(self, request) -> None:
         self.pending.discard(id(request))
@@ -4302,9 +4316,10 @@ class _JobRun:
         reads as a load the network dropped (SP8a), never as a site the flow
         left for: the address that failed is loaded once more after
         `GOTO_RETRY_S` when it is a GET on the allowed sites. A POST, PUT or
-        PATCH is never sent again, and after the submit click neither is the
-        GET that carried the send (the send watch's first request): at most
-        one send per job, so the page the send led to is the only one loaded
+        PATCH is never sent again, and after the submit click neither is a
+        GET the click itself caused (`SendWatch.caused`: the navigation it
+        started, and any request before it, SP8a review M6): at most one
+        send per job, so the page the send led to is the only one loaded
         again. A retry that lands on the error page again parks, as does an
         error page whose address is unknown. An address off the allowed sites
         parks as the site it names, but with `transition`: the page an Apply
@@ -4333,7 +4348,9 @@ class _JobRun:
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}; a {method} is never "
                                          f"sent again")
         watch = self._send_watch
-        if self.submit_clicked and watch is not None and watch.first() == f"GET {bare}":
+        row = f"GET {bare}"
+        if self.submit_clicked and watch is not None and (watch.first() == row
+                                                          or watch.caused_by_click(row)):
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}; that load carried the "
                                          f"send, so it is never loaded again")
         if url in self._error_retried:

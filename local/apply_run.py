@@ -1102,7 +1102,7 @@ class _Accounts:
         own: dict[str, apply_form.Button] = {}
         for b in digest.buttons:
             if b.chrome or b.disabled or not _CREATE_ACCOUNT.search(b.text or "") \
-                    or _THIRD_PARTY.search(b.text or "") \
+                    or _THIRD_PARTY.search(b.text or "") or _NOT_AN_ACCOUNT.search(b.text or "") \
                     or apply_judge.DECLINE_WORDS.search(b.text or ""):
                 continue
             own.setdefault(" ".join(b.text.lower().split()), b)
@@ -1832,9 +1832,12 @@ _ACCOUNT_BUTTON = re.compile(r"\b(sign|log)[\s-]*(in|on|up)\b|\blogin\b|\bregist
 
 
 _SIGN_UP_WORDS = re.compile(r"\bcreate\b|\bregister\b|\bsign[\s-]*up\b|\bjoin\b", re.I)
-# a control that goes to the sign-up from a sign-in screen (ACC-01)
+# a control that goes to the sign-up from a sign-in screen (ACC-01), never a
+# sign-up for job alerts, a newsletter or a talent network
 _CREATE_ACCOUNT = re.compile(r"\bcreate\s+(?:an?\s+|your\s+|new\s+)?(?:\w+\s+)?account\b"
                              r"|\bsign[\s-]*up\b|\bregister\b|\bnew\s+(?:user|candidate)\b", re.I)
+_NOT_AN_ACCOUNT = re.compile(r"\balerts?\b|\bnewsletter|\btalent\s+(?:community|network|pool)"
+                             r"|\bupdates\b|\bevents?\b", re.I)
 _SIGN_IN_ONLY = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b", re.I)
 
 

@@ -673,3 +673,26 @@ def test_the_recorder_marks_the_master_passwords_typings_and_no_other(
     assert secret == [("signup", "password", "127.0.0.1")] * 2 + [
         ("login", "password", "127.0.0.1")], secret
     assert any(a.kind == "fill" and not a.secret for a in r.actions)
+
+
+_SIGN_IN_WITH_BUTTONS = """<body><h1>Sign In</h1>
+<label>Email Address <input id="email" type="text"></label>
+<label>Password <input id="pw" type="password"></label>
+<button type="button" id="go">Sign In</button>
+<button type="button" onclick="document.body.dataset.took = 'alerts'">Sign up for job alerts</button>
+<button type="button" onclick="document.body.dataset.took = 'create';
+  document.body.insertAdjacentHTML('beforeend', '<h2>Create Account</h2>')">Create Account</button>
+</body>"""
+
+
+def test_the_create_account_button_is_the_one_that_makes_an_account(browser_page, tmp_path):
+    # ACC-01: of a sign-in screen's sign-up words, never a job-alert sign-up
+    import apply_form
+    browser_page.route("http://127.0.0.1/signin", lambda route: route.fulfill(
+        body=_SIGN_IN_WITH_BUTTONS, content_type="text/html"))
+    browser_page.goto("http://127.0.0.1/signin")
+    run = _job_run(tmp_path, "127.0.0.1")
+    run.page = browser_page
+    digest = apply_form.extract(browser_page)
+    assert run.accounts._signup_button(browser_page, digest, "127.0.0.1") is True
+    assert browser_page.evaluate("document.body.dataset.took") == "create"

@@ -2029,7 +2029,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
                       "auto_apply_jev_mode": "fake", "auto_apply_batch_cap": 1,
                       "auto_apply_generate": True},
             context=context, run_context={"signup_email": SIGNUP_EMAIL, "inbox_url": inbox},
-            sleep=lambda s: None)
+            sleep=lambda s: None, drain_report=False)
         outcomes = runner.drain(cap=1)
     # the record, the trace, the queue and the ledger: none may hold the
     # master password, and the ledger no password-shaped key (SP7)

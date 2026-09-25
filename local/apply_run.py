@@ -3819,7 +3819,10 @@ class Runner:
     persistent profile at
     `profile_dir` is launched per drain and, when a page is parked and the
     window is visible, held open until the user closes it; `run_context` is
-    `apply_queue.build_context()`'s dict (the inbox URL), computed on demand.
+    `apply_queue.build_context()`'s dict (the inbox URL), computed on demand;
+    `drain_report` off keeps a drain from printing and writing its table
+    (`_report`), for the matrix harness, which runs thousands of one-job
+    drains and reports them itself.
     """
 
     def __init__(self, *, jev: Any, queue_path: Path | None = None,
@@ -3828,8 +3831,9 @@ class Runner:
                  sleep: Callable[[float], None] = time.sleep,
                  accounts: Any = None, inbox: Any = None, answergen: Any = None,
                  log: logging.Logger | None = None, context: Any = None,
-                 run_context: dict | None = None):
+                 run_context: dict | None = None, drain_report: bool = True):
         self.log = log if log is not None else logging.getLogger("apply_run")
+        self.drain_report = drain_report
         self.sleep = sleep
         self.jev = jev
         self.queue_path = Path(queue_path) if queue_path else None
@@ -3946,7 +3950,7 @@ class Runner:
         and in `apply_drain-<stamp>.md` beside the job folders
         (`write_drain_report`), so a live run reports its own rate. A report
         that cannot be written is logged; the drain's outcomes stand."""
-        if not outcomes:
+        if not outcomes or not self.drain_report:
             return
         try:
             _say(drain_table(outcomes))

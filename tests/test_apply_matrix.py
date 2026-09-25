@@ -608,3 +608,14 @@ def test_the_fixture_server_takes_a_burst_of_connects_while_it_is_busy():
         for c in socks:
             c.close()
         server.server_close()
+
+
+def test_a_matrix_run_prints_no_drain_table_and_writes_no_drain_report(
+        _browser, flow_server, tmp_path, capsys):
+    # the matrix drains one job per run, thousands of times, and prints its
+    # own summary: a per-drain table would flood it with temp paths (SP8a)
+    r = h.run_flow(h.flow("lever_single_park"), jev.FakeJev(), "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok, r
+    assert "| # | job |" not in capsys.readouterr().out
+    assert not list(tmp_path.rglob(f"{apply_run.DRAIN_REPORT_PREFIX}*.md"))

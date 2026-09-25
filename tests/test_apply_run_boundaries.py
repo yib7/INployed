@@ -215,6 +215,10 @@ def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
     monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: locator)
     clicked = Mock(return_value=apply_run.apply_fill.ClickResult(clicked=True, changed=True))
     monkeypatch.setattr(job, "_click", clicked)
+    # the application's answers are on the site, so the button may send what
+    # the site held for the code (before them it is the account's own check,
+    # a step control: SP8b review I1, tests/test_apply_submit.py)
+    job.form_filled = True
 
     job._code_gate(digest, plan, {"filled": []})
 
@@ -222,6 +226,8 @@ def test_code_gate_submit_uses_submit_no_retry_path(monkeypatch):
         "n": 0, "label": "Security code", "value": apply_run.HIDDEN,
         "type": "text", "id_or_name": "code", "upload": False, "hidden": True}]},
         conf=apply_run.apply_judge.BUTTON_SUBMIT_MIN_CONF)
+    # the gate is the only send: the job reads as may-have-sent, never clicked
+    assert not job.submit_clicked and job._code_may_send
 
 
 # --- the relaxed rules (2026-09-22): sites, the password's sites, the human check ---------

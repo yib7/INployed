@@ -2936,12 +2936,14 @@ def confirmation_step(digest: apply_form.FormDigest, answers: Mapping[str, Any],
     conf), ("go_on", the read to act on, its probability) or ("park", the
     reason, conf).
 
-    After a click in the submit role (the code step's): received words on
-    the page (`CONFIRMATION_WORDS`), or the read at `CONFIRMATION_MIN_CONF`
-    on a page with no form field and no send button, is the confirmation;
-    else the person checks. After a code step's click alone (`code_sent`: a
-    sign-up's email "Verify" is one) only received words make it the
-    confirmation; else the person checks. Before any submit click a
+    After the submit gate's click (`submit_clicked`; the code step never
+    sets it, SP8b review I1): received words on the page
+    (`CONFIRMATION_WORDS`), or the read at `CONFIRMATION_MIN_CONF` on a page
+    with no form field and no send button, is the confirmation; else the
+    person checks. After a code step's click alone (`code_sent`: a
+    sign-up's email "Verify" is one, whatever role it was judged in) only
+    received words make it the confirmation; else the person checks.
+    Before any submit click a
     confirmation is never the run's own send: a page with a form field, a
     submit button, a Next, a Continue or an accept and no received words is
     a form or a review misread, and goes on as its next read when the loop
@@ -8379,17 +8381,44 @@ class _JobRun:
             raise _Parked("needs_human", f"code entered; its button "
                                          f"({_cap(_button_text(digest, button[0]), 60)}) would "
                                          f"send the application", CODE_NOTE)
+        if role == "submit" and not self.submit_clicked:
+            # the submit gate is the only send (SP8b review I1): a code step's
+            # button read as the submit before the gate has let the
+            # application go never marks the job clicked, so a "verified"
+            # page after it is confirmed by received words alone
+            # (`confirmation_step`'s code_sent rule)
+            text = _cap(_button_text(digest, button[0]), 60)
+            if not self.form_filled:
+                # none of the application is on the site yet: the button is
+                # a step control of the account's check (an email "Verify")
+                self._decide("code_step_control", f"the code step's {text!r} was read as the "
+                                                  f"submit ({button[1]:.2f}) before any of the "
+                                                  "application went on a page; it is clicked "
+                                                  "as a step control",
+                             button=button[0], confidence=button[1])
+                role = "advance"
+            elif not self.r.settings.get("auto_apply_submit", True):
+                # the application's answers are on the site: park mode never
+                # clicks what the judge reads as its send
+                raise _Parked("needs_human", f"code entered; its button ({text}) was read as "
+                                             f"the submit ({button[1]:.2f}), and park mode sends "
+                                             "nothing", CODE_NOTE)
+            else:
+                # it may send what the site held for the code: clicked once,
+                # never twice (the submit role's click), and the job is never
+                # handed back (`_code_may_send`)
+                self._decide("code_step_may_send", f"the code step's {text!r} was read as the "
+                                                   f"submit ({button[1]:.2f}) after the "
+                                                   "application's answers went on a page; it is "
+                                                   "clicked once, and only received words "
+                                                   "confirm a send after it",
+                             button=button[0], confidence=button[1])
         result = self._click(digest, button[0], role, rec, conf=button[1])
         if result.refused:
             raise _Parked("needs_human", f"code entered; its button "
                                          f"({_cap(_button_text(digest, button[0]), 60)}) changed "
                                          f"before the click: {result.refused}", CODE_NOTE)
         if result.clicked or result.late:
-            if role == "submit":
-                # a landed click in the submit role may have sent: the job
-                # never reads as unsent after it, so it is never sent twice
-                # (INV-06)
-                self.submit_clicked = True
             self._code_sent = True      # a code can finish a send the site held back
             if self.submit_clicked or self.form_filled:
                 # the site may have held the application for this code; an

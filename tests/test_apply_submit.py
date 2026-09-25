@@ -27,6 +27,8 @@ Headless Chromium through the module-scoped test browser; the fixtures are
 served by the flow server, fake hosts and the bot-check providers' URLs are
 routed to local pages; the judge is `FakeJev`, `NoisyJev` or a scripted
 subclass. No network."""
+import dataclasses
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -775,10 +777,10 @@ def test_an_entry_whose_live_text_reads_as_a_send_is_refused():
 
 # === INV-06: the code step =======================================================================
 
-def _code_job(button_text, role, conf=0.9):
+def _code_job(button_text, role, conf=0.9, submit=True):
     context = Mock()
     runner = apply_run.Runner(jev=jev.FakeJev(), context=context, run_context={},
-                              sleep=lambda s: None)
+                              settings={"auto_apply_submit": submit}, sleep=lambda s: None)
     job = apply_run._JobRun(runner, context, {"job_posting_id": "s",
                                               "apply_url": "https://careers.example/verify"})
     job._build_allowlist()
@@ -800,15 +802,65 @@ def test_the_code_step_refuses_a_final_button_before_any_submit(monkeypatch, tex
         job._code_gate(digest, plan, {"filled": []})
 
 
-def test_a_submit_role_click_on_the_code_step_marks_the_job_clicked(monkeypatch):
-    job, digest, plan = _code_job("Verify", "submit")
+def _landed_clicks(monkeypatch, job):
+    """The code step's clicks (the role each was made in); each one lands."""
     locator = SimpleNamespace(first=SimpleNamespace(fill=lambda *a, **kw: None))
     monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: locator)
-    # M9: only a click that landed marks the job
-    monkeypatch.setattr(job, "_click",
-                        lambda *a, **kw: apply_fill.ClickResult(clicked=True, changed=True))
+    roles: list[str] = []
+
+    def click(digest, n, role, rec, **kw):
+        roles.append(role)
+        return apply_fill.ClickResult(clicked=True, changed=True)
+
+    monkeypatch.setattr(job, "_click", click)
+    return roles
+
+
+@pytest.mark.parametrize("submit", [True, False], ids=["submit_mode", "park_mode"])
+@pytest.mark.parametrize("conf", [0.50, 0.55, 0.74, 0.9])
+def test_an_account_code_steps_verify_read_as_the_submit_is_a_step_control(
+        monkeypatch, conf, submit):
+    # SP8b review I1: before the submit gate, the code step's "Verify" read
+    # as the submit is the account's check; the job is never marked clicked,
+    # so a "verified" page after it never ends it submitted
+    job, digest, plan = _code_job("Verify", "submit", conf=conf, submit=submit)
+    roles = _landed_clicks(monkeypatch, job)
     job._code_gate(digest, plan, {"filled": []})
-    assert job.submit_clicked and job._code_sent
+    assert roles == ["advance"]
+    assert job._code_sent and not job.submit_clicked and not job._maybe_sent()
+
+
+def test_a_code_steps_verify_read_as_the_submit_after_the_form_may_send_in_submit_mode(
+        monkeypatch):
+    job, digest, plan = _code_job("Verify", "submit", conf=0.6)
+    job.form_filled = True
+    roles = _landed_clicks(monkeypatch, job)
+    job._code_gate(digest, plan, {"filled": []})
+    # the site may have held the application for the code: clicked once in
+    # the submit role (no second click), never re-queued, and only received
+    # words confirm it (M9)
+    assert roles == ["submit"]
+    assert not job.submit_clicked and job._code_may_send and job._maybe_sent()
+
+
+def test_park_mode_never_clicks_a_code_steps_button_read_as_the_submit_after_the_form(
+        monkeypatch):
+    job, digest, plan = _code_job("Verify", "submit", conf=0.6, submit=False)
+    job.form_filled = True
+    roles = _landed_clicks(monkeypatch, job)
+    with pytest.raises(apply_run._Parked, match=r"read as the submit \(0\.60\), and park mode "
+                                                r"sends nothing") as p:
+        job._code_gate(digest, plan, {"filled": []})
+    assert p.value.status == "needs_human" and roles == []
+    assert not job.submit_clicked and not job._code_sent
+
+
+def test_a_code_step_after_the_submit_gates_click_keeps_its_submit_role(monkeypatch):
+    job, digest, plan = _code_job("Verify", "submit", conf=0.6)
+    job.submit_clicked = True           # the gate sent it; the site asks for a code
+    roles = _landed_clicks(monkeypatch, job)
+    job._code_gate(digest, plan, {"filled": []})
+    assert roles == ["submit"] and job.submit_clicked and job._code_may_send
 
 
 @pytest.mark.parametrize("result", [apply_fill.ClickResult(clicked=False, changed=False),
@@ -1065,6 +1117,61 @@ def test_a_sign_ups_email_verified_thanks_is_never_read_as_submitted(
     r = _flow("email_verify_thanks", _browser, flow_server, tmp_path)
     assert r.ok and not r.breaks, r
     assert r.status == "needs_human"
+
+
+# the account's email-code page with one plain "Verify" (the review's I1 page)
+_PLAIN_VERIFY = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Verify your email</title></head><body>
+<h1>Check your inbox</h1>
+<p>We emailed you a security code to confirm your new candidate account.</p>
+<label for="code">Security code</label>
+<input id="code" name="code" type="text" autocomplete="one-time-code">
+<p><button type="button" id="btn-verify">Verify</button></p>
+<script>
+  document.getElementById('btn-verify').addEventListener('click', function () {
+    window.location.href = 'email_verified.html';
+  });
+</script></body></html>"""
+
+
+class _CodeVerifyReadAsSubmit:
+    """A judge that reads every button on the code page (the one with the
+    "Security code" box) as the submit at `conf`, the advance second."""
+
+    def __init__(self, inner, conf):
+        self.inner, self.conf = inner, conf
+
+    def judge(self, state, questions):
+        out = dict(self.inner.judge(state, questions))
+        labels = {str(f.get("label", "")).strip() for f in (state or {}).get("fields") or []}
+        if "Security code" in labels:
+            for qid in questions:
+                if qid.startswith("button_") and qid.endswith("_role"):
+                    out[qid] = jev.Answer(kind="choice", choice="submit", confidence=self.conf,
+                                          probabilities={"submit": self.conf,
+                                                         "advance": 1 - self.conf})
+        return out
+
+
+@pytest.mark.parametrize("submit", [True, False], ids=["submit_mode", "park_mode"])
+@pytest.mark.parametrize("conf", [0.55, 0.74])
+def test_an_accounts_verify_read_as_the_submit_never_ends_submitted_on_the_verified_page(
+        _browser, flow_server, tmp_path, conf, submit):
+    # SP8b review I1: the code step clicked this "Verify" as the submit, and
+    # the "Your email is verified, thank you" page (read as a confirmation
+    # at 0.90, no received words) ended the job submitted in either mode
+    f = dataclasses.replace(
+        h.flow("email_verify_thanks"), name="email_verify_as_submit", submit=submit,
+        routes=lambda base: {f"{base}/forms/verify_email_code.html": _PLAIN_VERIFY},
+        wrap=lambda judge: _CodeVerifyReadAsSubmit(h.VerifiedReadAsConfirmation(judge), conf))
+    r = h.run_flow(f, jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert not r.breaks, r
+    assert r.status == "needs_human" and re.match(
+        r"check whether the application went through: after the emailed code the page reads "
+        r"as confirmation \(\d\.\d\d\) with no received words", r.reason), r
+    trace = "".join(x.read_text(encoding="utf-8") for x in Path(r.trace).glob("*.json"))
+    assert '"code_step_control"' in trace and '"role": "submit"' not in trace
 
 
 # --- I6: a review page after the click is no confirmation; a form after a send is checked ---------

@@ -1881,35 +1881,35 @@ _ENTRY_TEXT = (("artifacts", ("apply_md", "folder", "resume_pdf", "cover_letter_
 
 def entry_problem(entry: Any) -> str:
     """What makes a queue entry one the run cannot work (RES-09), in words
-    that carry no value of it, or "" for a sound one: `artifacts` or `ats`
-    that is no mapping, a path, address or host that is no text (or holds a
-    NUL, which no path takes), an `apply_url` that is no text, `attempts`
-    that is no number."""
+    that carry no value of it (what the value must be, and the type it has),
+    or "" for a sound one: `artifacts` or `ats` that is no mapping, a path,
+    address or host that is no text (or holds a NUL, which no path takes),
+    an `apply_url` that is no text, `attempts` that is no number."""
     if not isinstance(entry, Mapping):
-        return f"the entry is a {type(entry).__name__}, not a mapping"
+        return f"the entry must be a mapping (got {type(entry).__name__})"
     for key, names in _ENTRY_TEXT:
         value = entry.get(key)
         if value is None:
             continue
         if not isinstance(value, Mapping):
-            return f"{key} is a {type(value).__name__}, not a mapping"
+            return f"{key} must be a mapping (got {type(value).__name__})"
         for name in names:
             v = value.get(name)
             if v is None:
                 continue
             if not isinstance(v, str):
-                return f"{key}.{name} is a {type(v).__name__}, not text"
+                return f"{key}.{name} must be text (got {type(v).__name__})"
             if "\x00" in v:
                 return f"{key}.{name} holds a NUL character"
     url = entry.get("apply_url")
     if url is not None and not isinstance(url, str):
-        return f"apply_url is a {type(url).__name__}, not text"
+        return f"apply_url must be text (got {type(url).__name__})"
     attempts = entry.get("attempts")
     if attempts is not None:
         try:
             int(attempts)
         except (TypeError, ValueError):
-            return "attempts is not a number"
+            return "attempts must be a number"
     return ""
 
 

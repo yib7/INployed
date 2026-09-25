@@ -303,8 +303,8 @@ def test_a_malformed_entry_ends_that_job_failed_and_the_drain_goes_on(_browser, 
     assert [o.job_id for o in outcomes] == ["bad", "good"]
     first = outcomes[0]
     assert first.status == "failed"
-    assert first.reason == (f"{apply_run.MALFORMED_REASON}: artifacts.apply_md is a dict, "
-                            f"not text")
+    assert first.reason == (f"{apply_run.MALFORMED_REASON}: artifacts.apply_md must be text "
+                            f"(got dict)")
     assert outcomes[1].reason == "no apply.md"
     jobs = {e["job_posting_id"]: e for e in apply_queue.load(queue)["jobs"]}
     assert jobs["bad"]["status"] == "failed" and jobs["good"]["status"] == "failed"
@@ -387,8 +387,22 @@ def test_a_job_that_cannot_be_set_up_logs_its_frames_and_retries_its_queue_write
 
 def test_a_malformed_entry_is_a_dead_end_inside_the_policy():
     import apply_run
-    assert h.policy_park("failed", f"{apply_run.MALFORMED_REASON}: ats is a list, "
-                                   f"not a mapping") is True
+    assert h.policy_park("failed", f"{apply_run.MALFORMED_REASON}: ats must be a mapping "
+                                   f"(got list)") is True
+
+
+@pytest.mark.parametrize("entry, problem", [
+    ([1, 2], "the entry must be a mapping (got list)"),
+    ({"artifacts": ["a"]}, "artifacts must be a mapping (got list)"),
+    ({"ats": {"domain": 3}}, "ats.domain must be text (got int)"),
+    ({"apply_url": 5}, "apply_url must be text (got int)"),
+    ({"attempts": "twice"}, "attempts must be a number"),
+])
+def test_a_malformed_entry_names_what_each_value_must_be(entry, problem):
+    # SP8a review M14: what the value must be, and its type, with no
+    # contrast framing
+    import apply_run
+    assert apply_run.entry_problem(entry) == problem
 
 
 @pytest.mark.parametrize("after", ["submit click", "code step"])

@@ -614,6 +614,31 @@ def test_a_portal_that_signs_in_only_with_another_site_parks_and_clicks_none(
     assert not [a for a in r.actions if a.kind == "click"]
 
 
+_SSO_CHROME = (h.FIXTURES_DIR / "forms" / "sso_buttons.html").read_text(encoding="utf-8").replace(
+    "<p>By signing in you agree to our Terms of Use.</p>",
+    '<p>By signing in you agree to our Terms of Use. <button type="button">Learn more</button></p>'
+    '<div><button type="button">English</button> <button type="button">Contact us</button></div>'
+    '<div role="region" aria-label="Cookies"><p>We use cookies.</p>'
+    '<button type="button">Accept all</button></div>')
+
+
+def test_a_portal_with_page_chrome_beside_its_sso_buttons_parks_as_sso(
+        _browser, flow_server, tmp_path):
+    # N2 (SP7 review): "Learn more", a language, "Contact us" and a cookie
+    # banner's "Accept all" are no way on; the park is the SSO one (in the
+    # policy), never a login wall
+    import dataclasses
+    assert _SSO_CHROME.count("Accept all") == 1
+    f = dataclasses.replace(h.flow("sso_buttons"), name="sso_buttons_chrome",
+                            routes=lambda base: {f"{base}/forms/sso_buttons.html": _SSO_CHROME})
+    r = _run(f, tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert r.reason == ("sign-in only through another site (Google, Microsoft, LinkedIn, "
+                        "Apple); the run never signs in with another site")
+    assert r.policy is True
+    assert not [a for a in r.actions if a.kind == "click"]
+
+
 @pytest.mark.parametrize("buttons, fields, sites", [
     (["Sign in with Google", "Continue with Microsoft"], [], ["Google", "Microsoft"]),
     (["Sign in with Google", "Sign in with email"], [], []),     # an own way on
@@ -628,6 +653,16 @@ def test_a_portal_that_signs_in_only_with_another_site_parks_and_clicks_none(
     # help, a way back, a cancel, a close or a notice is no way on
     (["Sign in with Google", "Help", "Back", "Cancel", "Close", "Privacy policy",
       "Cookie settings"], [], ["Google"]),
+    # N2 (SP7 review): page chrome beside the buttons is no way on
+    *[(["Sign in with Google", "Continue with Microsoft", aside], [], ["Google", "Microsoft"])
+      for aside in ("Learn more", "Accept all", "English", "Contact us", "Accept all cookies",
+                    "Reject all", "Français", "FAQ", "Terms of use", "Accessibility")],
+    # and a control that offers another way to sign in or apply is one
+    *[(["Sign in with Google", "Continue with Microsoft", way], [], [])
+      for way in ("More options", "Other ways to sign in", "Use email", "Continue with email",
+                  "Create account", "Sign up", "Use a password instead",
+                  "Email me a sign-in link", "More sign-in options", "Next", "I agree")],
+    (["Sign in with Google", "Learn more"], [("Password", "other")], []),    # a password box
 ])
 def test_sso_only_reads_a_screen_whose_one_way_on_is_another_sites_sign_in(buttons, fields,
                                                                          sites):

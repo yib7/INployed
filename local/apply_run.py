@@ -2082,18 +2082,28 @@ _SSO_NAMES = {"linkedin": "LinkedIn", "github": "GitHub", "sso": "SSO", "x": "X"
 # the controls a screen of sign-ins with other sites may hold beside them,
 # none a way on of its own: help, a way back, a cancel, a close, the site's
 # privacy, terms and cookie notices
-_SSO_ASIDE = re.compile(r"\bhelp\b|\bback\b|\bcancel\b|\bclose\b|\bdismiss\b|\bprivacy\b"
-                        r"|\bterms\b|\bcookies?\b", re.I)
+# a cookie banner's choice beside a sign-in screen: no way on ("Accept all"
+# reads as an advance otherwise)
+_COOKIE_CHOICE = re.compile(r"\bcookies?\b|^\s*(?:accept|allow|reject|refuse|deny|decline)\s+all\b",
+                            re.I)
+# a control that offers another way to sign in or apply than another site's
+# account (SP7 review M4, N2): more ways, an email, a password, a code
+_SSO_WAY_ON = re.compile(
+    r"\b(?:more|other|another|different|alternative)\s+(?:sign[\s-]*in\s+|log[\s-]*in\s+)?"
+    r"(?:ways?|methods?|options?)\b|\bshow\s+(?:more|all)\b|\be-?mail\b|\bpassword\b"
+    r"|\busername\b|\bphone\b|\bcode\b|\b(?:magic|sign[\s-]*in|login)\s+link\b|\bjoin\b"
+    r"|\bnew\s+(?:user|candidate|account)\b|\bguest\b", re.I)
 
 
 def sso_only(digest: apply_form.FormDigest) -> list[str]:
     """ACC-11: the sites a screen offers to sign in with, when that is its
     only way on: no box to fill but tick boxes, at least one sign-in with
-    another site's account (`THIRD_PARTY`), and no other control but help,
-    a way back, a cancel, a close or a notice (`_SSO_ASIDE`): an Apply, a
-    Next, a sign-in or a sign-up of its own, a send, or a control that may
-    show the screen's own way on ("More options", "Use another method")
-    means []. The site's header never counts."""
+    another site's account (`THIRD_PARTY`), and no control that offers
+    another way on: an Apply, a Next, a sign-in or a sign-up of its own, a
+    send, or a control that may show one ("More options", "Other ways to
+    sign in", "Use email", `_SSO_WAY_ON`) means []. Page chrome beside the
+    buttons (help, a way back, a language, "Learn more", "Contact us", a
+    cookie banner's choice) is no way on. The site's header never counts."""
     if any(f.type != "checkbox" for f in digest.fields):
         return []
     names: list[str] = []
@@ -2109,9 +2119,11 @@ def sso_only(digest: apply_form.FormDigest) -> list[str]:
                 if name not in names:
                     names.append(name)
             continue
+        if _COOKIE_CHOICE.search(text):
+            continue
         if apply_judge.entry_worded(text) or apply_judge.ADVANCE_WORDS.search(text) \
                 or _ACCOUNT_BUTTON.search(text) or apply_judge.SEND_WORDS.search(text) \
-                or not _SSO_ASIDE.search(text):
+                or _SSO_WAY_ON.search(text):
             return []
     return names
 

@@ -387,8 +387,7 @@ def test_a_slow_step_posts_once_and_is_waited_for(_browser, flow_server, delay, 
         context.close()
 
 
-def test_a_step_that_posted_and_never_moved_parks_without_a_second_click(_browser, flow_server,
-                                                                        monkeypatch):
+def test_a_step_that_posted_and_never_moved_parks_without_a_second_click(_browser, flow_server):
     name = "sp6_dead_step"
     flow_server.answers[name] = (0.0, "ok")
     context = _browser.new_context()
@@ -410,8 +409,9 @@ def test_a_step_that_posted_and_never_moved_parks_without_a_second_click(_browse
         run.page = page
         digest = apply_form.extract(page)
         n = next(b.n for b in digest.buttons if b.text == "Save and continue")
-        monkeypatch.setattr(apply_run, "STEP_SETTLE_S", 1)
-        with h.fast_timing(), pytest.raises(apply_run._Parked, match="it was not clicked again"):
+        settle = (("apply_run", "STEP_SETTLE_S"), 1)      # after FAST_TIMING's own 8 s
+        with h.fast_timing(extra=(settle,)), \
+                pytest.raises(apply_run._Parked, match="it was not clicked again"):
             run._click(digest, n, "advance", {"clicked": []}, conf=0.9)
         assert flow_server.posts.get(name) == 1
     finally:

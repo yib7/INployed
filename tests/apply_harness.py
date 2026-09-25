@@ -236,6 +236,10 @@ FAST_TIMING = {
     ("apply_run", "GOTO_RETRY_S"): 0.1,
     ("apply_run", "CLICK_TIMEOUT_S"): 3,
     ("apply_run", "SUBMIT_SETTLE_S"): 5,
+    # a quiet step click that set a request going: no flow's step answers
+    # later than 5 s (`test_a_slow_step_posts_once_and_is_waited_for` answers
+    # at 5 s), so 8 s keeps every wait while a dead step parks in 8 s, not 20
+    ("apply_run", "STEP_SETTLE_S"): 8,
     ("apply_run", "REDIRECT_TIMEOUT_S"): 6,
     # the empty-read and top-card waits keep room for the fixtures that render
     # late (0.8 s and 2.5 s after `load`)

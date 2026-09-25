@@ -19,15 +19,17 @@ restricted to that one flow), each with its own `FlowServer` and its own
 Chromium. `--jobs 1` keeps the serial path unchanged: one process, one
 browser, one server, run through every flow and judge in turn. A worker
 that crashes or outlives its flow's timeout (`--flow-timeout`, default 3x an
-estimate from the judge count) becomes a "failed" row naming the cause
-instead of stalling the batch. The combined rows are put back in the same
-order the serial run produces: the registry's flow order, each flow's own
-judge order.
+estimate from the judge count) becomes a "failed" row per judge of its flow,
+each naming the cause, instead of stalling the batch: every run the flow
+owed counts as a miss (SP6 review R2-M3). The combined rows are put back in
+the same order the serial run produces: the registry's flow order, each
+flow's own judge order.
 
-Exit 0 when no run broke an invariant, 1 when one did, 2 when the browser
-could not start (only checked directly with `--jobs 1`; under `--jobs`
-greater than 1 a Chromium that will not launch shows up as a failed row per
-flow instead).
+Exit 0 when no run broke an invariant and every worker finished, 1 when a
+run broke one or a worker crashed or hung, 2 when the browser could not
+start (only checked directly with `--jobs 1`; under `--jobs` greater than 1
+a Chromium that will not launch shows up as failed rows per flow instead,
+and exits 1).
 """
 from __future__ import annotations
 
@@ -122,9 +124,20 @@ def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out
         out_queue.put(("error", flow_name, traceback.format_exc()))
 
 
-def _crash_result(flow_name: str, reason: str):
+_CRASH_MARK = "apply_matrix: "      # the reason's start on a crashed or hung worker's rows
+
+
+def _crash_results(flow_name: str, seeds: tuple, reason: str) -> list:
+    """One "failed" row per judge the flow owed (`apply_harness.judges`), each
+    naming the cause: a crashed or hung worker counts every run as a miss."""
     import apply_harness as h
-    return h.RunResult(flow_name, "worker", "failed", reason, False, [], 0, 0, 0.0)
+    return [h.RunResult(flow_name, judge, "failed", reason, False, [], 0, 0, 0.0)
+            for judge, _ in h.judges(seeds)]
+
+
+def _crashed(results) -> int:
+    """How many rows stand for a crashed or hung worker's runs."""
+    return sum(1 for r in results if r.status == "failed" and r.reason.startswith(_CRASH_MARK))
 
 
 def _next_message(out_q, p, deadline: float):
@@ -149,7 +162,7 @@ def _next_message(out_q, p, deadline: float):
 def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: float,
                   verbose: bool, ctx) -> list:
     """`name` in its own worker process, bounded by `timeout`: the worker's
-    own results, or one "failed" row naming a crash or a timeout."""
+    own results, or a "failed" row per judge naming a crash or a timeout."""
     out_q = ctx.Queue()
     p = ctx.Process(target=_run_flow_worker, args=(name, seeds, fast, str(workdir), out_q),
                     daemon=True)
@@ -177,12 +190,12 @@ def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: f
                       "result")
         else:
             reason = f"apply_matrix: {name} did not finish within {timeout:.0f}s"
-        return [_crash_result(name, reason)]
+        return _crash_results(name, seeds, reason)
     if payload[0] == "done":
         return payload[1]
     cause = payload[2] if len(payload) > 2 else ""
     cause = cause.strip().splitlines()[-1] if cause.strip() else "unknown error"
-    return [_crash_result(name, f"apply_matrix: {name}'s worker failed: {cause}")]
+    return _crash_results(name, seeds, f"apply_matrix: {name}'s worker failed: {cause}")
 
 
 def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: float,
@@ -269,10 +282,14 @@ def main(argv: list[str] | None = None) -> int:
               f"{h.SUITE_SEEDS[-1]}): noisy {h.SUCCESS_FLOOR:.1%}, fake "
               f"{h.FAKE_SUCCESS_FLOOR:.1%}; {len(flows)} flows x {len(judge_list)} judges in "
               f"{time.monotonic() - started:.0f}s")
+        crashed = _crashed(results)
+        if crashed:
+            print(f"apply_matrix: {crashed} run(s) lost to a crashed or hung worker, each "
+                  "counted as a miss", file=sys.stderr)
         if args.json:
             rows = [{k: v for k, v in asdict(r).items() if k != "actions"} for r in results]
             Path(args.json).write_text(json.dumps(rows, indent=2), encoding="utf-8")
-        return 1 if rt["breaks"] else 0
+        return 1 if rt["breaks"] or crashed else 0
 
 
 if __name__ == "__main__":

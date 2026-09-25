@@ -126,12 +126,29 @@ def test_a_flow_missing_from_the_registry_is_a_failure_row_not_a_hang(tmp_path):
     # into one row, never drop it and never hang waiting on it
     bogus = dataclasses.replace(h.flow("post_form"), name="__apply_matrix_test_boom__")
     results = apply_matrix._run_parallel((bogus,), (1,), True, 1, 10.0, tmp_path, verbose=False)
-    assert len(results) == 1
+    assert len(results) == 2        # a row per judge it owed: fake and seed 1 (R2-M3)
     r = results[0]
     assert r.flow == "__apply_matrix_test_boom__"
     assert r.status == "failed"
     assert r.ok is False
     assert "worker failed" in r.reason and "StopIteration" in r.reason, r.reason
+
+
+def test_a_crashed_worker_counts_every_run_it_owed_as_a_miss_and_fails_the_exit(
+        tmp_path, monkeypatch, capsys):
+    # SP6 review R2-M3: one row per judge, each naming the cause, and the
+    # script exits nonzero even with no invariant broken
+    bogus = dataclasses.replace(h.flow("post_form"), name="__apply_matrix_test_boom__")
+    results = apply_matrix._run_parallel((bogus,), (1, 2), True, 1, 10.0, tmp_path,
+                                         verbose=False)
+    assert [r.judge for r in results] == ["fake", "noisy-1", "noisy-2"]
+    assert all(r.status == "failed" and not r.ok and "StopIteration" in r.reason
+               for r in results)
+    assert apply_matrix._crashed(results) == 3
+    monkeypatch.setattr(h, "FLOWS", h.FLOWS + (bogus,))
+    code = apply_matrix.main(["--flows", bogus.name, "--seeds", "1", "--jobs", "2"])
+    assert code == 1
+    assert "lost to a crashed or hung worker" in capsys.readouterr().err
 
 
 def test_default_flow_timeout_scales_with_the_judge_count():

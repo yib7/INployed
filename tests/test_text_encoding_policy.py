@@ -172,16 +172,42 @@ def test_gitattributes_forces_line_endings_for_the_scripts_that_break_without_it
             f"{pattern} is a Windows launcher and PowerShell 5.1 needs CRLF"
 
 
-def test_no_tracked_text_file_carries_a_utf8_bom():
-    binary_ext = {".png", ".gif", ".ico", ".jpg", ".jpeg", ".pdf", ".zip"}
-    offenders = []
-    for rel in _tracked_files():
-        p = REPO / rel
-        if p.suffix.lower() in binary_ext or not p.exists():
+_BINARY_PROBE = 8000     # the bytes git reads to tell a binary file (a NUL among them)
+
+
+def _binary(raw: bytes) -> bool:
+    """git's own test for a binary file: a NUL byte in its first block, so a
+    new fixture type (a font, an image, an archive) needs no list."""
+    return b"\x00" in raw[:_BINARY_PROBE]
+
+
+def _text_files(root: Path, rels) -> list[tuple[str, bytes]]:
+    """(rel, bytes) of each file under `root` that exists and is text (`_binary`)."""
+    out = []
+    for rel in rels:
+        p = root / rel
+        if not p.exists():
             continue
-        with p.open("rb") as fh:
-            if fh.read(3) == b"\xef\xbb\xbf":
-                offenders.append(rel)
+        raw = p.read_bytes()
+        if not _binary(raw):
+            out.append((rel, raw))
+    return out
+
+
+def _control_bytes(files) -> dict[str, list[str]]:
+    """The bytes below 0x20 other than tab, LF and CR, per file."""
+    allowed = {0x09, 0x0A, 0x0D}
+    offenders = {}
+    for rel, raw in files:
+        bad = sorted({b for b in raw if b < 0x20 and b not in allowed})
+        if bad:
+            offenders[rel] = [hex(b) for b in bad]
+    return offenders
+
+
+def test_no_tracked_text_file_carries_a_utf8_bom():
+    offenders = [rel for rel, raw in _text_files(REPO, _tracked_files())
+                 if raw.startswith(b"\xef\xbb\xbf")]
     assert not offenders, (
         "a UTF-8 BOM breaks json.loads, a shell shebang and PowerShell parsing: "
         f"{offenders}")
@@ -191,18 +217,20 @@ def test_no_tracked_text_file_carries_a_control_byte():
     """A byte below 0x20 other than tab, LF and CR in a text file is a
     mangled escape: c16's USER_GUIDE carried a vertical tab (0x0b) where the
     `\\v` of `..\\venv` belongs."""
-    binary_ext = {".png", ".gif", ".ico", ".jpg", ".jpeg", ".pdf", ".zip"}
-    allowed = {0x09, 0x0A, 0x0D}
-    offenders = {}
-    for rel in _tracked_files():
-        p = REPO / rel
-        if p.suffix.lower() in binary_ext or not p.exists():
-            continue
-        raw = p.read_bytes()
-        bad = sorted({b for b in raw if b < 0x20 and b not in allowed})
-        if bad:
-            offenders[rel] = [hex(b) for b in bad]
+    offenders = _control_bytes(_text_files(REPO, _tracked_files()))
     assert not offenders, f"control bytes in tracked text files: {offenders}"
+
+
+def test_a_binary_file_of_any_type_is_left_out_of_the_text_sweeps(tmp_path):
+    # SP8a review M16: a binary is told by its content (a NUL byte in its
+    # first block, as git tells it), so a new fixture type never trips the
+    # sweeps, and a text file's stray control byte still does
+    (tmp_path / "font.woff2").write_bytes(b"wOF2\x00\x01\x00\x00\x0b\x1b" * 40)
+    (tmp_path / "shot.webp").write_bytes(b"RIFF\x10\x00\x00\x00WEBPVP8 \x0c" * 40)
+    (tmp_path / "page.html").write_bytes(b"<p>..\x0benv</p>\n")
+    files = _text_files(tmp_path, ["font.woff2", "shot.webp", "page.html"])
+    assert [rel for rel, _ in files] == ["page.html"]
+    assert _control_bytes(files) == {"page.html": ["0xb"]}
 
 
 def test_ps1_scripts_are_pure_ascii():

@@ -187,6 +187,24 @@ def test_no_tracked_text_file_carries_a_utf8_bom():
         f"{offenders}")
 
 
+def test_no_tracked_text_file_carries_a_control_byte():
+    """A byte below 0x20 other than tab, LF and CR in a text file is a
+    mangled escape: c16's USER_GUIDE carried a vertical tab (0x0b) where the
+    `\\v` of `..\\venv` belongs."""
+    binary_ext = {".png", ".gif", ".ico", ".jpg", ".jpeg", ".pdf", ".zip"}
+    allowed = {0x09, 0x0A, 0x0D}
+    offenders = {}
+    for rel in _tracked_files():
+        p = REPO / rel
+        if p.suffix.lower() in binary_ext or not p.exists():
+            continue
+        raw = p.read_bytes()
+        bad = sorted({b for b in raw if b < 0x20 and b not in allowed})
+        if bad:
+            offenders[rel] = [hex(b) for b in bad]
+    assert not offenders, f"control bytes in tracked text files: {offenders}"
+
+
 def test_ps1_scripts_are_pure_ascii():
     """PowerShell 5.1 mangles BOM-less non-ASCII, which corrupts parsing."""
     offenders = {}

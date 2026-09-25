@@ -258,6 +258,39 @@ def test_after_the_send_the_get_that_carried_it_is_never_loaded_again_when_a_pos
     assert r.sends == 1 and r.breaks == []
 
 
+# A single-page app's form: the button sends by fetch, then the page's script
+# sends the tab to its thank-you page
+_SPA_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</title></head>
+<body><h1>Apply for Analytics Engineer</h1><p>Fabrikam, Remote</p>
+<form id="f" onsubmit="return false">
+<label>First name * <input name="first_name" required></label>
+<label>Last name * <input name="last_name" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<button type="button" id="btn-submit">Submit application</button>
+</form><script>document.getElementById('btn-submit').addEventListener('click', function () {
+  fetch('/spa/submit', {method: 'POST', body: 'answers'}).then(function () {
+    location.href = '/spa/thanks'; }); });</script></body></html>"""
+
+
+def test_after_a_fetch_send_the_thank_you_page_the_script_led_to_is_loaded_again(
+        _browser, flow_server, tmp_path):
+    # SP8a review R2-M4: a GET counts as the send only when it goes to the
+    # submit form's action or is the first request the click caused; the
+    # thank-you page a script loads after the fetch is the site's own
+    posts: list[str] = []
+    thanks = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
+    f = h.Flow("spa_fetch", f"{_POST_SITE}/spa/apply", True, "submitted", r"^confirmation page",
+               confirm="body[data-confirmed]", send_urls=(f"{_POST_SITE}/spa/submit",),
+               routes=lambda b: {f"{_POST_SITE}/spa/apply": _SPA_FORM,
+                                 f"{_POST_SITE}/spa/submit": _sink(posts, '{"ok": true}'),
+                                 f"{_POST_SITE}/spa/thanks": thanks})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert posts == ["POST"]
+    assert thanks.seen == ["GET", "GET"], (thanks.seen, r.status, r.reason)
+    assert r.status == "submitted" and r.ok, (r.status, r.reason)
+    assert r.sends == 1 and r.breaks == []
+
+
 # --- a malformed queue entry (RES-09) -------------------------------------------------------
 
 def _queue(tmp_path, *entries):

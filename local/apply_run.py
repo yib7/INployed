@@ -650,6 +650,19 @@ def _tracking(url: str) -> bool:
     return site == "google.com" and parts.path.startswith(_GOOGLE_TRACKING)
 
 
+# The address the submit button's form sends to, before the click (SP8a
+# review R2-M4): the button's own `formaction`, else its form's `action`
+# (read as the attribute: a control named "action" shadows the property),
+# resolved against the page; "" for a button in no form
+_FORM_ACTION_JS = """el => {
+  const form = el.form || el.closest('form');
+  if (!form) return '';
+  const raw = el.getAttribute('formaction') ?? form.getAttribute('action') ?? '';
+  try { return new URL(raw, document.baseURI).href; } catch (e) { return ''; }
+}"""
+ACTION_READ_MS = 2_000
+
+
 class SendWatch:
     """What the page sends after the submit click (TERM-01), from the page,
     its frames and any tab it opens:
@@ -677,9 +690,10 @@ class SendWatch:
     keeps the method and the URL without its query (a GET form puts the
     answers there); `pending` keeps the read waiting while one of the job's
     page is in flight. `caused` keeps the rows the click itself caused: each
-    one up to the first navigation of the job's page, that navigation too
-    (a GET form's send after a draft's POST, SP8a review M6); a navigation
-    after it is the site's own (a POST's answer sending the tab on)."""
+    one up to the first navigation of the job's page, that navigation too; a
+    navigation after it is the site's own (a POST's answer sending the tab
+    on). Which GET carried the send is `carried_get`'s (SP8a review M6,
+    R2-M4)."""
 
     _SEND_METHODS = ("POST", "PUT", "PATCH")
 
@@ -763,10 +777,17 @@ class SendWatch:
         except Exception:       # noqa: BLE001  (a request that cannot be read counts as nothing)
             pass
 
-    def caused_by_click(self, row: str) -> bool:
-        """Was `row` ("METHOD bare-url") among the requests the click itself
-        caused (`caused`)?"""
-        return row in self.caused
+    def carried_get(self, row: str, action: str = "") -> bool:
+        """Did the GET `row` ("GET bare-url") carry the send? When its URL
+        without the query is the submit form's `action` (a GET form's send,
+        after a draft's POST too, SP8a review M6), or when it is the first
+        request the click caused (`caused`; the first seen when the job's
+        page saw none of its own). A later GET is the site's own: a script
+        sending the tab to its thank-you page after a fetch sent the answers
+        (R2-M4)."""
+        if action and row == f"GET {self._bare(action)}":
+            return True
+        return (self.caused[:1] or [self.first()]) == [row]
 
     def _done(self, request) -> None:
         self.pending.discard(id(request))
@@ -4416,12 +4437,12 @@ class _JobRun:
         left for: the address that failed is loaded once more after
         `GOTO_RETRY_S` when it is a GET on the allowed sites. A POST, PUT or
         PATCH is never sent again, and after the submit click neither is a
-        GET the click itself caused (`SendWatch.caused`: the navigation it
-        started, and any request before it, SP8a review M6): at most one
-        send per job, so the page the send led to is the only one loaded
-        again. A send that never reached the site (`_no_connection`) and was
-        the one request seen parks as nothing sent (`_Unsent`, SP8a review
-        M7). A retry that lands on the error page again parks, as does an
+        GET that carried the send (`SendWatch.carried_get`: one to the
+        submit form's action, or the first request the click caused, SP8a
+        review M6, R2-M4): at most one send per job, so a page the send led
+        to is loaded again. A send that never reached the site
+        (`_no_connection`) and was the one request seen parks as nothing
+        sent (`_Unsent`, SP8a review M7). A retry that lands on the error page again parks, as does an
         error page whose address is unknown (`_held_load`). An address off
         the allowed sites parks as the site it names, but with `transition`:
         the page an Apply or a redirect led to, which `_admit_ats_transition`
@@ -4445,8 +4466,8 @@ class _JobRun:
         what = f"{method} {_cap(bare, 120)} failed on the network ({_cap(failure, 60)})"
         watch = self._send_watch
         row = f"{method} {bare}"
-        carried = watch is not None and (method != "GET" or watch.first() == row
-                                         or watch.caused_by_click(row))
+        action = str((self._before_submit or {}).get("action") or "")
+        carried = watch is not None and (method != "GET" or watch.carried_get(row, action))
         if self.submit_clicked and carried and _no_connection(failure) and watch.only(row):
             # the send never reached the site and nothing else left: the job
             # is no possible send, and the load is still never made again
@@ -7734,11 +7755,20 @@ class _JobRun:
 
     def _submit_baseline(self, digest: apply_form.FormDigest) -> dict[str, Any]:
         """The page just before the submit click, for the reads after it: its
-        URL, its form, its visible text and error texts."""
+        URL, its form, its visible text and error texts, and the address the
+        submit button's form sends to (`_FORM_ACTION_JS`, "" for a button in
+        no form: the GET that carries a send, SP8a review R2-M4)."""
         try:
             text = apply_fill.page_text(self.page)
         except Exception:       # noqa: BLE001  (a page double)
             text = ""
+        action = ""
+        if self._submit_at:
+            try:
+                action = str(apply_form.resolve(self.page, self._submit_at).first
+                             .evaluate(_FORM_ACTION_JS, timeout=ACTION_READ_MS) or "")
+            except Exception:       # noqa: BLE001  (a page double, a button gone)
+                action = ""
         try:
             errors = {e["text"] for e in apply_form.validity_report(self.page)["errors"]}
         except Exception:       # noqa: BLE001
@@ -7750,7 +7780,7 @@ class _JobRun:
         # the boxes' values stay in memory for the post-submit read; they are
         # never written to the trace or the record
         return {"url": str(self.page.url), "fields": _fields_sig(digest), "text": text,
-                "errors": errors, "values": values}
+                "errors": errors, "values": values, "action": action}
 
     def _typed_boxes(self) -> list[tuple[int, str]]:
         """The boxes this page's fill typed into, less the ones that took the

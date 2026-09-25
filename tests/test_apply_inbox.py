@@ -415,6 +415,29 @@ def test_verification_links_keep_the_allowed_verify_links_and_name_the_rest():
     assert refused == ["click.tracker.invalid"]
 
 
+@pytest.mark.parametrize("text, path", [
+    ("Confirm", "/confirm-unsubscribe"),
+    ("Verify", "/verify/decline"),
+    ("Confirm unsubscribe", "/c/1"),
+    ("Not you? Confirm here", "/confirm/2"),
+    ("Verify", "/account/not-you"),
+    ("Confirm password reset", "/confirm/3"),
+    ("Verify", "/reset-password/verify"),
+    ("Report this email", "/verify/report"),
+    ("Confirm your email preferences", "/confirm/4"),
+    ("Verify", "/email_preferences/confirm"),
+])
+def test_verification_links_never_take_an_unsubscribe_a_reset_or_a_not_you(text, path):
+    """M2 (SP7 review): a link beside the check that carries a verify word
+    in its text or its path is never it, and one alone is never opened."""
+    inbox = _inbox()
+    host = "https://acme.wd5.myworkdayjobs.com"
+    assert inbox.verification_links([(text, host + path)], lambda h: True) == []
+    got = inbox.verification_links([(text, host + path), ("Verify Account", host + "/verify?t=1")],
+                                   lambda h: True)
+    assert got == [("Verify Account", host + "/verify?t=1")]
+
+
 def test_the_link_pick_names_each_link_by_its_text_and_host_never_its_url():
     import apply_judge
     state, questions = apply_judge.link_pick_questions(

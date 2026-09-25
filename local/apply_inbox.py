@@ -47,6 +47,11 @@ ROW_SELECTOR = ", ".join(s["row"] for s in SELECTORS.values())
 
 # a link that checks an address or starts an account: its words or its path
 VERIFY_LINK_WORDS = re.compile(r"verif|confirm|activat|validat", re.I)
+# a link beside the check that is never it, by its text or its path: an
+# unsubscribe, a decline, a "not you", a password reset, a report, the
+# mail preferences ("/confirm-unsubscribe", "/verify/decline")
+NOT_VERIFY_LINK_WORDS = re.compile(r"(?<![a-z0-9])(?:unsubscrib|decline|not[\s_-]*you\b|reset"
+                                   r"|report|preferences|opt[\s_-]*out)", re.I)
 _LINKS_JS = """els => els.flatMap(e => Array.from(e.querySelectorAll('a[href]')).map(a =>
   [((a.innerText || '') + ' ' + (a.getAttribute('aria-label') || '')).replace(/\\s+/g, ' ').trim(),
    a.href]))"""
@@ -369,8 +374,10 @@ def message_links(page) -> list[tuple[str, str]]:
 def verification_links(links: list[tuple[str, str]], allowed: Callable[[str], bool],
                        refused: list | None = None) -> list[tuple[str, str]]:
     """The links that verify an address or start an account
-    (`VERIFY_LINK_WORDS` in their text or their path), http or https, whose
-    host `allowed` takes, each URL once. A verification link on any other
+    (`VERIFY_LINK_WORDS` in their text or their path, never with
+    `NOT_VERIFY_LINK_WORDS` in either: "Confirm unsubscribe", a reset), http
+    or https, whose host `allowed` takes, each URL once. A verification link
+    on any other
     host (a mail tracker's, a stranger's) is never handed back: its host
     joins `refused`."""
     out: list[tuple[str, str]] = []
@@ -381,6 +388,8 @@ def verification_links(links: list[tuple[str, str]], allowed: Callable[[str], bo
         if parts.scheme not in ("http", "https") or not host or href in seen:
             continue
         if not (VERIFY_LINK_WORDS.search(text) or VERIFY_LINK_WORDS.search(parts.path)):
+            continue
+        if NOT_VERIFY_LINK_WORDS.search(text) or NOT_VERIFY_LINK_WORDS.search(parts.path):
             continue
         seen.add(href)
         if allowed(host):

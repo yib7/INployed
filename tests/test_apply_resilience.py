@@ -1076,16 +1076,38 @@ def _bare_run(tmp_path):
 
 
 class _Tab:
-    """A tab double: its address, open."""
+    """A tab double: its address, open unless `closed`, and its main frame."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, closed: bool = False):
         self.url = url
+        self.closed = closed
+        self.main_frame = _Frame(self)
 
     def is_closed(self) -> bool:
-        return False
+        return self.closed
 
     def wait_for_timeout(self, ms) -> None:
         pass
+
+
+class _Frame:
+    def __init__(self, page):
+        self.page = page
+        self.parent_frame = None
+
+
+class _Held:
+    """A held first load's request double: its tab's frame once the tab is
+    known (`frame`), else it raises as Playwright's does before then."""
+
+    def __init__(self, frame=None):
+        self._frame = frame
+
+    @property
+    def frame(self):
+        if self._frame is None:
+            raise RuntimeError("Frame for this navigation request is not available")
+        return self._frame
 
 
 def test_a_left_tab_whose_clock_or_relative_time_ticks_has_not_moved_on(_browser):
@@ -1122,17 +1144,76 @@ def test_a_linkedin_tab_is_never_taken_over_as_the_flow(tmp_path, monkeypatch):
     assert run._moved_on() == (company, "text then", "text now")
 
 
-def test_a_new_tabs_failed_first_load_is_taken_only_when_it_is_the_one_held(tmp_path):
-    # SP8a review M5: a new tab's first load has no frame to tie it to its
-    # tab; with two held, the one that failed in this tab is not known
+_RESET = "net::ERR_CONNECTION_RESET"
+
+
+def test_a_new_tabs_failed_first_load_is_taken_by_its_own_tab_whatever_else_is_held(tmp_path):
+    # SP8a review M5 and R2-M3: a new tab's first load names no tab when it
+    # fails; by the error page its tab is known, so the load is tied to it,
+    # a closed tab's is dropped, another tab's goes to that tab, and a load
+    # still tied to no tab stays held and is never taken
     import apply_run
     run = _bare_run(tmp_path)
-    run._unplaced_loads = [(f"{_CAREERS}/apply", "GET", "net::ERR_CONNECTION_RESET"),
-                           ("https://ads.example.net/x", "GET", "net::ERR_CONNECTION_RESET")]
+    tab = _Tab("chrome-error://chromewebdata/")
+    closed = _Tab("chrome-error://chromewebdata/", closed=True)
+    other = _Tab("chrome-error://chromewebdata/")
+    unknown = _Held()
+    run._unplaced_loads = [
+        (_Held(closed.main_frame), ("https://ads.example.net/x", "GET", _RESET)),
+        (unknown, ("https://ads.example.net/y", "GET", _RESET)),
+        (_Held(tab.main_frame), (f"{_CAREERS}/apply", "POST", _RESET)),
+        (_Held(other.main_frame), (f"{_CAREERS}/other", "POST", _RESET))]
+    with pytest.raises(apply_run._Parked) as parked:
+        run._recover_error_page(tab)
+    # this tab's own load (a POST, so never sent again: the reason names it)
+    assert parked.value.reason == (f"{apply_run.ERROR_PAGE_REASON}: POST {_CAREERS}/apply "
+                                   f"failed on the network ({_RESET}); a POST is never sent "
+                                   f"again"), parked.value.reason
+    assert [request for request, _ in run._unplaced_loads] == [unknown]
+    with pytest.raises(apply_run._Parked) as parked:
+        run._recover_error_page(other)
+    assert parked.value.reason.startswith(f"{apply_run.ERROR_PAGE_REASON}: POST "
+                                          f"{_CAREERS}/other failed"), parked.value.reason
+
+
+def test_a_held_first_load_tied_to_no_tab_is_never_taken(tmp_path):
+    # SP8a review R2-M3: once the error tab is known a load still tied to no
+    # tab is another tab's (one that closed before it was reported): taking
+    # it would load a stale address in this tab
+    import apply_run
+    run = _bare_run(tmp_path)
+    run._unplaced_loads = [(_Held(), ("https://ads.example.net/x", "GET", _RESET))]
     with pytest.raises(apply_run._Parked) as parked:
         run._recover_error_page(_Tab("chrome-error://chromewebdata/"))
     assert parked.value.reason == (f"{apply_run.ERROR_PAGE_REASON}: the tab shows Chrome's "
                                    f"error page and the address that failed is not known")
+
+
+def test_a_popup_that_failed_and_closed_earlier_never_hides_the_next_tabs_load(
+        _browser, flow_server, tmp_path, monkeypatch):
+    # SP8a review R2-M3: a tracker's window whose first load failed and that
+    # closed at once is held beside the Apply tab's own dropped first load;
+    # the Apply tab's load is still the one loaded again
+    import apply_run
+    real = apply_run._JobRun._listen_loads
+
+    def _listen_then_a_tracker_fails(self) -> None:
+        real(self)
+        opener = self.ctx.new_page()
+        with opener.expect_popup() as info:
+            opener.evaluate("window.open('https://ads.example.net/px')")
+        info.value.close()
+        opener.close()
+    monkeypatch.setattr(apply_run._JobRun, "_listen_loads", _listen_then_a_tracker_fails)
+    base = h.flow("linkedin_gts_other")
+    hop = "https://www.linkedin.com/safety/go/**"
+    drop = _drop_first(body=base.routes(flow_server.base)[hop])
+    f = dataclasses.replace(base, routes=lambda b: {**base.routes(b), hop: drop})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert "chromewebdata" not in r.reason and "not known" not in r.reason, r
+    assert r.ok, (r.status, r.reason)
+    assert r.breaks == []
+    assert drop.seen == ["GET", "GET"]
 
 
 # --- the judge down once something may have been sent (RES-02, SP8a review I1) ---------------

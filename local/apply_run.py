@@ -4179,10 +4179,11 @@ class _JobRun:
         self._before_submit: dict[str, Any] | None = None   # the page just before it
         self._submit_at: tuple[int, str] | None = None      # the submit button's locator
         # a tab's last main-frame load the network dropped, (address, method,
-        # error), by the tab; a new tab's first load, which Playwright names
-        # no tab for, in `_unplaced_loads` (SP8a: Chrome's error page)
-        self._failed_loads: dict[int, tuple[str, str, str]] = {}
-        self._unplaced_loads: list[tuple[str, str, str]] = []
+        # error), by the tab (held with the tab); a new tab's first load,
+        # which Playwright names no tab for yet, in `_unplaced_loads` with its
+        # request (SP8a: Chrome's error page; `_held_load`)
+        self._failed_loads: dict[int, tuple[Any, tuple[str, str, str]]] = {}
+        self._unplaced_loads: list[tuple[Any, tuple[str, str, str]]] = []
         self._load_listener: Callable[[Any], None] | None = None
         self._error_retried: set[str] = set()      # addresses loaded once more after it
 
@@ -4352,10 +4353,10 @@ class _JobRun:
                 try:
                     frame = request.frame
                 except Exception:   # noqa: BLE001  (a new tab's first load: no frame yet)
-                    self._unplaced_loads.append(row)
+                    self._unplaced_loads.append((request, row))
                     return
                 if frame.parent_frame is None:
-                    self._failed_loads[id(frame.page)] = row
+                    self._failed_loads[id(frame.page)] = (frame.page, row)
             except Exception:       # noqa: BLE001  (a request that cannot be read)
                 pass
         try:
@@ -4372,6 +4373,43 @@ class _JobRun:
             except Exception:   # noqa: BLE001  (the context is gone)
                 pass
 
+    def _held_load(self, page) -> tuple[str, str, str] | None:
+        """The load that failed in `page`, taken from what is held (SP8a
+        review M5, R2-M3). A new tab's first load names no tab when it
+        fails; by the tab's error page Playwright ties that load to it, so
+        each held first load is placed now: `page`'s own is taken (the
+        newest), one of a tab since closed is dropped, and one of another
+        open tab goes to that tab. A load still tied to no tab belongs to a
+        tab never reported (one closed at once), so it stays held and is
+        never taken: a stale address is never loaded in `page`. Rows of
+        closed tabs are dropped. A load that failed once the tab was known
+        is newer than its first and wins. None when no load is known for
+        `page`."""
+        for key, (tab, _) in list(self._failed_loads.items()):
+            if _page_closed(tab):
+                del self._failed_loads[key]
+        own = self._failed_loads.pop(id(page), None)
+        later = own[1] if own is not None and own[0] is page else None
+        try:
+            main = page.main_frame
+        except Exception:       # noqa: BLE001  (a closed tab)
+            main = None
+        first = None
+        held: list[tuple[Any, tuple[str, str, str]]] = []
+        for request, row in self._unplaced_loads:
+            try:
+                frame = request.frame
+                tab = frame.page
+            except Exception:   # noqa: BLE001  (its tab not reported yet, or never)
+                held.append((request, row))
+                continue
+            if main is not None and frame is main:
+                first = row                 # the newest held for this tab wins
+            elif not _page_closed(tab) and getattr(frame, "parent_frame", None) is None:
+                self._failed_loads.setdefault(id(tab), (tab, row))
+        self._unplaced_loads = held
+        return later if later is not None else first
+
     def _recover_error_page(self, page, *, transition: bool = False) -> bool:
         """A tab on Chrome's own error page (`chrome-error://chromewebdata/`)
         reads as a load the network dropped (SP8a), never as a site the flow
@@ -4384,24 +4422,18 @@ class _JobRun:
         again. A send that never reached the site (`_no_connection`) and was
         the one request seen parks as nothing sent (`_Unsent`, SP8a review
         M7). A retry that lands on the error page again parks, as does an
-        error page whose address is unknown (a new tab's first load held
-        beside another's, SP8a review M5). An address off the allowed sites
-        parks as the site it names, but with `transition`: the page an Apply
-        or a redirect led to, which `_admit_ats_transition` judges once it
-        has loaded. True when the address was loaded again, False when the
-        tab shows no error page."""
+        error page whose address is unknown (`_held_load`). An address off
+        the allowed sites parks as the site it names, but with `transition`:
+        the page an Apply or a redirect led to, which `_admit_ats_transition`
+        judges once it has loaded. True when the address was loaded again,
+        False when the tab shows no error page."""
         try:
             now = str(page.url)
         except Exception:       # noqa: BLE001  (a closed tab: the caller's handling)
             return False
         if not _error_page(now):
             return False
-        failed = self._failed_loads.pop(id(page), None)
-        if failed is None and len(self._unplaced_loads) == 1:
-            # a new tab's first load, which no frame ties to its tab: taken
-            # only when it is the one held; with more, which one failed here
-            # is not known (SP8a review M5)
-            failed = self._unplaced_loads.pop()
+        failed = self._held_load(page)
         if failed is None:
             raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: the tab shows Chrome's error "
                                          f"page and the address that failed is not known")

@@ -562,27 +562,78 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
    it is compared by length only after the fill, and it never reaches a file, a log,
    the record or Jev. Keep it a password you use for job applications only.
 
-**When the run stops.** The run submits an application when every required field was
-filled from your answers and read back correctly and Jev picks out the submit button.
-It stops only in these cases, with the window left open and the queue row saying why:
+**What a drain does.** `python local/apply_run.py drain` (the **Start auto-apply run**
+button) takes the queued jobs in queue order, one at a time, up to the batch cap (`--cap N`;
+10 when unset). For each job it opens the job's apply address in the run's own Chrome
+profile; on LinkedIn it follows the posting's external Apply. Then it works page by page:
+it reads the page (Jev's read, weighed against what the page's own structure shows), fills
+the fields from your apply sheet and answer bank, reads every value back, drafts and checks
+the free-text answers, signs in or makes an account with the master password where a
+portal forces one, fetches an emailed code or link from your inbox, and clicks the button
+Jev picks as the way on. At the submit step it sends only when submitting is on and every
+required field was filled and read back correctly. Each job ends as **submitted**, **ready
+to submit**, **needs human** or **failed**, and the queue row carries the reason. The tab a
+job ended on stays open, except after a confirmation page. A submitted row whose reason does
+not start with "confirmation page" was sent with no confirmation seen: check that one.
 
-- **Submit when verified** is off (or the run has `--no-submit`): every job stops at its
-  submit step as **Ready to submit**.
-- A required question has no answer in your data. Answer it in the job's panel and
-  **Re-queue**; the answer is kept for later applications.
-- A required question the run never answers: an SSN, a birthdate, bank or card details,
-  an ID number. You finish that application by hand; an optional one is left blank.
-- The page cannot be passed: a payment request, a closed or dead posting, a page that
-  does not move after its button, a sign-in it cannot complete, or LinkedIn signed out.
-- Jev cannot tell what the page is, and its best guess is a confirmation, a bot check, a
-  payment, a dead page or an unknown page. A doubtful read of a posting, a form, a review
-  page, a sign-in or a sign-up is acted on, and so is a doubtful code screen with a code
-  box. That step's own checks still apply.
-- An application form needs a password and no master password is set. An optional
-  password box is left blank.
-- A CAPTCHA challenge opens. The run never solves one. With the window visible it waits
-  up to five minutes for you to solve it, then carries on; hidden, or unsolved, the job
-  stops.
+A drain ends when the queue is empty or the cap is reached, and it ends early in two
+cases: you close the browser window (the jobs not yet started stay queued, their attempt
+counts untouched), or Jev stays down through its retries (the job it was on goes back to
+the queue with the attempt not counted, unless something may already have been sent).
+
+**Where a drain stops: the park policy.** Your rule for the run: it stops a job only at the
+submit step when submitting is off, at a required question your data cannot answer, or at
+a dead end it cannot pass. Every such stop leaves the job's tab open and the queue row
+saying why (the reason starts with the words in brackets):
+
+- Submitting is off (**Submit when verified** off, or `--no-submit`): every job stops at
+  its submit step as **Ready to submit** ("auto_apply_submit is off").
+- A required question has no answer in your data ("required field without an answer").
+  Answer it in the job's panel and **Re-queue**; the answer is kept for later
+  applications. A way on that stays disabled until a field the run left blank is answered
+  stops the same way. An optional question with no answer is left blank.
+- A question the run never answers: an SSN, a birthdate, bank or card details, an ID
+  number ("asks for ..., which auto-apply never fills"). You finish that application by
+  hand.
+- A payment request ("payment requested").
+- A CAPTCHA or bot check nobody solved ("captcha or bot check on the page", "a CAPTCHA
+  challenge ..."). The run never solves one. With the window visible it waits up to five
+  minutes for you to solve it, then carries on; hidden, or unsolved, the job stops. An
+  unticked CAPTCHA checkbox on a form stops the job at the submit step for you to tick.
+- A dead page, a closed posting, or a job the site or LinkedIn says you applied to already
+  ("error or dead page", "closed: ...", "already applied: ...").
+- A posting the run cannot apply to itself: a job board's posting with no link to the
+  company's site ("aggregator posting"), an Apply that is an email address ("apply by
+  email"), and an Easy Apply job on LinkedIn, which you apply to there ("Easy Apply: apply
+  on LinkedIn").
+- LinkedIn signed out ("LinkedIn is signed out"): run `login` again.
+- An account the run cannot make: a portal whose only sign-in is another site's account
+  ("sign-in only through another site"), or password rules the master password cannot meet
+  ("the master password does not meet the password rules").
+- A way on that stays disabled after every field was answered ("the ... button stays
+  disabled after the fill").
+- You closed the window or the job's tab ("the browser window was closed", "the job's tab
+  was closed").
+- A queue entry the run cannot work, such as a hand-edited row whose paths are not text
+  ("malformed queue entry"): it ends as **failed**; fix or remove the row.
+- Jev down after the submit click or the code step ("check whether the application went
+  through: the run stopped after the submit click (judge unavailable: ..."), or down
+  under the same job twice in one drain for an error its own request can cause ("judge
+  unavailable: ... parked so the queue moves on"). A busy service or a dropped connection
+  never parks a job: it goes back to the queue.
+
+Any other stop is one the run should not have made, and it is what the shakedown below
+asks you to send back. The ones you may meet: Jev unsure of a page it would act on only
+when sure (a confirmation, a bot check, a payment, a dead page or an unrecognised page),
+a sign-in or sign-up it could not complete ("login wall", "account signup needed", "an
+account exists", "emailed verification link needed"), a submit click followed by a form
+or a sign-in in place of a confirmation ("check whether the application went through"),
+a send that never reached the site ("the submit did not go through": nothing was sent),
+a form that needs a password while no master password is set (set one and **Re-queue**;
+an optional password box is left blank), and an application that went back to LinkedIn
+after the company's form. A doubtful read
+of a posting, a form, a review page, a sign-in, a sign-up or a code screen is acted on;
+that step's own checks still apply.
 
 A page of form boxes read as a sign-in or sign-up is treated as the form. A LinkedIn job
 page with an Apply button, no form and no submit button counts as the posting until the
@@ -647,3 +698,85 @@ CLI equivalents (from the repo root): `python local/apply_run.py drain` (the Sta
 button; `--cap N`, `--no-submit`, `--headless`), `one <job_id>` for one
 queued job, `login` and `doctor` as above. Exit code 0 means drained or nothing queued,
 2 means not configured (no key, or the job id is not queued), 1 an unexpected error.
+
+**The drain's summary.** When a drain ends it prints one line and one table, and writes
+both to `apply_drain-<YYYYMMDD-HHMMSS>.md` beside the job folders (the queue file's folder
+when the jobs' folders do not share one parent):
+
+    drained 2: submitted 0, ready_to_submit 1, needs_human 1, failed 0; Jev 23 requests, 214806 tokens, $0.0090
+
+| # | job | end | pages | reason | trace |
+|--:|-----|-----|------:|--------|-------|
+| 1 | 4012345678 | ready_to_submit | 3 | auto_apply_submit is off; ... | [job folder/attempt-1](...) |
+| 2 | 4012345679 | needs_human | 2 | required field without an answer: Years of SQL | [job folder/attempt-1](...) |
+
+`end` is the job's status, `pages` the pages it read, `reason` the queue row's reason
+(cut to 200 characters) and `trace` a link to that attempt's trace folder. A "re-queued"
+count in the line means Jev went down and the job went back to the queue. Read each row's
+reason against the park policy above: a reason on the list is a designed stop, and any
+other reason is one to look at.
+
+**Reading a trace.** Every attempt at a job leaves a folder,
+`<job folder>/apply_trace/attempt-<n>/`, and the table links it. Read it in this order:
+
+1. `run.json`: the job's status and reason, `url_chain` (every address the job's tabs
+   loaded, redirects included, in order) and `setup_events` (what happened before the first
+   page was read: the start, a LinkedIn hop, an Apply click).
+2. `page-<k>.jpg` beside `page-<k>.json`, one pair per page read, in order. The picture is
+   the page as it was judged. In the JSON, `state` and `confidence` are the read the run
+   acted on; `answers.page_state` is that read with its evidence, and
+   `answers.page_state_judged` is Jev's own pick with its probabilities, so a page where the
+   two differ shows the page's structure outweighing Jev. `digest` lists the fields and
+   buttons the run saw; the other `answers` are Jev's per question (`field_<n>_source` for
+   the fact a field asks for, `field_<n>_pick` for a dropdown's option, `button_<n>_role`
+   for a button), each with its confidence.
+3. The page's `events`, in order: `plan` (what each field would get), `fill` and `verify`
+   (which boxes were filled and whether each read back), `click` and its result,
+   `decision` (a choice the run made, with `what` and `why`), and `park` (the stop and
+   its evidence).
+4. `end.jpg`: the page the job ended on. `job.log`: the job's log lines.
+
+The trace never holds a field's value, the master password or an emailed code, and every
+password and code box is masked in the pictures. The pictures do show the other answers
+the page showed (your name, email, phone), and `apply_record.md` lists every value
+filled: look through both before you pass them on.
+
+**The probe.** `python local/apply_run.py probe <url>` reads one page the way the run
+would and prints it: the fields and buttons, the page text's head, what the LinkedIn
+handler and the fieldless-posting fallback would click, and whether it reads as an
+account screen. It types, uploads, ticks and submits nothing, in a fresh temporary
+browser profile unless you pass `--profile`. Add `--judge` to ask Jev about the page
+(a few requests, a fraction of a cent): the page read with Jev's own pick beside it, each
+button's role, and the step the loop would take (`--no-submit` describes that step in park
+mode). `--follow-apply` clicks the page's plain Apply entry only (never on a page with
+form fields) and prints the page it opens. `--headed` shows the window. Use it on a
+portal before you queue its jobs, or on a job that stopped for a reason you doubt, and
+send the output back with the trace.
+
+**The shakedown: `drain --cap 2 --no-submit`.** Before a first real drain, and after an
+update, run two queued jobs in park mode with the window visible:
+
+    python local/apply_run.py drain --cap 2 --no-submit
+
+It fills both applications and stops each at its submit step, sending nothing. It costs
+a few cents of Jev at most. Queue two jobs on the portals you apply through most (a
+Workday job is the most useful second one: its wizard shows every step at one address).
+Leave the window alone while it runs, unless a CAPTCHA wait asks for you. Then check:
+
+- Each row of the table ends **ready_to_submit** with "auto_apply_submit is off". Any other
+  end: note its reason and whether it is on the park policy's list.
+- On each open tab, every field holds the right answer and no required field is empty.
+- The page reads: in each `page-<k>.json`, `state` names the page you see in
+  `page-<k>.jpg` (the posting, the form, a sign-in, the review page).
+- The loading waits. The wait for a loading placeholder (a spinner, grey skeleton bars) is
+  kept per step: a wizard that shows each step at the same address gets its own wait on
+  each step. Look in each page's `events` for a `decision` whose `what` is
+  `reread_after_settle` and whose `why` starts "a loading placeholder". One that ends
+  "read again" is the wait working. One that says "a loading placeholder stayed up past
+  ... ms", or a page whose `digest` has no fields while its picture shows a skeleton, means
+  a step was read before it loaded: send that trace.
+
+What to send back: the drain report (`apply_drain-<stamp>.md`); for each job that did not
+end ready to submit, or that filled a field wrong, its `apply_trace/attempt-<n>` folder
+(zipped) and a line on what the page should have got; and the probe output for any page
+you doubt.

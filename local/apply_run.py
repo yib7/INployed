@@ -2136,15 +2136,40 @@ _SSO_NAME = re.compile(r"\b(?:with|using|via|through)\s+(?:your\s+)?([a-z]+)\b",
 _SSO_NAMES = {"linkedin": "LinkedIn", "github": "GitHub", "sso": "SSO", "x": "X"}
 
 
-# the controls a screen of sign-ins with other sites may hold beside them,
-# none a way on of its own: help, a way back, a cancel, a close, the site's
-# privacy, terms and cookie notices
-# a cookie banner's choice beside a sign-in screen: no way on ("Accept all"
-# reads as an advance otherwise)
+# The page chrome a screen of sign-ins with other sites may hold beside
+# them, none a way on (SP7 review M4, N2, R3-I1, R3-M4). Any other control
+# may be a way on, so the screen is not SSO-only: a screen misread so ends
+# at the account step, whose park falls back to the SSO one
+# (`_JobRun._account_park`), where a screen misread the other way would lose
+# a job the run could apply to.
+# - a word of help, a way back, a cancel, a close, the site's privacy,
+#   terms and cookie notices, read after the words of a way on
+_SSO_ASIDE = re.compile(r"\bhelp\b|\bback\b|\bcancel\b|\bclose\b|\bdismiss\b|\bprivacy\b"
+                        r"|\bterms\b|\bcookies?\b", re.I)
+# - a cookie banner's choice ("Accept all" reads as an advance otherwise)
 _COOKIE_CHOICE = re.compile(r"\bcookies?\b|^\s*(?:accept|allow|reject|refuse|deny|decline)\s+all\b",
                             re.I)
+# - a control whose whole words are chrome, read before the words of a way
+#   on ("Email us" holds "email", "Forgot password?" a password): a page
+#   about the site, a way to reach it, a language, an account's recovery
+_SSO_LANGUAGE = (r"english|fran[c\u00e7]ais|deutsch|espa[n\u00f1]ol|italiano|portugu[e\u00ea]s"
+                 r"|nederlands|polski|svenska|dansk|norsk|suomi|t\u00fcrk\u00e7e|magyar"
+                 r"|\u0440\u0443\u0441\u0441\u043a\u0438\u0439|\u65e5\u672c\u8a9e"
+                 r"|(?:\u7b80\u4f53|\u7e41\u9ad4)?\u4e2d\u6587|\ud55c\uad6d\uc5b4"
+                 r"|(?:en|fr|de|es|pt|nl|pl|sv|da|fi|ja|zh|ko)(?:[-_][a-z]{2})?")
+_SSO_CHROME = re.compile(
+    r"learn\s+more(?:\s+about\b.{0,40})?|read\s+more|about\s+us"
+    r"|contact(?:\s+(?:us|support))?|(?:e-?mail|phone|call)\s+(?:us|support)|support"
+    r"|faqs?|frequently\s+asked\s+questions|accessibility(?:\s+statement)?"
+    r"|terms(?:\s+of\s+(?:use|service)|\s+(?:and|&)\s+conditions)?|code\s+of\s+conduct"
+    r"|(?:(?:select|change|choose)\s+(?:your\s+)?)?languages?(?:\s*:\s*(?:" + _SSO_LANGUAGE + r"))?"
+    r"|(?:" + _SSO_LANGUAGE + r")(?:\s*\([^)]{1,30}\))?"
+    r"|forgot(?:\s+(?:your|my))?\s+(?:password|user\s*name|e-?mail(?:\s+address)?|login"
+    r"|sign[\s-]*in(?:\s+details)?)|(?:reset|recover)\s+(?:your\s+|my\s+)?(?:password|account)"
+    r"|(?:having\s+)?trouble\s+(?:signing|logging)\s+in|(?:can['\u2019]?t|cannot)\s+(?:sign|log)"
+    r"\s+in|account\s+recovery|need\s+help\s+signing\s+in", re.I)
 # a control that offers another way to sign in or apply than another site's
-# account (SP7 review M4, N2): more ways, an email, a password, a code
+# account, whatever aside word it also holds ("Go back and use email")
 _SSO_WAY_ON = re.compile(
     r"\b(?:more|other|another|different|alternative)\s+(?:sign[\s-]*in\s+|log[\s-]*in\s+)?"
     r"(?:ways?|methods?|options?)\b|\bshow\s+(?:more|all)\b|\be-?mail\b|\bpassword\b"
@@ -2152,35 +2177,59 @@ _SSO_WAY_ON = re.compile(
     r"|\bnew\s+(?:user|candidate|account)\b|\bguest\b", re.I)
 
 
-def sso_only(digest: apply_form.FormDigest) -> list[str]:
-    """ACC-11: the sites a screen offers to sign in with, when that is its
-    only way on: no box to fill but tick boxes, at least one sign-in with
-    another site's account (`THIRD_PARTY`), and no control that offers
-    another way on: an Apply, a Next, a sign-in or a sign-up of its own, a
-    send, or a control that may show one ("More options", "Other ways to
-    sign in", "Use email", `_SSO_WAY_ON`) means []. Page chrome beside the
-    buttons (help, a way back, a language, "Learn more", "Contact us", a
-    cookie banner's choice) is no way on. The site's header never counts."""
+def _sso_site(text: str) -> str | None:
+    """The site a control signs in with ("Sign in with Google": Google),
+    None for a control that is no sign-in with another site's account."""
+    if not (_THIRD_PARTY.search(text) and _SSO_SIGN_IN.search(text)):
+        return None
+    m = _SSO_NAME.search(text)
+    word = (m.group(1) if m else "another site").lower()
+    return _SSO_NAMES.get(word, word.capitalize())
+
+
+def _sso_chrome(text: str) -> bool:
+    """Is a control page chrome beside sign-ins with other sites
+    (`_COOKIE_CHOICE`, `_SSO_CHROME` over its whole words)?"""
+    core = re.sub(r"^[^\w(]+|[^\w)]+$", "", text)
+    return bool(_COOKIE_CHOICE.search(text) or _SSO_CHROME.fullmatch(core))
+
+
+def sso_sites(digest: apply_form.FormDigest) -> list[str]:
+    """The sites a screen with no box to fill but tick boxes offers to sign
+    in with (`THIRD_PARTY`), whatever else it holds; [] for a screen with a
+    box to fill. The site's header never counts."""
     if any(f.type != "checkbox" for f in digest.fields):
         return []
     names: list[str] = []
+    for b in digest.buttons:
+        name = None if b.chrome or b.disabled else _sso_site(" ".join((b.text or "").split()))
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def sso_only(digest: apply_form.FormDigest) -> list[str]:
+    """ACC-11: the sites a screen offers to sign in with (`sso_sites`), when
+    that is its only way on: beside them only known page chrome (help, a
+    way back, a cancel, a close, a notice, a cookie banner's choice, "Learn
+    more", "Contact us", "Email us", a language, "Forgot password?"). Any
+    other control means []: an Apply, a Next, a sign-in or a sign-up of its
+    own, a send, a control that may show one ("More options"), and one the
+    run does not know ("Skip", "Get started", "Upload resume")."""
+    names = sso_sites(digest)
+    if not names:
+        return []
     for b in digest.buttons:
         if b.chrome or b.disabled:
             continue
         text = " ".join((b.text or "").split())
         if _THIRD_PARTY.search(text):
-            if _SSO_SIGN_IN.search(text):
-                m = _SSO_NAME.search(text)
-                word = (m.group(1) if m else "another site").lower()
-                name = _SSO_NAMES.get(word, word.capitalize())
-                if name not in names:
-                    names.append(name)
-            continue
-        if _COOKIE_CHOICE.search(text):
+            continue            # another site's control, a sign-in or not
+        if _sso_chrome(text):
             continue
         if apply_judge.entry_worded(text) or apply_judge.ADVANCE_WORDS.search(text) \
                 or _ACCOUNT_BUTTON.search(text) or apply_judge.SEND_WORDS.search(text) \
-                or _SSO_WAY_ON.search(text):
+                or _SSO_WAY_ON.search(text) or not _SSO_ASIDE.search(text):
             return []
     return names
 

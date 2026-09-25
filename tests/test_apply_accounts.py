@@ -639,31 +639,53 @@ def test_a_portal_with_page_chrome_beside_its_sso_buttons_parks_as_sso(
     assert not [a for a in r.actions if a.kind == "click"]
 
 
-@pytest.mark.parametrize("buttons, fields, sites", [
+# ACC-11: the controls beside two sign-ins with other sites, over every list
+# the SP7 reviews probed (M4, N2, R3-I1, R3-M4). Known page chrome leaves the
+# screen SSO-only; any other control may be a way on, and a screen read so
+# goes on to its account step (R3-I1: a false SSO park loses a job)
+_SSO_CHROME_CONTROLS = [
+    # round 1 (M4): help, a way back, a cancel, a close, a notice
+    "Help", "Back", "Cancel", "Close", "Privacy policy", "Cookie settings",
+    # round 2 (N2): page chrome
+    "Learn more", "Accept all", "English", "Contact us", "Accept all cookies", "Reject all",
+    "Fran\u00e7ais", "FAQ", "Terms of use", "Accessibility",
+    # round 3 (R3-M4): a way to reach the site, an account's recovery
+    "Email us", "Email support", "Phone support", "Forgot password?", "Code of conduct",
+    "English (US)", "Language: Deutsch", "Can't sign in?", "Reset your password", "Learn more \u203a",
+]
+_SSO_WAY_ON_CONTROLS = [
+    # round 1 (M4): a control that may show the screen's own way on
+    "More options", "Use another method", "Show more", "Other ways to sign in",
+    # round 2 (N2): another way to sign in or apply
+    "Use email", "Continue with email", "Create account", "Sign up", "Use a password instead",
+    "Email me a sign-in link", "More sign-in options", "Next", "I agree", "Sign in with email",
+    "Apply",
+    # round 3 (R3-I1): a control the run does not know
+    "Skip", "Skip for now", "Skip this step", "Not now", "Maybe later", "Proceed", "Get started",
+    "Start", "Go", "Upload resume", "Upload your resume", "Enter details manually",
+    "Fill out the form", "Use my resume", "I don't have an account", "Create one",
+    "First time here?", "New here? Get started", "Continue without signing in",
+    "Apply manually", "Candidate login", "Register",
+    # round 3 (R3-M4): left as ways on, the safe side
+    "Show all", "Join our talent community",
+    # an aside's word beside a way on's
+    "Go back and use email", "Help me apply",
+]
+_SSO_TABLE = [
     (["Sign in with Google", "Continue with Microsoft"], [], ["Google", "Microsoft"]),
-    (["Sign in with Google", "Sign in with email"], [], []),     # an own way on
     (["Sign in with Google"], [("Email", "email")], []),         # a box to fill
     (["Apply with LinkedIn", "Apply"], [], []),                  # a posting's own Apply
     (["Log in using your SSO account", "Help"], [], ["SSO"]),
-    # M4 (SP7 review): a control that may show the screen's own way on
-    (["Sign in with Google", "More options"], [], []),
-    (["Sign in with Google", "Use another method"], [], []),
-    (["Continue with Microsoft", "Show more"], [], []),
-    (["Sign in with Google", "Other ways to sign in"], [], []),
-    # help, a way back, a cancel, a close or a notice is no way on
     (["Sign in with Google", "Help", "Back", "Cancel", "Close", "Privacy policy",
-      "Cookie settings"], [], ["Google"]),
-    # N2 (SP7 review): page chrome beside the buttons is no way on
-    *[(["Sign in with Google", "Continue with Microsoft", aside], [], ["Google", "Microsoft"])
-      for aside in ("Learn more", "Accept all", "English", "Contact us", "Accept all cookies",
-                    "Reject all", "Français", "FAQ", "Terms of use", "Accessibility")],
-    # and a control that offers another way to sign in or apply is one
-    *[(["Sign in with Google", "Continue with Microsoft", way], [], [])
-      for way in ("More options", "Other ways to sign in", "Use email", "Continue with email",
-                  "Create account", "Sign up", "Use a password instead",
-                  "Email me a sign-in link", "More sign-in options", "Next", "I agree")],
+      "Cookie settings", "Learn more", "Email us"], [], ["Google"]),
     (["Sign in with Google", "Learn more"], [("Password", "other")], []),    # a password box
-])
+    *[(["Sign in with Google", "Continue with Microsoft", c], [], ["Google", "Microsoft"])
+      for c in _SSO_CHROME_CONTROLS],
+    *[(["Sign in with Google", "Continue with Microsoft", c], [], []) for c in _SSO_WAY_ON_CONTROLS],
+]
+
+
+@pytest.mark.parametrize("buttons, fields, sites", _SSO_TABLE)
 def test_sso_only_reads_a_screen_whose_one_way_on_is_another_sites_sign_in(buttons, fields,
                                                                          sites):
     form = apply_run.apply_form

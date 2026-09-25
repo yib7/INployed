@@ -44,10 +44,12 @@ only meaningful once the fact is known. The first request carries a
 the value); a model-mapped select waits for `field_{n}_pick` from the second
 request, and until then it is `skip` and, when required, sets `park_reason`.
 
-The thresholds were tuned 2026-09-22 (SP8) against the recorded live answers
-in `tests/fixtures/jev_cache/cache.json`; the block below the constants
-records the distribution each gate was read against. The constants are the
-only place to change them.
+The thresholds were tuned 2026-09-25 (SP8b) against the recorded live answers
+in `tests/fixtures/jev_cache/cache.json` (the runner tests) and
+`tests/fixtures/jev_cache/matrix_cache.json` (the flow matrix's real column),
+and the live page reads of the matrix and the local captures (first tuned
+2026-09-22, SP8); the block below the constants records the distribution each
+gate was read against. The constants are the only place to change them.
 """
 from __future__ import annotations
 
@@ -1655,25 +1657,42 @@ def _action_for(f) -> str:
     return "fill"
 
 
+# The profile's name sources, the only ones whose probabilities pool
+# (`pooled_confidence`): each types the candidate's own name, so two of them
+# typing the same words are one answer. An answer-bank entry (`answer_<id>`),
+# years of experience or any other fact is left out: the same "Yes" or "5"
+# given to two questions says nothing about which question the field asks.
+POOL_KEYS = frozenset({"full_name", "first_name", "last_name", "signature_name",
+                       "signature_today"})
+# a value no two sources can agree on by meaning: a yes/no word or a number
+_GENERIC_VALUE = re.compile(r"^(?:yes|no|y|n|true|false|n/?a|none|\d+(?:[.,]\d+)?\+?)$", re.I)
+
+
 def _typed_words(f, catalog: FactCatalog, key: str) -> str:
-    """The words source `key` would type into field `f`, whitespace folded
-    and lowercased; "" for a source that types no plain text (a Yes/No, a
-    list answer, a file, a date, the specials other than the typed name)."""
+    """The words name source `key` (`POOL_KEYS`) would type into field `f`,
+    whitespace folded and lowercased; "" for any other source, and for a
+    value that is a yes/no word or a number (`_GENERIC_VALUE`)."""
+    if key not in POOL_KEYS:
+        return ""
     if key == "signature_today":
-        key = "today" if _wants_date(f) else "signature_name"
+        if _wants_date(f):
+            return ""
+        key = "signature_name"
     fact = catalog.facts.get(key)
     if fact is None or fact.kind != "text" or not fact.value:
         return ""
-    return " ".join(fact.value.split()).lower()
+    words = " ".join(fact.value.split()).lower()
+    return "" if _GENERIC_VALUE.match(words) else words
 
 
 def pooled_confidence(f, catalog: FactCatalog, answer: Answer | None, key: str) -> float:
-    """The judge's probability that field `f` gets the words `key` types:
-    the sum over every text source that types the same words. A signature
-    box read live as the full name at 0.61 and as the typed signature at
-    0.29 (2026-09-25) is one answer at 0.90, since both type the name. Plain
-    text only: a Yes shared by two questions of different meaning never
-    pools. 0.0 when `key` types no plain text."""
+    """The judge's probability that field `f` gets the name `key` types:
+    the sum over every name source (`POOL_KEYS`) that types the same words.
+    A signature box read live as the full name at 0.61 and as the typed
+    signature at 0.29 (2026-09-25) is one answer at 0.90, since both type
+    the name. Nothing else pools: an answer-bank entry, a Yes or a number
+    shared by two questions of different meaning stays apart. 0.0 when
+    `key` is no name source."""
     want = _typed_words(f, catalog, key)
     if not want or answer is None:
         return 0.0
@@ -1688,8 +1707,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     Per field: a `quick_map` hit whose fact has a value wins over the model's
     mapping (a disagreement is logged at DEBUG; an empty fact falls through to
     the model's mapping); a mapping below `FIELD_MAP_MIN_CONF` or equal to
-    `leave_blank` is `skip` (a text source's mapping counts the probability
-    of every text source that types the same words, `pooled_confidence`),
+    `leave_blank` is `skip` (a name source's mapping counts the probability
+    of every name source that types the same words, `pooled_confidence`),
     and when the field is required the plan carries
     `park_reason` and a `missing` entry (an optional skip is a `missing` entry
     only); `needs_generation` is `generate` when generation is enabled, else

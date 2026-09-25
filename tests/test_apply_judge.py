@@ -174,7 +174,9 @@ def test_threshold_constants_match_the_spec_table():
     assert apply_judge.GROUNDING_MIN == 0.70
     assert apply_judge.MAX_PAGES == 20
     assert apply_judge.PAGE_TEXT_CAP == 4000
-    assert "tuned 2026-09-22" in apply_judge.__doc__ and "UNTUNED" not in apply_judge.__doc__
+    doc = " ".join(apply_judge.__doc__.split())
+    assert "tuned 2026-09-25 (SP8b)" in doc and "UNTUNED" not in doc
+    assert "cache.json" in doc and "matrix_cache.json" in doc
 
 
 def test_the_option_tuples():
@@ -844,6 +846,42 @@ def test_plan_pools_neither_other_words_nor_a_shared_yes(catalog):
     assert [pf.action for pf in p.fields] == ["skip", "skip"]
     assert p.park_reason == ("required field without an answer: "
                              "Signature (type your full name)")
+
+
+def _bank_with(*entries):
+    bank = _bank()
+    bank.extend({"id": eid, "question": q, "answer": a, "kind": "fixed", "status": "active"}
+                for eid, q, a in entries)
+    return bank
+
+
+@pytest.mark.parametrize("label,split,value", [
+    # SP8b review I2: two answer-bank entries that both hold "Yes"; the judge
+    # was unsure which applied, and the shared Yes is no agreement
+    ("Do you hold a current driver's license?",
+     {"answer_over_18": 0.45, "answer_background_check": 0.30, "leave_blank": 0.25}, "Yes"),
+    # and a number: the years of experience and an answer-bank entry both "2"
+    ("Years of Python experience",
+     {"years_experience": 0.45, "answer_sql_years": 0.30, "leave_blank": 0.25}, "2"),
+])
+def test_plan_pools_no_answer_bank_yes_and_no_shared_number(tmp_path, label, split, value):
+    (tmp_path / "apply.md").write_text(apply_data.build_markdown(_MASTER, _JOB, _bank()),
+                                       encoding="utf-8")
+    cat = apply_facts.build(tmp_path, today=date(2026, 9, 21), answers=_bank_with(
+        ("over_18", "Are you at least 18 years old?", "Yes"),
+        ("background_check", "Will you consent to a background check?", "Yes"),
+        ("sql_years", "How many years of SQL experience do you have?", "2")))
+    keys = [k for k in split if k != "leave_blank"]
+    assert [cat.value(k) for k in keys] == [value, value]
+    options = ("Yes", "No") if value == "Yes" else ()
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, label, "radio" if options else "text", required=True, options=options)])
+    # the option pick is sure: only the source split decides
+    answers = _page_answers(digest, {}, options={0: ("Yes", 1.0)})
+    answers["field_0_source"] = _split(keys[0], 0.45, split)
+    p = apply_judge.plan(digest, cat, answers)
+    assert p.fields[0].action == "skip"
+    assert p.park_reason == f"required field without an answer: {label}"
 
 
 def test_a_portfolio_box_takes_the_github_fact_when_no_website_is_stored(tmp_path):

@@ -537,3 +537,46 @@ def test_a_re_verification_replaces_its_own_rows_and_keeps_the_rest():
     apply_run._record_verification(rec, [VerifyResult(0, "Phone", True, 0.95, 0.05)])
     assert [(r["label"], r["ok"]) for r in rec["verification"]] == [("Phone", True),
                                                                   ("Email", True)]
+
+
+# === SP6 review round 2 ====================================================================================
+
+# --- R2-I1: a way on whose own box takes the form's message is found again ------------------------------
+
+@pytest.mark.parametrize("name", ["validation_in_button_box", "validation_in_button_box_submit"])
+def test_a_button_whose_box_takes_the_forms_message_is_found_again(_browser, flow_server,
+                                                                    tmp_path, name):
+    r = h.run_flow(h.flow(name), jev.FakeJev(), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert not any(d["what"] == "button_lost" for d in _decisions(r))
+
+
+def test_a_footer_button_outside_any_form_is_matched_by_its_box_never_another_boxs(browser_page):
+    # two boxes outside any form, each with a bare "Submit": the one found
+    # again is the box's that holds the application's fields, whatever
+    # message the page writes beside it; gone, the talent box's never is
+    from unittest.mock import Mock
+    browser_page.set_content("""<body>
+      <div class="talent"><label>Your email <input type="email" name="t"></label>
+        <div class="bar"><button type="button">Submit</button></div></div>
+      <div class="application"><label>First name <input name="f"></label>
+        <label>Last name <input name="l"></label>
+        <div class="bar" id="bar"><button type="button">Submit</button></div></div></body>""")
+    run = apply_run._JobRun(apply_run.Runner(jev=jev.FakeJev(), context=Mock(), run_context={},
+                                             sleep=lambda s: None), Mock(),
+                            {"job_posting_id": "s", "apply_url": "https://x.example/1"})
+    run.page = browser_page
+    d = apply_form.extract(browser_page)
+    app = max(b.n for b in d.buttons if b.text == "Submit")     # the second, in page order
+    who = run._button_identity(d, app)
+    browser_page.evaluate("""() => { const e = document.createElement('p');
+      e.textContent = 'Please correct 1 error.'; document.getElementById('bar').prepend(e); }""")
+    d2 = apply_form.extract(browser_page)
+    got = run._same_button(d2, who)
+    assert got is not None
+    assert browser_page.locator("#bar button").evaluate("el => el.textContent") == "Submit"
+    live = run._button_identity(d2, got)
+    assert set(live["home"]) & set(who["home"]) and "t" not in live["home"]
+    browser_page.evaluate("document.querySelector('#bar button').remove()")
+    assert run._same_button(apply_form.extract(browser_page), who) is None

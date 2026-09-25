@@ -1036,6 +1036,14 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", wrap=OptionalLeftBlank,
          covers="the same, then a submit the form refuses with nothing sent: repaired once and "
                 "sent through the gate again (ADV-02)"),
+    Flow("validation_in_button_box", "validation_in_button_box.html", False, "ready_to_submit",
+         _PARKED, confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
+         covers="a Next refused with its summary written into the Next's own box: the same "
+                "button found again after the repair (SP6 review R2-I1)"),
+    Flow("validation_in_button_box_submit", "validation_in_button_box.html", True, "submitted",
+         _SUBMITTED, confirm="#thanks:visible", wrap=OptionalLeftBlank,
+         covers="the same, and a submit refused with its message in its own box: repaired and "
+                "sent through the gate again (SP6 review R2-I1)"),
     Flow("validation_banner_only", "validation_banner_only.html", False, "ready_to_submit",
          _PARKED, confirm="#thanks:visible", gate="#btn-submit:visible", wrap=OptionalLeftBlank,
          covers="a Next refused with one banner no control names: the judge's mapping is the "

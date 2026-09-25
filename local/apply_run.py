@@ -829,6 +829,27 @@ def _spare_judged(plan: FillPlan, judged: set[int]) -> None:
         plan.park_reason = f"{head}{hard.label}" if hard is not None else ""
 
 
+# A button outside any form (a wizard's footer): the fields of the lowest box
+# above it that holds any, by their id, name or type; a box of another form
+# (a talent-community sign-up) holds none of them (SP6 review R2-I1)
+_BUTTON_HOME_JS = r"""el => {
+  const FIELD = 'input:not([type=hidden]):not([type=submit]):not([type=button])'
+    + ':not([type=image]):not([type=reset]), select, textarea';
+  for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+    const got = Array.from(p.querySelectorAll(FIELD));
+    if (got.length) return got.map((f) => f.id || f.getAttribute('name') || f.type).slice(0, 60);
+  }
+  return [];
+}"""
+
+
+def _ident_attrs(ident: str) -> str:
+    """An identity (`apply_form.IDENT_FN_JS`) without its label part: the
+    control's own tag, type, id, name, aria-label, test attributes and
+    placeholder."""
+    return str(ident).rsplit("|", 1)[0]
+
+
 def _label_key(label: str) -> str:
     """A field's question words, spaces and case folded (the key the
     messages' tried fields keep, M1)."""
@@ -4567,37 +4588,51 @@ class _JobRun:
     def _button_identity(self, digest: apply_form.FormDigest, n: int) -> dict[str, Any] | None:
         """Who button `n` is on the live page, read before a repair: its
         locator, its text, its identity (`apply_form.IDENT_FN_JS`: tag, type,
-        id, name, aria-label, test attributes, its label or its box's words)
-        and its form (`apply_form.form_index`)."""
+        id, name, aria-label, test attributes, then its label or its box's
+        words), its form (`apply_form.form_index`) and, outside a form, the
+        fields of the lowest box above it that holds any (`_BUTTON_HOME_JS`)."""
         b = next((x for x in digest.buttons if x.n == n), None)
         if b is None:
             return None
         who: dict[str, Any] = {"locator": tuple(b.locator), "text": " ".join(b.text.split()),
-                               "ident": "", "form": None}
+                               "ident": "", "form": None, "home": []}
         try:
             loc = apply_form.resolve(self.page, b.locator)
             if loc.count() == 1:
                 who["ident"] = str(loc.first.evaluate(apply_form.IDENT_FN_JS, timeout=2_000))
                 who["form"] = apply_form.form_index(self.page, [b.locator])[0]
+                if who["form"][1] == -1:
+                    who["home"] = list(loc.first.evaluate(_BUTTON_HOME_JS, timeout=2_000) or [])
         except Exception:       # noqa: BLE001  (a page double; `_same_button` finds none)
             pass
         return who
 
     def _same_button(self, digest: apply_form.FormDigest, who: dict[str, Any] | None) -> int | None:
         """The `n` of the button in `digest` that is the control `who`
-        (`_button_identity`) names: the same text, the same identity and the
-        same form, read live; the one at the same locator first. None when no
+        (`_button_identity`) names, read live: the same text, the same
+        attributes (the identity without its label part: a form that writes
+        its message into the button's own box changes those words, SP6
+        review R2-I1), and the same form, or outside a form a box that holds
+        a field of the one it sat in. Among several, the one whose label
+        words still agree, then the one at the same locator. None when no
         button is that control: another form's button with the same words
         ("Submit" of a talent-community box) never is."""
         if who is None or not who.get("ident"):
             return None
         rows = [b for b in digest.buttons if " ".join(b.text.split()) == who["text"]]
-        rows.sort(key=lambda b: tuple(b.locator) != who["locator"])
+        found = []
         for b in rows:
             live = self._button_identity(digest, b.n)
-            if live and live["ident"] and apply_form.same_ident(live["ident"], who["ident"])                     and live["form"] == who["form"]:
-                return b.n
-        return None
+            if not (live and live["ident"]) or live["form"] != who["form"]:
+                continue
+            if _ident_attrs(live["ident"]) != _ident_attrs(who["ident"]):
+                continue
+            if who["form"][1] == -1 and who.get("home") \
+                    and not set(live.get("home") or []) & set(who["home"]):
+                continue
+            found.append((not apply_form.same_ident(live["ident"], who["ident"]),
+                          tuple(b.locator) != who["locator"], b.n))
+        return min(found)[2] if found else None
 
     def _button_lost(self, who: dict[str, Any] | None) -> _Parked:
         """The park when the control a step clicks cannot be found again after

@@ -1030,15 +1030,15 @@ class _Accounts:
     def _to_sign_in(self, page, digest, host: str, exists: str) -> bool:
         """ACC-03: from a sign-up that says the address has an account, the
         screen's own way to the sign-in (the first button or link that says
-        sign in, none in the header, none with another site, none that
-        sends), clicked through the live click guard; with none, the job
+        sign in, none in the header, none with another site, none for job
+        alerts, none that sends), clicked through the live click guard; with none, the job
         parks naming the account."""
         own: dict[str, apply_form.Button] = {}
         for b in digest.buttons:
             text = b.text or ""
             if b.chrome or b.disabled or not _SIGN_IN_ONLY.search(text) \
                     or _THIRD_PARTY.search(text) or _NOT_ACCOUNT_STEP.search(text) \
-                    or _send_worded(text, account=True):
+                    or _NOT_AN_ACCOUNT.search(text) or _send_worded(text, account=True):
                 continue
             own.setdefault(" ".join(text.lower().split()), b)
         if not own:
@@ -1172,25 +1172,41 @@ class _Accounts:
     def _signup_link(self, page, digest, host: str) -> bool | None:
         """The sign-in page's one create-account link, taken once the judge
         rates it a way on (the page it leads to is read and signed up on
-        here); None when the page has no such link."""
+        here). A link to job alerts, a newsletter or a talent network, a
+        sign-up with another site or a decline is none (ACC-01), and a link
+        in the site's header, nav or footer counts only when the page's body
+        has none. None when the page has no such link, several that lead to
+        different pages, or one the judge does not rate a way on: the
+        screen's create-account button (ACC-01) and the one sign-in (ACC-02)
+        come next."""
         # Expose account-creation links as buttons to the same role judge.
         links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
-        count = links.count()
-        if not count:
+        found: list[tuple[str, str, bool]] = []     # (text, target, in the site's chrome)
+        for i in range(links.count()):
+            link = links.nth(i)
+            text = " ".join((link.inner_text(timeout=apply_fill.ACTION_TIMEOUT_MS) or "").split())
+            href = link.get_attribute("href", timeout=apply_fill.ACTION_TIMEOUT_MS)
+            if not href or _NOT_AN_ACCOUNT.search(text) or _THIRD_PARTY.search(text) \
+                    or apply_judge.DECLINE_WORDS.search(text):
+                continue
+            found.append((text, urljoin(page.url, href), bool(link.evaluate(_LINK_CHROME_JS))))
+        found = [f for f in found if not f[2]] or found
+        if not found:
             return None
         # a header link and a body link that point at the same page are one
         # offer; two different destinations are a choice nobody made. The
         # hrefs are resolved against the page first, so an absolute link
         # and a relative one to the same target count once.
-        hrefs = [links.nth(i).get_attribute("href") for i in range(count)]
-        targets = {urljoin(page.url, h) for h in hrefs if h}
+        targets = {target for _, target, _ in found}
         if len(targets) != 1:
-            return False
+            self.run._decide("signup_link", f"the sign-in page's create-account links lead to "
+                                            f"{len(targets)} pages; none is followed")
+            return None
         target = targets.pop()
         self.run._check_host(target)
         link_digest = apply_form.FormDigest(
             url_host=host, title=digest.title, text=digest.text,
-            buttons=[apply_form.Button(0, (0, "a"), links.first.inner_text(), "")])
+            buttons=[apply_form.Button(0, (0, "a"), found[0][0], "")])
         plan = apply_judge.plan(link_digest, self.run.catalog,
                                 self.run._map(link_digest, {}, "job_posting", discover=False,
                                               own_page=False), company=self.run._company())
@@ -1198,7 +1214,7 @@ class _Accounts:
         self.run._decide("signup_link", "the sign-in page's one create-account link",
                          target=target, advance=advance_conf)
         if advance_conf < apply_judge.BUTTON_ADVANCE_MIN_CONF:
-            return False
+            return None
         page.goto(target, timeout=self._nav_timeout())
         self.run._check_host(page.url)
         # the sign-up page renders like any other: it is read once it
@@ -1849,6 +1865,12 @@ _CREATE_ACCOUNT = re.compile(r"\bcreate\s+(?:an?\s+|your\s+|new\s+)?(?:\w+\s+)?a
                              r"|\bsign[\s-]*up\b|\bregister\b|\bnew\s+(?:user|candidate)\b", re.I)
 _NOT_AN_ACCOUNT = re.compile(r"\balerts?\b|\bnewsletter|\btalent\s+(?:community|network|pool)"
                              r"|\bupdates\b|\bevents?\b", re.I)
+# a link in the site's header, nav or footer (a form's or a dialog's own
+# header is the form's)
+_LINK_CHROME_JS = """el => {
+  const c = el.closest('header, footer, nav, [role=banner], [role=contentinfo], [role=navigation]');
+  return !!c && !(c.parentElement && c.parentElement.closest('form, dialog, [role=dialog]'));
+}"""
 _SIGN_IN_ONLY = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b", re.I)
 
 
@@ -2116,7 +2138,7 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     for b in digest.buttons:
         if getattr(b, "chrome", False) or getattr(b, "disabled", False) \
                 or not _ACCOUNT_BUTTON.search(b.text) or apply_judge.DECLINE_WORDS.search(b.text) \
-                or _THIRD_PARTY.search(b.text):
+                or _THIRD_PARTY.search(b.text) or _NOT_AN_ACCOUNT.search(b.text):
             continue
         own.setdefault(" ".join(b.text.lower().split()), b)
     buttons = list(own.values())
@@ -2126,10 +2148,12 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
         held = plan.buttons.get(role)
         if held is None or held[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF \
                 or _chrome(digest, held[0]) or _THIRD_PARTY.search(text.get(held[0], "")) \
-                or _NOT_ACCOUNT_STEP.search(text.get(held[0], "")):
+                or _NOT_ACCOUNT_STEP.search(text.get(held[0], "")) \
+                or _NOT_AN_ACCOUNT.search(text.get(held[0], "")):
             # never a header's button, a sign-in with another site, or a
             # control beside the step: a password reset (it mails a reset
-            # link), a resend, a cancel, a way back
+            # link), a resend, a cancel, a way back, a sign-up for job
+            # alerts, a newsletter or a talent network (ACC-01)
             continue
         words = text.get(held[0], "")
         if step == read and fitting and other.search(words) and not fits.search(words):

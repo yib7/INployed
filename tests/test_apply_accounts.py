@@ -869,6 +869,99 @@ def test_the_create_account_button_is_the_one_that_makes_an_account(browser_page
     assert browser_page.evaluate("document.body.dataset.took") == "create"
 
 
+_SIGN_IN_ALERTS_LINK = """<body><header><a href="/alerts">Sign up for job alerts</a></header>
+<h1>Sign In</h1>
+<label>Email Address <input id="email" type="text"></label>
+<label>Password <input id="pw" type="password"></label>
+<button type="button" id="go">Sign In</button>
+<button type="button" onclick="document.body.dataset.took = 'create';
+  document.body.insertAdjacentHTML('beforeend', '<h2>Create Account</h2>')">Create Account</button>
+</body>"""
+
+
+def test_a_header_job_alerts_link_never_shadows_the_create_account_button(
+        browser_page, tmp_path, monkeypatch, ledger):
+    # I3 (SP7 review): the header's "Sign up for job alerts" link was taken
+    # for the sign-in's create-account link; the run went to the alerts page
+    # and parked as a login wall, the Create Account button never clicked
+    import apply_form
+    monkeypatch.setattr(ats_accounts, "has_password", lambda: True)
+    for path, body in (("signin", _SIGN_IN_ALERTS_LINK), ("alerts", "<h1>Job alerts</h1>")):
+        browser_page.route(f"http://127.0.0.1/{path}", h._fulfiller(body))
+    browser_page.goto("http://127.0.0.1/signin")
+    run = _job_run(tmp_path, "127.0.0.1")
+    run.page = browser_page
+    run.catalog = apply_run.apply_facts.FactCatalog()
+    digest = apply_form.extract(browser_page)
+    assert run.accounts.login(browser_page, digest, "127.0.0.1") is True
+    assert browser_page.evaluate("document.body.dataset.took") == "create"
+    assert browser_page.url == "http://127.0.0.1/signin"
+
+
+def test_a_sign_in_whose_header_carries_a_job_alerts_link_makes_the_account(
+        _browser, flow_server, tmp_path):
+    r = _run(h.flow("signin_alerts_link"), tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    clicks = [a.text for a in r.actions if a.kind == "click"]
+    assert "Create Account" in clicks and "Sign up for job alerts" not in clicks, clicks
+    assert not [a for a in r.actions if a.secret and a.account.startswith("login")]
+
+
+def test_a_job_alerts_link_leaves_the_one_sign_in_to_a_screen_with_no_sign_up(
+        _browser, flow_server, tmp_path):
+    # no Create Account button: the alerts link is no sign-up, and the one
+    # sign-in without a ledger entry (ACC-02) is tried
+    import json
+    body = (h.FIXTURES_DIR / "forms" / "signin_alerts_link.html").read_text(encoding="utf-8")
+    body = body.replace('<p><button type="button" id="btn-create-account">Create Account</button>'
+                        '</p>', "").replace(
+        "document.body.setAttribute('data-signed-in', 'refused');",
+        "window.location.href = 'lever_single.html'; return;")
+    assert "btn-create-account\"" not in body and "lever_single.html'; return;" in body
+    f = h.Flow("signin_alerts_only", "signin_alerts_only.html", False, "ready_to_submit",
+               h._PARKED, confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
+               routes=lambda base: {f"{base}/forms/signin_alerts_only.html": body})
+    r = _run(f, tmp_path, _browser, flow_server)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    ledger = json.loads((Path(r.trace).parents[2] / "accounts.json").read_text(encoding="utf-8"))
+    assert "signed in" in ledger["127.0.0.1"]["note"]
+
+
+def test_the_account_steps_own_buttons_are_never_a_job_alerts_sign_up():
+    # a noisy judge rated the job-alerts sign-up the advance of a sign-up
+    # screen; the screen's own Create Account is the click
+    from apply_judge import FillPlan
+    form = apply_run.apply_form
+    digest = form.FormDigest("127.0.0.1", "Create Account", "Create Account", fields=[
+        form.Field(0, (0, "#email"), "Email Address", "email", False),
+        form.Field(1, (0, "#p"), "Password", "other", False, autocomplete="new-password"),
+        form.Field(2, (0, "#c"), "Verify New Password", "other", False,
+                   autocomplete="new-password")],
+        buttons=[form.Button(0, (0, "#b0"), "Sign up for job alerts"),
+                 form.Button(1, (0, "#b1"), "Create Account")])
+    plan = FillPlan(buttons={"advance": (0, 0.93), "other": (1, 0.94)})
+    assert apply_run.account_advance(digest, plan, signup=True) == (
+        1, apply_run.apply_judge.BUTTON_ADVANCE_MIN_CONF)
+
+
+def test_the_way_to_the_sign_in_is_never_a_job_alerts_sign_in(browser_page, tmp_path):
+    # ACC-03's way from a sign-up that says the account exists to the sign-in
+    import apply_form
+    browser_page.route("http://127.0.0.1/signup", lambda route: route.fulfill(
+        content_type="text/html", body="""<body><h1>Create Account</h1>
+<p>An account with this email already exists.</p>
+<button type="button" onclick="document.body.dataset.took = 'alerts'">Sign in to manage job
+alerts</button>
+<button type="button" onclick="document.body.dataset.took = 'signin';
+  document.body.insertAdjacentHTML('beforeend', '<h2>Sign In</h2>')">Sign In</button></body>"""))
+    browser_page.goto("http://127.0.0.1/signup")
+    run = _job_run(tmp_path, "127.0.0.1")
+    run.page = browser_page
+    digest = apply_form.extract(browser_page)
+    assert run.accounts._to_sign_in(browser_page, digest, "127.0.0.1", "exists") is True
+    assert browser_page.evaluate("document.body.dataset.took") == "signin"
+
+
 def test_a_sign_ins_box_that_came_back_is_never_typed_again(tmp_path):
     # ACC-12 re-types a sign-up's emptied boxes only: a sign-in's box that came
     # back is a rejected password, and a second typing moves toward a lockout

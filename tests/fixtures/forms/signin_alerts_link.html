@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  header { display: flex; gap: 12px; padding: 12px 24px; background: #eef; }
+  main { margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<!-- ACC-01 (SP7 review I3): the site's header carries a job-alerts sign-up
+     link; the sign-in's own way to an account is its Create Account button,
+     which swaps in the sign-up form. The job-alerts page is no account, and
+     this site holds no account for the address: a sign-in is refused. -->
+<header><a href="#">Fabrikam Careers</a><a href="job_alerts.html">Sign up for job alerts</a></header>
+<main>
+  <h1>Sign In</h1>
+  <div id="signin">
+    <p id="signin-error" role="alert" style="display: none">Wrong email or password.</p>
+    <label for="login_email">Email Address</label><input id="login_email" name="email" type="email" autocomplete="username">
+    <label for="login_password">Password</label><input id="login_password" name="password" type="password" autocomplete="current-password">
+    <p><button type="button" id="btn-signin">Sign In</button></p>
+    <p><button type="button" id="btn-create-account">Create Account</button></p>
+  </div>
+</main>
+<script>
+  document.getElementById('btn-signin').addEventListener('click', function () {
+    if (!document.getElementById('login_password').value) return;
+    document.body.setAttribute('data-signed-in', 'refused');
+    document.getElementById('login_password').value = '';
+    document.getElementById('signin-error').style.display = 'block';
+  });
+  document.getElementById('btn-create-account').addEventListener('click', function () {
+    document.querySelector('h1').textContent = 'Create Account';
+    document.getElementById('signin').outerHTML =
+      '<div id="signup">' +
+      '<label for="signup_email">Email Address</label><input id="signup_email" name="email" type="email" autocomplete="username">' +
+      '<label for="signup_password">Password</label><input id="signup_password" name="password" type="password" autocomplete="new-password">' +
+      '<label for="signup_confirm">Verify New Password</label><input id="signup_confirm" name="password_confirmation" type="password" autocomplete="new-password">' +
+      '<p><button type="button" id="btn-create">Create Account</button></p>' +
+      '</div>';
+    document.getElementById('btn-create').addEventListener('click', function () {
+      var p = document.getElementById('signup_password').value;
+      if (!p || p !== document.getElementById('signup_confirm').value
+          || !document.getElementById('signup_email').value) return;
+      window.location.href = 'lever_single.html';
+    });
+  });
+</script>
+</body>
+</html>

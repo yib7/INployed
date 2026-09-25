@@ -1165,6 +1165,10 @@ FLOWS: tuple[Flow, ...] = (
          password=True,
          covers="a portal whose only way on is a sign-in with Google, Microsoft, LinkedIn or "
                 "Apple: parks at once, none clicked (ACC-11)"),
+    Flow("signin_alerts_link", "signin_alerts_link.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
+         covers="a sign-in whose header carries a job-alerts sign-up link: the screen's own "
+                "Create Account button makes the account, never the alerts link (ACC-01)"),
 )
 
 

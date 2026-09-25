@@ -214,11 +214,12 @@ class Guarded:
     `delays`, or after the service's Retry-After when that is longer. When
     the last try fails too, when the service asks for a wait over
     `RETRY_AFTER_CAP_S`, or when it refuses the key (401, 402, 403), the
-    breaker opens: `down` names the error's class and status and every
-    later request raises `JudgeOutage` at once, so the run can hand its job
-    back to the queue and stop the drain. Any other error (a request the
-    service rejected, a bug) passes through as it was. Attributes other than
-    `judge` are the wrapped judge's."""
+    breaker opens: `down` names the error's class and status, `refused`
+    says it was the key (no wait mends that), and every later request
+    raises `JudgeOutage` at once, so the run can hand its job back to the
+    queue and stop the drain. Any other error (a request the service
+    rejected, a bug) passes through as it was. Attributes other than `judge`
+    are the wrapped judge's."""
 
     def __init__(self, inner: Any, *, sleep: Callable[[float], None] = time.sleep,
                  delays: tuple[float, ...] = RETRY_DELAYS_S,
@@ -228,6 +229,7 @@ class Guarded:
         self.delays = tuple(delays)
         self.log = logger if logger is not None else log
         self.down = ""
+        self.refused = False
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         if self.down:
@@ -254,7 +256,7 @@ class Guarded:
                 asked = retry_after_s(e)
                 if refused or n + 1 >= tries or (asked is not None
                                                  and asked > RETRY_AFTER_CAP_S):
-                    self.down = kind
+                    self.down, self.refused = kind, refused
                     self.log.warning("jev unavailable: %s after %d attempt(s); the breaker "
                                      "is open", kind, n + 1)
                     raise JudgeOutage(kind) from e

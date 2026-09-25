@@ -1812,7 +1812,11 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # (RES-02): the job is never re-queued once something may have been
     # sent, and the run cannot read on, a dead end the user checks
     "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the run stopped after the "
-    r"(?:submit click|code step) \(" + re.escape(apply_run.JUDGE_DOWN_REASON) + ": "))
+    r"(?:submit click|code step) \(" + re.escape(apply_run.JUDGE_DOWN_REASON) + ": ",
+    # SP8a review M1: the judge down under the same job a second time, a
+    # failure the job's own request may cause: parked so the queue moves on
+    "^" + re.escape(apply_run.JUDGE_DOWN_REASON) + ": .+; "
+    + re.escape(apply_run.OUTAGES_PARKED) + "$"))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

@@ -513,6 +513,34 @@ def test_requeue_clears_the_right_fields_keeps_attempts(tmp_path):
     assert got["queued_at"]            # re-entered the FIFO
 
 
+def test_unclaim_gives_the_attempt_back_and_counts_the_outage_only_when_asked(tmp_path):
+    # SP8a review M1: a judge the service could not answer gives the attempt
+    # back and counts an outage; a refused key keeps the attempt counted
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    queued_at = apply_queue.claim(claimed_by="w", path=q)["queued_at"]
+    got = apply_queue.unclaim("1", notes="judge down", path=q)
+    assert (got["status"], got["attempts"], got["outages"]) == ("queued", 0, 1)
+    assert got["queued_at"] == queued_at        # its place in the FIFO kept
+    apply_queue.claim(claimed_by="w", path=q)
+    got = apply_queue.unclaim("1", give_back=False, path=q)
+    assert (got["status"], got["attempts"], got["outages"]) == ("queued", 1, 1)
+    apply_queue.claim(claimed_by="w", path=q)
+    got = apply_queue.unclaim("1", path=q)
+    assert (got["attempts"], got["outages"]) == (1, 2)
+
+
+def test_requeue_starts_the_outage_count_over(tmp_path):
+    q = _q(tmp_path)
+    apply_queue.enqueue(_entry("1"), path=q)
+    apply_queue.claim(claimed_by="w", path=q)
+    apply_queue.unclaim("1", path=q)
+    apply_queue.claim(claimed_by="w", path=q)
+    apply_queue.finish("1", "needs_human", path=q)
+    got = apply_queue.requeue("1", path=q)
+    assert got["status"] == "queued" and got.get("outages", 0) == 0
+
+
 def test_requeue_refresh_hook_called_with_folder(tmp_path, monkeypatch):
     q = _q(tmp_path)
     _finished_entry(q)

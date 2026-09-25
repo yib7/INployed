@@ -299,6 +299,15 @@ TAB_CLOSED_REASON = "the job's tab was closed"
 # `queued` with its attempt not counted and the drain stops; no park.
 JUDGE_DOWN_REASON = "judge unavailable"
 REQUEUED_NOTE = "re-queued, this attempt not counted"
+# A refused key (401, 402, 403) is none of the job's doing and no wait mends
+# it: the job goes back with this attempt counted and no outage (SP8a review M1)
+KEY_REFUSED_NOTE = "re-queued, this attempt counted (the judge refused the key or the account)"
+# The judge down under the same job a second time parks it (M1): a failure
+# its own request causes would otherwise stop every drain at the queue's head
+OUTAGES_MAX = 2
+OUTAGES_PARKED = (f"the judge went down under this job {OUTAGES_MAX} times; parked so the "
+                  f"queue moves on")
+OUTAGES_NOTE = "Re-queue once the judge answers again"
 EVIDENCE_CAP = 300                # characters of evidence a park reason carries
 PROBE_SETTLE_S = 10                # the probe's wait for a page to hold still
 PROBE_GOTO_MS = 30_000
@@ -3912,7 +3921,7 @@ class Runner:
         RES-02) stops it too: the job it was on goes back to `queued` with
         its attempt not counted, unless something may have been sent."""
         limit = int(cap if cap is not None else self.settings["auto_apply_batch_cap"])
-        self.jev.down = ""      # a new drain tries the judge again
+        self.jev.down, self.jev.refused = "", False     # a new drain tries the judge again
 
         def _work(ctx) -> list[Outcome]:
             outcomes: list[Outcome] = []
@@ -4702,7 +4711,9 @@ class _JobRun:
                                                        f"after the code step "
                                                        f"({JUDGE_DOWN_REASON}: {down} at {step})",
                                         CHECK_SENT_NOTE)
-                return self._finish("failed", f"{type(e).__name__} at {step} "
+                # a service's status stays in (`jev.error_kind`): a request the
+                # judge rejected (a 400, one too large) ends this job only (M1)
+                return self._finish("failed", f"{jev.error_kind(e)} at {step} "
                                               f"(page {len(self.pages)})")
         finally:
             self._unlisten_loads()
@@ -4723,12 +4734,22 @@ class _JobRun:
 
     def _requeued(self, step: str) -> Outcome:
         """RES-02: the judge went down under the job before anything could
-        have been sent. The entry goes back to `queued` with the attempt its
-        claim counted taken back (`apply_queue.unclaim`), the job's tabs
-        close, and the drain stops (`Outcome.judge_down`). No record is
-        written (the job has not ended); the trace ends with the reason."""
+        have been sent. The entry goes back to `queued`
+        (`apply_queue.unclaim`), the job's tabs close, and the drain stops
+        (`Outcome.judge_down`). After an error the service may get over (a
+        busy status, a 5xx, a timeout, a dropped connection) the attempt the
+        claim counted is taken back and the outage counted; the job's
+        `OUTAGES_MAX`th outage parks it instead (`OUTAGES_PARKED`, inside the
+        policy), so a failure its own request causes never holds the queue's
+        head. After a refused key (`jev.Guarded.refused`) the attempt stays
+        counted and no outage is (SP8a review M1). No record is written for
+        a re-queue (the job has not ended); the trace ends with the reason."""
         at = f" at {step}" if step else ""
-        reason = f"{JUDGE_DOWN_REASON}: {self._judge_down()}{at}; {REQUEUED_NOTE}"
+        down = f"{JUDGE_DOWN_REASON}: {self._judge_down()}{at}"
+        refused = getattr(self.r.jev, "refused", False) is True
+        if not refused and apply_queue.outages(self.entry) + 1 >= OUTAGES_MAX:
+            return self._finish("needs_human", f"{down}; {OUTAGES_PARKED}", OUTAGES_NOTE)
+        reason = f"{down}; {KEY_REFUSED_NOTE if refused else REQUEUED_NOTE}"
         usage = _usage_delta(self.usage_before, jev.usage())
         usage["generated"] = generated_count(self.pages)
         self._stop_late_watch()
@@ -4737,7 +4758,8 @@ class _JobRun:
                           extra_mask=self._secret_masks(self.page) if self.page is not None else [])
         for attempt in (1, 2):
             try:
-                apply_queue.unclaim(self.job_id, notes=reason, path=self.r.queue_path)
+                apply_queue.unclaim(self.job_id, notes=reason, give_back=not refused,
+                                    path=self.r.queue_path)
                 break
             except Exception as e:      # noqa: BLE001  (the queue write must not end the drain)
                 if attempt == 1:

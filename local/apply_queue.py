@@ -484,26 +484,41 @@ def finish(job_id: str, status: str, *, tab_note: str = "", record: str = "",
         return dict(e)
 
 
-def unclaim(job_id: str, *, notes: Optional[str] = None,
+def outages(entry: Dict[str, Any]) -> int:
+    """The judge outages `entry` was handed back to the queue for (`unclaim`),
+    0 when none were or the count is no number (a hand edit)."""
+    try:
+        return max(0, int(entry.get("outages") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def unclaim(job_id: str, *, notes: Optional[str] = None, give_back: bool = True,
             path: Optional[Path] = None) -> Dict[str, Any]:
-    """Hand an `in_progress` entry back to "queued" as if the claim had not
-    happened: the attempt it counted is taken back, `claimed_by`,
+    """Hand an `in_progress` entry back to "queued": `claimed_by`,
     `started_at` and the run's `missing_answers` are cleared, and
     `queued_at` is kept, so the job keeps its place in the FIFO and the next
     run lists its own. The runner calls it when the judge went down under
-    the job before anything could be sent (RES-02). An entry in any other
-    status (moved from the dashboard meanwhile) is left as it is."""
+    the job before anything could be sent (RES-02). With `give_back` (the
+    judge's service could not answer: a busy status, a 5xx, a timeout, a
+    dropped connection) the attempt the claim counted is taken back and the
+    outage is counted in `outages` (the runner parks a job at its second,
+    SP8a review M1); without it (the judge refused the key) the attempt
+    stays counted and no outage is. An entry in any other status (moved from
+    the dashboard meanwhile) is left as it is."""
     with locked(path):
         data = load(path, quarantine=True)   # under locked(): may rename aside
         e = _find(data, job_id)
         if e.get("status") != "in_progress":
             return dict(e)
-        try:
-            prior = int(e.get("attempts") or 0)
-        except (TypeError, ValueError):
-            prior = 1
         e["status"] = "queued"
-        e["attempts"] = max(0, prior - 1)
+        if give_back:
+            try:
+                prior = int(e.get("attempts") or 0)
+            except (TypeError, ValueError):
+                prior = 1
+            e["attempts"] = max(0, prior - 1)
+            e["outages"] = outages(e) + 1
         e["claimed_by"] = ""
         e["started_at"] = ""
         e["missing_answers"] = []
@@ -517,8 +532,9 @@ def unclaim(job_id: str, *, notes: Optional[str] = None,
 def requeue(job_id: str, *, refresh_answers: bool = False,
             path: Optional[Path] = None) -> Dict[str, Any]:
     """Send an entry (any status) back to "queued": clears missing_answers /
-    finished_at / tab_note / claimed_by, KEEPS attempts (the retry count is the
-    point), re-stamps queued_at (a requeued job goes to the back of the FIFO).
+    finished_at / tab_note / claimed_by and the judge-outage count, KEEPS
+    attempts (the retry count is the point), re-stamps queued_at (a requeued
+    job goes to the back of the FIFO).
 
     refresh_answers=True re-splices the folder's apply.md Standard-answers
     section from the current store (apply_data.refresh_standard_answers) —
@@ -535,6 +551,7 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
         e["finished_at"] = ""
         e["tab_note"] = ""
         e["claimed_by"] = ""
+        e.pop("outages", None)      # the person's re-queue starts the outage count over (M1)
         e["queued_at"] = _now()
         e["updated_at"] = _now()
         _save(data, path)

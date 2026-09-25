@@ -522,9 +522,10 @@ def test_a_judge_busy_for_a_while_lets_the_run_go_on(_browser, flow_server, tmp_
     assert flaky.calls > 2
 
 
-def _two_jobs(judge, browser, server, tmp_path, sleeps):
-    """A drain of two queued jobs on the fixture form under `judge`: the
-    outcomes, the queue's entries by id, and the tabs left open."""
+def _two_jobs(judges, browser, server, tmp_path, sleeps):
+    """Drains of two queued jobs on the fixture form, one drain under each of
+    `judges` in turn: each drain's outcomes, the queue's entries by id after
+    the last, and the tabs left open."""
     import apply_queue
     import apply_run
     queue = tmp_path / "queue.json"
@@ -541,17 +542,21 @@ def _two_jobs(judge, browser, server, tmp_path, sleeps):
                                       path=queue)
         ctx = browser.new_context()
         h.offline(ctx)
+        runs = []
         try:
             runner = apply_run.Runner(
-                jev=judge, queue_path=queue, profile_dir=tmp_path / "p",
+                jev=judges[0], queue_path=queue, profile_dir=tmp_path / "p",
                 settings={"auto_apply_headless": True, "auto_apply_jev_mode": "fake",
                           "auto_apply_submit": False},
-                context=ctx, run_context={"inbox_url": ""}, sleep=sleeps.append)
-            outcomes = runner.drain(cap=5)
+                context=ctx, run_context={"inbox_url": ""}, sleep=sleeps.append,
+                drain_report=False)
+            for judge in judges:
+                runner.jev = judge
+                runs.append(runner.drain(cap=5))
             left = [p for p in ctx.pages if not p.is_closed()]
         finally:
             ctx.close()
-    return outcomes, {e["job_posting_id"]: e for e in apply_queue.load(queue)["jobs"]}, left
+    return runs, {e["job_posting_id"]: e for e in apply_queue.load(queue)["jobs"]}, left
 
 
 def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
@@ -560,8 +565,8 @@ def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
 
     import apply_run
     sleeps: list[float] = []
-    outcomes, jobs, left = _two_jobs(_Flaky([_Busy(529)] * 20), _browser, flow_server,
-                                     tmp_path, sleeps)
+    (outcomes,), jobs, left = _two_jobs([_Flaky([_Busy(529)] * 20)], _browser, flow_server,
+                                        tmp_path, sleeps)
     assert [(o.job_id, o.status) for o in outcomes] == [("a", "queued")], outcomes
     reason = outcomes[0].reason
     assert reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
@@ -572,6 +577,7 @@ def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
     a, b = jobs["a"], jobs["b"]
     assert (a["status"], a["attempts"], a["claimed_by"], a["started_at"]) == ("queued", 0, "", "")
     assert a["notes"] == reason
+    assert a["outages"] == 1                # counted (SP8a review M1)
     assert (b["status"], b["attempts"]) == ("queued", 0)
     # no park: no tab left open, no record; the trace ends with the reason
     assert left == []
@@ -580,6 +586,57 @@ def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
                      .read_text(encoding="utf-8"))
     assert (run["status"], run["reason"]) == ("queued", reason)
     assert "re-queued 1" in apply_run.summary_line(outcomes)
+
+
+def test_a_refused_key_hands_the_job_back_with_its_attempt_counted(
+        _browser, flow_server, tmp_path):
+    # SP8a review M1: only an error the service may get over gives the attempt
+    # back; a refused key is no outage of this job's, so none is counted
+    import apply_run
+    sleeps: list[float] = []
+    (outcomes,), jobs, _ = _two_jobs([_Flaky([_Busy(401)] * 20)], _browser, flow_server,
+                                     tmp_path, sleeps)
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "queued")], outcomes
+    assert outcomes[0].reason.endswith(apply_run.KEY_REFUSED_NOTE), outcomes[0].reason
+    assert outcomes[0].judge_down and sleeps == []
+    a, b = jobs["a"], jobs["b"]
+    assert (a["status"], a["attempts"], a.get("outages", 0)) == ("queued", 1, 0)
+    assert (b["status"], b["attempts"]) == ("queued", 0)
+
+
+def test_a_second_outage_under_the_same_job_parks_it_and_the_queue_moves_on(
+        _browser, flow_server, tmp_path):
+    # SP8a review M1: a judge failure the job's own request causes would
+    # otherwise stop every drain at the queue's head
+    import apply_run
+    sleeps: list[float] = []
+    runs, jobs, _ = _two_jobs([_Flaky([_Busy(529)] * 20), _Flaky([_Busy(529)] * 20),
+                               jev.FakeJev()], _browser, flow_server, tmp_path, sleeps)
+    first, second, third = runs
+    assert [(o.job_id, o.status) for o in first] == [("a", "queued")], first
+    assert [(o.job_id, o.status) for o in second] == [("a", "needs_human")], second
+    reason = second[0].reason
+    assert reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
+    assert reason.endswith(apply_run.OUTAGES_PARKED), reason
+    assert h.policy_park("needs_human", reason) is True
+    assert second[0].judge_down                  # the drain stopped all the same
+    assert [(o.job_id, o.status) for o in third] == [("b", "ready_to_submit")], third
+    assert (jobs["a"]["status"], jobs["a"]["attempts"]) == ("needs_human", 1)
+
+
+def test_a_request_the_judge_rejects_ends_that_job_and_the_drain_goes_on(
+        _browser, flow_server, tmp_path):
+    # SP8a review M1: a 400 (or a request too large for the service) is the
+    # request's own fault: that job fails with the status named, the next runs
+    sleeps: list[float] = []
+    (outcomes,), jobs, _ = _two_jobs([_Flaky([_Busy(400)])], _browser, flow_server,
+                                     tmp_path, sleeps)
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "failed"),
+                                                        ("b", "ready_to_submit")], outcomes
+    assert outcomes[0].reason.startswith("_Busy 400 at "), outcomes[0].reason
+    assert "Jane" not in outcomes[0].reason
+    assert not outcomes[0].judge_down and sleeps == []
+    assert (jobs["a"]["status"], jobs["a"]["attempts"]) == ("failed", 1)
 
 
 def test_an_outage_at_the_grounding_gate_reaches_the_run():

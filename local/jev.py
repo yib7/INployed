@@ -106,13 +106,23 @@ def usage() -> dict:
     """{"requests", "input_tokens", "usd"} for every live request this process
     made. The fake and a replay hit never count."""
     tokens = _USAGE["input_tokens"]
-    return {"requests": _USAGE["requests"], "input_tokens": tokens,
-            "usd": tokens / 1_000_000 * PRICE_USD_PER_MTOK}
+    return {"requests": _USAGE["requests"], "input_tokens": tokens, "usd": usd_for(tokens)}
 
 
 def reset_usage() -> None:
     _USAGE["requests"] = 0
     _USAGE["input_tokens"] = 0
+
+
+def count_usage(tokens: int) -> None:
+    """Add one live request of `tokens` input tokens to the process counter."""
+    _USAGE["requests"] += 1
+    _USAGE["input_tokens"] += max(0, int(tokens))
+
+
+def usd_for(tokens: int | float) -> float:
+    """What `tokens` input tokens cost at `PRICE_USD_PER_MTOK`."""
+    return float(tokens) / 1_000_000 * PRICE_USD_PER_MTOK
 
 
 # --- the request's size (RES-03) ----------------------------------------------------
@@ -336,8 +346,7 @@ class TypeSafeJev:
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         response = self._client.system_one(state, questions, model=self.model)
         tokens = int(getattr(response.usage, "input_tokens", 0) or 0)
-        _USAGE["requests"] += 1
-        _USAGE["input_tokens"] += tokens
+        count_usage(tokens)
         self.last_model = getattr(response, "model", None)
         log.info("jev %s: %d question(s), %d input tokens",
                  self.last_model, len(questions), tokens)
@@ -962,6 +971,82 @@ class ReplayJev:
         cache[key] = {qid: a.to_dict() for qid, a in answers.items()}
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self.cache_path, cache)
+        return answers
+
+
+# --- a recording's spend cap (SP8b) ------------------------------------------------------
+
+RECORD_CAP_ENV = "AUTO_APPLY_RECORD_USD_CAP"
+DEFAULT_RECORD_CAP_USD = 1.00
+
+
+class SpendCapReached(JevUnavailable):
+    """A recording reached its spend cap: no more live requests leave."""
+
+
+def record_cap(env: Mapping[str, str] | None = None) -> float:
+    """The recording's cap in USD: `AUTO_APPLY_RECORD_USD_CAP`, else 1.00."""
+    raw = ((os.environ if env is None else env).get(RECORD_CAP_ENV) or "").strip()
+    return float(raw) if raw else DEFAULT_RECORD_CAP_USD
+
+
+class SpendCap:
+    """The live judge a recording asks through (`ReplayJev(SpendCap(live,
+    cap), cache)`). It counts the live spend since it was made
+    (`usage()`), and a request whose estimated cost (`request_size`, the
+    whole request, at `PRICE_USD_PER_MTOK`) would take that spend past
+    `cap_usd` raises `SpendCapReached` before it leaves; so does every
+    request after. `reached` says the cap stopped a request; `refused`
+    counts them; `reason` is the first refusal's text."""
+
+    def __init__(self, inner: Jev, cap_usd: float):
+        self.inner = inner
+        self.cap_usd = float(cap_usd)
+        self._start = usage()
+        self.reached = False
+        self.refused = 0
+        self.reason = ""
+
+    @property
+    def spent_usd(self) -> float:
+        return max(0.0, usage()["usd"] - self._start["usd"])
+
+    @property
+    def requests(self) -> int:
+        return max(0, usage()["requests"] - self._start["requests"])
+
+    def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
+        spent = self.spent_usd
+        next_usd = usd_for(request_size(state, questions)[1])
+        if self.reached or spent + next_usd > self.cap_usd:
+            self.refused += 1
+            reason = (f"{RECORD_CAP_ENV} reached: {spent:.4f} USD spent over {self.requests} "
+                      f"live request(s), the next estimated at {next_usd:.4f} USD, cap "
+                      f"{self.cap_usd:.4f} USD")
+            if not self.reached:
+                self.reached, self.reason = True, reason
+            raise SpendCapReached(reason)
+        return self.inner.judge(state, questions)
+
+
+class DryRun:
+    """A stand-in for the live judge in a recording's dry run: `inner`
+    (the fake by default) answers, and each request counts as one live
+    request of its estimated size (`request_size`, the whole request), so
+    the cap and the spend estimate work as they would live. No key, no
+    network. Never a production judge."""
+
+    def __init__(self, inner: Jev | None = None):
+        self.inner = inner if inner is not None else FakeJev()
+        self.requests = 0
+        self.tokens = 0
+
+    def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
+        tokens = request_size(state, questions)[1]
+        answers = self.inner.judge(state, questions)
+        self.requests += 1
+        self.tokens += tokens
+        count_usage(tokens)
         return answers
 
 

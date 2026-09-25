@@ -6,6 +6,7 @@ then the success rate per flow and overall.
     python scripts/apply_matrix.py [--seeds N] [--flows a,b] [--real-timing]
                                    [--json out.json] [--verbose]
                                    [--jobs N] [--flow-timeout S]
+                                   [--real record|replay|dry] [--real-cache PATH]
 
 The flows, the judges and the invariants are `tests/apply_harness.py`'s. The
 run is hermetic: the fixtures are served from `tests/fixtures/` on a local
@@ -24,6 +25,18 @@ each naming the cause, instead of stalling the batch: every run the flow
 owed counts as a miss (SP6 review R2-M3). The combined rows are put back in
 the same order the serial run produces: the registry's flow order, each
 flow's own judge order.
+
+`--real` adds the real judge's column (SP8b): one run per flow under the
+live model's answers, kept in their own cache (`--real-cache`, default
+`tests/fixtures/jev_cache/matrix_cache.json`). `--real replay` runs it
+beside the fake and noisy runs, from the cache alone (a miss ends that run
+as failed and is counted). `--real record` asks the live model on a miss
+and must go through `scripts/jev_record.ps1 -Target matrix`, which holds
+the key for that one process; it runs the real column alone, serially, and
+stops starting flows at `AUTO_APPLY_RECORD_USD_CAP`. `--real dry` is the
+same run with the fake answering at each request's estimated size into a
+temp copy of the cache: the request count and the spend a recording would
+make, with no key.
 
 Exit 0 when no run broke an invariant and every worker finished, 1 when a
 run broke one or a worker crashed or hung, 2 when the browser could not
@@ -83,7 +96,8 @@ def _default_flow_timeout(judge_count: int) -> float:
 
 # --- the parallel path -----------------------------------------------------------------------
 
-def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out_queue) -> None:
+def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out_queue,
+                     real_cache: str = "") -> None:
     """One flow across every judge in `seeds`, in its own process: this
     worker's own isolation, its own `FlowServer` and its own headless
     Chromium, then `apply_harness.run_matrix` restricted to the one flow, so
@@ -91,13 +105,17 @@ def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out
     `run_matrix` -> `run_flow` calls `apply_harness.offline` on every
     context it opens, worker or not). Streams a ("progress", line) message
     per run, in the same text `main`'s own `--verbose` prints, and ends with
-    exactly one ("done", [RunResult, ...]) or ("error", flow_name, cause)."""
+    exactly one ("done", [RunResult, ...]) or ("error", flow_name, cause).
+    With `real_cache`, the real judge's replay over that cache runs last
+    (`apply_harness.real_judge("replay", ...)`: read-only, so workers may
+    share the file)."""
     try:
         tmp = Path(workdir)
         _isolate(tmp, appdata=f"appdata-{flow_name}")
         import apply_harness as h
         f = h.flow(flow_name)
-        judge_list = h.judges(seeds)
+        real = h.real_judge("replay", Path(real_cache)).judge if real_cache else None
+        judge_list = h.judges(seeds, real=real)
         server = h.FlowServer()
         server.start()
         try:
@@ -127,12 +145,15 @@ def _run_flow_worker(flow_name: str, seeds: tuple, fast: bool, workdir: str, out
 _CRASH_MARK = "apply_matrix: "      # the reason's start on a crashed or hung worker's rows
 
 
-def _crash_results(flow_name: str, seeds: tuple, reason: str) -> list:
-    """One "failed" row per judge the flow owed (`apply_harness.judges`), each
-    naming the cause: a crashed or hung worker counts every run as a miss."""
+def _crash_results(flow_name: str, seeds: tuple, reason: str, real: bool = False) -> list:
+    """One "failed" row per judge the flow owed (`apply_harness.judges`, the
+    real judge's too with `real`), each naming the cause: a crashed or hung
+    worker counts every run as a miss."""
     import apply_harness as h
+    f = next((f for f in h.FLOWS if f.name == flow_name), None)
+    real = real and (f is None or f.replayable)
     return [h.RunResult(flow_name, judge, "failed", reason, False, [], 0, 0, 0.0)
-            for judge, _ in h.judges(seeds)]
+            for judge, _ in h.judges(seeds, real=object() if real else None)]
 
 
 def _crashed(results) -> int:
@@ -160,12 +181,12 @@ def _next_message(out_q, p, deadline: float):
 
 
 def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: float,
-                  verbose: bool, ctx) -> list:
+                  verbose: bool, ctx, real_cache: str = "") -> list:
     """`name` in its own worker process, bounded by `timeout`: the worker's
     own results, or a "failed" row per judge naming a crash or a timeout."""
     out_q = ctx.Queue()
-    p = ctx.Process(target=_run_flow_worker, args=(name, seeds, fast, str(workdir), out_q),
-                    daemon=True)
+    p = ctx.Process(target=_run_flow_worker,
+                    args=(name, seeds, fast, str(workdir), out_q, real_cache), daemon=True)
     p.start()
     deadline = time.monotonic() + timeout
     payload = None
@@ -190,16 +211,17 @@ def _run_one_flow(name: str, seeds: tuple, fast: bool, workdir: Path, timeout: f
                       "result")
         else:
             reason = f"apply_matrix: {name} did not finish within {timeout:.0f}s"
-        return _crash_results(name, seeds, reason)
+        return _crash_results(name, seeds, reason, bool(real_cache))
     if payload[0] == "done":
         return payload[1]
     cause = payload[2] if len(payload) > 2 else ""
     cause = cause.strip().splitlines()[-1] if cause.strip() else "unknown error"
-    return _crash_results(name, seeds, f"apply_matrix: {name}'s worker failed: {cause}")
+    return _crash_results(name, seeds, f"apply_matrix: {name}'s worker failed: {cause}",
+                          bool(real_cache))
 
 
 def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: float,
-                  workdir: Path, *, verbose: bool = False) -> list:
+                  workdir: Path, *, verbose: bool = False, real_cache: str = "") -> list:
     """Every flow in `flows`, one worker process per flow, `jobs` running at
     once; the combined rows put back in `flows`' own order (each flow's own
     rows already come back in judge order from `run_matrix`), so the output
@@ -209,7 +231,8 @@ def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: floa
     per_flow: dict[str, list] = {}
 
     def _task(name: str) -> None:
-        per_flow[name] = _run_one_flow(name, seeds, fast, workdir, flow_timeout, verbose, ctx)
+        per_flow[name] = _run_one_flow(name, seeds, fast, workdir, flow_timeout, verbose, ctx,
+                                       real_cache)
 
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
         list(ex.map(_task, names))
@@ -217,6 +240,67 @@ def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: floa
     for name in names:
         results.extend(per_flow[name])
     return results
+
+
+# --- the real judge's recording ----------------------------------------------------------------
+
+def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
+                 verbose: bool, json_out: str) -> int:
+    """`--real record` or `--real dry`: the real judge's column alone, one
+    run per flow in one process (`apply_harness.run_real`: the cache is one
+    file and the spend counter is this process's), under the cap
+    `AUTO_APPLY_RECORD_USD_CAP`. The cap stops the column: the flows left
+    unrecorded are listed. A dry run answers with the fake at each
+    request's estimated size into a temp copy of the cache and prints that
+    copy's path, which `--real replay --real-cache` reads back."""
+    import jev
+    started = time.monotonic()
+    try:
+        rj = h.real_judge(mode, cache)
+    except jev.JevUnavailable as e:
+        print(f"apply_matrix: {e}", file=sys.stderr)
+        return 2
+    before = jev.usage()
+    server = h.FlowServer()
+    server.start()
+    from playwright.sync_api import sync_playwright
+    try:
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch(headless=True)
+            except Exception as e:      # noqa: BLE001  (Playwright raises its own Error)
+                print(f"apply_matrix: Chromium did not start: {e}", file=sys.stderr)
+                return 2
+
+            def progress(r):
+                if verbose:
+                    print(f"{r.flow} {r.judge}: {'ok' if r.ok else 'NO'} {r.status} "
+                          f"({r.reason}) {r.seconds}s {r.judge_requests} request(s)",
+                          flush=True)
+            col = h.run_real(flows, rj, browser=browser, server=server, workdir=workdir,
+                             fast=fast, progress=progress)
+            browser.close()
+    finally:
+        server.stop()
+    after = jev.usage()
+    requests = after["requests"] - before["requests"]
+    tokens = after["input_tokens"] - before["input_tokens"]
+    if col.results:
+        print(h.summary(col.results))
+    live = "estimated live" if mode == "dry" else "live"
+    print(f"real judge ({mode}): {len(col.results)} of {len(flows)} flow(s) run in "
+          f"{time.monotonic() - started:.0f}s; {live} requests {requests}, {tokens} input "
+          f"tokens, {jev.usd_for(tokens):.4f} USD (cap {rj.cap.cap_usd:.4f} USD); cache {rj.cache}")
+    if col.stopped:
+        print(f"apply_matrix: {col.stopped}; left unrecorded: {', '.join(col.unrecorded)}",
+              file=sys.stderr)
+    if json_out:
+        rows = [{k: v for k, v in asdict(r).items() if k != "actions"} for r in col.results]
+        Path(json_out).write_text(json.dumps({"results": rows, "unrecorded": col.unrecorded,
+                                              "stopped": col.stopped, "requests": requests,
+                                              "input_tokens": tokens}, indent=2),
+                                  encoding="utf-8")
+    return 1 if h.rates(col.results)["breaks"] else 0
 
 
 # --- entry point -------------------------------------------------------------------------------
@@ -235,6 +319,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--flow-timeout", type=float, default=0.0,
                     help="seconds before a flow's worker is treated as hung and reported as "
                          "a failure row (default: 3x an estimate from the judge count)")
+    ap.add_argument("--real", choices=("record", "replay", "dry"), default="",
+                    help="the real judge's column: replay adds one run per flow over the "
+                         "cache beside the fake and noisy runs; record (through "
+                         "scripts/jev_record.ps1 -Target matrix) and dry run that column "
+                         "alone, serially, under AUTO_APPLY_RECORD_USD_CAP")
+    ap.add_argument("--real-cache", default="",
+                    help="the real judge's cache (default "
+                         "tests/fixtures/jev_cache/matrix_cache.json)")
     args = ap.parse_args(argv)
 
     with tempfile.TemporaryDirectory(prefix="apply-matrix-") as tmp:
@@ -245,8 +337,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.flows:
             wanted = {n.strip() for n in args.flows.split(",") if n.strip()}
             flows = tuple(f for f in h.FLOWS if f.name in wanted)
+        real_cache = Path(args.real_cache) if args.real_cache else h.REAL_CACHE
+        if args.real in ("record", "dry"):
+            return _record_real(h, flows, args.real, real_cache, tmp_path,
+                                fast=not args.real_timing, verbose=args.verbose,
+                                json_out=args.json)
         noisy_seeds = h.NOISY_SEEDS[:max(0, args.seeds)]
-        judge_list = h.judges(noisy_seeds)
+        real = h.real_judge("replay", real_cache).judge if args.real == "replay" else None
+        judge_list = h.judges(noisy_seeds, real=real)
         jobs = max(1, args.jobs)
         started = time.monotonic()
         if jobs == 1:
@@ -275,8 +373,18 @@ def main(argv: list[str] | None = None) -> int:
             timeout = args.flow_timeout if args.flow_timeout > 0 else \
                 _default_flow_timeout(len(judge_list))
             results = _run_parallel(flows, noisy_seeds, not args.real_timing, jobs, timeout,
-                                    tmp_path, verbose=args.verbose)
+                                    tmp_path, verbose=args.verbose,
+                                    real_cache=str(real_cache) if real is not None else "")
         print(h.summary(results))
+        if real is not None:
+            rows = [r for r in results if r.judge == h.REAL]
+            missed = [r.flow for r in rows if r.replay_misses]
+            apart = [f.name for f in flows if not f.replayable]
+            print(f"real judge: replay of {real_cache}: {sum(r.replay_misses for r in rows)} "
+                  f"miss(es) over {len(rows)} flow(s)"
+                  + (f"; flows with a miss: {', '.join(missed)}" if missed else "")
+                  + (f"; left out, their text changes with the clock: {', '.join(apart)}"
+                     if apart else ""))
         rt = h.rates(results)
         print(f"the suite's pinned floors (fake and seeds {h.SUITE_SEEDS[0]} to "
               f"{h.SUITE_SEEDS[-1]}): noisy {h.SUCCESS_FLOOR:.1%}, fake "

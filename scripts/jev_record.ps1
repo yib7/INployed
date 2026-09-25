@@ -1,28 +1,48 @@
-# Record or replay the Jev answers the runner tests make (SP8 tuning harness).
+# Record or replay live Jev answers for a fixture set (SP8 tuning harness).
 #
-#   .\scripts\jev_record.ps1                 # record: needs TYPESAFE_API_KEY, spends money
-#   .\scripts\jev_record.ps1 -Mode replay    # replay: no key, no network
-#   .\scripts\jev_record.ps1 -Cap 0.50       # stop recording once live spend passes 0.50 USD
+#   .\scripts\jev_record.ps1 -Cap 0.20                     # record the runner tests
+#   .\scripts\jev_record.ps1 -Mode replay                  # replay them: no key, no network
+#   .\scripts\jev_record.ps1 -Target matrix -Cap 0.20      # record the flow matrix's real column
+#   .\scripts\jev_record.ps1 -Target captures -Cap 0.05    # record the local captures' page reads
+#   .\scripts\jev_record.ps1 -Target matrix -Dry           # the dry run: fake answers, no key
+#
+# Targets:
+#   runner    tests/test_apply_run.py and tests/test_apply_run_boundaries.py
+#             (cache tests/fixtures/jev_cache/cache.json, committed)
+#   matrix    scripts/apply_matrix.py --real, one run per registered flow
+#             (cache tests/fixtures/jev_cache/matrix_cache.json, committed)
+#   captures  tests/test_capture_reads.py over tests/fixtures/local_captures/
+#             (cache and results in its _jev folder: local only, never committed)
 #
 # Record mode reads TYPESAFE_API_KEY from the environment, else from the one row
-# in .env, and exports it to this one pytest process only; the value is never
-# printed. After the run the mode and cap variables are removed again so a
-# later plain pytest stays on the fake, and the key is dropped when this
-# script loaded it. Both modes end with scripts/jev_thresholds.py over the
-# cache and outcomes.jsonl. Pure ASCII on purpose (PowerShell 5.1).
+# in .env, and exports it to this one process only; the value is never printed.
+# Every live entry point stops at the cap (AUTO_APPLY_RECORD_USD_CAP, from -Cap):
+# a request whose estimated cost would pass it is never sent. -Dry answers with
+# the fake at each request's estimated size into a temp copy of the cache, with
+# no key: the request count and the spend a recording would make. When the run
+# ends, the variables this script set are removed, so a later plain pytest stays
+# on the fake, and the key is dropped when this script loaded it. A recording or
+# a replay of the runner or matrix target ends with scripts/jev_thresholds.py
+# over its cache. Pure ASCII on purpose (PowerShell 5.1).
 param(
     [ValidateSet("record", "replay")]
     [string]$Mode = "record",
+    [ValidateSet("runner", "matrix", "captures")]
+    [string]$Target = "runner",
     [double]$Cap = 1.00,
-    [string]$Cache = ""
+    [string]$Cache = "",
+    [string]$Flows = "",
+    [string]$Json = "",
+    [switch]$Dry
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+$live = ($Mode -eq "record") -and (-not $Dry)
 $loadedKey = $false
-if ($Mode -eq "record" -and -not $env:TYPESAFE_API_KEY) {
+if ($live -and -not $env:TYPESAFE_API_KEY) {
     $envFile = Join-Path $root ".env"
     if (Test-Path $envFile) {
         foreach ($line in Get-Content $envFile) {
@@ -40,21 +60,57 @@ if ($Mode -eq "record" -and -not $env:TYPESAFE_API_KEY) {
     }
 }
 
-$env:AUTO_APPLY_TEST_JEV = $Mode
-$env:AUTO_APPLY_RECORD_USD_CAP = $Cap.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-if ($Cache) { $env:AUTO_APPLY_JEV_CACHE = $Cache }
+$capText = $Cap.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+$env:AUTO_APPLY_RECORD_USD_CAP = $capText
 $env:QT_QPA_PLATFORM = "offscreen"
-
-Write-Host "jev $Mode over the runner tests (cap $Cap USD)"
-python -m pytest tests/test_apply_run.py tests/test_apply_run_boundaries.py -q
-$code = $LASTEXITCODE
-
-$thresholdArgs = @()
-if ($Cache) { $thresholdArgs = @("--cache", $Cache) }
-python scripts/jev_thresholds.py @thresholdArgs
-
-Remove-Item Env:AUTO_APPLY_TEST_JEV -ErrorAction SilentlyContinue
-Remove-Item Env:AUTO_APPLY_RECORD_USD_CAP -ErrorAction SilentlyContinue
-if ($Cache) { Remove-Item Env:AUTO_APPLY_JEV_CACHE -ErrorAction SilentlyContinue }
-if ($loadedKey) { Remove-Item Env:TYPESAFE_API_KEY -ErrorAction SilentlyContinue }
+$set = @("AUTO_APPLY_RECORD_USD_CAP")
+$code = 0
+try {
+    if ($Target -eq "runner") {
+        $env:AUTO_APPLY_TEST_JEV = $Mode
+        $set += "AUTO_APPLY_TEST_JEV"
+        if ($Dry) { $env:AUTO_APPLY_RECORD_DRY = "1"; $set += "AUTO_APPLY_RECORD_DRY" }
+        if ($Cache) { $env:AUTO_APPLY_JEV_CACHE = $Cache; $set += "AUTO_APPLY_JEV_CACHE" }
+        Write-Host "jev $Mode over the runner tests (cap $capText USD, dry $Dry)"
+        python -m pytest tests/test_apply_run.py tests/test_apply_run_boundaries.py -q
+        $code = $LASTEXITCODE
+        if (-not $Dry) {
+            $thresholdArgs = @()
+            if ($Cache) { $thresholdArgs = @("--cache", $Cache) }
+            python scripts/jev_thresholds.py @thresholdArgs
+        }
+    }
+    elseif ($Target -eq "matrix") {
+        $real = $Mode
+        if ($Dry) { $real = "dry" }
+        $matrixArgs = @("scripts/apply_matrix.py", "--real", $real, "--verbose")
+        if ($Mode -eq "replay") { $matrixArgs += @("--seeds", "0") }
+        if ($Cache) { $matrixArgs += @("--real-cache", $Cache) }
+        if ($Flows) { $matrixArgs += @("--flows", $Flows) }
+        if ($Json) { $matrixArgs += @("--json", $Json) }
+        Write-Host "jev $real over the flow matrix (cap $capText USD)"
+        python @matrixArgs
+        $code = $LASTEXITCODE
+        if (-not $Dry) {
+            $matrixCache = "tests/fixtures/jev_cache/matrix_cache.json"
+            if ($Cache) { $matrixCache = $Cache }
+            python scripts/jev_thresholds.py --cache $matrixCache --no-outcomes
+        }
+    }
+    else {
+        $captureMode = $Mode
+        if ($Dry) { $captureMode = "dry" }
+        $env:AUTO_APPLY_CAPTURE_JEV = $captureMode
+        $set += "AUTO_APPLY_CAPTURE_JEV"
+        Write-Host "jev $captureMode over the local captures' page reads (cap $capText USD)"
+        python -m pytest tests/test_capture_reads.py -q -rsx
+        $code = $LASTEXITCODE
+        $summary = "tests/fixtures/local_captures/_jev/summary.txt"
+        if (Test-Path $summary) { Get-Content $summary }
+    }
+}
+finally {
+    foreach ($name in $set) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+    if ($loadedKey) { Remove-Item Env:TYPESAFE_API_KEY -ErrorAction SilentlyContinue }
+}
 exit $code

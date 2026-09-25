@@ -205,6 +205,116 @@ def test_cap_guard_counts_only_the_spend_inside_tests(tmp_path, monkeypatch):
     assert s.spent_usd == 0.0 and s.skip_reason() is None
 
 
+# --- the per-request cap and the dry run (SP8b) ------------------------------------------
+
+class _Sized:
+    """A stand-in for the live judge that counts each request at its
+    estimated size, as `TypeSafeJev` counts the service's own count."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def judge(self, state, questions):
+        self.calls += 1
+        jev.count_usage(jev.request_size(state, questions)[1])
+        return jev.FakeJev().judge(state, questions)
+
+
+def _one_request_usd():
+    return jev.usd_for(jev.request_size(STATE, QUESTIONS)[1])
+
+
+def test_spend_cap_refuses_the_request_that_would_pass_it_and_every_one_after():
+    live = _Sized()
+    cap = jev.SpendCap(live, cap_usd=_one_request_usd() * 1.5)
+    cap.judge(STATE, QUESTIONS)
+    assert live.calls == 1 and not cap.reached
+    with pytest.raises(jev.SpendCapReached) as e:
+        cap.judge(STATE, QUESTIONS)     # the spend so far plus this one's estimate passes it
+    assert live.calls == 1, "a refused request never leaves"
+    assert cap.reached and cap.refused == 1
+    assert jev.RECORD_CAP_ENV in str(e.value) and cap.reason == str(e.value)
+    tiny_state, tiny_questions = {"p": 1}, {"q": {"type": "noul", "instructions": "x"}}
+    with pytest.raises(jev.SpendCapReached):
+        cap.judge(tiny_state, tiny_questions)   # once reached, nothing more leaves
+    assert live.calls == 1 and cap.refused == 2
+    assert cap.spent_usd == pytest.approx(_one_request_usd()) and cap.requests == 1
+
+
+def test_spend_cap_counts_only_the_spend_since_it_was_made():
+    jev.count_usage(50_000_000)         # 2.10 USD spent by something else first
+    live = _Sized()
+    cap = jev.SpendCap(live, cap_usd=_one_request_usd() * 1.5)
+    cap.judge(STATE, QUESTIONS)
+    assert live.calls == 1 and cap.spent_usd == pytest.approx(_one_request_usd())
+
+
+def test_spend_cap_is_a_replay_miss_for_the_harness_and_a_judge_unavailable_for_the_run():
+    assert issubclass(jev.SpendCapReached, jev.JevUnavailable)
+
+
+def test_dry_run_answers_like_the_fake_and_counts_each_request_at_its_estimate():
+    dry = jev.DryRun()
+    answers = dry.judge(STATE, QUESTIONS)
+    fake = jev.FakeJev().judge(STATE, QUESTIONS)
+    assert {q: a.to_dict() for q, a in answers.items()} == {q: a.to_dict()
+                                                            for q, a in fake.items()}
+    size = jev.request_size(STATE, QUESTIONS)[1]
+    assert (dry.requests, dry.tokens) == (1, size)
+    assert jev.usage() == {"requests": 1, "input_tokens": size, "usd": jev.usd_for(size)}
+
+
+def test_the_cap_env_parses_and_defaults():
+    assert jev.record_cap({}) == 1.0
+    assert jev.record_cap({jev.RECORD_CAP_ENV: " 0.35 "}) == 0.35
+    assert jev_harness.dry_from({jev_harness.DRY_ENV: "1"})
+    assert jev_harness.dry_from({jev_harness.DRY_ENV: "Yes"})
+    assert not jev_harness.dry_from({}) and not jev_harness.dry_from({jev_harness.DRY_ENV: "0"})
+
+
+def test_record_mode_asks_the_live_judge_through_the_cap(tmp_path, monkeypatch):
+    live = _Sized()
+    monkeypatch.setattr(jev_harness, "live_judge", lambda: live)
+    s = jev_harness.Session("record", tmp_path / "cache.json", cap_usd=0.5,
+                            env={jev.KEY_ENV: "k-test"})
+    s.begin("t::a")
+    judge = s.judge()
+    assert isinstance(judge.inner.inner, jev.SpendCap) and judge.inner.inner.inner is live
+    assert s.cap is judge.inner.inner and s.cap.cap_usd == 0.5
+
+
+def test_a_dry_record_needs_no_key_and_leaves_the_cache_as_it_was(tmp_path):
+    cache = tmp_path / "cache.json"
+    jev.ReplayJev(jev.FakeJev(), cache).judge({"other": 1}, QUESTIONS)
+    before = cache.read_bytes()
+    s = jev_harness.Session("record", cache, cap_usd=1.0, env={}, dry=True)
+    assert s.dry and s.skip_reason() is None
+    assert s.source_cache == cache and s.cache_path != cache
+    assert s.cached_count() == 1, "the temp copy starts from the cache"
+    s.begin("t::a")
+    s.judge().judge(STATE, QUESTIONS)
+    s.end("t::a")
+    assert isinstance(s.cap.inner, jev.DryRun) and s.cap.inner.requests == 1
+    assert s.requests == 1 and s.spent_usd == pytest.approx(_one_request_usd())
+    assert cache.read_bytes() == before
+    assert jev_harness.outcomes_path(s.cache_path).parent != cache.parent
+    assert not jev_harness.dry_from({}) and not jev_harness.Session(
+        "replay", cache, env={}, dry=True).dry, "dry is a record mode's only"
+
+
+def test_a_dry_record_stops_at_the_cap_before_the_request_leaves(tmp_path):
+    s = jev_harness.Session("record", tmp_path / "cache.json",
+                            cap_usd=_one_request_usd() * 0.5, env={}, dry=True)
+    rec = s.begin("t::a")
+    with pytest.raises(jev.SpendCapReached):
+        s.judge().judge(STATE, QUESTIONS)
+    s.end("t::a")
+    assert rec.capped and jev.RECORD_CAP_ENV in rec.capped and rec.misses == []
+    assert s.requests == 0 and s.cap.inner.requests == 0
+    reason = s.skip_reason()
+    assert reason and jev_harness.CAP_ENV in reason and s.stopped == reason
+
+
 # --- the outcomes writer ----------------------------------------------------------------
 
 def test_outcomes_writer_appends_one_json_line_per_record(tmp_path):
@@ -428,6 +538,42 @@ def test_fixture_in_record_mode_stops_at_the_cap_and_skips_the_rest(
     assert (tmp_path / "cache.json").is_file()
 
 
+def test_fixture_in_a_dry_record_skips_the_test_the_cap_stops_and_every_one_after(
+        pytester, monkeypatch, tmp_path):
+    # the cap proved on the fake: the first request's estimate is over the
+    # cap, so nothing is answered, nothing is written to the cache, and each
+    # test skips with the cap's reason (never a failure, never a divergence)
+    monkeypatch.setenv(jev_harness.MODE_ENV, "record")
+    monkeypatch.setenv(jev_harness.DRY_ENV, "1")
+    monkeypatch.delenv(jev.KEY_ENV, raising=False)
+    monkeypatch.setenv(jev_harness.CAP_ENV, f"{_one_request_usd() * 0.5:.10f}")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    _inner(pytester)
+    result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider")
+    result.assert_outcomes(skipped=3)
+    out = result.stdout.str()
+    assert jev_harness.CAP_ENV in out and "dry run" in out
+    assert "estimated live requests 0" in out
+    assert not (tmp_path / "cache.json").exists()
+    assert not (tmp_path / "outcomes.jsonl").exists(), "a dry run writes beside its temp copy"
+
+
+def test_fixture_in_a_dry_record_estimates_the_requests_a_recording_makes(
+        pytester, monkeypatch, tmp_path):
+    monkeypatch.setenv(jev_harness.MODE_ENV, "record")
+    monkeypatch.setenv(jev_harness.DRY_ENV, "1")
+    monkeypatch.delenv(jev.KEY_ENV, raising=False)
+    monkeypatch.setenv(jev_harness.CAP_ENV, "1.00")
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    _inner(pytester)
+    result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider")
+    result.assert_outcomes(passed=2, failed=1)
+    out = result.stdout.str()
+    # the three tests ask one request between them: the first asks, the rest replay
+    assert "estimated live requests 1" in out and "jev record (dry run)" in out
+    assert not (tmp_path / "cache.json").exists()
+
+
 # --- the thresholds helper ------------------------------------------------------------------
 
 def _tuning_cache(tmp_path):
@@ -493,3 +639,62 @@ def test_thresholds_helper_handles_an_empty_cache(tmp_path):
                           capture_output=True, text=True, encoding="utf-8", cwd=str(REPO), timeout=60)
     assert proc.returncode == 0, proc.stderr
     assert "no answers recorded" in proc.stdout and "page state" in proc.stdout
+
+
+def _answer(kind, value, choice=None):
+    if kind == "noul":
+        return jev.Answer(kind="noul", noul=value).to_dict()
+    return jev.Answer(kind="choice", choice=choice, probabilities={choice: value},
+                      confidence=value).to_dict()
+
+
+def test_thresholds_helper_reads_todays_question_ids_over_several_caches(tmp_path):
+    # SP8b: the page read's Nouls, the send Noul, an error's field, the
+    # inbox's link Noul and the link pick are today's ids; each cache adds
+    # its requests, and the combined reads come from a matrix --json file
+    # and the captures' results
+    first = tmp_path / "a" / "cache.json"
+    second = tmp_path / "b" / "cache.json"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text(json.dumps({"k1": {
+        "page_state": _answer("choice", 0.95, "application_form"),
+        "page_applicant_details": _answer("noul", 0.97),
+        "page_sign_in": _answer("noul", 0.03),
+        "button_0_sends": _answer("noul", 0.91),
+        "error_0_field": _answer("choice", 0.66, "q2")}}), encoding="utf-8")
+    second.write_text(json.dumps({"k2": {
+        "msg_0_has_link": _answer("noul", 0.93),
+        "msg_0_from_site": _answer("noul", 0.88),
+        "link_pick": _answer("choice", 0.99, "link_1")}}), encoding="utf-8")
+    matrix = tmp_path / "matrix.json"
+    matrix.write_text(json.dumps([{"flow": "ashby_wizard", "judge": "real", "reads": [
+        {"n": 1, "state": "application_form", "conf": 0.93, "read": "application_form",
+         "read_conf": 0.93, "judged": "application_form", "judged_conf": 1.0},
+        {"n": 2, "state": "confirmation", "conf": 0.35, "read": "confirmation",
+         "read_conf": 0.35, "judged": "review_page", "judged_conf": 0.6}]}]), encoding="utf-8")
+    captures = tmp_path / "results.json"
+    captures.write_text(json.dumps({"reads": [
+        {"capture": "x/posting", "expected": ["job_posting"], "read": "job_posting",
+         "read_conf": 0.8, "judged": "job_posting", "judged_conf": 0.9},
+        {"capture": "x/apply", "expected": ["application_form"], "read": "other",
+         "read_conf": 0.45, "judged": "other", "judged_conf": 0.5}]}), encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(REPO / "scripts" / "jev_thresholds.py"),
+                           "--cache", str(first), "--cache", str(second), "--no-outcomes",
+                           "--reads", str(matrix), "--reads", str(captures)],
+                          capture_output=True, text=True, encoding="utf-8", cwd=str(REPO),
+                          timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "jev answers: 8 over 2 request(s)" in out
+    assert "read page_applicant_details: 1 answer(s); gate READ_NOUL_MIN = 0.50" in out
+    assert "button sends: 1 answer(s); gate BUTTON_SENDS_MIN = 0.80" in out
+    assert "error field: 1 answer(s); gate FIELD_MAP_MIN_CONF = 0.70" in out
+    assert "1 of 1 below the gate" in out
+    assert "inbox: 2 answer(s)" in out and "link pick: 1 answer(s)" in out
+    assert "unrecognised id" not in out
+    assert "combined page reads: 4 read(s)" in out
+    assert "confirmation: 1;" in out and "1 under the gate" in out
+    assert "against the labels: 1 right" in out and "1 wrong" in out
+    assert "ashby_wizard real p2: judged review_page 0.60, read confirmation 0.35" in out
+    assert "outcomes: 0 test(s) recorded" in out

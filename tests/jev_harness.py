@@ -4,12 +4,18 @@
 `tests/test_apply_run.py` and `tests/test_apply_run_boundaries.py` gets:
 
 - unset or `fake`: `FakeJev()`, today's behaviour, nothing written anywhere.
-- `record`: `ReplayJev(TypeSafeJev(), cache)`; every request the fixtures make
-  is answered by the live model once and stored in the cache. Needs
-  `TYPESAFE_API_KEY` in the environment (the fixture skips with the reason when
-  it is unset). Live spend is measured per test through `jev.usage()` and the
-  session stops recording, skipping the remaining tests, once it passes
-  `AUTO_APPLY_RECORD_USD_CAP` (default 1.00 USD).
+- `record`: `ReplayJev(SpendCap(TypeSafeJev(), cap), cache)`; every request
+  the fixtures make is answered by the live model once and stored in the
+  cache. Needs `TYPESAFE_API_KEY` in the environment (the fixture skips with
+  the reason when it is unset). `jev.SpendCap` refuses a live request whose
+  estimated cost would take the session's spend past
+  `AUTO_APPLY_RECORD_USD_CAP` (default 1.00 USD); the test it stops skips
+  with the reason, and so does every test after it.
+- `record` with `AUTO_APPLY_RECORD_DRY=1`: the dry run. The fake answers in
+  place of the live model and each request counts at its estimated size
+  (`jev.DryRun`), over a temp copy of the cache: the request count and the
+  spend a recording would make, and the cap at work, with no key, no network
+  and the cache left as it was.
 - `replay`: `ReplayJev(None, cache)`; a miss raises `JevUnavailable` inside
   the runner (which parks the job as failed) and the harness turns that into a
   test failure naming the fixture, the test and the re-record command.
@@ -27,7 +33,9 @@ call in place of `jev.FakeJev()`.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -41,8 +49,9 @@ from jev_outcomes import OutcomesWriter, TestRecord, answer_row  # noqa: E402
 from jsonutil import read_json_dict  # noqa: E402
 
 MODE_ENV = "AUTO_APPLY_TEST_JEV"
-CAP_ENV = "AUTO_APPLY_RECORD_USD_CAP"
-DEFAULT_CAP_USD = 1.00
+CAP_ENV = jev.RECORD_CAP_ENV
+DRY_ENV = "AUTO_APPLY_RECORD_DRY"
+DEFAULT_CAP_USD = jev.DEFAULT_RECORD_CAP_USD
 MODES = ("fake", "record", "replay")
 FIXTURE = "jev_judge"
 RUNNER_TESTS = "tests/test_apply_run.py tests/test_apply_run_boundaries.py"
@@ -69,8 +78,21 @@ def cache_path_from(env: Mapping[str, str]) -> Path:
 
 
 def cap_from(env: Mapping[str, str]) -> float:
-    raw = (env.get(CAP_ENV) or "").strip()
-    return float(raw) if raw else DEFAULT_CAP_USD
+    return jev.record_cap(env)
+
+
+def dry_from(env: Mapping[str, str]) -> bool:
+    """`AUTO_APPLY_RECORD_DRY` set to 1, true or yes."""
+    return (env.get(DRY_ENV) or "").strip().lower() in ("1", "true", "yes")
+
+
+def dry_copy(cache_path: Path) -> Path:
+    """A temp copy of the cache (an empty one when there is none) for a dry
+    run to write its fake answers into."""
+    tmp = Path(tempfile.mkdtemp(prefix="jev-dry-")) / Path(cache_path).name
+    if Path(cache_path).is_file():
+        shutil.copyfile(cache_path, tmp)
+    return tmp
 
 
 def outcomes_path(cache_path: Path) -> Path:
@@ -96,6 +118,9 @@ class Observed:
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, jev.Answer]:
         try:
             answers = self.inner.judge(state, questions)
+        except jev.SpendCapReached as e:
+            self.record.capped = str(e)
+            raise
         except jev.JevUnavailable as e:
             self.record.misses.append({"key": jev.ReplayJev.key_for(state, questions),
                                        "questions": sorted(questions), "error": str(e)})
@@ -117,14 +142,18 @@ class Session:
     per-test records, the live spend and the cap."""
 
     def __init__(self, mode: str, cache_path: Path, cap_usd: float = DEFAULT_CAP_USD,
-                 env: Mapping[str, str] | None = None):
+                 env: Mapping[str, str] | None = None, *, dry: bool = False):
         if mode not in MODES:
             raise ValueError(f"unknown harness mode {mode!r}")
         self.mode = mode
-        self.cache_path = Path(cache_path)
+        self.dry = bool(dry) and mode == "record"
+        # a dry run writes its fake answers into a temp copy, never the cache
+        self.source_cache = Path(cache_path)
+        self.cache_path = dry_copy(cache_path) if self.dry else Path(cache_path)
         self.cap_usd = float(cap_usd)
         self.env = os.environ if env is None else env
         self.replay: jev.ReplayJev | None = None
+        self.cap: jev.SpendCap | None = None
         self.records: dict[str, TestRecord] = {}
         self.current: TestRecord | None = None
         self.spent_usd = 0.0
@@ -136,7 +165,8 @@ class Session:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Session:
         env = os.environ if env is None else env
-        return cls(mode_from(env), cache_path_from(env), cap_from(env), env=env)
+        return cls(mode_from(env), cache_path_from(env), cap_from(env), env=env,
+                   dry=dry_from(env))
 
     @property
     def soft(self) -> bool:
@@ -148,7 +178,8 @@ class Session:
     def skip_reason(self) -> str | None:
         if self.stopped:
             return self.stopped
-        if self.mode == "record" and not (self.env.get(jev.KEY_ENV) or "").strip():
+        if self.mode == "record" and not self.dry and not (self.env.get(jev.KEY_ENV)
+                                                           or "").strip():
             return (f"{MODE_ENV}=record needs {jev.KEY_ENV} in the environment; "
                     "scripts/jev_record.ps1 exports it from .env for one run")
         return None
@@ -168,8 +199,10 @@ class Session:
             self.requests += max(0, after["requests"] - before["requests"])
             self.current.usd = delta
             self.current = None
-        if self.mode == "record" and self.stopped is None and self.spent_usd > self.cap_usd:
-            self.stopped = (f"{CAP_ENV} reached: {self.spent_usd:.2f} USD after "
+        capped = self.cap is not None and self.cap.reached
+        if self.mode == "record" and self.stopped is None and (capped
+                                                               or self.spent_usd > self.cap_usd):
+            self.stopped = (f"{CAP_ENV} reached: {self.spent_usd:.4f} USD after "
                             f"{self.requests} live request(s), cap {self.cap_usd:.2f} USD; "
                             "the cache keeps every answer recorded so far")
 
@@ -184,7 +217,11 @@ class Session:
 
     def _replay(self) -> jev.ReplayJev:
         if self.replay is None:
-            inner = live_judge() if self.mode == "record" else None
+            inner = None
+            if self.mode == "record":
+                self.cap = jev.SpendCap(jev.DryRun() if self.dry else live_judge(),
+                                        self.cap_usd)
+                inner = self.cap
             self.replay = jev.ReplayJev(inner, self.cache_path)
         return self.replay
 

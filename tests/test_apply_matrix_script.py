@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -85,6 +87,62 @@ def test_jobs_1_and_jobs_3_agree_on_three_small_flows(_browser, tmp_path):
     # of which worker happened to finish first
     assert [(r["flow"], r["judge"]) for r in serial_rows] == \
         [(r["flow"], r["judge"]) for r in parallel_rows]
+
+
+# --- the real judge's column (SP8b), proved on the fake ----------------------------------------
+
+_TWO_FLOWS = ("post_form", "lever_single_park")
+
+
+def _real(args: list, cap: str, timeout: int = 90) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+    env["AUTO_APPLY_RECORD_USD_CAP"] = cap
+    return subprocess.run([sys.executable, str(REPO / "scripts" / "apply_matrix.py"), *args],
+                          capture_output=True, text=True, encoding="utf-8", cwd=str(REPO),
+                          timeout=timeout, env=env)
+
+
+def test_a_dry_recording_of_the_real_column_replays_with_no_miss(_browser, tmp_path):
+    committed = h.REAL_CACHE.read_bytes() if h.REAL_CACHE.is_file() else None
+    out_json = tmp_path / "dry.json"
+    proc = _real(["--real", "dry", "--flows", ",".join(_TWO_FLOWS), "--json", str(out_json)],
+                 "1.00")
+    assert proc.returncode == 0, proc.stderr
+    m = re.search(r"; cache (.+matrix_cache\.json)$", proc.stdout, re.M)
+    assert m, proc.stdout
+    cache = Path(m.group(1))
+    try:
+        assert cache.is_file() and cache != h.REAL_CACHE
+        assert "real judge (dry): 2 of 2 flow(s)" in proc.stdout
+        assert "estimated live requests" in proc.stdout
+        data = json.loads(out_json.read_text(encoding="utf-8"))
+        assert sorted(r["flow"] for r in data["results"]) == sorted(_TWO_FLOWS)
+        assert data["unrecorded"] == [] and data["requests"] > 0
+        assert all(r["judge"] == "real" and r["reads"] for r in data["results"])
+        # every request the recording made replays, on another port, in a
+        # worker of its own
+        proc = _real(["--real", "replay", "--real-cache", str(cache), "--flows",
+                      ",".join(_TWO_FLOWS), "--seeds", "0", "--jobs", "2"], "1.00")
+        assert proc.returncode == 0, proc.stderr
+        assert "0 miss(es) over 2 flow(s)" in proc.stdout, proc.stdout
+        assert "real 100.0% over 2 flows" in proc.stdout, proc.stdout
+    finally:
+        shutil.rmtree(cache.parent, ignore_errors=True)
+    assert (h.REAL_CACHE.read_bytes() if h.REAL_CACHE.is_file() else None) == committed
+
+
+def test_the_real_column_starts_no_flow_past_the_cap(_browser, tmp_path):
+    # a cap under one request's estimate: nothing is asked, and every flow
+    # is listed as left unrecorded
+    proc = _real(["--real", "dry", "--flows", ",".join(_TWO_FLOWS)], "0.000001")
+    assert proc.returncode == 0, proc.stderr
+    assert "AUTO_APPLY_RECORD_USD_CAP reached" in proc.stderr
+    assert "left unrecorded: lever_single_park, post_form" in proc.stderr
+    assert "real judge (dry): 0 of 2 flow(s)" in proc.stdout
+    assert "estimated live requests 0" in proc.stdout
+    m = re.search(r"; cache (.+matrix_cache\.json)$", proc.stdout, re.M)
+    if m:
+        shutil.rmtree(Path(m.group(1)).parent, ignore_errors=True)
 
 
 # --- the timeout path, with no real worker at all --------------------------------------------

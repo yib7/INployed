@@ -15,10 +15,11 @@ Hooks, active in `record` and `replay` mode only:
 - collection: in `record` mode, one line with the number of tests that use
   the fixture, the number of requests already in the cache (they replay for
   free) and the spend cap.
-- makereport (call phase): a replay miss recorded on the test becomes a
-  failure whose text names the fixture, the test and the re-record command; a
-  failed `AssertionError` becomes an xfail carrying the divergence; either way
-  the test's record goes to `outcomes.jsonl`.
+- makereport (call phase): a test whose live request the spend cap stopped
+  (`jev.SpendCap`) skips with the cap's reason; a replay miss recorded on
+  the test becomes a failure whose text names the fixture, the test and the
+  re-record command; a failed `AssertionError` becomes an xfail carrying the
+  divergence; either way the test's record goes to `outcomes.jsonl`.
 - terminal summary: replay hits and misses, live requests and spend, the
   outcomes path, and the cap stop if it happened.
 """
@@ -83,10 +84,12 @@ def pytest_collection_modifyitems(config, items):
     n = sum(1 for it in items if jev_harness.FIXTURE in getattr(it, "fixturenames", ()))
     reporter = config.pluginmanager.get_plugin("terminalreporter")
     if reporter is not None:
+        dry = (f" (dry run: the fake answers at each request's estimated size, into a temp "
+               f"copy of {session.source_cache})" if session.dry else "")
         reporter.write_line(
             f"jev record: {n} test(s) use {jev_harness.FIXTURE}; {session.cached_count()} "
             f"request(s) already cached replay for free; live spend stops at cap "
-            f"{session.cap_usd:.2f} USD ({jev_harness.CAP_ENV}); cache {session.cache_path}")
+            f"{session.cap_usd:.2f} USD ({jev_harness.CAP_ENV}); cache {session.cache_path}{dry}")
 
 
 @pytest.fixture
@@ -131,7 +134,12 @@ def pytest_runtest_makereport(item, call):
     record = session.records.get(item.nodeid)
     if record is None:
         return
-    if record.misses:
+    if record.capped:
+        # the spend cap stopped a live request: the test never saw its
+        # answers, so it is neither a divergence nor a miss
+        rep.outcome = "skipped"
+        rep.longrepr = (str(item.path), item.location[1] or 0, f"Skipped: {record.capped}")
+    elif record.misses:
         rep.outcome = "failed"
         rep.longrepr = session.miss_text(record) + "\n\n" + str(rep.longrepr or "")
     elif rep.failed and call.excinfo is not None and call.excinfo.errisinstance(AssertionError):
@@ -152,9 +160,10 @@ def pytest_terminal_summary(terminalreporter, config):
     hits = replay.hits if replay else 0
     misses = replay.misses if replay else 0
     diverged = sum(1 for r in session.records.values() if r.divergence)
-    terminalreporter.write_sep("-", f"jev {session.mode}")
+    terminalreporter.write_sep("-", f"jev {session.mode}{' (dry run)' if session.dry else ''}")
+    live = "estimated live" if session.dry else "live"
     terminalreporter.write_line(
-        f"replay hits {hits}, misses {misses}; live requests {usage['requests']}, "
+        f"replay hits {hits}, misses {misses}; {live} requests {usage['requests']}, "
         f"{usage['input_tokens']} input tokens, {usage['usd']:.4f} USD; "
         f"{len(session.records)} test(s) recorded, {diverged} diverged from the fake")
     terminalreporter.write_line(f"outcomes: {session.writer.path}")

@@ -700,6 +700,10 @@ class Flow:
     # nothing, every noisy seed's run is that run, and the suite copies it
     # (`judge_requests` 0 is checked); the script runs every seed
     judge_free: bool = False
+    # the page's text changes with the clock, so no two runs ask the judge
+    # the same request: a replay of the real judge's answers leaves the flow
+    # out (its recording's run is its real column, SP8b)
+    replayable: bool = True
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
@@ -922,7 +926,8 @@ FLOWS: tuple[Flow, ...] = (
                 "real last step reaches the gate"),
     Flow("ticker_page", "ticker_page.html", True, "needs_human", r"^page did not advance",
          covers="a clock and a posted-ago note that change every second, a Continue that brings "
-                "the same step back: read as not advancing, never as new pages"),
+                "the same step back: read as not advancing, never as new pages",
+         replayable=False),
     Flow("tracker_redirect", _LINKEDIN_JOB, False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", routes=tracker_routes,
          covers="an ad tracker's hop after LinkedIn's Apply, sending the tab on 3 s later: "
@@ -1883,13 +1888,98 @@ class RunResult:
     policy: bool | None = None      # `policy_park` of the end
     actions: list[Action] = field(default_factory=list, repr=False)  # what the run did
     judge_requests: int = 0         # the requests the judge got
+    replay_misses: int = 0          # the requests a replay judge's cache did not hold
+    reads: list[dict] = field(default_factory=list)     # per traced page, `trace_reads`
 
 
-def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True) -> list[tuple[str, Any]]:
-    """("fake", FakeJev()) and ("noisy-<seed>", NoisyJev(FakeJev(), seed)) per seed."""
+def trace_reads(trace_dir: str | Path) -> list[dict]:
+    """Per page of a run's trace (`page-<n>.json`), the combined read the
+    run acted on (`state`, `conf`) and the judge's own pick
+    (`judged`, `judged_conf`): what the page-read floors are tuned on."""
+    rows = []
+    if not trace_dir:
+        return rows
+    pages = sorted(Path(trace_dir).glob("page-*.json"),
+                   key=lambda p: int(p.stem.split("-")[1]) if p.stem.split("-")[1].isdigit()
+                   else 0)
+    for p in pages:
+        try:
+            entry = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        answers = entry.get("answers") or {}
+        read = answers.get("page_state") or {}
+        judged = answers.get("page_state_judged") or read
+        rows.append({"n": entry.get("n"), "state": entry.get("state"),
+                     "conf": entry.get("confidence"), "read": read.get("choice"),
+                     "read_conf": read.get("confidence"), "judged": judged.get("choice"),
+                     "judged_conf": judged.get("confidence")})
+    return rows
+
+
+def judges(seeds: Iterable[int] = SUITE_SEEDS, *, fake: bool = True,
+           real: Any = None) -> list[tuple[str, Any]]:
+    """("fake", FakeJev()) and ("noisy-<seed>", NoisyJev(FakeJev(), seed)) per
+    seed, then ("real", `real`) when given (a `RealJudge`'s judge)."""
     out: list[tuple[str, Any]] = [("fake", jev.FakeJev())] if fake else []
     out += [(f"noisy-{s}", jev.NoisyJev(jev.FakeJev(), s)) for s in seeds]
+    if real is not None:
+        out.append((REAL, real))
     return out
+
+
+# --- the real judge's column (SP8b) -----------------------------------------------------------
+#
+# One run per flow under the live model through its own replay cache
+# (`REAL_CACHE`, committed: the flows are synthetic pages). `record` asks the
+# live model on a miss through `jev.SpendCap`, so the column stops at the
+# recording's cap; `replay` never leaves the machine and a miss parks the
+# run as failed, naming `JevUnavailable`; `dry` answers with the fake at
+# each request's estimated size into a temp copy of the cache (the request
+# count and the spend a recording would make, and the cap at work).
+
+REAL = "real"
+REAL_MODES = ("record", "replay", "dry")
+REAL_CACHE = FIXTURES_DIR / "jev_cache" / "matrix_cache.json"
+
+
+@dataclass
+class RealJudge:
+    mode: str
+    judge: Any                      # the ReplayJev a run gets
+    cache: Path                     # where the answers are read and written
+    cap: Any = None                 # the jev.SpendCap in `record` and `dry`
+
+    @property
+    def capped(self) -> bool:
+        return bool(self.cap is not None and self.cap.reached)
+
+
+def replay_only(judge: Any) -> bool:
+    """A replay judge that never asks anyone (`ReplayJev(None, ...)`)."""
+    return isinstance(judge, jev.ReplayJev) and judge.inner is None
+
+
+def real_judge(mode: str, cache: Path = REAL_CACHE, cap_usd: float | None = None,
+               *, live: Callable[[], Any] | None = None) -> RealJudge:
+    """The real judge's column's judge for `mode` (`REAL_MODES`). `live`
+    makes the live judge in `record` (`jev.TypeSafeJev` when None); the cap
+    is `cap_usd`, else `AUTO_APPLY_RECORD_USD_CAP`, else 1.00 USD."""
+    if mode not in REAL_MODES:
+        raise ValueError(f"unknown real-judge mode {mode!r}; expected one of "
+                         f"{', '.join(REAL_MODES)}")
+    cache = Path(cache)
+    if mode == "replay":
+        return RealJudge(mode, jev.ReplayJev(None, cache), cache)
+    cap_usd = jev.record_cap() if cap_usd is None else float(cap_usd)
+    if mode == "dry":
+        import jev_harness
+        cache = jev_harness.dry_copy(cache)
+        inner: Any = jev.DryRun()
+    else:
+        inner = live() if live is not None else jev.TypeSafeJev()
+    cap = jev.SpendCap(inner, cap_usd)
+    return RealJudge(mode, jev.ReplayJev(cap, cache), cache, cap)
 
 
 _LOCAL_HOSTS = ("127.0.0.1", "localhost")
@@ -2064,6 +2154,7 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
         sends.install(context, f, server)
         stack.enter_context(recorder.recording())
         inbox = inbox_url(f.inbox_page) if f.inbox else "https://mail.example.com/inbox"
+        replay, misses = judge, getattr(judge, "misses", None)
         if f.wrap is not None:
             judge = f.wrap(judge)
         runner = apply_run.Runner(
@@ -2079,9 +2170,11 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
     recorder.ledger = rundir / "accounts.json"
     recorder.files = [folder, queue, recorder.ledger]
     seconds = round(time.monotonic() - start, 2)
+    missed = replay.misses - misses if isinstance(misses, int) else 0
     if not outcomes:
         return RunResult(f.name, judge_name, "", "no outcome", False,
-                         ["NO-OUTCOME: the drain ran no job"], sends.count, 0, seconds)
+                         ["NO-OUTCOME: the drain ran no job"], sends.count, 0, seconds,
+                         replay_misses=missed)
     out = outcomes[0]
     breaks = invariant_breaks(out, recorder, sends)
     if f.opens_no_page and opened:
@@ -2092,7 +2185,8 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
                      f.reached(out.status, out.reason, recorder.final), breaks, sends.count,
                      out.pages, seconds, str(traces[-1]) if traces else "",
                      policy_park(out.status, out.reason), list(recorder.actions),
-                     len(recorder.judge_requests))
+                     len(recorder.judge_requests), missed,
+                     trace_reads(traces[-1]) if traces else [])
 
 
 def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, browser,
@@ -2101,12 +2195,47 @@ def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, brow
     results = []
     for f in flows:
         for name, judge in judge_list:
+            if name == REAL and not f.replayable and replay_only(judge):
+                continue            # its text changes with the clock: no replay can hit
             r = run_flow(f, judge, name, browser=browser, server=server, workdir=workdir,
                          fast=fast)
             results.append(r)
             if progress is not None:
                 progress(r)
     return results
+
+
+@dataclass
+class RealColumn:
+    results: list[RunResult]
+    unrecorded: list[str]           # flows the cap stopped mid-run or before they started
+    stopped: str = ""               # the cap's reason, when it stopped a request
+
+
+def run_real(flows: Iterable[Flow], rj: RealJudge, *, browser, server: FlowServer,
+             workdir: Path, fast: bool = True,
+             progress: Callable[[RunResult], None] | None = None) -> RealColumn:
+    """The real judge's column: one run per flow, in turn (a recording
+    writes one cache, so its runs never go in parallel). Once the cap stops
+    a request, no new flow starts: the flow it stopped and every flow after
+    it are listed as unrecorded and left out of the results (a stopped run's
+    end is the cap's, never the judge's). The answers recorded before the
+    stop stay in the cache."""
+    results: list[RunResult] = []
+    unrecorded: list[str] = []
+    for f in flows:
+        if rj.capped:
+            unrecorded.append(f.name)
+            continue
+        r = run_flow(f, rj.judge, REAL, browser=browser, server=server, workdir=workdir,
+                     fast=fast)
+        if rj.capped:
+            unrecorded.append(f.name)
+            continue
+        results.append(r)
+        if progress is not None:
+            progress(r)
+    return RealColumn(results, unrecorded, rj.cap.reason if rj.capped else "")
 
 
 def rates(results: list[RunResult]) -> dict[str, Any]:
@@ -2116,9 +2245,16 @@ def rates(results: list[RunResult]) -> dict[str, Any]:
     def rate(rows):
         return (sum(1 for r in rows if r.ok) / len(rows)) if rows else 1.0
 
+    def noisy(r):
+        return r.judge not in ("fake", REAL)
+
     def row(rows):
-        return {"fake": rate([r for r in rows if r.judge == "fake"]),
-                "noisy": rate([r for r in rows if r.judge != "fake"]), "runs": len(rows)}
+        out = {"fake": rate([r for r in rows if r.judge == "fake"]),
+               "noisy": rate([r for r in rows if noisy(r)]), "runs": len(rows)}
+        real = [r for r in rows if r.judge == REAL]
+        if real:                    # the real judge's column, when it ran on the flow
+            out["real"] = rate(real)
+        return out
     known = {f.name for f in FLOWS if f.known}
     counted = [r for r in results if r.flow not in known]
     per_flow: dict[str, list[RunResult]] = {}
@@ -2129,7 +2265,9 @@ def rates(results: list[RunResult]) -> dict[str, Any]:
     # answer, a "check whether" end) reaching that end is no miss: it is
     # counted apart, and the policy count shows only the misses
     return {"fake": rate([r for r in counted if r.judge == "fake"]),
-            "noisy": rate([r for r in counted if r.judge != "fake"]),
+            "noisy": rate([r for r in counted if noisy(r)]),
+            "real": rate([r for r in counted if r.judge == REAL]),
+            "real_runs": sum(1 for r in counted if r.judge == REAL),
             "all": rate(counted),
             "breaks": sum(len(r.breaks) for r in results),
             "parks": len(parks),
@@ -2152,17 +2290,27 @@ def summary(results: list[RunResult], *, width: int = 70) -> str:
         for b in r.breaks:
             lines.append(f"    ! {b}")
     rt = rates(results)
+    # the columns the run has: the fake and noisy ones always (today's
+    # layout), the real judge's when it ran; a real-only run shows it alone
+    real = any(r.judge == REAL for r in results)
+    cols = ("real",) if real and all(r.judge == REAL for r in results) else \
+        ("fake", "noisy", "real") if real else ("fake", "noisy")
     lines.append("")
-    lines.append(f"{'flow':<22} {'fake':>6} {'noisy':>6} runs")
+    def cell(row, c):
+        return f"{row[c]:>6.0%} " if c in row else f"{'-':>6} "
+    lines.append(f"{'flow':<22} " + "".join(f"{c:>6} " for c in cols) + "runs")
     for name, row in rt["per_flow"].items():
-        lines.append(f"{name:<22} {row['fake']:>6.0%} {row['noisy']:>6.0%} {row['runs']}")
+        lines.append(f"{name:<22} " + "".join(cell(row, c) for c in cols) + f"{row['runs']}")
     lines.append("")
     by_name = {f.name: f for f in FLOWS}
     for name, row in rt["known"].items():
         tag = by_name[name].known.split(":")[0]
-        lines.append(f"known failing, {tag}: {name} (fake {row['fake']:.0%}, noisy "
-                     f"{row['noisy']:.0%}; left out of the rates below)")
-    lines.append(f"success: fake {rt['fake']:.1%}, noisy {rt['noisy']:.1%}, all {rt['all']:.1%} "
+        rated = ", ".join(f"{c} {row[c]:.0%}" if c in row else f"{c} -" for c in cols)
+        lines.append(f"known failing, {tag}: {name} ({rated}; left out of the rates below)")
+    parts = [f"{c} {rt[c]:.1%}" for c in cols if c != "real"]
+    if real:
+        parts.append(f"real {rt['real']:.1%} over {rt['real_runs']} flows")
+    lines.append(f"success: {', '.join(parts)}, all {rt['all']:.1%} "
                  f"over {len(results)} runs; invariant breaks: {rt['breaks']}; parks outside "
                  f"the policy: {rt['outside_policy']} of {rt['parks']}; designed ends off the "
                  f"policy list: {rt['designed']}")

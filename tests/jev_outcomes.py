@@ -26,6 +26,7 @@ class TestRecord:
     divergence: str | None = None
     result: str = ""
     usd: float = 0.0
+    capped: str | None = None       # the spend cap stopped a live request in the test
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

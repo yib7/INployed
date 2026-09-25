@@ -4085,6 +4085,10 @@ class _JobRun:
         # the message still shown (SP6 review R2-I4); this page's
         self._spared: dict[str, tuple[str, str]] = {}
         self._code_sent = False         # the code step clicked on (a code can finish a send)
+        # the code step clicked on after the submit click or once the
+        # application's answers went on a page: a code the site may have held
+        # the application for (an account's own code sends none of it, M9)
+        self._code_may_send = False
         self._links_followed: set[str] = set()     # sites whose emailed link was opened (ACC-05)
         self._send_watch: SendWatch | None = None     # the requests after the submit click
         self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
@@ -4710,9 +4714,12 @@ class _JobRun:
         return down if isinstance(down, str) else ""
 
     def _maybe_sent(self) -> bool:
-        """The submit click landed or the code step clicked on: something may
-        have been sent, so the job is never handed back to the queue."""
-        return bool(self.submit_clicked or self._code_sent)
+        """The submit click landed, or a code step clicked on once the
+        application may have been held for it (`_code_may_send`): something
+        may have been sent, so the job is never handed back to the queue. An
+        account's own code before any of the application's answers went on a
+        page sends none of it (SP8a review M9)."""
+        return bool(self.submit_clicked or self._code_may_send)
 
     def _requeued(self, step: str) -> Outcome:
         """RES-02: the judge went down under the job before anything could
@@ -4786,8 +4793,9 @@ class _JobRun:
     def _take_over(self, e: BaseException) -> bool:
         """RES-06: whether the run goes on in another tab of the job after
         `e` left the loop. Only when the job's tab closed with the window
-        open, nothing could have been sent (after the submit click or the
-        code step the run only reads that tab: `_confirmed_elsewhere`), the
+        open, nothing could have been sent (after the submit click, or a code
+        step the application may have been held for, the run only reads that
+        tab: `_maybe_sent`, `_confirmed_elsewhere`), the
         judge is up, no tab was taken over before in this job, and a tab the
         run left for another has moved on since (`_moved_on`): the flow went
         on there. A tab as the run left it (the user closed the job's tab; a
@@ -4847,7 +4855,8 @@ class _JobRun:
 
     def _confirmed_elsewhere(self) -> Outcome | None:
         """RES-06 after a send: the job's tab closed after the submit click
-        or the code step, and a tab the run left for it moved on
+        or a code step that may have sent (`_maybe_sent`), and a tab the run
+        left for it moved on
         (`_moved_on`, a form in a popup that hands back to its opener as it
         closes). That tab is only read, never clicked or judged (at most one
         send per job): received words it did not show when the run left it
@@ -8017,6 +8026,11 @@ class _JobRun:
                 # (INV-06)
                 self.submit_clicked = True
             self._code_sent = True      # a code can finish a send the site held back
+            if self.submit_clicked or self.form_filled:
+                # the site may have held the application for this code; an
+                # account's own code, before the application's answers went
+                # on a page, sends none of it (M9)
+                self._code_may_send = True
 
     def _fill_otp(self, target: apply_form.Field, code: str) -> None:
         """ACC-06: a code in one-character boxes (`widget` "otp"): typed from

@@ -948,6 +948,33 @@ def test_a_judge_down_after_the_code_step_of_a_filled_application_asks_the_perso
     assert h.policy_park(outcomes[0].status, reason) is True
 
 
+_ACCOUNT_CODE = (_FORMS / "verify_email_code.html").read_text(encoding="utf-8").replace(
+    "window.location.href = 'email_verified.html';",
+    "fetch('/account/verify', {method: 'POST', body: 'c'}).then(function () {"
+    " location.href = '/apply/form'; });")
+
+
+def test_a_judge_down_after_an_account_code_hands_the_job_back_to_the_queue(
+        _browser, tmp_path, monkeypatch):
+    # the account's own code, before any of the application's answers went
+    # on a page, sends nothing of the application (SP8a review M9)
+    import apply_run
+    posts: list[str] = []
+    judge = _GoesDown()
+    _down_from(monkeypatch, judge, "_code_gate", after=True)
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/apply/verify"),
+                                                   ("b", f"{_CAREERS}/apply/verify")], {
+        f"{_CAREERS}/apply/verify": _ACCOUNT_CODE, f"{_CAREERS}/account/verify": _sink(posts, "ok"),
+        f"{_CAREERS}/apply/form": _POST_FORM}, submit=True, judge=judge, inbox=_Mailbox())
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "queued")], outcomes
+    assert outcomes[0].reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), \
+        outcomes[0].reason
+    assert posts == ["POST"]            # the account's check, never the application
+    jobs = _entries(tmp_path)
+    assert (jobs["a"]["status"], jobs["a"]["attempts"]) == ("queued", 0)
+    assert (jobs["b"]["status"], jobs["b"]["attempts"]) == ("queued", 0)
+
+
 def test_a_park_a_step_reached_with_the_judge_down_after_the_submit_click_stands(
         _browser, tmp_path, monkeypatch):
     # a step that noted the outage and went on to a park of its own (the

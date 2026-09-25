@@ -326,8 +326,10 @@ class _RedirectingSite:
     `cf-mitigated: challenge`) whose script, once it runs, sets a cookie and
     goes on to `/landed` (the link used); `/hopcf` is a 302 to it; `/busy`
     and `/down` answer 429 and 503; `/gone` is a 403 that says the link
-    expired; `/human` is a 200 page of a bot check. Every path asked for is
-    kept in `asked`."""
+    expired; `/human` is a 200 page of a bot check, `/hophuman` a 302 to it.
+    `/verified_widget` and `/verified_box` are verified pages whose sign-in
+    carries a CAPTCHA widget in a frame or a "Verify you are human" box.
+    Every path asked for is kept in `asked`."""
 
     def __init__(self):
         import http.server
@@ -345,7 +347,8 @@ class _RedirectingSite:
                 moves = {"/go": other, "/stay": own, "/loop": "/loop2", "/loop2": "/loop",
                          "/jsloc": f"javascript:location.href='{other}'",
                          "/dataloc": f"data:text/html,<script>location.href='{other}'</script>",
-                         "/hopcf": f"http://127.0.0.1:{site.port}/cf"}
+                         "/hopcf": f"http://127.0.0.1:{site.port}/cf",
+                         "/hophuman": f"http://127.0.0.1:{site.port}/human"}
                 if self.path in moves:
                     self.send_response(302)
                     self.send_header("Location", moves[self.path])
@@ -382,6 +385,15 @@ class _RedirectingSite:
                                    "</script>",
                         "/human": "<h1>Verify you are human</h1><p>Complete the check below."
                                   "</p>",
+                        "/verified_widget": "<h1>Your email address is verified</h1><p>Sign in "
+                                            "to go on with your application.</p><form><input "
+                                            "name=u><input type=password name=p><iframe srcdoc=\""
+                                            "<input type=checkbox><label>I'm not a robot</label>"
+                                            "\"></iframe><button>Sign in</button></form>",
+                        "/verified_box": "<h1>Email verified</h1><p>Sign in to continue.</p>"
+                                         "<form><input name=u><input type=password name=p><div><label>"
+                                         "<input type=checkbox> Verify you are human</label>"
+                                         "</div><button>Sign in</button></form>",
                         }.get(self.path, "")
                 data = f"<!doctype html><html><body>{body}</body></html>".encode()
                 self.send_response(200)
@@ -507,7 +519,7 @@ def test_a_verification_link_redirected_to_an_address_with_no_host_names_its_sch
 
 
 @pytest.mark.parametrize("path, said", [
-    ("/cf", "cf-mitigated: challenge"), ("/hopcf", "cf-mitigated: challenge"),
+    ("/cf", "cf-mitigated: challenge"),
     ("/busy", "HTTP 429"), ("/down", "HTTP 503"),
     ("/human", "the page says 'Verify you are human'")])
 def test_a_verification_link_answered_by_a_bot_check_parks_for_the_person(
@@ -526,6 +538,36 @@ def test_a_verification_link_answered_by_a_bot_check_parks_for_the_person(
     assert ("127.0.0.1", "solved") not in _left_behind(browser_page)["cookies"]
     if path != "/human":
         assert read == []
+
+
+@pytest.mark.parametrize("path, said", [
+    ("/hopcf", "cf-mitigated: challenge"), ("/hophuman", "the page says 'Verify you are human'")])
+def test_a_bot_check_after_the_links_own_address_answered_says_the_link_may_have_been_used(
+        browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
+    # R4-I2 (SP7 review): the link's own address answered with a redirect,
+    # so the site may have taken the link's token before the check; the
+    # park says so and asks for a Re-queue first
+    run, _ = _link_run(tmp_path, browser_page, monkeypatch)
+    with pytest.raises(apply_run._Parked) as parked:
+        run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}")
+    assert parked.value.reason == (
+        "emailed verification link needed: the emailed link's page asked for a bot check "
+        f"({said}) after the link's own address had answered, so the link may have been used")
+    assert parked.value.tab_note == apply_run.LINK_USED_NOTE
+    assert not [p for p in redirecting_site.asked if p.endswith("/landed")], redirecting_site.asked
+
+
+@pytest.mark.parametrize("path, shown", [("/verified_widget", "Your email address is verified"),
+                                         ("/verified_box", "Email verified")])
+def test_a_verified_page_whose_sign_in_carries_a_captcha_is_read(
+        browser_page, tmp_path, monkeypatch, redirecting_site, path, shown):
+    # R4-I2 (SP7 review): the link verified the address, and the page's
+    # sign-in carries its own CAPTCHA (a widget in a frame, a "Verify you
+    # are human" box). A check's words are read from the main frame of a
+    # page with no box to fill, so this page is read and the run goes on
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    assert run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}").startswith(shown)
+    assert read == [f"http://127.0.0.1:{redirecting_site.port}{path}"]
 
 
 def test_a_verification_link_the_site_answers_with_a_403_that_names_the_link_is_refused(

@@ -256,6 +256,9 @@ LINK_BOT_WORDS = re.compile(
     r"|\bchecking\s+(?:your\s+browser|if\s+the\s+site\s+connection\s+is\s+secure)\b"
     r"|\bare\s+you\s+a\s+robot\b|\bi(?:'m|\u2019m|\s+am)\s+not\s+a\s+robot\b", re.I)
 LINK_BOT_NOTE = "open the emailed link yourself, then Re-queue"
+# a check met after the link's own address answered: the link may have done
+# its work (SP7 review R4-I2)
+LINK_USED_NOTE = "Re-queue first; if the site still asks for the link, open it yourself"
 REVIEW_NOTE = "review and submit"
 SUBMIT_FAILED_NOTE = "submit did not register; review and submit"
 NOT_SENT_REASON = "the submit did not go through"
@@ -1650,6 +1653,30 @@ def _link_challenge(answer) -> str:
     if LINK_FAILED_WORDS.search(re.sub(r"<[^>]*>", " ", body)):
         return ""
     return f"HTTP {answer.status}"
+
+
+# a verification link's settled page as a bot check reads it (SP7 review
+# R4-I2): the main frame's own text, on a page with no box to fill, as a
+# check's page is; "" for a page with a box. A CAPTCHA widget in a child
+# frame, or a box beside one, belongs to the page's next step (a sign-in
+# with its own CAPTCHA box once the link verified the address)
+_LINK_CHECK_JS = """() => {
+  const box = [...document.querySelectorAll('input, textarea, select')].some(el => {
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (['hidden', 'checkbox', 'submit', 'button', 'image', 'reset'].includes(type)) return false;
+    return el.getClientRects().length > 0;
+  });
+  return box || !document.body ? '' : (document.body.innerText || '');
+}"""
+
+
+def _link_check_text(tab) -> str:
+    """The words of a verification link's settled page a bot check is read
+    from (`_LINK_CHECK_JS`); "" for a page that cannot be read."""
+    try:
+        return str(tab.main_frame.evaluate(_LINK_CHECK_JS) or "")
+    except Exception:           # noqa: BLE001  (a page gone shows no check)
+        return ""
 
 
 def _tracker(url_or_host: str) -> bool:
@@ -7520,9 +7547,13 @@ class _JobRun:
         the tab is headed for any other host nothing more of it loads and
         nothing of it is read. A navigation answered by the site's bot
         check (`_link_challenge`) goes no further: the check's page never
-        runs, the link is not used, and the park asks the person to open
-        it (SP7 review R3-M2); so does a settled page that reads as one
-        (`LINK_BOT_WORDS`). A page the tab opens (a popup) loads nothing
+        runs, and the park asks the person to open the link (SP7 review
+        R3-M2); so does a settled page that reads as one: `LINK_BOT_WORDS`
+        in its main frame, on a page with no box to fill
+        (`_link_check_text`). On the link's own address the link is not
+        used; a check on a later hop comes after that address answered, so
+        the park says the link may have been used and asks for a Re-queue
+        first (SP7 review R4-I2). A page the tab opens (a popup) loads nothing
         and is closed. The tab's text once it settled (a park when it was
         refused, left the allowed hosts, asked for a bot check or did not
         load), and the tab closed."""
@@ -7533,7 +7564,9 @@ class _JobRun:
         moves: list[str] = []           # the redirects handed to the page as a script's move
         landed = [False]                # a page that is no redirect was handed to the tab
         broken: list[str] = []          # why the route could not answer a navigation
-        challenged: list[str] = []      # what said a navigation's answer was a bot check
+        # what said a navigation's answer was a bot check, and whether a hop
+        # of the link had answered before it (the link may have been used)
+        challenged: list[tuple[str, bool]] = []
 
         def main_frame(request) -> bool:
             try:
@@ -7577,9 +7610,9 @@ class _JobRun:
                 return
             challenge = _link_challenge(answer)
             if challenge:
-                challenged.append(challenge)
-                route.abort()       # the check's page never runs: the link is not used
-                return
+                challenged.append((challenge, bool(moves)))
+                route.abort()       # the check's page never runs (on the link's own
+                return              # address, the link is not used)
             where = answer.headers.get("location", "") if 300 <= answer.status < 400 else ""
             if not where:
                 landed[0] = True
@@ -7622,7 +7655,7 @@ class _JobRun:
                 page.close()
             except Exception:       # noqa: BLE001
                 pass
-        error, text = "", ""
+        error, text, check = "", "", ""
         try:
             context.route("**/*", fresh)
             tab.on("popup", close)
@@ -7639,6 +7672,7 @@ class _JobRun:
                 apply_fill.settle(tab, CLICK_TIMEOUT_S)
             if not stopped and not challenged and not left(tab.url):
                 text = apply_fill.page_text(tab)
+                check = _link_check_text(tab)
                 left(tab.url)       # a redirect while it was read: the text is dropped
         except Exception as e:      # noqa: BLE001  (an error may quote the link's token)
             error = broken[0] if broken else type(e).__name__
@@ -7654,12 +7688,18 @@ class _JobRun:
             raise _Parked("needs_human", f"{LINK_REASON}: the emailed link went on to "
                                          f"{stopped[0]}, outside the application's sites; the "
                                          "run stopped it", LINK_NOTE)
-        bot = LINK_BOT_WORDS.search(text or "")
+        bot = LINK_BOT_WORDS.search(check)
         if bot and not challenged:
-            challenged.append(f"the page says {' '.join(bot.group(0).split())!r}")
+            challenged.append((f"the page says {' '.join(bot.group(0).split())!r}", bool(moves)))
         if challenged:
+            what, hopped = challenged[0]
+            if hopped:
+                raise _Parked("needs_human", f"{LINK_REASON}: the emailed link's page asked for a "
+                                             f"bot check ({what}) after the link's own address "
+                                             "had answered, so the link may have been used",
+                              LINK_USED_NOTE)
             raise _Parked("needs_human", f"{LINK_REASON}: the emailed link's page asked for a bot "
-                                         f"check ({challenged[0]})", LINK_BOT_NOTE)
+                                         f"check ({what})", LINK_BOT_NOTE)
         if error:
             raise _Parked("needs_human", f"{LINK_REASON}: the emailed link did not open "
                                          f"({error})", LINK_NOTE)

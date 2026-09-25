@@ -309,6 +309,9 @@ _PARK_STATES = {
     "error_or_dead": "error or dead page",
     "other": "unrecognised page",
 }
+# A tab on Chrome's own error page after a load the network dropped parks
+# with the error state's words once its one retry is spent (SP8a)
+ERROR_PAGE_REASON = _PARK_STATES["error_or_dead"]
 # A page read below `apply_judge.PAGE_STATE_MIN_CONF` is still acted on as one
 # of these (`_JobRun._check_unsure`): each step has gates of its own (the Apply
 # entry's confidence, the fill plan's, the submit gate, the accounts hook's
@@ -1810,6 +1813,12 @@ def _dropped_load(e: BaseException) -> bool:
     return "net::ERR_" in text or "chrome-error://" in text
 
 
+def _error_page(url: str) -> bool:
+    """Chrome's own error page (`chrome-error://chromewebdata/`), shown after
+    a load the network dropped: never a site of the flow."""
+    return str(url or "").startswith("chrome-error://")
+
+
 def _settled_ms(info: Any) -> int:
     """The milliseconds `apply_fill.settle` reported (0 from a stand-in)."""
     return int(info.get("ms", 0)) if isinstance(info, Mapping) else 0
@@ -1889,7 +1898,7 @@ def _error_page_up(page, cap_s: float) -> bool:
     waited = 0
     while waited < cap_ms:
         try:
-            up = str(page.url).startswith("chrome-error://")
+            up = _error_page(str(page.url))
         except Exception:       # noqa: BLE001  (a page mid-navigation)
             up = False
         if up:
@@ -3233,6 +3242,10 @@ def await_destination(page, log: logging.Logger | None = None,
         except Exception as e:      # noqa: BLE001  (the loop reads whatever the tab shows)
             logger.info("job %s: the LinkedIn redirect did not move on (%s)", job_id,
                         type(e).__name__)
+            if _dropped_load(e):
+                # the hop's load of the company's site was dropped: the tab is
+                # left once Chrome's error page is up, for its retry (SP8a)
+                _error_page_up(page, GOTO_ERROR_PAGE_S)
             return page, info
     again = apply_fill.settle(page, CLICK_TIMEOUT_S)
     info["settled_ms"] += _settled_ms(again)
@@ -3255,6 +3268,8 @@ def _past_trackers(page, info: dict[str, Any], logger: logging.Logger,
         except Exception as e:      # noqa: BLE001  (the loop parks on a hop that stays)
             logger.info("job %s: the tracker hop %s did not move on (%s)", job_id, hops[-1],
                         type(e).__name__)
+            if _dropped_load(e):
+                _error_page_up(page, GOTO_ERROR_PAGE_S)     # for its retry (SP8a)
             break
         again = apply_fill.settle(page, CLICK_TIMEOUT_S)
         info["settled_ms"] = info.get("settled_ms", 0) + _settled_ms(again)
@@ -3914,6 +3929,13 @@ class _JobRun:
         self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
         self._before_submit: dict[str, Any] | None = None   # the page just before it
         self._submit_at: tuple[int, str] | None = None      # the submit button's locator
+        # a tab's last main-frame load the network dropped, (address, method,
+        # error), by the tab; a new tab's first load, which Playwright names
+        # no tab for, in `_unplaced_loads` (SP8a: Chrome's error page)
+        self._failed_loads: dict[int, tuple[str, str, str]] = {}
+        self._unplaced_loads: list[tuple[str, str, str]] = []
+        self._load_listener: Callable[[Any], None] | None = None
+        self._error_retried: set[str] = set()      # addresses loaded once more after it
 
     # -- the trace --------------------------------------------------------------------------
 
@@ -4049,9 +4071,115 @@ class _JobRun:
         return site in ATS_SITES or any(site == _site(h) for h in self.ats_hosts)
 
     def _check_host(self, url: str) -> None:
+        if _error_page(url):
+            # Chrome's error page is a load the network dropped, never a site
+            # the flow left for (SP8a): the job's tab gets its one retry
+            page = self.page
+            if page is None or not _error_page(str(getattr(page, "url", ""))):
+                raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: a tab shows Chrome's "
+                                             f"error page (a load the network dropped)")
+            self._recover_error_page(page)
+            url = str(page.url)
         host = _host(url)
         if host and not self._allowed_site(host):
             raise _Parked("needs_human", f"left the allowed sites: {host}")
+
+    # -- Chrome's error page (SP8a) ----------------------------------------------------------
+
+    def _listen_loads(self) -> None:
+        """Note every main-frame load of the job's context that the network
+        dropped (its address, method and error): Chrome's error page, which
+        the tab shows then, names none of them."""
+        def _failed(request) -> None:
+            try:
+                if not request.is_navigation_request():
+                    return
+                failure = str(request.failure or "")
+                if "ERR_ABORTED" in failure:
+                    return          # a load another one replaced: no error page follows
+                row = (str(request.url), str(request.method).upper(), failure)
+                try:
+                    frame = request.frame
+                except Exception:   # noqa: BLE001  (a new tab's first load: no frame yet)
+                    self._unplaced_loads.append(row)
+                    return
+                if frame.parent_frame is None:
+                    self._failed_loads[id(frame.page)] = row
+            except Exception:       # noqa: BLE001  (a request that cannot be read)
+                pass
+        try:
+            self.ctx.on("requestfailed", _failed)
+            self._load_listener = _failed
+        except Exception:       # noqa: BLE001  (a context double)
+            self._load_listener = None
+
+    def _unlisten_loads(self) -> None:
+        fn, self._load_listener = self._load_listener, None
+        if fn is not None:
+            try:
+                self.ctx.remove_listener("requestfailed", fn)
+            except Exception:   # noqa: BLE001  (the context is gone)
+                pass
+
+    def _recover_error_page(self, page, *, transition: bool = False) -> bool:
+        """A tab on Chrome's own error page (`chrome-error://chromewebdata/`)
+        reads as a load the network dropped (SP8a), never as a site the flow
+        left for: the address that failed is loaded once more after
+        `GOTO_RETRY_S` when it is a GET on the allowed sites. A POST, PUT or
+        PATCH is never sent again, and after the submit click neither is the
+        GET that carried the send (the send watch's first request): at most
+        one send per job, so the page the send led to is the only one loaded
+        again. A retry that lands on the error page again parks, as does an
+        error page whose address is unknown. An address off the allowed sites
+        parks as the site it names, but with `transition`: the page an Apply
+        or a redirect led to, which `_admit_ats_transition` judges once it
+        has loaded. True when the address was loaded again, False when the
+        tab shows no error page."""
+        try:
+            now = str(page.url)
+        except Exception:       # noqa: BLE001  (a closed tab: the caller's handling)
+            return False
+        if not _error_page(now):
+            return False
+        failed = self._failed_loads.pop(id(page), None)
+        if failed is None and self._unplaced_loads:
+            failed = self._unplaced_loads.pop()
+        if failed is None:
+            raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: the tab shows Chrome's error "
+                                         f"page and the address that failed is not known")
+        url, method, failure = failed
+        host = _host(url)
+        if host and not transition and not self._allowed_site(host):
+            raise _Parked("needs_human", f"left the allowed sites: {host}")
+        bare = SendWatch._bare(url)
+        what = f"{method} {_cap(bare, 120)} failed on the network ({_cap(failure, 60)})"
+        if method != "GET":
+            raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}; a {method} is never "
+                                         f"sent again")
+        watch = self._send_watch
+        if self.submit_clicked and watch is not None and watch.first() == f"GET {bare}":
+            raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}; that load carried the "
+                                         f"send, so it is never loaded again")
+        if url in self._error_retried:
+            raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what} again after one retry")
+        self._error_retried.add(url)
+        self._decide_next("error_page_retry", f"{what}; the tab showed Chrome's error page; "
+                                              f"one retry of the GET", url=_cap(bare, 160))
+        self.log.info("job %s: Chrome's error page after %s; one retry", self.job_id, what)
+        _error_page_up(page, GOTO_ERROR_PAGE_S)
+        page.wait_for_timeout(int(GOTO_RETRY_S * 1000))
+        left_ms = int(max(1.0, self.deadline - self.r.clock()) * 1000)
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=min(GOTO_TIMEOUT_MS, left_ms))
+        except Exception as e:      # noqa: BLE001  (Playwright's Error and TimeoutError)
+            if _closed_error(e):
+                raise
+            # a retry the network dropped again shows as the error page below
+        if _error_page(str(page.url)):
+            self._failed_loads.pop(id(page), None)
+            raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: {what}, and again after one "
+                                         f"retry")
+        return True
 
     def _related_hosts(self, host: str) -> list[str]:
         """The job's own ATS hosts on `host`'s site, other than `host`: a
@@ -4191,7 +4319,11 @@ class _JobRun:
     def _admit_ats_transition(self, url: str, source_url: str) -> None:
         """Record where the application lives. A known ATS platform is
         admitted wherever the flow met it; any other site only as the one
-        destination LinkedIn's Apply led to."""
+        destination LinkedIn's Apply led to. Chrome's error page is never
+        one (SP8a): the caller's retry (`_recover_error_page`) comes first."""
+        if _error_page(url):
+            raise _Parked("needs_human", f"{ERROR_PAGE_REASON}: a tab shows Chrome's error "
+                                         f"page (a load the network dropped)")
         host = _host(url)
         if not host or host in LINKEDIN_HOSTS or _site(host) == _site(LINKEDIN_HOSTS[0]):
             return
@@ -4304,6 +4436,7 @@ class _JobRun:
         try:
             try:
                 self._start_trace()
+                self._listen_loads()
                 self.log.info("job %s: start (%s)", self.job_id, self.entry.get("apply_url", ""))
                 if _easy_apply(self.entry):
                     # the user applies to an Easy Apply job on LinkedIn in
@@ -4366,6 +4499,7 @@ class _JobRun:
                     return self._tab_gone(type(e).__name__)
                 return self._finish("failed", f"{type(e).__name__}: {e}")
         finally:
+            self._unlisten_loads()
             self.trace.close()
 
     def _tab_closed(self) -> bool:
@@ -4745,6 +4879,10 @@ class _JobRun:
                          url_kind=kind)
             dest, info = self._await_destination(self.page)
             self._trace("redirect", destination=str(dest.url), **info)
+            if dest is self.page and self._recover_error_page(self.page, transition=True):
+                # Chrome's error page had its one retry: where the retry led (SP8a)
+                dest, info = self._await_destination(self.page)
+                self._trace("redirect", destination=str(dest.url), **info)
             if dest is not self.page:
                 self._follow_popup(dest, source_url=url)
                 return True
@@ -5203,6 +5341,10 @@ class _JobRun:
             dest, info = self._await_destination(self.page)
             self._trace("apply_entry", n=n, text=text, how=how, popup=False, signal=signal,
                         waited_ms=waited, destination=str(dest.url), **info)
+            if dest is self.page and self._recover_error_page(self.page, transition=True):
+                # Chrome's error page had its one retry: where the retry led (SP8a)
+                dest, info = self._await_destination(self.page)
+                self._trace("redirect", destination=str(dest.url), **info)
             if dest is not self.page:
                 # the interstitial's Continue opened the destination's tab: it
                 # is followed here, and the late-tab watch (which saw it open
@@ -5231,17 +5373,22 @@ class _JobRun:
         tab the safety interstitial's Continue opens is followed the same
         way."""
         source = source_url or self.page.url
-        for _ in range(2):
-            if popup is not self.page:
+        watched: list = []
+        for _ in range(3):
+            if popup is not self.page and not any(popup is w for w in watched):
                 self.trace.nav(str(getattr(popup, "url", "")))  # its first load came before the watch
                 self._watch(popup)
+                watched.append(popup)
             dest, info = self._await_destination(popup)
             if info.get("trackers"):
                 self._decide_next("tracker_hops", "waited out an ad tracker's hop to the "
                                                   "company's site", trackers=info["trackers"])
-            if dest is popup:
+            if dest is not popup:
+                popup = dest
+                continue
+            # Chrome's error page: its one retry, then the retry's destination (SP8a)
+            if not self._recover_error_page(popup, transition=True):
                 break
-            popup = dest
         self._admit_ats_transition(popup.url, source)
         self._check_host(popup.url)
         self.page = popup

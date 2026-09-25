@@ -329,7 +329,8 @@ class _RedirectingSite:
     `/denied` and `/empty403` a bare 403; `/bot403` is a 403 whose page
     asks for a bot check; `/gone` is a 403 that says the link expired and
     `/already` one that says the address is verified already; `/human` is
-    a 200 page of a bot check, `/hophuman` a 302 to it.
+    a 200 page of a bot check, `/hophuman` a 302 to it, `/hopdown` a 302 to
+    `/down`.
     `/verified_widget` and `/verified_box` are verified pages whose sign-in
     carries a CAPTCHA widget in a frame or a "Verify you are human" box.
     Every path asked for is kept in `asked`."""
@@ -351,7 +352,8 @@ class _RedirectingSite:
                          "/jsloc": f"javascript:location.href='{other}'",
                          "/dataloc": f"data:text/html,<script>location.href='{other}'</script>",
                          "/hopcf": f"http://127.0.0.1:{site.port}/cf",
-                         "/hophuman": f"http://127.0.0.1:{site.port}/human"}
+                         "/hophuman": f"http://127.0.0.1:{site.port}/human",
+                         "/hopdown": f"http://127.0.0.1:{site.port}/down"}
                 if self.path in moves:
                     self.send_response(302)
                     self.send_header("Location", moves[self.path])
@@ -551,18 +553,21 @@ def test_a_verification_link_answered_by_a_bot_check_parks_for_the_person(
 
 
 @pytest.mark.parametrize("path, said", [
-    ("/hopcf", "cf-mitigated: challenge"), ("/hophuman", "the page says 'Verify you are human'")])
+    ("/hopcf", "asked for a bot check (cf-mitigated: challenge)"),
+    ("/hophuman", "asked for a bot check (the page says 'Verify you are human')"),
+    ("/hopdown", "answered HTTP 503 (the page says 'Service unavailable')")])
 def test_a_bot_check_after_the_links_own_address_answered_says_the_link_may_have_been_used(
         browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
     # R4-I2 (SP7 review): the link's own address answered with a redirect,
     # so the site may have taken the link's token before the check; the
-    # park says so and asks for a Re-queue first
+    # park says so and asks for a Re-queue first. A status that is no check
+    # on that hop says the same (R4-M1)
     run, _ = _link_run(tmp_path, browser_page, monkeypatch)
     with pytest.raises(apply_run._Parked) as parked:
         run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}")
     assert parked.value.reason == (
-        "emailed verification link needed: the emailed link's page asked for a bot check "
-        f"({said}) after the link's own address had answered, so the link may have been used")
+        f"emailed verification link needed: the emailed link's page {said} after the link's "
+        "own address had answered, so the link may have been used")
     assert parked.value.tab_note == apply_run.LINK_USED_NOTE
     assert not [p for p in redirecting_site.asked if p.endswith("/landed")], redirecting_site.asked
 

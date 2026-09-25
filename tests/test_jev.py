@@ -328,6 +328,7 @@ def _fake_sdk(monkeypatch, response, record):
 
     mod = types.ModuleType("typesafe_sdk")
     mod.TypeSafeClient = _Client
+    mod.RetryPolicy = lambda **kw: types.SimpleNamespace(**kw)
     monkeypatch.setitem(sys.modules, "typesafe_sdk", mod)
 
 
@@ -366,6 +367,7 @@ def test_typesafe_passes_raw_question_dicts_and_pins_the_model(monkeypatch):
     jev.TypeSafeJev(api_key="k-test").judge(STATE, QUESTIONS)
     init = next(r for r in record if r[0] == "init")[1]
     assert init["api_key"] == "k-test" and init["model"] == "jev-1.13.0"
+    assert init["retry"].max_retries == 0       # `jev.Guarded` owns the retries (M2)
     call = next(r for r in record if r[0] == "system_one")
     assert call[1] is STATE and call[2] is QUESTIONS
     assert call[3].get("model") == "jev-1.13.0"
@@ -426,3 +428,31 @@ def test_typesafe_never_calls_the_api_at_construction(monkeypatch):
     jev.TypeSafeJev(api_key="k-test")
     assert [r[0] for r in record] == ["init"]
     assert jev.usage()["requests"] == 0
+
+
+# --- (e) one layer of retries (SP8a review M2) --------------------------------
+
+def test_a_judge_that_stays_down_gets_the_guards_retries_alone():
+    """The installed SDK over a transport that answers every request with a
+    529 (no network): `jev.Guarded` owns the retries, so the judge gets the
+    first try and `RETRY_DELAYS_S`'s three more (about a minute of waits),
+    never the SDK's own retries inside each one (twelve requests)."""
+    httpx2 = pytest.importorskip("httpx2")
+    pytest.importorskip("typesafe_sdk")
+    sent: list[str] = []
+
+    def _busy(request):
+        sent.append(request.method)
+        return httpx2.Response(529, json={"error": {"type": "overloaded_error",
+                                                    "message": "overloaded"}})
+    sleeps: list[float] = []
+    live = jev.TypeSafeJev(api_key="k-test", transport=httpx2.MockTransport(_busy))
+    judge = jev.Guarded(live, sleep=sleeps.append)
+    try:
+        with pytest.raises(jev.JudgeOutage):
+            judge.judge(STATE, QUESTIONS)
+    finally:
+        live._client.close()
+    assert len(sent) == 1 + len(jev.RETRY_DELAYS_S), sent
+    assert sleeps == list(jev.RETRY_DELAYS_S) and sum(sleeps) <= 60
+    assert judge.down.endswith(" 529")

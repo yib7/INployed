@@ -154,8 +154,8 @@ def request_fits(state: Any, questions: Mapping[str, Any]) -> bool:
 
 # --- the outage guard (RES-02) ------------------------------------------------------
 
-# The run's own retries of a judge request the service could not answer, on
-# top of the SDK's quick ones: about a minute over three more attempts.
+# The only retries of a judge request the service could not answer (the SDK's
+# own are off, `TypeSafeJev`): about a minute over three more attempts.
 RETRY_DELAYS_S = (5.0, 15.0, 40.0)
 RETRY_AFTER_CAP_S = 60.0     # a longer Retry-After reads as the judge being down
 _BUSY_STATUS = frozenset((408, 409, 425, 429))
@@ -281,10 +281,13 @@ class TypeSafeJev:
     environment (`.env` reaches it through the dashboard's and the runner's
     `load_dotenv`). Construction raises `JevUnavailable` when the key or the SDK
     is missing, so a run refuses to start before it can park every job. No
-    request is made until `judge()`.
+    request is made until `judge()`. The SDK makes each request once (its
+    retries are off: `Guarded` owns them); `transport` is the SDK's HTTP
+    transport (a test's `httpx2.MockTransport`), the SDK's own when None.
     """
 
-    def __init__(self, api_key: str | None = None, model: str = MODEL):
+    def __init__(self, api_key: str | None = None, model: str = MODEL, *,
+                 transport: Any = None):
         key = (api_key or os.environ.get(KEY_ENV, "")).strip()
         if not key:
             raise JevUnavailable(
@@ -299,7 +302,12 @@ class TypeSafeJev:
                 "`pip install typesafe-sdk` (it is in requirements.txt).") from exc
         self.model = model
         self.last_model: str | None = None
-        self._client = typesafe_sdk.TypeSafeClient(api_key=key, model=model)
+        extra = {"transport": transport} if transport is not None else {}
+        # `Guarded` owns the retries (`RETRY_DELAYS_S`): the SDK's own are off,
+        # so a judge that stays down costs four requests over about a minute,
+        # never the SDK's three inside each of them (SP8a review M2)
+        self._client = typesafe_sdk.TypeSafeClient(
+            api_key=key, model=model, retry=typesafe_sdk.RetryPolicy(max_retries=0), **extra)
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         response = self._client.system_one(state, questions, model=self.model)

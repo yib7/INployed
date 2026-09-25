@@ -105,8 +105,9 @@ def _real(args: list, cap: str, timeout: int = 90) -> subprocess.CompletedProces
 def test_a_dry_recording_of_the_real_column_replays_with_no_miss(_browser, tmp_path):
     committed = h.REAL_CACHE.read_bytes() if h.REAL_CACHE.is_file() else None
     out_json = tmp_path / "dry.json"
-    proc = _real(["--real", "dry", "--flows", ",".join(_TWO_FLOWS), "--json", str(out_json)],
-                 "1.00")
+    # an empty cache of its own: the committed one already answers both flows
+    proc = _real(["--real", "dry", "--real-cache", str(tmp_path / "matrix_cache.json"),
+                  "--flows", ",".join(_TWO_FLOWS), "--json", str(out_json)], "1.00")
     assert proc.returncode == 0, proc.stderr
     m = re.search(r"; cache (.+matrix_cache\.json)$", proc.stdout, re.M)
     assert m, proc.stdout
@@ -133,8 +134,10 @@ def test_a_dry_recording_of_the_real_column_replays_with_no_miss(_browser, tmp_p
 
 def test_the_real_column_starts_no_flow_past_the_cap(_browser, tmp_path):
     # a cap under one request's estimate: nothing is asked, and every flow
-    # is listed as left unrecorded
-    proc = _real(["--real", "dry", "--flows", ",".join(_TWO_FLOWS)], "0.000001")
+    # is listed as left unrecorded (over an empty cache: the committed one
+    # would answer both flows without a request)
+    proc = _real(["--real", "dry", "--real-cache", str(tmp_path / "matrix_cache.json"),
+                  "--flows", ",".join(_TWO_FLOWS)], "0.000001")
     assert proc.returncode == 0, proc.stderr
     assert "AUTO_APPLY_RECORD_USD_CAP reached" in proc.stderr
     assert "left unrecorded: lever_single_park, post_form" in proc.stderr

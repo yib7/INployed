@@ -594,3 +594,145 @@ def test_an_outage_while_the_inbox_is_read_reaches_the_run(browser_page, fixture
                                sleep=lambda s: None)
     assert len(browser_page.context.pages) == 1     # its tab closed all the same
 
+
+# --- a tab the site closes (RES-06), one tab per job (RES-07) ---------------------------------
+
+_CAREERS = "https://careers.fabrikam.example"
+_FORMS = REPO / "tests" / "fixtures" / "forms"
+_LINKEDIN_JOB = "https://www.linkedin.com/jobs/view/4438751519/"
+
+
+def _posting(to: str) -> str:
+    """The fixture posting, its Apply opening `to` in a new tab."""
+    return (_FORMS / "job_posting.html").read_text(encoding="utf-8").replace(
+        'href="ashby_steps.html"', f'href="{to}"')
+
+
+# A popup's first step that hands the flow back to the tab that opened it
+# and closes itself (a `window.close()` after a step, as after an OAuth)
+_HANDBACK_STEP = f"""<!doctype html><html><head><title>Apply</title></head><body>
+<h1>Apply for Analytics Engineer</h1>
+<label>First name * <input name="first" required></label>
+<button type="button" onclick="window.opener.location.href = '{_CAREERS}/apply/next';
+  window.close()">Continue</button></body></html>"""
+_THANKS = """<!doctype html><html><head><title>Application received</title></head><body>
+<h1>Thank you for applying</h1><p>Your application has been received.</p></body></html>"""
+
+
+def _handback_form(posts: list) -> str:
+    """The Lever fixture's form, whose Submit posts, sends the tab that
+    opened it to /apply/next and closes itself; `posts` counts its sends."""
+    form = (_FORMS / "lever_single.html").read_text(encoding="utf-8")
+    script = form[form.index("<script>"):form.index("</script>") + len("</script>")]
+    return form.replace(script, (
+        "<script>document.getElementById('btn-submit').addEventListener('click', function () {"
+        " fetch('/apply/post', {method: 'POST', body: 'a'}).then(function () {"
+        f" window.opener.location.href = '{_CAREERS}/apply/next'; window.close(); }});"
+        " });</script>"))
+
+
+def _counter(posts: list):
+    def _handle(route) -> None:
+        posts.append(route.request.method)
+        route.fulfill(body="ok", content_type="text/plain")
+    return _handle
+
+
+def _drain_jobs(browser, tmp_path, jobs, routes, *, submit=False):
+    """A drain of `jobs` ((id, url) pairs) under the fake judge on an offline
+    context with `routes` (a glob -> HTML or a handler, the later winning):
+    the outcomes, and the URLs of the tabs left open."""
+    import apply_queue
+    import apply_run
+    queue = tmp_path / "queue.json"
+    with h.hermetic(tmp_path), h.fast_timing():
+        for jid, url in jobs:
+            folder = h.write_job_folder(tmp_path / jid)
+            apply_queue.enqueue(apply_queue.new_entry(jid, company="Fabrikam",
+                                                      title="Analytics Engineer", apply_url=url),
+                                path=queue)
+            apply_queue.set_artifacts(jid, {"folder": str(folder),
+                                            "apply_md": str(folder / "apply.md"),
+                                            "resume_pdf": str(folder / "Jane_Doe_Resume.pdf")},
+                                      path=queue)
+        ctx = browser.new_context()
+        h.offline(ctx)
+        for glob, body in routes.items():
+            ctx.route(glob, body if callable(body) else h._fulfiller(body))
+        try:
+            runner = apply_run.Runner(
+                jev=jev.FakeJev(), queue_path=queue, profile_dir=tmp_path / "p",
+                settings={"auto_apply_headless": True, "auto_apply_jev_mode": "fake",
+                          "auto_apply_submit": submit, "auto_apply_generate": True},
+                context=ctx, run_context={"signup_email": h.SIGNUP_EMAIL, "inbox_url": ""},
+                sleep=lambda s: None)
+            outcomes = runner.drain(cap=5)
+            left = [str(p.url) for p in ctx.pages if not p.is_closed()]
+        finally:
+            ctx.close()
+    return outcomes, left
+
+
+def _trace_of(tmp_path, jid: str) -> str:
+    return "\n".join(p.read_text(encoding="utf-8", errors="replace")
+                     for p in (tmp_path / jid / "apply_trace").rglob("*.json"))
+
+
+def test_a_popup_that_hands_the_flow_back_and_closes_goes_on_in_the_tab_that_opened_it(
+        _browser, tmp_path):
+    outcomes, left = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/jobs/a")], {
+        f"{_CAREERS}/jobs/a": _posting(f"{_CAREERS}/apply/start"),
+        f"{_CAREERS}/apply/start": _HANDBACK_STEP,
+        f"{_CAREERS}/apply/next": (_FORMS / "lever_single.html").read_text(encoding="utf-8")})
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "ready_to_submit")], outcomes
+    assert left == [f"{_CAREERS}/apply/next"]         # the job's one tab, at the gate
+    assert "tab_taken_over" in _trace_of(tmp_path, "a")
+
+
+def test_a_popup_that_sends_then_hands_back_is_confirmed_by_the_tab_that_opened_it(
+        _browser, tmp_path):
+    posts: list = []
+    outcomes, left = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/jobs/a")], {
+        f"{_CAREERS}/jobs/a": _posting(f"{_CAREERS}/apply/start"),
+        f"{_CAREERS}/apply/start": _handback_form(posts),
+        f"{_CAREERS}/apply/post": _counter(posts),
+        f"{_CAREERS}/apply/next": _THANKS}, submit=True)
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "submitted")], outcomes
+    assert outcomes[0].reason.startswith("confirmation page (in the tab that opened"), outcomes
+    assert "received" in outcomes[0].reason
+    assert posts == ["POST"] and left == []           # one send; a confirmation closes its tab
+
+
+def test_after_a_send_the_tab_handed_back_to_is_only_read_never_filled_or_sent_again(
+        _browser, tmp_path):
+    # the tab that opened the closed one shows a form again: the run never
+    # takes it over after the submit click (at most one send per job)
+    posts: list = []
+    again = (_FORMS / "lever_single.html").read_text(encoding="utf-8").replace(
+        "document.body.setAttribute('data-submitted', '1');",
+        "fetch('/apply/post', {method: 'POST', body: 'b'});")
+    outcomes, left = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/jobs/a")], {
+        f"{_CAREERS}/jobs/a": _posting(f"{_CAREERS}/apply/start"),
+        f"{_CAREERS}/apply/start": _handback_form(posts),
+        f"{_CAREERS}/apply/post": _counter(posts),
+        f"{_CAREERS}/apply/next": again}, submit=True)
+    assert posts == ["POST"], posts
+    assert outcomes[0].status == "submitted", outcomes
+    assert outcomes[0].reason.startswith("submitted (unconfirmed): the job's tab was closed"), \
+        outcomes
+    assert "tab_taken_over" not in _trace_of(tmp_path, "a")
+    assert left == [f"{_CAREERS}/apply/next"]         # the job's last open tab stays
+
+
+def test_the_linkedin_tab_closes_once_the_company_tab_is_adopted_and_each_job_keeps_one_tab(
+        _browser, flow_server, tmp_path):
+    routes = h.linkedin_job_routes("linkedin_posting_button.html",
+                                   "lever_single.html")(flow_server.base)
+    outcomes, left = _drain_jobs(_browser, tmp_path, [
+        ("a", _LINKEDIN_JOB), ("b", f"{flow_server.base}/forms/job_posting.html")], routes)
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "ready_to_submit"),
+                                                        ("b", "ready_to_submit")], outcomes
+    # one tab per job, each at its form: no LinkedIn tab, no posting behind a popup
+    assert sorted(left) == sorted([f"{flow_server.base}/forms/lever_single.html",
+                                   f"{flow_server.base}/forms/ashby_steps.html"]), left
+    assert "source_tab_closed" in _trace_of(tmp_path, "a")

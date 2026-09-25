@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -156,6 +157,8 @@ POST_SUBMIT_QUIET_S = 2.0          # a page this still, with no request in fligh
 POST_SUBMIT_READS = 5              # judge requests the post-submit read makes at most
 HOLD_POLL_S = 1.0                  # while holding the window open
 FINISH_RETRY_S = 1.0               # before the one retry of a failed queue finish
+TAKEOVER_WAIT_S = 3.0              # for a tab the flow may go on in to move, once the site
+TAKEOVER_POLL_S = 0.25             # closed the job's (RES-06)
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 LINKEDIN_HOSTS = ("linkedin.com", "www.linkedin.com")
 REDIRECT_TIMEOUT_S = 20            # for that hop's script to send the tab on
@@ -1993,6 +1996,18 @@ def _page_closed(page) -> bool:
         return bool(page.is_closed())
     except Exception:       # noqa: BLE001  (a page double)
         return False
+
+
+def _page_print(page) -> tuple[str, str]:
+    """(a tab's address and visible text hashed, the text): whether it moved
+    on after the run left it, and what it showed (RES-06). ("", "") for a
+    tab that cannot be read."""
+    try:
+        text = apply_fill.page_text(page)
+        seen = f"{page.url}\n{text}"
+    except Exception:       # noqa: BLE001  (a closed tab, a page double)
+        return "", ""
+    return hashlib.sha256(seen.encode("utf-8", "replace")).hexdigest(), text
 
 
 def _snapshot_or_none(page) -> Any:
@@ -4015,6 +4030,12 @@ class _JobRun:
         self._consent_clicks = 0
         self._linkedin_clicks: dict[str, int] = {}    # a LinkedIn job id -> the handler's clicks
         self._late_watch: LateWatch | None = None     # tabs the last entry click opens late
+        self._job_pages: list = []      # the job's own tabs, in the order they opened (RES-07)
+        # (a tab the run left for another it opened, its print then): the
+        # page a closed tab's flow may go on in (RES-06)
+        self._left_pages: list[tuple[Any, str, str]] = []   # (the tab, its print, its text)
+        self._adopted = 0               # tabs taken over after the site closed the job's (RES-06)
+        self._turn = 0                  # the state loop's page turn, across a takeover
         # the locators this page's fill put a value in (the gate's evidence
         # that an application is on the page, INV-01)
         self._filled_here: list[tuple[int, str]] = []
@@ -4075,7 +4096,9 @@ class _JobRun:
 
     def _watch(self, page) -> None:
         """Keep `page`'s main-frame navigations (redirects included) in the
-        trace's URL chain."""
+        trace's URL chain, and `page` among the job's tabs."""
+        if not any(page is p for p in self._job_pages):
+            self._job_pages.append(page)
         try:
             main = page.main_frame
             page.on("framenavigated",
@@ -4569,12 +4592,18 @@ class _JobRun:
                 self.page = self.ctx.new_page()
                 self._watch(self.page)
                 self._open(url)
-                self._loop()
+                self._drive()
                 raise _Parked("needs_human",
                               f"page budget exhausted ({apply_judge.MAX_PAGES} pages"
                               f"{self._last_states()})")
             except _Parked as p:
                 self._trace("park", status=p.status, reason=p.reason)
+                if not p.reason.startswith("confirmation page"):
+                    # the site closed the job's tab after the send: the tab
+                    # it handed back to may show the confirmation (RES-06)
+                    done = self._confirmed_elsewhere()
+                    if done is not None:
+                        return done
                 if p.status != "submitted":
                     # whatever the loop made of it, the window or the tab went
                     # away under it
@@ -4611,6 +4640,9 @@ class _JobRun:
                 down = "" if closed or tab else self._judge_down()
                 if down and not self._maybe_sent():
                     return self._requeued(step)
+                done = self._confirmed_elsewhere() if tab else None
+                if done is not None:
+                    return done
                 if self.submit_clicked:
                     self.browser_closed = closed
                     why = (CLOSED_REASON if closed else TAB_CLOSED_REASON if tab
@@ -4687,13 +4719,144 @@ class _JobRun:
         return Outcome(job_id=self.job_id, status="queued", reason=reason, record_path="",
                        pages=len(self.pages), jev_usage=usage, judge_down=True)
 
-    def _close_job_pages(self) -> None:
-        """Close the job's tab."""
-        if self.page is not None:
+    def _close_job_pages(self, keep=None) -> None:
+        """Close the job's tabs but `keep` (RES-07: one tab per job)."""
+        for page in [*self._job_pages, self.page]:
+            if page is None or page is keep or _page_closed(page):
+                continue
             try:
-                self.page.close()
-            except Exception:       # noqa: BLE001  (already closed)
+                page.close()
+            except Exception:       # noqa: BLE001  (closed under the run)
                 pass
+
+    def _parked_tab(self) -> Any:
+        """The tab a job that ends keeps open: the one it ended on, else the
+        job's last tab still open (None when none is)."""
+        if self.page is not None and not _page_closed(self.page):
+            return self.page
+        return next((p for p in reversed(self._job_pages) if not _page_closed(p)), None)
+
+    def _drive(self) -> None:
+        """The state loop (`_loop`). When the site closed the job's tab
+        before anything could have been sent (a `window.close()` that hands
+        the flow back to the page that opened it), the loop goes on once in
+        the tab the flow moved on in (`_take_over`, RES-06); the page budget
+        counts on across it."""
+        start = 0
+        while True:
+            try:
+                self._loop(start)
+                return
+            except Exception as e:      # noqa: BLE001  (re-raised unless a tab is taken over)
+                if not self._take_over(e):
+                    raise
+                start = self._turn + 1
+
+    def _take_over(self, e: BaseException) -> bool:
+        """RES-06: whether the run goes on in another tab of the job after
+        `e` left the loop. Only when the job's tab closed with the window
+        open, nothing could have been sent (after the submit click or the
+        code step the run only reads that tab: `_confirmed_elsewhere`), the
+        judge is up, no tab was taken over before in this job, and a tab the
+        run left for another has moved on since (`_moved_on`): the flow went
+        on there. A tab as the run left it (the user closed the job's tab; a
+        popup that closed itself over an unchanged page) is no way on, and
+        the job ends as a closed tab."""
+        if isinstance(e, _Parked) and e.status == "submitted":
+            return False
+        if not self._tab_closed() or self._window_closed():
+            return False
+        if self._adopted or self._maybe_sent() or self._judge_down():
+            return False
+        moved = self._moved_on()
+        if moved is None:
+            return False
+        page = moved[0]
+        self._adopted += 1
+        closed = str(getattr(self.page, "url", ""))
+        url = str(getattr(page, "url", ""))
+        self._trace("tab_taken_over", closed=closed, url=url, error=type(e).__name__)
+        self._decide_next("tab_taken_over", "the site closed the job's tab; the flow went on "
+                                            "in the tab that opened it, which the run takes over",
+                          closed=_cap(closed, 160), url=_cap(url, 160))
+        self.log.info("job %s: the site closed the job's tab; going on at %s", self.job_id, url)
+        self._left_pages = [row for row in self._left_pages if row[0] is not page]
+        self.page = page
+        self.last_sig = None
+        return True
+
+    def _moved_on(self) -> tuple[Any, str, str] | None:
+        """(the last tab the run left for another (`_leave`) that is still
+        open, on the allowed sites and read as other than the run left it;
+        its text then; its text now), looked at every `TAKEOVER_POLL_S` for
+        up to `TAKEOVER_WAIT_S` (the closing tab's script may have set it
+        going the moment before), else None. A tab that could not be read
+        either time is never taken."""
+        rows = [row for row in reversed(self._left_pages)
+                if row[1] and not _page_closed(row[0])]
+        if not rows:
+            return None
+        end = time.monotonic() + TAKEOVER_WAIT_S
+        while True:
+            for page, before, then in rows:
+                url = str(getattr(page, "url", ""))
+                host = _host(url)
+                if _page_closed(page) or not host or _error_page(url) \
+                        or not self._allowed_site(host):
+                    continue
+                now, text = _page_print(page)
+                if now and now != before:
+                    return page, then, text
+            if time.monotonic() >= end:
+                return None
+            try:
+                rows[0][0].wait_for_timeout(TAKEOVER_POLL_S * 1000)
+            except Exception:       # noqa: BLE001  (the tab closed too)
+                time.sleep(TAKEOVER_POLL_S)
+
+    def _confirmed_elsewhere(self) -> Outcome | None:
+        """RES-06 after a send: the job's tab closed after the submit click
+        or the code step, and a tab the run left for it moved on
+        (`_moved_on`, a form in a popup that hands back to its opener as it
+        closes). That tab is only read, never clicked or judged (at most one
+        send per job): received words it did not show when the run left it
+        end the job `submitted` on a confirmation; anything else leaves the
+        ending to the closed tab's rules (None)."""
+        if not self._maybe_sent() or not self._tab_closed() or self._window_closed():
+            return None
+        moved = self._moved_on()
+        if moved is None:
+            return None
+        page, then, text = moved
+        marker = new_confirmation(then, text)
+        if not marker:
+            return None
+        url = str(getattr(page, "url", ""))
+        self._decide("after_submit", f"confirmation: the job's tab closed after the submit; "
+                                     f"the tab that opened it shows {marker!r}, which it did "
+                                     f"not before", url=_cap(url, 160))
+        self.page = page
+        return self._finish("submitted", f"confirmation page (in the tab that opened the job's "
+                                         f"closed tab: {marker!r})")
+
+    def _leave(self, source, popup) -> None:
+        """The run left `source` for `popup`. A LinkedIn tab closes (RES-07:
+        one tab per job; LinkedIn's part is done once the company's tab is
+        adopted); any other is kept with its print, as the page a flow may
+        hand back to when its popup closes itself (RES-06)."""
+        if source is None or source is popup or _page_closed(source):
+            return
+        url = str(getattr(source, "url", ""))
+        if apply_linkedin.is_linkedin(_host(url)):
+            self._decide_next("source_tab_closed", "the LinkedIn tab the Apply left is closed "
+                                                   "once the company's tab is adopted",
+                              url=_cap(url, 160))
+            try:
+                source.close()
+            except Exception:       # noqa: BLE001  (closed under the run)
+                pass
+            return
+        self._left_pages.append((source, *_page_print(source)))
 
     def _tab_closed(self) -> bool:
         try:
@@ -4714,13 +4877,14 @@ class _JobRun:
         self._trace("tab_closed", evidence=evidence)
         return self._finish("needs_human", f"{TAB_CLOSED_REASON} ({_cap(evidence, 120)})")
 
-    def _loop(self) -> None:
-        """One page per turn: the consent banner out of the way, a read that
-        waits for the page to render (`_read_digest`), LinkedIn's pages by
-        the handler (`_linkedin_step`, no judge), every other page judged
-        (an unsure read taken once more after a settle, `_reread`) and
-        handled by its state."""
-        for page_no in range(apply_judge.MAX_PAGES):
+    def _loop(self, start: int = 0) -> None:
+        """One page per turn from turn `start`: the consent banner out of the
+        way, a read that waits for the page to render (`_read_digest`),
+        LinkedIn's pages by the handler (`_linkedin_step`, no judge), every
+        other page judged (an unsure read taken once more after a settle,
+        `_reread`) and handled by its state."""
+        for page_no in range(start, apply_judge.MAX_PAGES):
+            self._turn = page_no
             if self.r.clock() >= self.deadline:
                 raise _Parked("needs_human", f"time budget exhausted "
                                              f"({JOB_WALL_CLOCK_S // 60} min; {len(self.pages)} "
@@ -5576,6 +5740,7 @@ class _JobRun:
         tab the safety interstitial's Continue opens is followed the same
         way."""
         source = source_url or self.page.url
+        left = self.page
         watched: list = []
         for _ in range(3):
             if popup is not self.page and not any(popup is w for w in watched):
@@ -5596,6 +5761,7 @@ class _JobRun:
         self._check_host(popup.url)
         self.page = popup
         self.last_sig = None
+        self._leave(left, popup)
 
     def _await_destination(self, page) -> tuple[Any, dict[str, Any]]:
         return await_destination(page, self.log, self.job_id)
@@ -8128,8 +8294,9 @@ class _JobRun:
         self._finish_entry(status, tab_note, record, reason)
         if self._send_watch is not None:
             self._send_watch.stop()
+        confirmed = status == "submitted" and reason.startswith("confirmation page")
         if self.page is not None:
-            if status == "submitted" and reason.startswith("confirmation page"):
+            if confirmed:
                 # only a confirmation closes the tab (TERM-03): an unconfirmed
                 # send stays open for the person to check
                 try:
@@ -8138,6 +8305,9 @@ class _JobRun:
                     pass
             else:
                 self.r.parked_pages.append(self.page)
+        # RES-07: one tab per job stays, the one the job ended on (the job's
+        # last open tab when the site or the user closed that one)
+        self._close_job_pages(keep=None if confirmed else self._parked_tab())
         self.log.info("job %s: %s (%s)", self.job_id, status, reason)
         return Outcome(job_id=self.job_id, status=status, reason=reason, record_path=record,
                        pages=len(self.pages), jev_usage=usage,

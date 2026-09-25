@@ -19,7 +19,7 @@ browser or the network.
     page_requests(digest, catalog, job)    the same mapping in requests sized to
                                            Jev's limits (RES-03), read back as
                                            one by `merge_answers`
-    option_questions(digest, plan)       the second request: option picks for
+    option_questions(digest, plan)         the second request: option picks for
                                            fields whose fact the first answer
                                            chose (quick_map covers the rest)
     verify_questions(filled, sheet)        every typed value against the sheet

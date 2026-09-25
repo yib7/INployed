@@ -279,6 +279,21 @@ def test_a_malformed_entry_is_a_dead_end_inside_the_policy():
                                    f"not a mapping") is True
 
 
+@pytest.mark.parametrize("after", ["submit click", "code step"])
+def test_a_judge_down_after_a_possible_send_is_a_dead_end_inside_the_policy(after):
+    """RES-02's one park: the judge stays down once something may have been
+    sent, so the job is never re-queued (at most one send per job). Any
+    other stop after the submit click stays outside the policy, and the
+    re-queue before a send is no park at all."""
+    import apply_run
+    down = f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at fill_and_verify"
+    reason = f"{apply_run.CHECK_SENT_REASON}: the run stopped after the {after} ({down})"
+    assert h.policy_park("needs_human", reason) is True
+    assert h.policy_park("needs_human", f"{apply_run.CHECK_SENT_REASON}: the run stopped "
+                                        f"after the {after} (RuntimeError at read)") is False
+    assert h.policy_park("queued", f"{down}; {apply_run.REQUEUED_NOTE}") is False
+
+
 # --- an unexpected error's reason (RES-05) -----------------------------------------------------
 
 _CALL_LOG = ("Locator.fill: Timeout 5000ms exceeded.\nCall log:\n  - waiting for "

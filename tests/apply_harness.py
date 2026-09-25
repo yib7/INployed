@@ -1807,7 +1807,12 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     "^" + re.escape(apply_run.SSO_REASON) + " ",
     "^" + re.escape(apply_run.PASSWORD_RULE_REASON) + " on ",
     # SP8a: a queue entry the run cannot work (RES-09), which the user fixes
-    "^" + re.escape(apply_run.MALFORMED_REASON) + ": "))
+    "^" + re.escape(apply_run.MALFORMED_REASON) + ": ",
+    # SP8a: a judge that stays down after the submit click or the code step
+    # (RES-02): the job is never re-queued once something may have been
+    # sent, and the run cannot read on, a dead end the user checks
+    "^" + re.escape(apply_run.CHECK_SENT_REASON) + r": the run stopped after the "
+    r"(?:submit click|code step) \(" + re.escape(apply_run.JUDGE_DOWN_REASON) + ": "))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

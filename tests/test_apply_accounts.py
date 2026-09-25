@@ -321,8 +321,13 @@ class _RedirectingSite:
     `/loop` with 302s back and forth, `/meta` and `/js` move to the other
     host from the page. `/landed` sets a cookie, asks for `/pixel`, opens
     a popup and sets a cookie from its script; `/opener` is a verified page
-    that opens popups on both hosts. Every path asked for is kept in
-    `asked`."""
+    that opens popups on both hosts. `/jsloc` and `/dataloc` answer with a
+    302 to an address with no host. `/cf` is a bot check (a 403 with
+    `cf-mitigated: challenge`) whose script, once it runs, sets a cookie and
+    goes on to `/landed` (the link used); `/hopcf` is a 302 to it; `/busy`
+    and `/down` answer 429 and 503; `/gone` is a 403 that says the link
+    expired; `/human` is a 200 page of a bot check. Every path asked for is
+    kept in `asked`."""
 
     def __init__(self):
         import http.server
@@ -337,12 +342,31 @@ class _RedirectingSite:
                 site.asked.append(f"{self.headers.get('Host', '').split(':')[0]}{self.path}")
                 other = f"http://localhost:{site.port}/landed"
                 own = f"http://127.0.0.1:{site.port}/landed"
-                moves = {"/go": other, "/stay": own, "/loop": "/loop2", "/loop2": "/loop"}
+                moves = {"/go": other, "/stay": own, "/loop": "/loop2", "/loop2": "/loop",
+                         "/jsloc": f"javascript:location.href='{other}'",
+                         "/dataloc": f"data:text/html,<script>location.href='{other}'</script>",
+                         "/hopcf": f"http://127.0.0.1:{site.port}/cf"}
                 if self.path in moves:
                     self.send_response(302)
                     self.send_header("Location", moves[self.path])
                     self.send_header("Set-Cookie", "hop=1; Path=/")
                     self.end_headers()
+                    return
+                checks = {"/cf": (403, "<h1>Just a moment...</h1><script>document.cookie = "
+                                       "'solved=1'; location.href = '/landed';</script>"),
+                          "/busy": (429, "<h1>Too many requests</h1>"),
+                          "/down": (503, "<h1>Service unavailable</h1>"),
+                          "/gone": (403, "<h1>This link has expired</h1>")}
+                if self.path in checks:
+                    status, page = checks[self.path]
+                    data = f"<!doctype html><html><body>{page}</body></html>".encode()
+                    self.send_response(status)
+                    if self.path == "/cf":
+                        self.send_header("cf-mitigated", "challenge")
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
                     return
                 body = {"/meta": f'<meta http-equiv="refresh" content="0;url={other}">Moving',
                         "/js": f"<script>location.href = '{other}';</script>Moving",
@@ -356,6 +380,8 @@ class _RedirectingSite:
                                    f"a.href = 'http://localhost:{site.port}/popup';"
                                    "a.target = '_blank'; document.body.appendChild(a); a.click();"
                                    "</script>",
+                        "/human": "<h1>Verify you are human</h1><p>Complete the check below."
+                                  "</p>",
                         }.get(self.path, "")
                 data = f"<!doctype html><html><body>{body}</body></html>".encode()
                 self.send_response(200)
@@ -464,6 +490,70 @@ def test_a_verification_link_redirected_without_end_does_not_open(
         run._open_link(f"http://127.0.0.1:{redirecting_site.port}/loop")
     assert read == []
     assert len(redirecting_site.asked) == apply_run.LINK_MOVES_MAX
+
+
+@pytest.mark.parametrize("path, scheme", [("/jsloc", "javascript"), ("/dataloc", "data")])
+def test_a_verification_link_redirected_to_an_address_with_no_host_names_its_scheme(
+        browser_page, tmp_path, monkeypatch, redirecting_site, path, scheme):
+    # R3-M1 (SP7 review): a Location with no host (a javascript: or data:
+    # address) is stopped like any other, and the park names its scheme
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    with pytest.raises(apply_run._Parked, match=rf"the emailed link went on to a {scheme}: "
+                                                r"address, outside the application's sites; "
+                                                r"the run stopped it$"):
+        run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}")
+    assert read == []
+    assert not [p for p in redirecting_site.asked if p.startswith("localhost")]
+
+
+@pytest.mark.parametrize("path, said", [
+    ("/cf", "cf-mitigated: challenge"), ("/hopcf", "cf-mitigated: challenge"),
+    ("/busy", "HTTP 429"), ("/down", "HTTP 503"),
+    ("/human", "the page says 'Verify you are human'")])
+def test_a_verification_link_answered_by_a_bot_check_parks_for_the_person(
+        browser_page, tmp_path, monkeypatch, redirecting_site, path, said):
+    # R3-M2 (SP7 review): the site's bot check in place of the link's page.
+    # A check's answer to the fetch never reaches the tab, so its script
+    # never runs and never uses the link; the park asks the person to open
+    # the link
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    with pytest.raises(apply_run._Parked) as parked:
+        run._open_link(f"http://127.0.0.1:{redirecting_site.port}{path}")
+    assert parked.value.reason == ("emailed verification link needed: the emailed link's page "
+                                   f"asked for a bot check ({said})")
+    assert parked.value.tab_note == apply_run.LINK_BOT_NOTE
+    assert not [p for p in redirecting_site.asked if p.endswith("/landed")], redirecting_site.asked
+    assert ("127.0.0.1", "solved") not in _left_behind(browser_page)["cookies"]
+    if path != "/human":
+        assert read == []
+
+
+def test_a_verification_link_the_site_answers_with_a_403_that_names_the_link_is_refused(
+        browser_page, tmp_path, monkeypatch, redirecting_site):
+    # a 403 that says the link expired is the site's word on the link, not
+    # a bot check
+    run, read = _link_run(tmp_path, browser_page, monkeypatch)
+    with pytest.raises(apply_run._Parked, match=r"the site refused the emailed link "
+                                                r"\('link has expired'\)"):
+        run._open_link(f"http://127.0.0.1:{redirecting_site.port}/gone")
+    assert read == [f"http://127.0.0.1:{redirecting_site.port}/gone"]
+
+
+def test_a_verification_link_behind_a_bot_check_is_not_recorded_as_opened(
+        browser_page, tmp_path, monkeypatch, redirecting_site):
+    # R3-M2: no decision says the link was opened, and the site is not one
+    # whose link was followed
+    from types import SimpleNamespace
+    run, _ = _link_run(tmp_path, browser_page, monkeypatch)
+    link = f"http://127.0.0.1:{redirecting_site.port}/cf"
+    run.inbox = SimpleNamespace(fetch_link=lambda page, host, inbox_url: link, refused=[])
+    decided: list[str] = []
+    monkeypatch.setattr(run, "_decide", lambda what, why, **kw: decided.append(what))
+    rec: dict = {"clicked": []}
+    with pytest.raises(apply_run._Parked, match=r"asked for a bot check"):
+        run._verify_link(apply_run.apply_form.FormDigest("127.0.0.1", "Verify your email", ""),
+                         rec)
+    assert decided == [] and rec["clicked"] == [] and run._links_followed == set()
 
 
 @pytest.mark.parametrize("fields, text, said", [

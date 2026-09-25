@@ -244,6 +244,14 @@ LINK_FAILED_WORDS = re.compile(
     r"\b(?:link|token|code)\s+(?:has\s+|is\s+)?(?:expired|invalid|no longer valid)\b"
     r"|\b(?:expired|invalid)\s+(?:link|token)\b|\balready\s+been\s+used\b"
     r"|\bcould\s+not\s+(?:be\s+)?verif", re.I)
+# a verification link's page that is the site's bot check (SP7 review R3-M2):
+# the answer's statuses (`_link_challenge`), and the words of a check's page
+LINK_CHALLENGE_STATUS = (403, 429, 503)
+LINK_BOT_WORDS = re.compile(
+    r"\bverify(?:ing)?\s+(?:that\s+)?you\s+are\s+(?:a\s+)?human\b"
+    r"|\bchecking\s+(?:your\s+browser|if\s+the\s+site\s+connection\s+is\s+secure)\b"
+    r"|\bare\s+you\s+a\s+robot\b|\bi(?:'m|\u2019m|\s+am)\s+not\s+a\s+robot\b", re.I)
+LINK_BOT_NOTE = "open the emailed link yourself, then Re-queue"
 REVIEW_NOTE = "review and submit"
 SUBMIT_FAILED_NOTE = "submit did not register; review and submit"
 NOT_SENT_REASON = "the submit did not go through"
@@ -1618,6 +1626,26 @@ def _is_captcha_url(url: str) -> bool:
     if _site(host) in CAPTCHA_SITES or host == "challenges.cloudflare.com":
         return True
     return _site(host) == "google.com" and parts.path.startswith("/recaptcha")
+
+
+def _link_challenge(answer) -> str:
+    """What says the answer to a verification link's fetch is the site's bot
+    check in place of the link's page (SP7 review R3-M2): Cloudflare's
+    `cf-mitigated: challenge` header, or a 403, 429 or 503 whose page does
+    not say the link itself was refused (`LINK_FAILED_WORDS`); "" for any
+    other answer."""
+    headers = {str(k).lower(): str(v) for k, v in dict(answer.headers or {}).items()}
+    if headers.get("cf-mitigated", "").strip().lower() == "challenge":
+        return "cf-mitigated: challenge"
+    if answer.status not in LINK_CHALLENGE_STATUS:
+        return ""
+    try:
+        body = answer.text()
+    except Exception:           # noqa: BLE001  (a body that does not decode says nothing)
+        body = ""
+    if LINK_FAILED_WORDS.search(re.sub(r"<[^>]*>", " ", body)):
+        return ""
+    return f"HTTP {answer.status}"
 
 
 def _tracker(url_or_host: str) -> bool:
@@ -7413,8 +7441,8 @@ class _JobRun:
         if not self._link_ok(to):
             raise _Parked("needs_human", f"{LINK_REASON}: the email's link goes to {to}, outside "
                                          "the application's sites; it was never opened", LINK_NOTE)
-        self._links_followed.add(site)
         shown = self._open_link(link)
+        self._links_followed.add(site)
         rec["clicked"].append("the emailed verification link (opened in a tab of its own)")
         self._decide("verify_link", f"the account check's link in the email, on {to}, was "
                                     f"opened in a tab of its own and closed; the job's tab is "
@@ -7440,10 +7468,14 @@ class _JobRun:
         the route sees that hop too. A script's or a meta refresh's move
         is held the same way, and so is the URL the tab settled on. Once
         the tab is headed for any other host nothing more of it loads and
-        nothing of it is read. A page the tab opens (a popup) loads nothing
+        nothing of it is read. A navigation answered by the site's bot
+        check (`_link_challenge`) goes no further: the check's page never
+        runs, the link is not used, and the park asks the person to open
+        it (SP7 review R3-M2); so does a settled page that reads as one
+        (`LINK_BOT_WORDS`). A page the tab opens (a popup) loads nothing
         and is closed. The tab's text once it settled (a park when it was
-        refused, left the allowed hosts or did not load), and the tab
-        closed."""
+        refused, left the allowed hosts, asked for a bot check or did not
+        load), and the tab closed."""
         context = self.page.context
         known = list(context.pages)
         tab = context.new_page()
@@ -7451,6 +7483,7 @@ class _JobRun:
         moves: list[str] = []           # the redirects handed to the page as a script's move
         landed = [False]                # a page that is no redirect was handed to the tab
         broken: list[str] = []          # why the route could not answer a navigation
+        challenged: list[str] = []      # what said a navigation's answer was a bot check
 
         def main_frame(request) -> bool:
             try:
@@ -7459,11 +7492,16 @@ class _JobRun:
                 return True
 
         def left(url: str) -> bool:
-            """Is `url` off the allowed hosts? Its host joins `stopped`."""
-            if self._link_ok(_host(url)):
+            """Is `url` off the allowed hosts? Where it goes joins `stopped`:
+            its host, or its scheme when it has none (a `javascript:` or a
+            `data:` address, SP7 review R3-M1)."""
+            host = _host(url)
+            if self._link_ok(host):
                 return False
-            if _host(url) not in stopped:
-                stopped.append(_host(url))
+            scheme = urlsplit(str(url or "")).scheme.lower()
+            where = host or (f"a {scheme}: address" if scheme else "an address with no host")
+            if where not in stopped:
+                stopped.append(where)
             return True
 
         def guard(route) -> None:
@@ -7486,6 +7524,11 @@ class _JobRun:
             except Exception as e:  # noqa: BLE001  (a network error may quote the link's token)
                 broken.append(type(e).__name__)
                 route.abort()
+                return
+            challenge = _link_challenge(answer)
+            if challenge:
+                challenged.append(challenge)
+                route.abort()       # the check's page never runs: the link is not used
                 return
             where = answer.headers.get("location", "") if 300 <= answer.status < 400 else ""
             if not where:
@@ -7537,14 +7580,14 @@ class _JobRun:
             tab.route("**/*", guard)
             tab.goto(link, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
             end = time.monotonic() + GOTO_TIMEOUT_MS / 1000
-            while moves and not landed[0] and not stopped and not broken \
+            while moves and not landed[0] and not stopped and not broken and not challenged \
                     and time.monotonic() < end:
                 tab.wait_for_timeout(100)   # the script's move to the redirect's target
             if broken and not stopped:
                 raise RuntimeError(broken[0])
-            if not stopped and not left(tab.url):
+            if not stopped and not challenged and not left(tab.url):
                 apply_fill.settle(tab, CLICK_TIMEOUT_S)
-            if not stopped and not left(tab.url):
+            if not stopped and not challenged and not left(tab.url):
                 text = apply_fill.page_text(tab)
                 left(tab.url)       # a redirect while it was read: the text is dropped
         except Exception as e:      # noqa: BLE001  (an error may quote the link's token)
@@ -7561,6 +7604,12 @@ class _JobRun:
             raise _Parked("needs_human", f"{LINK_REASON}: the emailed link went on to "
                                          f"{stopped[0]}, outside the application's sites; the "
                                          "run stopped it", LINK_NOTE)
+        bot = LINK_BOT_WORDS.search(text or "")
+        if bot and not challenged:
+            challenged.append(f"the page says {' '.join(bot.group(0).split())!r}")
+        if challenged:
+            raise _Parked("needs_human", f"{LINK_REASON}: the emailed link's page asked for a bot "
+                                         f"check ({challenged[0]})", LINK_BOT_NOTE)
         if error:
             raise _Parked("needs_human", f"{LINK_REASON}: the emailed link did not open "
                                          f"({error})", LINK_NOTE)

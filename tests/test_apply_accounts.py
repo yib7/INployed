@@ -709,7 +709,15 @@ def test_the_create_account_button_is_the_one_that_makes_an_account(browser_page
 def test_a_sign_ins_box_that_came_back_is_never_typed_again(tmp_path):
     # ACC-12 re-types a sign-up's emptied boxes only: a sign-in's box that came
     # back is a rejected password, and a second typing moves toward a lockout
+    class _Emptied:
+        """A password box the site emptied."""
+
+        def evaluate(self, js, *a, **kw):
+            return 0
+    run = _job_run(tmp_path, "127.0.0.1")
+    assert run.accounts._retype("127.0.0.1", [_Emptied()],
+                                _boxes_digest(("Password", "new-password"))) is True
     run = _job_run(tmp_path, "127.0.0.1")
     digest = _boxes_digest(("Password", "current-password"))
-    assert run.accounts._retype("127.0.0.1", [object()], digest) is False
+    assert run.accounts._retype("127.0.0.1", [_Emptied()], digest) is False
     assert run.accounts.retyped == set()

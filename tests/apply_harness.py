@@ -1003,7 +1003,9 @@ FLOWS: tuple[Flow, ...] = (
     Flow("rippling_generic_aria", "rippling_generic_aria.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
          covers="'Search' / 'Select...' / 'textbox' aria-labels under visible questions, a "
-                "role=radio consent, the only submit disabled until the form is complete"),
+                "role=radio question, the only submit disabled until the form is complete "
+                "(its question was 'May we text you about this application?' until SP8b: the "
+                "live judge leaves that blank, since no fact answers it, and the job parks)"),
     Flow("bamboo_honeypot_mui", "bamboo_honeypot_mui.html", True, "submitted", _SUBMITTED,
          confirm="#thanks:visible",
          covers="a late posting with a read-only share box, a honeypot, hidden selects behind "
@@ -1151,9 +1153,14 @@ FLOWS: tuple[Flow, ...] = (
          covers="a required start date inside a closed shadow root and a form-associated "
                 "relocation choice: named, and the job parks on the required one (EXT-01)"),
     # --- SP7: accounts and email ---
-    Flow("otp_six_boxes", "otp_six_boxes.html", False, "ready_to_submit", _PARKED,
+    # served on the company's careers host: the code comes from
+    # careers@fabrikam.example, and the live judge rightly reads that mail as
+    # sent by someone other than 127.0.0.1 (0.09, SP8b)
+    Flow("otp_six_boxes", f"{_CAREERS}/apply/otp", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True, inbox=True,
          inbox_page="otp_list.html",
+         routes=lambda base: {f"{_CAREERS}/**": (FIXTURES_DIR / "forms" / "otp_six_boxes.html")
+                              .read_text(encoding="utf-8")},
          covers="a sign-up, then its code in six one-character boxes, the fresh code below an "
                 "older one from the same sender, then the application (ACC-06, ACC-07)"),
     Flow("workday_signin_modal", "workday_signin_modal.html", False, "ready_to_submit", _PARKED,
@@ -1162,6 +1169,12 @@ FLOWS: tuple[Flow, ...] = (
          covers="Workday's start popup, a Sign In dialog whose way to an account is a Create "
                 "Account button, the password rules, the account checked by a link in the "
                 "email, the sign-in after it, then the wizard (ACC-01, ACC-04, ACC-05)"),
+    Flow("workday_link_pick", "workday_signin_modal.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True, inbox=True,
+         inbox_page="link_pick_list.html", ats={"system": "workday"},
+         covers="the account check's email holds two links whose words read as a check, the "
+                "job alerts' confirmation first: the judge picks the account's link, the "
+                "sign-in after it, then the wizard (ACC-05's link pick, SP8b)"),
     Flow("signup_exists", "signup_exists.html", False, "ready_to_submit", _PARKED,
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-up that says the address has an account: one sign-in instead, never a "

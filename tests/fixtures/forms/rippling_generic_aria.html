@@ -5,7 +5,7 @@
 <title>Apply - Analytics Engineer - Fabrikam</title>
 <!-- A synthetic replica of a Rippling application (layout study G2, G6, G7,
      G10): dropdowns whose aria-label is "Search" or "Select..." under a
-     visible question, a text box whose aria-label is "textbox", a consent
+     visible question, a text box whose aria-label is "textbox", a yes/no
      question drawn as a radiogroup of role=radio divs each holding a hidden
      native radio, a resume box whose own label is its file count, and the
      only submit, "Apply", disabled until the form is complete. -->
@@ -38,10 +38,10 @@
            data-choices='["Female", "Male", "Non-binary", "Decline to self-identify"]'>
   </div>
   <div class="field">
-    <span class="q" id="sms-q">May we text you about this application? *</span>
-    <div role="radiogroup" aria-labelledby="sms-q" aria-required="true">
-      <div role="radio" aria-checked="false" tabindex="0"><input type="radio" name="sms" value="yes">Yes</div>
-      <div role="radio" aria-checked="false" tabindex="-1"><input type="radio" name="sms" value="no">No</div>
+    <span class="q" id="auth-q">Are you legally authorized to work in the United States? *</span>
+    <div role="radiogroup" aria-labelledby="auth-q" aria-required="true">
+      <div role="radio" aria-checked="false" tabindex="0"><input type="radio" name="authorized" value="yes">Yes</div>
+      <div role="radio" aria-checked="false" tabindex="-1"><input type="radio" name="authorized" value="no">No</div>
     </div>
   </div>
   <div class="field" role="group" aria-labelledby="resume-q">

@@ -283,11 +283,11 @@ def test_a_hidden_select_behind_a_styled_trigger_is_picked_in_place(browser_page
 def test_a_role_radio_group_is_one_question_clicked_through_its_options(browser_page,
                                                                        fixture_url):
     d = _open(browser_page, fixture_url, "rippling_generic_aria.html")
-    sms = _by_label(d, "May we text you about this application?")
-    assert (sms.type, sms.widget, sms.required, sms.options) == ("radio", "choice", True,
-                                                                 ["Yes", "No"])
-    values = _fill(browser_page, _planned(sms, "select", "No", "No"))
-    assert values[sms.n] == "No"
+    auth = _by_label(d, "Are you legally authorized to work in the United States?")
+    assert (auth.type, auth.widget, auth.required, auth.options) == ("radio", "choice", True,
+                                                                     ["Yes", "No"])
+    values = _fill(browser_page, _planned(auth, "select", "No", "No"))
+    assert values[auth.n] == "No"
     assert browser_page.locator("[role=radio][aria-checked=true]").inner_text() == "No"
 
 

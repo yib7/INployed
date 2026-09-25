@@ -14,6 +14,7 @@
 Headless Chromium through the module-scoped test browser for the flows; no
 network, no judge but `FakeJev`, `NoisyJev` or a scripted one; the master
 password is the harness's synthetic one."""
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -312,6 +313,52 @@ def test_a_verification_link_the_site_refuses_parks_with_its_words(_browser, flo
     assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
     assert r.reason == ("emailed verification link needed: the site refused the emailed link "
                         "('link has expired')")
+
+
+class _LinkPick:
+    """FakeJev, with each request's question ids kept, and the link pick
+    answered `pick` when one is given."""
+
+    def __init__(self, pick: str | None = None):
+        self.pick, self.asked = pick, []
+
+    def judge(self, state, questions):
+        self.asked.append(set(questions))
+        out = jev.FakeJev().judge(state, questions)
+        if self.pick and "link_pick" in out:
+            out["link_pick"] = jev.Answer(kind="choice", choice=self.pick,
+                                          probabilities={self.pick: 1.0}, confidence=1.0)
+        return out
+
+
+def test_the_judge_picks_the_accounts_link_from_a_message_that_holds_two(
+        _browser, flow_server, tmp_path):
+    # ACC-05's link pick in a run (SP8b): the message holds a job alerts'
+    # confirmation first and the account's check second, both on the
+    # application's site; the judge's pick is the link opened
+    judge = _LinkPick()
+    r = h.run_flow(h.flow("workday_link_pick"), judge, "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    assert [q for q in judge.asked if "link_pick" in q] == [{"link_pick"}]
+    opened = [e for e in _events(r, "decision") if e.get("what") == "verify_link"]
+    assert len(opened) == 1
+    assert opened[0]["shown"].startswith("Your account has been verified"), opened
+
+
+def test_a_link_pick_that_opens_the_other_link_parks_once_the_site_still_asks(
+        _browser, flow_server, tmp_path):
+    # the other side: a pick of the job alerts' link verifies nothing, and the
+    # site's second ask for the link parks (one link per site, never a loop)
+    f = dataclasses.replace(h.flow("workday_link_pick"), status="needs_human",
+                            reason=r"^emailed verification link needed: the emailed link was "
+                                   r"opened and ")
+    r = h.run_flow(f, _LinkPick("link_0"), "fake", browser=_browser, server=flow_server,
+                   workdir=tmp_path)
+    assert r.ok and not r.breaks, (r.status, r.reason, r.breaks)
+    opened = [e for e in _events(r, "decision") if e.get("what") == "verify_link"]
+    assert [e["shown"] for e in opened] == [
+        "Your job alerts are on. We will email you new Analytics roles at Fabrikam each week."]
 
 
 class _RedirectingSite:

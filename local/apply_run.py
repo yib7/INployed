@@ -547,6 +547,7 @@ def _credential_form(digest) -> bool:
     return bool(_password_boxes(digest)) or _email_first(digest)
 
 
+# Armed, it costs ~0.35 s a 150-request page, no HTTP cache, ~0.2 s per 5 MB posted (RES-10)
 class _NavGuard:
     """While the credentials are on the page, the page and the frames that
     hold them (`frames`, by id) may not navigate off the application's sites:

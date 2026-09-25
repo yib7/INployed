@@ -846,6 +846,75 @@ def test_a_count_of_classes_the_password_misses_still_parks(tmp_path, monkeypatc
         run._check_password_rules(_rules_digest(_OVER_READ[0][0]), "127.0.0.1")
 
 
+# N1 (SP7 review round 2): a prohibition, a choice and another field's hint,
+# each read as the site means it; a rule left unclear is no rule
+_READ_AS_MEANT = [
+    # a prohibition names no class the password needs
+    ("Password\nYour password must not contain your name, email address or phone number", {}),
+    ("Password\nMust not contain spaces or special characters", {}),
+    ("Password\nMust contain a number and must not contain your phone number", {"digit": True}),
+    ("Password\nCan't contain your phone number. Must include a number.", {"digit": True}),
+    # classes joined by "or": any one of them
+    ("Password\nMust include at least one number or special character",
+     {"digit": True, "special": True, "classes_needed": 1}),
+    ("Password\nMust contain a number, a symbol, or an uppercase letter",
+     {"upper": True, "digit": True, "special": True, "classes_needed": 1}),
+    # a choice beside classes it requires: the required ones, the choice the site's
+    ("Password\nAt least one uppercase letter, one lowercase letter, and one number or special "
+     "character", {"upper": True, "lower": True}),
+    # another field's label with its own hint ends the password's rules
+    ("Password\n8+ characters\nNickname (up to 20 characters)", {"min_length": 8}),
+    ("Password\nBio: at least 50 characters", {}),
+    # a heading that names the password keeps its rules
+    ("Password requirements: at least 12 characters", {"min_length": 12}),
+    ("Password\nConfirm password\nPassword requirements:\nAt least 12 characters\n"
+     "One uppercase letter", {"min_length": 12, "upper": True}),
+    # the username's rule is no password rule; a prohibition naming it is one
+    ("Forgot your password?\nNew users must register with at least 3 characters in the username",
+     {}),
+    ("Password\nMust be at least 8 characters and must not match your username",
+     {"min_length": 8}),
+    # a typographic apostrophe is the same prohibition
+    ("Password\nCan\u2019t contain your phone number or any symbol. Must include a number.",
+     {"digit": True}),
+]
+
+
+@pytest.mark.parametrize("text, rules", _READ_AS_MEANT)
+@pytest.mark.parametrize("labelled", [False, True])
+def test_password_rules_read_a_prohibition_a_choice_and_a_hint_as_the_site_means_them(
+        text, rules, labelled):
+    others = [("Nickname", "text"), ("Bio", "textarea"), ("Username", "text")] if labelled else []
+    got, said = apply_run.password_rules(_rules_digest(text, *others))
+    assert got == rules, said
+
+
+@pytest.mark.parametrize("text, password", [
+    (_READ_AS_MEANT[0][0], "No-Digits-Here"),            # the phone number is no digit rule
+    (_READ_AS_MEANT[1][0], "Plainpassword"),              # nor its special characters a need
+    (_READ_AS_MEANT[4][0], "Only-Symbols-Here"),          # a number or a special character
+    (_READ_AS_MEANT[4][0], "OnlyDigits1234"),
+    (_READ_AS_MEANT[5][0], "only-symbols-here"),          # a number, a symbol or an uppercase
+    (_READ_AS_MEANT[7][0], "Twenty-Four-Chars-Long-1"),  # the nickname's 20 is no maximum
+    (_READ_AS_MEANT[8][0], "Short-Pass-12"),              # the bio's 50 is no minimum
+])
+def test_a_screen_whose_rule_the_password_meets_as_meant_never_parks(
+        tmp_path, monkeypatch, text, password):
+    # each parked with "does not meet the password rules" before; the value
+    # is a test's own, never the stored one
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: password)
+    run = _job_run(tmp_path, "127.0.0.1")
+    run._check_password_rules(_rules_digest(text), "127.0.0.1")
+
+
+def test_a_choice_of_classes_the_password_holds_none_of_still_parks(tmp_path, monkeypatch):
+    monkeypatch.setattr(ats_accounts, "_get_master_password", lambda: "onlylowercaseletters")
+    run = _job_run(tmp_path, "127.0.0.1")
+    with pytest.raises(apply_run._Parked, match=r"it needs at least 1 of: a digit, a special "
+                                                r"character \(the site asks"):
+        run._check_password_rules(_rules_digest(_READ_AS_MEANT[4][0]), "127.0.0.1")
+
+
 # === the password invariants (SP7) ===========================================================================
 
 def _recorder(tmp_path):

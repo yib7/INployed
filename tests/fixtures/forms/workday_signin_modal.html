@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics Engineer - Fabrikam Careers</title>
+<!-- A synthetic replica of a Workday tenant's account path (ACC-01, ACC-04,
+     ACC-05; layout study G4, G9): the posting, the "Start Your Application"
+     popup, then on the applyManually URL a Sign In dialog whose way to an
+     account is a Create Account BUTTON (never a link), the Create Account
+     form with the tenant's password rules and a terms box, then "verify
+     your account" (a link in the email, no box). The emailed link lands on
+     workday_account_verified.html, which marks the account verified in this
+     origin's storage; loaded again, this page signs the account in and
+     shows the application: My Information, then the review and its Submit.
+     The account keeps only the address and the password's length. -->
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  [data-automation-id=header] { display: flex; gap: 12px; padding: 12px 24px; background: #eef; }
+  main { margin: 24px; }
+  .popup { display: none; position: fixed; left: 50%; top: 40px; width: 420px; margin-left: -210px;
+           background: #fff; border: 1px solid #555; padding: 20px; z-index: 10; }
+  .popup label { display: block; margin: 8px 0 2px; }
+  .step { display: none; }
+  .step.active { display: block; }
+  #thanks { display: none; }
+  .note { color: #555; font-size: 13px; }
+</style>
+</head>
+<body>
+<div data-automation-id="header">
+  <a role="button" href="#" data-automation-id="utilityButtonSignIn">Sign In</a>
+  <a role="button" href="#" data-automation-id="navigationItem-Search for Jobs">Search for Jobs</a>
+</div>
+<main>
+  <div id="posting">
+    <h2 data-automation-id="jobPostingHeader">Analytics Engineer</h2>
+    <p>Remote, United States &middot; Full time &middot; Job requisition R-1042</p>
+    <a role="button" href="#" id="apply" data-automation-id="adventureButton">Apply</a>
+    <div data-automation-id="jobPostingDescription">
+      <h3>About the team</h3>
+      <p>Our analytics group keeps the reporting layer tidy for every product line.</p>
+      <h3>Responsibilities</h3>
+      <p>Model the warehouse, review changes, and keep the nightly loads healthy.</p>
+      <h3>Qualifications</h3>
+      <p>Two years of SQL and one scripting language.</p>
+    </div>
+  </div>
+
+  <div class="step" id="step-info" data-automation-id="applyFlowPage">
+    <h3>My Information</h3>
+    <p>Step 1 of 2</p>
+    <label for="first">First Name *</label>
+    <input id="first" type="text" data-automation-id="legalNameSection_firstName" aria-required="true">
+    <label for="last">Last Name *</label>
+    <input id="last" type="text" data-automation-id="legalNameSection_lastName" aria-required="true">
+    <label for="phone">Phone Number</label>
+    <input id="phone" type="tel" data-automation-id="phone-number">
+    <p><button type="button" id="info-next" data-automation-id="bottom-navigation-next-button">Save and Continue</button></p>
+  </div>
+  <div class="step" id="step-review" data-automation-id="applyFlowPage">
+    <h3>Review</h3>
+    <p>Step 2 of 2</p>
+    <p>Please review your application before you submit it.</p>
+    <p id="summary"></p>
+    <p><button type="button" id="btn-submit" data-automation-id="bottom-navigation-next-button">Submit</button></p>
+  </div>
+  <section id="thanks"><h2>Application Submitted</h2><p>Thank you for applying. Your application has been received.</p></section>
+</main>
+
+<div class="popup" id="start" role="dialog" aria-labelledby="start-title" data-automation-activepopup="true"
+     style="min-height: 260px">
+  <h2 id="start-title">Start Your Application</h2>
+  <p><a role="button" href="#" id="manual" data-automation-id="applyManually">Apply Manually</a></p>
+  <p><a role="button" href="#" id="use-last" data-automation-id="useMyLastApplication">Use My Last Application</a></p>
+</div>
+
+<div class="popup" id="signin" role="dialog" aria-modal="true" aria-labelledby="signin-title">
+  <h2 id="signin-title">Sign In</h2>
+  <p class="note" id="verified-note" style="display: none">Your account is verified. Sign in to continue your application.</p>
+  <label for="si-email">Email Address</label>
+  <input id="si-email" type="text" data-automation-id="email">
+  <label for="si-password">Password</label>
+  <input id="si-password" type="password" data-automation-id="password">
+  <p id="signin-error" role="alert" style="display: none">Wrong email address or password.</p>
+  <p><button type="button" id="signin-go" data-automation-id="signInSubmitButton">Sign In</button></p>
+  <p><button type="button" data-automation-id="forgotPasswordLink">Forgot your password?</button></p>
+  <p>Don't have an account yet? <button type="button" id="to-create" data-automation-id="createAccountLink">Create Account</button></p>
+</div>
+
+<div class="popup" id="create" role="dialog" aria-modal="true" aria-labelledby="create-title">
+  <h2 id="create-title">Create Account</h2>
+  <label for="cr-email">Email Address</label>
+  <input id="cr-email" type="text" data-automation-id="email">
+  <label for="cr-password">Password</label>
+  <input id="cr-password" type="password" data-automation-id="password">
+  <label for="cr-verify">Verify New Password</label>
+  <input id="cr-verify" type="password" data-automation-id="verifyPassword">
+  <div class="note" id="rules">Password Requirements:
+    <ul><li>a lowercase character</li><li>an uppercase character</li><li>a numeric character</li>
+    <li>a special character</li><li>a minimum of 8 characters</li></ul></div>
+  <p><label><input type="checkbox" id="cr-terms" data-automation-id="createAccountCheckbox" required>
+    I agree to the Terms and Conditions</label></p>
+  <p id="create-error" role="alert" style="display: none">Fill in every box and accept the terms.</p>
+  <p><button type="button" id="create-go" data-automation-id="createAccountSubmitButton">Create Account</button></p>
+  <p>Already have an account? <button type="button" id="to-signin" data-automation-id="signInLink">Sign In</button></p>
+</div>
+
+<div class="popup" id="verify" role="dialog" aria-modal="true" aria-labelledby="verify-title">
+  <h2 id="verify-title">Verify Your Account</h2>
+  <p>We sent a verification email to your address. Click the link in the email to activate your
+     account, then come back here to sign in.</p>
+  <p><button type="button" data-automation-id="resendVerification">Resend Account Verification</button></p>
+</div>
+
+<script>
+  var manual = /[?&]apply=manual\b/.test(location.search);
+  function popup(id) {
+    ['start', 'signin', 'create', 'verify'].forEach(function (p) {
+      document.getElementById(p).style.display = p === id ? 'block' : 'none';
+    });
+  }
+  function step(id) {
+    // the account dialogs are gone once the application shows
+    document.querySelectorAll('.popup').forEach(function (p) { p.remove(); });
+    document.getElementById('posting').style.display = 'none';
+    ['step-info', 'step-review'].forEach(function (s) {
+      document.getElementById(s).classList.toggle('active', s === id);
+    });
+  }
+  var account = null;
+  try { account = JSON.parse(localStorage.getItem('wd-account') || 'null'); } catch (e) { account = null; }
+  var verified = localStorage.getItem('wd-verified') === '1';
+  if (manual) {
+    document.getElementById('posting').style.display = 'none';
+    if (account && !verified) { popup('verify'); }
+    else { popup('signin'); }
+    if (verified) document.getElementById('verified-note').style.display = 'block';
+  }
+  document.getElementById('apply').addEventListener('click', function (e) {
+    e.preventDefault();
+    popup('start');
+  });
+  ['manual', 'use-last'].forEach(function (id) {
+    document.getElementById(id).addEventListener('click', function (e) {
+      e.preventDefault();
+      location.href = location.pathname + '?apply=manual';
+    });
+  });
+  document.getElementById('to-create').addEventListener('click', function () { popup('create'); });
+  document.getElementById('to-signin').addEventListener('click', function () { popup('signin'); });
+  document.getElementById('create-go').addEventListener('click', function () {
+    var e = document.getElementById('cr-email').value, p = document.getElementById('cr-password').value;
+    if (!e || !p || p !== document.getElementById('cr-verify').value
+        || !document.getElementById('cr-terms').checked) {
+      document.getElementById('create-error').style.display = 'block';
+      return;
+    }
+    localStorage.setItem('wd-account', JSON.stringify({email: e, length: p.length}));
+    account = {email: e, length: p.length};
+    popup('verify');
+  });
+  document.getElementById('signin-go').addEventListener('click', function () {
+    var e = document.getElementById('si-email').value, p = document.getElementById('si-password').value;
+    if (!account || !verified || e !== account.email || p.length !== account.length) {
+      document.getElementById('signin-error').style.display = 'block';
+      return;
+    }
+    popup('none');
+    step('step-info');
+  });
+  document.getElementById('info-next').addEventListener('click', function () {
+    if (!document.getElementById('first').value || !document.getElementById('last').value) return;
+    document.getElementById('summary').textContent = 'Name: ' + document.getElementById('first').value
+      + ' ' + document.getElementById('last').value;
+    step('step-review');
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    step('none');
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

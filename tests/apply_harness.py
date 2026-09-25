@@ -667,6 +667,7 @@ class Flow:
     routes: Callable[[str], dict[str, str]] = _no_routes
     password: bool = False          # a synthetic master password is stored
     inbox: bool = False             # the fixture inbox is the run's inbox
+    inbox_page: str = "outlook_list.html"   # which one, under tests/fixtures/inbox/
     ats: dict[str, str] = field(default_factory=dict)
     settle_s: float | None = None   # the quiet window when a page moves on by a timer
     # ((module, name), value) caps raised for this flow on top of `FAST_TIMING`:
@@ -1135,6 +1136,18 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible",
          covers="a required start date inside a closed shadow root and a form-associated "
                 "relocation choice: named, and the job parks on the required one (EXT-01)"),
+    # --- SP7: accounts and email ---
+    Flow("otp_six_boxes", "otp_six_boxes.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True, inbox=True,
+         inbox_page="otp_list.html",
+         covers="a sign-up, then its code in six one-character boxes, the fresh code below an "
+                "older one from the same sender, then the application (ACC-06, ACC-07)"),
+    Flow("workday_signin_modal", "workday_signin_modal.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", password=True, inbox=True,
+         inbox_page="link_list.html", ats={"system": "workday"},
+         covers="Workday's start popup, a Sign In dialog whose way to an account is a Create "
+                "Account button, the password rules, the account checked by a link in the "
+                "email, the sign-in after it, then the wizard (ACC-01, ACC-04, ACC-05)"),
 )
 
 
@@ -1780,6 +1793,33 @@ def offline_contexts():
         p.undo()
 
 
+# The flows' inbox has a host of its own (the application's is the fixture
+# server's): the master password is never typed on the inbox's site, and a
+# link in a message is the application's only by its host (SP7)
+INBOX_HOST = "mail.fixtures.test"
+
+
+def inbox_url(page: str) -> str:
+    return f"http://{INBOX_HOST}/inbox/{page}"
+
+
+def _inbox_server(base: str) -> Callable[[Any], None]:
+    """A route handler serving `tests/fixtures/inbox/<name>` on `INBOX_HOST`,
+    each message's links to `../forms/` pointed at the application's host
+    (`base`)."""
+    from urllib.parse import urlsplit
+
+    def _handle(route) -> None:
+        name = urlsplit(route.request.url).path.split("/inbox/", 1)[-1]
+        path = FIXTURES_DIR / "inbox" / name
+        if not name or "/" in name or not path.is_file():
+            route.fulfill(status=404, body="not found", content_type="text/plain")
+            return
+        body = path.read_text(encoding="utf-8").replace('href="../forms/', f'href="{base}/forms/')
+        route.fulfill(body=body, content_type="text/html")
+    return _handle
+
+
 def _fulfiller(body: str) -> Callable[[Any], None]:
     """A route handler serving `body` (one parameter: Playwright passes the
     request too to a handler that takes two)."""
@@ -1846,12 +1886,12 @@ def run_flow(f: Flow, judge: Any, judge_name: str, *, browser, server: FlowServe
         opened: list = []
         context.on("page", lambda p: opened.append(p))
         offline(context)
+        context.route(f"http://{INBOX_HOST}/**", _inbox_server(server.base))
         for glob, body in f.routes(server.base).items():
             context.route(glob, _fulfiller(body))
         sends.install(context, f, server)
         stack.enter_context(recorder.recording())
-        inbox = f"{server.base}/inbox/outlook_list.html" if f.inbox \
-            else "https://mail.example.com/inbox"
+        inbox = inbox_url(f.inbox_page) if f.inbox else "https://mail.example.com/inbox"
         if f.wrap is not None:
             judge = f.wrap(judge)
         runner = apply_run.Runner(

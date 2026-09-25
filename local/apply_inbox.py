@@ -424,7 +424,8 @@ def _polling(page, inbox_url: str, one_poll: Callable, *, polls: int, wait_s: fl
                     stopped.append("off the inbox host")
                 route.abort()
             else:
-                route.continue_()
+                # on to the context's own handlers, then the network
+                route.fallback()
 
         tab.route("**/*", guard)
         last = ""

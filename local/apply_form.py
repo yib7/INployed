@@ -1415,6 +1415,33 @@ _EXTRACT_JS = r"""
                             { widget: 'date:' + kinds.join(''), option_css: parts.map(locatorFor) }));
   }
 
+  // one-time code boxes (ACC-06): four or more one-character boxes in one
+  // box up to three levels above them (Greenhouse's security-input-N,
+  // Oracle's PIN boxes) are one code field, typed from its first box
+  const oneChar = (e) => e.tagName === 'INPUT' && ['text', 'tel', 'number'].includes(typeAttr(e))
+    && parseInt(e.getAttribute('maxlength') || '', 10) === 1 && !consumed.has(e) && visible(e);
+  const singles = all.filter(oneChar);
+  const otpBoxes = new Map();
+  for (const s of singles) {
+    let box = null;
+    let p = up(s);
+    for (let i = 0; p && i < 3 && !box; i++, p = up(p)) {
+      if (singles.filter((o) => containsC(p, o)).length >= 4) box = p;
+    }
+    if (!box) continue;
+    if (!otpBoxes.has(box)) otpBoxes.set(box, []);
+    otpBoxes.get(box).push(s);
+  }
+  for (const [box, parts] of otpBoxes) {
+    if (parts.length < 4 || parts.length > 12 || !usable(parts[0])) continue;
+    parts.forEach((s) => consumed.add(s));
+    const marks = [];
+    const [label, req] = groupLabelFor(parts, closestC(box, '[role=group]'), marks);
+    push(parts[0], describe(parts[0], 'text', label || 'Verification code',
+                            req || parts.some(isRequired), locatorFor(parts[0]), [],
+                            { widget: 'otp', option_css: parts.map(locatorFor) }));
+  }
+
   // checkbox groups (G8): boxes sharing a name, an id's question prefix, or
   // a question box of their own
   // the question box of options with no shared name (bunq gives each box

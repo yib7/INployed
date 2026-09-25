@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply - Analytics Engineer - Fabrikam Careers</title>
+<!-- A synthetic replica of an account check by code in one-character boxes
+     (ACC-06: Greenhouse's security-input-N, Oracle's PIN boxes): the account
+     screen, then six boxes that move the focus on as each character is
+     typed, then the application and its Submit. All steps share one URL.
+     The code the inbox holds is 482915; any other is refused. -->
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+  .step { display: none; }
+  .step.active { display: block; }
+  .otp { display: flex; gap: 8px; margin: 12px 0; }
+  .otp input { width: 32px; height: 40px; text-align: center; font-size: 20px; }
+  #thanks { display: none; }
+</style>
+</head>
+<body>
+<div class="step active" id="step-account">
+  <h1>Create your candidate account</h1>
+  <p>An account keeps your application and lets you check on it later.</p>
+  <label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username">
+  <label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="new-password">
+  <label for="pw2">Confirm password</label><input id="pw2" name="password_confirmation" type="password" autocomplete="new-password">
+  <p><button type="button" id="create">Create account</button></p>
+</div>
+
+<div class="step" id="step-code">
+  <h1>Check your email</h1>
+  <p>We emailed a 6-digit verification code to your address. Enter it below to confirm your account.</p>
+  <div class="otp" role="group" aria-label="Verification code">
+    <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 1" id="d1" autocomplete="off">
+    <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 2" id="d2" autocomplete="off">
+    <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 3" id="d3" autocomplete="off">
+    <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 4" id="d4" autocomplete="off">
+    <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 5" id="d5" autocomplete="off">
+    <input type="text" inputmode="numeric" maxlength="1" aria-label="Digit 6" id="d6" autocomplete="off">
+  </div>
+  <p id="code-error" role="alert" style="display: none">That code is not right. Check the newest email.</p>
+  <p><button type="button" id="verify">Verify</button></p>
+</div>
+
+<div class="step" id="step-app">
+  <h1>Analytics Engineer: your application</h1>
+  <form id="application" onsubmit="return false">
+    <label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+    <label for="last_name">Last name *</label><input id="last_name" name="last_name" required>
+    <label for="phone">Phone</label><input id="phone" name="phone" type="tel">
+    <label for="resume">Resume *</label><input id="resume" name="resume" type="file" required>
+    <p><button type="button" id="btn-submit">Submit application</button></p>
+  </form>
+</div>
+<section id="thanks"><h2>Thank you for applying</h2><p>Your application has been received.</p></section>
+<script>
+  var order = ['step-account', 'step-code', 'step-app'];
+  function show(id) {
+    order.forEach(function (s) { document.getElementById(s).classList.toggle('active', s === id); });
+  }
+  var boxes = Array.from(document.querySelectorAll('.otp input'));
+  boxes.forEach(function (b, i) {
+    b.addEventListener('input', function () {
+      if (b.value && i + 1 < boxes.length) boxes[i + 1].focus();
+    });
+  });
+  document.getElementById('create').addEventListener('click', function () {
+    var p = document.getElementById('pw').value;
+    if (!document.getElementById('email').value || !p || p !== document.getElementById('pw2').value) return;
+    show('step-code');
+  });
+  document.getElementById('verify').addEventListener('click', function () {
+    var code = boxes.map(function (b) { return b.value; }).join('');
+    if (code !== '482915') {
+      document.getElementById('code-error').style.display = 'block';
+      boxes.forEach(function (b) { b.value = ''; });
+      return;
+    }
+    show('step-app');
+  });
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    document.body.setAttribute('data-submitted', '1');
+    show('none');
+    document.getElementById('thanks').style.display = 'block';
+  });
+</script>
+</body>
+</html>

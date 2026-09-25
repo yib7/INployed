@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Account Verified - Fabrikam Careers</title>
+<!-- The page an emailed account-verification link opens (ACC-05): with a
+     token it marks the account verified in this origin's storage. -->
+<style> body { font-family: sans-serif; margin: 24px; } </style>
+</head>
+<body>
+<h1 id="title">Verifying your account...</h1>
+<p id="note"></p>
+<script>
+  var ok = /[?&]token=[0-9a-f]{8,}/.test(location.search);
+  if (ok) {
+    localStorage.setItem('wd-verified', '1');
+    document.getElementById('title').textContent = 'Your account has been verified.';
+    document.getElementById('note').textContent = 'You can now sign in and continue your application.';
+  } else {
+    document.getElementById('title').textContent = 'This link is invalid.';
+  }
+</script>
+</body>
+</html>

@@ -786,6 +786,13 @@ CODE_WORDS = re.compile(
     r"(?:verification|security|one[- ]?time|auth\w*)[ _-]*code|\botp\b|passcode", re.I)
 NOT_CODE_WORDS = re.compile(
     r"zip|post\s*code|postal|country|promo|coupon|discount|referral|invite|area\s*code", re.I)
+# A page's words that a verification link was emailed (ACC-05): "We sent a
+# verification link", "Click the link in the email", "Check your inbox".
+LINK_SENT_WORDS = re.compile(
+    r"\b(?:verification|confirmation|activation|verify|confirm|activate)\w*\s+(?:link|e-?mail)\b"
+    r"|\bclick(?:ing)?\s+(?:on\s+)?(?:the\s+)?link\b|\b(?:open|follow|use)\s+the\s+link\b"
+    r"|\b(?:sent|e-?mailed)\s+(?:you\s+)?(?:a|an)\s+(?:\w+\s+){0,2}link\b"
+    r"|\bcheck\s+your\s+(?:e-?mail|inbox)\b", re.I)
 # A password box's words when it makes the password rather than signs in with it.
 NEW_PASSWORD = re.compile(r"\b(create|new|choose|set|confirm|re-?enter|repeat|verify)\b"
                           r"|new[_-]?pass|confirm[_-]?pass", re.I)
@@ -886,6 +893,11 @@ def code_field(fields):
     # group's question is its label now)
     fields = [f for f in fields if str(getattr(f, "type", "") or "") in _CODE_TYPES]
     for f in fields:
+        # one-character boxes side by side (ACC-06): the extractor's own
+        # finding, whatever their label says
+        if str(getattr(f, "widget", "") or "") == "otp":
+            return f
+    for f in fields:
         if str(getattr(f, "autocomplete", "")).lower() == "one-time-code":
             return f
     for f in fields:
@@ -897,6 +909,16 @@ def code_field(fields):
         if "code" in text.lower() and not NOT_CODE_WORDS.search(text):
             return f
     return None
+
+
+def link_sent(digest: FormDigest) -> str:
+    """ACC-05: the words a page says a verification link was emailed with
+    (`LINK_SENT_WORDS`), on a page with no box to fill but tick boxes and no
+    code box: an account check by link, whose way on is the link in the
+    email; "" else."""
+    if code_field(digest.fields) is not None or any(f.type != "checkbox" for f in digest.fields):
+        return ""
+    return _first_words(LINK_SENT_WORDS, f"{digest.title}\n{digest.text or ''}")
 
 
 _HEX_TOKEN = re.compile(r"[0-9a-fA-F-]+")
@@ -954,6 +976,7 @@ class PageFacts:
     url_kind: str = ""
     text_chars: int = 0
     dialog: str = ""            # an open modal dialog's title (the extractor's)
+    link_sent: str = ""         # the words a verification link was emailed with (ACC-05)
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v}
@@ -1046,7 +1069,7 @@ def page_facts(digest: FormDigest, url: str = "", *, captcha_frame: bool = False
         error=_first_words(ERROR_WORDS, text),
         captcha="a bot-check frame" if captcha_frame else _first_words(CAPTCHA_WORDS, text),
         url_kind=url_kind(url), text_chars=len((digest.text or "").strip()),
-        dialog=str(getattr(digest, "dialog", "") or ""))
+        dialog=str(getattr(digest, "dialog", "") or ""), link_sent=link_sent(digest))
 
 
 # The read's Nouls: one signal each, phrased so a high value means yes, with
@@ -1239,7 +1262,9 @@ def _structure(f: PageFacts) -> dict[str, float]:
         s["confirmation"] += STRUCT_RULED_OUT
     elif not f.received and (f.advance_buttons or f.apply_entries):
         s["confirmation"] += STRUCT_AGAINST     # a page with a way on asks for more
-    if f.code_box and not f.passwords:
+    if (f.code_box and not f.passwords) or (f.link_sent and not f.received):
+        # a code box, or a page that says a verification link was emailed
+        # and has no box to fill (ACC-05): an account check
         s["code_gate"] += STRUCT_DECISIVE
     elif not f.code_box:
         s["code_gate"] += STRUCT_AGAINST
@@ -1364,6 +1389,8 @@ def structural_kind(facts: PageFacts, *, strict: bool = False) -> str | None:
         return "captcha_or_bot_check"
     if facts.code_box and not facts.passwords:
         return "code_gate"
+    if facts.link_sent and not facts.received:
+        return "code_gate"          # an account check by an emailed link (ACC-05)
     if facts.passwords and not facts.files:
         if facts.new_password:
             return "signup_form"

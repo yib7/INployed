@@ -110,6 +110,7 @@ import apply_inbox  # noqa: E402
 import apply_linkedin  # noqa: E402
 import apply_queue  # noqa: E402
 import apply_trace  # noqa: E402
+import apply_verify  # noqa: E402
 import ats_accounts  # noqa: E402
 import jev  # noqa: E402
 from apply_judge import FillPlan, VerifyResult  # noqa: E402
@@ -225,6 +226,13 @@ EASY_APPLY_REASON = apply_linkedin.EASY_APPLY_REASON
 EASY_APPLY_NOTE = apply_linkedin.EASY_APPLY_NOTE
 LINKEDIN_RETURN_REASON = "the application went back to LinkedIn after the company's form"
 CODE_NOTE = "enter the emailed code manually, then Re-queue"
+LINK_REASON = "emailed verification link needed"
+LINK_NOTE = "open the verification link in the email, then Re-queue"
+# a verification link's page that refused it (ACC-05)
+LINK_FAILED_WORDS = re.compile(
+    r"\b(?:link|token|code)\s+(?:has\s+|is\s+)?(?:expired|invalid|no longer valid)\b"
+    r"|\b(?:expired|invalid)\s+(?:link|token)\b|\balready\s+been\s+used\b"
+    r"|\bcould\s+not\s+(?:be\s+)?verif", re.I)
 REVIEW_NOTE = "review and submit"
 SUBMIT_FAILED_NOTE = "submit did not register; review and submit"
 NOT_SENT_REASON = "the submit did not go through"
@@ -290,6 +298,9 @@ _PROFILE_APPLY = apply_judge.PROFILE_APPLY
 # application (`_JobRun._after_submit`): the job then waits for the user,
 # since a sent application's page can look the same.
 _OPENED_BY_ACCOUNT = frozenset(("application_form", "login_wall", "signup_form"))
+# the reads a page that says a verification link was emailed (and has no box
+# to fill) is taken from: it is the account check (ACC-05)
+_LINK_REMAPS = frozenset(("application_form", "review_page", "login_wall", "signup_form"))
 # The loop's send vocabulary: a button whose text has one of `SUBMIT_WORDS`
 # reads as sending the application (`_submit_shaped`), and one with a
 # `FINAL_WORDS` word as a last step (`_final_shaped`). The flow harness checks
@@ -924,8 +935,12 @@ class _Accounts:
         # second password screen of the same kind is a rejected password, and
         # typing it again only moves the account toward a lockout
         self.password_typed: set[tuple[str, str]] = set()
+        self.attempted: set[str] = set()    # sites of the one sign-in without an account (ACC-02)
+        self.pending: dict[str, tuple[str, str]] = {}   # site -> (host, email) of that sign-in
+        self.last_error = ""                # the account step's exception (ACC-10)
 
     def login(self, page, digest, host: str) -> bool:
+        self.last_error = ""
         account = self.run._account_for(host)
         if account:
             if account.get("method") != "master_password":
@@ -941,84 +956,188 @@ class _Accounts:
             # ADV-08: a sign-up beside the sign-in, and no account in the
             # ledger for the site: the sign-up's form is the step
             return self._fill(page, digest, host, self._signup_email(), True)
-        # Expose account-creation links as buttons to the same role judge.
-        links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
         try:
-            count = links.count()
-            if not count:
-                return False
-            # a header link and a body link that point at the same page are one
-            # offer; two different destinations are a choice nobody made. The
-            # hrefs are resolved against the page first, so an absolute link
-            # and a relative one to the same target count once.
-            hrefs = [links.nth(i).get_attribute("href") for i in range(count)]
-            targets = {urljoin(page.url, h) for h in hrefs if h}
-            if len(targets) != 1:
-                return False
-            target = targets.pop()
-            self.run._check_host(target)
-            link_digest = apply_form.FormDigest(
-                url_host=host, title=digest.title, text=digest.text,
-                buttons=[apply_form.Button(0, (0, "a"), links.first.inner_text(), "")])
-            plan = apply_judge.plan(link_digest, self.run.catalog,
-                                    self.run._map(link_digest, {}, "job_posting", discover=False,
-                                                  own_page=False), company=self.run._company())
-            advance_conf = plan.buttons.get("advance", (None, 0))[1]
-            self.run._decide("signup_link", "the sign-in page's one create-account link",
-                             target=target, advance=advance_conf)
-            if advance_conf < apply_judge.BUTTON_ADVANCE_MIN_CONF:
-                return False
-            page.goto(target, timeout=self._nav_timeout())
-            self.run._check_host(page.url)
-            # the sign-up page renders like any other: it is read once it
-            # holds still (NAV-03)
-            info = apply_fill.settle(page, CLICK_TIMEOUT_S)
-            self.run._decide_next("settled", f"settled {_settled_ms(info)} ms after the "
-                                             "create-account link")
-            fresh = self.run._drop_foreign_controls(self.run._extract(page))
-            # the loop's own read (NAV-03): the judge with the page's
-            # structure (a box that makes a password is a sign-up), an unsure
-            # read taken once more after a settle, then the structure alone
-            answers = self.run._read(fresh)
-            state, confidence = apply_judge.read_page_state(answers)
-            if confidence < apply_judge.PAGE_STATE_MIN_CONF:
-                fresh, answers, state, confidence = self.run._reread(fresh, answers, state,
-                                                                     confidence)
-            if confidence < apply_judge.PAGE_STATE_MIN_CONF \
-                    and apply_judge.structural_kind(self.run._facts) == "signup_form":
-                self.run._decide_next("structural_fallback", f"unsure of the page the "
-                                                             f"create-account link led to "
-                                                             f"({state}, {confidence:.2f}); a box "
-                                                             f"makes the password: a sign-up",
-                                      to="signup_form")
-                state = "signup_form"
-                confidence = apply_judge.PAGE_STATE_MIN_CONF
-            # the page the link led to is a page of the job: the record and
-            # the trace carry it, and the sign-up's step is written on it
-            self.run._new_page_record(state, confidence, digest=fresh, answers=answers)
-            # a park from here names the sign-up page and its own evidence: its
-            # read, boxes and buttons (the stored answers are its answers now)
-            if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
-                raise _Parked("needs_human", f"login wall (the create-account link led to "
-                                             f"{_cap(page.url, 120)}: "
-                                             f"{self.run._account_evidence(state, fresh)})",
-                              LOGIN_NOTE)
-            if not self.signup(page, fresh, fresh.url_host or _host(page.url)):
-                raise _Parked("needs_human", f"account signup needed (the create-account link "
-                                             f"led to {_cap(page.url, 120)}: "
-                                             f"{self.run._account_evidence(state, fresh)})",
-                              LOGIN_NOTE)
-            return True
+            went = self._signup_link(page, digest, host)
+            if went is None:
+                went = self._signup_button(page, digest, host)
         except (_Parked, _AsForm):
-            # the loop's own park (a host check, an unanswerable box): the
-            # reason names what was refused and the loop ends the job with
-            # it; a sign-up that sends the application goes to the form step
             raise
         except Exception as e:  # noqa: BLE001  (account details stay out of errors)
-            self.run._trace("error", step="accounts.login", error=type(e).__name__)
+            self._failed("accounts.login", e)
             return False
+        if went is not None:
+            return went
+        return self._attempt_sign_in(page, digest, host)
+
+    def _not_taken(self, site: str, host: str, kind: str) -> str:
+        """Why a second password screen of the same kind parks: after the
+        one sign-in tried without an account in the ledger (ACC-02), no
+        account on the site takes the master password; else the step did
+        not take it."""
+        if kind == "login" and site in self.attempted:
+            return (f"no account on {host} took the master password (one sign-in was tried "
+                    f"with the sign-up address) and the screen offers no sign-up: create the "
+                    f"account or reset its password, then Re-queue")
+        return f"the {kind} on {host} did not take the master password"
+
+    def _failed(self, step: str, e: BaseException) -> None:
+        """An account step that raised (ACC-10): its step and the exception's
+        type in the trace and in `last_error`, which the park's reason
+        carries; never its message (it may quote a filled value)."""
+        self.last_error = f"{type(e).__name__} at {step}"
+        self.run._trace("error", step=step, error=type(e).__name__)
+
+    def _signup_button(self, page, digest, host: str) -> bool | None:
+        """ACC-01: a sign-in screen's one create-account BUTTON (Workday's
+        `createAccountLink`, SuccessFactors, Oracle), never one in the
+        site's header, a disabled one, a sign-up with another site, or one
+        whose words send the application ("Create account and apply"):
+        clicked through the live click guard, and the loop reads the screen
+        it shows. None when the screen has no such button (or several that
+        say different things); False when the click was refused or changed
+        nothing."""
+        own: dict[str, apply_form.Button] = {}
+        for b in digest.buttons:
+            if b.chrome or b.disabled or not _CREATE_ACCOUNT.search(b.text or "") \
+                    or _THIRD_PARTY.search(b.text or "") \
+                    or apply_judge.DECLINE_WORDS.search(b.text or ""):
+                continue
+            own.setdefault(" ".join(b.text.lower().split()), b)
+        if len(own) != 1:
+            return None
+        button = next(iter(own.values()))
+        if _sends_application(digest, button.n, account_only=False):
+            self.run._decide("signup_button", f"the sign-in screen's create-account button "
+                                              f"({_cap(button.text, 60)}) reads as sending the "
+                                              "application; it is not clicked")
+            return False
+        self.run._decide("signup_button", "the sign-in screen's one create-account button",
+                         text=button.text)
+        rec = self.run.pages[-1] if self.run.pages else None
+        if rec is not None:
+            rec["clicked"].append(f"{button.text} (to the sign-up)")
+        self.run._last_click = (button.text, "advance")
+        result = apply_fill.click(page, digest, button.n, timeout_s=self._click_timeout(),
+                                  check=self.run._live_check("advance", account=True))
+        self.run._trace("click", n=button.n, text=button.text, role="advance",
+                        clicked=result.clicked, changed=result.changed, url=str(page.url),
+                        refused=result.refused)
+        if result.refused:
+            raise _Parked("needs_human", f"the account step's button ({_cap(button.text, 60)}) "
+                                         f"changed before the click: {result.refused}; nothing "
+                                         f"was clicked", LOGIN_NOTE)
+        self.run._check_host(page.url)
+        return bool(result.changed)
+
+    def _attempt_sign_in(self, page, digest, host: str) -> bool:
+        """ACC-02: no account in the ledger for the site, and no way to make
+        one on this screen (the user may have made it by hand with the
+        master password): one sign-in with the sign-up address and the
+        master password, on a screen of the address and the password. A
+        sign-in that leads on puts the account in the ledger
+        (`confirm_sign_ins`); one that comes back to a sign-in parks."""
+        if not _password_boxes(digest) or not any(_is_email_box(f) for f in digest.fields):
+            return False
+        email = self._signup_email()
+        site = _site(host)
+        if not email or site in self.attempted:
+            return False
+        self.attempted.add(site)
+        self.run._decide("sign_in_attempt", "no account in the ledger and no sign-up on the "
+                                            "screen: one sign-in with the master password")
+        if not self._fill(page, digest, host, email, False):
+            return False
+        self.pending[site] = (host, email)
+        return True
+
+    def confirm_sign_ins(self) -> None:
+        """The attempted sign-ins (ACC-02) that led past the account
+        screens: their accounts go in the ledger."""
+        for site, (host, email) in list(self.pending.items()):
+            self.run._record_account(host, email, note="signed in with the master password")
+            self.run._decide("account_recorded", f"the sign-in on {host} led on; the account is "
+                                                 "in the ledger")
+            del self.pending[site]
+
+    def _click_timeout(self) -> float:
+        """Seconds for an account click's wait (ACC-09): the loop's own click
+        budget, inside the job's clock."""
+        return max(1.0, min(CLICK_TIMEOUT_S, self.run.deadline - self.run.r.clock()))
+
+    def _signup_link(self, page, digest, host: str) -> bool | None:
+        """The sign-in page's one create-account link, taken once the judge
+        rates it a way on (the page it leads to is read and signed up on
+        here); None when the page has no such link."""
+        # Expose account-creation links as buttons to the same role judge.
+        links = page.get_by_role("link").filter(has_text=re.compile(r"create.*account|sign up|register", re.I))
+        count = links.count()
+        if not count:
+            return None
+        # a header link and a body link that point at the same page are one
+        # offer; two different destinations are a choice nobody made. The
+        # hrefs are resolved against the page first, so an absolute link
+        # and a relative one to the same target count once.
+        hrefs = [links.nth(i).get_attribute("href") for i in range(count)]
+        targets = {urljoin(page.url, h) for h in hrefs if h}
+        if len(targets) != 1:
+            return False
+        target = targets.pop()
+        self.run._check_host(target)
+        link_digest = apply_form.FormDigest(
+            url_host=host, title=digest.title, text=digest.text,
+            buttons=[apply_form.Button(0, (0, "a"), links.first.inner_text(), "")])
+        plan = apply_judge.plan(link_digest, self.run.catalog,
+                                self.run._map(link_digest, {}, "job_posting", discover=False,
+                                              own_page=False), company=self.run._company())
+        advance_conf = plan.buttons.get("advance", (None, 0))[1]
+        self.run._decide("signup_link", "the sign-in page's one create-account link",
+                         target=target, advance=advance_conf)
+        if advance_conf < apply_judge.BUTTON_ADVANCE_MIN_CONF:
+            return False
+        page.goto(target, timeout=self._nav_timeout())
+        self.run._check_host(page.url)
+        # the sign-up page renders like any other: it is read once it
+        # holds still (NAV-03)
+        info = apply_fill.settle(page, CLICK_TIMEOUT_S)
+        self.run._decide_next("settled", f"settled {_settled_ms(info)} ms after the "
+                                         "create-account link")
+        fresh = self.run._drop_foreign_controls(self.run._extract(page))
+        # the loop's own read (NAV-03): the judge with the page's
+        # structure (a box that makes a password is a sign-up), an unsure
+        # read taken once more after a settle, then the structure alone
+        answers = self.run._read(fresh)
+        state, confidence = apply_judge.read_page_state(answers)
+        if confidence < apply_judge.PAGE_STATE_MIN_CONF:
+            fresh, answers, state, confidence = self.run._reread(fresh, answers, state,
+                                                                 confidence)
+        if confidence < apply_judge.PAGE_STATE_MIN_CONF \
+                and apply_judge.structural_kind(self.run._facts) == "signup_form":
+            self.run._decide_next("structural_fallback", f"unsure of the page the "
+                                                         f"create-account link led to "
+                                                         f"({state}, {confidence:.2f}); a box "
+                                                         f"makes the password: a sign-up",
+                                  to="signup_form")
+            state = "signup_form"
+            confidence = apply_judge.PAGE_STATE_MIN_CONF
+        # the page the link led to is a page of the job: the record and
+        # the trace carry it, and the sign-up's step is written on it
+        self.run._new_page_record(state, confidence, digest=fresh, answers=answers)
+        # a park from here names the sign-up page and its own evidence: its
+        # read, boxes and buttons (the stored answers are its answers now)
+        if state != "signup_form" or confidence < apply_judge.PAGE_STATE_MIN_CONF:
+            raise _Parked("needs_human", f"login wall (the create-account link led to "
+                                         f"{_cap(page.url, 120)}: "
+                                         f"{self.run._account_evidence(state, fresh)})",
+                          LOGIN_NOTE)
+        if not self.signup(page, fresh, fresh.url_host or _host(page.url)):
+            raise _Parked("needs_human", f"account signup needed (the create-account link "
+                                         f"led to {_cap(page.url, 120)}: "
+                                         f"{self.run._account_evidence(state, fresh)})",
+                          LOGIN_NOTE)
+        return True
 
     def signup(self, page, digest, host: str) -> bool:
+        self.last_error = ""
         return self._fill(page, digest, host, self._signup_email(), True)
 
     def _signup_email(self) -> str:
@@ -1168,8 +1287,7 @@ class _Accounts:
                                   LOGIN_NOTE)
                 kind = "signup" if signup else "login"
                 if (site, kind) in self.password_typed:
-                    raise _Parked("needs_human", f"the {kind} on {host} did not take the "
-                                                 "master password", LOGIN_NOTE)
+                    raise _Parked("needs_human", self._not_taken(site, host, kind), LOGIN_NOTE)
             guard.start()
             try:
                 for loc in emails:
@@ -1227,25 +1345,52 @@ class _Accounts:
         except (_Parked, _AsForm):
             raise
         except Exception as e:  # noqa: BLE001  (Playwright may include filled values)
-            self.run._trace("error", step="accounts.fill", error=type(e).__name__)
+            self._failed("accounts.fill", e)
             return False
 
 
 class _Inbox:
+    """The job's verification mail (`apply_inbox`), read in a tab of its own:
+    a code, never one older than the job or one the job used already
+    (ACC-07), or an account check's link on an allowed host (ACC-05)."""
+
     def __init__(self, run):
         self.run = run
+        self.used: set[str] = set()         # the codes handed to the run, by `code_hash`
+        self.refused: list[str] = []        # hosts of verification links never opened
+
+    def _entry_words(self) -> dict[str, str]:
+        entry = self.run.entry
+        return {"ats": str((entry.get("ats") or {}).get("system") or ""),
+                "company": str(entry.get("company") or "")}
 
     def fetch_code(self, page, site: str, inbox_url: str) -> str | None:
         self.run._check_host(inbox_url)
-        entry = self.run.entry
         errors: list[str] = []
         code = apply_inbox.fetch_code(page, site, inbox_url, jev=self.run.r.jev,
                                       clock=self.run.r.clock, sleep=self.run.r.sleep,
-                                      deadline=self.run.deadline,
-                                      ats=str((entry.get("ats") or {}).get("system") or ""),
-                                      company=str(entry.get("company") or ""), errors=errors)
+                                      deadline=self.run.deadline, errors=errors,
+                                      since=self.run.started_at, used=frozenset(self.used),
+                                      **self._entry_words())
+        if code:
+            self.used.add(apply_inbox.code_hash(code))
         self.run._trace("inbox", found=bool(code), errors=errors)
         return code
+
+    def fetch_link(self, page, site: str, inbox_url: str) -> str | None:
+        self.run._check_host(inbox_url)
+        errors: list[str] = []
+        refused: list[str] = []
+        link = apply_inbox.fetch_link(page, site, inbox_url, jev=self.run.r.jev,
+                                      allowed=self.run._link_ok, clock=self.run.r.clock,
+                                      sleep=self.run.r.sleep, deadline=self.run.deadline,
+                                      errors=errors, since=self.run.started_at, refused=refused,
+                                      **self._entry_words())
+        self.refused = refused
+        # the link's host alone: its path and query carry the account's token
+        self.run._trace("inbox_link", found=bool(link), host=_host(link or ""),
+                        refused=refused, errors=errors)
+        return link
 
 
 # --- outcomes and the record ----------------------------------------------------------
@@ -1582,6 +1727,9 @@ _ACCOUNT_BUTTON = re.compile(r"\b(sign|log)[\s-]*(in|on|up)\b|\blogin\b|\bregist
 
 
 _SIGN_UP_WORDS = re.compile(r"\bcreate\b|\bregister\b|\bsign[\s-]*up\b|\bjoin\b", re.I)
+# a control that goes to the sign-up from a sign-in screen (ACC-01)
+_CREATE_ACCOUNT = re.compile(r"\bcreate\s+(?:an?\s+|your\s+|new\s+)?(?:\w+\s+)?account\b"
+                             r"|\bsign[\s-]*up\b|\bregister\b|\bnew\s+(?:user|candidate)\b", re.I)
 _SIGN_IN_ONLY = re.compile(r"\b(sign|log)[\s-]*(in|on)\b|\blogin\b", re.I)
 
 
@@ -1611,6 +1759,10 @@ def password_step(digest: apply_form.FormDigest) -> str:
 
 
 _FORGOT = re.compile(r"\bforgot(ten)?\s+(your\s+)?password\b", re.I)
+# an account screen's controls that are no way on for its step: a password
+# reset, a resend, a cancel, a way back, help
+_NOT_ACCOUNT_STEP = re.compile(r"\bforgot|\breset\b|\bresend\b|\bcancel\b|\bback\b|\bhelp\b"
+                               r"|\btrouble\b", re.I)
 
 
 def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
@@ -1650,7 +1802,11 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     for role in ("advance", "submit"):
         held = plan.buttons.get(role)
         if held is None or held[1] < apply_judge.BUTTON_ADVANCE_MIN_CONF \
-                or _chrome(digest, held[0]) or _THIRD_PARTY.search(text.get(held[0], "")):
+                or _chrome(digest, held[0]) or _THIRD_PARTY.search(text.get(held[0], "")) \
+                or _NOT_ACCOUNT_STEP.search(text.get(held[0], "")):
+            # never a header's button, a sign-in with another site, or a
+            # control beside the step: a password reset (it mails a reset
+            # link), a resend, a cancel, a way back
             continue
         words = text.get(held[0], "")
         if step == read and fitting and other.search(words) and not fits.search(words):
@@ -1664,6 +1820,21 @@ def account_advance(digest: apply_form.FormDigest, plan: FillPlan, *,
     if len(buttons) == 1:
         return buttons[0].n, apply_judge.BUTTON_ADVANCE_MIN_CONF
     return None
+
+
+_CODE_WAY_ON = re.compile(r"\b(verify|continue|next)\b", re.I)
+
+
+def code_advance(digest: apply_form.FormDigest) -> int | None:
+    """A code step's own way on when no button was judged one: its one
+    button (none in the header, none disabled, none with another site,
+    none that declines or sends) whose words verify or go on ("Verify",
+    "Verify and continue", "Next"); None with none or several."""
+    own = {" ".join(b.text.lower().split()): b.n for b in digest.buttons
+           if not b.chrome and not b.disabled and _CODE_WAY_ON.search(b.text)
+           and not _THIRD_PARTY.search(b.text) and not apply_judge.DECLINE_WORDS.search(b.text)
+           and not _send_worded(b.text)}
+    return next(iter(own.values())) if len(own) == 1 else None
 
 
 def _submit_shaped(digest: apply_form.FormDigest, n: int) -> bool:
@@ -1813,13 +1984,15 @@ def remaps_to_form(state: str, digest: apply_form.FormDigest, url: str) -> bool:
 
 def unsure_acts(state: str, digest: apply_form.FormDigest) -> bool:
     """May a read below `PAGE_STATE_MIN_CONF` go on as its guess? Only one of
-    `_UNSURE_ACTS`, a code gate only with its code box, a sign-in or sign-up
+    `_UNSURE_ACTS`, a code gate only with its code box or the words of an
+    emailed verification link (`apply_judge.link_sent`), a sign-in or sign-up
     only on a screen of account boxes (`_credential_form`) or of form boxes
     (the form, `remaps_to_form`)."""
     if state not in _UNSURE_ACTS:
         return False
     if state == "code_gate":
-        return _code_field(digest.fields) is not None
+        # its code box, or the emailed link it asks for (ACC-05)
+        return _code_field(digest.fields) is not None or bool(apply_judge.link_sent(digest))
     if state in ("login_wall", "signup_form"):
         return bool(digest.fields)
     return True
@@ -3080,6 +3253,8 @@ class _JobRun:
         self.last_sig: tuple | None = None
         self.usage_before = jev.usage()
         self.start = runner.clock()
+        # the wall-clock start: mail from before it is never the job's (ACC-07)
+        self.started_at = datetime.now()
         self.deadline = self.start + JOB_WALL_CLOCK_S
         self.folder = self._folder()
         self.accounts = runner.accounts if runner.accounts is not None else _Accounts(self)
@@ -3129,6 +3304,7 @@ class _JobRun:
         # the message still shown (SP6 review R2-I4); this page's
         self._spared: dict[str, tuple[str, str]] = {}
         self._code_sent = False         # the code step clicked on (a code can finish a send)
+        self._links_followed: set[str] = set()     # sites whose emailed link was opened (ACC-05)
         self._send_watch: SendWatch | None = None     # the requests after the submit click
         self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
         self._before_submit: dict[str, Any] | None = None   # the page just before it
@@ -3691,12 +3867,26 @@ class _JobRun:
                     state = settled
                     if state in _LINKEDIN_FORM_STATES:
                         self._no_form_on_linkedin(f"read by its structure as {state}")
+            if state in _LINK_REMAPS and facts.link_sent:
+                # ACC-05: a page with no box that says a verification link was
+                # emailed is the account check, whatever else it was read as;
+                # its way on is the link in the email
+                self._decide("remap", f"read as {state} ({conf:.2f}); the page says "
+                                      f"{facts.link_sent!r} and has no box to fill: an account "
+                                      "check by an emailed link", to="code_gate")
+                state = "code_gate"
             if state == "application_form" and _email_first(digest):
                 # the address screen of a two-step sign-in taken as a form:
                 # its site takes the password screen after it all the same
                 sites = getattr(self.accounts, "email_sites", None)
                 if sites is not None:
                     sites.add(_site(digest.url_host or _host(self.page.url)))
+            if state in ("application_form", "review_page", "confirmation"):
+                # a sign-in tried without an account in the ledger led on
+                # (ACC-02): its account goes in the ledger
+                confirm = getattr(self.accounts, "confirm_sign_ins", None)
+                if confirm is not None:
+                    confirm()
             self._map(digest, answers, state)
             plan = apply_judge.plan(digest, self.catalog, answers,
                                     generation_enabled=bool(self.r.settings["auto_apply_generate"]),
@@ -4045,15 +4235,25 @@ class _JobRun:
                                              f"{state})", LINKEDIN_LOGIN_NOTE)
             raise _Parked("needs_human", f"a sign-in on {host}, outside the application site",
                           LOGIN_NOTE)
+        said = password_step(digest)
+        read = "signup" if state == "signup_form" else "signin"
+        if said and said != read and not account_forms(self.page, digest):
+            # the password boxes say the other step (a sign-up's two boxes or
+            # its new-password box; a sign-in's current-password box, or its
+            # one box beside "Forgot your password?"): the boxes decide, so a
+            # misread never types the password into the other step's form
+            self._decide("account_step_by_boxes", f"read as {state}; its password boxes say "
+                                                  f"{said}", to=said)
+            state = "signup_form" if said == "signup" else "login_wall"
         try:
             if state == "login_wall":
                 if not self.accounts.login(self.page, digest, host):
-                    raise _Parked("needs_human", f"login wall "
-                                                 f"({self._account_evidence(state, digest)})",
+                    raise _Parked("needs_human", self._login_wall_reason(state, digest, host),
                                   LOGIN_NOTE)
             elif not self.accounts.signup(self.page, digest, host):
                 raise _Parked("needs_human", f"account signup needed "
-                                             f"({self._account_evidence(state, digest)})",
+                                             f"({self._account_evidence(state, digest)}"
+                                             f"{self._account_error()})",
                               LOGIN_NOTE)
         except _AsForm as form:
             self.log.info("job %s: the account screen carries the application; it is the "
@@ -4064,6 +4264,22 @@ class _JobRun:
                                        completed=True)
             finally:
                 self.handed_off = False
+
+    def _account_error(self) -> str:
+        """"; the account step failed: <type> at <step>" when the accounts
+        hook's last step raised (ACC-10), else ""."""
+        error = str(getattr(self.accounts, "last_error", "") or "")
+        return f"; the account step failed: {error}" if error else ""
+
+    def _login_wall_reason(self, state: str, digest: apply_form.FormDigest, host: str) -> str:
+        """A sign-in the run could not pass: after the one sign-in the run
+        tried without an account in the ledger (ACC-02), that no account on
+        the site takes the master password; else the login wall and its
+        evidence."""
+        not_taken = getattr(self.accounts, "_not_taken", None)
+        if not_taken is not None and _site(host) in getattr(self.accounts, "attempted", ()):
+            return not_taken(_site(host), host, "login")
+        return f"login wall ({self._account_evidence(state, digest)}{self._account_error()})"
 
     def _human_check_showing(self, *, checkbox: bool = False) -> bool:
         """Is a bot check waiting for the person on the page: a frame from a
@@ -6479,19 +6695,31 @@ class _JobRun:
     def _code_gate(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict) -> None:
         self._no_form_on_linkedin("the code step")
         site = digest.url_host or _host(self.page.url)
+        target = _code_field(digest.fields)
+        if target is None and apply_judge.link_sent(digest):
+            # ACC-05: the account check is a link in the email
+            self._verify_link(digest, rec)
+            return
         code = self.inbox.fetch_code(self.page, site, str(self.r.run_context().get("inbox_url") or ""))
         if not code:
             raise _Parked("needs_human", "emailed code needed", CODE_NOTE)
-        target = _code_field(digest.fields)
         if target is None:
             raise _Parked("needs_human", "code gate without a code box", CODE_NOTE)
         self._keep_secret_box(target.locator)     # masked from here on, typed or not
+        if target.widget == "otp":
+            for css in target.option_locators:
+                self._keep_secret_box((int(target.locator[0]), str(css)))
         try:
-            apply_form.resolve(self.page, target.locator).first.fill(str(code), timeout=5_000)
+            if target.widget == "otp":
+                self._fill_otp(target, str(code))
+            else:
+                apply_form.resolve(self.page, target.locator).first.fill(str(code), timeout=5_000)
+        except _Parked:
+            raise
         except Exception as e:  # noqa: BLE001  (a fill exception may carry the private code)
             self._trace("error", step="code_gate.fill", error=type(e).__name__)
             raise _Parked("needs_human", "emailed code could not be filled", CODE_NOTE) from None
-        self._trace("code", box=target.label)
+        self._trace("code", box=target.label, boxes=len(target.option_locators) or 1)
         rec["filled"].append({"n": target.n, "label": target.label,
                               "value": HIDDEN,
                               "type": target.type, "id_or_name": target.id_or_name,
@@ -6510,6 +6738,13 @@ class _JobRun:
         elif submit is not None:
             role, button, minimum = ("submit", submit,
                                      apply_judge.BUTTON_SUBMIT_MIN_CONF)
+        elif (own := code_advance(digest)) is not None:
+            # no button judged the way on: the step's one own button that
+            # says it verifies or goes on ("Verify", "Continue")
+            self._decide("code_advance", f"no button was judged the way on; the code step's "
+                                         f"own {_cap(_button_text(digest, own), 40)!r} is")
+            role, button, minimum = ("advance", (own, apply_judge.BUTTON_ADVANCE_MIN_CONF),
+                                     apply_judge.BUTTON_ADVANCE_MIN_CONF)
         else:
             raise _Parked("needs_human", "code entered; no button to continue", CODE_NOTE)
         if button[1] < minimum:
@@ -6536,6 +6771,149 @@ class _JobRun:
                 # (INV-06)
                 self.submit_clicked = True
             self._code_sent = True      # a code can finish a send the site held back
+
+    def _fill_otp(self, target: apply_form.Field, code: str) -> None:
+        """ACC-06: a code in one-character boxes (`widget` "otp"): typed from
+        the first box (`apply_verify.fill_code`: a click, then key by key, so
+        a widget that moves the focus on takes each character), read back as
+        the boxes joined, and when that is not the code, put in box by box.
+        The read-back is only compared with the code, never logged or
+        recorded."""
+        frame = apply_form.frames(self.page)[int(target.locator[0])]
+        boxes = [frame.locator(css).first for css in target.option_locators]
+        if len(code) != len(boxes):
+            raise _Parked("needs_human", f"emailed code could not be filled (the code has "
+                                         f"{len(code)} characters and the page {len(boxes)} "
+                                         f"boxes)", CODE_NOTE)
+
+        def _holds() -> bool:
+            joined = "".join(b.input_value(timeout=apply_fill.ACTION_TIMEOUT_MS) for b in boxes)
+            return joined == code
+        apply_verify.fill_code(self.page, boxes[0], code)
+        if _holds():
+            return
+        self._decide("otp_box_by_box", "the code typed from the first box did not fill the "
+                                       "boxes; each box takes its own character")
+        for box, char in zip(boxes, code):
+            box.fill(char, timeout=apply_fill.ACTION_TIMEOUT_MS)
+        if not _holds():
+            raise _Parked("needs_human", "emailed code could not be filled (the boxes did not "
+                                         "keep it)", CODE_NOTE)
+
+    def _link_ok(self, host: str) -> bool:
+        """May a verification link from the inbox be opened (ACC-05)? Only
+        on the application's own site (an admitted ATS host's or the job's
+        page's) or a known ATS platform (`ATS_SITES`), and on a multi-tenant
+        ATS only the job's own tenant (`ats_accounts.tenant_key`); never on
+        LinkedIn, a job board, a tracker, or the inbox provider's site
+        (unless the job's page itself is served from the inbox's host)."""
+        host = _host(host)
+        site = _site(host)
+        if not site or apply_linkedin.is_linkedin(host) or site in TRACKER_SITES \
+                or site in AGGREGATOR_SITES:
+            return False
+        page_host = _host(str(getattr(self.page, "url", "") or ""))
+        inbox_host = _host(str(self.r.run_context().get("inbox_url") or ""))
+        if inbox_host and site == _site(inbox_host) and _site(page_host) != site:
+            return False
+        own = {_site(h) for h in self.ats_hosts} | ({_site(page_host)} if page_host else set())
+        if site not in own and site not in ATS_SITES:
+            return False
+        tenant = ats_accounts.tenant_key(host)
+        ours = {ats_accounts.tenant_key(h) for h in [*self.ats_hosts, page_host]
+                if _site(h) == site} - {""}
+        return not (tenant and ours and tenant not in ours)
+
+    def _verify_link(self, digest: apply_form.FormDigest, rec: dict) -> None:
+        """ACC-05: a page that says a verification link was emailed. The
+        link comes from the inbox (`_Inbox.fetch_link`: the site's message,
+        a link on an allowed host, `_link_ok`), opens in a tab of its own,
+        guarded onto the allowed hosts, and closes once it settled; the
+        job's tab is then loaded again from its own URL and the loop reads
+        what the site shows now (a sign-in, the application). Once per site:
+        a second link page after the link was followed parks. A link on any
+        other host is never opened, and the park names its host."""
+        host = digest.url_host or _host(self.page.url)
+        site = _site(host)
+        if site in self._links_followed:
+            raise _Parked("needs_human", f"{LINK_REASON}: the emailed link was opened and {host} "
+                                         f"still asks for it", LINK_NOTE)
+        fetch = getattr(self.inbox, "fetch_link", None)
+        inbox_url = str(self.r.run_context().get("inbox_url") or "")
+        link = fetch(self.page, host, inbox_url) if fetch is not None else None
+        if not link:
+            refused = list(getattr(self.inbox, "refused", None) or [])
+            if refused:
+                raise _Parked("needs_human", f"{LINK_REASON}: the email's link goes to "
+                                             f"{refused[0]}, outside the application's sites; it "
+                                             "was never opened", LINK_NOTE)
+            raise _Parked("needs_human", f"{LINK_REASON}: no verification link from {host} in "
+                                         "the inbox", LINK_NOTE)
+        to = _host(link)
+        if not self._link_ok(to):
+            raise _Parked("needs_human", f"{LINK_REASON}: the email's link goes to {to}, outside "
+                                         "the application's sites; it was never opened", LINK_NOTE)
+        self._links_followed.add(site)
+        shown = self._open_link(link)
+        rec["clicked"].append("the emailed verification link (opened in a tab of its own)")
+        self._decide("verify_link", f"the account check's link in the email, on {to}, was "
+                                    f"opened in a tab of its own and closed; the job's tab is "
+                                    f"loaded again", host=to, shown=_cap(shown, 120))
+        try:
+            self.page.reload(wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+        except Exception as e:      # noqa: BLE001  (the page is read as it is)
+            if _closed_error(e):
+                raise
+            self._trace("error", step="verify_link.reload", error=type(e).__name__)
+        info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
+        self._decide_next("settled", f"settled {_settled_ms(info)} ms after the reload")
+        self._check_host(self.page.url)
+        self.last_sig = None            # the same page again is the site's next step
+
+    def _open_link(self, link: str) -> str:
+        """The emailed verification link in a new tab of the job's context,
+        every main-frame navigation of it held to `_link_ok`; the tab's text
+        once it settled (a park when it was refused, left the allowed hosts
+        or did not load), and the tab closed."""
+        tab = self.page.context.new_page()
+        stopped: list[str] = []
+
+        def guard(route) -> None:
+            request = route.request
+            try:
+                main = request.frame.parent_frame is None
+            except Exception:       # noqa: BLE001  (a frame gone: the tab's own)
+                main = True
+            if request.is_navigation_request() and main and not self._link_ok(_host(request.url)):
+                stopped.append(_host(request.url))
+                route.abort()
+                return
+            route.fallback()
+        error, text = "", ""
+        try:
+            tab.route("**/*", guard)
+            tab.goto(link, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+            apply_fill.settle(tab, CLICK_TIMEOUT_S)
+            text = apply_fill.page_text(tab)
+        except Exception as e:      # noqa: BLE001  (an error may quote the link's token)
+            error = type(e).__name__
+        finally:
+            try:
+                tab.close()
+            except Exception:       # noqa: BLE001
+                pass
+        if stopped:
+            raise _Parked("needs_human", f"{LINK_REASON}: the emailed link went on to "
+                                         f"{stopped[0]}, outside the application's sites; the "
+                                         "run stopped it", LINK_NOTE)
+        if error:
+            raise _Parked("needs_human", f"{LINK_REASON}: the emailed link did not open "
+                                         f"({error})", LINK_NOTE)
+        refused = LINK_FAILED_WORDS.search(text or "")
+        if refused:
+            raise _Parked("needs_human", f"{LINK_REASON}: the site refused the emailed link "
+                                         f"({' '.join(refused.group(0).split())!r})", LINK_NOTE)
+        return " ".join((text or "").split())
 
     # -- the end --------------------------------------------------------------------------------
 

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-provider="outlook">
+<title>Inbox</title>
+<body>
+<!-- The account check's code (ACC-06, ACC-07): the code this sign-up asked
+     for, below an earlier code from the same sender that is still among the
+     newest rows. The fresh row's time is the time the page was opened; the
+     earlier one's is a date long past. -->
+<div role="listbox" aria-label="Message list">
+
+<div role="option" onclick="location.href='otp_stale_message.html'">
+<span data-testid="sender">careers@fabrikam.example</span>
+<span data-testid="subject">Your Fabrikam verification code</span>
+<span data-testid="preview">Message sent by Fabrikam Careers. Your verification code is 739104.</span>
+<span data-testid="date" title="Mon 1/5/2026 9:12 AM">1/5/2026</span></div>
+
+<div role="option" onclick="location.href='order_message.html'">
+<span data-testid="sender">orders@shopfront.example</span>
+<span data-testid="subject">Order #48213 confirmed</span>
+<span data-testid="preview">Your order number is 48213 and it ships on Tuesday.</span>
+<span data-testid="date" title="Sun 1/4/2026 6:40 PM">1/4/2026</span></div>
+
+<div role="option" onclick="location.href='otp_message.html'">
+<span data-testid="sender">careers@fabrikam.example</span>
+<span data-testid="subject">Your Fabrikam verification code</span>
+<span data-testid="preview">Message sent by Fabrikam Careers. Your verification code is 482915.</span>
+<span data-testid="date" id="fresh-date"></span></div>
+
+</div>
+<script>
+  (function () {
+    var now = new Date();
+    var h = now.getHours(), m = now.getMinutes();
+    var clock = ((h % 12) || 12) + ':' + (m < 10 ? '0' : '') + m + (h < 12 ? ' AM' : ' PM');
+    var day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][now.getDay()];
+    var el = document.getElementById('fresh-date');
+    el.textContent = clock;
+    el.title = day + ' ' + (now.getMonth() + 1) + '/' + now.getDate() + '/' + now.getFullYear()
+      + ' ' + clock;
+  })();
+</script>
+</body></html>

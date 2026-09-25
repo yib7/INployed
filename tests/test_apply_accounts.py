@@ -309,12 +309,17 @@ def test_a_verification_link_the_site_refuses_parks_with_its_words(_browser, flo
     # a sign-up that says it will mail a link is a form; a code box is a code step
     ([("Email", "email")], "We will send a verification email.", ""),
     ([("Verification code", "text")], "Check your email for the code.", ""),
+    # a thank-you that mentions its confirmation email; a posting's link to apply
+    ([], "Thank you for applying! We sent a confirmation email to your address.", ""),
+    ([], "About the role. To apply, click the link below.", ""),
 ])
 def test_a_page_that_says_a_link_was_emailed_reads_as_the_account_check(fields, text, said):
     import apply_judge
     form = apply_run.apply_form
+    buttons = [form.Button(0, (0, "#apply"), "Apply now")] if "To apply" in text else []
     digest = form.FormDigest("127.0.0.1", "Account", text, fields=[
-        form.Field(i, (0, f"#f{i}"), label, kind, False) for i, (label, kind) in enumerate(fields)])
+        form.Field(i, (0, f"#f{i}"), label, kind, False) for i, (label, kind) in enumerate(fields)],
+        buttons=buttons)
     assert apply_judge.link_sent(digest) == said
     facts = apply_judge.page_facts(digest)
     if said:

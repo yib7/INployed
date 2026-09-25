@@ -913,12 +913,18 @@ def code_field(fields):
 
 def link_sent(digest: FormDigest) -> str:
     """ACC-05: the words a page says a verification link was emailed with
-    (`LINK_SENT_WORDS`), on a page with no box to fill but tick boxes and no
-    code box: an account check by link, whose way on is the link in the
-    email; "" else."""
+    (`LINK_SENT_WORDS`), on a page with no box to fill but tick boxes, no
+    code box, no Apply entry (a posting's "click the link below to apply")
+    and no received words (a thank-you's "we sent a confirmation email"):
+    an account check by link, whose way on is the link in the email; ""
+    else."""
     if code_field(digest.fields) is not None or any(f.type != "checkbox" for f in digest.fields):
         return ""
-    return _first_words(LINK_SENT_WORDS, f"{digest.title}\n{digest.text or ''}")
+    text = f"{digest.title}\n{digest.text or ''}"
+    if confirmation_words(text) or any(entry_worded(b.text) and not b.in_form
+                                       for b in digest.buttons if not getattr(b, "chrome", False)):
+        return ""
+    return _first_words(LINK_SENT_WORDS, text)
 
 
 _HEX_TOKEN = re.compile(r"[0-9a-fA-F-]+")

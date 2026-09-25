@@ -563,9 +563,10 @@ decisions live in `local/apply_judge.py`, with the live answers they were tuned 
    the record or Jev. Keep it a password you use for job applications only.
 
 **What a drain does.** `python local/apply_run.py drain` (the **Start auto-apply run**
-button) takes the queued jobs in queue order, one at a time, up to the batch cap (`--cap N`;
-10 when unset). For each job it opens the job's apply address in the run's own Chrome
-profile; on LinkedIn it follows the posting's external Apply. Then it works page by page:
+button) takes the queued jobs in queue order, one at a time, up to the batch cap (`--cap N`,
+else Settings > **Max jobs queued per batch**, 10 by default). For each job it opens the
+job's apply address in the run's own Chrome profile; on LinkedIn it follows the posting's
+external Apply. Then it works page by page:
 it reads the page (Jev's read, weighed against what the page's own structure shows), fills
 the fields from your apply sheet and answer bank, reads every value back, drafts and checks
 the free-text answers, signs in or makes an account with the master password where a
@@ -649,7 +650,10 @@ on the next (iCIMS, Workday). Other boxes on a sign-up form are filled from your
 Only the submit step sends an application. The sign-in and code steps act only on a screen
 of account boxes (a password box or a lone email box, and no resume box) or a code box, and
 they never click a button that reads as sending one ("Submit application", "Apply",
-"Complete application", "Create account and apply"). A sign-up screen that also asks what
+"Complete application", "Create account and apply"). A code step's button that the model
+reads as the submit never counts as the send: the page after it is a confirmation only
+when it says the application was received, and in park mode, once your answers are on the
+site, that button stops the job for you. A sign-up screen that also asks what
 only an application asks (a profile link, work authorization, a written answer) is the
 form: it is filled and checked, the password included, and its send-shaped button goes to
 the submit step. When submitting is on and the page after that click is a form or a
@@ -765,6 +769,15 @@ Leave the window alone while it runs, unless a CAPTCHA wait asks for you. Then c
 
 - Each row of the table ends **ready_to_submit** with "auto_apply_submit is off". Any other
   end: note its reason and whether it is on the park policy's list.
+- The stop is the application's last step. For each ready_to_submit row, open its
+  `end.jpg`: the page must be the one whose button sends the application (a single-page
+  form, or the wizard's review or last step). A stop on a middle page means the run took
+  a step button ("Save and continue", "Next") for the send, and with submitting on it
+  would have clicked it as the send: send that trace.
+- The email-first case. Some portals open on a page that asks only for your email, with
+  an **Apply** or **Continue** beside it, and show the rest of the form after it. The run
+  must go past that page. A ready_to_submit row whose `end.jpg` shows only the email box
+  means the run took that first button for the send: send that trace.
 - On each open tab, every field holds the right answer and no required field is empty.
 - The page reads: in each `page-<k>.json`, `state` names the page you see in
   `page-<k>.jpg` (the posting, the form, a sign-in, the review page).

@@ -159,6 +159,7 @@ def request_fits(state: Any, questions: Mapping[str, Any]) -> bool:
 RETRY_DELAYS_S = (5.0, 15.0, 40.0)
 RETRY_AFTER_CAP_S = 60.0     # a longer Retry-After reads as the judge being down
 _BUSY_STATUS = frozenset((408, 409, 425, 429))
+_OVERLOADED_STATUS = frozenset((503, 529))      # the service, whoever asks
 _REFUSED_STATUS = frozenset((401, 402, 403))    # the key or the account
 
 
@@ -183,6 +184,17 @@ def _transient(e: BaseException) -> bool:
     status = getattr(e, "status", None)
     if isinstance(status, int):
         return status in _BUSY_STATUS or status >= 500
+    return isinstance(e, (ConnectionError, TimeoutError))
+
+
+def request_fault(e: BaseException) -> bool:
+    """Could the request itself have caused the error: a 5xx other than
+    503 and 529, a timeout (408 too) or a dropped connection? A busy or
+    overloaded service (409, 425, 429, 503, 529) never did (SP8a review
+    R3-M1)."""
+    status = getattr(e, "status", None)
+    if isinstance(status, int):
+        return status == 408 or (status >= 500 and status not in _OVERLOADED_STATUS)
     return isinstance(e, (ConnectionError, TimeoutError))
 
 
@@ -221,8 +233,10 @@ class Guarded:
     rejected, a bug) passes through as it was. `answers` counts the
     requests answered (the runner sets it to 0 at each drain's start: an
     outage counts toward a job's cap only after the judge answered in the
-    drain, SP8a review R2-I1). Attributes other than `judge` are the
-    wrapped judge's."""
+    drain, SP8a review R2-I1). `request_fault` says the request itself may
+    have caused the outage (`request_fault(e)` on every try, with no
+    Retry-After over the cap): only such an outage counts toward the cap
+    (R3-M1). Attributes other than `judge` are the wrapped judge's."""
 
     def __init__(self, inner: Any, *, sleep: Callable[[float], None] = time.sleep,
                  delays: tuple[float, ...] = RETRY_DELAYS_S,
@@ -234,6 +248,7 @@ class Guarded:
         self.down = ""
         self.refused = False
         self.answers = 0
+        self.request_fault = False
 
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         if self.down:
@@ -247,6 +262,7 @@ class Guarded:
                              longest, whole, round(SIZE_MARGIN * 100), STATE_TOKENS_MAX,
                              REQUEST_TOKENS_MAX)
         tries = len(self.delays) + 1
+        fault = True            # every try failed with an error the request may cause
         for n in range(tries):
             try:
                 got = self.inner.judge(state, questions)
@@ -260,9 +276,10 @@ class Guarded:
                 if not refused and not _transient(e):
                     raise
                 asked = retry_after_s(e)
-                if refused or n + 1 >= tries or (asked is not None
-                                                 and asked > RETRY_AFTER_CAP_S):
-                    self.down, self.refused = kind, refused
+                long_wait = asked is not None and asked > RETRY_AFTER_CAP_S
+                fault = fault and request_fault(e) and not long_wait
+                if refused or n + 1 >= tries or long_wait:
+                    self.down, self.refused, self.request_fault = kind, refused, fault
                     self.log.warning("jev unavailable: %s after %d attempt(s); the breaker "
                                      "is open", kind, n + 1)
                     raise JudgeOutage(kind) from e

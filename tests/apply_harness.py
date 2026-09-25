@@ -1849,9 +1849,12 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # SP8a review M1: the judge down under the same job a second time, a
     # failure the job's own request may cause: parked so the queue moves on.
     # Only after the judge answered in the drain (R2-I1): a park while it
-    # answered nothing (an outage for every job) is outside the policy
-    "^" + re.escape(apply_run.JUDGE_DOWN_REASON) + r": .+ after [1-9]\d* answers? in this "
-    r"drain; " + re.escape(apply_run.OUTAGES_PARKED) + "$"))
+    # answered nothing (an outage for every job) is outside the policy. Only
+    # for an error a request can cause (R3-M1): a 5xx other than 503 and
+    # 529, a 408, or an error with no status (a timeout, a dropped connection)
+    "^" + re.escape(apply_run.JUDGE_DOWN_REASON) + r": \S+(?: (?:408|5(?!03|29)\d\d))? "
+    r"(?:at .+ )?after [1-9]\d* answers? in this drain; "
+    + re.escape(apply_run.OUTAGES_PARKED) + "$"))
 
 
 def policy_park(status: str, reason: str) -> bool | None:

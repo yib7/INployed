@@ -803,15 +803,32 @@ def test_the_guard_counts_the_requests_the_judge_answered():
     assert down.answers == 0
 
 
+@pytest.mark.parametrize("errors, fault", [
+    ([_Busy(500)] * 4, True), ([_Busy(502)] * 4, True), ([_Busy(408)] * 4, True),
+    ([ConnectionError("reset")] * 4, True), ([TimeoutError()] * 4, True),
+    ([_Busy(529)] * 4, False), ([_Busy(503)] * 4, False), ([_Busy(429)] * 4, False),
+    ([_Busy(409)] * 4, False), ([_Busy(500, retry_after_ms=600_000)], False),
+    ([_Busy(529), _Busy(500), _Busy(500), _Busy(500)], False), ([_Busy(401)], False)])
+def test_only_an_error_a_request_can_cause_is_the_requests_fault(errors, fault):
+    # SP8a review R3-M1: a 5xx other than 503 and 529, a timeout or a dropped
+    # connection on every try; never a busy or overloaded service, a long
+    # Retry-After or a refused key
+    guarded = jev.Guarded(_Flaky(errors), sleep=lambda s: None)
+    assert guarded.request_fault is False
+    with pytest.raises(jev.JudgeOutage):
+        guarded.judge({}, {})
+    assert guarded.request_fault is fault
+
+
 def test_a_new_drain_starts_the_answer_count_over(tmp_path):
     import apply_run
     guarded = jev.Guarded(_Answers(), sleep=lambda s: None)
     guarded.judge({}, {"q": {"type": "noul", "instructions": "x"}})
     runner = apply_run.Runner(jev=guarded, queue_path=tmp_path / "queue.json",
                               context=object(), run_context={}, drain_report=False)
-    guarded.down, guarded.refused = "_Busy 529", False
+    guarded.down, guarded.refused, guarded.request_fault = "_Busy 500", False, True
     assert runner.drain(cap=1) == []
-    assert (guarded.answers, guarded.down) == (0, "")
+    assert (guarded.answers, guarded.down, guarded.request_fault) == (0, "", False)
 
 
 def test_a_runner_holds_its_judge_behind_the_guard_whoever_sets_it():
@@ -920,16 +937,17 @@ def test_a_refused_key_hands_the_job_back_with_its_attempt_counted(
 
 class _DownFor:
     """The fake judge, except that a request about a job of `companies`
-    fails with a 529 the way a busy service's does: a failure that job's
-    own request causes."""
+    fails with `status`: a 500 by default, a failure that job's own request
+    causes (SP8a review R3-M1)."""
 
-    def __init__(self, companies):
+    def __init__(self, companies, status: int = 500):
         self.companies = set(companies)
+        self.status = status
         self.inner = jev.FakeJev()
 
     def judge(self, state, questions):
         if str((state.get("job") or {}).get("company") or "") in self.companies:
-            raise _Busy(529)
+            raise _Busy(self.status)
         return self.inner.judge(state, questions)
 
 
@@ -963,7 +981,7 @@ def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves
     assert [(o.job_id, o.status) for o in second] == [("c", "ready_to_submit"),
                                                       ("b", "needs_human")], second
     reason = second[1].reason
-    assert reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
+    assert reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 500 at "), reason
     assert reason.endswith(apply_run.OUTAGES_PARKED), reason
     assert h.policy_park("needs_human", reason) is True
     assert second[1].judge_down                  # the drain stopped all the same
@@ -972,16 +990,42 @@ def test_a_job_whose_own_request_downs_the_judge_twice_parks_and_the_queue_moves
         "needs_human", 1, 1)
 
 
-def test_a_cap_park_while_the_judge_answered_nothing_is_outside_the_policy():
-    # SP8a review R2-I1: the harness accepts the cap's park only after the
-    # judge answered in the drain; a park in a global outage is no dead end
+@pytest.mark.parametrize("status", [529, 503, 429])
+def test_a_busy_service_under_the_same_job_twice_never_parks_it(
+        _browser, flow_server, tmp_path, status):
+    # SP8a review R3-M1: a busy or overloaded service is no request's doing,
+    # even when it answered the other jobs: the job goes back each time
+    # with no outage counted
+    sleeps: list[float] = []
+    judge = _DownFor({"Fabrikam B"}, status=status)
+    runs, jobs, _ = _two_jobs([judge, judge, judge], _browser, flow_server, tmp_path, sleeps,
+                              ids=("a", "b", "c"))
+    assert [[(o.job_id, o.status) for o in run] for run in runs] == [
+        [("a", "ready_to_submit"), ("b", "queued")],
+        [("c", "ready_to_submit"), ("b", "queued")],
+        [("b", "queued")]], runs
+    assert all(run[-1].judge_down for run in runs)
+    b = jobs["b"]
+    assert (b["status"], b["attempts"], b.get("outages", 0)) == ("queued", 0, 0), b
+
+
+def test_the_harness_accepts_a_cap_park_only_for_a_requests_error_after_an_answer():
+    # SP8a review R2-I1 and R3-M1: the cap's park is a dead end only after
+    # the judge answered in the drain, and only for an error a request can
+    # cause; a park in a global outage or a busy service is outside the policy
     import apply_run
-    down = f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at fill"
-    assert h.policy_park("needs_human", f"{down}; {apply_run.OUTAGES_PARKED}") is False
-    assert h.policy_park("needs_human", f"{down} after 0 answers in this drain; "
-                                        f"{apply_run.OUTAGES_PARKED}") is False
-    assert h.policy_park("needs_human", f"{down} after 3 answers in this drain; "
-                                        f"{apply_run.OUTAGES_PARKED}") is True
+
+    def cap(kind: str, after: str = " after 3 answers in this drain") -> bool:
+        return h.policy_park("needs_human", f"{apply_run.JUDGE_DOWN_REASON}: {kind} at fill"
+                                            f"{after}; {apply_run.OUTAGES_PARKED}")
+    assert cap("_Busy 500", "") is False
+    assert cap("_Busy 500", " after 0 answers in this drain") is False
+    assert cap("_Busy 500") is True
+    assert cap("_Busy 502", " after 1 answer in this drain") is True
+    assert cap("_Busy 408") is True
+    assert cap("ConnectionError") is True and cap("TimeoutError") is True
+    for status in (529, 503, 429, 409, 425):
+        assert cap(f"_Busy {status}") is False, status
 
 
 def test_a_request_the_judge_rejects_ends_that_job_and_the_drain_goes_on(

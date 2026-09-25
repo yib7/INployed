@@ -305,7 +305,9 @@ KEY_REFUSED_NOTE = "re-queued, this attempt counted (the judge refused the key o
 # The judge down under the same job a second time parks it (M1): a failure
 # its own request causes would otherwise stop every drain at the queue's head.
 # An outage counts only after the judge answered in the drain (R2-I1): one
-# down for every job is no job's doing, and the park's reason names the count
+# down for every job is no job's doing, and the park's reason names the count.
+# It counts only for an error a request can cause (R3-M1,
+# `jev.Guarded.request_fault`): never a busy or overloaded service
 OUTAGES_MAX = 2
 OUTAGES_PARKED = (f"the judge went down under this job {OUTAGES_MAX} times; parked so the "
                   f"queue moves on")
@@ -4049,6 +4051,7 @@ class Runner:
         limit = int(cap if cap is not None else self.settings["auto_apply_batch_cap"])
         # a new drain tries the judge again and counts its answers from 0 (R2-I1)
         self.jev.down, self.jev.refused, self.jev.answers = "", False, 0
+        self.jev.request_fault = False
 
         def _work(ctx) -> list[Outcome]:
             outcomes: list[Outcome] = []
@@ -4946,7 +4949,10 @@ class _JobRun:
         status, a 5xx, a timeout, a dropped connection) the attempt the claim
         counted is taken back; the outage counts only when the judge
         answered earlier in the drain (`jev.Guarded.answers`), so an outage
-        for every job never does (SP8a review R2-I1). The job's
+        for every job never does (SP8a review R2-I1), and only for an error
+        the job's request may have caused (`jev.Guarded.request_fault`: a
+        5xx other than 503 and 529, a timeout, a dropped connection; never
+        a busy or overloaded service or a long Retry-After, R3-M1). The job's
         `OUTAGES_MAX`th counted outage parks it instead (`OUTAGES_PARKED`,
         inside the policy), so a failure its own request causes never holds
         the queue's head. After a refused key (`jev.Guarded.refused`) the
@@ -4960,7 +4966,8 @@ class _JobRun:
             if answers else ""
         down = f"{JUDGE_DOWN_REASON}: {self._judge_down()}{at}{after}"
         refused = getattr(self.r.jev, "refused", False) is True
-        counted = not refused and answers > 0
+        fault = getattr(self.r.jev, "request_fault", False) is True
+        counted = not refused and answers > 0 and fault
         if counted and apply_queue.outages(self.entry) + 1 >= OUTAGES_MAX:
             return self._finish("needs_human", f"{down}; {OUTAGES_PARKED}", OUTAGES_NOTE)
         reason = f"{down}; {KEY_REFUSED_NOTE if refused else REQUEUED_NOTE}"

@@ -92,6 +92,18 @@ _QUESTIONS = {
         id="q" aria-haspopup="listbox" aria-label="Expected finish date">Select</button></div>""",
     "q9_reread_send_by_post_box": """<div><span>Delivery method</span><button type="button"
         id="q" aria-haspopup="listbox">Send by post</button></div>""",
+    # SP6 review R2-I3: a last-step verb is read by what follows it, and a
+    # label naming a document and the value asked of it is a question
+    "r2_finish_month": """<div><button type="button" id="q" aria-haspopup="listbox"
+        aria-label="Finish month">Select</button></div>""",
+    "r2_starred_finish_month": """<div><span>Finish month *</span><button type="button" id="q"
+        aria-haspopup="listbox" aria-label="Finish month">Select</button></div>""",
+    "r2_confirm_citizenship": """<div><button type="button" id="q" aria-haspopup="listbox"
+        aria-required="true" aria-label="Confirm your citizenship status">Select One</button></div>""",
+    "r2_send_by_post_document_delivery": """<div><label for="q">Document delivery</label>
+        <button type="button" id="q" aria-haspopup="listbox">Send by post</button></div>""",
+    "r2_complete_resume_status": """<div><label for="q">Resume status</label>
+        <button type="button" id="q" aria-haspopup="menu">Complete</button></div>""",
 }
 
 # Every send shape rounds 4 to 8 found (and a few beside them): never opened.
@@ -145,10 +157,17 @@ _SENDS = {
     "n_icon_submit_resume_req": """<div><button type="button" id="q" aria-haspopup="menu"
         aria-required="true" aria-label="Submit resume">
         <svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/></svg></button></div>""",
-    # the brief's rule: a last-step verb leading a short name refuses whatever
-    # follows it (an unmarked one is a button; a required one parks on it)
-    "finish_month": """<div><button type="button" id="q" aria-haspopup="listbox"
-        aria-label="Finish month">Select</button></div>""",
+    # SP6 review R2-I3: a last-step verb alone or before the send is refused
+    "r2_done": """<div><button type="button" id="q" aria-haspopup="menu">Done</button></div>""",
+    "r2_complete_application": """<div><button type="button" id="q" aria-haspopup="menu"
+        aria-label="Complete application"><svg width="10" height="10"><path d="M0 0 L10 0 L5 8 z"/>
+        </svg></button></div>""",
+    "r2_finalize": """<div><button type="button" id="q" aria-haspopup="menu">Finalize</button>
+        </div>""",
+    # SP6 review R2-M4: a <label for> that names the send, over an icon arrow
+    "r2_label_for_the_send": """<div><label for="q">Submit application</label><button
+        type="button" id="q" aria-haspopup="menu"><svg width="10" height="10">
+        <path d="M0 0 L10 0 L5 8 z"/></svg></button></div>""",
 }
 
 
@@ -188,10 +207,13 @@ def test_every_send_shape_stays_refused(browser_page, shape):
     ("Submit your application or save a draft", True), ("Confirm and submit", True),
     ("Finish", True), ("Done", True), ("I confirm", True), ("Apply", True),
     ("Apply with", True), ("Apply now", True), ("Send", True),
-    # a send or last-step verb leading a short name, whatever follows (SP6 review I1)
+    # a submit or send leading a short name, whatever follows (SP6 review I1)
     ("Submit for review", True), ("Submit resume", True), ("Submit and continue", True),
-    ("Send to recruiter", True), ("Finish month", True), ("Submit a source", True),
-    ("Send by post", True),
+    ("Send to recruiter", True), ("Submit a source", True), ("Send by post", True),
+    # a last-step verb by what follows it (SP6 review R2-I3)
+    ("Complete application", True), ("Finalize", True), ("Finish now", True),
+    ("Finish month", False), ("Confirm your citizenship status", False),
+    ("Complete your degree details", False),
     ("Expected finish date", False), ("Apply a location", False), ("Does not apply", False),
     ("Willing to submit references", False), ("Continue studies", False),
     ("Preferred way to send documents", False), ("Select One", False),
@@ -210,18 +232,23 @@ def test_a_question_shaped_aria_label_and_its_answer_are_never_read_as_a_name():
     assert apply_fill.popup_refusal({"title": "Submit a source",
                                      "label": "How did you hear about us?"}) == ""
     # an unlabelled shown send, a label that names the application, and a
-    # labelling element that names the send, are read
+    # labelling element or a <label for> that names the send, are read
     assert apply_fill.popup_refusal({"shown": "Done"})
     assert apply_fill.popup_refusal({"shown": "Submit", "label": "Your application"})
     assert apply_fill.popup_refusal({"shown": "", "named": "Submit application"})
+    assert apply_fill.popup_refusal({"shown": "", "label": "Submit application"})
+    # a label that asks is never read as a name (SP6 review R2-M4)
+    assert apply_fill.popup_refusal({"shown": "Select", "label": "Expected finish date *"}) == ""
+    assert apply_fill.popup_refusal({"shown": "Complete", "label": "Resume status"}) == ""
 
 
 @pytest.mark.parametrize("text, asks", [
     ("Do you agree to the terms?", True), ("How did you hear about us?", True),
     ("Degree status", True), ("Delivery method", True), ("Background check status", True),
     ("Select all that apply", True), ("Plans after graduation *", True),
+    ("Document delivery", True), ("Resume status", True), ("Application source", True),
     ("Your application", False), ("Application", False), ("Resume *", False), ("Step 3", False),
-    ("Share your profile", False), ("", False)])
+    ("Share your profile", False), ("Submit document type", False), ("", False)])
 def test_a_question_label_asks_for_a_value_and_never_names_the_send(text, asks):
     assert apply_fill.question_label(text) is asks
 
@@ -229,17 +256,20 @@ def test_a_question_label_asks_for_a_value_and_never_names_the_send(text, asks):
 # --- review M2: the extractor reads the send rule too ---------------------------------------------
 
 def test_an_unmarked_question_with_a_send_word_in_its_middle_is_offered(browser_page):
-    # "Expected finish date" by its own aria-label, no star, no aria-required:
-    # a field, opened by discovery; "Finish month" leads with its verb and
-    # stays a button (the brief's rule)
+    # "Expected finish date" and "Finish month" by their own aria-labels, no
+    # star, no aria-required: fields, opened by discovery (SP6 review
+    # R2-I3); an unmarked "Complete application" stays a button
     browser_page.set_content("""<body><form>
       <div><button type="button" id="efd" aria-haspopup="listbox" aria-label="Expected finish date"
         onclick="document.body.dataset.opened = 1">Select</button></div>
       <div><button type="button" id="fm" aria-haspopup="listbox" aria-label="Finish month"
-        >Select</button></div></form></body>""")
+        >Select</button></div>
+      <div><button type="button" id="ca" aria-haspopup="menu" aria-label="Complete application"
+        >&#9662;</button></div></form></body>""")
     d = apply_form.extract(browser_page)
-    assert [(f.label, f.required) for f in d.fields] == [("Expected finish date", False)]
-    assert "#fm" in [b.locator[1] for b in d.buttons]
+    assert [(f.label, f.required) for f in d.fields] == [("Expected finish date", False),
+                                                        ("Finish month", False)]
+    assert "#ca" in [b.locator[1] for b in d.buttons]
     apply_fill.open_listbox_options(browser_page, d.fields[0])
     assert browser_page.evaluate("document.body.dataset.opened") == "1"
 

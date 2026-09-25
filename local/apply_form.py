@@ -1538,16 +1538,18 @@ _EXTRACT_JS = r"""
   const chromePopup = (text) => POPUP_CHROME.test(text) || POPUP_TOOL.test(text);
   // a send or go-on phrase, as a popup's own name ("More submit options",
   // "Save and continue", "Continue with", "Apply with", "Next step")
-  // (SP6 review M2) the send part is `apply_fill.send_phrase`'s rule: a send
-  // or last-step verb leading a short name, or one followed by nothing or by
-  // the application or the send itself; "Expected finish date" and "Willing
-  // to submit references" name a question
+  // (SP6 review M2, R2-I3) the send part is `apply_fill.send_phrase`'s rule:
+  // a submit or send leading a short name, or a send or last-step verb
+  // followed by nothing or by the application or the send itself; "Finish
+  // month", "Expected finish date" and "Willing to submit references" name a
+  // question
+  const SEND_LEAD = /^(submit|send)$/i;
   const SEND_VERB = /^(submit|send|finish|complete|confirm|finali[sz]e|done)$/i;
   const SEND_OBJECT = /^(applications?|forms?|answers?|responses?|options?|request|submission|now|here|everything|all|it|this|submit|send|finish|complete|confirm|finali[sz]e|done|apply)$/i;
   const FILLER = /^(your|the|my|this|our|a|an|and|or)$/i;
   const sendName = (t) => {
     const words = (t || '').match(/[a-z]+/gi) || [];
-    if (words.length && SEND_VERB.test(words[0]) && words.length <= 6) return true;
+    if (words.length && SEND_LEAD.test(words[0]) && words.length <= 6) return true;
     for (let i = 0; i < words.length; i++) {
       if (!SEND_VERB.test(words[i])) continue;
       const rest = words.slice(i + 1).filter((w) => !FILLER.test(w));

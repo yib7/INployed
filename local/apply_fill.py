@@ -521,24 +521,28 @@ class PopupRefused(LookupError):
 # (`apply_run._send_worded`), a leading "Apply" too ("Apply with LinkedIn");
 # never "Does not apply". SP6 reads them as a name (`send_phrase`, review
 # round 9 and SP6 review I1):
-# - a send or last-step verb that leads a short name names a send, whatever
-#   follows it ("Submit for review", "Submit resume", "Send to recruiter",
-#   "Finish month");
-# - anywhere else, a send or last-step verb names one when nothing follows
-#   it, or what follows names the application or the send itself ("Submit
-#   ▾", "More submit options", "Choose how to submit your application",
-#   "Confirm and submit"), never another thing ("Expected finish date",
-#   "Willing to submit references");
+# - a "submit" or "send" that leads a short name names a send, whatever
+#   follows it ("Submit for review", "Submit resume", "Send to recruiter");
+# - a last-step verb ("finish", "complete", "confirm", "done", "finalize"),
+#   leading or not, and a send verb anywhere else, name one when nothing
+#   follows, or what follows names the application or the send itself
+#   ("Done", "Complete application", "Confirm and submit", "Submit ▾",
+#   "More submit options", "Choose how to submit your application"), never
+#   another thing ("Finish month", "Confirm your citizenship status",
+#   "Expected finish date", "Willing to submit references") (SP6 review
+#   R2-I3);
 # - a leading "Apply" names one alone or with "with", "now", "for"... ("Apply
 #   a location" is a placeholder).
 # Words that ask ("... a background check? Select One Required", Workday's
 # aria-label) are no name; a shown value or a title under an outside
 # question label is an answer ("I confirm" under "Do you agree to the
-# terms?", "Send by post" under "Delivery method"), and under a label that
-# names the application, a document, a step or an action ("Your
-# application", "Resume *", "Step 3", "Share your profile") it is read.
+# terms?", "Send by post" under "Delivery method" or "Document delivery",
+# "Complete" under "Resume status"), and under a label that names the
+# application, a document, a step or an action ("Your application", "Resume
+# *", "Step 3", "Share your profile") it is read.
 _POPUP_VERB = re.compile(r"\b(submit|send|finish|complete|confirm|finali[sz]e|done)\b", re.I)
-_POPUP_LEAD_MAX = 6             # words: a name the leading verb makes a send whatever follows
+_POPUP_LEAD_MAX = 6             # words: a name a leading submit or send makes a send
+_POPUP_LEAD = re.compile(r"^(submit|send)$", re.I)
 _POPUP_APPLY = re.compile(r"^\s*apply\b", re.I)
 # what a send's verb may be followed by and still name the send: the
 # application or its parts, the send's own words, a time, another send verb
@@ -562,6 +566,15 @@ _NAMES_THE_SEND = re.compile(
     r"\b(applications?|applying|submissions?|resumes?|résumés?|cv|cover\s+letters?"
     r"|documents?|attachments?|profiles?|candidacy|step\s*\d+)\b"
     r"|^\s*(share|send|submit|apply|upload|attach|save|review|continue|complete|finish|confirm"
+    r"|finali[sz]e|proceed|next|done)\b", re.I)
+# a label that names a document or the application and then the value asked
+# of it ("Document delivery", "Resume status", "Application source"): a
+# question (SP6 review R2-I3)
+_VALUE_TAIL = re.compile(
+    r"\b(status|delivery|method|type|format|date|preferences?|source|language|option|choice"
+    r"|level|stage|mode|frequency|channel)\s*$", re.I)
+_LEADS_ACTION = re.compile(
+    r"^\s*(share|send|submit|apply|upload|attach|save|review|continue|complete|finish|confirm"
     r"|finali[sz]e|proceed|next|done)\b", re.I)
 _POPUP_WORDS_JS = """el => {
   const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
@@ -607,25 +620,29 @@ def _question_shaped(text: str) -> bool:
 
 def question_label(text: str) -> bool:
     """Is `text` (a label, a labelling element's or a question box's words)
-    a question a value answers: words that ask (`_ASKS`), or words that name
-    no application, document, step or action (`_NAMES_THE_SEND`: "Degree
+    a question a value answers: words that ask (`_ASKS`), words that name no
+    application, document, step or action (`_NAMES_THE_SEND`: "Degree
     status", "Delivery method" ask for a value; "Your application", "Resume
-    *", "Step 3", "Share your profile" name the thing a send sends)?"""
+    *", "Step 3", "Share your profile" name the thing a send sends), or
+    words that name one and then the value asked of it ("Document
+    delivery", "Resume status": `_VALUE_TAIL`, SP6 review R2-I3)?"""
     t = " ".join(str(text or "").split()).strip(" *✱＊")
     if not t:
         return False
-    return bool(_ASKS.search(t)) or not _NAMES_THE_SEND.search(t)
+    return bool(_ASKS.search(t)) or not _NAMES_THE_SEND.search(t) or (
+        bool(_VALUE_TAIL.search(t)) and not _LEADS_ACTION.search(t))
 
 
 def send_phrase(text: str) -> bool:
     """Do `text`'s words name a send or a last step (see `_POPUP_VERB`): a
-    send or last-step verb that leads a name of at most `_POPUP_LEAD_MAX`
-    words, whatever follows it; elsewhere a send verb with nothing after it
-    but fillers or symbols, or followed by the application, the send's own
-    words or another send verb; a leading "Apply" alone or with "with",
-    "now", "for"..."""
+    "submit" or "send" that leads a name of at most `_POPUP_LEAD_MAX` words,
+    whatever follows it; any other send or last-step verb, leading or not,
+    with nothing after it but fillers or symbols, or followed by the
+    application, the send's own words or another send verb (SP6 review
+    R2-I3: "Finish month" and "Confirm your citizenship status" ask); a
+    leading "Apply" alone or with "with", "now", "for"..."""
     words = _POPUP_WORD.findall(str(text or ""))
-    if words and _POPUP_VERB.fullmatch(words[0]) and len(words) <= _POPUP_LEAD_MAX:
+    if words and _POPUP_LEAD.fullmatch(words[0]) and len(words) <= _POPUP_LEAD_MAX:
         return True
     for i, w in enumerate(words):
         verb = bool(_POPUP_VERB.fullmatch(w))
@@ -643,17 +660,18 @@ def send_phrase(text: str) -> bool:
 def popup_refusal(words: dict) -> str:
     """Why a popup whose own words read `words` ({shown, aria, title, label,
     named, box}) must not be opened, or "": its aria-label, its title, the
-    element outside it that names it (`named`, aria-labelledby) or its shown
-    text names a send or a last step (`send_phrase`). Words that ask
-    (`_question_shaped`) are never read as a name. The shown text and the
-    title are never read under an outside question label (`question_label`
-    of its label, its labelling element or its question box's words) or a
-    question in its own aria-label: they are the answer. Under any other
-    outside label they are read (SP6 review I1)."""
+    element outside it that names it (`named`, aria-labelledby), its
+    `<label for>` (SP6 review R2-M4) or its shown text names a send or a
+    last step (`send_phrase`). Words that ask (`_question_shaped`) are never
+    read as a name. The shown text and the title are never read under an
+    outside question label (`question_label` of its label, its labelling
+    element or its question box's words) or a question in its own
+    aria-label: they are the answer. Under any other outside label they are
+    read (SP6 review I1)."""
     aria = " ".join(str(words.get("aria") or "").split())
     answered = (bool(aria) and _question_shaped(aria)) or any(
         question_label(words.get(key) or "") for key in ("label", "named", "box"))
-    for key in ("aria", "named", "title", "shown"):
+    for key in ("aria", "named", "label", "title", "shown"):
         text = " ".join(str(words.get(key) or "").split())
         if not text:
             continue

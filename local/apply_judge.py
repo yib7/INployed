@@ -16,7 +16,10 @@ browser or the network.
                                            run acts on: field -> fact map,
                                            option picks, button roles, the
                                            prohibited flag
-    option_questions(digest, plan)         the second request: option picks for
+    page_requests(digest, catalog, job)    the same mapping in requests sized to
+                                           Jev's limits (RES-03), read back as
+                                           one by `merge_answers`
+    option_questions(digest, plan)       the second request: option picks for
                                            fields whose fact the first answer
                                            chose (quick_map covers the rest)
     verify_questions(filled, sheet)        every typed value against the sheet
@@ -48,6 +51,7 @@ only place to change them.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 from dataclasses import asdict, dataclass, field
@@ -57,7 +61,7 @@ from urllib.parse import urlsplit
 
 from apply_facts import FactCatalog, quick_map
 from apply_form import FormDigest, is_password_field
-from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer
+from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer, request_fits
 
 log = logging.getLogger("apply_judge")
 
@@ -709,6 +713,51 @@ def page_questions(digest: FormDigest, catalog: FactCatalog,
                             "identification document?",
         }
     return state, questions
+
+
+def page_requests(digest: FormDigest, catalog: FactCatalog,
+                  job: Mapping[str, Any] | None = None, *,
+                  fields: bool = True) -> list[tuple[dict, dict]]:
+    """`page_questions` as requests that fit Jev's limits (RES-03,
+    `jev.request_fits`): the one request when it fits; else without the
+    buttons in the site's header, nav or top bar, which sit outside the
+    application and whose roles never beat the page's own (`plan`); else
+    the fields halved, again and again until every request fits or holds a
+    single field, the first part with the buttons and every part with its
+    own `fields` (its questions name them by their place in it)."""
+    state, questions = page_questions(digest, catalog, job, fields=fields)
+    if request_fits(state, questions):
+        return [(state, questions)]
+    kept = [b for b in digest.buttons if not getattr(b, "chrome", False)]
+    slim = dataclasses.replace(digest, buttons=kept)
+    if not fields or len(digest.fields) < 2:
+        return [page_questions(slim, catalog, job, fields=fields)]
+    return _field_parts(slim, catalog, job)
+
+
+def _field_parts(digest: FormDigest, catalog: FactCatalog,
+                 job: Mapping[str, Any] | None) -> list[tuple[dict, dict]]:
+    state, questions = page_questions(digest, catalog, job)
+    if request_fits(state, questions) or len(digest.fields) < 2:
+        return [(state, questions)]
+    mid = len(digest.fields) // 2
+    first = dataclasses.replace(digest, fields=digest.fields[:mid])
+    second = dataclasses.replace(digest, fields=digest.fields[mid:], buttons=[])
+    return _field_parts(first, catalog, job) + _field_parts(second, catalog, job)
+
+
+def merge_answers(parts: list[Mapping[str, Answer]]) -> dict[str, Answer]:
+    """The answers of a mapping asked in parts (`page_requests`) as one; a
+    Noul every part asks (`asks_for_prohibited`) keeps its highest yes."""
+    out: dict[str, Answer] = {}
+    for got in parts:
+        for qid, a in got.items():
+            held = out.get(qid)
+            if (held is not None and held.noul is not None and a.noul is not None
+                    and held.noul >= a.noul):
+                continue
+            out[qid] = a
+    return out
 
 
 # --- the page read (SP4) -----------------------------------------------------------

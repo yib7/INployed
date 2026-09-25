@@ -307,6 +307,101 @@ def test_an_unexpected_error_names_its_type_and_step_and_never_its_message(
     assert "Jane Doe" not in log and "Call log" not in log
 
 
+# --- the judge request's size (RES-03) ----------------------------------------------------------
+
+_COUNTRIES = [f"Country number {i} of the long list" for i in range(40)]
+
+
+def _long_form(n_fields: int = 80, n_buttons: int = 30):
+    """A long application: `n_fields` fields with help text, a third of them
+    lists of 40 options, and `n_buttons` buttons, a third in the site's header."""
+    import apply_form
+    fields = []
+    for n in range(n_fields):
+        options = list(_COUNTRIES) if n % 3 == 0 else []
+        fields.append(apply_form.Field(
+            n, (0, f"#q{n}"), f"Question number {n} about your background and experience",
+            "select" if options else "text", n % 2 == 0,
+            help=("Tell us in your own words what you did, where, for how long and with whom; "
+                  "a few lines are enough. ") * 2,
+            options=options, id_or_name=f"question_{n}_answer", section=f"Part {n // 10}"))
+    buttons = [apply_form.Button(n_fields + i, (0, f"#b{i}"), f"Header link {i}", chrome=i % 3 == 0)
+               for i in range(n_buttons)]
+    return apply_form.FormDigest("careers.fabrikam.example", "Apply for Analytics Engineer",
+                                 "Apply for Analytics Engineer. " * 200, fields=fields,
+                                 buttons=buttons)
+
+
+def _catalog(tmp_path):
+    import apply_facts
+    return apply_facts.build(h.write_job_folder(tmp_path / "job"), answers=h.bank())
+
+
+def test_an_80_field_form_is_asked_in_requests_that_fit_the_judges_limits(tmp_path):
+    import apply_judge
+    digest, catalog = _long_form(), _catalog(tmp_path)
+    whole = apply_judge.page_questions(digest, catalog, {})
+    assert not jev.request_fits(*whole)     # asked as one, it would not fit
+    requests = apply_judge.page_requests(digest, catalog, {})
+    for state, questions in requests:
+        longest, total = jev.request_size(state, questions)
+        assert longest <= jev.STATE_TOKENS_MAX * jev.SIZE_MARGIN, (longest, total)
+        assert total <= jev.REQUEST_TOKENS_MAX * jev.SIZE_MARGIN, (longest, total)
+    asked = [q for _, qs in requests for q in qs]
+    # every field asked once, in the part whose `fields` holds it
+    assert sorted(int(q.split("_")[1]) for q in asked if q.endswith("_source")) == list(range(80))
+    for state, questions in requests:
+        held = {f["n"] for f in state["fields"]}
+        assert {int(q.split("_")[1]) for q in questions if q.endswith("_source")} == held
+    # the page's own buttons asked once; the header's left out
+    roles = sorted(int(q.split("_")[1]) for q in asked if q.endswith("_role"))
+    assert roles == [b.n for b in digest.buttons if not b.chrome]
+
+
+def test_a_form_that_fits_is_asked_as_it_was(tmp_path):
+    import apply_judge
+    digest, catalog = _long_form(12, 6), _catalog(tmp_path)
+    assert apply_judge.page_requests(digest, catalog, {}) == [
+        apply_judge.page_questions(digest, catalog, {})]
+
+
+def test_the_parts_answers_read_as_one_and_a_yes_to_the_prohibited_question_holds():
+    import apply_judge
+    no = jev.Answer(kind="noul", noul=0.1)
+    yes = jev.Answer(kind="noul", noul=0.8)
+    pick = jev.Answer(kind="choice", choice="email", probabilities={"email": 0.9},
+                      confidence=0.9)
+    got = apply_judge.merge_answers([{"asks_for_prohibited": no, "field_1_source": pick},
+                                     {"asks_for_prohibited": yes},
+                                     {"asks_for_prohibited": no}])
+    assert got == {"asks_for_prohibited": yes, "field_1_source": pick}
+
+
+def test_the_run_maps_a_long_form_in_parts_and_plans_every_field(tmp_path):
+    from unittest.mock import Mock
+
+    import apply_run
+
+    sizes: list[tuple[int, int]] = []
+
+    class Sized(jev.FakeJev):
+        def judge(self, state, questions):
+            sizes.append(jev.request_size(state, questions))
+            return super().judge(state, questions)
+    runner = apply_run.Runner(jev=Sized(), context=Mock(), run_context={}, sleep=lambda s: None)
+    run = apply_run._JobRun(runner, Mock(), {"job_posting_id": "s",
+                                             "apply_url": "https://x.example/1"})
+    run.catalog = _catalog(tmp_path)
+    run.page = Mock(url="https://careers.fabrikam.example/apply")
+    answers = run._map(_long_form(), {}, "application_form", discover=False, own_page=False)
+    assert len(sizes) > 1
+    for longest, total in sizes:
+        assert longest <= jev.STATE_TOKENS_MAX * jev.SIZE_MARGIN
+        assert total <= jev.REQUEST_TOKENS_MAX * jev.SIZE_MARGIN
+    assert all(f"field_{n}_source" in answers for n in range(80))
+    assert "asks_for_prohibited" in answers
+
+
 # --- the judge's outage (RES-02) ---------------------------------------------------------------
 
 class _Busy(Exception):

@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -114,6 +115,43 @@ def reset_usage() -> None:
     _USAGE["input_tokens"] = 0
 
 
+# --- the request's size (RES-03) ----------------------------------------------------
+
+# Jev's limits (docs/superpowers/jev-complete-guide.md, "Limits & price"): 32k
+# tokens for the state and the single longest question, 64k for the state and
+# every question. The estimate is the compact JSON's length over
+# CHARS_PER_TOKEN, a low ratio for JSON (English prose runs about 4), and a
+# request fits under SIZE_MARGIN of each limit.
+STATE_TOKENS_MAX = 32_000
+REQUEST_TOKENS_MAX = 64_000
+CHARS_PER_TOKEN = 3.0
+SIZE_MARGIN = 0.85
+
+
+def estimate_tokens(value: Any) -> int:
+    """The tokens `value` (a state or one question) is estimated to take."""
+    text = value if isinstance(value, str) else json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), default=str)
+    return math.ceil(len(text) / CHARS_PER_TOKEN)
+
+
+def request_size(state: Any, questions: Mapping[str, Any]) -> tuple[int, int]:
+    """(the state and the longest question, the state and every question),
+    in estimated tokens."""
+    base = estimate_tokens(state)
+    sizes = [estimate_tokens(q) for q in questions.values()]
+    return base + max(sizes, default=0), base + sum(sizes)
+
+
+def _sized_to_fit(longest: int, whole: int) -> bool:
+    return longest <= STATE_TOKENS_MAX * SIZE_MARGIN and whole <= REQUEST_TOKENS_MAX * SIZE_MARGIN
+
+
+def request_fits(state: Any, questions: Mapping[str, Any]) -> bool:
+    """Is the request under `SIZE_MARGIN` of both of Jev's limits?"""
+    return _sized_to_fit(*request_size(state, questions))
+
+
 # --- the outage guard (RES-02) ------------------------------------------------------
 
 # The run's own retries of a judge request the service could not answer, on
@@ -194,6 +232,14 @@ class Guarded:
     def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
         if self.down:
             raise JudgeOutage(self.down)
+        longest, whole = request_size(state, questions)
+        if not _sized_to_fit(longest, whole):
+            # the mapping is sized before it is asked (`apply_judge.page_requests`);
+            # any other request this large is named in the job's log (RES-03)
+            self.log.warning("jev request estimated at %d tokens (the state and its longest "
+                             "question) and %d in all, past %d%% of the %d and %d limits",
+                             longest, whole, round(SIZE_MARGIN * 100), STATE_TOKENS_MAX,
+                             REQUEST_TOKENS_MAX)
         tries = len(self.delays) + 1
         for n in range(tries):
             try:

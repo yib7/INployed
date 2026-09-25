@@ -5382,9 +5382,19 @@ class _JobRun:
         with_fields = state != "job_posting" or bool(digest.fields)
         if with_fields and discover and not self._on_linkedin():
             self._discover_listbox_options(digest)
-        s, q = apply_judge.page_questions(digest, self.catalog, self.entry, fields=with_fields)
-        if q:
-            got = {k: v for k, v in self.r.jev.judge(s, q).items() if k in q}
+        # RES-03: sized to Jev's limits, split when a long form needs it
+        requests = [(s, q) for s, q in apply_judge.page_requests(
+            digest, self.catalog, self.entry, fields=with_fields) if q]
+        sent = sum(len(s.get("buttons") or ()) for s, _ in requests)
+        if len(requests) > 1 or (requests and sent < len(digest.buttons)):
+            self._decide("mapping_sized", f"the mapping asked in {len(requests)} request(s) "
+                                          f"with {sent} of {len(digest.buttons)} buttons, to "
+                                          f"fit the judge's request limits",
+                         fields=len(digest.fields))
+        if requests:
+            got = apply_judge.merge_answers([
+                {k: v for k, v in self.r.jev.judge(s, q).items() if k in q}
+                for s, q in requests])
             answers.update(got)
             if own_page:
                 self.trace.add_answers(got)
@@ -8316,9 +8326,10 @@ def _probe_page(page, n: int, judge: Any, out, *,
         answers["page_state"] = apply_judge.read_answer(combined)
         read, conf = combined.state, combined.conf
         with_fields = bool(digest.fields) or read != "job_posting"
-        s2, q2 = apply_judge.page_questions(digest, catalog, {}, fields=with_fields)
-        if q2:
-            answers.update({k: v for k, v in judge.judge(s2, q2).items() if k in q2})
+        answers.update(apply_judge.merge_answers([
+            {k: v for k, v in judge.judge(s2, q2).items() if k in q2}
+            for s2, q2 in apply_judge.page_requests(digest, catalog, {}, fields=with_fields)
+            if q2]))
         print(f"  judge: page_state {read} {conf:.2f} "
               f"({apply_trace.page_state_reads(answers, top=5)}; the judge read "
               f"{combined.judged} {combined.judged_conf:.2f})", file=out)

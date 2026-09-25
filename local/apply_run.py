@@ -692,8 +692,10 @@ class SendWatch:
     page is in flight. `caused` keeps the rows the click itself caused: each
     one up to the first navigation of the job's page, that navigation too; a
     navigation after it is the site's own (a POST's answer sending the tab
-    on). Which GET carried the send is `carried_get`'s (SP8a review M6,
-    R2-M4)."""
+    on). `_order` keeps every such row of the job's page and its tabs in the
+    order they left, and `answered` the requests whose answer came back, for
+    `sent_left`. Which GET may have carried the send is `carried_get`'s (SP8a
+    review M6, R2-M4)."""
 
     _SEND_METHODS = ("POST", "PUT", "PATCH")
 
@@ -708,6 +710,8 @@ class SendWatch:
         self.possible: list[str] = []
         self.caused: list[str] = []
         self._navigated = False            # the click's own navigation was seen
+        self._order: list[tuple[Any, str, str]] = []   # (request, kind, row)
+        self.answered: set[int] = set()    # the requests whose answer came back
         self.pending: set[int] = set()
         self._targets: list = []
         self._before: set[int] = set()     # the context's tabs before `start`
@@ -764,9 +768,11 @@ class SendWatch:
             navigation = owner == "job" and self._navigation(request)
             kind = self._kind(request, navigation)
             row = f"{str(request.method).upper()} {self._bare(request.url)}"
-            if owner == "job" and not self._navigated and (kind or navigation):
-                self.caused.append(row)
-                self._navigated = navigation
+            if owner == "job" and (kind or navigation):
+                self._order.append((request, kind, row))
+                if not self._navigated:
+                    self.caused.append(row)
+                    self._navigated = navigation
             if not kind:
                 return
             if owner == "unknown":
@@ -778,19 +784,50 @@ class SendWatch:
             pass
 
     def carried_get(self, row: str, action: str = "") -> bool:
-        """Did the GET `row` ("GET bare-url") carry the send? When its URL
-        without the query is the submit form's `action` (a GET form's send,
-        after a draft's POST too, SP8a review M6), or when it is the first
-        request the click caused (`caused`; the first seen when the job's
-        page saw none of its own). A later GET is the site's own: a script
-        sending the tab to its thank-you page after a fetch sent the answers
-        (R2-M4)."""
+        """May the GET `row` ("GET bare-url") have carried the send? Always
+        when its URL without the query is the submit form's `action` (a GET
+        form's send, after a draft's POST too, SP8a review M6), or when it is
+        the first request the click caused (`caused`; the first seen when the
+        job's page saw none of its own). Any other GET too, unless a send is
+        known to have left before it (`sent_left`): a script can send the
+        answers by a GET to any address (R2-M4). A GET after a send that
+        came back is the site's own, such as the thank-you page a script
+        loads after a fetch sent the answers."""
         if action and row == f"GET {self._bare(action)}":
             return True
-        return (self.caused[:1] or [self.first()]) == [row]
+        if (self.caused[:1] or [self.first()]) == [row]:
+            return True
+        return not self.sent_left(row)
+
+    def sent_left(self, row: str) -> bool:
+        """Is a send known to have left before the load `row`: a POST, PUT
+        or PATCH to the application's sites, from the job's page or a tab it
+        opened, whose answer came back (SP8a review R2-M4)? A send to
+        another host (a beacon `_tracking` does not know may be one), a send
+        whose answer never came, and anything when `row` was never seen are
+        no such send."""
+        rows = [r for _, _, r in self._order]
+        if row not in rows:
+            return False
+        end = len(rows) - 1 - rows[::-1].index(row)
+        return any(kind == "sent" and r.split(" ", 1)[0] in self._SEND_METHODS
+                   and id(request) in self.answered
+                   for request, kind, r in self._order[:end])
 
     def _done(self, request) -> None:
         self.pending.discard(id(request))
+
+    def _finished(self, request) -> None:
+        self.pending.discard(id(request))
+        self.answered.add(id(request))
+
+    def _answered(self, response) -> None:
+        """A response's headers came back: its request reached the site,
+        even when its body is cut off after."""
+        try:
+            self.answered.add(id(response.request))
+        except Exception:       # noqa: BLE001  (a response that cannot be read counts as nothing)
+            pass
 
     def _popup(self, popup) -> None:
         """A tab the job's page opened: its requests count, and a first
@@ -828,7 +865,8 @@ class SendWatch:
             self._before = set()
         context = getattr(self.page, "context", None) or self.page
         for target, events in ((context, (("request", self._request),
-                                          ("requestfinished", self._done),
+                                          ("response", self._answered),
+                                          ("requestfinished", self._finished),
                                           ("requestfailed", self._done))),
                                (self.page, (("popup", self._popup),))):
             for event, fn in events:
@@ -4437,10 +4475,12 @@ class _JobRun:
         left for: the address that failed is loaded once more after
         `GOTO_RETRY_S` when it is a GET on the allowed sites. A POST, PUT or
         PATCH is never sent again, and after the submit click neither is a
-        GET that carried the send (`SendWatch.carried_get`: one to the
-        submit form's action, or the first request the click caused, SP8a
-        review M6, R2-M4): at most one send per job, so a page the send led
-        to is loaded again. A send that never reached the site
+        GET that may have carried the send (`SendWatch.carried_get`): at
+        most one send per job, so after the click a GET is loaded again only
+        when a send to the application's sites came back before it
+        (`SendWatch.sent_left`), and never when it goes to the submit form's
+        action or was the first request the click caused (SP8a review M6,
+        R2-M4). A send that never reached the site
         (`_no_connection`) and was the one request seen parks as nothing
         sent (`_Unsent`, SP8a review M7). A retry that lands on the error page again parks, as does an
         error page whose address is unknown (`_held_load`). An address off

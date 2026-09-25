@@ -3,8 +3,9 @@
 - Chrome's own error page (`chrome-error://chromewebdata/`, a load the
   network dropped) reads as a failed load: one retry of a GET on the allowed
   sites, never "left the allowed sites: chromewebdata". After the submit
-  click only the page the send led to is loaded again: the GET that carried
-  the send and any POST never are (at most one send per job).
+  click a GET is loaded again only when a send to the application's sites
+  came back before it: a GET that may have carried the send and any POST
+  never are (at most one send per job).
 
 Headless Chromium through the module-scoped test browser, the flow harness
 (`apply_harness.run_flow`) and the fake judge; no network but the local
@@ -291,7 +292,69 @@ def test_after_a_fetch_send_the_thank_you_page_the_script_led_to_is_loaded_again
     assert r.sends == 1 and r.breaks == []
 
 
-# --- a malformed queue entry (RES-09) -------------------------------------------------------
+# A form whose button posts an analytics beacon to a host `_tracking` does not
+# know, then sends the answers by a script GET to an address other than the
+# form's action
+_BEACON = "https://collect.statfox.example/b"
+_BEACON_FORM = """<!doctype html><html><head><title>Apply for Analytics Engineer</title></head>
+<body><h1>Apply for Analytics Engineer</h1><p>Fabrikam, Remote</p>
+<form id="f" onsubmit="return false">
+<label>First name * <input name="first_name" required></label>
+<label>Last name * <input name="last_name" required></label>
+<label>Email * <input type="email" name="email" required></label>
+<button type="button" id="btn-submit">Submit application</button>
+</form><script>document.getElementById('btn-submit').addEventListener('click', function () {
+  var go = function () {
+    location.href = '/beacon/send?' + new URLSearchParams(new FormData(document.getElementById('f')));
+  };
+  fetch('%s', {method: 'POST', body: 'e=submit', mode: 'no-cors', keepalive: true}).then(go, go);
+});</script></body></html>""" % _BEACON
+
+
+def test_a_script_get_send_after_a_beacon_is_never_loaded_again(
+        _browser, flow_server, tmp_path):
+    # SP8a review R2-M4 addition: a failed GET after the click is loaded
+    # again only when a send to the application's sites is known to have
+    # left before it; a beacon to another host that came back is no such send
+    beacons: list[str] = []
+    send = _drop_first("connectionreset", body=h.CONFIRMATION_HTML)
+    f = h.Flow("beacon_then_get", f"{_POST_SITE}/beacon/apply", True, "submitted",
+               r"^submitted \(unconfirmed\): ", send_urls=(f"{_POST_SITE}/beacon/send**",),
+               routes=lambda b: {f"{_POST_SITE}/beacon/apply": _BEACON_FORM,
+                                 _BEACON: _sink(beacons, ""),
+                                 f"{_POST_SITE}/beacon/send**": send})
+    r = _run(f, _browser, flow_server, tmp_path)
+    assert beacons == ["POST"]
+    assert send.seen == ["GET"], (send.seen, r.status, r.reason)
+    assert r.status == "submitted", r
+    assert r.reason.startswith("submitted (unconfirmed): error or dead page: GET "), r.reason
+    assert "carried the send" in r.reason
+    assert r.sends == 1 and r.breaks == []
+
+
+def test_a_get_is_loaded_again_only_after_a_send_to_the_application_came_back_before_it():
+    from unittest.mock import Mock
+
+    import apply_run
+    site = "https://careers.fabrikam.example"
+    beacon, post, get, late = Mock(), Mock(), Mock(), Mock()
+    watch = apply_run.SendWatch(Mock(), Mock())
+    watch._order = [(beacon, "possible", f"POST {_BEACON}"), (post, "sent", f"POST {site}/submit"),
+                    (get, "sent", f"GET {site}/thanks"), (late, "sent", f"POST {site}/late")]
+    watch.caused = [f"POST {_BEACON}", f"POST {site}/submit"]
+    thanks = f"GET {site}/thanks"
+    assert watch.carried_get(thanks) is True            # nothing came back yet
+    watch.answered |= {id(beacon), id(late)}            # another host's, and one after the GET
+    assert watch.sent_left(thanks) is False
+    assert watch.carried_get(thanks) is True
+    watch.answered.add(id(post))
+    assert watch.sent_left(thanks) is True
+    assert watch.carried_get(thanks) is False
+    assert watch.carried_get(thanks, f"{site}/thanks?x=1") is True     # the form's action
+    assert watch.carried_get(f"GET {site}/never-seen") is True
+
+
+# --- a malformed queue entry (RES-09)-------------------------------------------------------
 
 def _queue(tmp_path, *entries):
     """A queue file holding `entries` as written, hand-edited ones included."""

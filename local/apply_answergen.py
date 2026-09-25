@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import apply_judge
+from jev import JudgeOutage
 
 log = logging.getLogger("apply_answergen")
 
@@ -251,6 +252,8 @@ def attempt(field: Any, catalog: Any, jev: Any, *, budget: int,
         return Attempt(None, False, "empty draft")
     try:
         ok, weakest = grounded(text, sheet, jev)
+    except JudgeOutage:
+        raise       # the run hands the job back to the queue, never parks it (RES-02)
     except Exception as e:      # noqa: BLE001  (a judge error can quote the sheet)
         log.warning("grounding for %r failed: %s", label, type(e).__name__)
         return Attempt(None, False, f"grounding failed: {type(e).__name__}")

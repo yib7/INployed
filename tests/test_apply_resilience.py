@@ -13,6 +13,8 @@ import dataclasses
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
@@ -303,4 +305,186 @@ def test_an_unexpected_error_names_its_type_and_step_and_never_its_message(
     log = (Path(r.trace) / "job.log").read_text(encoding="utf-8")
     assert "RuntimeError at fill_and_verify" in log and "apply_run.py:" in log
     assert "Jane Doe" not in log and "Call log" not in log
+
+
+# --- the judge's outage (RES-02) ---------------------------------------------------------------
+
+class _Busy(Exception):
+    """A service error the way the TypeSafe SDK raises one: `status`, and
+    `retry_after_ms` on a 429; its message quotes the request."""
+
+    def __init__(self, status: int, retry_after_ms: float | None = None):
+        super().__init__(f"{status}: the request for Jane Doe was not answered")
+        self.status = status
+        self.retry_after_ms = retry_after_ms
+
+
+class _Flaky:
+    """Raises `errors` in turn, then answers as `inner` (the fake judge)."""
+
+    def __init__(self, errors, inner=None):
+        self.errors = list(errors)
+        self.inner = inner if inner is not None else jev.FakeJev()
+        self.calls = 0
+
+    def judge(self, state, questions):
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+        return self.inner.judge(state, questions)
+
+
+class _Answers:
+    def judge(self, state, questions):
+        return {q: jev.Answer(kind="noul", noul=0.9) for q in questions}
+
+
+def test_a_busy_judge_is_tried_again_after_its_retry_after_and_answers():
+    sleeps: list[float] = []
+    inner = _Flaky([_Busy(429, retry_after_ms=20_000), _Busy(503), ConnectionError("reset")],
+                   inner=_Answers())
+    guarded = jev.Guarded(inner, sleep=sleeps.append)
+    got = guarded.judge({"page": "x"}, {"q": {"type": "noul", "instructions": "x"}})
+    assert got["q"].noul == 0.9
+    # the service's 20 s over the first 5 s delay, then the run's own 15 s and 40 s
+    assert sleeps == [20.0, 15.0, 40.0] and inner.calls == 4
+    assert guarded.down == ""
+
+
+def test_a_judge_that_stays_down_opens_the_breaker_and_later_requests_fail_at_once():
+    sleeps: list[float] = []
+    inner = _Flaky([_Busy(529)] * 9)
+    guarded = jev.Guarded(inner, sleep=sleeps.append)
+    with pytest.raises(jev.JudgeOutage) as got:
+        guarded.judge({}, {"q": {"type": "noul", "instructions": "x"}})
+    assert got.value.kind == "_Busy 529" and "Jane" not in str(got.value)
+    assert sleeps == list(jev.RETRY_DELAYS_S) and inner.calls == 4
+    assert guarded.down == "_Busy 529"
+    with pytest.raises(jev.JudgeOutage):
+        guarded.judge({}, {"q": {"type": "noul", "instructions": "x"}})
+    assert inner.calls == 4 and len(sleeps) == 3      # no request while it is open
+
+
+def test_a_refused_key_or_a_long_retry_after_opens_the_breaker_without_a_wait():
+    for error in (_Busy(401), _Busy(403), _Busy(429, retry_after_ms=600_000)):
+        sleeps: list[float] = []
+        guarded = jev.Guarded(_Flaky([error]), sleep=sleeps.append)
+        with pytest.raises(jev.JudgeOutage):
+            guarded.judge({}, {})
+        assert sleeps == [] and guarded.down == f"_Busy {error.status}"
+
+
+def test_a_request_the_service_rejects_passes_through_without_a_retry():
+    sleeps: list[float] = []
+    guarded = jev.Guarded(_Flaky([_Busy(400), ValueError("a bug")]), sleep=sleeps.append)
+    for kind in (_Busy, ValueError):
+        with pytest.raises(kind):
+            guarded.judge({}, {})
+    assert sleeps == [] and guarded.down == ""
+
+
+def test_a_runner_holds_its_judge_behind_the_guard_whoever_sets_it():
+    import apply_run
+    judge = jev.FakeJev()
+    runner = apply_run.Runner(jev=judge, context=object(), run_context={})
+    assert isinstance(runner.jev, jev.Guarded) and runner.jev.inner is judge
+    other = _Flaky([])
+    runner.jev = other
+    assert runner.jev.inner is other and runner.jev.calls == 0     # its attributes read through
+
+
+def test_a_judge_busy_for_a_while_lets_the_run_go_on(_browser, flow_server, tmp_path):
+    flaky = _Flaky([_Busy(529), _Busy(429, retry_after_ms=1_000)])
+    r = h.run_flow(h.flow("lever_single_park"), flaky, "fake", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and r.breaks == [], (r.status, r.reason)
+    assert flaky.calls > 2
+
+
+def _two_jobs(judge, browser, server, tmp_path, sleeps):
+    """A drain of two queued jobs on the fixture form under `judge`: the
+    outcomes, the queue's entries by id, and the tabs left open."""
+    import apply_queue
+    import apply_run
+    queue = tmp_path / "queue.json"
+    url = f"{server.base}/forms/lever_single.html"
+    with h.hermetic(tmp_path), h.fast_timing():
+        for jid in ("a", "b"):
+            folder = h.write_job_folder(tmp_path / jid)
+            apply_queue.enqueue(apply_queue.new_entry(jid, company="Fabrikam",
+                                                      title="Analytics Engineer", apply_url=url),
+                                path=queue)
+            apply_queue.set_artifacts(jid, {"folder": str(folder),
+                                            "apply_md": str(folder / "apply.md"),
+                                            "resume_pdf": str(folder / "Jane_Doe_Resume.pdf")},
+                                      path=queue)
+        ctx = browser.new_context()
+        h.offline(ctx)
+        try:
+            runner = apply_run.Runner(
+                jev=judge, queue_path=queue, profile_dir=tmp_path / "p",
+                settings={"auto_apply_headless": True, "auto_apply_jev_mode": "fake",
+                          "auto_apply_submit": False},
+                context=ctx, run_context={"inbox_url": ""}, sleep=sleeps.append)
+            outcomes = runner.drain(cap=5)
+            left = [p for p in ctx.pages if not p.is_closed()]
+        finally:
+            ctx.close()
+    return outcomes, {e["job_posting_id"]: e for e in apply_queue.load(queue)["jobs"]}, left
+
+
+def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
+        _browser, flow_server, tmp_path):
+    import json
+
+    import apply_run
+    sleeps: list[float] = []
+    outcomes, jobs, left = _two_jobs(_Flaky([_Busy(529)] * 20), _browser, flow_server,
+                                     tmp_path, sleeps)
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "queued")], outcomes
+    reason = outcomes[0].reason
+    assert reason.startswith(f"{apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
+    assert reason.endswith(apply_run.REQUEUED_NOTE) and "Jane" not in reason
+    assert outcomes[0].judge_down
+    assert sleeps == list(jev.RETRY_DELAYS_S)
+    # the job is back in the queue as if never claimed, the next one untouched
+    a, b = jobs["a"], jobs["b"]
+    assert (a["status"], a["attempts"], a["claimed_by"], a["started_at"]) == ("queued", 0, "", "")
+    assert a["notes"] == reason
+    assert (b["status"], b["attempts"]) == ("queued", 0)
+    # no park: no tab left open, no record; the trace ends with the reason
+    assert left == []
+    assert not list((tmp_path / "a").glob("application_record*"))
+    run = json.loads((tmp_path / "a" / "apply_trace" / "attempt-1" / "run.json")
+                     .read_text(encoding="utf-8"))
+    assert (run["status"], run["reason"]) == ("queued", reason)
+    assert "re-queued 1" in apply_run.summary_line(outcomes)
+
+
+def test_an_outage_at_the_grounding_gate_reaches_the_run():
+    import types
+
+    import apply_answergen
+
+    class Down:
+        def judge(self, state, questions):
+            raise jev.JudgeOutage("_Busy 529")
+    field = types.SimpleNamespace(label="Why this role?", help="", placeholder="")
+    catalog = types.SimpleNamespace(sheet_excerpt=lambda: "Jane built ingestion pipelines.")
+    with pytest.raises(jev.JudgeOutage):
+        apply_answergen.attempt(field, catalog, Down(), budget=1,
+                                llm_call=lambda *a, **k: "I built ingestion pipelines.")
+
+
+def test_an_outage_while_the_inbox_is_read_reaches_the_run(browser_page, fixtures_server):
+    import apply_inbox
+
+    class Down:
+        def judge(self, state, questions):
+            raise jev.JudgeOutage("_Busy 529")
+    with pytest.raises(jev.JudgeOutage):
+        apply_inbox.fetch_code(browser_page, "127.0.0.1",
+                               fixtures_server + "/inbox/outlook_list.html", jev=Down(), polls=2,
+                               sleep=lambda s: None)
+    assert len(browser_page.context.pages) == 1     # its tab closed all the same
 

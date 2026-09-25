@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import apply_judge
 import apply_verify
+from jev import JudgeOutage
 
 # Provider DOM shapes are kept together so markup changes need one update.
 SELECTORS = {
@@ -458,6 +459,8 @@ def _polling(page, inbox_url: str, one_poll: Callable, *, polls: int, wait_s: fl
                 break
             try:
                 got = one_poll(tab)
+            except JudgeOutage:
+                raise           # the run hands the job back to the queue (RES-02)
             except Exception as e:  # noqa: BLE001  (browser and judge errors may include private mail)
                 _noted(e)
                 if stopped or type(e).__name__ == last:
@@ -469,6 +472,8 @@ def _polling(page, inbox_url: str, one_poll: Callable, *, polls: int, wait_s: fl
                 delay = min(max(0, wait_s), max(0, end - clock()))
                 if delay:
                     sleep(delay)
+    except JudgeOutage:
+        raise
     except Exception as e:  # noqa: BLE001  (browser and judge errors may include private mail)
         _noted(e)
         return None

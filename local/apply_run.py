@@ -292,7 +292,11 @@ MAILTO_REASON = "apply by email"
 MAILTO_NOTE = "the posting asks for an email application: send it yourself"
 CLOSED_REASON = "the browser window was closed"
 TAB_CLOSED_REASON = "the job's tab was closed"
-EVIDENCE_CAP = 300                 # characters of evidence a park reason carries
+# The judge stayed down through the retries (RES-02): the job goes back to
+# `queued` with its attempt not counted and the drain stops; no park.
+JUDGE_DOWN_REASON = "judge unavailable"
+REQUEUED_NOTE = "re-queued, this attempt not counted"
+EVIDENCE_CAP = 300                # characters of evidence a park reason carries
 PROBE_SETTLE_S = 10                # the probe's wait for a page to hold still
 PROBE_GOTO_MS = 30_000
 
@@ -1014,7 +1018,7 @@ class _Accounts:
             went = self._signup_link(page, digest, host)
             if went is None:
                 went = self._signup_button(page, digest, host)
-        except (_Parked, _AsForm):
+        except (_Parked, _AsForm, jev.JudgeOutage):
             raise
         except Exception as e:  # noqa: BLE001  (account details stay out of errors)
             self._failed("accounts.login", e)
@@ -1509,7 +1513,7 @@ class _Accounts:
             # form, a code gate, or the same screen with an error (which the
             # per-site step cap ends)
             return True
-        except (_Parked, _AsForm):
+        except (_Parked, _AsForm, jev.JudgeOutage):
             raise
         except Exception as e:  # noqa: BLE001  (Playwright may include filled values)
             self._failed("accounts.fill", e)
@@ -1571,6 +1575,7 @@ class Outcome:
     pages: int
     jev_usage: dict[str, Any] = field(default_factory=dict)
     browser_closed: bool = False    # the window closed under the job: the drain stops
+    judge_down: bool = False        # the judge went down under the job: the drain stops (RES-02)
 
 
 def _closed_error(e: BaseException) -> bool:
@@ -3807,21 +3812,33 @@ class Runner:
                  accounts: Any = None, inbox: Any = None, answergen: Any = None,
                  log: logging.Logger | None = None, context: Any = None,
                  run_context: dict | None = None):
+        self.log = log if log is not None else logging.getLogger("apply_run")
+        self.sleep = sleep
         self.jev = jev
         self.queue_path = Path(queue_path) if queue_path else None
         self.profile_dir = Path(profile_dir) if profile_dir else default_profile_dir()
         self.settings = {**DEFAULT_SETTINGS, **(settings or {})}
         self.clock = clock
-        self.sleep = sleep
         default = NotConfigured()
         self.accounts = accounts
         self.inbox = inbox
         self.answergen = answergen if answergen is not None else default
-        self.log = log if log is not None else logging.getLogger("apply_run")
         self._injected = context
         self._ctx = context
         self._run_context = run_context
         self.parked_pages: list = []
+
+    @property
+    def jev(self) -> jev.Guarded:
+        """The judge, always behind `jev.Guarded` (retries and the breaker,
+        RES-02); a judge set here is wrapped, and its own attributes read
+        through."""
+        return self._jev
+
+    @jev.setter
+    def jev(self, judge: Any) -> None:
+        self._jev = judge if isinstance(judge, jev.Guarded) else jev.Guarded(
+            judge, sleep=lambda s: self.sleep(s), logger=self.log)
 
     # -- browser lifecycle --------------------------------------------------------------
 
@@ -3870,8 +3887,11 @@ class Runner:
         `Outcome` per job. A closed window or a crashed browser stops the
         drain: the job it ended is `needs_human` (`CLOSED_REASON`) and
         nothing more is claimed, so the rest stay queued with their attempt
-        counts untouched."""
+        counts untouched. A judge that stays down (`jev.Guarded`'s breaker,
+        RES-02) stops it too: the job it was on goes back to `queued` with
+        its attempt not counted, unless something may have been sent."""
         limit = int(cap if cap is not None else self.settings["auto_apply_batch_cap"])
+        self.jev.down = ""      # a new drain tries the judge again
 
         def _work(ctx) -> list[Outcome]:
             outcomes: list[Outcome] = []
@@ -3893,6 +3913,11 @@ class Runner:
                 if outcome.browser_closed:
                     self.log.warning("the browser window closed during job %s; the drain "
                                      "stops and the queued jobs stay queued", outcome.job_id)
+                    break
+                if outcome.judge_down:
+                    self.log.warning("%s (%s) during job %s; the drain stops and the queued "
+                                     "jobs stay queued", JUDGE_DOWN_REASON, self.jev.down,
+                                     outcome.job_id)
                     break
             self.log.info(summary_line(outcomes))
             return outcomes
@@ -4557,6 +4582,10 @@ class _JobRun:
                         return self._closed(f"the run had reached: {p.reason}")
                     if self._tab_closed():
                         return self._tab_gone(f"the run had reached: {p.reason}")
+                    if self._judge_down() and not self._maybe_sent():
+                        # a park reached after the judge went down (a step
+                        # that noted the error and went on) is no answer
+                        return self._requeued("")
                 return self._finish(p.status, p.reason, p.tab_note)
             except Exception as e:      # noqa: BLE001  (the entry must leave in_progress)
                 # the context or the browser gone is a closed window; a closed
@@ -4575,13 +4604,17 @@ class _JobRun:
                 if closed or tab:
                     self.log.warning("job %s: the browser %s closed (%s)", self.job_id,
                                      "window" if closed else "tab", type(e).__name__)
-                else:
+                elif not isinstance(e, jev.JudgeOutage):
                     self.log.error("job %s: unexpected error %s at %s; traceback (the message "
                                    "left out):\n  %s", self.job_id, type(e).__name__, step,
                                    "\n  ".join(frames))
+                down = "" if closed or tab else self._judge_down()
+                if down and not self._maybe_sent():
+                    return self._requeued(step)
                 if self.submit_clicked:
                     self.browser_closed = closed
                     why = (CLOSED_REASON if closed else TAB_CLOSED_REASON if tab
+                           else f"{JUDGE_DOWN_REASON}: {down} at {step}" if down
                            else f"{type(e).__name__} at {step}")
                     watch = self._send_watch
                     if watch is not None and watch.sent:
@@ -4600,11 +4633,67 @@ class _JobRun:
                     return self._closed(type(e).__name__)
                 if tab:
                     return self._tab_gone(type(e).__name__)
+                if down:
+                    # the code step clicked on and a code can finish a send:
+                    # the job is never handed back to the queue
+                    return self._finish("needs_human", f"{CHECK_SENT_REASON}: the run stopped "
+                                                       f"after the code step "
+                                                       f"({JUDGE_DOWN_REASON}: {down} at {step})",
+                                        CHECK_SENT_NOTE)
                 return self._finish("failed", f"{type(e).__name__} at {step} "
                                               f"(page {len(self.pages)})")
         finally:
             self._unlisten_loads()
             self.trace.close()
+
+    def _judge_down(self) -> str:
+        """The open breaker's error class and status (`jev.Guarded.down`), or ""."""
+        down = getattr(self.r.jev, "down", "")
+        return down if isinstance(down, str) else ""
+
+    def _maybe_sent(self) -> bool:
+        """The submit click landed or the code step clicked on: something may
+        have been sent, so the job is never handed back to the queue."""
+        return bool(self.submit_clicked or self._code_sent)
+
+    def _requeued(self, step: str) -> Outcome:
+        """RES-02: the judge went down under the job before anything could
+        have been sent. The entry goes back to `queued` with the attempt its
+        claim counted taken back (`apply_queue.unclaim`), the job's tabs
+        close, and the drain stops (`Outcome.judge_down`). No record is
+        written (the job has not ended); the trace ends with the reason."""
+        at = f" at {step}" if step else ""
+        reason = f"{JUDGE_DOWN_REASON}: {self._judge_down()}{at}; {REQUEUED_NOTE}"
+        usage = _usage_delta(self.usage_before, jev.usage())
+        usage["generated"] = generated_count(self.pages)
+        self._stop_late_watch()
+        self._flush_decisions()
+        self.trace.finish("queued", reason, self.page,
+                          extra_mask=self._secret_masks(self.page) if self.page is not None else [])
+        for attempt in (1, 2):
+            try:
+                apply_queue.unclaim(self.job_id, notes=reason, path=self.r.queue_path)
+                break
+            except Exception as e:      # noqa: BLE001  (the queue write must not end the drain)
+                if attempt == 1:
+                    self.log.warning("job %s: queue unclaim failed (%s); retrying in %s s",
+                                     self.job_id, type(e).__name__, FINISH_RETRY_S)
+                    self.r.sleep(FINISH_RETRY_S)
+                else:
+                    self.log.error("job %s: queue unclaim failed twice (%s); the entry stays "
+                                   "in_progress", self.job_id, type(e).__name__)
+        self._close_job_pages()
+        self.log.warning("job %s: %s", self.job_id, reason)
+        return Outcome(job_id=self.job_id, status="queued", reason=reason, record_path="",
+                       pages=len(self.pages), jev_usage=usage, judge_down=True)
+
+    def _close_job_pages(self) -> None:
+        """Close the job's tab."""
+        if self.page is not None:
+            try:
+                self.page.close()
+            except Exception:       # noqa: BLE001  (already closed)
+                pass
 
     def _tab_closed(self) -> bool:
         try:
@@ -8037,7 +8126,7 @@ class _JobRun:
         self.log.info("job %s: %s (%s)", self.job_id, status, reason)
         return Outcome(job_id=self.job_id, status=status, reason=reason, record_path=record,
                        pages=len(self.pages), jev_usage=usage,
-                       browser_closed=self.browser_closed)
+                       browser_closed=self.browser_closed, judge_down=bool(self._judge_down()))
 
 
     def _finish_entry(self, status: str, tab_note: str, record: str, reason: str) -> None:
@@ -8071,9 +8160,12 @@ def summary_line(outcomes: list[Outcome]) -> str:
         requests += int(o.jev_usage.get("requests", 0))
         tokens += int(o.jev_usage.get("input_tokens", 0))
         usd += float(o.jev_usage.get("usd", 0.0))
+    # a job the judge's outage handed back to the queue (RES-02)
+    back = f", re-queued {counts['queued']}" if counts.get("queued") else ""
     return (f"drained {len(outcomes)}: submitted {counts['submitted']}, "
             f"ready_to_submit {counts['ready_to_submit']}, needs_human {counts['needs_human']}, "
-            f"failed {counts['failed']}; Jev {requests} requests, {tokens} tokens, ${usd:.4f}")
+            f"failed {counts['failed']}{back}; Jev {requests} requests, {tokens} tokens, "
+            f"${usd:.4f}")
 
 
 def _load_env() -> None:

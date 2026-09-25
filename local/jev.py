@@ -17,6 +17,9 @@ shape:
   would (a neighbouring page state, lower confidences, two buttons' roles
   exchanged, a field mapping dropped), the same way for the same request. The
   flow matrix and the invariant harness run on it; nothing in production does.
+- `Guarded(inner)` is how the runner holds its judge: a request the service
+  could not answer is tried again for about a minute, and then a circuit
+  breaker opens and raises `JudgeOutage` (RES-02).
 
 `get(mode)` is the factory the runner and the dashboard call. Raw question
 dicts in the HTTP shape (`{"type": ..., "instructions": ..., "criteria": ...}`)
@@ -31,7 +34,8 @@ import json
 import logging
 import os
 import re
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -108,6 +112,116 @@ def usage() -> dict:
 def reset_usage() -> None:
     _USAGE["requests"] = 0
     _USAGE["input_tokens"] = 0
+
+
+# --- the outage guard (RES-02) ------------------------------------------------------
+
+# The run's own retries of a judge request the service could not answer, on
+# top of the SDK's quick ones: about a minute over three more attempts.
+RETRY_DELAYS_S = (5.0, 15.0, 40.0)
+RETRY_AFTER_CAP_S = 60.0     # a longer Retry-After reads as the judge being down
+_BUSY_STATUS = frozenset((408, 409, 425, 429))
+_REFUSED_STATUS = frozenset((401, 402, 403))    # the key or the account
+
+
+class JudgeOutage(RuntimeError):
+    """The judge stayed unreachable through the retries, asked for a longer
+    wait than `RETRY_AFTER_CAP_S`, or refused the key. `kind` names the
+    error's class and status, never its message (a service error can quote
+    the request, which carries the page and the applicant's facts)."""
+
+    def __init__(self, kind: str):
+        super().__init__(kind)
+        self.kind = kind
+
+
+def error_kind(e: BaseException) -> str:
+    """The error's class, and its status when there is one ("TypeSafeRateLimitError 429")."""
+    status = getattr(e, "status", None)
+    return f"{type(e).__name__} {status}" if isinstance(status, int) else type(e).__name__
+
+
+def _transient(e: BaseException) -> bool:
+    status = getattr(e, "status", None)
+    if isinstance(status, int):
+        return status in _BUSY_STATUS or status >= 500
+    return isinstance(e, (ConnectionError, TimeoutError))
+
+
+def retry_after_s(e: BaseException) -> float | None:
+    """The wait the service asked for: the SDK's `retry_after_ms`, else the
+    `retry-after-ms` or `retry-after` header in seconds; None when it asked
+    for none (a date form reads as none)."""
+    ms = getattr(e, "retry_after_ms", None)
+    if isinstance(ms, (int, float)) and not isinstance(ms, bool) and ms >= 0:
+        return float(ms) / 1000
+    headers = getattr(e, "headers", None)
+    try:
+        raw = headers.get("retry-after-ms") if headers is not None else None
+        if raw:
+            return max(0.0, float(raw) / 1000)
+        raw = headers.get("retry-after") if headers is not None else None
+        if raw:
+            return max(0.0, float(raw))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return None
+
+
+class Guarded:
+    """A judge with the run's retries and a circuit breaker (RES-02).
+
+    A request the service could not answer (a status of 408, 409, 425, 429
+    or 5xx, a dropped connection, a timeout) is tried again after each of
+    `delays`, or after the service's Retry-After when that is longer. When
+    the last try fails too, when the service asks for a wait over
+    `RETRY_AFTER_CAP_S`, or when it refuses the key (401, 402, 403), the
+    breaker opens: `down` names the error's class and status and every
+    later request raises `JudgeOutage` at once, so the run can hand its job
+    back to the queue and stop the drain. Any other error (a request the
+    service rejected, a bug) passes through as it was. Attributes other than
+    `judge` are the wrapped judge's."""
+
+    def __init__(self, inner: Any, *, sleep: Callable[[float], None] = time.sleep,
+                 delays: tuple[float, ...] = RETRY_DELAYS_S,
+                 logger: logging.Logger | None = None):
+        self.inner = inner
+        self.sleep = sleep
+        self.delays = tuple(delays)
+        self.log = logger if logger is not None else log
+        self.down = ""
+
+    def judge(self, state: Any, questions: dict[str, dict]) -> dict[str, Answer]:
+        if self.down:
+            raise JudgeOutage(self.down)
+        tries = len(self.delays) + 1
+        for n in range(tries):
+            try:
+                return self.inner.judge(state, questions)
+            except JudgeOutage:
+                raise
+            except Exception as e:      # noqa: BLE001  (sorted below; the rest pass through)
+                kind = error_kind(e)
+                refused = getattr(e, "status", None) in _REFUSED_STATUS
+                if not refused and not _transient(e):
+                    raise
+                asked = retry_after_s(e)
+                if refused or n + 1 >= tries or (asked is not None
+                                                 and asked > RETRY_AFTER_CAP_S):
+                    self.down = kind
+                    self.log.warning("jev unavailable: %s after %d attempt(s); the breaker "
+                                     "is open", kind, n + 1)
+                    raise JudgeOutage(kind) from e
+                wait = max(self.delays[n], asked or 0.0)
+                self.log.warning("jev %s; attempt %d of %d in %.0f s", kind, n + 2, tries, wait)
+                self.sleep(wait)
+        raise JudgeOutage(self.down or "no attempt")    # never reached: the loop returns or raises
+
+    def __getattr__(self, name: str) -> Any:
+        inner = self.__dict__.get("inner")
+        if inner is None:
+            raise AttributeError(name)
+        return getattr(inner, name)
 
 
 # --- the live client --------------------------------------------------------------

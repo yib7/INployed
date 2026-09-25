@@ -484,6 +484,36 @@ def finish(job_id: str, status: str, *, tab_note: str = "", record: str = "",
         return dict(e)
 
 
+def unclaim(job_id: str, *, notes: Optional[str] = None,
+            path: Optional[Path] = None) -> Dict[str, Any]:
+    """Hand an `in_progress` entry back to "queued" as if the claim had not
+    happened: the attempt it counted is taken back, `claimed_by`,
+    `started_at` and the run's `missing_answers` are cleared, and
+    `queued_at` is kept, so the job keeps its place in the FIFO and the next
+    run lists its own. The runner calls it when the judge went down under
+    the job before anything could be sent (RES-02). An entry in any other
+    status (moved from the dashboard meanwhile) is left as it is."""
+    with locked(path):
+        data = load(path, quarantine=True)   # under locked(): may rename aside
+        e = _find(data, job_id)
+        if e.get("status") != "in_progress":
+            return dict(e)
+        try:
+            prior = int(e.get("attempts") or 0)
+        except (TypeError, ValueError):
+            prior = 1
+        e["status"] = "queued"
+        e["attempts"] = max(0, prior - 1)
+        e["claimed_by"] = ""
+        e["started_at"] = ""
+        e["missing_answers"] = []
+        if notes is not None:
+            e["notes"] = str(notes)
+        e["updated_at"] = _now()
+        _save(data, path)
+        return dict(e)
+
+
 def requeue(job_id: str, *, refresh_answers: bool = False,
             path: Optional[Path] = None) -> Dict[str, Any]:
     """Send an entry (any status) back to "queued": clears missing_answers /

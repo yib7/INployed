@@ -2868,3 +2868,86 @@ def test_currently_able_to_work_on_site_takes_the_on_site_answer(tmp_path, value
     pf = p.fields[0]
     assert (pf.action, pf.option, pf.fact_key) == ("select", value, "onsite_ok")
     assert p.park_reason == ""
+
+
+# --- cycle 18 SP6c round 7, rule 1: a custom answer compares literal words --------------------
+
+_H1B_HOLD = "Do you currently hold an H-1B visa?"
+_F1_HOLD = "Do you currently hold an F-1 visa?"
+_H1B_PETITIONS = "How many H-1B petitions have you had?"
+_TWO_DAYS = "Are you able to work on-site 2 days a week?"
+
+# (saved question, another field's label): a visa type, a number, a time
+# phrase or a place phrase is read as written, never as its set phrase
+_LITERAL_DIFFERENT = [
+    (_H1B_HOLD, _F1_HOLD),
+    ("Are you currently on an F-1 visa?", "Are you currently on an H-1B visa?"),
+    ("Do you have OPT?", "Do you have CPT?"),
+    ("Do you have an EAD?", "Do you have an OPT?"),
+    ("Are you currently in H-1B status?", "Are you currently in F-1 status?"),
+    ("Have you been counted against the H-1B cap?", "Have you been counted against the H-4 cap?"),
+    ("Do you currently hold an E-3 visa?", "Do you currently hold an O-1 visa?"),
+    ("Do you hold a visa (e.g. TN)?", "Do you hold a visa (e.g. H-1B)?"),
+    (_H1B_PETITIONS, "How many F-1 petitions have you had?"),
+    (_TWO_DAYS, "Are you able to work on-site 5 days a week?"),
+    ("Can you come into the office 1 day a week?", "Can you come into the office 4 days a week?"),
+    ("Have you worked for a competitor at any time?",
+     "Have you worked for a competitor now or in the future?"),
+    ("Have you worked for a competitor at any time?", "Have you worked for a competitor now or "
+                                                      "later?"),
+    ("Can you attend an interview in person?", "Can you attend an interview in the office?"),
+    ("Have you lived in the United States?", "Have you lived in America?"),
+    ("Is your visa an H-1B?", "Is your visa an L-1?"),
+]
+
+
+@pytest.mark.parametrize("saved, label", _LITERAL_DIFFERENT)
+def test_same_question_reads_visa_types_numbers_and_set_phrases_as_written(saved, label):
+    assert apply_facts.same_question(label, "", saved) is False
+    assert apply_facts.same_question(saved, "", saved) is True
+
+
+@pytest.mark.parametrize("label, saved", [
+    # case, Unicode punctuation, a contraction and a fixed trailing sentence
+    ("DO YOU CURRENTLY HOLD AN H-1B VISA?", _H1B_HOLD),
+    (f"Do you currently hold an H{_NBHYPHEN}1B visa?", _H1B_HOLD),
+    (f"Do you currently hold an H-1B{_NBSP}visa?", _H1B_HOLD),
+    ("Do you currently hold an H-1B visa? Please select one.", _H1B_HOLD),
+    (f"Don{_RSQUO}t you hold an H-1B visa?", "Do not you hold an H-1B visa?"),
+    (_TWO_DAYS, _TWO_DAYS),
+])
+def test_same_question_still_reads_case_punctuation_contractions_and_tails_as_one(label, saved):
+    assert apply_facts.same_question(label, "", saved) is True
+
+
+@pytest.mark.parametrize("key, saved, value", [("h1b", _H1B_HOLD, "No"),
+                                               ("days", _TWO_DAYS, "Yes")])
+@pytest.mark.parametrize("other", [False, True])
+def test_a_custom_yes_no_answer_settles_only_its_own_visa_type_or_days(tmp_path, key, saved,
+                                                                      value, other):
+    label = saved
+    if other:
+        label = _F1_HOLD if key == "h1b" else "Are you able to work on-site 5 days a week?"
+    bank = standard_bank(requires_sponsorship="Yes") + [
+        custom(key, saved, value, type="yes_no")]
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: (f"answer_{key}", 1.0)},
+                                                    options={0: (value, 1.0)}))
+    pf = p.fields[0]
+    if other:
+        assert (pf.action, pf.option, pf.fact_key) == ("skip", None, None)
+        assert p.park_reason == f"required field without an answer: {label}"
+    else:
+        assert (pf.action, pf.option) == ("select", value)
+        assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("label, action", [(_H1B_PETITIONS, "fill"),
+                                           ("How many F-1 petitions have you had?", "skip")])
+def test_a_custom_number_answer_settles_only_its_own_visa_type(tmp_path, label, action):
+    bank = standard_bank() + [custom("petitions", _H1B_PETITIONS, "1", type="number")]
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    digest = _field_with(label, type_="number", options=())
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("answer_petitions", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].value) == (action, "1" if action == "fill" else "")

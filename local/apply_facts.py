@@ -729,28 +729,42 @@ def _drop_neutral_tail(text: str) -> str:
     return text[:end]
 
 
-def question_tokens(label: str, help_text: str = "") -> tuple[str, ...]:
-    """Every word of a field's label and help, in order. The label and the
-    help each lose their trailing neutral sentences (`_NEUTRAL_TAILS`: "(If
-    not, please explain.)", "Please select one", "Required", "*"); dashes,
-    spaces and apostrophes read as their plain forms, "U.S." and "USA" as the
-    United States, a contraction is spelled out ("don't" is "do not"), the
-    text is lowercased and each set phrase is one token (`_PHRASES`: now or in
-    the future is NOWFUTURE, in the United States is US, without sponsorship
-    is NOSPONSOR, without restriction is UNRESTRICTED, on-site or in the
-    office is ONSITE, 3 days a week is DAYSWEEK, a visa type is VISATYPE, an
-    example made of visa types only is VISAEXAMPLE, ...)."""
+def _normalised(label: str, help_text: str, *, country: bool) -> str:
+    """The label and the help as one lowercased text, a line break between
+    them: each without its trailing neutral sentences (`_NEUTRAL_TAILS`: "(If
+    not, please explain.)", "Please select one", "Required", "*"), dashes,
+    spaces and apostrophes in their plain forms, "e.g." as "eg" and a
+    contraction spelled out ("don't" is "do not"). With `country`, "U.S." and
+    "USA" read as the United States."""
     parts = []
     for part in (label or "", help_text or ""):
         part = _drop_neutral_tail(part.translate(_CHARACTERS))
-        parts.append(_US_FORMS.sub(" united states ", part))
+        parts.append(_US_FORMS.sub(" united states ", part) if country else part)
     text = "\n".join(parts).lower()
     text = _ABBREV.sub(lambda m: m.group(0).replace(".", ""), text)
     for pattern, spelled in _CONTRACTIONS:
         text = pattern.sub(spelled, text)
+    return text
+
+
+def question_tokens(label: str, help_text: str = "") -> tuple[str, ...]:
+    """Every word of a field's label and help, in order (`_normalised`, "U.S."
+    and "USA" read as the United States), each set phrase one token
+    (`_PHRASES`: now or in the future is NOWFUTURE, in the United States is
+    US, without sponsorship is NOSPONSOR, without restriction is UNRESTRICTED,
+    on-site or in the office is ONSITE, 3 days a week is DAYSWEEK, a visa type
+    is VISATYPE, an example made of visa types only is VISAEXAMPLE, ...)."""
+    text = _normalised(label, help_text, country=True)
     for token, pattern in _PHRASES:
         text = pattern.sub(f" {token} ", text)
     return tuple(_TOKEN.findall(text))
+
+
+def literal_words(label: str, help_text: str = "") -> tuple[str, ...]:
+    """Every word of a field's label and help as written, in order
+    (`_normalised`): no set phrase, and every number kept. "H-1B" is not
+    "F-1", "2 days" is not "5 days", "in person" is not "in the office"."""
+    return tuple(_TOKEN.findall(_normalised(label, help_text, country=False)))
 
 
 def question_words(label: str, help_text: str = "") -> tuple[str, ...]:
@@ -811,9 +825,10 @@ def answers_question(fact_key: str | None, value: str, label: str,
 
 def same_question(label: str, help_text: str, saved: str) -> bool:
     """Does a field with this label and help ask `saved` word for word
-    (`question_tokens` in order, with at least one word)? Every word counts,
-    the modal and auxiliary verbs too: "Will you have ..." is not "Do you
-    have ...", and "Python over Java" is not "Java over Python". A custom yes
+    (`literal_words` in order, with at least one word)? Every word counts,
+    the modal and auxiliary verbs, a visa type and a number too: "Will you
+    have ..." is not "Do you have ...", "Python over Java" is not "Java over
+    Python", and "an H-1B visa" is not "an F-1 visa" (round 7). A custom yes
     / no or number answer settles only its own saved question."""
-    words = question_tokens(label, help_text)
-    return bool(words) and words == question_tokens(saved)
+    words = literal_words(label, help_text)
+    return bool(words) and words == literal_words(saved)

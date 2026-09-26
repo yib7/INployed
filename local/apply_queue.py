@@ -542,12 +542,13 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
     attempts (the retry count is the point), re-stamps queued_at (a requeued
     job goes to the back of the FIFO).
 
-    refresh_answers=True re-splices the folder's apply.md Standard-answers
-    section from the current store (apply_data.refresh_standard_answers) —
-    best-effort: a raised exception never fails the requeue itself, but is
-    surfaced IN-BAND on the entry's `notes` (so the dashboard panel shows it, not
-    only stderr) — otherwise a human sees a successful requeue and wrongly assumes
-    the answers regenerated.
+    refresh_answers=True re-splices the folder's apply.md Standard answers
+    section and Address block from the current store
+    (apply_data.refresh_answer_sections; the runner does the same before each
+    job). It is best-effort: a raised exception, a damaged store included,
+    never fails the requeue itself. The error is surfaced IN-BAND on the
+    entry's `notes`, so the dashboard panel shows it along with stderr, and a
+    person never reads a successful requeue as answers regenerated.
     """
     with locked(path):
         data = load(path, quarantine=True)   # under locked(): may rename aside
@@ -566,13 +567,13 @@ def requeue(job_id: str, *, refresh_answers: bool = False,
         folder = entry.get("artifacts", {}).get("folder") or ""
         if folder:
             try:
-                from resume_tailor import apply_data
-                apply_data.refresh_standard_answers(Path(folder))
+                from resume_tailor import apply_answers, apply_data
+                apply_data.refresh_answer_sections(Path(folder), apply_answers.load())
             except Exception as exc:  # never fail the requeue over the sheet
                 msg = (f"WARNING: standard-answers refresh FAILED "
                        f"({type(exc).__name__}: {exc}); apply.md answers may be "
                        f"stale; regenerate from the dashboard before draining.")
-                print(f"apply_queue: refresh_standard_answers failed for "
+                print(f"apply_queue: refresh_answer_sections failed for "
                       f"{folder}: {exc}", file=sys.stderr)
                 # Surface it on the entry so it's visible in the panel, not just stderr.
                 try:
@@ -790,7 +791,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = add("requeue", help="send an entry back to queued")
     p.add_argument("job_id")
     p.add_argument("--refresh-answers", action="store_true",
-                   help="re-splice the folder's apply.md standard answers")
+                   help="re-splice the folder's apply.md standard answers and address "
+                        "from the answer store")
 
     p = add("remove", help="delete an entry")
     p.add_argument("job_id")

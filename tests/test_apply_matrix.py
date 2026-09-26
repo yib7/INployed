@@ -206,6 +206,11 @@ def test_a_clean_run_breaks_nothing():
                     h.Action("fill", "http://127.0.0.1/forms/a.html", tag="input"),
                     h.Action("click", "https://www.linkedin.com/jobs/view/1/", text="Apply"),
                     h.Action("gate", "http://127.0.0.1/forms/a.html", in_gate=True)]
+    # confirmed answers typed and picked (cycle 18, FL-1)
+    rec._add("fill", "Locator.fill", {"url": "http://127.0.0.1/forms/a.html", "tag": "input"},
+             value="Jane")
+    rec._add("pick", "Locator.select_option", {"url": "http://127.0.0.1/forms/a.html",
+                                                "tag": "select"}, value=["Yes"])
     assert h.invariant_breaks(_Out(), rec, sends) == []
     rec, sends = _clean(park=False, confirmed=True)
     sends.events.append(h.Send("dom", "http://127.0.0.1/forms/a.html", in_gate=True))
@@ -238,7 +243,11 @@ def test_a_clean_run_breaks_nothing():
     ("unconfirmed_no_send", "SUBMITTED-WITHOUT-SEND"),
     # final review C-M2: a park the person may re-queue after an accepted send
     ("needs_human_after_send", "REQUEUABLE-AFTER-SEND"),
-    ("failed_after_send", "REQUEUABLE-AFTER-SEND")])
+    ("failed_after_send", "REQUEUABLE-AFTER-SEND"),
+    # cycle 18 (FL-1): an answer the user has not confirmed is never filled
+    ("unconfirmed_fill", "UNCONFIRMED-ANSWER"),
+    ("unconfirmed_pick", "UNCONFIRMED-ANSWER"),
+    ("unconfirmed_option_click", "UNCONFIRMED-ANSWER")])
 def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code):
     park = plant in ("park_send",)
     rec, sends = _clean(park=park)
@@ -309,6 +318,17 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
     elif plant == "failed_after_send":
         sends.events.append(h.Send("post", "/submit/post_redirect", True))
         out = _Out("failed", "TimeoutError: the page after the submit")
+    elif plant == "unconfirmed_fill":
+        rec._add("fill", "Locator.fill", {"url": "http://127.0.0.1/a", "tag": "textarea"},
+                 value=f"Hello. {h.unconfirmed_values()[0]}")
+    elif plant == "unconfirmed_pick":
+        rec._add("pick", "Locator.select_option", {"url": "http://127.0.0.1/a",
+                                                    "tag": "select"},
+                 value={"label": h.unconfirmed_values()[0]})
+    elif plant == "unconfirmed_option_click":
+        rec._add("click", "Locator.click", {"url": "http://127.0.0.1/a", "role": "option",
+                                            "toggle": True,
+                                            "text": h.unconfirmed_values()[0]})
     breaks = h.invariant_breaks(out, rec, sends)
     assert code in _codes(breaks), breaks
     with pytest.raises(AssertionError, match=code):
@@ -805,6 +825,13 @@ def _clock_reads(monkeypatch, day):
     monkeypatch.setattr(apply_facts, "date", _Day)
 
 
+# Cycle 18 (FL-5) rewrote three fact descriptions and added the onsite_ok
+# fact; the descriptions are part of each request's cache key, so the committed
+# cache misses until SP6 re-records it. Strict: the re-recorded cache makes
+# this test pass, and the mark has to go then.
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason="the committed replay cache predates cycle 18's fact descriptions; "
+                          "SP6 re-records it")
 def test_the_real_columns_replay_on_a_later_day_still_hits_the_committed_cache(
         _browser, flow_server, tmp_path, monkeypatch):
     # post_form's placeholder check lists the facts, today's date among them:
@@ -817,6 +844,33 @@ def test_the_real_columns_replay_on_a_later_day_still_hits_the_committed_cache(
     r = h.run_flow(h.flow("post_form"), h.real_judge("replay").judge, h.REAL, browser=_browser,
                    server=flow_server, workdir=tmp_path)
     assert r.replay_misses == 0 and r.ok, r
+
+
+def test_the_matrix_bank_holds_an_unconfirmed_answer_the_catalog_leaves_empty(tmp_path):
+    # cycle 18 (FL-1): the synthetic store holds one answer set and not
+    # confirmed; the runner's catalog has no value for it, and the sheet does
+    # not show it
+    from resume_tailor import apply_answers
+    (value,) = h.unconfirmed_values()
+    folder = h.write_job_folder(tmp_path / "job")
+    with h.hermetic(tmp_path):
+        answers = apply_answers.load()
+        assert answers == h.bank()
+        catalog = apply_run.apply_facts.build(folder, answers=answers)
+    assert apply_answers.STORE_PATH != tmp_path / "apply_answers.json"   # restored
+    assert catalog.value("answer_motivation") == ""
+    assert not [f.key for f in catalog.facts.values() if value in str(f.value)]
+    assert value not in (folder / "apply.md").read_text(encoding="utf-8")
+
+
+def test_the_harness_sheet_is_what_the_store_renders(tmp_path):
+    # FL-2: the runner refreshes the sheet's answers before each job; the
+    # harness sheet already shows them, so the refresh leaves it as it is
+    from resume_tailor import apply_data
+    folder = h.write_job_folder(tmp_path / "job")
+    before = (folder / "apply.md").read_bytes()
+    assert apply_data.refresh_answer_sections(folder, h.bank()) is True
+    assert (folder / "apply.md").read_bytes() == before
 
 
 def test_only_the_real_column_reads_the_recording_day(tmp_path, monkeypatch):

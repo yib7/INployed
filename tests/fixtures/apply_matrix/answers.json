@@ -2,106 +2,154 @@
   {
     "id": "work_authorized",
     "question": "Are you legally authorized to work in the US?",
-    "answer": "true",
-    "kind": "fixed",
+    "type": "yes_no",
+    "answer": "Yes",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "requires_sponsorship",
     "question": "Will you now or in the future require visa sponsorship?",
-    "answer": "false",
-    "kind": "fixed",
+    "type": "yes_no",
+    "answer": "No",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "years_experience",
     "question": "How many years of relevant experience do you have?",
+    "type": "number",
     "answer": "2",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "willing_to_relocate",
     "question": "Are you willing to relocate?",
-    "answer": "true",
-    "kind": "open-ended",
+    "type": "yes_no",
+    "answer": "Yes",
+    "note": "",
+    "confirmed": true,
+    "status": "active"
+  },
+  {
+    "id": "onsite_ok",
+    "question": "Are you willing to work on-site (in the office)?",
+    "type": "yes_no",
+    "answer": "Yes",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "authorization_statement",
     "question": "Work-authorization statement (free text).",
+    "type": "text",
     "answer": "Authorized to work in the United States; no visa sponsorship required.",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "gender",
     "question": "Gender (EEO self-identification).",
+    "type": "choice",
     "answer": "Decline to self-identify",
-    "kind": "fixed",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "race_ethnicity",
     "question": "Race / ethnicity (EEO self-identification).",
+    "type": "choice",
     "answer": "Decline to self-identify",
-    "kind": "fixed",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "veteran_status",
     "question": "Veteran status (EEO self-identification).",
-    "answer": "I am not a veteran",
-    "kind": "fixed",
+    "type": "choice",
+    "answer": "I am not a protected veteran",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "disability_status",
     "question": "Disability status (EEO self-identification).",
-    "answer": "No, I do not have a disability",
-    "kind": "fixed",
+    "type": "choice",
+    "answer": "No, I do not have a disability and have not had one in the past",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "how_did_you_hear",
     "question": "How did you hear about us?",
+    "type": "text",
     "answer": "LinkedIn",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "address_street",
     "question": "Street address (line 1).",
+    "type": "text",
     "answer": "123 Main Street",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "address_city",
     "question": "City.",
+    "type": "text",
     "answer": "Anytown",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "address_state",
     "question": "State / province.",
+    "type": "choice",
     "answer": "California",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "address_zip",
     "question": "ZIP / postal code.",
+    "type": "text",
     "answer": "12345",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
     "status": "active"
   },
   {
     "id": "address_country",
     "question": "Country.",
+    "type": "choice",
     "answer": "United States",
-    "kind": "open-ended",
+    "note": "",
+    "confirmed": true,
+    "status": "active"
+  },
+  {
+    "id": "motivation",
+    "question": "Why do you want to work here? Tell us about your motivation for this role.",
+    "type": "text",
+    "answer": "Unconfirmed synthetic motivation 7Q4Z: never typed by the run",
+    "note": "",
+    "confirmed": false,
     "status": "active"
   }
 ]

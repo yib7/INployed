@@ -12,7 +12,9 @@ write `apply_record.md`, finish the queue entry.
 
 Per job (`Runner.run_job`): an Easy Apply entry (`is_easy_apply`) ends at
 once, `needs_human` with `EASY_APPLY_REASON`, and no page is opened. Else the
-fact catalog from the job folder's apply.md (`apply_facts.build`), the first
+sheet's Standard answers and Address refreshed from the answer store the
+drain read once (`Runner.load_answers`), the fact catalog from the job
+folder's apply.md and that store (`apply_facts.build`), the first
 load (to `domcontentloaded`, settled), then one page at a time up to
 `apply_judge.MAX_PAGES` and the job's wall clock (`JOB_WALL_CLOCK_S`): a
 visible cookie or consent banner dismissed by its reject control (never its
@@ -4183,7 +4185,9 @@ class Runner:
     `apply_queue.build_context()`'s dict (the inbox URL), computed on demand;
     `drain_report` off keeps a drain from printing and writing its table
     (`_report`), for the matrix harness, which runs thousands of one-job
-    drains and reports them itself.
+    drains and reports them itself. The answer store is read once per drain
+    (`load_answers`) into `answers`; `answers_header` names the built-in
+    answers that are not confirmed.
     """
 
     def __init__(self, *, jev: Any, queue_path: Path | None = None,
@@ -4209,6 +4213,8 @@ class Runner:
         self._ctx = context
         self._run_context = run_context
         self.parked_pages: list = []
+        self.answers: list[dict] | None = None
+        self.answers_header = ""
 
     @property
     def jev(self) -> jev.Guarded:
@@ -4262,6 +4268,31 @@ class Runner:
             self._run_context = apply_queue.build_context(self.queue_path)
         return self._run_context
 
+    def load_answers(self) -> list[dict]:
+        """The answer store, read once per drain (FL-4): every job's sheet
+        refresh and fact catalog use this copy. A damaged store raises
+        `apply_answers.AnswerStoreError` before any job is claimed. The
+        built-in answers that are not set or not confirmed are named once in
+        `answers_header` (their questions, never a value): printed when the
+        drain reports (else logged) and written at the top of the drain
+        report."""
+        from resume_tailor import apply_answers
+        answers = apply_answers.load()
+        missing = [str(e.get("question") or e.get("id"))
+                   for e in apply_answers.with_missing_builtins(list(answers))
+                   if isinstance(e, dict) and e.get("id") in apply_answers.BUILTINS
+                   and not apply_answers.fact_value(e)]
+        self.answers = answers
+        self.answers_header = (
+            "Answers not confirmed: " + ", ".join(f'"{q}"' for q in missing)
+            + ". Questions that need them will stop.") if missing else ""
+        if self.answers_header:
+            if self.drain_report:
+                _say(self.answers_header)
+            else:
+                self.log.info(self.answers_header)
+        return answers
+
     # -- the drain ----------------------------------------------------------------------
 
     def drain(self, cap: int | None = None) -> list[Outcome]:
@@ -4272,8 +4303,13 @@ class Runner:
         counts untouched. A judge that stays down (`jev.Guarded`'s breaker,
         RES-02) stops it too: the job it was on goes back to `queued`,
         behind the others, with its attempt not counted, unless something
-        may have been sent."""
+        may have been sent. The answer store is read first (`load_answers`):
+        a damaged store raises `apply_answers.AnswerStoreError` and nothing
+        is claimed."""
         limit = int(cap if cap is not None else self.settings["auto_apply_batch_cap"])
+        # FL-4: the store is read before anything is claimed; a damaged one
+        # raises here and the queue stays as it was
+        self.load_answers()
         # a new drain tries the judge again and counts its answers from 0 (R2-I1)
         self.jev.down, self.jev.refused, self.jev.answers = "", False, 0
         self.jev.request_fault = False
@@ -4318,7 +4354,7 @@ class Runner:
             return
         try:
             _say(drain_table(outcomes))
-            path = write_drain_report(outcomes, self.queue_path)
+            path = write_drain_report(outcomes, self.queue_path, header=self.answers_header)
         except Exception as e:      # noqa: BLE001  (a report is never the drain's end)
             self.log.warning("the drain report was not written (%s)", type(e).__name__)
             return
@@ -5011,18 +5047,36 @@ class _JobRun:
     # -- the run ----------------------------------------------------------------------------
 
     def _prepare(self) -> str:
-        """The catalog, the PDFs from the entry's artifacts, the allowlist;
-        returns the apply URL. Raises `_Parked("failed", ...)` when the sheet
-        or the URL is missing."""
+        """The sheet's answers refreshed from the store, the catalog, the
+        PDFs from the entry's artifacts, the allowlist; returns the apply
+        URL. Raises `_Parked("failed", ...)` when the sheet or the URL is
+        missing."""
         if self.folder is None or not (self.folder / "apply.md").exists():
             raise _Parked("failed", "no apply.md")
-        self.catalog = apply_facts.build(self.folder)
+        answers = self.r.answers if self.r.answers is not None else self.r.load_answers()
+        self._refresh_sheet(answers)
+        self.catalog = apply_facts.build(self.folder, answers=answers)
         self._apply_artifacts()
         self._build_allowlist()
         url = str(self.entry.get("apply_url") or "")
         if not url:
             raise _Parked("failed", "no apply_url")
         return url
+
+    def _refresh_sheet(self, answers: list[dict]) -> None:
+        """The sheet's Standard answers and Address re-rendered from the
+        store before the facts are read (FL-2), so the sheet a person opens
+        shows what this run may fill. A refresh that fails, or a sheet
+        without those sections, is logged and the job goes on: the facts
+        come from the store either way."""
+        try:
+            from resume_tailor import apply_data
+            if not apply_data.refresh_answer_sections(self.folder, answers):
+                self.log.warning("job %s: apply.md has no Standard answers section to "
+                                 "refresh", self.job_id)
+        except Exception as e:      # noqa: BLE001  (the sheet is a view; the job goes on)
+            self.log.warning("job %s: the apply.md answers were not refreshed (%s)",
+                             self.job_id, type(e).__name__)
 
     def _apply_artifacts(self) -> None:
         """The entry's `resume_pdf` / `cover_letter_pdf` paths win over the
@@ -9230,16 +9284,18 @@ def drain_report_dir(outcomes: list[Outcome], queue_path: Path | None = None) ->
 
 
 def write_drain_report(outcomes: list[Outcome], queue_path: Path | None = None, *,
-                       now: datetime | None = None) -> Path:
-    """`apply_drain-<stamp>.md` in `drain_report_dir`: the drain's summary
-    line and its table, the traces linked relative to the file."""
+                       now: datetime | None = None, header: str = "") -> Path:
+    """`apply_drain-<stamp>.md` in `drain_report_dir`: `header` (the
+    answers not confirmed, when there are any), the drain's summary line and
+    its table, the traces linked relative to the file."""
     where = drain_report_dir(outcomes, queue_path)
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
     path, n = where / f"{DRAIN_REPORT_PREFIX}{stamp}.md", 2
     while path.exists():
         path, n = where / f"{DRAIN_REPORT_PREFIX}{stamp}-{n}.md", n + 1
     where.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# Apply drain {stamp}\n\n{summary_line(outcomes)}\n\n"
+    head = f"{header}\n\n" if header else ""
+    path.write_text(f"# Apply drain {stamp}\n\n{head}{summary_line(outcomes)}\n\n"
                     f"{drain_table(outcomes, base=where)}\n", encoding="utf-8")
     return path
 
@@ -9535,7 +9591,8 @@ def probe(url: str, *, follow_apply: bool = False, judge: Any = None, headed: bo
 
 def main(argv: list[str] | None = None) -> int:
     """Exit codes: 0 drained (or nothing queued), 1 unexpected error, 2 not
-    configured (no judge, or the job id is not queued)."""
+    configured (no judge, the job id is not queued, or the Apply Answers file
+    is damaged: nothing is claimed then)."""
     ap = argparse.ArgumentParser(prog="apply_run",
                                  description="Jev-judged auto-apply: drain the queue.")
     sub = ap.add_subparsers(dest="verb", required=True)
@@ -9613,14 +9670,21 @@ def main(argv: list[str] | None = None) -> int:
                      else NotConfigured())
         runner = Runner(jev=judge, queue_path=queue, profile_dir=profile, settings=cfg,
                         answergen=answergen)
-        if args.verb == "one":
-            entry = apply_queue.claim("apply_run", path=queue, job_id=args.job_id)
-            if entry is None:
-                print(f"apply_run: job {args.job_id} is not queued", file=sys.stderr)
-                return 2
-            outcomes = [runner.run_job(entry)]
-        else:
-            outcomes = runner.drain(cfg["auto_apply_batch_cap"])
+        from resume_tailor import apply_answers
+        try:
+            if args.verb == "one":
+                runner.load_answers()       # FL-4: before the claim
+                entry = apply_queue.claim("apply_run", path=queue, job_id=args.job_id)
+                if entry is None:
+                    print(f"apply_run: job {args.job_id} is not queued", file=sys.stderr)
+                    return 2
+                outcomes = [runner.run_job(entry)]
+            else:
+                outcomes = runner.drain(cfg["auto_apply_batch_cap"])
+        except apply_answers.AnswerStoreError as e:
+            print(f"The Apply Answers file is damaged ({e.path}): {e.reason}. Open the "
+                  f"dashboard's Apply Answers tab to restore the backup.", file=sys.stderr)
+            return 2
         print(summary_line(outcomes))
         return 0
     except Exception as e:      # noqa: BLE001  (one line, documented exit 1)

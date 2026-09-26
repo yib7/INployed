@@ -22,6 +22,7 @@ import apply_facts  # noqa: E402
 import apply_judge  # noqa: E402
 import jev  # noqa: E402
 from apply_form import Button, Field, FormDigest  # noqa: E402
+from answer_bank import custom, standard_bank, unconfirmed  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
 
 _MASTER = {
@@ -40,23 +41,9 @@ _JOB = {"job_posting_id": "42", "company_name": "Acme", "job_title": "Software E
 
 
 def _bank():
-    bank = apply_answers.seed_defaults()
-    values = {"work_authorized": "true", "requires_sponsorship": "false",
-              "years_experience": "2", "willing_to_relocate": "true",
-              "gender": "Decline to self-identify",
-              "race_ethnicity": "Decline to self-identify",
-              "veteran_status": "I am not a veteran",
-              "disability_status": "No, I do not have a disability",
-              "how_did_you_hear": "LinkedIn",
-              "address_street": "123 Main Street", "address_city": "Anytown",
-              "address_state": "California", "address_zip": "12345",
-              "address_country": "United States"}
-    for e in bank:
-        if e["id"] in values:
-            e["answer"] = values[e["id"]]
-    bank.append({"id": "salary_expectation", "question": "What is your desired salary?",
-                 "answer": "Open to discussion", "kind": "open-ended", "status": "active"})
-    return bank
+    """The shared confirmed answers (`answer_bank`), plus one custom entry."""
+    return standard_bank() + [custom("salary_expectation", "What is your desired salary?",
+                                     "Open to discussion")]
 
 
 @pytest.fixture(autouse=True)
@@ -851,10 +838,7 @@ def test_plan_pools_neither_other_words_nor_a_shared_yes(catalog):
 
 
 def _bank_with(*entries):
-    bank = _bank()
-    bank.extend({"id": eid, "question": q, "answer": a, "kind": "fixed", "status": "active"}
-                for eid, q, a in entries)
-    return bank
+    return _bank() + [custom(eid, q, a) for eid, q, a in entries]
 
 
 @pytest.mark.parametrize("label,split,value", [
@@ -884,6 +868,37 @@ def test_plan_pools_no_answer_bank_yes_and_no_shared_number(tmp_path, label, spl
     p = apply_judge.plan(digest, cat, answers)
     assert p.fields[0].action == "skip"
     assert p.park_reason == f"required field without an answer: {label}"
+
+
+_SPONSORSHIP = "Will you now or in the future require visa sponsorship?"
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_a_required_question_whose_answer_is_unconfirmed_parks(tmp_path, confirmed):
+    # cycle 18 (FL-1): the sheet says No, but the store's answers on
+    # sponsorship (the yes/no and the authorization statement that names it)
+    # are not confirmed, so the catalog has no fact for the question and the
+    # required field parks; confirmed, the same page fills No
+    (tmp_path / "apply.md").write_text(apply_data.build_markdown(_MASTER, _JOB, _bank()),
+                                       encoding="utf-8")
+    assert f"- **{_SPONSORSHIP}** No" in (tmp_path / "apply.md").read_text(encoding="utf-8")
+    bank = _bank() if confirmed else unconfirmed(_bank(), "requires_sponsorship",
+                                                 "authorization_statement")
+    cat = apply_facts.build(tmp_path, answers=bank, today=date(2026, 9, 21))
+    digest = FormDigest(url_host="x", title="t", text="", fields=[
+        _f(0, _SPONSORSHIP, required=True)])
+    state, questions = apply_judge.page_questions(digest, cat, _JOB)
+    p = apply_judge.plan(digest, cat, jev.FakeJev().judge(state, questions))
+    if confirmed:
+        assert (p.fields[0].action, p.fields[0].fact_key, p.fields[0].value) == (
+            "fill", "requires_sponsorship", "No")
+        assert p.park_reason == ""
+    else:
+        criteria = questions["field_0_source"]["criteria"]
+        assert "requires_sponsorship" not in criteria
+        assert "answer_authorization_statement" not in criteria
+        assert p.fields[0].action == "skip"
+        assert p.park_reason == f"required field without an answer: {_SPONSORSHIP}"
 
 
 def test_a_portfolio_box_takes_the_github_fact_when_no_website_is_stored(tmp_path):

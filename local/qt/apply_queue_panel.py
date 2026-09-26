@@ -556,7 +556,7 @@ class ApplyQueuePanel(QtWidgets.QWidget):
         self.requeue_btn = button(
             "Re-queue", self._requeue,
             "Send the selected job back to 'queued' (clears its missing answers "
-            "and refreshes its apply.md standard answers)")
+            "and refreshes its apply.md standard answers and address)")
         self.mark_applied_btn = button(
             "Mark applied", self._mark_applied,
             "Move to the Tracker as applied and remove from the queue")

@@ -1,10 +1,12 @@
 """The fact catalog: what the candidate can truthfully put on a form.
 
 `build(folder)` reads the job folder's `apply.md` (through
-`apply_playwright.parse_apply_md` for the Candidate / Address / Standard
-answers / signature blocks, plus a small section reader here for Education,
-the first Work experience entry and the Cover letter), merges the answer bank,
-and finds the resume and cover letter PDFs in the folder. Every `Fact` carries
+`apply_playwright.parse_apply_md` for the Candidate and signature blocks, plus
+a small section reader here for Education, the first Work experience entry and
+the Cover letter), takes every answer and the mailing address from the answer
+store through `apply_answers.fact_value` (the sheet's Standard answers and
+Address blocks only show what the store holds), and finds
+the resume and cover letter PDFs in the folder. Every `Fact` carries
 a `key`, its `value`, a `description` written the way a form label reads (the
 judge matches labels against descriptions) and a `kind`.
 
@@ -57,8 +59,11 @@ DESCRIPTIONS: dict[str, str] = {
                        "United States",
     "requires_sponsorship": "Whether the candidate will now or in the future require "
                             "visa sponsorship",
-    "years_experience": "How many years of relevant work experience the candidate has",
-    "willing_to_relocate": "Whether the candidate is willing to relocate",
+    "years_experience": "Total years of professional work experience across all jobs "
+                        "(not years with one skill, tool or language)",
+    "willing_to_relocate": "Whether the candidate is willing to relocate to the job's location",
+    "onsite_ok": "Whether the candidate is willing to work on-site in the employer's office, "
+                 "in person",
     "gender": "The candidate's gender, for EEO self-identification",
     "race_ethnicity": "The candidate's race or ethnicity, for EEO self-identification",
     "veteran_status": "The candidate's veteran status, for EEO self-identification",
@@ -77,8 +82,13 @@ DESCRIPTIONS: dict[str, str] = {
     "today": "Today's date in ISO form, for a signature date or application date",
 }
 
+# The store's yes/no answers (`apply_answers.BOOL_IDS`; a test pins the two
+# lists equal). Their facts are `bool`.
+_BOOL_BANK_IDS = frozenset(("work_authorized", "requires_sponsorship", "willing_to_relocate",
+                            "onsite_ok"))
+
 _KIND_BY_KEY: dict[str, str] = {
-    "work_authorized": "bool", "requires_sponsorship": "bool", "willing_to_relocate": "bool",
+    **dict.fromkeys(_BOOL_BANK_IDS, "bool"),
     "gender": "choice_text", "race_ethnicity": "choice_text", "veteran_status": "choice_text",
     "disability_status": "choice_text", "how_did_you_hear": "choice_text",
     "address_state": "choice_text", "address_country": "choice_text",
@@ -89,18 +99,15 @@ _KIND_BY_KEY: dict[str, str] = {
 # bank becomes `answer_<id>`.
 _NAMED_BANK_IDS = frozenset((
     "work_authorized", "requires_sponsorship", "years_experience", "willing_to_relocate",
-    "gender", "race_ethnicity", "veteran_status", "disability_status", "how_did_you_hear",
+    "onsite_ok", "gender", "race_ethnicity", "veteran_status", "disability_status",
+    "how_did_you_hear",
     "address_street", "address_city", "address_state", "address_zip", "address_country",
 ))
-_BOOL_BANK_IDS = frozenset(("work_authorized", "requires_sponsorship", "willing_to_relocate"))
 
 # parse_apply_md lowercases the sheet's labels; these are the ones it emits.
 _CANDIDATE_LABELS = {"full_name": "name", "email": "email", "phone": "phone",
                      "location": "location", "linkedin_url": "linkedin",
                      "github_url": "github / portfolio", "website_url": "website"}
-_ADDRESS_LABELS = {"address_street": "street", "address_city": "city",
-                   "address_state": "state / province", "address_zip": "zip / postal",
-                   "address_country": "country"}
 _BASICS_KEYS = {"full_name": "name", "email": "email", "phone": "phone",
                 "location": "location", "linkedin_url": "linkedin",
                 "github_url": "github", "website_url": "website"}
@@ -176,18 +183,19 @@ def build(folder: Path, *, answers: list[dict] | None = None,
           today: date | None = None) -> FactCatalog:
     """The catalog for `folder`: its apply.md, the answer bank (`answers`, else
     the store via `resume_tailor.apply_answers.load()`), the master's basics as
-    a fallback for the identity facts, and the folder's PDFs."""
+    a fallback for the identity facts, and the folder's PDFs. Every answer and
+    the address come from the bank through `apply_answers.fact_value` only, so
+    an answer the user has not confirmed gives no fact."""
+    from resume_tailor import apply_answers  # lazy: config.py loads .env at import
     folder = Path(folder)
     apply_md = folder / "apply.md"
     text = apply_md.read_text(encoding="utf-8") if apply_md.exists() else ""
     parsed = parse_apply_md(text)
     basics = {k: str(v or "").strip() for k, v in (master_basics or {}).items()}
     if answers is None:
-        from resume_tailor import apply_answers  # lazy: config.py loads .env at import
         answers = apply_answers.load()
     bank = [e for e in (answers or [])
             if isinstance(e, dict) and str(e.get("status", "active")) == "active"]
-    sheet_answers = {q: a for q, a in parsed.get("standard_answers", [])}
     values: dict[str, str] = {}
 
     # Identity: the sheet's Candidate block, the master basics as a fallback.
@@ -197,25 +205,16 @@ def build(folder: Path, *, answers: list[dict] | None = None,
     first, last = split_name(values["full_name"])
     values["first_name"], values["last_name"] = first, last
 
-    # Address: the sheet's block, the bank's address_* entries as a fallback.
-    address = parsed.get("address", {})
-    bank_by_id = {str(e.get("id", "")): e for e in bank}
-    for key, label in _ADDRESS_LABELS.items():
-        values[key] = address.get(label, "") or _bank_value(bank_by_id.get(key))
-
-    # Standard answers: the sheet's per-job snapshot wins, the bank fills gaps.
+    # The answers and the address: the store's, through `fact_value` ("" when
+    # an answer is not set, not confirmed or does not fit its type). A sheet
+    # written before a change in the store never outranks it (cycle 18).
     answer_facts: list[Fact] = []
     for entry in bank:
         eid = str(entry.get("id", "")).strip()
-        if not eid or eid in _ADDRESS_LABELS:
+        if not eid:
             continue
         question = str(entry.get("question", "") or "").strip()
-        if eid in _BOOL_BANK_IDS:
-            # the bank's own words win: a sheet written before `yes_no` read a
-            # worded yes ("Yes, I am a US citizen") as "No" (2026-09-26)
-            value = _bank_value(entry) or sheet_answers.get(question, "")
-        else:
-            value = sheet_answers.get(question, "") or _bank_value(entry)
+        value = apply_answers.fact_value(entry)
         if eid in _NAMED_BANK_IDS:
             values[eid] = value
         else:
@@ -236,16 +235,6 @@ def build(folder: Path, *, answers: list[dict] | None = None,
                   kind=_KIND_BY_KEY.get(k, "text"))
              for k, desc in DESCRIPTIONS.items()]
     return FactCatalog(facts + answer_facts, sheet_text=text)
-
-
-def _bank_value(entry: dict | None) -> str:
-    if not entry:
-        return ""
-    raw = str(entry.get("answer", "") or "").strip()
-    if str(entry.get("id", "")) in _BOOL_BANK_IDS and raw:
-        from resume_tailor import apply_answers  # lazy: config.py loads .env at import
-        return apply_answers.yes_no(raw) or raw
-    return raw
 
 
 def _h2_sections(text: str) -> dict[str, str]:

@@ -6,7 +6,6 @@ one reader; a damaged file raises `AnswerStoreError` and never falls back to
 defaults; a version 1 file migrates in memory with a review list; `validate`
 blocks a value the run could read more than one way and `warnings` never
 blocks; `find_collision` stops a custom question a built-in already covers.
-The legacy flat dict (`as_standard_answers`) still feeds the sheet's Address.
 """
 import json
 import sys
@@ -163,8 +162,12 @@ def test_validate_passes_seed():
     assert aa.validate(aa.seed_defaults()) == []
 
 
-def test_as_standard_answers_reproduces_defaults():
-    assert aa.as_standard_answers(aa.seed_defaults()) == apply_config.DEFAULTS
+def test_seed_reproduces_defaults():
+    # the seed carries every DEFAULTS value, a bool shown as Yes or No
+    by = _by_id(aa.seed_defaults())
+    for key, value in apply_config.DEFAULTS.items():
+        shown = ("Yes" if value else "No") if isinstance(value, bool) else str(value)
+        assert by[key]["answer"] == shown, key
 
 
 def test_defaults_include_structured_address():
@@ -274,7 +277,6 @@ def test_migrate_applies_overrides(tmp_path, monkeypatch):
     assert by["how_did_you_hear"]["answer"] == "Referral"
     assert by["willing_to_relocate"]["answer"] == "No"
     assert all(e["confirmed"] is False for e in merged)
-    assert aa.as_standard_answers(merged)["how_did_you_hear"] == "Referral"
     monkeypatch.setattr(aa, "STORE_PATH", tmp_path / "absent.json")
     assert _by_id(aa.load())["willing_to_relocate"]["answer"] == "No"
 
@@ -710,31 +712,6 @@ def test_a_migrated_test_bank_validates():
     by = _by_id(out)
     assert by["address_state"]["answer"] == "California"
     assert by["address_country"]["answer"] == "United States"
-
-
-def test_as_standard_answers_reads_v2_entries_for_the_address_block():
-    store = aa.seed_defaults()
-    by = _by_id(store)
-    by["work_authorized"]["answer"] = "No"
-    by["onsite_ok"]["answer"] = ""
-    by["address_city"]["answer"] = "Boston"
-    flat = aa.as_standard_answers(store)
-    assert flat["work_authorized"] is False and flat["requires_sponsorship"] is False
-    assert flat["willing_to_relocate"] is True
-    assert flat["onsite_ok"] is False                   # unset reads as an empty answer did
-    assert flat["address_city"] == "Boston"
-    assert flat["address_country"] == "United States"
-
-
-def test_as_standard_answers_reads_worded_yes_no_answers():
-    rows = [{"id": "work_authorized", "answer": "Yes, I am a US citizen", "status": "active"},
-            {"id": "requires_sponsorship", "answer": "No, I am a US citizen",
-             "status": "active"},
-            {"id": "willing_to_relocate", "answer": "Open to NYC", "status": "active"}]
-    flat = aa.as_standard_answers(rows)
-    assert flat["work_authorized"] is True
-    assert flat["requires_sponsorship"] is False
-    assert flat["willing_to_relocate"] == "Open to NYC"     # no yes or no: the words stand
 
 
 # --- ST-7: collisions ---------------------------------------------------------------------

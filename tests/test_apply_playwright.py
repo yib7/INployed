@@ -96,6 +96,32 @@ def test_parse_standard_answers_keep_question_text():
     assert sa["Gender (EEO self-identification)."] == "Male"
 
 
+# The sheet's escapes (cycle 18, FL-3): a `*` in a question or an answer is
+# written `\*`, and a note sits under its answer as a sub-bullet.
+_ESCAPED = r"""## Standard answers
+- **Rate your SQL skill from 1 to 5 \*** 4 \* strong
+- **Pronouns:** she/her
+- **Are you legally authorized to work in the US?** Yes
+  - Note: I am a US citizen
+- **Are you willing to relocate?** No
+  - Note: not with **bold** words
+
+## Candidate
+- **Email:** jane.doe@example.com
+"""
+
+
+def test_parse_standard_answers_unescape_stars_and_keep_a_trailing_colon():
+    p = apply_playwright.parse_apply_md(_ESCAPED)
+    assert p["standard_answers"] == [
+        ("Rate your SQL skill from 1 to 5 *", "4 * strong"),
+        ("Pronouns:", "she/her"),
+        ("Are you legally authorized to work in the US?", "Yes"),
+        ("Are you willing to relocate?", "No")]
+    # the other sections' labels still lose their colon
+    assert p["candidate"] == {"email": "jane.doe@example.com"}
+
+
 def test_parse_signature_name():
     p = apply_playwright.parse_apply_md(_APPLY_MD)
     assert p["signature_name"] == "Jane Doe"

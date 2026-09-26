@@ -559,16 +559,85 @@ def test_requeue_starts_the_outage_count_over(tmp_path):
     assert got["status"] == "queued" and got.get("outages", 0) == 0
 
 
-def test_requeue_refresh_hook_called_with_folder(tmp_path, monkeypatch):
+def _store(tmp_path, monkeypatch, **answers):
+    """A confirmed answer store in tmp_path (`answer_bank`)."""
+    from answer_bank import standard_bank
+    from resume_tailor import apply_answers
+    monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    apply_answers.save(standard_bank(**answers))
+    return apply_answers
+
+
+def test_requeue_refresh_hook_called_with_folder_and_the_store(tmp_path, monkeypatch):
+    aa = _store(tmp_path, monkeypatch)
     q = _q(tmp_path)
     _finished_entry(q)
     apply_queue.set_artifacts("1", {"folder": str(tmp_path / "gen")}, path=q)
     calls = []
     from resume_tailor import apply_data
-    monkeypatch.setattr(apply_data, "refresh_standard_answers",
-                        lambda folder: calls.append(Path(folder)) or None)
+    monkeypatch.setattr(apply_data, "refresh_answer_sections",
+                        lambda folder, answers: calls.append((Path(folder), answers)) or True)
     apply_queue.requeue("1", refresh_answers=True, path=q)
-    assert calls == [tmp_path / "gen"]
+    assert calls == [(tmp_path / "gen", aa.load())]
+
+
+_STALE_SHEET = """\
+# Apply: Acme - Engineer
+
+## Candidate
+- **Name:** Jane Doe
+
+### Address
+- **Street address:** 1 Old Road
+
+## Education
+- BS, State University
+
+## Standard answers
+- **Are you willing to relocate?** No
+- **Are you willing to work on-site (in the office)?** Yes
+
+## Electronic signature (type your full legal name)
+- **Signature:** Jane Doe
+"""
+
+
+def test_requeue_refresh_splices_the_store_into_a_stale_sheet(tmp_path, monkeypatch):
+    # cycle 18 (FL-2): the requeue re-renders the Standard answers and the
+    # Address from the store; the rest of the sheet stays as it was
+    _store(tmp_path, monkeypatch, willing_to_relocate="Yes", onsite_ok="No",
+           address_street="9 New Street")
+    folder = tmp_path / "gen"
+    folder.mkdir()
+    (folder / "apply.md").write_text(_STALE_SHEET, encoding="utf-8")
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
+    got = apply_queue.requeue("1", refresh_answers=True, path=q)
+    text = (folder / "apply.md").read_text(encoding="utf-8")
+    assert "- **Are you willing to relocate?** Yes\n" in text
+    assert "- **Are you willing to work on-site (in the office)?** No\n" in text
+    assert "9 New Street" in text and "1 Old Road" not in text
+    assert text.startswith(_STALE_SHEET.split("### Address")[0])
+    assert text.endswith(_STALE_SHEET[_STALE_SHEET.index("## Electronic signature"):])
+    assert "FAILED" not in (got.get("notes") or "")
+
+
+def test_requeue_refresh_names_a_damaged_store_on_the_entry(tmp_path, monkeypatch):
+    from resume_tailor import apply_answers
+    store = tmp_path / "apply_answers.json"
+    store.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(apply_answers, "STORE_PATH", store)
+    folder = tmp_path / "gen"
+    folder.mkdir()
+    (folder / "apply.md").write_text(_STALE_SHEET, encoding="utf-8")
+    q = _q(tmp_path)
+    _finished_entry(q)
+    apply_queue.set_artifacts("1", {"folder": str(folder)}, path=q)
+    got = apply_queue.requeue("1", refresh_answers=True, path=q)
+    assert got["status"] == "queued"
+    assert "refresh FAILED" in got["notes"] and "AnswerStoreError" in got["notes"]
+    assert (folder / "apply.md").read_text(encoding="utf-8") == _STALE_SHEET
 
 
 def test_requeue_refresh_hook_failure_is_tolerated(tmp_path, monkeypatch):
@@ -576,11 +645,11 @@ def test_requeue_refresh_hook_failure_is_tolerated(tmp_path, monkeypatch):
     _finished_entry(q)
     apply_queue.set_artifacts("1", {"folder": str(tmp_path / "gen")}, path=q)
 
-    def boom(folder):
+    def boom(folder, answers):
         raise RuntimeError("store on fire")
 
     from resume_tailor import apply_data
-    monkeypatch.setattr(apply_data, "refresh_standard_answers", boom)
+    monkeypatch.setattr(apply_data, "refresh_answer_sections", boom)
     got = apply_queue.requeue("1", refresh_answers=True, path=q)  # must not raise
     assert got["status"] == "queued"
     # P2 #14: the failure is surfaced IN-BAND on the entry's notes (dashboard-

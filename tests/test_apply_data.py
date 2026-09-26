@@ -20,6 +20,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "local"))
 
+from answer_bank import confirmed_bank, custom, standard_bank, unconfirmed  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data, assets, output  # noqa: E402
 import apply_playwright  # noqa: E402  (local/ is on sys.path above; stdlib-only module)
 
@@ -134,14 +135,11 @@ def test_write_marker_roundtrips_job_identity(tmp_path):
 def test_write_includes_structured_address(tmp_path, monkeypatch):
     store = tmp_path / "apply_answers.json"
     monkeypatch.setattr(apply_answers, "STORE_PATH", store)
-    ans = apply_answers.seed_defaults()
-    by = {e["id"]: e for e in ans}
-    by["address_street"]["answer"] = "1 Main St"
-    by["address_city"]["answer"] = "Boston"
     # a version 2 store holds a US state by its full name (the abbreviation is
-    # read once, when a version 1 store migrates)
-    by["address_state"]["answer"] = "Massachusetts"
-    by["address_zip"]["answer"] = "02100"
+    # read once, when a version 1 store migrates); the sheet shows confirmed
+    # answers only (cycle 18)
+    ans = confirmed_bank(address_street="1 Main St", address_city="Boston",
+                         address_state="Massachusetts", address_zip="02100")
     apply_answers.save(ans, store)
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
     for part in ("1 Main St", "Boston", "Massachusetts", "02100", "United States"):
@@ -149,6 +147,8 @@ def test_write_includes_structured_address(tmp_path, monkeypatch):
 
 
 def test_write_standard_answers_render_bools_and_exclude_address(tmp_path):
+    # the seeded answers, confirmed: the sheet shows confirmed answers only
+    apply_answers.save(confirmed_bank(), tmp_path / "apply_answers.json")
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
     assert "Yes" in text and "No" in text                 # work auth Yes / sponsorship No
     assert "Street address (line 1)." not in text         # address not repeated here
@@ -388,16 +388,18 @@ def test_parse_resume_bullets_empty_and_sectionless_input():
     assert apply_data.parse_resume_bullets("## Education\n- Uni — BS\n") == []
 
 
-# --- refresh_standard_answers: splice ONLY the Standard-answers section ----------
+# --- refresh_answer_sections: splice ONLY the Standard answers and Address ----------
 
 def _seed_store(tmp_path, **overrides):
+    """The store: the seeded answers with `overrides`, every set one confirmed."""
     store = tmp_path / "apply_answers.json"
-    ans = apply_answers.seed_defaults()
-    by = {e["id"]: e for e in ans}
-    for key, val in overrides.items():
-        by[key]["answer"] = val
-    apply_answers.save(ans, store)
+    apply_answers.save(confirmed_bank(**overrides), store)
     return store
+
+
+def _refresh(tmp_path):
+    """The per-job refresh over the store as it is now."""
+    return apply_data.refresh_answer_sections(tmp_path, apply_answers.load())
 
 
 def _spans(raw: bytes):
@@ -407,7 +409,76 @@ def _spans(raw: bytes):
     return start, sig
 
 
-def test_refresh_standard_answers_roundtrip_touches_only_the_span(tmp_path):
+def _address_span(raw: bytes):
+    """(start-of-Address, start-of-Education) byte offsets."""
+    return raw.index(b"### Address"), raw.index(b"## Education")
+
+
+def test_refresh_answer_sections_rewrites_only_the_answers_and_the_address(tmp_path):
+    # FL-2: the per-job refresh splices the two sections the store renders;
+    # every other byte of the sheet stays as it was
+    _seed_store(tmp_path, how_did_you_hear="LinkedIn", address_city="Anytown")
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS, skill_lines=_SKILLS,
+                           cover_body="Dear team,\n\nHello.")
+    before = out.read_bytes()
+    assert b"- **City:** Anytown" in before
+    _seed_store(tmp_path, how_did_you_hear="Referral from a friend",
+                address_city="Springfield", work_authorized="No")
+    assert _refresh(tmp_path) is True
+    after = out.read_bytes()
+    (addr_b, edu_b), (addr_a, edu_a) = _address_span(before), _address_span(after)
+    (start_b, sig_b), (start_a, sig_a) = _spans(before), _spans(after)
+    assert before[:addr_b] == after[:addr_a]               # above the address
+    assert before[edu_b:start_b] == after[edu_a:start_a]   # resume, cover letter
+    assert before[sig_b:] == after[sig_a:]                 # signature and marker
+    address, answers = after[addr_a:edu_a].decode(), after[start_a:sig_a].decode()
+    assert "- **City:** Springfield" in address and "Anytown" not in address
+    assert "Springfield" in after[addr_a:edu_a].decode().splitlines()[1]    # the Full line
+    assert "- **How did you hear about us?** Referral from a friend" in answers
+    assert "- **Are you legally authorized to work in the US?** No" in answers
+    assert apply_playwright.parse_apply_md(after.decode())["address"]["city"] == "Springfield"
+
+
+def test_refresh_answer_sections_skips_the_write_when_nothing_changed(tmp_path, monkeypatch):
+    _seed_store(tmp_path)
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS, skill_lines=_SKILLS)
+    before = out.read_bytes()
+
+    def boom(*a, **k):
+        raise AssertionError("an unchanged sheet was written")
+    monkeypatch.setattr(apply_data, "_atomic_write", boom)
+    assert _refresh(tmp_path) is True
+    assert out.read_bytes() == before
+
+
+def test_refresh_answer_sections_drops_an_answer_the_store_no_longer_confirms(tmp_path):
+    _seed_store(tmp_path, address_street="1 Main St")
+    out = apply_data.write(_JOB, tmp_path)
+    assert b"Decline to self-identify" in out.read_bytes()
+    assert b"1 Main St" in out.read_bytes()
+    bank = unconfirmed(confirmed_bank(address_street="1 Main St"), "gender",
+                       "race_ethnicity", "veteran_status", "disability_status",
+                       "address_street")
+    assert apply_data.refresh_answer_sections(tmp_path, bank) is True
+    text = out.read_text(encoding="utf-8")
+    assert "Decline to self-identify" not in text and "1 Main St" not in text
+
+
+def test_refresh_answer_sections_without_an_address_block_refreshes_the_answers(tmp_path):
+    # a sheet written before the Address block existed: the answers still refresh
+    _seed_store(tmp_path, how_did_you_hear="LinkedIn")
+    out = apply_data.write(_JOB, tmp_path)
+    text = out.read_text(encoding="utf-8")
+    start, end = text.index("### Address"), text.index("## Education")
+    out.write_text(text[:start] + text[end:], encoding="utf-8")
+    _seed_store(tmp_path, how_did_you_hear="Referral")
+    assert _refresh(tmp_path) is True
+    refreshed = out.read_text(encoding="utf-8")
+    assert "- **How did you hear about us?** Referral" in refreshed
+    assert "### Address" not in refreshed
+
+
+def test_refresh_answer_sections_roundtrip_touches_only_the_span(tmp_path):
     _seed_store(tmp_path, how_did_you_hear="LinkedIn")
     out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
                            skill_lines=_SKILLS)
@@ -415,8 +486,7 @@ def test_refresh_standard_answers_roundtrip_touches_only_the_span(tmp_path):
     assert b"LinkedIn" in before
 
     _seed_store(tmp_path, how_did_you_hear="Referral from a friend")
-    got = apply_data.refresh_standard_answers(tmp_path)
-    assert got == out
+    assert _refresh(tmp_path) is True
 
     after = out.read_bytes()
     text = after.decode("utf-8")
@@ -438,12 +508,12 @@ def test_refresh_standard_answers_roundtrip_touches_only_the_span(tmp_path):
     assert apply_data.parse_marker(text)["job_posting_id"] == "42"
 
 
-def test_refresh_standard_answers_unchanged_store_is_byte_identical(tmp_path):
+def test_refresh_answer_sections_unchanged_store_is_byte_identical(tmp_path):
     _seed_store(tmp_path)
     out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
                            skill_lines=_SKILLS)
     before = out.read_bytes()
-    assert apply_data.refresh_standard_answers(tmp_path) == out
+    assert _refresh(tmp_path) is True
     assert out.read_bytes() == before              # a no-change refresh is a no-op
 
 
@@ -454,7 +524,7 @@ def _rewrite_eol(path, eol: bytes):
     path.write_bytes(raw)
 
 
-def test_refresh_standard_answers_preserves_lf_endings(tmp_path):
+def test_refresh_answer_sections_preserves_lf_endings(tmp_path):
     # A hand-curated apply.md saved with LF endings must come back LF: the
     # splice contract says every byte outside the span is identical, and
     # write_text's os.linesep translation used to CRLF-ify the whole file.
@@ -465,7 +535,7 @@ def test_refresh_standard_answers_preserves_lf_endings(tmp_path):
     before = out.read_bytes()
     assert b"\r" not in before
     _seed_store(tmp_path, how_did_you_hear="Referral from a friend")
-    assert apply_data.refresh_standard_answers(tmp_path) == out
+    assert _refresh(tmp_path) is True
     after = out.read_bytes()
     assert b"\r" not in after                      # still LF everywhere
     assert b"Referral from a friend" in after
@@ -475,17 +545,17 @@ def test_refresh_standard_answers_preserves_lf_endings(tmp_path):
     assert before[sig_b:] == after[sig_a:]
 
 
-def test_refresh_standard_answers_lf_unchanged_store_is_byte_identical(tmp_path):
+def test_refresh_answer_sections_lf_unchanged_store_is_byte_identical(tmp_path):
     _seed_store(tmp_path)
     out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS,
                            skill_lines=_SKILLS)
     _rewrite_eol(out, b"\n")
     before = out.read_bytes()
-    assert apply_data.refresh_standard_answers(tmp_path) == out
+    assert _refresh(tmp_path) is True
     assert out.read_bytes() == before
 
 
-def test_refresh_standard_answers_preserves_crlf_endings(tmp_path):
+def test_refresh_answer_sections_preserves_crlf_endings(tmp_path):
     # Platform-independent pin of the CRLF case (on Windows write() already
     # emits CRLF; on POSIX it wouldn't — force it so the pin holds everywhere).
     _seed_store(tmp_path, how_did_you_hear="LinkedIn")
@@ -494,7 +564,7 @@ def test_refresh_standard_answers_preserves_crlf_endings(tmp_path):
     _rewrite_eol(out, b"\r\n")
     before = out.read_bytes()
     _seed_store(tmp_path, how_did_you_hear="Referral from a friend")
-    assert apply_data.refresh_standard_answers(tmp_path) == out
+    assert _refresh(tmp_path) is True
     after = out.read_bytes()
     assert after.count(b"\n") == after.count(b"\r\n")   # no bare LF introduced
     assert b"Referral from a friend" in after
@@ -504,25 +574,26 @@ def test_refresh_standard_answers_preserves_crlf_endings(tmp_path):
     assert before[sig_b:] == after[sig_a:]
 
 
-def test_refresh_standard_answers_missing_file_returns_none(tmp_path):
-    assert apply_data.refresh_standard_answers(tmp_path) is None
+def test_refresh_answer_sections_missing_file_returns_false(tmp_path):
+    assert _refresh(tmp_path) is False
 
 
-def test_refresh_standard_answers_missing_headings_returns_none(tmp_path):
+def test_refresh_answer_sections_missing_headings_returns_false(tmp_path):
     md = tmp_path / "apply.md"
     md.write_text("# Apply sheet\n\n## Candidate\n- **Name:** X\n", encoding="utf-8")
     before = md.read_bytes()
-    assert apply_data.refresh_standard_answers(tmp_path) is None
+    assert _refresh(tmp_path) is False
     assert md.read_bytes() == before               # untouched when it can't splice
 
     # Standard answers present but no signature heading -> still None, untouched
     md.write_text("## Standard answers\n- **Q** A\n", encoding="utf-8")
     before = md.read_bytes()
-    assert apply_data.refresh_standard_answers(tmp_path) is None
+    assert _refresh(tmp_path) is False
     assert md.read_bytes() == before
 
 
-def test_refresh_standard_answers_atomic_preserves_file_on_write_failure(tmp_path, monkeypatch):
+def test_refresh_answer_sections_atomic_preserves_file_on_write_failure(tmp_path,
+                                                                        monkeypatch):
     # P2-28: apply.md must be rewritten atomically (tmp + retrying replace) so a
     # crash at the rename leaves the previous apply.md fully intact, never a
     # truncated file. Fail the shared replace and assert the original survives.
@@ -543,11 +614,74 @@ def test_refresh_standard_answers_atomic_preserves_file_on_write_failure(tmp_pat
     monkeypatch.setattr(jsonutil.os, "replace", boom)
     monkeypatch.setattr(jsonutil, "_REPLACE_RETRY", 0)   # don't sleep in tests
 
+    answers = apply_answers.load()      # read before the patch below breaks os.replace
     with pytest.raises(OSError):
-        apply_data.refresh_standard_answers(tmp_path)
+        apply_data.refresh_answer_sections(tmp_path, answers)
 
     assert out.read_bytes() == before                    # untouched, not truncated
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
+# --- the Standard answers and Address blocks render the store (cycle 18, FL-3) ----------
+
+def test_standard_answers_render_from_fact_value():
+    bank = standard_bank(how_did_you_hear="")
+    by = {e["id"]: e for e in bank}
+    by["work_authorized"]["note"] = "I am a US citizen"
+    by["willing_to_relocate"]["note"] = "within 50 miles *only*"
+    by["gender"]["confirmed"] = False                 # set, not confirmed
+    by["requires_sponsorship"]["answer"] = "false"    # not an answer yes_no allows
+    text = apply_data._standard_answer_lines(bank)
+    assert ("- **Are you legally authorized to work in the US?** Yes\n"
+            "  - Note: I am a US citizen\n") in text
+    assert ("- **Are you willing to relocate?** Yes\n"
+            "  - Note: within 50 miles \\*only\\*\n") in text
+    assert "- **Are you willing to work on-site (in the office)?** Yes\n" in text
+    assert "- **How many years of relevant experience do you have?** 2\n" in text
+    for left_out in ("How did you hear", "Gender (EEO", "require visa sponsorship?",
+                     "Street address"):
+        assert left_out not in text, left_out
+    # a note stays with its answer: the parser reads no answer from it
+    parsed = apply_playwright.parse_apply_md(text)["standard_answers"]
+    assert ("Are you legally authorized to work in the US?", "Yes") in parsed
+    assert ("Are you willing to relocate?", "Yes") in parsed
+    assert not [q for q, _ in parsed if "Note" in q]
+
+
+def test_standard_answers_leave_out_every_unconfirmed_answer():
+    text = apply_data._standard_answer_lines(apply_answers.seed_defaults())
+    assert "- **" not in text
+    assert "(none confirmed; set and confirm them in the Apply Answers tab)" in text
+
+
+def test_a_question_with_a_star_or_a_trailing_colon_round_trips():
+    bank = standard_bank() + [
+        custom("sql", "Rate your SQL skill from 1 to 5 *", "4 * strong"),
+        custom("pronouns", "Pronouns:", "she/her"),
+        custom("bold", "Anything **else**?", "No **thanks**")]
+    md = apply_data.build_markdown(_MASTER, _JOB, bank)
+    assert "- **Rate your SQL skill from 1 to 5 \\*** 4 \\* strong\n" in md
+    answers = dict(apply_playwright.parse_apply_md(md)["standard_answers"])
+    assert answers["Rate your SQL skill from 1 to 5 *"] == "4 * strong"
+    assert answers["Pronouns:"] == "she/her"
+    assert answers["Anything **else**?"] == "No **thanks**"
+    assert answers["Are you legally authorized to work in the US?"] == "Yes"
+
+
+def test_address_renders_from_fact_value_only(tmp_path, monkeypatch):
+    # the old fallback to apply_config's values is gone: the store is the one source
+    cfg = tmp_path / "apply_config.json"
+    cfg.write_text(json.dumps({"address_street": "9 Config Street"}), encoding="utf-8")
+    monkeypatch.setattr(apply_config, "APPLY_CONFIG", cfg)
+    bank = unconfirmed(standard_bank(address_street=""), "address_city")
+    md = apply_data.build_markdown(_MASTER, _JOB, bank)
+    assert "9 Config Street" not in md
+    assert "- **Street:**" not in md and "- **City:**" not in md and "Anytown" not in md
+    assert "- **State / Province:** California\n" in md
+    assert "- **Full:** California 12345, United States\n" in md
+    assert apply_playwright.parse_apply_md(md)["address"] == {
+        "full": "California 12345, United States", "state / province": "California",
+        "zip / postal": "12345", "country": "United States"}
 
 
 # --- the `## Cover letter` section (replaces the old _Cover_Letter.txt) ---------
@@ -706,7 +840,7 @@ def test_refresh_cover_letter_missing_apply_md_returns_none(tmp_path):
     assert legacy.exists()                        # nothing deleted, nothing written
 
 
-def test_refresh_standard_answers_never_regenerates_tailored_content(tmp_path):
+def test_refresh_answer_sections_never_regenerates_tailored_content(tmp_path):
     # A hand-edited résumé bullet outside the span must survive a refresh —
     # proof the function splices instead of calling write_from_folder.
     _seed_store(tmp_path)
@@ -717,7 +851,7 @@ def test_refresh_standard_answers_never_regenerates_tailored_content(tmp_path):
                         "Built the ingestion pipeline REALLY fast.")
     out.write_text(text, encoding="utf-8")
     _seed_store(tmp_path, how_did_you_hear="Referral")
-    apply_data.refresh_standard_answers(tmp_path)
+    _refresh(tmp_path)
     refreshed = out.read_text(encoding="utf-8")
     assert "Built the ingestion pipeline REALLY fast." in refreshed
     assert "Referral" in refreshed

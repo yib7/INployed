@@ -39,7 +39,7 @@ from .answer_tables import (
 __all__ = [
     "AnswerStoreError", "BOOL_IDS", "BUILTINS", "Builtin", "CUSTOM_TYPES", "KINDS",
     "NOTE_MAX", "NUMBER_MAX", "STATE_TEXT_MAX", "STATUSES", "STORE_PATH", "TEXT_MAX",
-    "TYPES", "US_STATES", "VERSION", "YES_NO", "as_standard_answers", "fact_value",
+    "TYPES", "US_STATES", "VERSION", "YES_NO", "fact_value",
     "find_collision", "load", "load_store", "load_with_defaults", "migrate_from_apply_config",
     "migrate_v1", "new_id", "restore_bytes", "save", "seed_defaults", "validate", "warnings",
     "with_missing_builtins", "yes_no",
@@ -102,7 +102,7 @@ BUILTINS: Dict[str, Builtin] = {
     "address_country": Builtin("Country.", "choice", COUNTRIES),
 }
 
-# The yes/no ids: the sheet renders them as Yes/No and the legacy flat dict as bools.
+# The yes/no ids: the sheet and the fact catalog show them as Yes or No.
 BOOL_IDS = frozenset(k for k, b in BUILTINS.items() if b.type == "yes_no")
 
 # ST-7: the topics a custom question may not duplicate (matched on normalised text).
@@ -673,28 +673,3 @@ def restore_bytes(data: bytes, path: Union[Path, None] = None) -> None:
         except OSError:
             pass
         raise
-
-
-def _flat_bool(value: Any) -> Any:
-    """A yes/no answer for the legacy flat dict: a bool when it opens with yes
-    or no, else its own words ("" or missing stays False)."""
-    word = yes_no(value)
-    if word:
-        return word == "Yes"
-    text = str(value or "").strip()
-    return text or False
-
-
-def as_standard_answers(answers: Union[List[Dict[str, Any]], None] = None) -> Dict[str, Any]:
-    """Flatten the active answers into the legacy {id: value} dict the apply
-    sheet's Address block reads. Yes/no ids read back to bool (`_flat_bool`)."""
-    answers = answers if answers is not None else load()
-    out: Dict[str, Any] = {}
-    for e in answers:
-        if e.get("status") != "active":
-            continue
-        eid = e.get("id")
-        if not eid:
-            continue
-        out[eid] = _flat_bool(e.get("answer")) if eid in BOOL_IDS else e.get("answer")
-    return out

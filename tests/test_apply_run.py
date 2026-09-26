@@ -26,6 +26,7 @@ import ats_accounts  # noqa: E402
 import jev  # noqa: E402
 import apply_harness as h  # noqa: E402
 import jev_harness  # noqa: E402
+from answer_bank import standard_bank, unconfirmed  # noqa: E402
 from apply_judge import FillPlan, PlannedField, VerifyResult  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
 
@@ -58,21 +59,8 @@ _RUN_CONTEXT = {"signup_email": "jane.doe@example.com",
 
 
 def _bank():
-    bank = apply_answers.seed_defaults()
-    values = {"work_authorized": "true", "requires_sponsorship": "false",
-              "years_experience": "2", "willing_to_relocate": "true",
-              "gender": "Decline to self-identify",
-              "race_ethnicity": "Decline to self-identify",
-              "veteran_status": "I am not a veteran",
-              "disability_status": "No, I do not have a disability",
-              "how_did_you_hear": "LinkedIn",
-              "address_street": "123 Main Street", "address_city": "Anytown",
-              "address_state": "California", "address_zip": "12345",
-              "address_country": "United States"}
-    for e in bank:
-        if e["id"] in values:
-            e["answer"] = values[e["id"]]
-    return bank
+    """The shared confirmed answers (`answer_bank`)."""
+    return standard_bank()
 
 
 @pytest.fixture(autouse=True)
@@ -92,13 +80,16 @@ def _hermetic(tmp_path, monkeypatch, jev_judge):
     monkeypatch.setenv("ATS_ACCOUNTS_PATH", str(tmp_path / "accounts.json"))
     monkeypatch.setattr(apply_config, "APPLY_CONFIG", tmp_path / "missing.json")
     monkeypatch.setattr(apply_answers, "STORE_PATH", tmp_path / "apply_answers.json")
+    # the runner reads its answers from the store (FL-1, FL-4): a confirmed one
+    apply_answers.save(_bank())
     monkeypatch.setenv("APPLY_QUEUE_PATH", str(tmp_path / "apply_queue.json"))
 
 
 @pytest.fixture
 def catalog_builder(monkeypatch):
-    """`apply_facts.build` with the synthetic bank, so the runner never opens
-    the answer store."""
+    """`apply_facts.build` with the synthetic bank when a caller passes none
+    (the runner passes the store it read, which `_hermetic` seeds with the
+    same bank)."""
     real = apply_facts.build
 
     def _build(folder, **kw):
@@ -2604,6 +2595,129 @@ def test_main_settings_come_from_the_loader_and_flags_override(hermetic_cli, mon
     assert seen["cap"] == 3
     assert seen["settings"]["auto_apply_submit"] is False
     assert seen["settings"]["auto_apply_jev_mode"] == "typesafe"
+
+
+# --- cycle 18: the store is the one source of the answers (FL-2, FL-4) ------------------
+
+def test_prepare_refreshes_the_sheet_from_the_store_before_the_facts(
+        context, job_folder, tmp_path):
+    # FL-2: the sheet was written when the store said Yes; the store now says No
+    apply_answers.save(standard_bank(willing_to_relocate="No", address_street="9 New Street"))
+    sheet = job_folder / "apply.md"
+    before = sheet.read_text(encoding="utf-8")
+    assert "- **Are you willing to relocate?** Yes\n" in before
+    e = _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
+    run = apply_run._JobRun(_runner(context, tmp_path), context, e)
+    run._prepare()
+    after = sheet.read_text(encoding="utf-8")
+    assert "- **Are you willing to relocate?** No\n" in after
+    assert "9 New Street" in after and "123 Main Street" not in after
+    assert run.catalog.facts["willing_to_relocate"].value == "No"
+    # outside the two sections the sheet is as it was
+    assert after.split("### Address")[0] == before.split("### Address")[0]
+    sig = "## Electronic signature"
+    assert after[after.index(sig):] == before[before.index(sig):]
+
+
+def test_prepare_goes_on_when_the_sheet_refresh_fails(
+        context, job_folder, tmp_path, monkeypatch, caplog):
+    def boom(folder, answers):
+        raise RuntimeError("synthetic-refresh-detail")
+    monkeypatch.setattr(apply_data, "refresh_answer_sections", boom)
+    e = _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
+    run = apply_run._JobRun(_runner(context, tmp_path), context, e)
+    assert run._prepare() == "https://boards.greenhouse.io/acme/jobs/1"
+    assert run.catalog.facts["work_authorized"].value == "Yes"
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "the apply.md answers were not refreshed (RuntimeError)" in logged
+    assert "synthetic-refresh-detail" not in logged
+
+
+def test_the_runner_reads_the_store_once_per_drain(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, monkeypatch):
+    reads = []
+    real = apply_answers.load
+    monkeypatch.setattr(apply_answers, "load", lambda *a, **k: reads.append(1) or real(*a, **k))
+    _enqueue(job_folder, fixture_url("ashby_steps.html"))
+    _enqueue(job_folder, fixture_url("ashby_steps.html"), jid="43")
+    outcomes = _runner(context, tmp_path, auto_apply_submit=False).drain(cap=2)
+    assert len(outcomes) == 2
+    assert reads == [1]
+
+
+def _damaged_store():
+    apply_answers.STORE_PATH.write_text("{not json", encoding="utf-8")
+    with pytest.raises(apply_answers.AnswerStoreError) as info:
+        apply_answers.load()
+    return info.value
+
+
+def test_a_drain_over_a_damaged_store_claims_nothing(context, fixture_url, job_folder,
+                                                     tmp_path):
+    # FL-4: the store is read before the first claim
+    _enqueue(job_folder, fixture_url("ashby_steps.html"))
+    _damaged_store()
+    with pytest.raises(apply_answers.AnswerStoreError):
+        _runner(context, tmp_path).drain(cap=1)
+    entry = _entry()
+    assert entry["status"] == "queued" and int(entry.get("attempts") or 0) == 0
+
+
+@pytest.mark.parametrize("verb", [["drain"], ["one", "42"]])
+def test_main_exits_2_on_a_damaged_store_and_claims_nothing(
+        hermetic_cli, monkeypatch, capsys, job_folder, verb):
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
+    _enqueue(job_folder, "https://boards.greenhouse.io/acme/jobs/1")
+    err = _damaged_store()
+    assert apply_run.main([*verb, "--jev", "typesafe"]) == 2
+    assert capsys.readouterr().err.strip() == (
+        f"The Apply Answers file is damaged ({err.path}): {err.reason}. Open the "
+        f"dashboard's Apply Answers tab to restore the backup.")
+    entry = _entry()
+    assert entry["status"] == "queued" and int(entry.get("attempts") or 0) == 0
+
+
+_HEADER = ('Answers not confirmed: "Are you willing to relocate?", '
+           '"Are you willing to work on-site (in the office)?", '
+           '"Gender (EEO self-identification).". Questions that need them will stop.')
+
+
+def test_a_drain_names_the_answers_not_confirmed_once_on_the_console_and_in_the_report(
+        context, fixture_url, job_folder, catalog_builder, tmp_path, capsys):
+    # FL-4: two built-ins not confirmed and one missing; their questions only
+    bank = [e for e in unconfirmed(standard_bank(), "willing_to_relocate", "onsite_ok")
+            if e["id"] != "gender"]
+    apply_answers.save(bank)
+    _enqueue(job_folder, fixture_url("ashby_steps.html"))
+    runner = _runner(context, tmp_path, auto_apply_submit=False)
+    outcomes = runner.drain(cap=1)
+    assert len(outcomes) == 1
+    out = capsys.readouterr().out
+    assert out.count(_HEADER) == 1, out
+    report = next(tmp_path.glob(f"{apply_run.DRAIN_REPORT_PREFIX}*.md"))
+    text = report.read_text(encoding="utf-8")
+    assert text.startswith("# Apply drain ") and text.count(_HEADER) == 1
+    assert text.index(_HEADER) < text.index(apply_run.summary_line(outcomes))
+
+
+def test_a_store_with_every_built_in_confirmed_has_no_header(context, tmp_path):
+    runner = _runner(context, tmp_path)
+    assert runner.load_answers() == apply_answers.load()
+    assert runner.answers_header == ""
+
+
+def test_write_drain_report_puts_the_header_under_the_title(tmp_path):
+    from datetime import datetime
+    out = apply_run.Outcome("1", "submitted", "confirmation page", "", 3, {})
+    path = apply_run.write_drain_report([out], tmp_path / "q.json",
+                                        now=datetime(2026, 9, 26, 12, 0, 0), header=_HEADER)
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith(f"# Apply drain 20260926-120000\n\n{_HEADER}\n\n"
+                           f"{apply_run.summary_line([out])}\n\n")
+    plain = apply_run.write_drain_report([out], tmp_path / "q.json",
+                                         now=datetime(2026, 9, 26, 12, 0, 0))
+    assert plain.read_text(encoding="utf-8").startswith(
+        f"# Apply drain 20260926-120000\n\n{apply_run.summary_line([out])}\n\n")
 
 
 def test_default_profile_dir_sits_under_localappdata(monkeypatch, tmp_path):

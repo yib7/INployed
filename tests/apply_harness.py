@@ -94,7 +94,9 @@ _PDF = (b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
         b"2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
 
 # The runner tests' synthetic sheet (`apply_data.build_markdown` over their
-# synthetic master), with the sheet's delimiters filled in at run time.
+# synthetic master and `bank()`), with the sheet's delimiters filled in at run
+# time. Its Standard answers and Address are what the store renders, so the
+# runner's refresh before each job (FL-2) leaves it as it is.
 _SHEET = """# Apply sheet: Analytics Engineer @ Fabrikam
 Generated 2026-09-23.
 
@@ -135,11 +137,12 @@ I am writing to apply.
 - **Will you now or in the future require visa sponsorship?** No
 - **How many years of relevant experience do you have?** 2
 - **Are you willing to relocate?** Yes
+- **Are you willing to work on-site (in the office)?** Yes
 - **Work-authorization statement (free text).** Authorized to work in the United States; no visa sponsorship required.
 - **Gender (EEO self-identification).** Decline to self-identify
 - **Race / ethnicity (EEO self-identification).** Decline to self-identify
-- **Veteran status (EEO self-identification).** I am not a veteran
-- **Disability status (EEO self-identification).** No, I do not have a disability
+- **Veteran status (EEO self-identification).** I am not a protected veteran
+- **Disability status (EEO self-identification).** No, I do not have a disability and have not had one in the past
 - **How did you hear about us?** LinkedIn
 
 ## Electronic signature (use at the end, where the form asks; do not submit)
@@ -156,7 +159,39 @@ def sheet_text() -> str:
 
 
 def bank() -> list[dict]:
+    """The synthetic answer store's entries (version 2): every built-in set
+    and confirmed, and one custom answer set but not confirmed
+    (`unconfirmed_values`)."""
     return json.loads(BANK_PATH.read_text(encoding="utf-8"))
+
+
+# An unconfirmed answer shorter than this is left out of the recorder's check:
+# a "Yes" or a "2" turns up in many values the run types for other reasons.
+UNCONFIRMED_MIN = 6
+
+
+def unconfirmed_values(answers: list[dict] | None = None) -> tuple[str, ...]:
+    """The answers the bank holds that the user has not confirmed (FL-1: the
+    run never fills one), each at least `UNCONFIRMED_MIN` characters."""
+    answers = bank() if answers is None else answers
+    out = []
+    for e in answers:
+        text = str(e.get("answer") or "").strip() if isinstance(e, dict) else ""
+        if isinstance(e, dict) and not e.get("confirmed") and len(text) >= UNCONFIRMED_MIN:
+            out.append(text)
+    return tuple(out)
+
+
+def _value_text(value: Any) -> str:
+    """A fill's or a pick's value as text: a string, the strings of a list,
+    or a `select_option` dict's values."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(str(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return " ".join(_value_text(v) for v in value)
+    return ""
 
 
 def write_job_folder(folder: Path) -> Path:
@@ -200,19 +235,25 @@ class Patches:
 
 @contextmanager
 def hermetic(rundir: Path, *, password: bool = False, today: Any = None):
-    """The run's stores in `rundir` (the queue, the account ledger), the
-    synthetic answer bank for every catalog, and the synthetic master
-    password when the flow signs in (else none is stored). With `today`
-    (a `datetime.date`), every catalog reads it as today's date: the real
-    column passes the day its cache was recorded
+    """The run's stores in `rundir` (the queue, the account ledger, the
+    answer store holding the synthetic bank, which the runner reads once per
+    drain), the synthetic bank for every catalog built without one, and the
+    synthetic master password when the flow signs in (else none is stored).
+    With `today` (a `datetime.date`), every catalog reads it as today's date:
+    the real column passes the day its cache was recorded
     (`jev_harness.RECORDED_TODAY`)."""
     import apply_run
     import ats_accounts
+    from resume_tailor import apply_answers, apply_config
     p = Patches()
     try:
         p.setenv("ATS_ACCOUNTS_PATH", str(Path(rundir) / "accounts.json"))
         p.setenv("APPLY_QUEUE_PATH", str(Path(rundir) / "queue.json"))
         answers = bank()
+        store = Path(rundir) / "apply_answers.json"
+        p.setattr(apply_answers, "STORE_PATH", store)
+        p.setattr(apply_config, "APPLY_CONFIG", Path(rundir) / "apply_config.json")
+        apply_answers.save(answers, store)
         real_build = apply_run.apply_facts.build
 
         def _build(folder, **kw):
@@ -1495,6 +1536,8 @@ class Action:
     toggle: bool = False    # a tick or a toggle (a checkbox, switch, radio or option role,
                             # aria-pressed): it never sends (review round 6, Minor 1)
     secret: bool = False    # the value typed is the master password (SP7: never the value)
+    unconfirmed: bool = False   # the value filled or picked holds an answer the user has
+                                # not confirmed (cycle 18, FL-1: never the value)
     account: str = ""       # the account step's kind ("login" | "signup") and call, "login#2"
 
     @property
@@ -1507,10 +1550,12 @@ class Recorder:
     module docstring). `recording()` installs the patches and removes them."""
 
     def __init__(self, flow: Flow | None = None, *, park_mode: bool = False,
-                 password: str = ""):
+                 password: str = "", unconfirmed: tuple[str, ...] | None = None):
         self.flow = flow
         self.park_mode = park_mode
         self.password = password
+        # the bank's answers the user has not confirmed (`unconfirmed_values`)
+        self.unconfirmed = unconfirmed_values() if unconfirmed is None else tuple(unconfirmed)
         self.actions: list[Action] = []
         self.gate_depth = 0
         self.account_depth = 0
@@ -1542,6 +1587,12 @@ class Recorder:
         # whether the value typed is the master password: a boolean, never
         # the value (the recorder keeps no typed value at all)
         secret = bool(self.password) and isinstance(value, str) and value == self.password
+        # whether it holds an answer the user has not confirmed: the value
+        # filled or picked, or the text of the option or box ticked
+        shown = _value_text(value)
+        if kind in ("click", "tick") and info.get("toggle"):
+            shown = f"{shown} {info.get('text', '')}"
+        unconfirmed = any(u in shown for u in self.unconfirmed)
         self.actions.append(Action(kind=kind, how=how, url=str(info.get("url", "")),
                                    text=str(info.get("text", "")), role=str(info.get("role", "")),
                                    tag=str(info.get("tag", "")), type=str(info.get("type", "")),
@@ -1551,6 +1602,7 @@ class Recorder:
                                    in_account=self.account_depth > 0,
                                    junk=str(info.get("junk", "")),
                                    toggle=bool(info.get("toggle", False)), secret=secret,
+                                   unconfirmed=unconfirmed,
                                    account=self._account_kind[-1] if self._account_kind else ""))
 
     @staticmethod
@@ -1606,8 +1658,8 @@ class Recorder:
 
                     def _on(target, *a, _orig=orig, _kind=kind, _name=name, _label=label, **kw):
                         key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
-                        value = (a[0] if a else kw.get("value", kw.get("text"))) \
-                            if _kind == "fill" else None
+                        value = (a[0] if a else kw.get("value", kw.get("text", kw.get("label")))) \
+                            if _kind in ("fill", "pick") else None
                         rec._add(rec._kind(_kind, _name, a, kw), f"{_label}.{_name}",
                                  rec._live(target), key, value)
                         return _orig(target, *a, **kw)
@@ -1626,8 +1678,8 @@ class Recorder:
                             info = {}
                         info.setdefault("url", str(getattr(owner, "url", "")))
                         key = str(a[0] if a else kw.get("key", "")) if _kind == "press" else ""
-                        value = (a[0] if a else kw.get("value", kw.get("text"))) \
-                            if _kind == "fill" else None
+                        value = (a[0] if a else kw.get("value", kw.get("text", kw.get("label")))) \
+                            if _kind in ("fill", "pick") else None
                         rec._add(rec._kind(_kind, _name, a, kw), f"{_label}.{_name}", info, key,
                                  value)
                         return _orig(owner, selector, *a, **kw)
@@ -1867,6 +1919,10 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends, *,
         if a.secret and (a.type != "password" or a.how.startswith("Keyboard.")):
             breaks.append(f"PASSWORD-NOT-A-PASSWORD-BOX: the master password typed into a "
                           f"{a.tag or 'focused'} {a.type or 'element'} on {a.host}")
+        if a.unconfirmed:
+            breaks.append(f"UNCONFIRMED-ANSWER: a {a.kind} of an answer the user has not "
+                          f"confirmed, into a {a.tag or 'focused'} {a.type or 'element'} on "
+                          f"{a.host}")
     breaks += _password_tries(recorder.actions)
     if recorder.password:
         for path in _text_files(recorder.files):

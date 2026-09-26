@@ -27,7 +27,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import apply_answers, apply_config, assets
+from . import apply_answers, assets
 
 # Structured mailing-address answer ids — rendered in the Address section and
 # excluded from the generic Standard-answers list (so they aren't shown twice).
@@ -120,11 +120,15 @@ def _kv(label: str, value: Any, *, always: bool = False) -> str:
     return f"- **{label}:** {text}\n"
 
 
-def _address_lines(flat: Dict[str, Any]) -> str:
-    """Render the mailing address (combined line + structured components). Falls
-    back to apply_config defaults for any key the store doesn't carry."""
-    cfg = apply_config.load_apply_config()
-    val = {k: (str(flat.get(k) or cfg.get(k, "") or "").strip()) for k in ADDRESS_KEYS}
+def _address_lines(answers: List[Dict[str, Any]]) -> str:
+    """Render the mailing address (combined line + structured components) from
+    the store's address answers, each read through `apply_answers.fact_value`:
+    a part that is not set or not confirmed is left out."""
+    val = {k: "" for k in ADDRESS_KEYS}
+    for e in answers or []:
+        eid = e.get("id") if isinstance(e, dict) else None
+        if eid in val and not val[eid]:
+            val[eid] = apply_answers.fact_value(e)
     street, city, state, zc, country = (val["address_street"], val["address_city"],
                                         val["address_state"], val["address_zip"],
                                         val["address_country"])
@@ -345,24 +349,35 @@ def _cover_letter_section(cover_body: str) -> str:
     return "## Cover letter\n\n" + _defuse_structure(text) + "\n"
 
 
+def _md_text(value: Any) -> str:
+    """`value` as one line with each `*` escaped as `\\*`, so a question or an
+    answer that holds a star keeps its line's bold span intact
+    (`apply_playwright.parse_apply_md` reads `\\*` back as `*`)."""
+    return _one_line(value).replace("*", "\\*")
+
+
 def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
+    """The `## Standard answers` block: one `- **question** answer` line per
+    answer a form may use, read through `apply_answers.fact_value` (a yes/no
+    answer shows Yes or No; an answer not set or not confirmed is left out),
+    and its note, when it has one, on a `  - Note: ...` line under it."""
     out = ["## Standard answers\n"]
     for e in answers:
-        if e.get("status") != "active":
+        if not isinstance(e, dict):
             continue
-        eid = e.get("id", "")
+        eid = str(e.get("id", "") or "")
         if eid in ADDRESS_KEYS:  # rendered under Address, not here
             continue
-        raw = str(e.get("answer", "")).strip()
-        if not raw:
+        value = apply_answers.fact_value(e)
+        if not value:
             continue
-        if eid in apply_answers.BOOL_IDS:
-            shown = apply_answers.yes_no(raw) or raw
-        else:
-            shown = raw
-        out.append(f"- **{_one_line(e.get('question', eid))}** {_one_line(shown)}\n")
+        question = _md_text(e.get("question")) or _md_text(eid)
+        out.append(f"- **{question}** {_md_text(value)}\n")
+        note = _md_text(e.get("note"))
+        if note:
+            out.append(f"  - Note: {note}\n")
     if len(out) == 1:
-        out.append("- (none recorded; add them in the Apply Answers tab)\n")
+        out.append("- (none confirmed; set and confirm them in the Apply Answers tab)\n")
     return "".join(out)
 
 
@@ -375,7 +390,6 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     """Assemble the full apply.md text (pure function — easily testable)."""
     basics = master.get("basics", {}) or {}
     education = master.get("education", []) or []
-    flat = apply_answers.as_standard_answers(answers)
 
     # Collapsed to one line each: both are scraped from the posting, and a
     # newline in either would end the H1 and let the remainder of the value open
@@ -395,7 +409,7 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     parts.append(_kv("LinkedIn", assets.full_url(basics.get("linkedin", ""))))
     parts.append(_kv("GitHub / Portfolio", assets.full_url(basics.get("github", ""))))
 
-    parts.append("\n" + _address_lines(flat))
+    parts.append("\n" + _address_lines(answers))
     parts.append("\n" + _education_lines(education))
     parts.append("\n" + _resume_lines(master, sel, bullets, skill_lines))
     if (cover_body or "").strip():
@@ -447,6 +461,10 @@ def write_from_folder(folder: Path, job: Dict[str, str]) -> Path:
 # untranslated text (newline=""), so the heading match tolerates a trailing \r.
 _ANSWERS_HEADING_RE = re.compile(r"(?m)^## Standard answers[ \t]*\r?$")
 _SIGNATURE_PREFIX_RE = re.compile(r"(?m)^## Electronic signature")
+# The Address block runs from its own heading to the next `##` / `###` heading
+# (build_markdown puts `## Education` there).
+_ADDRESS_HEADING_RE = re.compile(r"(?m)^### Address[ \t]*\r?$")
+_NEXT_SECTION_RE = re.compile(r"(?m)^#{2,3} ")
 # The cover-letter span runs from its own heading to the next `## ` heading (or,
 # in a sheet that has none after it, to the meta marker / end of file).
 _COVER_HEADING_RE = re.compile(r"(?m)^## Cover letter[ \t]*\r?$")
@@ -468,42 +486,55 @@ def _dominant_eol(text: str) -> str:
     return "\r\n" if crlf > text.count("\n") - crlf else "\n"
 
 
-def refresh_standard_answers(folder: Path) -> Optional[Path]:
-    """Re-render ONLY the `## Standard answers` section of `<folder>/apply.md`
-    from the current answer store and splice it in place.
+def refresh_answer_sections(folder: Path, answers: List[Dict[str, Any]]) -> bool:
+    """Re-render the `## Standard answers` section and the `### Address` block of
+    `<folder>/apply.md` from `answers` (the answer store) and splice them in place.
 
-    Used when a job is requeued after the user fixed a missing answer: the
-    tailored résumé sections, the meta marker, and the signature block are
-    expensive/hand-curated, so everything OUTSIDE the span between the
-    `## Standard answers` heading and the `## Electronic signature` heading
-    stays byte-identical (`parse_resume_bullets` and cover-letter regen are
-    unaffected). Never calls write()/write_from_folder() — those would
-    regenerate the whole sheet and nuke the tailored content.
+    The runner calls it before each job, and a requeue calls it after the user
+    fixed an answer, so the sheet shows what the store holds. The tailored résumé
+    sections, the cover letter, the meta marker and the signature block are
+    expensive or hand-curated, so everything OUTSIDE the two spans stays
+    byte-identical in the file's own line endings (`parse_resume_bullets` and
+    cover-letter regen are unaffected). The Standard answers span runs from its
+    heading to the `## Electronic signature` heading; the Address span from its
+    heading to the next `##` / `###` heading. A sheet with no Address block gets
+    its Standard answers alone. The write is atomic, and skipped when nothing
+    changed. Never calls write()/write_from_folder(): those would regenerate the
+    whole sheet and nuke the tailored content.
 
-    Returns the apply.md path, or None when the file or either heading is
+    True when the sections were spliced (or already matched the store); False
+    when the file, the Standard answers heading or the signature heading is
     absent (nothing is touched then).
     """
     path = Path(folder) / "apply.md"
     if not path.exists():
-        return None
+        return False
     text = _read_untranslated(path)
     if text is None:
-        return None
+        return False
     m_start = _ANSWERS_HEADING_RE.search(text)
     if not m_start:
-        return None
+        return False
     m_sig = _SIGNATURE_PREFIX_RE.search(text, m_start.end())
     if not m_sig:
-        return None
+        return False
     eol = _dominant_eol(text)
-    section = _standard_answer_lines(apply_answers.load())
-    if eol != "\n":
-        section = section.replace("\n", eol)
-    # build_markdown separates the answers block from the signature heading with
-    # one blank line; reproduce it so an unchanged store round-trips byte-identical.
-    new_text = text[:m_start.start()] + section + eol + text[m_sig.start():]
-    _atomic_write(path, new_text)
-    return path
+    spans = [(m_start.start(), m_sig.start(), _standard_answer_lines(answers))]
+    m_addr = _ADDRESS_HEADING_RE.search(text, 0, m_start.start())
+    if m_addr:
+        m_next = _NEXT_SECTION_RE.search(text, m_addr.end())
+        if m_next and m_next.start() <= m_start.start():
+            spans.append((m_addr.start(), m_next.start(), _address_lines(answers)))
+    new_text = text
+    for begin, end, section in sorted(spans, reverse=True):   # the later span first
+        if eol != "\n":
+            section = section.replace("\n", eol)
+        # build_markdown ends each block with one blank line before the next
+        # heading; reproduce it so an unchanged store round-trips byte-identical.
+        new_text = new_text[:begin] + section + eol + new_text[end:]
+    if new_text != text:
+        _atomic_write(path, new_text)
+    return True
 
 
 def _read_untranslated(path: Path) -> Optional[str]:

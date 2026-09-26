@@ -46,7 +46,10 @@ import apply_driver  # noqa: E402  (same local/ dir; reuse _detach_kwargs — no
 import apply_verify  # noqa: E402  (same local/ dir; pure stdlib, safe at import time)
 
 # `- **Label:** value` — the shape every Candidate/Address/Standard-answer line uses.
-_KV_RE = re.compile(r"^\s*-\s+\*\*(?P<label>[^*]+?):?\*\*\s*(?P<value>.*?)\s*$")
+# The bold label may hold escaped stars (`\*`, written by apply_data._md_text);
+# a lone backslash is allowed anywhere else, so the label ends at the first
+# unescaped `**`.
+_KV_RE = re.compile(r"^\s*-\s+\*\*(?P<label>(?:\\\*|\\(?!\*)|[^*\\])+?)\*\*\s*(?P<value>.*?)\s*$")
 # A `## ` / `### ` section heading; text after `#`s, trailing space tolerated.
 _HEADING_RE = re.compile(r"^\s*#{2,3}\s+(?P<name>.+?)\s*$")
 
@@ -70,7 +73,9 @@ def parse_apply_md(text: str) -> Dict[str, Any]:
     "standard_answers": [(question, answer)], "signature_name": str}. Labels are
     lowercased with the trailing colon stripped ("First" not "**First:**"); the
     `## Standard answers` questions keep their original text (they ARE the form
-    question). Tolerant of hand edits and missing sections — absent → empty.
+    question), a trailing colon included, and a `\\*` in a question or an answer
+    reads back as `*`. A `  - Note: ...` line under an answer is ignored.
+    Tolerant of hand edits and missing sections (an absent one reads empty).
     """
     candidate: Dict[str, str] = {}
     address: Dict[str, str] = {}
@@ -100,14 +105,17 @@ def parse_apply_md(text: str) -> Dict[str, Any]:
             continue
         label = m.group("label").strip()
         value = m.group("value").strip()
+        if section == "standard answers":
+            # The whole bold span is the question; the value is the answer.
+            standard.append((label.replace("\\*", "*"), value.replace("\\*", "*")))
+            continue
+        if label.endswith(":"):
+            label = label[:-1].rstrip()
         low = label.lower()
         if section == "candidate":
             candidate[low] = value
         elif section == "address":
             address[low] = value
-        elif section == "standard answers":
-            # The whole bold span is the question; the value is the answer.
-            standard.append((label.strip(), value))
         elif section.startswith("electronic signature"):
             if low.startswith("signature"):
                 signature_name = value

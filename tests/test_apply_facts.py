@@ -18,6 +18,7 @@ sys.path.insert(0, str(REPO / "local"))
 
 import apply_facts  # noqa: E402
 import apply_form  # noqa: E402
+from answer_bank import confirmed_bank, custom, standard_bank, unconfirmed  # noqa: E402
 from resume_tailor import apply_answers, apply_config, apply_data  # noqa: E402
 
 _MASTER = {
@@ -42,25 +43,10 @@ _BULLETS = {"a1": "Built the ingestion pipeline."}
 
 
 def _bank():
-    """A synthetic answer bank: the seeded defaults with values filled in, plus
-    one custom entry the named keys do not cover."""
-    bank = apply_answers.seed_defaults()
-    values = {"work_authorized": "true", "requires_sponsorship": "false",
-              "years_experience": "2", "willing_to_relocate": "true",
-              "gender": "Decline to self-identify",
-              "race_ethnicity": "Decline to self-identify",
-              "veteran_status": "I am not a veteran",
-              "disability_status": "No, I do not have a disability",
-              "how_did_you_hear": "LinkedIn",
-              "address_street": "123 Main Street", "address_city": "Anytown",
-              "address_state": "California", "address_zip": "12345",
-              "address_country": "United States"}
-    for e in bank:
-        if e["id"] in values:
-            e["answer"] = values[e["id"]]
-    bank.append({"id": "salary_expectation", "question": "What is your desired salary?",
-                 "answer": "Open to discussion", "kind": "open-ended", "status": "active"})
-    return bank
+    """A synthetic answer bank: the shared confirmed answers (`answer_bank`),
+    plus one custom entry the named keys do not cover."""
+    return standard_bank() + [custom("salary_expectation", "What is your desired salary?",
+                                     "Open to discussion")]
 
 
 @pytest.fixture(autouse=True)
@@ -173,49 +159,135 @@ def test_build_one_answer_fact_per_uncovered_bank_entry(folder):
     assert cat.facts["work_authorized"].kind == "bool"
 
 
-def _worded_bank():
-    bank = _bank()
-    worded = {"work_authorized": "Yes, I am a US citizen",
-              "requires_sponsorship": "No, I am a US citizen",
-              "willing_to_relocate": "Yes willing to relocate and open to on-site"}
-    for e in bank:
-        if e["id"] in worded:
-            e["answer"] = worded[e["id"]]
-    return bank
+def _v1(**answers):
+    """A version 1 bank (untyped, no confirmed flag) with these answers."""
+    return [{"id": e["id"], "question": e["question"], "answer": answers.get(e["id"], ""),
+             "kind": "fixed", "status": "active"} for e in apply_answers.seed_defaults()]
 
 
-def test_build_reads_worded_yes_no_answers(tmp_path):
-    # no sheet: the bank's words are read by their first word (the 2026-09-26
-    # Contoso run put "No" on "Are you legally authorized" from "Yes, I am a US citizen")
-    cat = apply_facts.build(tmp_path, answers=_worded_bank())
+def test_build_reads_worded_yes_no_answers_once_migrated(tmp_path):
+    # the 2026-09-26 Contoso run put "No" on "Are you legally authorized" from
+    # "Yes, I am a US citizen"; the store now keeps "Yes" with the words as its
+    # note (`migrate_v1`), and the fact is the typed answer
+    v1 = _v1(work_authorized="Yes, I am a US citizen",
+             requires_sponsorship="No, I am a US citizen",
+             willing_to_relocate="Yes willing to relocate and open to on-site")
+    cat = apply_facts.build(tmp_path, answers=apply_answers.migrate_v1(v1)[0])
     assert cat.value("work_authorized") == "Yes"
     assert cat.value("requires_sponsorship") == "No"
     assert cat.value("willing_to_relocate") == "Yes"
 
 
-def test_build_a_yes_no_answer_without_yes_or_no_keeps_its_words(tmp_path):
-    bank = _bank()
-    for e in bank:
-        if e["id"] == "willing_to_relocate":
-            e["answer"] = "Open to NYC"
-    cat = apply_facts.build(tmp_path, answers=bank)
-    assert cat.value("willing_to_relocate") == "Open to NYC"
+def test_build_a_yes_no_answer_without_yes_or_no_gives_no_fact(tmp_path):
+    # moved to the store's rule on purpose (cycle 18): the words migrate into
+    # the note and the answer stays not set, so no form gets "Open to NYC"
+    migrated = apply_answers.migrate_v1(_v1(willing_to_relocate="Open to NYC"))[0]
+    cat = apply_facts.build(tmp_path, answers=migrated)
+    assert cat.value("willing_to_relocate") == ""
+    assert "willing_to_relocate" not in cat.to_criteria()
 
 
-def test_build_the_bank_outranks_a_stale_sheet_on_yes_no_answers(tmp_path):
-    # a sheet written before the fix carries "No" for a worded yes; the bank's
-    # own answer wins for the three yes/no questions
-    md = apply_data.build_markdown(_MASTER, _JOB, _bank(), sel=_SEL, bullets=_BULLETS)
-    md = md.replace("- **Are you legally authorized to work in the US?** Yes",
-                    "- **Are you legally authorized to work in the US?** No")
-    md = md.replace("- **Are you willing to relocate?** Yes",
-                    "- **Are you willing to relocate?** No")
-    assert "legally authorized to work in the US?** No" in md
-    (tmp_path / "apply.md").write_text(md, encoding="utf-8")
-    cat = apply_facts.build(tmp_path, answers=_worded_bank())
-    assert cat.value("work_authorized") == "Yes"
-    assert cat.value("willing_to_relocate") == "Yes"
+# A second bank whose every answer differs from `_bank()`'s.
+_OTHER = {"work_authorized": "No", "requires_sponsorship": "Yes", "years_experience": "7",
+          "willing_to_relocate": "No", "onsite_ok": "No", "gender": "Female",
+          "race_ethnicity": "Asian", "veteran_status": "Decline to self-identify",
+          "disability_status": "Decline to self-identify", "how_did_you_hear": "Referral",
+          "authorization_statement": "A US citizen.",
+          "address_street": "9 Elm Road", "address_city": "Springfield",
+          "address_state": "Oregon", "address_zip": "97477", "address_country": "Canada"}
+
+
+def test_build_the_store_outranks_a_stale_sheet_for_every_answer_and_the_address(folder):
+    # FL-1: the sheet was written from `_bank()`; the store now holds other
+    # answers, and every bank-backed fact is the store's
+    sheet = (folder / "apply.md").read_text(encoding="utf-8")
+    assert "- **Are you willing to relocate?** Yes" in sheet
+    assert "- **Street:** 123 Main Street" in sheet
+    bank = confirmed_bank(**_OTHER) + [custom("salary_expectation",
+                                              "What is your desired salary?", "90,000")]
+    cat = apply_facts.build(folder, answers=bank)
+    for eid, answer in _OTHER.items():
+        key = "answer_authorization_statement" if eid == "authorization_statement" else eid
+        assert cat.value(key) == answer, eid
+    assert cat.value("answer_salary_expectation") == "90,000"
+
+
+def test_build_the_sheet_fills_no_answer_the_store_lacks(folder):
+    # FL-1, moved on purpose: the sheet's Standard answers and Address used to
+    # fill what the bank lacked; now a store with nothing set gives no answer
+    bank = [dict(e, answer="", confirmed=False) for e in apply_answers.seed_defaults()]
+    cat = apply_facts.build(folder, answers=bank)
+    for key in (*apply_facts._NAMED_BANK_IDS, "answer_authorization_statement",
+                "answer_salary_expectation"):
+        assert cat.value(key) == "", key
+        assert key not in cat.to_criteria(), key
+    # the sheet still gives the candidate, the education and the current job
+    assert cat.value("email") == "jane.doe@example.com"
+    assert cat.value("education_school") == "State University"
+    assert cat.value("current_company") == "Acme Corp"
+
+
+def test_build_an_unconfirmed_answer_yields_no_fact(folder):
+    bank = unconfirmed(_bank(), "work_authorized", "years_experience", "address_city",
+                       "salary_expectation")
+    cat = apply_facts.build(folder, answers=bank)
+    for key in ("work_authorized", "years_experience", "address_city",
+                "answer_salary_expectation"):
+        assert cat.value(key) == "", key
+        assert not cat.has(key) and key not in cat.to_criteria(), key
+    blob = json.dumps(cat.to_criteria()) + cat.verification_excerpt()
+    assert "Open to discussion" not in blob
+    # the confirmed ones still read
     assert cat.value("requires_sponsorship") == "No"
+    assert cat.value("address_street") == "123 Main Street"
+
+
+@pytest.mark.parametrize("entry", [
+    # a version 1 row: no type, no confirmed flag
+    {"id": "work_authorized", "question": "Are you legally authorized to work in the US?",
+     "answer": "true", "kind": "fixed", "status": "active"},
+    # typed and confirmed, with an answer its type does not allow
+    {"id": "work_authorized", "question": "Are you legally authorized to work in the US?",
+     "type": "yes_no", "answer": "true", "note": "", "confirmed": True, "status": "active"},
+    {"id": "work_authorized", "question": "Are you legally authorized to work in the US?",
+     "type": "text", "answer": "Yes", "note": "", "confirmed": True, "status": "active"},
+])
+def test_build_reads_an_answer_only_through_fact_value(tmp_path, entry):
+    cat = apply_facts.build(tmp_path, answers=[entry])
+    assert cat.value("work_authorized") == ""
+
+
+def test_build_a_named_answer_is_never_a_custom_fact_too(folder):
+    cat = apply_facts.build(folder, answers=_bank())
+    named = [k for k in cat.facts if k.startswith("answer_")
+             and k[len("answer_"):] in apply_facts._NAMED_BANK_IDS]
+    assert named == []
+
+
+# --- FL-5: the fact descriptions and onsite_ok ------------------------------------
+
+def test_the_years_relocate_and_onsite_descriptions_are_the_specs():
+    d = apply_facts.DESCRIPTIONS
+    assert d["years_experience"] == ("Total years of professional work experience across all "
+                                     "jobs (not years with one skill, tool or language)")
+    assert d["willing_to_relocate"] == ("Whether the candidate is willing to relocate to the "
+                                        "job's location")
+    assert d["onsite_ok"] == ("Whether the candidate is willing to work on-site in the "
+                              "employer's office, in person")
+
+
+def test_onsite_ok_is_a_named_yes_no_fact(folder):
+    assert apply_facts._KIND_BY_KEY["onsite_ok"] == "bool"
+    assert "onsite_ok" in apply_facts._NAMED_BANK_IDS
+    # one list of the yes/no answers: the store's
+    assert apply_facts._BOOL_BANK_IDS == apply_answers.BOOL_IDS
+    assert all(apply_facts._KIND_BY_KEY[k] == "bool" for k in apply_answers.BOOL_IDS)
+    cat = apply_facts.build(folder, answers=_bank())
+    assert cat.value("onsite_ok") == "Yes"
+    assert cat.facts["onsite_ok"].kind == "bool"
+    assert "answer_onsite_ok" not in cat.facts
+    no = apply_facts.build(folder, answers=standard_bank(onsite_ok="No"))
+    assert no.value("onsite_ok") == "No"
 
 
 def test_build_reads_address_education_and_current_job(folder):
@@ -283,8 +355,7 @@ def test_sheet_excerpt_includes_grounding_evidence_from_experience_and_education
 
 
 def test_verification_evidence_includes_bank_fallbacks_and_artifact_names(folder):
-    bank = _bank() + [{"id": "availability", "question": "When can you start?",
-                       "answer": "October 15", "status": "active"}]
+    bank = _bank() + [custom("availability", "When can you start?", "October 15")]
     cat = apply_facts.build(folder, answers=bank)
     evidence = cat.verification_excerpt()
     for expected in ("State University", "Software Engineer", "When can you start?",

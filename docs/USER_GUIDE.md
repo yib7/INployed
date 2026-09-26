@@ -793,3 +793,22 @@ What to send back: the drain report (`apply_drain-<stamp>.md`); for each job tha
 end ready to submit, or that filled a field wrong, its `apply_trace/attempt-<n>` folder
 (zipped) and a line on what the page should have got; and the probe output for any page
 you doubt.
+
+**Known limits.** These cases are rare, and each one ends in a stop you can read in the
+drain report; none of them sends an application twice:
+
+- The words that mark a button as sending, a step or a required note are English. On a
+  page in another language the run leans on Jev's read alone and parks more often.
+- In a lookup box (a list that appears as you type), a lone option that holds your answer
+  is picked even when it reads the other way, such as "Not Hispanic or Latino" for
+  "Latino". Jev's check of the filled page is what catches it. Two options that both hold
+  your answer with different conditions ("Yes, I am authorized" beside "Yes, but I will
+  require sponsorship") tie, and a required one parks.
+- The link page from a verification email is opened outside the browser. A link page
+  behind a bot check parks, and so does a button the run does not know beside the "Sign
+  in with Google" style buttons on a sign-in wall.
+- A form that fades in on a script timer can have a single field read as hidden: a
+  required one parks, an optional one stays blank. An application's own fixed footer that
+  sits outside the form can be closed as if it were an overlay.
+- A thank-you page that a script loads, with a query in its address, ends
+  **submitted (unconfirmed)**: check that job's email.

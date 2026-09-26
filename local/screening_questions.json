@@ -1,0 +1,1110 @@
+{
+  "version": 1,
+  "questions": [
+    {
+      "id": "auth_radio",
+      "label": "Are you legally authorized to work in the United States?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "auth_toggle",
+      "label": "Are you authorized to work in the US?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "auth_select",
+      "label": "Are you legally eligible to work in the U.S.?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "auth_start_date",
+      "label": "Will you be legally able to work in the United States on your start date?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "auth_tick",
+      "label": "I am legally authorized to work in the United States.",
+      "help": "",
+      "widget": "checkbox",
+      "options": [
+        "checked"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "checked",
+        "sponsor": "checked"
+      }
+    },
+    {
+      "id": "auth_contoso",
+      "label": "Are you legally authorized to work in the United States?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes - on a work visa (OPT/H-1B)",
+        "U.S. citizen or permanent resident (no visa sponsorship required)",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "U.S. citizen or permanent resident (no visa sponsorship required)",
+        "sponsor": "Yes - on a work visa (OPT/H-1B)"
+      }
+    },
+    {
+      "id": "auth_with_without",
+      "label": "Are you authorized to work in the United States?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes, with sponsorship",
+        "Yes, without sponsorship",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes, without sponsorship",
+        "sponsor": "Yes, with sponsorship"
+      }
+    },
+    {
+      "id": "auth_with_without_radio",
+      "label": "Do you have the legal right to work in the United States?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes, without sponsorship",
+        "Yes, with sponsorship",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes, without sponsorship",
+        "sponsor": "Yes, with sponsorship"
+      }
+    },
+    {
+      "id": "auth_status",
+      "label": "What is your current work authorization status in the U.S.?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "U.S. Citizen",
+        "Permanent Resident (Green Card)",
+        "Employment visa (H-1B, L-1, etc.)",
+        "Student visa (F-1 OPT/CPT)",
+        "Other"
+      ],
+      "required": true,
+      "expected_fact": "answer_authorization_statement",
+      "expect": {
+        "citizen": "U.S. Citizen",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "auth_citizen",
+      "label": "Are you a U.S. citizen?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "answer_authorization_statement",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_citizen_or_pr",
+      "label": "Are you a U.S. citizen or lawful permanent resident?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "answer_authorization_statement",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_without_sponsor",
+      "label": "Are you able to work in the U.S. without employer sponsorship, now and in the future?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "spon_radio",
+      "label": "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "spon_toggle",
+      "label": "Do you require visa sponsorship?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "spon_select",
+      "label": "Will you need the company to sponsor an employment-based visa (such as an H-1B) for you?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "spon_future",
+      "label": "Will you require sponsorship in the future to continue working in the United States?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "spon_types",
+      "label": "Do you require sponsorship (e.g., H-1B, TN, O-1) to work for us?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "spon_qualified",
+      "label": "Do you require visa sponsorship?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes, I will require sponsorship",
+        "No, I do not require sponsorship"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No, I do not require sponsorship",
+        "sponsor": "Yes, I will require sponsorship"
+      }
+    },
+    {
+      "id": "spon_now_or_future",
+      "label": "Will you now, or in the future, require sponsorship for employment visa status?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "No, I will not require sponsorship",
+        "Yes, I will require sponsorship now",
+        "Yes, I will require sponsorship in the future"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No, I will not require sponsorship",
+        "sponsor": "Yes, I will require sponsorship in the future"
+      }
+    },
+    {
+      "id": "spon_currently",
+      "label": "Do you currently require visa sponsorship to work in the U.S.?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_tick",
+      "label": "I will require H-1B visa sponsorship now or in the future.",
+      "help": "",
+      "widget": "checkbox",
+      "options": [
+        "checked"
+      ],
+      "required": true,
+      "expected_fact": "requires_sponsorship",
+      "expect": {
+        "citizen": null,
+        "sponsor": "checked"
+      }
+    },
+    {
+      "id": "spon_opt",
+      "label": "Are you currently on F-1 OPT or STEM OPT?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "answer_authorization_statement",
+      "expect": {
+        "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_cpt",
+      "label": "Are you currently working on CPT (Curricular Practical Training)?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "answer_authorization_statement",
+      "expect": {
+        "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_h1b_transfer",
+      "label": "Do you currently hold an H-1B visa that would need to be transferred?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "answer_authorization_statement",
+      "expect": {
+        "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "reloc_radio",
+      "label": "Are you willing to relocate?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "reloc_toggle",
+      "label": "Would you be open to relocating for this role?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "reloc_select",
+      "label": "Are you willing to relocate for this position? Relocation assistance is not provided.",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "reloc_maybe",
+      "label": "Are you willing to relocate?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No",
+        "Maybe, depending on the location"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "reloc_tick",
+      "label": "I am willing to relocate to the job's location.",
+      "help": "",
+      "widget": "checkbox",
+      "options": [
+        "checked"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "checked",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "reloc_contoso",
+      "label": "This role is on-site in our San Francisco office. Are you willing to relocate?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "I already live in the San Francisco Bay Area",
+        "I am willing to relocate",
+        "I do not want to work in office",
+        "I am not willing to relocate"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "I am willing to relocate",
+        "sponsor": "I am not willing to relocate"
+      }
+    },
+    {
+      "id": "reloc_replica",
+      "label": "Are you willing to relocate to the job's location?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "I do not want to work in office",
+        "Yes, I am willing to relocate",
+        "No, I would prefer to stay where I am"
+      ],
+      "required": true,
+      "expected_fact": "willing_to_relocate",
+      "expect": {
+        "citizen": "Yes, I am willing to relocate",
+        "sponsor": "No, I would prefer to stay where I am"
+      }
+    },
+    {
+      "id": "onsite_radio",
+      "label": "Are you willing to work on-site?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "onsite_hybrid",
+      "label": "This role requires working in the office 3 days a week. Are you comfortable with this?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "onsite_in_person",
+      "label": "Are you able to work in person at our office five days a week?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "onsite_tick",
+      "label": "I understand this position is fully on-site and I am able to work in the office.",
+      "help": "",
+      "widget": "checkbox",
+      "options": [
+        "checked"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "checked",
+        "sponsor": "checked"
+      }
+    },
+    {
+      "id": "onsite_qualified",
+      "label": "Our team works from the office. Which describes you?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "I am able to work on-site",
+        "I am only able to work remotely"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "I am able to work on-site",
+        "sponsor": "I am able to work on-site"
+      }
+    },
+    {
+      "id": "onsite_preference",
+      "label": "What is your preferred work arrangement?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Remote",
+        "Hybrid",
+        "On-site"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_remote_only",
+      "label": "Are you looking for a fully remote position only?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "years_select",
+      "label": "How many years of professional experience do you have?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Less than 1 year",
+        "1-2 years",
+        "3-5 years",
+        "6-9 years",
+        "10+ years"
+      ],
+      "required": true,
+      "expected_fact": "years_experience",
+      "expect": {
+        "citizen": "1-2 years",
+        "sponsor": "3-5 years"
+      }
+    },
+    {
+      "id": "years_radio",
+      "label": "Years of relevant work experience",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "0-1",
+        "2-4",
+        "5-7",
+        "8+"
+      ],
+      "required": true,
+      "expected_fact": "years_experience",
+      "expect": {
+        "citizen": "0-1",
+        "sponsor": "2-4"
+      }
+    },
+    {
+      "id": "years_total",
+      "label": "How many years of experience do you have in total?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "0-2 years",
+        "3-5 years",
+        "More than 5 years"
+      ],
+      "required": true,
+      "expected_fact": "years_experience",
+      "expect": {
+        "citizen": "0-2 years",
+        "sponsor": "3-5 years"
+      }
+    },
+    {
+      "id": "years_at_least_2",
+      "label": "Do you have at least 2 years of professional work experience?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "years_experience",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "years_similar_role",
+      "label": "Do you have 3 or more years of experience in a similar role?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "years_experience",
+      "expect": {
+        "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_python",
+      "label": "How many years of experience do you have with Python?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "None",
+        "Less than 1 year",
+        "1-3 years",
+        "More than 3 years"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "gender_select",
+      "label": "Gender",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Male",
+        "Female",
+        "Non-binary",
+        "Decline to self-identify"
+      ],
+      "required": true,
+      "expected_fact": "gender",
+      "expect": {
+        "citizen": "Female",
+        "sponsor": "Male"
+      }
+    },
+    {
+      "id": "gender_identity",
+      "label": "What is your gender identity?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Man",
+        "Woman",
+        "Non-binary",
+        "Prefer not to say"
+      ],
+      "required": true,
+      "expected_fact": "gender",
+      "expect": {
+        "citizen": "Woman",
+        "sponsor": "Man"
+      }
+    },
+    {
+      "id": "gender_decline",
+      "label": "Gender",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Male",
+        "Female",
+        "I don't wish to answer"
+      ],
+      "required": true,
+      "expected_fact": "gender",
+      "expect": {
+        "citizen": "Female",
+        "sponsor": "Male"
+      }
+    },
+    {
+      "id": "race_select",
+      "label": "Race",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "American Indian or Alaska Native",
+        "Asian",
+        "Black or African American",
+        "Hispanic or Latino",
+        "Native Hawaiian or Other Pacific Islander",
+        "White",
+        "Two or more races",
+        "Decline to self-identify"
+      ],
+      "required": true,
+      "expected_fact": "race_ethnicity",
+      "expect": {
+        "citizen": "Asian",
+        "sponsor": "Decline to self-identify"
+      }
+    },
+    {
+      "id": "race_wording",
+      "label": "Please identify your race/ethnicity",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Asian (Not Hispanic or Latino)",
+        "Black or African American (Not Hispanic or Latino)",
+        "Hispanic or Latino",
+        "White (Not Hispanic or Latino)",
+        "Two or More Races (Not Hispanic or Latino)",
+        "I do not wish to self-identify"
+      ],
+      "required": true,
+      "expected_fact": "race_ethnicity",
+      "expect": {
+        "citizen": "Asian (Not Hispanic or Latino)",
+        "sponsor": "I do not wish to self-identify"
+      }
+    },
+    {
+      "id": "hispanic",
+      "label": "Are you Hispanic/Latino?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No",
+        "Decline to self-identify"
+      ],
+      "required": true,
+      "expected_fact": "race_ethnicity",
+      "expect": {
+        "citizen": null,
+        "sponsor": "Decline to self-identify"
+      }
+    },
+    {
+      "id": "veteran_select",
+      "label": "Veteran status",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "I am not a protected veteran",
+        "I identify as one or more of the classifications of protected veteran",
+        "I don't wish to answer"
+      ],
+      "required": true,
+      "expected_fact": "veteran_status",
+      "expect": {
+        "citizen": "I am not a protected veteran",
+        "sponsor": "I don't wish to answer"
+      }
+    },
+    {
+      "id": "veteran_wording",
+      "label": "Are you a protected veteran?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes, I am a protected veteran",
+        "No, I am not a protected veteran",
+        "I prefer not to answer"
+      ],
+      "required": true,
+      "expected_fact": "veteran_status",
+      "expect": {
+        "citizen": "No, I am not a protected veteran",
+        "sponsor": "I prefer not to answer"
+      }
+    },
+    {
+      "id": "veteran_identify",
+      "label": "Veteran Status",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "I identify as a protected veteran",
+        "I do not identify as a protected veteran",
+        "Decline to self-identify"
+      ],
+      "required": true,
+      "expected_fact": "veteran_status",
+      "expect": {
+        "citizen": "I do not identify as a protected veteran",
+        "sponsor": "Decline to self-identify"
+      }
+    },
+    {
+      "id": "disability_select",
+      "label": "Disability status",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes, I have a disability, or have had one in the past",
+        "No, I do not have a disability and have not had one in the past",
+        "I do not want to answer"
+      ],
+      "required": true,
+      "expected_fact": "disability_status",
+      "expect": {
+        "citizen": "No, I do not have a disability and have not had one in the past",
+        "sponsor": "I do not want to answer"
+      }
+    },
+    {
+      "id": "disability_short",
+      "label": "Do you have a disability?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No",
+        "Prefer not to say"
+      ],
+      "required": true,
+      "expected_fact": "disability_status",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "Prefer not to say"
+      }
+    },
+    {
+      "id": "hear_select",
+      "label": "How did you hear about us?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "LinkedIn",
+        "Indeed",
+        "Company website",
+        "Referral",
+        "Other"
+      ],
+      "required": true,
+      "expected_fact": "how_did_you_hear",
+      "expect": {
+        "citizen": "LinkedIn",
+        "sponsor": "Indeed"
+      }
+    },
+    {
+      "id": "hear_find",
+      "label": "How did you find out about this job?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Job board (LinkedIn, Indeed, etc.)",
+        "Employee referral",
+        "Recruiter reached out",
+        "Company careers page",
+        "Other"
+      ],
+      "required": true,
+      "expected_fact": "how_did_you_hear",
+      "expect": {
+        "citizen": "Job board (LinkedIn, Indeed, etc.)",
+        "sponsor": "Job board (LinkedIn, Indeed, etc.)"
+      }
+    },
+    {
+      "id": "hear_source",
+      "label": "Source",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "LinkedIn",
+        "Glassdoor",
+        "Indeed",
+        "AngelList",
+        "Other"
+      ],
+      "required": true,
+      "expected_fact": "how_did_you_hear",
+      "expect": {
+        "citizen": "LinkedIn",
+        "sponsor": "Indeed"
+      }
+    },
+    {
+      "id": "none_clearance",
+      "label": "Do you have an active security clearance?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_prior_employee",
+      "label": "Have you previously worked for Example Co?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_age",
+      "label": "Are you at least 18 years of age?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_non_compete",
+      "label": "Are you subject to a non-compete agreement?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_background",
+      "label": "Are you willing to undergo a background check?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_travel",
+      "label": "Are you willing to travel up to 25% of the time?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_salary",
+      "label": "What are your salary expectations?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "$80k-$100k",
+        "$100k-$120k",
+        "$120k or more"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_start",
+      "label": "When can you start?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Immediately",
+        "Within 2 weeks",
+        "Within a month",
+        "More than a month"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    }
+  ]
+}

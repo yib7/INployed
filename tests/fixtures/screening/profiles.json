@@ -1,0 +1,300 @@
+{
+  "citizen": {
+    "version": 2,
+    "answers": [
+      {
+        "id": "work_authorized",
+        "question": "Are you legally authorized to work in the US?",
+        "type": "yes_no",
+        "answer": "Yes",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "requires_sponsorship",
+        "question": "Will you now or in the future require visa sponsorship?",
+        "type": "yes_no",
+        "answer": "No",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "willing_to_relocate",
+        "question": "Are you willing to relocate?",
+        "type": "yes_no",
+        "answer": "Yes",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "onsite_ok",
+        "question": "Are you willing to work on-site (in the office)?",
+        "type": "yes_no",
+        "answer": "Yes",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "years_experience",
+        "question": "How many years of relevant experience do you have?",
+        "type": "number",
+        "answer": "1",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "authorization_statement",
+        "question": "Work-authorization statement (free text).",
+        "type": "text",
+        "answer": "I am a U.S. citizen.",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "gender",
+        "question": "Gender (EEO self-identification).",
+        "type": "choice",
+        "answer": "Female",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "race_ethnicity",
+        "question": "Race / ethnicity (EEO self-identification).",
+        "type": "choice",
+        "answer": "Asian",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "veteran_status",
+        "question": "Veteran status (EEO self-identification).",
+        "type": "choice",
+        "answer": "I am not a protected veteran",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "disability_status",
+        "question": "Disability status (EEO self-identification).",
+        "type": "choice",
+        "answer": "No, I do not have a disability and have not had one in the past",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "how_did_you_hear",
+        "question": "How did you hear about us?",
+        "type": "text",
+        "answer": "LinkedIn",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_street",
+        "question": "Street address (line 1).",
+        "type": "text",
+        "answer": "123 Main Street",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_city",
+        "question": "City.",
+        "type": "text",
+        "answer": "Anytown",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_state",
+        "question": "State / province.",
+        "type": "choice",
+        "answer": "California",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_zip",
+        "question": "ZIP / postal code.",
+        "type": "text",
+        "answer": "12345",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_country",
+        "question": "Country.",
+        "type": "choice",
+        "answer": "United States",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      }
+    ]
+  },
+  "sponsor": {
+    "version": 2,
+    "answers": [
+      {
+        "id": "work_authorized",
+        "question": "Are you legally authorized to work in the US?",
+        "type": "yes_no",
+        "answer": "Yes",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "requires_sponsorship",
+        "question": "Will you now or in the future require visa sponsorship?",
+        "type": "yes_no",
+        "answer": "Yes",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "willing_to_relocate",
+        "question": "Are you willing to relocate?",
+        "type": "yes_no",
+        "answer": "No",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "onsite_ok",
+        "question": "Are you willing to work on-site (in the office)?",
+        "type": "yes_no",
+        "answer": "Yes",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "years_experience",
+        "question": "How many years of relevant experience do you have?",
+        "type": "number",
+        "answer": "3",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "authorization_statement",
+        "question": "Work-authorization statement (free text).",
+        "type": "text",
+        "answer": "I am authorized to work in the U.S. now and will need visa sponsorship in the future.",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "gender",
+        "question": "Gender (EEO self-identification).",
+        "type": "choice",
+        "answer": "Male",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "race_ethnicity",
+        "question": "Race / ethnicity (EEO self-identification).",
+        "type": "choice",
+        "answer": "Decline to self-identify",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "veteran_status",
+        "question": "Veteran status (EEO self-identification).",
+        "type": "choice",
+        "answer": "Decline to self-identify",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "disability_status",
+        "question": "Disability status (EEO self-identification).",
+        "type": "choice",
+        "answer": "Decline to self-identify",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "how_did_you_hear",
+        "question": "How did you hear about us?",
+        "type": "text",
+        "answer": "Indeed",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_street",
+        "question": "Street address (line 1).",
+        "type": "text",
+        "answer": "456 Oak Avenue",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_city",
+        "question": "City.",
+        "type": "text",
+        "answer": "Springfield",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_state",
+        "question": "State / province.",
+        "type": "choice",
+        "answer": "Illinois",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_zip",
+        "question": "ZIP / postal code.",
+        "type": "text",
+        "answer": "62701",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      },
+      {
+        "id": "address_country",
+        "question": "Country.",
+        "type": "choice",
+        "answer": "United States",
+        "note": "",
+        "confirmed": true,
+        "status": "active"
+      }
+    ]
+  }
+}

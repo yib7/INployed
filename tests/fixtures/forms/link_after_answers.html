@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply for Analytics Engineer</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Apply for Analytics Engineer</h1>
+<!-- Final review A-I2: the application's answers, then a Continue that leads to
+     a page saying a link was emailed (link_sent.html). The link is the step
+     that sends: park mode stops there and never opens it. -->
+<label for="first_name">First name *</label><input id="first_name" name="first_name" required>
+<label for="last_name">Last name *</label><input id="last_name" name="last_name" required>
+<label for="email">Email *</label><input id="email" name="email" type="email" required>
+<p><button type="button" id="btn-next">Continue</button></p>
+<script>
+  document.getElementById('btn-next').addEventListener('click', function () {
+    location.href = 'link_sent.html';
+  });
+</script>
+</body>
+</html>

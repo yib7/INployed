@@ -107,6 +107,16 @@ def test_real_judge_record_asks_the_live_judge_through_the_cap(tmp_path, monkeyp
     assert h.real_judge("record", tmp_path / "n.json", live=_Sized).cap.cap_usd == 0.07
 
 
+def test_real_judge_refuses_a_live_recording_that_names_no_cap(tmp_path, monkeypatch):
+    # C KM2: only the dry run has a default cap
+    monkeypatch.delenv(jev.RECORD_CAP_ENV, raising=False)
+    live = _Sized()
+    with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):
+        h.real_judge("record", tmp_path / "m.json", live=lambda: live)
+    assert live.calls == 0 and not (tmp_path / "m.json").exists()
+    assert h.real_judge("dry", tmp_path / "d.json").cap.cap_usd == jev.DRY_RECORD_CAP_USD
+
+
 def test_real_judge_refuses_an_unknown_mode(tmp_path):
     with pytest.raises(ValueError, match="real-judge mode"):
         h.real_judge("live", tmp_path / "m.json")
@@ -156,6 +166,28 @@ def test_a_replay_of_the_real_judge_leaves_out_a_flow_whose_text_changes_with_th
                  workdir=tmp_path)
     assert calls == [("steady", "real"), ("ticking", "real")], "a recording runs it"
     assert [f.name for f in h.FLOWS if not f.replayable] == ["ticker_page"]
+
+
+def test_a_replay_leaves_out_a_flow_no_recording_holds_yet_and_a_recording_takes_it_in(
+        tmp_path, monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(h, "run_flow", _stub_run_flow(calls))
+    flows = _flows("steady") + tuple(dataclasses.replace(f, recorded=False)
+                                     for f in _flows("new"))
+    replay = h.real_judge("replay", tmp_path / "m.json").judge
+    h.run_matrix(flows, h.judges((), real=replay), browser=None, server=None,
+                 workdir=tmp_path)
+    assert calls == [("steady", "fake"), ("steady", "real"), ("new", "fake")]
+    calls.clear()
+    record = h.real_judge("dry", tmp_path / "m.json", cap_usd=1.0).judge
+    h.run_matrix(flows, h.judges((), fake=False, real=record), browser=None, server=None,
+                 workdir=tmp_path)
+    assert calls == [("steady", "real"), ("new", "real")], "a recording runs it"
+    # the cycle 17 final review's code and link steps after the answers and
+    # its method=get sign-in (C-M1), added in a round that records nothing
+    assert [f.name for f in h.FLOWS if not f.recorded] == [
+        "link_after_submit", "link_after_answers_park", "code_after_answers",
+        "code_after_answers_park", "email_code_first_park", "login_get_park"]
 
 
 # --- the real column in the rates and the summary -------------------------------------------

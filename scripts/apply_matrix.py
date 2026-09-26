@@ -151,7 +151,7 @@ def _crash_results(flow_name: str, seeds: tuple, reason: str, real: bool = False
     worker counts every run as a miss."""
     import apply_harness as h
     f = next((f for f in h.FLOWS if f.name == flow_name), None)
-    real = real and (f is None or f.replayable)
+    real = real and (f is None or (f.replayable and f.recorded))
     return [h.RunResult(flow_name, judge, "failed", reason, False, [], 0, 0, 0.0)
             for judge, _ in h.judges(seeds, real=object() if real else None)]
 
@@ -159,6 +159,29 @@ def _crash_results(flow_name: str, seeds: tuple, reason: str, real: bool = False
 def _crashed(results) -> int:
     """How many rows stand for a crashed or hung worker's runs."""
     return sum(1 for r in results if r.status == "failed" and r.reason.startswith(_CRASH_MARK))
+
+
+def _failures(h, results, *, whole: bool) -> list[str]:
+    """What fails the run (final review C-I2): an invariant break, a crashed
+    or hung worker, a park outside the user's policy that missed its flow's
+    end, the fake judge under `FAKE_SUCCESS_FLOOR`, and on a run of the
+    whole registry (`whole`) the noisy seeds under `SUCCESS_FLOOR`; []
+    when the run passes."""
+    rt = h.rates(results)
+    out = []
+    if rt["breaks"]:
+        out.append(f"{rt['breaks']} invariant break(s)")
+    crashed = _crashed(results)
+    if crashed:
+        out.append(f"{crashed} run(s) lost to a crashed or hung worker")
+    if rt["outside_policy"]:
+        out.append(f"{rt['outside_policy']} park(s) outside the policy")
+    if any(r.judge == "fake" for r in results) and rt["fake"] < h.FAKE_SUCCESS_FLOOR:
+        out.append(f"fake {rt['fake']:.1%}, under the floor {h.FAKE_SUCCESS_FLOOR:.1%}")
+    noisy = any(r.judge not in ("fake", h.REAL) for r in results)
+    if whole and noisy and rt["noisy"] < h.SUCCESS_FLOOR:
+        out.append(f"noisy {rt['noisy']:.1%}, under the floor {h.SUCCESS_FLOOR:.1%}")
+    return out
 
 
 def _next_message(out_q, p, deadline: float):
@@ -257,7 +280,9 @@ def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
     started = time.monotonic()
     try:
         rj = h.real_judge(mode, cache)
-    except jev.JevUnavailable as e:
+    except (jev.JevUnavailable, ValueError) as e:
+        # no key, or a cap that is unset for a live recording or no amount
+        # above 0: nothing is asked
         print(f"apply_matrix: {e}", file=sys.stderr)
         return 2
     before = jev.usage()
@@ -380,12 +405,14 @@ def main(argv: list[str] | None = None) -> int:
             rows = [r for r in results if r.judge == h.REAL]
             missed = [r.flow for r in rows if r.replay_misses]
             apart = [f.name for f in flows if not f.replayable]
+            unrecorded = [f.name for f in flows if f.replayable and not f.recorded]
             print(f"real judge: replay of {real_cache}: {sum(r.replay_misses for r in rows)} "
                   f"miss(es) over {len(rows)} flow(s)"
                   + (f"; flows with a miss: {', '.join(missed)}" if missed else "")
                   + (f"; left out, their text changes with the clock: {', '.join(apart)}"
-                     if apart else ""))
-        rt = h.rates(results)
+                     if apart else "")
+                  + (f"; left out, not recorded yet: {', '.join(unrecorded)}"
+                     if unrecorded else ""))
         print(f"the suite's pinned floors (fake and seeds {h.SUITE_SEEDS[0]} to "
               f"{h.SUITE_SEEDS[-1]}): noisy {h.SUCCESS_FLOOR:.1%}, fake "
               f"{h.FAKE_SUCCESS_FLOOR:.1%}; {len(flows)} flows x {len(judge_list)} judges in "
@@ -397,7 +424,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             rows = [{k: v for k, v in asdict(r).items() if k != "actions"} for r in results]
             Path(args.json).write_text(json.dumps(rows, indent=2), encoding="utf-8")
-        return 1 if rt["breaks"] or crashed else 0
+        failed = _failures(h, results, whole=not args.flows)
+        if failed:
+            print(f"apply_matrix: FAILED: {'; '.join(failed)}", file=sys.stderr)
+        return 1 if failed else 0
 
 
 if __name__ == "__main__":

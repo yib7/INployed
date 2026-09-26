@@ -349,7 +349,10 @@ class FlowServer:
             "slow_post": (SLOW_POST_S, None),
             "server_validation": (0.0, _page("server_validation_errors.html")),
             "postback_emptied.html": (0.0, _page("postback_emptied_answer.html")),
-            "success_flash.html": (0.0, _page("success_flash_answer.html"))}
+            "success_flash.html": (0.0, _page("success_flash_answer.html")),
+            # final review A-C1: the post answered with no redirect by a page
+            # that says a link to confirm the application was emailed
+            "link_after_submit": (0.0, _page("link_sent.html"))}
         self.rejects: set[str] = {"server_validation"}      # posts answered with a refusal
         self._server = None
         self._thread = None
@@ -704,6 +707,10 @@ class Flow:
     # the same request: a replay of the real judge's answers leaves the flow
     # out (its recording's run is its real column, SP8b)
     replayable: bool = True
+    # the real judge's cache holds a run of it: False for a flow added after
+    # the last recording (a round that records nothing adds flows too). A
+    # replay leaves it out and names it; the next recording takes it in
+    recorded: bool = True
 
     def start_url(self, base: str) -> str:
         return self.start if "://" in self.start else f"{base}/forms/{self.start}"
@@ -1196,6 +1203,45 @@ FLOWS: tuple[Flow, ...] = (
          confirm="#thanks:visible", gate="#btn-submit:visible", password=True,
          covers="a sign-in whose header carries a job-alerts sign-up link: the screen's own "
                 "Create Account button makes the account, never the alerts link (ACC-01)"),
+    # --- cycle 17 final review: the code and link steps after the answers (A Known
+    # Minor 5). Added after the real judge's last recording, and this round
+    # records nothing: `recorded=False` until the next one ---
+    Flow("link_after_submit", "link_after_submit.html", True, "submitted",
+         r"^submitted \(unconfirmed\): the emailed link's page on \S+ says "
+         r"'application has been received'", inbox=True, inbox_page="link_confirm_list.html",
+         ats={"system": "greenhouse"}, recorded=False,
+         covers="a form post answered with no redirect by a page that says a link was emailed: "
+                "the link opens in a tab of its own, its page is the confirmation, and the job's "
+                "tab is never loaded again, so one post goes (final review A-C1)"),
+    Flow("link_after_answers_park", "link_after_answers.html", False, "ready_to_submit",
+         r"^auto_apply_submit is off; the emailed link from \S+ is the step that may send the "
+         r"application", gate="#link-sent:visible", inbox=True,
+         inbox_page="link_confirm_list.html", ats={"system": "greenhouse"}, recorded=False,
+         covers="the answers, then a Continue to a page that says a link was emailed: park mode "
+                "stops there and never opens the link (final review A-I2)"),
+    Flow("code_after_answers", "code_after_answers.html", True, "submitted", _SUBMITTED,
+         confirm="body[data-confirmed]", inbox=True, ats={"system": "greenhouse"},
+         recorded=False,
+         covers="the answers, a Continue to an emailed-code step, the code typed and its Verify "
+                "clicked once, then the last step sent through the gate (final review A-I2)"),
+    Flow("code_after_answers_park", "code_after_answers.html", False, "ready_to_submit",
+         r"^auto_apply_submit is off; the emailed code is entered and its button \(Verify\) is "
+         r"the step that may send the application", gate="#btn-verify:visible", inbox=True,
+         ats={"system": "greenhouse"}, recorded=False,
+         covers="the same in park mode: the code is typed and its button never clicked, "
+                "whatever role the judge gave it (final review A-I2, A Known Minor 10)"),
+    Flow("email_code_first_park", "email_code_first.html", False, "ready_to_submit", _PARKED,
+         confirm="#thanks:visible", gate="#btn-submit:visible", inbox=True,
+         ats={"system": "greenhouse"}, recorded=False,
+         covers="an email-first start, its emailed code, then the application: the address alone "
+                "is no application on the site, so park mode passes the code step and stops at "
+                "the submit (final review A-I2)"),
+    Flow("login_get_park", "login_get_form.html", False, "ready_to_submit", _PARKED,
+         confirm="#received:visible", gate="#btn-submit:visible", password=True,
+         recorded=False,
+         covers="a sign-in form sent with method=get, whose next page's query carries the "
+                "password: the trace keeps each URL without its query, so PASSWORD-LEAK "
+                "covers it (final review C-M1)"),
 )
 
 
@@ -1206,7 +1252,11 @@ def flow(name: str) -> Flow:
 # --- sends --------------------------------------------------------------------------------
 
 BINDING = "__applyHarnessSend"
+# once per document (a tab's window outlives its first blank document, so the
+# mark is the document's own)
 _SEND_JS = """(() => {
+  if (document.__applyHarnessSendSeen) { return; }
+  document.__applyHarnessSendSeen = true;
   const report = () => { try { window.%s(); } catch (e) {} };
   const seen = new MutationObserver((records) => {
     for (const r of records) {
@@ -1224,6 +1274,13 @@ class Send:
     detail: str
     in_gate: bool
     accepted: bool = True       # the site took it (a refused post is still a send)
+
+
+def _watch_document(page) -> None:
+    try:
+        page.evaluate(_SEND_JS)
+    except Exception:       # noqa: BLE001  (a tab closed or moving on: its next page is watched)
+        pass
 
 
 # a request that failed before any connection was made never reached the site
@@ -1252,6 +1309,12 @@ class Sends:
     def install(self, context, flow: Flow, server: FlowServer | None = None) -> None:
         context.expose_binding(BINDING, self._dom)
         context.add_init_script(_SEND_JS)
+        # a tab `window.open` made keeps its first blank window for the page
+        # it loads, and the init script does not run again for that page: a
+        # submit in such a tab went unseen (popup_step, found by the final
+        # review's SUBMITTED-WITHOUT-SEND, C-M3). Each tab's loaded page gets
+        # the watch too; the document's mark keeps it to one
+        context.on("page", self._watch_tab)
         for glob in flow.send_urls:
             context.route(glob, self._request)
         if flow.send_urls:
@@ -1263,6 +1326,9 @@ class Sends:
     def uninstall(self, server: FlowServer | None = None) -> None:
         if server is not None:
             server.on_post = None
+
+    def _watch_tab(self, page) -> None:
+        page.on("domcontentloaded", _watch_document)
 
     def _dom(self, source, *args) -> None:
         try:
@@ -1709,10 +1775,22 @@ def invariant_breaks(outcome: Any, recorder: Recorder, sends: Sends) -> list[str
         if not s.in_gate:
             breaks.append(f"SEND-OUTSIDE-GATE: a {s.kind} send ({s.detail}) while the "
                           "submit gate was not running")
+    # final review C-M3: the runner's own prefix, never the word anywhere in
+    # a reason that may quote the page
     if status == "submitted" and not recorder.final.get("confirmed"):
-        if not ("unconfirmed" in reason and sends.count):
+        if not (reason.startswith("submitted (unconfirmed)") and sends.count):
             breaks.append(f"FALSE-SUBMITTED: submitted without the confirmation marker "
                           f"({reason})")
+    if status == "submitted" and sends.count == 0:
+        breaks.append(f"SUBMITTED-WITHOUT-SEND: submitted ({reason[:80]!r}) and no send was "
+                      "seen: the job would never be tried again")
+    # final review C-M2: after a send the site accepted, a park the person
+    # may re-queue sends a second application; only a check-whether park
+    # (which is never re-queued as is) may follow one
+    if any(s.accepted for s in sends.events) and status in ("needs_human", "failed") \
+            and not reason.startswith(apply_run.CHECK_SENT_REASON):
+        breaks.append(f"REQUEUABLE-AFTER-SEND: {status} ({reason[:80]!r}) after a send the site "
+                      "accepted: a re-queue would send it twice")
     if status == "ready_to_submit" and sends.count:
         breaks.append(f"READY-AFTER-SEND: ready_to_submit ({reason}) after {sends.count} "
                       "send(s): a review would send it again")
@@ -1835,7 +1913,10 @@ _POLICY_PARKS = tuple(re.compile(p) for p in (
     # reasons, anchored (an unanchored word matched a reads list's
     # "captcha_or_bot_check 0.17" inside another park's evidence, review M3)
     r"^captcha or bot check on the page", r"^a CAPTCHA (?:challenge|check) ",
-    r"; a CAPTCHA checkbox on the page is unticked: tick it", r"^error or dead page",
+    # its one producer's shape (`_JobRun._click_advance`), anchored so a park
+    # whose evidence quotes the sentence never reads as it (final review C-M4)
+    r"^the \S+ button \(.*\) did nothing \(.*clicked twice\); a CAPTCHA checkbox",
+    r"^error or dead page",
     "^" + re.escape(apply_run.CLOSED_REASON), "^" + re.escape(apply_run.TAB_CLOSED_REASON),
     "^" + re.escape(apply_run.EASY_APPLY_REASON) + "$",
     "^" + re.escape(apply_run.apply_linkedin.APPLIED_REASON),
@@ -1977,15 +2058,16 @@ def real_judge(mode: str, cache: Path = REAL_CACHE, cap_usd: float | None = None
                *, live: Callable[[], Any] | None = None) -> RealJudge:
     """The real judge's column's judge for `mode` (`REAL_MODES`). `live`
     makes the live judge in `record` (`jev.TypeSafeJev` when None); the cap
-    is `cap_usd`, else `AUTO_APPLY_RECORD_USD_CAP`, else
-    `jev.DEFAULT_RECORD_CAP_USD`."""
+    is `cap_usd`, else `AUTO_APPLY_RECORD_USD_CAP` (`jev.record_cap`: a
+    live recording without it is refused, a dry run takes
+    `jev.DRY_RECORD_CAP_USD`)."""
     if mode not in REAL_MODES:
         raise ValueError(f"unknown real-judge mode {mode!r}; expected one of "
                          f"{', '.join(REAL_MODES)}")
     cache = Path(cache)
     if mode == "replay":
         return RealJudge(mode, jev.ReplayJev(None, cache), cache)
-    cap_usd = jev.record_cap() if cap_usd is None else float(cap_usd)
+    cap_usd = jev.record_cap(live=mode == "record") if cap_usd is None else float(cap_usd)
     if mode == "dry":
         import jev_harness
         cache = jev_harness.dry_copy(cache)
@@ -2209,8 +2291,10 @@ def run_matrix(flows: Iterable[Flow], judge_list: list[tuple[str, Any]], *, brow
     results = []
     for f in flows:
         for name, judge in judge_list:
-            if name == REAL and not f.replayable and replay_only(judge):
-                continue            # its text changes with the clock: no replay can hit
+            if name == REAL and not (f.replayable and f.recorded) and replay_only(judge):
+                # its text changes with the clock, or no recording holds it
+                # yet: no replay can hit
+                continue
             r = run_flow(f, judge, name, browser=browser, server=server, workdir=workdir,
                          fast=fast)
             results.append(r)

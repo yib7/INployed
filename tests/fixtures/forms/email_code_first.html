@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply for Analytics Engineer</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Apply for Analytics Engineer</h1>
+<!-- Final review A-I2: an email-first start (an address box and a Continue, no
+     application question), then an emailed code (email_code_first_code.html),
+     then the application (email_code_first_form.html). The address alone is
+     no application on the site: the code step goes on in park mode too. -->
+<p>Enter your email address to start your application.</p>
+<label for="email">Email address *</label><input id="email" name="email" type="email" required>
+<p><button type="button" id="btn-next">Continue</button></p>
+<script>
+  document.getElementById('btn-next').addEventListener('click', function () {
+    if (document.getElementById('email').value.indexOf('@') > 0) {
+      location.href = 'email_code_first_code.html';
+    }
+  });
+</script>
+</body>
+</html>

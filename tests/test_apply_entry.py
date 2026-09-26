@@ -984,6 +984,29 @@ def test_ci_installs_pillow_where_the_browser_tests_run():
     assert re.search(r"pip install [^\n]*\bPillow\b", step), step
 
 
+def test_ci_runs_every_module_that_opts_into_the_browser():
+    # final review C-I1: the browser step selects its modules by the
+    # `conftest_browser` opt-in, never a hand-kept list a new module misses
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    step = ci.split("- name: Run auto-apply browser tests", 1)[1].split("\n  readme-setup:", 1)[0]
+    run = step.split("run: |", 1)[1]
+    found = re.search(r"grep -l '([^']+)' tests/test_\*\.py", run)
+    assert found, run
+    opt_in = re.compile(found.group(1), re.M)
+    selected = {p.name for p in (REPO / "tests").glob("test_*.py")
+                if opt_in.search(p.read_text(encoding="utf-8"))}
+    opted = {p.name for p in (REPO / "tests").glob("test_*.py")
+             if re.search(r"^pytest_plugins\s*=.*\bconftest_browser\b",
+                          p.read_text(encoding="utf-8"), re.M)}
+    assert selected == opted and {"test_apply_submit.py", "test_apply_resilience.py",
+                                  "test_apply_accounts.py"} <= selected, sorted(opted - selected)
+    assert Path(__file__).name in selected
+    assert not re.search(r"^\s+tests/test_\w+\.py", run, re.M), "a hand-kept list"
+    # bash that stops on a failure, and a selection that finds nothing fails
+    assert "set -euo pipefail" in run and "exit 1" in run
+    assert '"${modules[@]}"' in run.split("python -m pytest", 1)[1]
+
+
 # --- N4: an Enter inside a frame is tied to the frame's form -------------------------------------------
 
 def test_an_enter_pressed_in_a_frame_is_read_in_that_frame(context):

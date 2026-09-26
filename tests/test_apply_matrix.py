@@ -230,7 +230,15 @@ def test_a_clean_run_breaks_nothing():
     ("captcha_touch", "CAPTCHA-TOUCH"),
     ("not_sent_after_send", "NOT-SENT-AFTER-SEND"),
     ("unsent_after_send", "NOT-SENT-AFTER-SEND"),
-    ("guard_unsent_after_send", "NOT-SENT-AFTER-SEND")])
+    ("guard_unsent_after_send", "NOT-SENT-AFTER-SEND"),
+    # final review C-M3: the unconfirmed prefix is the runner's own, and a
+    # submitted end needs a send
+    ("unconfirmed_word_quoted", "FALSE-SUBMITTED"),
+    ("submitted_no_send", "SUBMITTED-WITHOUT-SEND"),
+    ("unconfirmed_no_send", "SUBMITTED-WITHOUT-SEND"),
+    # final review C-M2: a park the person may re-queue after an accepted send
+    ("needs_human_after_send", "REQUEUABLE-AFTER-SEND"),
+    ("failed_after_send", "REQUEUABLE-AFTER-SEND")])
 def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code):
     park = plant in ("park_send",)
     rec, sends = _clean(park=park)
@@ -287,6 +295,20 @@ def test_each_invariant_check_fails_on_its_planted_breach(tmp_path, plant, code)
     elif plant == "captcha_touch":
         rec.actions.append(h.Action("click", "https://www.google.com/recaptcha/api2/anchor?k=x",
                                     text="I'm not a robot"))
+    elif plant == "unconfirmed_word_quoted":
+        # a confirmation reason that quotes the page's word, with no marker
+        sends.events.append(h.Send("dom", "x", True))
+        out = _Out("submitted", "confirmation page ('your application stays unconfirmed until "
+                                "you verify your email')")
+    elif plant == "submitted_no_send":
+        rec.final["confirmed"] = True
+        out = _Out("submitted", "confirmation page")
+    elif plant == "needs_human_after_send":
+        sends.events.append(h.Send("post", "/submit/post_redirect", True))
+        out = _Out("needs_human", "required field without an answer: Salary")
+    elif plant == "failed_after_send":
+        sends.events.append(h.Send("post", "/submit/post_redirect", True))
+        out = _Out("failed", "TimeoutError: the page after the submit")
     breaks = h.invariant_breaks(out, rec, sends)
     assert code in _codes(breaks), breaks
     with pytest.raises(AssertionError, match=code):
@@ -316,11 +338,50 @@ def test_a_send_that_never_made_its_connection_is_one_the_site_did_not_accept():
     assert sends.count == 6         # each is still an attempt
 
 
+def test_a_submit_in_a_tab_window_open_made_is_one_send(_browser, flow_server):
+    # final review C-M3's SUBMITTED-WITHOUT-SEND found popup_step's submit
+    # unseen: the tab keeps its first blank window, and the init script's
+    # watch was on that blank document
+    ctx = _browser.new_context()
+    try:
+        sends = h.Sends()
+        sends.install(ctx, h.flow("popup_step"))
+        page = ctx.new_page()
+        page.goto(flow_server.url("popup_step.html"))
+        page.fill("#first_name", "Jane")
+        with page.expect_popup() as opened:
+            page.click("#btn-next")
+        tab = opened.value
+        tab.wait_for_load_state()
+        tab.fill("#email", "jane.doe@example.com")
+        with tab.expect_popup():
+            tab.click("#btn-submit")
+        tab.wait_for_timeout(300)
+        assert [s.kind for s in sends.events] == ["dom"], sends.events
+        assert "step=2" in sends.events[0].detail
+    finally:
+        ctx.close()
+
+
 def test_a_submitted_unconfirmed_with_a_send_is_within_the_invariants():
     rec, sends = _clean(park=False)
     sends.events.append(h.Send("dom", "x", True))
     out = _Out("submitted", "submitted (unconfirmed): the page after submit reads as other (0.5)")
     assert h.invariant_breaks(out, rec, sends) == []
+
+
+@pytest.mark.parametrize("status, reason, accepted", [
+    # final review C-M2: a check-whether park is never re-queued as it is
+    ("needs_human", apply_run.CHECK_SENT_REASON + ": a request left after the submit click "
+                    "(POST x)", True),
+    # a send the site refused (or that never made its connection) sent nothing
+    ("needs_human", "required field without an answer: Salary", False),
+    ("failed", "TimeoutError: x", False)])
+def test_a_park_after_a_send_is_within_the_invariants_only_when_it_cannot_send_twice(
+        status, reason, accepted):
+    rec, sends = _clean(park=False)
+    sends.events.append(h.Send("post", "/submit/post_redirect", True, accepted))
+    assert h.invariant_breaks(_Out(status, reason), rec, sends) == []
 
 
 def test_a_loop_clicking_its_submit_outside_the_gate_is_caught_end_to_end(
@@ -362,7 +423,8 @@ def test_a_confident_confirmation_misread_before_any_submit_is_caught(
     r = h.run_flow(h.flow("ashby_wizard"), _FormAsConfirmation(), "misread", browser=_browser,
                    server=flow_server, workdir=tmp_path)
     assert (r.status, r.reason) == ("submitted", "confirmation page"), r
-    assert _codes(r.breaks) == ["FALSE-SUBMITTED"], r.breaks
+    # no send went either (final review C-M3)
+    assert _codes(r.breaks) == ["FALSE-SUBMITTED", "SUBMITTED-WITHOUT-SEND"], r.breaks
 
 
 # --- the matrix, one test per flow (M6) --------------------------------------------------------------
@@ -389,6 +451,10 @@ def test_each_flow_holds_every_invariant_under_the_fake_and_the_noisy_seeds(
     _RESULTS[flow_name] = results
     table = h.summary(results)
     assert all(not r.breaks for r in results), table
+    # final review C-I2: a park outside the user's policy that missed the
+    # flow's end fails its flow, under xdist too (the floors' test below runs
+    # only when one process ran every flow)
+    assert not [r for r in results if r.policy is False and not r.ok], table
     # SP4's checkpoint, per flow so it runs under xdist too (review M4): a
     # page is never left unread ("unsure what this page is") and a moving
     # page never reads as stuck ("page did not advance") but where the flow
@@ -535,6 +601,11 @@ def test_enter_and_escape_that_send_nothing_break_nothing():
     ("needs_human", "a CAPTCHA check is on the form before the submit; not solved in time", True),
     ("needs_human", "the advance button (Next) did nothing (judged advance 1.00, clicked twice); "
                     "a CAPTCHA checkbox on the page is unticked: tick it, then Re-queue", True),
+    # final review C-M4: the sentence quoted inside another park's evidence
+    ("needs_human", "no submit button (the page says 'x; a CAPTCHA checkbox on the page is "
+                    "unticked: tick it')", False),
+    ("needs_human", "no way forward; a CAPTCHA checkbox on the page is unticked: tick it, then "
+                    "Re-queue", False),
     ("needs_human", "check whether the application went through: a request left after the "
                     "submit click (POST x) and the page reads as the form again "
                     "(captcha_or_bot_check 0.17)", False),

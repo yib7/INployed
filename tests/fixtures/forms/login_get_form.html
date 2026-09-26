@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in - Fabrikam Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<!-- A sign-in form sent with method=get: the browser puts the address and the
+     password in the next page's query, so the trace keeps a page's URL
+     without it (cycle 17 final review C-M1). -->
+<h1>Sign in to continue your application</h1>
+<p>Use the account you created for Fabrikam Careers.</p>
+<form id="login" method="get" action="ashby_steps.html">
+  <label for="login_email">Email</label><input id="login_email" name="email" type="email" autocomplete="username">
+  <label for="login_password">Password</label><input id="login_password" name="password" type="password" autocomplete="current-password" required>
+  <p><button type="submit" id="btn-signin">Sign in</button></p>
+</form>
+</body>
+</html>

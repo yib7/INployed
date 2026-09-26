@@ -89,10 +89,12 @@ jobs:
       # Chromium over local HTML fixtures. Playwright is optional in
       # requirements.txt, so it is installed here, with the runner's system
       # libraries, on this job only: the Windows job runs the same files and they
-      # skip there with "Chromium not installed", which is also the fallback here
-      # should this step ever fail to leave a launchable browser. Pillow reads the
-      # trace's screenshots back, so the checks that a password or code box is
-      # masked run here instead of skipping.
+      # skip there with "Chromium not installed". Every one of those skips runs
+      # here, because the browser step below selects each module that opts into
+      # tests/conftest_browser.py, found by its opt-in line. "Chromium not
+      # installed" is also the fallback here should this step ever fail to leave
+      # a launchable browser. Pillow reads the trace's screenshots back, so the
+      # checks that a password or code box is masked run here instead of skipping.
       - name: Install Playwright and Chromium
         run: |
           python -m pip install playwright Pillow
@@ -116,26 +118,27 @@ jobs:
             tests/test_scraper_bounds.py \
             tests/test_vm_sync.py
 
-      # The browser-backed auto-apply tests, run where Chromium was just installed.
-      # `-rs` prints every skip with its reason, so a missing browser shows up in
-      # the log as a wall of "Chromium not installed" lines. test_apply_trace.py
-      # and test_apply_matrix.py are the per-job trace and the flow matrix (every
-      # fixture flow under the fake judge and three noisy seeds, one test per
-      # flow; a few minutes); test_apply_entry.py is the entry (Easy Apply, the
-      # LinkedIn job page, settling, consent banners).
+      # The browser-backed auto-apply tests, run where Chromium was just installed:
+      # every test module that opts into the browser fixtures with a
+      # `pytest_plugins = ["conftest_browser"]` line, found by that line, so a new
+      # module (the submit, resilience and accounts suites among them) runs here
+      # without an edit to this file. The two local-capture modules come along and
+      # skip with their reason (their captures are never committed). `-rs` prints
+      # every skip with its reason, so a missing browser shows up in the log as a
+      # wall of "Chromium not installed" lines. test_apply_matrix.py is the flow
+      # matrix (every fixture flow under the fake judge and three noisy seeds, one
+      # test per flow; a few minutes). The shell is bash with `set -euo pipefail`,
+      # and a selection that finds no module fails the step.
       - name: Run auto-apply browser tests
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python -m pytest -q -rs -n auto \
-            tests/test_apply_form.py \
-            tests/test_apply_fill.py \
-            tests/test_apply_run.py \
-            tests/test_apply_inbox.py \
-            tests/test_ats_accounts.py \
-            tests/test_apply_trace.py \
-            tests/test_apply_entry.py \
-            tests/test_apply_matrix.py
+          set -euo pipefail
+          mapfile -t modules < <(grep -l '^pytest_plugins = .*conftest_browser' tests/test_*.py)
+          if [ "${#modules[@]}" -eq 0 ]; then echo "no browser test module found"; exit 1; fi
+          printf 'browser test modules: %s\n' "${#modules[@]}"
+          printf '  %s\n' "${modules[@]}"
+          python -m pytest -q -rs -n auto "${modules[@]}"
 
   # Runs the README's "Getting started" steps VERBATIM on a clean runner. This job
   # exists because a fresh-clone breakage slipped through once: the documented

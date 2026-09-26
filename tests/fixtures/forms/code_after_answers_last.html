@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apply for Analytics Engineer</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  label { display: block; margin: 10px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Apply for Analytics Engineer</h1>
+<!-- The last step after the emailed code (code_after_answers_code.html): a real
+     form post, which the harness server counts as the send and answers with
+     the confirmation page. -->
+<h2>Last step</h2>
+<form id="application" method="post" action="/submit/code_after_answers">
+  <label for="phone">Phone</label><input id="phone" name="phone" type="tel">
+  <p><button type="submit" id="btn-submit">Submit application</button></p>
+</form>
+</body>
+</html>

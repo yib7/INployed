@@ -212,6 +212,36 @@ def test_a_crashed_worker_counts_every_run_it_owed_as_a_miss_and_fails_the_exit(
     assert "lost to a crashed or hung worker" in capsys.readouterr().err
 
 
+def _row(judge: str, ok: bool, status: str = "submitted", policy=None) -> h.RunResult:
+    return h.RunResult("post_form", judge, status, "confirmation page" if ok else "a miss", ok,
+                       [], 1, 1, 0.1, policy=policy)
+
+
+@pytest.mark.parametrize("rows, flows, fails", [
+    # a clean run
+    ([_row("fake", True), _row("noisy-1", True)], ["--flows", "post_form"], ""),
+    # a park outside the user's policy that missed its end
+    ([_row("fake", True), _row("noisy-1", False, "needs_human", False)],
+     ["--flows", "post_form"], "1 park(s) outside the policy"),
+    # the fake judge under its floor, on any run
+    ([_row("fake", False, "needs_human", True), _row("noisy-1", True)],
+     ["--flows", "post_form"], "fake 0.0%, under the floor 100.0%"),
+    # the noisy seeds under their floor: on the whole registry only
+    ([_row("fake", True), _row("noisy-1", False, "needs_human", True)], [],
+     "noisy 0.0%, under the floor 97.0%"),
+    ([_row("fake", True), _row("noisy-1", False, "needs_human", True)],
+     ["--flows", "post_form"], "")])
+def test_the_script_fails_on_an_off_policy_park_and_on_the_floors(
+        monkeypatch, capsys, rows, flows, fails):
+    # final review C-I2: the floors and the off-policy count gate the exit
+    monkeypatch.setattr(apply_matrix, "_run_parallel", lambda *a, **k: list(rows))
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)    # no run, no store
+    code = apply_matrix.main([*flows, "--seeds", "1", "--jobs", "2"])
+    err = capsys.readouterr().err
+    assert code == (1 if fails else 0), err
+    assert (f"apply_matrix: FAILED: {fails}" in err) if fails else ("FAILED" not in err), err
+
+
 def test_default_flow_timeout_scales_with_the_judge_count():
     base = apply_matrix._default_flow_timeout(21)
     assert base == pytest.approx(53.0 * 3.0)

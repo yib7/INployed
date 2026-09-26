@@ -154,20 +154,22 @@ def test_write_standard_answers_render_bools_and_exclude_address(tmp_path):
     assert "Street address (line 1)." not in text         # address not repeated here
 
 
-def test_write_standard_answers_read_worded_yes_no_answers(tmp_path, monkeypatch):
+def test_write_leaves_a_worded_yes_no_answer_off_until_confirmed(tmp_path, monkeypatch):
     # A version 1 store with worded yes/no answers migrates on load (cycle 18):
-    # "Yes, I am a US citizen" is Yes plus a note, and an answer with no yes or
-    # no in front ("Open to NYC") is not set, so the sheet leaves it out.
+    # "Yes, I am a US citizen" is Yes plus a note, left unconfirmed until the
+    # user ticks it (final review C1), and an answer with no yes or no in front
+    # ("Open to NYC") is not set, so the sheet leaves both out. A bare "Yes"
+    # the user changed from the seed reads the same and goes on the sheet.
     store = tmp_path / "apply_answers.json"
     monkeypatch.setattr(apply_answers, "STORE_PATH", store)
     ids = ("work_authorized", "requires_sponsorship", "willing_to_relocate")
-    words = ("Yes, I am a US citizen", "No, I am a US citizen", "Open to NYC")
+    words = ("Yes, I am a US citizen", "Yes", "Open to NYC")
     v1 = [{"id": eid, "question": apply_answers.BUILTINS[eid].question, "answer": word,
            "kind": "fixed", "status": "active"} for eid, word in zip(ids, words)]
     store.write_text(json.dumps({"answers": v1}), encoding="utf-8")
     text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
-    assert "- **Are you legally authorized to work in the US?** Yes\n" in text
-    assert "- **Will you now or in the future require visa sponsorship?** No\n" in text
+    assert "Are you legally authorized to work in the US?" not in text
+    assert "- **Will you now or in the future require visa sponsorship?** Yes\n" in text
     assert "Are you willing to relocate?" not in text
     assert "Open to NYC" not in text
 
@@ -462,6 +464,35 @@ def test_refresh_answer_sections_drops_an_answer_the_store_no_longer_confirms(tm
     assert apply_data.refresh_answer_sections(tmp_path, bank) is True
     text = out.read_text(encoding="utf-8")
     assert "Decline to self-identify" not in text and "1 Main St" not in text
+
+
+def test_a_damaged_store_still_writes_the_sheet_and_a_later_refresh_fills_it(tmp_path):
+    # final review store I1: the tailor's resume and cover sections are paid
+    # output, so a damaged answer file leaves out only the answers
+    store = tmp_path / "apply_answers.json"
+    store.write_text("{not json", encoding="utf-8")
+    notes = []
+    out = apply_data.write(_JOB, tmp_path, sel=_SEL, bullets=_BULLETS, skill_lines=_SKILLS,
+                           cover_body="Dear team,\n\nHello.", on_warning=notes.append)
+    text = out.read_text(encoding="utf-8")
+    assert notes == ["answers left out: the Apply Answers file is damaged"]
+    assert "Built the ingestion pipeline fast." in text and "## Cover letter" in text
+    assert "### Address" in text and "## Standard answers" in text
+    answers = text[text.index("## Standard answers"):text.index("## Electronic signature")]
+    assert "- **" not in answers
+    assert "the Apply Answers file is damaged" in answers
+    store.unlink()                                       # the user repairs the file
+    _seed_store(tmp_path, how_did_you_hear="LinkedIn", address_city="Anytown")
+    assert _refresh(tmp_path) is True
+    text = out.read_text(encoding="utf-8")
+    assert "- **How did you hear about us?** LinkedIn" in text
+    assert "- **City:** Anytown" in text
+    assert "Built the ingestion pipeline fast." in text and "Dear team," in text
+
+
+def test_a_damaged_store_writes_the_sheet_with_no_warning_callback(tmp_path):
+    (tmp_path / "apply_answers.json").write_text("{not json", encoding="utf-8")
+    assert apply_data.write(_JOB, tmp_path).exists()
 
 
 def test_refresh_answer_sections_without_an_address_block_refreshes_the_answers(tmp_path):

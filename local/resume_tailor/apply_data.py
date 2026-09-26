@@ -25,9 +25,13 @@ import os
 import re
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from . import apply_answers, assets
+
+# What `write` reports when the answer file is damaged and the sheet goes out
+# with no answers.
+ANSWERS_LEFT_OUT = "answers left out: the Apply Answers file is damaged"
 
 # Structured mailing-address answer ids — rendered in the Address section and
 # excluded from the generic Standard-answers list (so they aren't shown twice).
@@ -360,12 +364,16 @@ def _md_text(value: Any) -> str:
     return _one_line(value).replace("*", "\\*")
 
 
-def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
+def _standard_answer_lines(answers: List[Dict[str, Any]], left_out: str = "") -> str:
     """The `## Standard answers` block: one `- **question** answer` line per
     answer a form may use, read through `apply_answers.fact_value` (a yes/no
     answer shows Yes or No; an answer not set or not confirmed is left out),
-    and its note, when it has one, on a `  - Note: ...` line under it."""
+    and its note, when it has one, on a `  - Note: ...` line under it.
+    `left_out` names why the store gave no answers (a damaged file)."""
     out = ["## Standard answers\n"]
+    if left_out:
+        out.append(f"- ({left_out}; fix it in the Apply Answers tab)\n")
+        return "".join(out)
     for e in answers:
         if not isinstance(e, dict):
             continue
@@ -390,8 +398,10 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
                    sel: Optional[Dict[str, Any]] = None,
                    bullets: Optional[Dict[str, str]] = None,
                    skill_lines: Optional[List[Dict[str, str]]] = None,
-                   cover_body: Optional[str] = None) -> str:
-    """Assemble the full apply.md text (pure function — easily testable)."""
+                   cover_body: Optional[str] = None,
+                   answers_left_out: str = "") -> str:
+    """Assemble the full apply.md text (a pure function, so tests call it directly).
+    `answers_left_out` says why the Standard answers block is empty."""
     basics = master.get("basics", {}) or {}
     education = master.get("education", []) or []
 
@@ -418,7 +428,7 @@ def build_markdown(master: Dict[str, Any], job: Dict[str, str],
     parts.append("\n" + _resume_lines(master, sel, bullets, skill_lines))
     if (cover_body or "").strip():
         parts.append("\n" + _cover_letter_section(cover_body or ""))
-    parts.append("\n" + _standard_answer_lines(answers))
+    parts.append("\n" + _standard_answer_lines(answers, answers_left_out))
 
     parts.append("\n## Electronic signature (use at the end, where the form asks; do not submit)\n")
     parts.append(_kv("Signature (type)", basics.get("name", ""), always=True))
@@ -432,7 +442,8 @@ def write(job: Dict[str, str], out_dir: Path, *,
           sel: Optional[Dict[str, Any]] = None,
           bullets: Optional[Dict[str, str]] = None,
           skill_lines: Optional[List[Dict[str, str]]] = None,
-          cover_body: Optional[str] = None) -> Path:
+          cover_body: Optional[str] = None,
+          on_warning: Optional[Callable[[str], None]] = None) -> Path:
     """Write a self-contained apply.md into out_dir and return its path.
 
     `sel` / `bullets` / `skill_lines` are the tailor's own selection + surviving
@@ -440,12 +451,23 @@ def write(job: Dict[str, str], out_dir: Path, *,
     Omit them (CLI / backfill) and the sheet carries a re-tailor note instead.
     `cover_body` is the paste-ready cover letter when the run generated one; omit
     it and the sheet simply carries no `## Cover letter` section.
+
+    A damaged answer file leaves out only the answers: the sheet keeps its
+    `### Address` and `## Standard answers` headings, so the runner's
+    `refresh_answer_sections` fills them once the file is repaired, and
+    `on_warning` (when given) gets ANSWERS_LEFT_OUT.
     """
     master = assets.load_master()
-    answers = apply_answers.load()
+    left_out = ""
+    try:
+        answers = apply_answers.load()
+    except apply_answers.AnswerStoreError:
+        answers, left_out = [], ANSWERS_LEFT_OUT
+        if on_warning is not None:
+            on_warning(left_out)
     md = build_markdown(master, job, answers,
                         sel=sel, bullets=bullets, skill_lines=skill_lines,
-                        cover_body=cover_body)
+                        cover_body=cover_body, answers_left_out=left_out)
     path = out_dir / "apply.md"
     path.write_text(md, encoding="utf-8")
     return path

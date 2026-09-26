@@ -190,6 +190,24 @@ def test_fact_value_reads_a_confirmed_set_answer():
     assert aa.fact_value(_v2("address_state", "Ontario")) == "Ontario"   # a province abroad
 
 
+def test_match_option_strips_and_matches_case_aside():
+    assert aa.match_option("Yes ", aa.YES_NO) == "Yes"
+    assert aa.match_option(" no", aa.YES_NO) == "No"
+    assert aa.match_option("female ", aa.BUILTINS["gender"].options) == "Female"
+    assert aa.match_option("maybe", aa.YES_NO) is None
+    assert aa.match_option("", aa.YES_NO) is None
+    assert aa.match_option(None, aa.YES_NO) is None
+
+
+def test_fact_value_reads_a_spaced_or_cased_option_the_way_the_editor_shows_it():
+    # final review UI I2: one normalizer, so the run and the editor agree
+    assert aa.fact_value(_v2("work_authorized", "Yes ")) == "Yes"
+    assert aa.fact_value(_v2("work_authorized", "yes")) == "Yes"
+    assert aa.fact_value(_v2("gender", "Female ")) == "Female"
+    assert aa.fact_value(_v2("address_state", "massachusetts")) == "Massachusetts"
+    assert aa.fact_value(_v2("work_authorized", "maybe")) == ""
+
+
 def test_fact_value_gives_nothing_when_unset_or_unconfirmed():
     assert aa.fact_value(_v2("work_authorized", "Yes", confirmed=False)) == ""
     assert aa.fact_value(_v2("work_authorized", "")) == ""
@@ -474,10 +492,38 @@ def test_validate_ignores_the_legacy_kind_and_flags_duplicate_ids():
     assert any("duplicate" in e.lower() for e in errs)
 
 
-def test_validate_blocks_a_custom_question_a_builtin_already_covers():
-    entry = _v2("auth_q", "Yes", type_="yes_no", question="Are you authorized to work in the US?")
+def test_validate_blocks_a_custom_question_worded_as_a_builtin():
+    entry = _v2("auth_q", "Yes", type_="yes_no",
+                question="are you legally authorized to work in the US")
     errs = aa.validate(aa.seed_defaults() + [entry])
-    assert any("Are you legally authorized to work in the US?" in e for e in errs), errs
+    assert errs == ["answer 'auth_q': the built-in answer 'Are you legally authorized to work "
+                    "in the US?' already answers this question, and the run fills it from "
+                    "that answer"], errs
+    assert not any("edit that answer" in e for e in errs)
+
+
+def test_validate_names_a_custom_question_saved_twice():
+    first = _v2("github", "x", question="What is your GitHub?")
+    second = _v2("github_2", "y", question="what is your github")
+    errs = aa.validate([first, second])
+    assert errs == ["answer 'github_2': the custom answer 'What is your GitHub?' already has "
+                    "this question; keep one of the two"], errs
+
+
+@pytest.mark.parametrize("question", [
+    "Are you authorized to work in the US?",
+    "Are you authorized to work in Canada?",
+    "Will you require H-1B visa sponsorship?",
+])
+def test_validate_accepts_a_custom_question_in_other_words(question):
+    entry = _v2("custom", "No", type_="yes_no", question=question)
+    assert aa.validate(aa.seed_defaults() + [entry]) == []
+
+
+def test_validate_counts_a_long_note_in_its_message():
+    entry = _v2("work_authorized", "Yes", note="n" * 467)
+    assert aa.validate([entry]) == ["answer 'work_authorized': the note is 467 of 300 "
+                                    "characters"]
 
 
 def test_append_needs_review_is_retired():
@@ -532,7 +578,8 @@ def test_migrate_reads_a_worded_yes_no_answer_as_yes_plus_a_note():
     auth, sponsor = out
     assert (auth["type"], auth["answer"], auth["note"]) == ("yes_no", "Yes", "I am a US citizen")
     assert (sponsor["answer"], sponsor["note"]) == ("No", "I am a US citizen")
-    assert auth["confirmed"] is True and sponsor["confirmed"] is True   # the user changed them
+    # the words after Yes or No can change what it means, so the user confirms it
+    assert auth["confirmed"] is False and sponsor["confirmed"] is False
     assert review[0] == {"id": "work_authorized",
                          "question": "Are you legally authorized to work in the US?",
                          "before": "Yes, I am a US citizen",
@@ -550,6 +597,47 @@ def test_migrate_leaves_a_seed_answer_unconfirmed_and_off_the_review():
                                           "LinkedIn", "", "United States"]
     assert all(e["confirmed"] is False for e in out)
     assert review == []
+
+
+@pytest.mark.parametrize("eid, text, answer", [
+    ("requires_sponsorship", "No, but I will need H-1B sponsorship after my OPT ends", "No"),
+    ("willing_to_relocate", "No problem relocating for the right role", "No"),
+    ("work_authorized", "Yes, but only on OPT until May 2027", "Yes"),
+    ("years_experience", "2 years in Python, 5 total", "2"),
+    ("years_experience", "None professionally, 2 years of research", "0"),
+    ("veteran_status", "Yes",
+     "I identify as one or more of the classifications of protected veteran"),
+    ("disability_status", "No",
+     "No, I do not have a disability and have not had one in the past"),
+])
+def test_migrate_leaves_a_guessed_meaning_unconfirmed_and_on_the_review(eid, text, answer):
+    # final review C1: the rest of the sentence can reverse the word the
+    # migration read, and a Yes or No names no veteran or disability option
+    out, review = aa.migrate_v1([_v1(eid, text)])
+    assert (out[0]["answer"], out[0]["confirmed"]) == (answer, False)
+    assert [r["id"] for r in review] == [eid]
+
+
+def test_a_migrated_reversed_sponsorship_answer_reaches_no_form(tmp_path):
+    # the drain loads a version 1 file in memory and leaves the file as it is
+    path = _v1_file(tmp_path / "apply_answers.json", [
+        _v1("work_authorized", "Yes, I am on OPT"),
+        _v1("requires_sponsorship", "No, but I will need H-1B sponsorship after my OPT ends")])
+    by = _by_id(aa.load(path))
+    assert aa.fact_value(by["requires_sponsorship"]) == ""
+    assert aa.fact_value(by["work_authorized"]) == ""
+
+
+@pytest.mark.parametrize("eid, text, answer", [
+    ("requires_sponsorship", "Yes", "Yes"),
+    ("requires_sponsorship", "true.", "Yes"),
+    ("years_experience", "5", "5"),
+    ("gender", "female", "Female"),
+    ("how_did_you_hear", "A friend", "A friend"),
+])
+def test_migrate_confirms_an_answer_that_reads_the_same_as_its_value(eid, text, answer):
+    out, _ = aa.migrate_v1([_v1(eid, text)])
+    assert (out[0]["answer"], out[0]["note"], out[0]["confirmed"]) == (answer, "", True)
 
 
 def test_migrate_keeps_an_unreadable_yes_no_as_a_note_for_review():
@@ -587,7 +675,7 @@ def test_migrate_keeps_an_unreadable_yes_no_as_a_note_for_review():
 def test_migrate_reads_a_leading_number(text, answer, note):
     out, review = aa.migrate_v1([_v1("years_experience", text)])
     assert (out[0]["type"], out[0]["answer"], out[0]["note"]) == ("number", answer, note)
-    assert out[0]["confirmed"] is bool(answer)
+    assert out[0]["confirmed"] is (answer == text)     # only a bare number confirms
     assert bool(review) is (text != answer)
 
 
@@ -637,8 +725,24 @@ def test_migrate_reads_a_leading_number(text, answer, note):
      "Yes, I have a disability, or have had one in the past"),
 ])
 def test_migrate_matches_a_choice_by_case_and_the_alias_table(eid, text, want):
+    # final review C1: a case match, a state or country spelling and a decline
+    # form confirm; every other alias is a reading the user confirms by hand
     out, _ = aa.migrate_v1([_v1(eid, text)])
-    assert (out[0]["answer"], out[0]["note"], out[0]["confirmed"]) == (want, "", True)
+    confirmed = (eid, text) in _SPELLING_ALIASES
+    assert (out[0]["answer"], out[0]["note"], out[0]["confirmed"]) == (want, "", confirmed)
+
+
+_SPELLING_ALIASES = {
+    ("gender", "Decline"), ("race_ethnicity", "Prefer not to say"),
+    ("disability_status", "I don't wish to answer"), ("gender", "female"),
+    ("address_country", "USA"), ("address_country", "US"), ("address_country", "U.S."),
+    ("address_state", "MA"), ("address_state", "new york"),
+}
+
+
+def test_migrate_confirms_a_trailing_period_on_an_exact_option():
+    out, _ = aa.migrate_v1([_v1("gender", "Female.")])
+    assert (out[0]["answer"], out[0]["confirmed"]) == ("Female", True)
 
 
 def test_a_trailing_period_or_extra_spaces_never_blocks_an_exact_match():
@@ -721,34 +825,36 @@ _Q["onsite_ok"] = "Are you willing to work on-site (in the office)?"
 
 
 @pytest.mark.parametrize("question, want", [
-    ("Are you authorized to work in the US?", "work_authorized"),
-    ("Years of Python experience?", None),
+    ("Are you legally authorized to work in the US?", "work_authorized"),
+    ("are you legally  authorized to work in the us", "work_authorized"),
+    ("Will you now or in the future require visa sponsorship?", "requires_sponsorship"),
+    ("How many years of relevant experience do you have?", "years_experience"),
+    ("Country.", "address_country"),
+    ("State / province", "address_state"),
+    # final review UI C1: a question the run hands to a custom answer saves;
+    # the own-question check lives in the Add answer dialog (local/qt)
+    ("Are you authorized to work in Canada?", None),
+    ("Will you require H-1B visa sponsorship?", None),
+    ("Are you willing to relocate to Austin, TX?", None),
+    ("How many years of experience do you have with Python?", None),
+    ("Work authorization", None),
+    ("State your desired salary", None),
+    ("Country of citizenship", None),
     ("What is your GitHub?", None),
-    ("Are you legally able to work here?", "work_authorized"),
-    ("Will you need visa sponsorship?", "requires_sponsorship"),
-    ("Would you relocate for this role?", "willing_to_relocate"),
-    ("Can you work on-site three days a week?", "onsite_ok"),
-    ("Are you comfortable working in the office?", "onsite_ok"),
-    ("How many years of professional experience do you have?", "years_experience"),
-    ("What is your gender identity?", "gender"),
-    # SP1 fix round 1, item 2: an EEO form's own "Hispanic or Latino?" question
-    # is a custom row, not the race_ethnicity built-in's topic
-    ("Are you Hispanic or Latino?", None),
-    ("What is your race?", "race_ethnicity"),
-    ("Ethnicity", "race_ethnicity"),
-    ("Are you a protected veteran?", "veteran_status"),
-    ("Do you have a disability?", "disability_status"),
-    ("How did you find this job?", "how_did_you_hear"),
-    ("Mailing address", "address_street"),
-    ("City of residence", "address_city"),
-    ("State", "address_state"),
-    ("Postal code", "address_zip"),
-    ("Country of residence", "address_country"),
-    ("What city do you live in?", None),
 ])
-def test_find_collision_names_the_builtin_a_custom_question_duplicates(question, want):
+def test_find_collision_names_only_a_builtins_own_wording(question, want):
     expected = _Q[want] if want else None
     assert aa.find_collision(question, aa.seed_defaults()) == expected
+
+
+def test_validate_lets_a_version_1_store_keep_a_narrower_custom_question(tmp_path):
+    path = _v1_file(tmp_path / "apply_answers.json", [
+        _v1("work_authorized", "Yes"),
+        _v1("canada", "No", question="Are you authorized to work in Canada?")])
+    answers = aa.load(path)
+    assert aa.validate(answers) == []
+    aa.save(answers, path)
+    assert _by_id(aa.load(path))["canada"]["answer"] == "No"
 
 
 def test_find_collision_between_custom_questions_uses_normalised_text():
@@ -759,9 +865,6 @@ def test_find_collision_between_custom_questions_uses_normalised_text():
     assert aa.find_collision("", entries) is None
 
 
-def test_find_collision_prefers_a_built_ins_own_text_over_another_topic_match():
-    # SP1 fix round 1, item 9: "authorization_statement" has no topic regex of
-    # its own, and its exact text trips work_authorized's "authori[sz]" regex;
-    # the exact match must win.
+def test_find_collision_names_the_authorization_statement_by_its_own_text():
     question = aa.BUILTINS["authorization_statement"].question
     assert aa.find_collision(question, aa.seed_defaults()) == question

@@ -1,7 +1,7 @@
 """The master answer store: the user's saved answers to screening questions.
 
-Version 2 (cycle 18) types every answer, so a form gets exactly what the user
-meant or nothing at all. The file (repo-root `apply_answers.json`) is
+Version 2 (cycle 18) types every answer, so a form gets the answer you picked,
+or a blank. The file (repo-root `apply_answers.json`) is
 
     {"version": 2,
      "answers": [{"id", "question", "type", "answer", "note", "confirmed", "status"}, ...],
@@ -32,7 +32,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 from . import apply_config
 from .answer_tables import (
-    CHOICE_ALIASES, COUNTRIES, DISABILITY_OPTIONS, GENDER_OPTIONS, RACE_OPTIONS,
+    CHOICE_ALIASES, COUNTRIES, DECLINE, DISABILITY_OPTIONS, GENDER_OPTIONS, RACE_OPTIONS,
     STATE_NAMES, US_COUNTRY, US_STATES, VETERAN_OPTIONS,
 )
 
@@ -40,9 +40,9 @@ __all__ = [
     "AnswerStoreError", "BOOL_IDS", "BUILTINS", "Builtin", "CUSTOM_TYPES", "KINDS",
     "NOTE_MAX", "NUMBER_MAX", "STATE_TEXT_MAX", "STATUSES", "STORE_PATH", "TEXT_MAX",
     "TYPES", "US_STATES", "VERSION", "YES_NO", "fact_value",
-    "find_collision", "load", "load_store", "load_with_defaults", "migrate_from_apply_config",
-    "migrate_v1", "new_id", "restore_bytes", "save", "seed_defaults", "validate", "warnings",
-    "with_missing_builtins", "yes_no",
+    "find_collision", "load", "load_store", "load_with_defaults", "match_option",
+    "migrate_from_apply_config", "migrate_v1", "new_id", "restore_bytes", "save",
+    "seed_defaults", "validate", "warnings", "with_missing_builtins", "yes_no",
 ]
 
 PKG_DIR = Path(__file__).resolve().parent          # local/resume_tailor
@@ -104,26 +104,7 @@ BUILTINS: Dict[str, Builtin] = {
 
 # The yes/no ids: the sheet and the fact catalog show them as Yes or No.
 BOOL_IDS = frozenset(k for k, b in BUILTINS.items() if b.type == "yes_no")
-
-# ST-7: the topics a custom question may not duplicate (matched on normalised text).
-_TOPICS = {
-    "work_authorized": re.compile(r"\bauthori[sz]"),
-    "requires_sponsorship": re.compile(r"\bsponsor"),
-    "willing_to_relocate": re.compile(r"\breloca"),
-    "onsite_ok": re.compile(r"\b(on ?site|in office|in the office|in person)\b"),
-    "years_experience": re.compile(
-        r"^how many years of (relevant |professional |work )?experience\b"),
-    "gender": re.compile(r"\bgender\b"),
-    "race_ethnicity": re.compile(r"\b(race|racial|ethnicity)\b"),
-    "veteran_status": re.compile(r"\bveteran"),
-    "disability_status": re.compile(r"\bdisabilit"),
-    "how_did_you_hear": re.compile(r"\bhow did you (hear|find)\b"),
-    "address_street": re.compile(r"\b(street|mailing) address\b"),
-    "address_city": re.compile(r"^city\b"),
-    "address_state": re.compile(r"^(state|province)\b"),
-    "address_zip": re.compile(r"\b(zip|postal)\b"),
-    "address_country": re.compile(r"^country\b"),
-}
+_BUILTIN_QUESTIONS = frozenset(b.question for b in BUILTINS.values())
 
 
 class AnswerStoreError(Exception):
@@ -157,6 +138,16 @@ def yes_no(value: Any) -> str:
     if word in _NO_WORDS:
         return "No"
     return ""
+
+
+def match_option(value: Any, options: Tuple[str, ...]) -> Optional[str]:
+    """The option `value` names once stripped, case aside ("Yes " and "yes" are
+    "Yes"), or None when it names none or is blank. The one normalizer the run
+    (`fact_value`) and the editor's option boxes share."""
+    text = str(value or "").strip().casefold()
+    if not text:
+        return None
+    return next((o for o in options if o.casefold() == text), None)
 
 
 def _type_ok(eid: str, etype: Any) -> bool:
@@ -195,8 +186,9 @@ def _answer_problem(eid: str, etype: str, answer: str, us: Optional[bool]) -> Op
 def fact_value(entry: Any) -> str:
     """What a form gets for this answer: "" when it is not confirmed, not set, or
     does not fit its type; otherwise the answer (yes_no "Yes"/"No", number the
-    digits, choice the option text, text the text). The only reader the run and
-    the apply sheet use."""
+    digits, choice the option text, text the text). A yes/no or choice answer
+    reads through `match_option`, so "yes " is "Yes". The only reader the run
+    and the apply sheet use."""
     if not isinstance(entry, dict) or entry.get("confirmed") is not True:
         return ""
     if entry.get("status", "active") != "active":
@@ -209,7 +201,13 @@ def fact_value(entry: Any) -> str:
     if not _type_ok(eid, etype):
         return ""
     answer = answer.strip()
-    if _answer_problem(eid, etype, answer, None) is not None:
+    if etype == "yes_no":
+        answer = match_option(answer, YES_NO) or ""
+    elif etype == "choice" and eid == "address_state":
+        answer = match_option(answer, STATE_NAMES) or answer   # a province abroad is text
+    elif etype == "choice":
+        answer = match_option(answer, BUILTINS[eid].options) or ""
+    if not answer or _answer_problem(eid, etype, answer, None) is not None:
         return ""
     return answer
 
@@ -270,8 +268,7 @@ _LEAD_NUMBER = re.compile(r"\d{1,2}(\.5)?")
 # ("3 1/2 years") makes it unreadable
 _NUMBER_TAIL_BAD = re.compile(
     r"^(?:[.,]?\d|\s*(?:-|\u2013|\u2014|to\b|or\b)\s*\d|\s+\d+\s*/\s*\d+)", re.I)
-# a years_experience answer with no leading digit (or one an unreadable tail
-# rules out) that still means zero
+# a years_experience answer with no leading digit that still means zero
 _ZERO_EXPERIENCE_RE = re.compile(
     r"^(?:less than (?:1|one)|under 1|<\s?1|none|no experience)\b", re.I)
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
@@ -354,6 +351,29 @@ def _reads_same(raw: str, answer: str, etype: str) -> bool:
     return raw.casefold() == answer.casefold()
 
 
+# The alias tables whose every entry is a spelling of its option: a state code,
+# a way to write the United States.
+_SPELLING_ALIAS_IDS = ("address_state", "address_country")
+
+
+def _clean_read(eid: str, etype: str, raw: str, answer: str, note: str) -> bool:
+    """The migration read `raw` with no guess about its meaning: the whole text
+    is the value (case, spacing and end punctuation aside for a choice), or a
+    spelling alias (a state code, "USA", a decline form). A worded yes/no, a
+    number with words after it and any other alias are readings the user
+    confirms (final review C1)."""
+    if not answer or note:
+        return False
+    if _reads_same(raw, answer, etype):
+        return True
+    if etype != "choice":
+        return False
+    if _norm(raw) == _norm(answer):
+        return True
+    alias = _ALIASES.get(eid, {}).get(_norm(raw))
+    return alias == answer and (eid in _SPELLING_ALIAS_IDS or answer == DECLINE)
+
+
 def _describe(answer: str, note: str) -> str:
     text = answer or "Not set"
     return f"{text}, note '{note}'" if note else text
@@ -366,8 +386,10 @@ def migrate_v1(entries: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Lis
     by its leading `\\d{1,2}(\\.5)?`, the rest kept as the note; a choice by its
     options (case aside), then `CHOICE_ALIASES`; custom entries become text. What
     cannot be read is left not set with the words in the note. An entry is
-    confirmed when the user changed it from its seed and it read cleanly. Each
-    converted or unreadable answer gets a review item {id, question, before, after}.
+    confirmed when the user changed it from its seed and its text is the value
+    itself or a spelling of it (`_clean_read`); a worded or aliased reading stays
+    unconfirmed. Each converted or unreadable answer gets a review item {id,
+    question, before, after}.
     """
     rows = [e for e in (entries or []) if isinstance(e, dict)]
     country = next((_v1_text(e.get("answer")).strip() for e in rows
@@ -384,8 +406,8 @@ def migrate_v1(entries: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Lis
         raw = _v1_text(old.get("answer")).strip()
         answer, note, readable = _read_v1(eid, etype, raw, us)
         changed = builtin is None or not _is_seed(eid, raw)
-        confirmed = (bool(answer) and readable and changed
-                     and old.get("status") != "needs-review")
+        confirmed = (readable and changed and old.get("status") != "needs-review"
+                     and _clean_read(eid, etype, raw, answer, note))
         new = {"id": old.get("id", ""), "question": question, "type": etype, "answer": answer,
                "note": note, "confirmed": confirmed, "status": "active"}
         for key, value in old.items():
@@ -478,7 +500,8 @@ def _us_address(answers: List[Any]) -> bool:
 def validate(answers: List[Dict[str, Any]]) -> List[str]:
     """Problems that block a save ([] = OK): the record shape, each answer's shape
     for its type, the address rules, a built-in's question and type, a custom
-    question a built-in or another custom already covers, duplicate ids."""
+    question that is a built-in's own question or an earlier custom's
+    (`find_collision`), duplicate ids."""
     errors: List[str] = []
     if not isinstance(answers, list):
         return ["the answer store must be a list of entries"]
@@ -511,10 +534,13 @@ def validate(answers: List[Dict[str, Any]]) -> List[str]:
             errors.append("answer '%s': type must be one of %s"
                           % (label, ", ".join(CUSTOM_TYPES)))
         elif question:
-            hit = find_collision(question, answers, own_id=eid)
-            if hit:
-                errors.append("answer '%s': already covered by '%s'; edit that answer instead"
-                              % (label, hit))
+            hit = find_collision(question, answers[:i], own_id=eid)
+            if hit in _BUILTIN_QUESTIONS:
+                errors.append("answer '%s': the built-in answer '%s' already answers this "
+                              "question, and the run fills it from that answer" % (label, hit))
+            elif hit:
+                errors.append("answer '%s': the custom answer '%s' already has this "
+                              "question; keep one of the two" % (label, hit))
         answer, note = e.get("answer", ""), e.get("note", "")
         if not isinstance(answer, str):
             errors.append("answer '%s': the answer must be text" % label)
@@ -525,7 +551,8 @@ def validate(answers: List[Dict[str, Any]]) -> List[str]:
         if note is not None and not isinstance(note, str):
             errors.append("answer '%s': the note must be text" % label)
         elif etype in ("yes_no", "number") and len(note or "") > NOTE_MAX:
-            errors.append("answer '%s': the note is over %d characters" % (label, NOTE_MAX))
+            errors.append("answer '%s': the note is %d of %d characters"
+                          % (label, len(note), NOTE_MAX))
         if eid:
             if eid in seen:
                 errors.append("duplicate answer id '%s'" % eid)
@@ -619,24 +646,16 @@ def new_id(question: str, taken: set) -> str:
 def find_collision(question: str, entries: List[Dict[str, Any]],
                    own_id: Optional[str] = None) -> Optional[str]:
     """The question text of the answer a (new or custom) question duplicates, or
-    None: a built-in whose topic it names, or a custom question with the same
-    normalised text. `own_id` is the question's own entry, left out."""
+    None: a built-in whose own question it is word for word, or a custom
+    question with the same text (case, spacing and punctuation aside). `own_id`
+    is the question's own entry, left out. A question the run would answer
+    from a built-in in other words is the Add answer dialog's check
+    (`apply_facts.question_fit`, under local/qt)."""
     norm = _norm(question)
     if not norm:
         return None
-    words = norm.split()
-    # A custom question that is verbatim a built-in's own text names that
-    # built-in, even when the text also happens to trip another built-in's
-    # topic regex (e.g. the authorization_statement text contains "authoriz").
     for eid, b in BUILTINS.items():
         if eid != own_id and norm == _norm(b.question):
-            return b.question
-    for eid, b in BUILTINS.items():
-        if eid == own_id:
-            continue
-        topic = _TOPICS.get(eid)
-        if ((topic is not None and topic.search(norm))
-                or (eid == "work_authorized" and "legally" in words and "work" in words)):
             return b.question
     for e in entries or []:
         if not isinstance(e, dict):

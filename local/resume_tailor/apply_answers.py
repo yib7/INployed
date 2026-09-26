@@ -76,8 +76,32 @@ def _to_answer_str(entry_id: str, value: Any) -> str:
     return str(value)
 
 
-def _truthy(value: Any) -> bool:
-    return str(value).strip().lower() in {"true", "yes", "1"}
+_YES_WORDS = {"yes", "true", "1"}
+_NO_WORDS = {"no", "false", "0"}
+_FIRST_WORD = re.compile(r"[a-z0-9]+")
+
+
+def yes_no(value: Any) -> str:
+    """"Yes" or "No" when a yes/no answer opens with one ("true", "Yes, I am a
+    US citizen", "no."), else "" (the answer's own words carry it). A worded
+    answer is never read as "No" for want of an exact "yes"."""
+    m = _FIRST_WORD.match(str(value or "").strip().lower())
+    word = m.group(0) if m else ""
+    if word in _YES_WORDS:
+        return "Yes"
+    if word in _NO_WORDS:
+        return "No"
+    return ""
+
+
+def _flat_bool(value: Any) -> Any:
+    """A yes/no answer for the legacy flat dict: a bool when it opens with yes
+    or no, else its own words ("" or missing stays False)."""
+    word = yes_no(value)
+    if word:
+        return word == "Yes"
+    text = str(value or "").strip()
+    return text or False
 
 
 def _slug(text: str) -> str:
@@ -230,7 +254,7 @@ def restore_bytes(data: bytes, path: Union[Path, None] = None) -> None:
 
 def as_standard_answers(answers: Union[List[Dict[str, Any]], None] = None) -> Dict[str, Any]:
     """Flatten the ACTIVE answers into the legacy {id: value} dict the apply
-    skill's table expects. Boolean ids are coerced back to bool."""
+    skill's table expects. Boolean ids are read back to bool (`_flat_bool`)."""
     answers = answers if answers is not None else load()
     out: Dict[str, Any] = {}
     for e in answers:
@@ -239,7 +263,7 @@ def as_standard_answers(answers: Union[List[Dict[str, Any]], None] = None) -> Di
         eid = e.get("id")
         if not eid:
             continue
-        out[eid] = _truthy(e.get("answer")) if eid in BOOL_IDS else e.get("answer")
+        out[eid] = _flat_bool(e.get("answer")) if eid in BOOL_IDS else e.get("answer")
     return out
 
 

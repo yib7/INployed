@@ -132,3 +132,26 @@ def test_load_with_defaults_merges_missing_address(tmp_path):
         assert loaded[key]["status"] == "active"
     # custom/existing entries are preserved
     assert "how_did_you_hear" in loaded
+
+
+def test_yes_no_reads_the_answers_first_word():
+    # a worded answer is read by its first word, never turned to "No" (the
+    # 2026-09-26 Contoso run: "Yes, I am a US citizen" went on the form as "No")
+    for text in ("true", "Yes", "yes.", "Yes, I am a US citizen",
+                 "Yes willing to relocate and open to on-site", "1"):
+        assert aa.yes_no(text) == "Yes", text
+    for text in ("false", "No", "No, I am a US citizen", "no.", "0"):
+        assert aa.yes_no(text) == "No", text
+    for text in ("US citizen", "Not at this time", "N/A", "Y", "", None):
+        assert aa.yes_no(text) == "", text
+
+
+def test_as_standard_answers_reads_worded_yes_no_answers():
+    rows = [{"id": "work_authorized", "answer": "Yes, I am a US citizen", "status": "active"},
+            {"id": "requires_sponsorship", "answer": "No, I am a US citizen",
+             "status": "active"},
+            {"id": "willing_to_relocate", "answer": "Open to NYC", "status": "active"}]
+    flat = aa.as_standard_answers(rows)
+    assert flat["work_authorized"] is True
+    assert flat["requires_sponsorship"] is False
+    assert flat["willing_to_relocate"] == "Open to NYC"     # no yes or no: the words stand

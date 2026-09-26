@@ -210,7 +210,12 @@ def build(folder: Path, *, answers: list[dict] | None = None,
         if not eid or eid in _ADDRESS_LABELS:
             continue
         question = str(entry.get("question", "") or "").strip()
-        value = sheet_answers.get(question, "") or _bank_value(entry)
+        if eid in _BOOL_BANK_IDS:
+            # the bank's own words win: a sheet written before `yes_no` read a
+            # worded yes ("Yes, I am a US citizen") as "No" (2026-09-26)
+            value = _bank_value(entry) or sheet_answers.get(question, "")
+        else:
+            value = sheet_answers.get(question, "") or _bank_value(entry)
         if eid in _NAMED_BANK_IDS:
             values[eid] = value
         else:
@@ -238,7 +243,8 @@ def _bank_value(entry: dict | None) -> str:
         return ""
     raw = str(entry.get("answer", "") or "").strip()
     if str(entry.get("id", "")) in _BOOL_BANK_IDS and raw:
-        return "Yes" if raw.lower() in {"true", "yes", "1"} else "No"
+        from resume_tailor import apply_answers  # lazy: config.py loads .env at import
+        return apply_answers.yes_no(raw) or raw
     return raw
 
 

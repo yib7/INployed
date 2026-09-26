@@ -152,6 +152,21 @@ def test_write_standard_answers_render_bools_and_exclude_address(tmp_path):
     assert "Street address (line 1)." not in text         # address not repeated here
 
 
+def test_write_standard_answers_read_worded_yes_no_answers(tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    monkeypatch.setattr(apply_answers, "STORE_PATH", store)
+    ans = apply_answers.seed_defaults()
+    by = {e["id"]: e for e in ans}
+    by["work_authorized"]["answer"] = "Yes, I am a US citizen"
+    by["requires_sponsorship"]["answer"] = "No, I am a US citizen"
+    by["willing_to_relocate"]["answer"] = "Open to NYC"
+    apply_answers.save(ans, store)
+    text = apply_data.write(_JOB, tmp_path).read_text(encoding="utf-8")
+    assert "- **Are you legally authorized to work in the US?** Yes\n" in text
+    assert "- **Will you now or in the future require visa sponsorship?** No\n" in text
+    assert "- **Are you willing to relocate?** Open to NYC\n" in text
+
+
 def test_write_has_no_documents_or_upload_language(tmp_path):
     # apply.md is for portals that DON'T auto-fill from a résumé upload, so it no
     # longer carries a Documents section or any directive to upload files.

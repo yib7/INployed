@@ -173,6 +173,51 @@ def test_build_one_answer_fact_per_uncovered_bank_entry(folder):
     assert cat.facts["work_authorized"].kind == "bool"
 
 
+def _worded_bank():
+    bank = _bank()
+    worded = {"work_authorized": "Yes, I am a US citizen",
+              "requires_sponsorship": "No, I am a US citizen",
+              "willing_to_relocate": "Yes willing to relocate and open to on-site"}
+    for e in bank:
+        if e["id"] in worded:
+            e["answer"] = worded[e["id"]]
+    return bank
+
+
+def test_build_reads_worded_yes_no_answers(tmp_path):
+    # no sheet: the bank's words are read by their first word (the 2026-09-26
+    # Contoso run put "No" on "Are you legally authorized" from "Yes, I am a US citizen")
+    cat = apply_facts.build(tmp_path, answers=_worded_bank())
+    assert cat.value("work_authorized") == "Yes"
+    assert cat.value("requires_sponsorship") == "No"
+    assert cat.value("willing_to_relocate") == "Yes"
+
+
+def test_build_a_yes_no_answer_without_yes_or_no_keeps_its_words(tmp_path):
+    bank = _bank()
+    for e in bank:
+        if e["id"] == "willing_to_relocate":
+            e["answer"] = "Open to NYC"
+    cat = apply_facts.build(tmp_path, answers=bank)
+    assert cat.value("willing_to_relocate") == "Open to NYC"
+
+
+def test_build_the_bank_outranks_a_stale_sheet_on_yes_no_answers(tmp_path):
+    # a sheet written before the fix carries "No" for a worded yes; the bank's
+    # own answer wins for the three yes/no questions
+    md = apply_data.build_markdown(_MASTER, _JOB, _bank(), sel=_SEL, bullets=_BULLETS)
+    md = md.replace("- **Are you legally authorized to work in the US?** Yes",
+                    "- **Are you legally authorized to work in the US?** No")
+    md = md.replace("- **Are you willing to relocate?** Yes",
+                    "- **Are you willing to relocate?** No")
+    assert "legally authorized to work in the US?** No" in md
+    (tmp_path / "apply.md").write_text(md, encoding="utf-8")
+    cat = apply_facts.build(tmp_path, answers=_worded_bank())
+    assert cat.value("work_authorized") == "Yes"
+    assert cat.value("willing_to_relocate") == "Yes"
+    assert cat.value("requires_sponsorship") == "No"
+
+
 def test_build_reads_address_education_and_current_job(folder):
     cat = apply_facts.build(folder, answers=_bank())
     assert cat.value("address_street") == "123 Main Street"

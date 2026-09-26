@@ -357,7 +357,7 @@ def _standard_answer_lines(answers: List[Dict[str, Any]]) -> str:
         if not raw:
             continue
         if eid in apply_answers.BOOL_IDS:
-            shown = "Yes" if raw.lower() in {"true", "yes", "1"} else "No"
+            shown = apply_answers.yes_no(raw) or raw
         else:
             shown = raw
         out.append(f"- **{_one_line(e.get('question', eid))}** {_one_line(shown)}\n")

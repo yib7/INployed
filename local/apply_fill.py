@@ -328,36 +328,52 @@ def _ci_match(want: str, candidates: list[str]) -> int:
     FILL-07), else the closest one that holds it (`_holds`: "no" is never
     inside "None"), else -1.
 
-    An option that holds the value with a negation or a qualifier the value
-    lacks (`_qualifiers`: "Not Hispanic or Latino" for "Latino", "Yes, but I
-    will require sponsorship" for "Yes") never stands for it (final review B
-    R2 M2); a stored decline still takes the one option that declines in its
-    own words ("Prefer not to say"). The closest names each of the value's
-    comma parts as one of its own ("Chicago, IL" for "chicago", never
-    "Chicago Heights, IL";
-    `_names_each`); among such equal fits ("Anytown, California" and
-    "Anytown, New York" for "anytown") the site's own order stands (final
-    review B-M2): the value names nothing that sets them apart, and the
-    site's first match is what typing it gives a person. Two or more that
-    only hold the value ("Software Engineering" and "Hardware Engineering"
-    for "Engineering") differ in what the value leaves out: `OPTION_TIE`."""
+    A negation or a qualifier the value lacks (`_qualifiers`) only breaks a
+    tie between options that each hold the value (final review B R2 M2, fix
+    round 3); it never puts out a lone one, and the read-back check reads
+    that pick as before ("No, I do not require sponsorship" for "No"). Among
+    two or more, the ones that turn the value are out while one that leaves
+    it unturned is left ("Hispanic or Latino" over "Not Hispanic or Latino"
+    for "Latino", "Yes, I am authorized" over "Yes, but I will require
+    sponsorship" for "Yes"). When every one of them turns it, and they are
+    not all the same words, they tie (`OPTION_TIE`): the value names nothing
+    that tells their turns apart. A stored decline takes the one option
+    that declines in its own words ("Prefer not to say"). The closest names
+    each of the value's comma parts as one of its own ("Chicago, IL" for
+    "chicago", never "Chicago Heights, IL"; `_names_each`); among such equal
+    fits ("Anytown, California" and "Anytown, New York" for "anytown") the
+    site's own order stands (final review B-M2): the value names nothing
+    that sets them apart, and the site's first match is what typing it gives
+    a person. Two or more that only hold the value ("Software Engineering"
+    and "Hardware Engineering" for "Engineering") differ in what the value
+    leaves out: `OPTION_TIE`."""
     w = " ".join((want or "").split()).lower()
     folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
         return folded.index(w)
     mine = _qualifiers(w)
-    found = apply_judge.match_option(want, [str(c) for c in candidates])
-    # the one option that starts with the value turns it too ("Yes, but I
-    # will require sponsorship" for "Yes"); a stored decline takes the one
-    # option that declines, in its own words
-    if found is not None and (not _qualifiers(found) - mine or apply_judge.declines(want)):
-        return [str(c) for c in candidates].index(found)
     parts = [p.strip() for p in w.split(",") if p.strip()]
+    held = [i for i, c in enumerate(folded) if parts and _holds(parts, c)]
+    # the options that hold the value and leave it unturned
+    plain = [i for i in held if not _qualifiers(folded[i]) - mine]
+    found = apply_judge.match_option(want, [str(c) for c in candidates])
+    if found is not None:
+        k = [str(c) for c in candidates].index(found)
+        # the one option that starts with the value, a name it goes by, or a
+        # decline, stands unless it turns the value while another option
+        # holds it too; a stored decline keeps the one option that declines
+        if not _qualifiers(folded[k]) - mine or apply_judge.declines(want) \
+                or not any(folded[i] != folded[k] for i in held):
+            return k
     if not parts:
         return -1
-    held = [i for i, c in enumerate(folded) if _holds(parts, c) and not _qualifiers(c) - mine]
     if not held:
         return -1
+    if not plain:
+        # every option that holds the value turns it: a lone one stands, and
+        # two that differ tie
+        return OPTION_TIE if len({folded[i] for i in held}) > 1 else held[0]
+    held = plain
     closest = [i for i in held if _names_each(parts, folded[i])]
     if closest:
         return closest[0]

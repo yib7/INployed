@@ -408,6 +408,71 @@ def test_a_box_whose_options_tie_parks_when_required_and_stays_blank_when_option
                                "error": "OptionTie"}]
 
 
+_TIED_SIGNUP = """<body><h1>Create Account</h1><form>
+  <label for="email">Email</label><input id="email" type="email">
+  <label for="pw">Password</label><input id="pw" type="password">
+  <label for="country">Country</label><select id="country"{required}>
+    <option value="">Select a country</option><option>Republic of the Congo</option>
+    <option>Democratic Republic of the Congo</option></select>
+  <button type="button" onclick="document.body.dataset.clicked = 'yes'">Create Account</button>
+  </form></body>"""
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_an_account_screens_box_whose_options_tie_parks_when_required(
+        context, tmp_path, monkeypatch, required):
+    # fix round 3: the account screen's fill kept no errors, so a tie there
+    # left the box blank with no trace and the step went on to the password
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, "https://careers.fabrikam.example/jobs/42")
+    run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
+    run._prepare()
+    run.ats_hosts.add("careers.fabrikam.example")
+    run.trace = apply_trace.Trace(folder, attempt=1, job_id="42")
+    run.trace.start()
+    typed = []
+    monkeypatch.setattr(apply_run.ats_accounts, "has_password", lambda: True)
+    monkeypatch.setattr(apply_run.ats_accounts, "fill_password",
+                        lambda page, loc: typed.append("password") or True)
+    try:
+        run.page = context.new_page()
+        url = "https://careers.fabrikam.example/signup"
+        run.page.route(url, h._fulfiller(_TIED_SIGNUP.format(
+            required=" required" if required else "")))
+        run.page.goto(url)
+        digest = apply_form.extract(run.page)
+        run._new_page_record("signup_form", 1.0, digest=digest, answers={})
+        country = next(f for f in digest.fields if f.label == "Country")
+        button = next(b for b in digest.buttons if b.text == "Create Account")
+        plan = FillPlan(fields=[PlannedField(
+            n=country.n, locator=country.locator, label="Country", required=required,
+            fact_key="address_country", value="Congo", option=None, confidence=1.0,
+            action="select")], buttons={"advance": (button.n, 0.95)})
+        monkeypatch.setattr(run, "_map", lambda *a, **kw: {})
+        monkeypatch.setattr(apply_run.apply_judge, "plan", lambda *a, **kw: plan)
+        monkeypatch.setattr(run, "_complete_option_plan", lambda d, answers, p, rec: p)
+        if required:
+            with pytest.raises(apply_run._Parked) as parked:
+                run.accounts._fill(run.page, digest, "careers.fabrikam.example",
+                                   h.SIGNUP_EMAIL, True)
+            assert (parked.value.status, parked.value.reason) == (
+                "needs_human", "required field without an answer: Country (the options "
+                               "that hold its answer tie and differ in meaning)")
+            assert typed == [] and run.page.evaluate("document.body.dataset.clicked") is None
+        else:
+            run.accounts._fill(run.page, digest, "careers.fabrikam.example", h.SIGNUP_EMAIL,
+                               True)
+            assert typed == ["password"]
+            assert run.page.evaluate("document.body.dataset.clicked") == "yes"
+        assert run.page.locator("#country").input_value() == ""
+    finally:
+        run.trace.close()
+    assert [m["question"] for m in run.missing] == ["Country"]
+    events = _pages(folder / "apply_trace" / "attempt-1")[0]["events"]
+    assert [e["fields"] for e in events
+            if e["kind"] == "decision" and e["what"] == "option_tie"] == [["Country"]]
+
+
 def test_an_account_step_error_is_traced_by_its_type(context, tmp_path, monkeypatch):
     folder = h.write_job_folder(tmp_path / "job")
     _enqueue(folder, "https://careers.fabrikam.example/jobs/42")

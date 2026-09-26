@@ -1654,8 +1654,16 @@ class _Accounts:
                         current = ""
                     if current.strip().lower() != email.strip().lower():
                         loc.fill(email, timeout=self._timeout())
-                filled = apply_fill.apply(page, FillPlan(fields=others),
-                                          deadline=self.run.deadline, clock=self.run.r.clock)
+                # a box whose options tie on the answer is left blank and
+                # traced; a required one parks before the password is typed
+                # (fix round 3: the form's rule on the account screen too)
+                errors: list[dict] = []
+                typed = FillPlan(fields=others)
+                filled = apply_fill.apply(page, typed, deadline=self.run.deadline,
+                                          clock=self.run.r.clock, errors=errors)
+                tied = self.run._option_ties(typed, errors)
+                filled = [f for f in filled if f.n not in tied]
+                self.run._park_a_required_tie(typed, tied)
                 for loc in passwords:
                     if not ats_accounts.fill_password(page, loc):
                         return False
@@ -7169,10 +7177,7 @@ class _JobRun:
         self._filled_any = self._filled_any or bool(self._filled_here)
         if _fills_the_application(digest, plan, filled):
             self.form_filled = True
-        required = [pf.label for pf in plan.fields if pf.n in tied and pf.required]
-        if required:
-            raise _Parked("needs_human", f"required field without an answer: {required[0]} "
-                                         f"({OPTION_TIE_WORDS})")
+        self._park_a_required_tie(plan, tied)
         drafts = _drafts(plan)
         shaped = _shaped(plan, digest)
         verification = self._verify(filled, drafts, _picks(plan), shaped)
@@ -7690,6 +7695,16 @@ class _JobRun:
                              fields=[pf.label])
                 self._add_missing(pf.label, OPTION_TIE_WORDS)
         return tied
+
+    @staticmethod
+    def _park_a_required_tie(plan: FillPlan, tied: set[int]) -> None:
+        """A required field among `tied` (`_option_ties`) parks the job: its
+        answer is the person's to pick. The form and an account screen park
+        the same way; an optional one stays blank."""
+        required = [pf.label for pf in plan.fields if pf.n in tied and pf.required]
+        if required:
+            raise _Parked("needs_human", f"required field without an answer: {required[0]} "
+                                         f"({OPTION_TIE_WORDS})")
 
     def _add_missing(self, question: str, context: str) -> None:
         self.missing.append({"question": question, "context": context, "suggestion": ""})

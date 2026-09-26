@@ -165,14 +165,21 @@ def _v1(**answers):
              "kind": "fixed", "status": "active"} for e in apply_answers.seed_defaults()]
 
 
-def test_build_reads_worded_yes_no_answers_once_migrated(tmp_path):
+def test_build_reads_worded_yes_no_answers_once_migrated_and_confirmed(tmp_path):
     # the 2026-09-26 Contoso run put "No" on "Are you legally authorized" from
     # "Yes, I am a US citizen"; the store now keeps "Yes" with the words as its
-    # note (`migrate_v1`), and the fact is the typed answer
+    # note (`migrate_v1`). A sentence that says more than its first word stays
+    # unconfirmed (final review), so no form gets it until the user ticks it;
+    # once confirmed, the fact is the typed answer
     v1 = _v1(work_authorized="Yes, I am a US citizen",
              requires_sponsorship="No, I am a US citizen",
              willing_to_relocate="Yes willing to relocate and open to on-site")
-    cat = apply_facts.build(tmp_path, answers=apply_answers.migrate_v1(v1)[0])
+    migrated = apply_answers.migrate_v1(v1)[0]
+    cat = apply_facts.build(tmp_path, answers=migrated)
+    for key in ("work_authorized", "requires_sponsorship", "willing_to_relocate"):
+        assert cat.value(key) == ""
+    confirmed = [dict(e, confirmed=True) for e in migrated]
+    cat = apply_facts.build(tmp_path, answers=confirmed)
     assert cat.value("work_authorized") == "Yes"
     assert cat.value("requires_sponsorship") == "No"
     assert cat.value("willing_to_relocate") == "Yes"

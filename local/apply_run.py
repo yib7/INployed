@@ -246,6 +246,9 @@ PASSWORD_RULE_REASON = "the master password does not meet the password rules"
 PASSWORD_RULE_NOTE = ("make the account yourself with another password, or change the "
                       "master password, then Re-queue")
 LINK_NOTE = "open the verification link in the email, then Re-queue"
+# park mode's submit end at an emailed link after the application's answers
+# (final review A-I2): the link may be what sends the application
+LINK_SUBMIT_NOTE = "review, then open the link in the email to send the application"
 # the server redirects a verification link may take, as a browser's limit (ACC-05)
 LINK_MOVES_MAX = 20
 # a verification link's page that refused it (ACC-05)
@@ -299,9 +302,11 @@ TAB_CLOSED_REASON = "the job's tab was closed"
 # `queued` with its attempt not counted and the drain stops; no park.
 JUDGE_DOWN_REASON = "judge unavailable"
 REQUEUED_NOTE = "re-queued, this attempt not counted"
-# A refused key (401, 402, 403) is none of the job's doing and no wait mends
-# it: the job goes back with this attempt counted and no outage (SP8a review M1)
-KEY_REFUSED_NOTE = "re-queued, this attempt counted (the judge refused the key or the account)"
+# A refused key (401, 402, 403) or a retired model (404, 410) is none of the
+# job's doing and no wait mends it: the job goes back with this attempt
+# counted and no outage (SP8a review M1), and the drain stops
+KEY_REFUSED_NOTE = ("re-queued, this attempt counted (the judge refused the key or the "
+                    "account, or no longer has the model)")
 # The judge down under the same job a second time parks it (M1): a failure
 # its own request causes would otherwise stop every drain at the queue's head.
 # An outage counts only after the judge answered in the drain (R2-I1): one
@@ -507,8 +512,7 @@ _ACCOUNT_FACTS = frozenset((
 
 
 def _password_boxes(digest) -> list:
-    return [f for f in digest.fields
-            if apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete)]
+    return [f for f in digest.fields if apply_form.password_box(f)]
 
 
 def _fills_the_application(digest, plan: FillPlan, filled) -> bool:
@@ -516,8 +520,11 @@ def _fills_the_application(digest, plan: FillPlan, filled) -> bool:
     with a password box whose boxes a sign-up asks for (a name, the address,
     a phone: `_ACCOUNT_FACTS`) makes an account; an application is filled
     only once a page carries something else (a resume, a profile link, a
-    written answer). A page without a password box counts whatever it held."""
-    if not filled:
+    written answer). A page without a password box counts whatever it held,
+    but an address box alone (`_email_first`): the start of a sign-in or of
+    an application, whose code step comes before any answer (final review
+    A-I2)."""
+    if not filled or _email_first(digest):
         return False
     if not _password_boxes(digest):
         return True
@@ -540,8 +547,7 @@ def account_forms(page, digest) -> list:
     buttons_at = where[len(digest.fields):]
     pw_forms = []
     for f, at in zip(digest.fields, fields_at):
-        if at[1] >= 0 and apply_form.is_password_field(f.type, f.id_or_name, f.label,
-                                                        f.autocomplete) and at not in pw_forms:
+        if at[1] >= 0 and apply_form.password_box(f) and at not in pw_forms:
             pw_forms.append(at)
     if len(pw_forms) < 2:
         return []
@@ -575,7 +581,12 @@ class _NavGuard:
     person; the password is only ever typed on the application's site
     (`_password_ok`), which is the protection that matters. `before` names
     the page as it was when the guard went on (a stopped navigation leaves
-    the tab on a browser error page)."""
+    the tab on a browser error page). A form post goes only where the
+    password may be typed (`_password_ok`: never LinkedIn, the inbox or a
+    job board, final review A-M1); a GET wherever the run may go
+    (`_allowed_site`), so a hop back to LinkedIn after the submit still
+    loads. `posts` keeps each stopped post's method and bare URL, as
+    `SendWatch` writes its rows (final review A-I3)."""
 
     def __init__(self, run, page):
         self.run = run
@@ -583,6 +594,7 @@ class _NavGuard:
         self.frames: set[int] = set()   # the page's main frame joins at `start`
         self.blocked: list[str] = []
         self.posted = False             # a stopped navigation carried a form post
+        self.posts: list[str] = []      # the stopped posts, "POST scheme://host/path"
         self.before = ""
         self._on = False
 
@@ -592,13 +604,21 @@ class _NavGuard:
             frame_id = id(request.frame)
         except Exception:       # noqa: BLE001  (a service-worker request has no frame)
             frame_id = None
-        if (target_host and request.is_navigation_request() and frame_id in self.frames
-                and not self.run._allowed_site(target_host)):
-            self.blocked.append(target_host)
-            self.posted = self.posted or request.method.upper() == "POST"
-            route.abort()
-            return
+        if target_host and request.is_navigation_request() and frame_id in self.frames:
+            post = request.method.upper() == "POST"
+            if not (self.run._password_ok(target_host) if post
+                    else self.run._allowed_site(target_host)):
+                self.blocked.append(target_host)
+                if post:
+                    self.posted = True
+                    self.posts.append(f"POST {SendWatch._bare(request.url)}")
+                route.abort()
+                return
         route.fallback()        # on to any other handler, then the network
+
+    def post_host(self) -> str:
+        """The host of the first stopped post ("" with none)."""
+        return _host(self.posts[0].split(" ", 1)[1]) if self.posts else ""
 
     def start(self) -> None:
         if not self._on:
@@ -2251,8 +2271,7 @@ def password_step(digest: apply_form.FormDigest) -> str:
     one box that names neither and nothing else to go on (a one-box sign-up
     looks like a sign-in, review round 3, M2), or boxes that say both (a
     change of password)."""
-    boxes = [f for f in digest.fields
-             if apply_form.is_password_field(f.type, f.id_or_name, f.label, f.autocomplete)]
+    boxes = [f for f in digest.fields if apply_form.password_box(f)]
     if not boxes:
         return ""
     tokens = {str(f.autocomplete or "").lower() for f in boxes}
@@ -2283,11 +2302,34 @@ _PROBLEM_WORDS = re.compile(r"\berror\b|\binvalid\b|\bincorrect\b|\bwrong\b|\bno
                             r"|\btry\s+again\b|\bfailed\b|\bunable\b|\balready\b|\bnot\s+valid\b",
                             re.I)
 
+# final review A-M2: a page's line can quote what the person typed ("jane@x.com
+# is already registered", "'Jane Q' does not match"). A reason reaches the
+# queue row and the drain's report, which the person may send on, so a line
+# enters it without its quoted spans and its email- or phone-shaped tokens;
+# the local trace keeps the whole line
+_QUOTED_SPAN = re.compile(r"\"[^\"\n]{0,200}\"|“[^”\n]{0,200}”"
+                          r"|‘[^’\n]{0,200}’|(?<!\w)'[^'\n]{0,200}'(?!\w)")
+_EMAIL_SHAPED = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE_SHAPED = re.compile(r"\+?\(?\d[\d\s().-]{5,}\d")
+
+
+def _page_words(text: object, n: int) -> str:
+    """`text` (a page's line) for a reason: quoted spans, email-shaped tokens
+    and phone-shaped runs (seven digits or more) replaced, spaces joined,
+    capped at `n` (A-M2)."""
+    line = _QUOTED_SPAN.sub("[quoted]", str(text or ""))
+    line = _EMAIL_SHAPED.sub("[email]", line)
+    line = _PHONE_SHAPED.sub(
+        lambda m: "[number]" if sum(c.isdigit() for c in m.group(0)) >= 7 else m.group(0), line)
+    return _cap(" ".join(line.split()), n)
+
 
 def page_problem(digest: apply_form.FormDigest | None) -> str:
     """The first line of a page's text that reads as a problem (an error, a
     refusal, a mismatch, an address in use), capped: never a field's label
-    or a question ("Already have an account?"); "" with none (ACC-12)."""
+    or a question ("Already have an account?"); "" with none (ACC-12). The
+    line comes without what it may quote of the person's data
+    (`_page_words`)."""
     if digest is None:
         return ""
     labels = {" ".join((f.label or "").lower().split()) for f in digest.fields}
@@ -2295,7 +2337,7 @@ def page_problem(digest: apply_form.FormDigest | None) -> str:
         line = " ".join(line.split())
         if line and "?" not in line and line.lower() not in labels \
                 and _PROBLEM_WORDS.search(line):
-            return _cap(line, 120)
+            return _page_words(line, 120)
     return ""
 
 
@@ -2742,6 +2784,25 @@ def _final_shaped(digest: apply_form.FormDigest, n: int) -> bool:
 
 _ACCOUNT_STEP_WORDS = re.compile(r"\b(registration|register|sign[\s-]*up|account|profile)\b",
                                  re.I)
+# A step's own words ("Next", "Save and continue", "Sign in", "Log in",
+# "Create account", "Back"): a submit whose words are only these, and at
+# least one step verb, names no send (`step_only`; final review B Known
+# Minor 4)
+_STEP_VERB = re.compile(r"\b(next|continue|save|back|previous|proceed|sign|log|login|logon"
+                        r"|create|register)\b", re.I)
+_STEP_ONLY = re.compile(r"(?:\b(?:next|continue|save|back|previous|proceed|step|sign|log|in|on"
+                        r"|up|login|logon|create|account|register|and|to|the|my|your|an?)\b"
+                        r"|[\W_])+", re.I)
+
+
+def step_only(text: str) -> bool:
+    """Are `text`'s words only a step's ("Save and continue", "Sign in",
+    "Create account"), with no send or last-step word (`SUBMIT_WORDS`,
+    `FINAL_WORDS`)? Such a button is never the application's send: in
+    submit mode the gate refuses it (`_JobRun._gate_read`)."""
+    t = " ".join(str(text or "").split())
+    return (bool(_STEP_VERB.search(t)) and bool(_STEP_ONLY.fullmatch(t))
+            and not SUBMIT_WORDS.search(t) and not FINAL_WORDS.search(t))
 
 
 def _sends_application(digest: apply_form.FormDigest, n: int, *,
@@ -3847,7 +3908,9 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
                      f"page-<n>.jpg; end.jpg, run.json, {apply_trace.LOG_NAME})")
     lines.append("")
     for i, p in enumerate(pages, 1):
-        lines.append(f"## Page {i}: {p.get('url', '')}")
+        # the address without its query: a method=get form carries the
+        # answers there (final review C-M1)
+        lines.append(f"## Page {i}: {apply_trace.bare_url(p.get('url', ''))}")
         lines.append(f"- State: {p.get('state', '')} ({float(p.get('confidence', 0.0)):.2f})")
         if trace_dir:
             lines.append(f"{_TRACE_LINE}[page-{i}.json]({trace_dir}/page-{i}.json), "
@@ -3925,13 +3988,26 @@ def write_record(folder: Path, entry: dict, outcome_status: str, reason: str,
 
 # --- the submit gate ----------------------------------------------------------------------
 
+# final review A-M2: Chrome's own validationMessage can quote the value typed
+# ("'jane.doe' is missing an '@'"), so a native check is named by its reason
+# code's words; a site's own message (`aria-invalid`, a custom validity)
+# keeps its words without what it may quote (`_page_words`)
+_VALIDITY_WORDS = {
+    "typeMismatch": "not the kind of value the box takes",
+    "patternMismatch": "does not match the requested format", "tooShort": "too short",
+    "tooLong": "too long", "rangeUnderflow": "below the allowed range",
+    "rangeOverflow": "above the allowed range", "stepMismatch": "not an allowed step",
+    "badInput": "not a value the box takes", "invalid": "invalid"}
+
+
 def _invalid_words(row: Mapping[str, Any]) -> str:
     label = " ".join(str(row.get("label") or "a field").split())[:80]
-    message = " ".join(str(row.get("message") or "").split())[:120]
-    if row.get("reason") == "valueMissing":
-        return (f"required field without an answer: {label} (the form reports it empty"
-                + (f": {message})" if message else ")"))
-    return f"the form reports an invalid field: {label} ({message or row.get('reason')})"
+    reason = str(row.get("reason") or "")
+    if reason == "valueMissing":
+        return f"required field without an answer: {label} (the form reports it empty)"
+    said = _VALIDITY_WORDS.get(reason) or _page_words(row.get("message"), 120) \
+        or ("marked invalid by the site" if reason == "aria-invalid" else reason or "invalid")
+    return f"the form reports an invalid field: {label} ({said})"
 
 
 def can_submit(plan: FillPlan, verification: list[VerifyResult],
@@ -3950,10 +4026,11 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
     INV-01 and INV-02): `no_application` (nothing was filled on this page or
     an earlier one: the page holds no application), `apply_button` (an
     Apply-worded button without the DOM evidence and the judge's word that
-    it sends the finished application), `invalid` (the submit's form holds a
-    control that would not validate, or one marked `aria-invalid`) and
-    `required_empty` (a required control the extractor leaves out is
-    empty); each fails the gate with its evidence."""
+    it sends the finished application), `step_button` (in submit mode, a
+    submit whose words are only a step's: `step_only`), `invalid` (the
+    submit's form holds a control that would not validate, or one marked
+    `aria-invalid`) and `required_empty` (a required control the extractor
+    leaves out is empty); each fails the gate with its evidence."""
     if not settings.get("auto_apply_submit", True):
         return False, "auto_apply_submit is off"
     if plan.park_reason:
@@ -3983,6 +4060,8 @@ def can_submit(plan: FillPlan, verification: list[VerifyResult],
         return False, f"no application on the page ({live['no_application']})"
     if live.get("apply_button"):
         return False, str(live["apply_button"])
+    if live.get("step_button"):
+        return False, str(live["step_button"])
     for row in live.get("invalid") or []:
         return False, _invalid_words(row)
     for row in live.get("required_empty") or []:
@@ -4348,6 +4427,12 @@ class _JobRun:
         # application's answers went on a page: a code the site may have held
         # the application for (an account's own code sends none of it, M9)
         self._code_may_send = False
+        # submit mode clicked an advance whose words a last step uses
+        # ("Confirm", "Complete", "Done"): it may have sent (final review A-M3)
+        self._final_advance = False
+        # a send that never reached the site and nothing else left (`_Unsent`):
+        # what the watch saw is no possible send (final review A-M4)
+        self._unsent = False
         self._links_followed: set[str] = set()     # sites whose emailed link was opened (ACC-05)
         self._send_watch: SendWatch | None = None     # the requests after the submit click
         self._sent_when = "after the submit click"      # or "during the CAPTCHA wait" (m5)
@@ -4630,6 +4715,7 @@ class _JobRun:
             # is no possible send, and the load is still never made again
             # (SP8a review M7)
             self.submit_clicked = False
+            self._unsent = True
             self._decide("after_submit", f"{what}; no connection was made and no other request "
                                          f"left, so nothing was sent")
             raise _Unsent("needs_human", f"{ERROR_PAGE_REASON}: {what}; no connection was "
@@ -4950,9 +5036,18 @@ class _JobRun:
                 if p.status != "submitted":
                     # whatever the loop made of it, the window or the tab went
                     # away under it
-                    if self._window_closed():
+                    closed = self._window_closed()
+                    gone = not closed and self._tab_closed()
+                    if (closed or gone) and self._maybe_sent():
+                        # final review A-I1: something may have been sent; the
+                        # job keeps the check-sent end and its note, never the
+                        # closed one whose note is a Re-queue
+                        return self._stopped_after_send(
+                            CLOSED_REASON if closed else TAB_CLOSED_REASON,
+                            f"; the run had reached: {_cap(p.reason, 200)}", window=closed)
+                    if closed:
                         return self._closed(f"the run had reached: {p.reason}")
-                    if self._tab_closed():
+                    if gone:
                         return self._tab_gone(f"the run had reached: {p.reason}")
                     if self._judge_down() and not self._maybe_sent():
                         # a park reached after the judge went down (a step
@@ -4989,42 +5084,74 @@ class _JobRun:
                 done = self._confirmed_here() if down and self.submit_clicked else None
                 if done is not None:
                     return done
-                if self.submit_clicked:
-                    self.browser_closed = closed
+                if self._maybe_sent():
+                    # the submit click, or a code or link step the site may
+                    # have held the application for (final review A-I1): the
+                    # job is never handed back to the queue
                     why = (CLOSED_REASON if closed else TAB_CLOSED_REASON if tab
                            else f"{JUDGE_DOWN_REASON}: {down} at {step}" if down
                            else f"{type(e).__name__} at {step}")
                     watch = self._send_watch
-                    if watch is not None and watch.sent:
+                    if self.submit_clicked and watch is not None and watch.sent:
+                        self.browser_closed = closed
                         return self._finish("submitted", f"submitted (unconfirmed): {why} "
                                                          f"(after {_cap(watch.first(), 120)})")
                     # no request to the application's sites was seen: the
                     # run claims no send, and the job is never re-queued on
                     # its own
                     left = (f"; a request left: {_cap(watch.first(), 120)}"
-                            if watch is not None and watch.any() else "")
-                    return self._finish("needs_human", f"{CHECK_SENT_REASON}: the run stopped "
-                                                       f"after the submit click "
-                                                       f"({_cap(why, 160)}){left}",
-                                        CHECK_SENT_NOTE)
+                            if watch is not None and watch.any()
+                            else "; no request was seen leaving")
+                    return self._stopped_after_send(why, left, window=closed)
                 if closed:
                     return self._closed(type(e).__name__)
                 if tab:
                     return self._tab_gone(type(e).__name__)
-                if down:
-                    # the code step clicked on and a code can finish a send:
-                    # the job is never handed back to the queue
-                    return self._finish("needs_human", f"{CHECK_SENT_REASON}: the run stopped "
-                                                       f"after the code step "
-                                                       f"({JUDGE_DOWN_REASON}: {down} at {step})",
-                                        CHECK_SENT_NOTE)
                 # a service's status stays in (`jev.error_kind`): a request the
                 # judge rejected (a 400, one too large) ends this job only (M1)
                 return self._finish("failed", f"{jev.error_kind(e)} at {step} "
                                               f"(page {len(self.pages)})")
+            except BaseException as e:
+                # final review A-M5: Ctrl+C in a drain, or a queue write that
+                # failed twice. The entry leaves in_progress: a possible send
+                # waits for the person to check it; anything else waits for
+                # the person too, and the drain stops (re-raised)
+                self._trace("exception", error=type(e).__name__, step=error_step(e))
+                try:
+                    if self._maybe_sent():
+                        self._stopped_after_send(f"{type(e).__name__} at {error_step(e)}",
+                                                 "; the run was interrupted")
+                    else:
+                        self._finish("needs_human", f"the run was interrupted "
+                                                    f"({type(e).__name__} at {error_step(e)})")
+                except BaseException:   # noqa: BLE001  (the first interruption is the one raised)
+                    self.log.warning("job %s: the interrupted job's end could not be written",
+                                     self.job_id)
+                raise
         finally:
             self._unlisten_loads()
             self.trace.close()
+
+    def _stopped_after_send(self, why: str, more: str = "", *, window: bool = False) -> Outcome:
+        """The run stopped (`why`: the window or the tab closed, the judge
+        down, an error) after a step that may have sent the application
+        (`_maybe_sent`): the person checks it, and the job is never handed
+        back to the queue. `more` follows the parenthesis (what left, what
+        the run had reached); a closed window still stops the drain."""
+        if window:
+            self.browser_closed = True
+        return self._finish("needs_human", f"{CHECK_SENT_REASON}: the run stopped after "
+                                           f"{self._sent_step()} ({_cap(why, 160)}){more}",
+                            CHECK_SENT_NOTE)
+
+    def _sent_step(self) -> str:
+        """The step `_maybe_sent` stands on, as the park names it."""
+        watch = self._send_watch
+        if self.submit_clicked or (watch is not None and not self._unsent and watch.any()):
+            return "the submit click"
+        if self._code_may_send:
+            return "the code step"
+        return "the final-worded step"
 
     def _judge_down(self) -> str:
         """The open breaker's error class and status (`jev.Guarded.down`), or ""."""
@@ -5032,12 +5159,19 @@ class _JobRun:
         return down if isinstance(down, str) else ""
 
     def _maybe_sent(self) -> bool:
-        """The submit click landed, or a code step clicked on once the
-        application may have been held for it (`_code_may_send`): something
-        may have been sent, so the job is never handed back to the queue. An
-        account's own code before any of the application's answers went on a
-        page sends none of it (SP8a review M9)."""
-        return bool(self.submit_clicked or self._code_may_send)
+        """The submit click landed, a code or link step went on once the
+        application may have been held for it (`_code_may_send`), submit
+        mode clicked a final-worded advance (`_final_advance`, final review
+        A-M3), or the submit's watch saw a request leave that `_Unsent` did
+        not rule out (a reset `submit_clicked` after validation errors,
+        final review A-M4): something may have been sent, so the job is
+        never handed back to the queue. An account's own code before any of
+        the application's answers went on a page sends none of it (SP8a
+        review M9)."""
+        if self.submit_clicked or self._code_may_send or self._final_advance:
+            return True
+        watch = self._send_watch
+        return bool(watch is not None and not self._unsent and watch.any())
 
     def _requeued(self, step: str) -> Outcome:
         """RES-02: the judge went down under the job before anything could
@@ -6705,7 +6839,7 @@ class _JobRun:
         missed: list[int] = []
         says: dict[int, str] = {}
         if blank:
-            says = {n: _cap(named[n][0].get("text") or "", 100) for n in blank}
+            says = {n: _page_words(named[n][0].get("text"), 100) for n in blank}
             sub = dataclasses.replace(digest, buttons=[], fields=[
                 dataclasses.replace(f, required=True) for f in digest.fields if f.n in blank])
             answers = self._map(sub, {}, "application_form", discover=False)
@@ -6789,7 +6923,7 @@ class _JobRun:
             if p.get("kind") == "invalid":
                 rows.append(_invalid_words(p))
             else:
-                rows.append(f"the form says: {_cap(p.get('text') or '', 100)}")
+                rows.append(f"the form says: {_page_words(p.get('text'), 100)}")
         return _cap("; ".join(rows), 260)
 
     def _advance(self, digest: apply_form.FormDigest, plan: FillPlan,
@@ -6815,7 +6949,16 @@ class _JobRun:
             def _check(d=digest, b=before, out=problems) -> bool:
                 out[:] = self._form_problems(d, n, b)
                 return bool(out)
-            self._click(digest, n, "advance", rec, conf=conf, refused_by_form=_check)
+            # final review A-M3: submit mode clicks a final-worded advance
+            # ("Confirm", "Complete", "Done") as a step (park mode sends it to
+            # the gate); it may send, so it is marked before the click
+            final = self.r.settings.get("auto_apply_submit", True) \
+                and _final_shaped(digest, n) and not self._final_advance
+            if final:
+                self._final_advance = True
+            result = self._click(digest, n, "advance", rec, conf=conf, refused_by_form=_check)
+            if final and (result.refused or not (result.clicked or result.late)):
+                self._final_advance = False     # nothing was clicked
             if not problems:
                 return
             self._decide("form_refused", f"the form refused the {_cap(text, 40)} step "
@@ -7203,20 +7346,20 @@ class _JobRun:
         when `_fill_passwords` types the master password and removed when the
         page's step ends (a click, the submit gate, a park), before the
         window is left to the user. A navigation it stopped before any submit
-        parks the job with the host it was headed for, and so does a form
-        post it stopped after the submit click: that post was the send, and
-        nothing went out. Any other navigation stopped after the submit click
-        keeps the job submitted (a send may have gone out before the page
-        moved on, and a second one must not) and says so."""
+        parks the job with the host it was headed for. A form post it
+        stopped after the submit click was the send, and nothing went out,
+        only when no request but that post left (`_guard_stopped_the_send`)
+        and the step's own read claims no confirmation (final review A-I3);
+        otherwise the step's end stands and names the stopped post. Any
+        other navigation stopped after the submit click keeps the job
+        submitted (a send may have gone out before the page moved on, and a
+        second one must not) and says so."""
         guard = _NavGuard(self, self.page)
         try:
             yield guard
         except _Parked as p:
             if guard.blocked and self.submit_clicked and guard.posted:
-                self.submit_clicked = False
-                raise _Parked("needs_human", f"the form posts to {guard.blocked[0]}, outside "
-                                             f"the allowed sites; the run stopped it and "
-                                             f"nothing was sent", guard.before) from None
+                raise self._stopped_post(guard, p) from None
             if guard.blocked and not self.submit_clicked:
                 raise _Parked("needs_human", f"left the allowed sites: {guard.blocked[0]}",
                               guard.before) from None
@@ -7229,13 +7372,36 @@ class _JobRun:
         finally:
             guard.stop()
         if guard.blocked and guard.posted:
-            self.submit_clicked = False
-            raise _Parked("needs_human", f"the form posts to {guard.blocked[0]}, outside the "
-                                         f"allowed sites; the run stopped it and nothing was "
-                                         f"sent", guard.before)
+            raise self._stopped_post(guard, None)
         if guard.blocked and not self.submit_clicked:
             raise _Parked("needs_human", f"left the allowed sites: {guard.blocked[0]}",
                           guard.before)
+
+    def _stopped_post(self, guard: _NavGuard, p: _Parked | None) -> _Parked:
+        """The end of a step whose form post the guard stopped (`p`: the
+        step's own park, or None when the step went on). Nothing was sent
+        when the step claims no confirmation and no request but the stopped
+        post left (`SendWatch`'s rows, the stopped one aside): the job is no
+        possible send (`_Unsent`). Otherwise the step's end stands and names
+        the stopped post; a step that went on after a request left asks the
+        person to check (final review A-I3)."""
+        host = guard.post_host() or (guard.blocked[0] if guard.blocked else "")
+        watch = self._send_watch
+        seen = ([*watch.sent, *watch.possible, *watch.unplaced_sends()]
+                if watch is not None and self.submit_clicked else [])
+        others = [row for row in seen if row not in guard.posts]
+        if (p is None or p.status != "submitted") and not others:
+            self.submit_clicked = False
+            self._unsent = True
+            return _Unsent("needs_human", f"the form posts to {host}, outside the allowed "
+                                          f"sites; the run stopped it and nothing was sent",
+                           guard.before)
+        if p is not None:
+            return _Parked(p.status, f"{p.reason}; the run stopped a post to {host}",
+                           p.tab_note)
+        return _Parked("needs_human", f"{CHECK_SENT_REASON}: a request left after the submit "
+                                      f"click ({_cap(others[0], 120)}); the run stopped a post "
+                                      f"to {host}", CHECK_SENT_NOTE)
 
     def _fill_passwords(self, digest: apply_form.FormDigest, plan: FillPlan, rec: dict,
                         guard: _NavGuard) -> None:
@@ -7310,7 +7476,10 @@ class _JobRun:
                 why = f"the password box ({pf.label}) went away"
             elif str(kind).lower() != "password" or f is None or not _names_password(f):
                 why = f"{pf.label or 'a masked box'} is not a password box for an account"
-            elif posts_to and not self._allowed_site(posts_to):
+            elif posts_to and not self._password_ok(posts_to):
+                # the application's own site only: LinkedIn, the inbox and a
+                # job board are allowed to load and never take the password
+                # (final review A-M1)
                 why = f"the password box's form posts to {posts_to}, outside the allowed sites"
             else:
                 if 0 <= idx < len(frames):
@@ -7699,7 +7868,8 @@ class _JobRun:
         `live`, INV-01 and INV-02): whether an application is on it (a field
         filled on this page, or the application filled on an earlier one),
         whether an Apply-worded submit is the form's own sending button
-        (`_apply_button_why`), the submit's form's validity
+        (`_apply_button_why`), whether a submit in submit mode names only a
+        step (`step_only`), the submit's form's validity
         (`apply_form.validity_report`) and the required controls the
         extractor leaves out that are empty (`apply_form.control_scan`)."""
         out: dict[str, Any] = {}
@@ -7713,6 +7883,16 @@ class _JobRun:
             return out
         if apply_judge.apply_worded(button.text):
             out["apply_button"] = self._apply_button_why(digest, button)
+        if self.r.settings.get("auto_apply_submit", True) and step_only(button.text) \
+                and not self.handed_off \
+                and not any(pf.action == apply_judge.PASSWORD_ACTION for pf in plan.fields):
+            # final review B Known Minor 4: in submit mode a submit whose
+            # words are only a step's is never clicked as the send; an
+            # account screen that carries the application (its password
+            # typed here, or handed back by the account step) keeps its
+            # account button as the send
+            out["step_button"] = (f"the submit button ({_cap(button.text, 60)}) holds only a "
+                                  f"step's words; it is never clicked as the send")
         try:
             out["invalid"] = apply_form.validity_report(self.page, button.locator,
                                                         self._filled_here)["invalid"]
@@ -8118,7 +8298,7 @@ class _JobRun:
                 self._decide("after_submit", "an error banner after the submit click",
                              banner=banners[0]["text"], sent=watch.first())
                 raise _Parked("needs_human", f"the site showed an error after the submit "
-                                             f"click ({_cap(banners[0]['text'], 160)}); "
+                                             f"click ({_page_words(banners[0]['text'], 160)}); "
                                              f"{CHECK_SENT_REASON}")
             if state == "error_or_dead" and sure and not watch.pending:
                 raise _Parked("needs_human", f"an error page after the submit click "
@@ -8216,7 +8396,7 @@ class _JobRun:
         typed: the gate repairs it once (`_Refused`, ADV-02)."""
         self.submit_clicked = False
         rows = [_invalid_words(r) for r in invalid[:3]]
-        rows += [f"the form says: {_cap(e['text'], 100)}" for e in field_errors[:2]]
+        rows += [f"the form says: {_page_words(e['text'], 100)}" for e in field_errors[:2]]
         self._decide("after_submit", "validation errors after the submit click; nothing was "
                                      "sent", invalid=invalid[:5],
                      errors=[e["text"] for e in field_errors[:5]], request=watch.first())
@@ -8369,6 +8549,21 @@ class _JobRun:
                                      apply_judge.BUTTON_ADVANCE_MIN_CONF)
         else:
             raise _Parked("needs_human", "code entered; no button to continue", CODE_NOTE)
+        text = _cap(_button_text(digest, button[0]), 60)
+        if not self.r.settings.get("auto_apply_submit", True) and self.form_filled \
+                and not self.submit_clicked:
+            # final review A-I2 and A Known Minor 10: the application's
+            # answers are on the site, so the code may finish a send the site
+            # held for it, whatever role the judge gave the button. Park mode
+            # ends here as its submit end: the code typed, the button left
+            # for the person
+            self._decide("code_step_park", f"the code is entered; its {text!r} ({role}, "
+                                           f"{button[1]:.2f}) may send the application, and "
+                                           "park mode clicks no send",
+                         button=button[0], confidence=button[1])
+            raise _Parked("ready_to_submit", f"auto_apply_submit is off; the emailed code is "
+                                             f"entered and its button ({text}) is the step that "
+                                             f"may send the application", REVIEW_NOTE)
         if button[1] < minimum:
             raise _Parked("needs_human",
                           f"code entered; {role} button confidence {button[1]:.2f} "
@@ -8387,7 +8582,6 @@ class _JobRun:
             # application go never marks the job clicked, so a "verified"
             # page after it is confirmed by received words alone
             # (`confirmation_step`'s code_sent rule)
-            text = _cap(_button_text(digest, button[0]), 60)
             if not self.form_filled:
                 # none of the application is on the site yet: the button is
                 # a step control of the account's check (an email "Verify")
@@ -8397,12 +8591,6 @@ class _JobRun:
                                                   "as a step control",
                              button=button[0], confidence=button[1])
                 role = "advance"
-            elif not self.r.settings.get("auto_apply_submit", True):
-                # the application's answers are on the site: park mode never
-                # clicks what the judge reads as its send
-                raise _Parked("needs_human", f"code entered; its button ({text}) was read as "
-                                             f"the submit ({button[1]:.2f}), and park mode sends "
-                                             "nothing", CODE_NOTE)
             else:
                 # it may send what the site held for the code: clicked once,
                 # never twice (the submit role's click), and the job is never
@@ -8413,18 +8601,23 @@ class _JobRun:
                                                    "clicked once, and only received words "
                                                    "confirm a send after it",
                              button=button[0], confidence=button[1])
+        # marked before the click (final review A-I1): a click that lands and
+        # then raises (the tab closed under it) leaves the job a possible
+        # send, never taken over (`_take_over`) or handed back to the queue.
+        # The site may have held the application for this code; an account's
+        # own code, before the application's answers went on a page, sends
+        # none of it (M9)
+        code_sent, may_send = self._code_sent, self._code_may_send
+        self._code_sent = True          # a code can finish a send the site held back
+        self._code_may_send = may_send or bool(self.submit_clicked or self.form_filled)
         result = self._click(digest, button[0], role, rec, conf=button[1])
+        if result.refused or not (result.clicked or result.late):
+            # the button changed before the click, or the click never landed:
+            # nothing went
+            self._code_sent, self._code_may_send = code_sent, may_send
         if result.refused:
-            raise _Parked("needs_human", f"code entered; its button "
-                                         f"({_cap(_button_text(digest, button[0]), 60)}) changed "
-                                         f"before the click: {result.refused}", CODE_NOTE)
-        if result.clicked or result.late:
-            self._code_sent = True      # a code can finish a send the site held back
-            if self.submit_clicked or self.form_filled:
-                # the site may have held the application for this code; an
-                # account's own code, before the application's answers went
-                # on a page, sends none of it (M9)
-                self._code_may_send = True
+            raise _Parked("needs_human", f"code entered; its button ({text}) changed before "
+                                         f"the click: {result.refused}", CODE_NOTE)
 
     def _fill_otp(self, target: apply_form.Field, code: str) -> None:
         """ACC-06: a code in one-character boxes (`widget` "otp"): typed from
@@ -8483,15 +8676,34 @@ class _JobRun:
         link comes from the inbox (`_Inbox.fetch_link`: the site's message,
         a link on an allowed host, `_link_ok`), opens in a tab of its own,
         guarded onto the allowed hosts, and closes once it settled; the
-        job's tab is then loaded again from its own URL and the loop reads
-        what the site shows now (a sign-in, the application). Once per site:
-        a second link page after the link was followed parks. A link on any
-        other host is never opened, and the park names its host."""
+        job's tab is then loaded again from its own URL by a GET (never a
+        reload, which sends again the POST the page came from: final review
+        A-C1) and the loop reads what the site shows now (a sign-in, the
+        application). Once per site: a second link page after the link was
+        followed parks. A link on any other host is never opened, and the
+        park names its host.
+
+        Once the application's answers are on the site (final review A-I2),
+        the link may be the step that sends it. Park mode ends before the
+        inbox is read, as its submit end. Submit mode marks the job a
+        possible send before the link opens (`_code_may_send`), and after it
+        the job's tab is never loaded again: the link's own page is read,
+        its received words end the job submitted, and anything else asks
+        the person to check."""
         host = digest.url_host or _host(self.page.url)
         site = _site(host)
         if site in self._links_followed:
             raise _Parked("needs_human", f"{LINK_REASON}: the emailed link was opened and {host} "
                                          f"still asks for it", LINK_NOTE)
+        if not self.r.settings.get("auto_apply_submit", True) and self.form_filled \
+                and not self.submit_clicked:
+            self._decide("link_step_park", f"the page on {host} says a link was emailed after "
+                                           "the application's answers went on the site; the "
+                                           "link may send the application, and park mode opens "
+                                           "no send")
+            raise _Parked("ready_to_submit", f"auto_apply_submit is off; the emailed link from "
+                                             f"{host} is the step that may send the application; "
+                                             f"it was not opened", LINK_SUBMIT_NOTE)
         fetch = getattr(self.inbox, "fetch_link", None)
         inbox_url = str(self.r.run_context().get("inbox_url") or "")
         link = fetch(self.page, host, inbox_url) if fetch is not None else None
@@ -8507,20 +8719,41 @@ class _JobRun:
         if not self._link_ok(to):
             raise _Parked("needs_human", f"{LINK_REASON}: the email's link goes to {to}, outside "
                                          "the application's sites; it was never opened", LINK_NOTE)
+        if self.form_filled or self.submit_clicked:
+            # the site may hold the application for this link: from here on
+            # the job is never taken over or handed back to the queue
+            self._code_may_send = True
         shown = self._open_link(link)
         self._links_followed.add(site)
         rec["clicked"].append("the emailed verification link (opened in a tab of its own)")
+        if self._maybe_sent():
+            # the job's tab is the answer to what may have sent the
+            # application: loading it again would send that again
+            marker = new_confirmation("", shown)
+            self._decide("verify_link", f"the emailed link on {to} was opened in a tab of its own "
+                                        f"after a possible send; its page is read, and the "
+                                        f"job's tab is not loaded again", host=to,
+                         shown=_cap(shown, 120), received=marker)
+            if marker:
+                raise _Parked("submitted", f"submitted (unconfirmed): the emailed link's page on "
+                                           f"{to} says {marker!r}; the job's tab was not loaded "
+                                           f"again after the send")
+            raise _Parked("needs_human", f"{CHECK_SENT_REASON}: the emailed link on {to} was "
+                                         f"opened after the application's answers went on the "
+                                         f"site, and its page shows no received words; the "
+                                         f"job's tab was not loaded again", CHECK_SENT_NOTE)
         self._decide("verify_link", f"the account check's link in the email, on {to}, was "
                                     f"opened in a tab of its own and closed; the job's tab is "
-                                    f"loaded again", host=to, shown=_cap(shown, 120))
+                                    f"loaded again from its URL", host=to, shown=_cap(shown, 120))
         try:
-            self.page.reload(wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+            self.page.goto(self.page.url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
         except Exception as e:      # noqa: BLE001  (the page is read as it is)
             if _closed_error(e):
                 raise
-            self._trace("error", step="verify_link.reload", error=type(e).__name__)
+            self._trace("error", step="verify_link.goto", error=type(e).__name__)
         info = apply_fill.settle(self.page, CLICK_TIMEOUT_S)
-        self._decide_next("settled", f"settled {_settled_ms(info)} ms after the reload")
+        self._decide_next("settled", f"settled {_settled_ms(info)} ms after the page was loaded "
+                                     f"again")
         self._check_host(self.page.url)
         self.last_sig = None            # the same page again is the site's next step
 
@@ -8705,6 +8938,10 @@ class _JobRun:
     # -- the end --------------------------------------------------------------------------------
 
     def _finish(self, status: str, reason: str, tab_note: str = "") -> Outcome:
+        # every address in the reason and the tab note without its query: a
+        # page a method=get form reached carries the answers there, and the
+        # reason goes to the queue, the record and the trace (final review C-M1)
+        reason = apply_trace.scrub_urls(reason)
         usage = _usage_delta(self.usage_before, jev.usage())
         usage["generated"] = generated_count(self.pages)
         self._stop_late_watch()
@@ -8734,7 +8971,7 @@ class _JobRun:
                 tab_note = f"{self.page.url} | {self.page.title()}"
             except Exception:       # noqa: BLE001
                 tab_note = ""
-        self._finish_entry(status, tab_note, record, reason)
+        self._finish_entry(status, apply_trace.scrub_urls(tab_note), record, reason)
         if self._send_watch is not None:
             self._send_watch.stop()
         confirmed = status == "submitted" and reason.startswith("confirmation page")
@@ -9223,7 +9460,14 @@ def main(argv: list[str] | None = None) -> int:
         print(summary_line(outcomes))
         return 0
     except Exception as e:      # noqa: BLE001  (one line, documented exit 1)
-        print(f"apply_run: error: {type(e).__name__}: {e}", file=sys.stderr)
+        # the type and the step only (final review A-M6, RES-05): a
+        # Playwright message carries the page's words and the values typed;
+        # the frames go to the log
+        print(f"apply_run: error: {type(e).__name__} at {error_step(e)} (the traceback is in "
+              f"the log)", file=sys.stderr)
+        logging.getLogger("apply_run").error("apply_run: %s at %s; traceback (the message left "
+                                             "out):\n  %s", type(e).__name__, error_step(e),
+                                             "\n  ".join(error_frames(e)))
         return 1
 
 

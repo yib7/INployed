@@ -525,7 +525,10 @@ def test_a_step_opened_in_a_new_tab_is_the_next_page_and_nothing_is_clicked_twic
     nexts = [a for a in r.actions if a.kind == "click" and a.text == "Next"]
     assert len(nexts) == 1, nexts
     adopted = _decisions(Path(r.trace), "click_popup")
-    assert adopted and "step=2" in adopted[0]["url"], adopted
+    assert adopted, adopted
+    # the trace keeps an address without its query (final review C-M1): the
+    # run's own actions show the new tab it went on in is step 2's
+    assert [a for a in r.actions if "step=2" in a.url], r.actions
 
 
 # --- what the judge reads first: study G9, G13, G14, G4 --------------------------------------------

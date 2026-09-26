@@ -278,6 +278,42 @@ def test_a_crash_after_the_submit_click_with_nothing_seen_leaving_claims_no_send
                                                                "submit click"), out.reason
 
 
+@pytest.mark.parametrize("what", ["window", "tab"])
+def test_a_park_after_the_submit_click_whose_window_or_tab_closed_asks_the_person_to_check(
+        _browser, tmp_path, monkeypatch, what):
+    # final review A-I1 and A Known Minor 11: the park after the submit click
+    # is reached as the window or the job's tab goes away. The job keeps the
+    # check-sent end and its note, never the bare closed end whose note is a
+    # Re-queue; a closed window still stops the drain
+    ctx = _browser.new_context()
+    h.offline(ctx)
+    _Posts(ctx, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'});
+      };""")})
+
+    def _gone(self, watch, before, account, handoff):
+        (self.ctx if what == "window" else self.page).close()
+        raise apply_run._Parked("needs_human", "the site showed an error after the submit click "
+                                               "(Something went wrong)")
+    monkeypatch.setattr(apply_run._JobRun, "_read_after_submit", _gone)
+    try:
+        out, _, _ = _drain(ctx, tmp_path, APPLY_URL)
+    finally:
+        try:
+            ctx.close()
+        except Exception:       # noqa: BLE001  (closed by the test)
+            pass
+    closed = apply_run.CLOSED_REASON if what == "window" else apply_run.TAB_CLOSED_REASON
+    assert out.status == "needs_human", out
+    assert out.reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the "
+                                 f"submit click ({closed}); the run had reached: the site showed "
+                                 f"an error after the submit click"), out.reason
+    assert out.browser_closed is (what == "window")
+    entry = apply_queue.load()["jobs"][-1]
+    assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE, entry
+
+
 def test_submitted_unconfirmed_only_with_a_request_seen_leaving(context, tmp_path):
     # the submit posts by fetch and the page then shows a neutral panel
     posts = _Posts(context, {"/apply/42": _form("Submit application", """
@@ -344,6 +380,61 @@ def test_an_error_banner_after_the_submit_parks_with_its_text(context, tmp_path)
     assert out.status == "needs_human", out
     assert out.reason.startswith("the site showed an error after the submit click (Something "
                                  "went wrong on our side"), out.reason
+
+
+_TYPED = ("jane.doe", "example.com", "555", "0199", "Jane Q")
+
+
+def test_an_error_banner_that_quotes_the_persons_data_parks_without_it(context, tmp_path):
+    # final review A-M2: a reason reaches the queue row and the drain's report
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'}).then(function () {
+          document.body.insertAdjacentHTML('afterbegin', '<div role="alert">' +
+            'jane.doe@example.com is already registered to &quot;Jane Q&quot;; ' +
+            'call +1 (555) 010-0199 to fix it.</div>');
+        });
+      };""")})
+    out, _, _ = _drain(context, tmp_path, APPLY_URL)
+    assert out.reason.startswith("the site showed an error after the submit click ([email] is "
+                                 "already registered to [quoted]; call [number] to fix it"), \
+        out.reason
+    assert not [t for t in _TYPED if t in out.reason], out.reason
+
+
+def test_a_reasons_form_and_page_words_leave_out_what_they_quote():
+    # final review A-M2: Chrome's message for a type=email box quotes the value
+    native = {"label": "Email", "reason": "typeMismatch", "message":
+              "Please include an '@' in the email address. 'jane.doe' is missing an '@'."}
+    assert apply_run._invalid_words(native) == (
+        "the form reports an invalid field: Email (not the kind of value the box takes)")
+    assert apply_run._invalid_words({**native, "reason": "valueMissing"}) == (
+        "required field without an answer: Email (the form reports it empty)")
+    site = {"label": "Phone", "reason": "aria-invalid",
+            "message": 'The number "+1 (555) 010-0199" is not valid for Jane Q'}
+    assert apply_run._invalid_words(site) == (
+        "the form reports an invalid field: Phone (The number [quoted] is not valid for Jane Q)")
+    assert apply_run._invalid_words({**site, "message": ""}) == (
+        "the form reports an invalid field: Phone (marked invalid by the site)")
+    refused = apply_run._JobRun._refused_words(None, [
+        {"kind": "error", "text": "jane.doe@example.com is already in use"},
+        {"kind": "invalid", **native}])
+    assert refused == ("the form says: [email] is already in use; the form reports an invalid "
+                       "field: Email (not the kind of value the box takes)")
+    digest = apply_form.FormDigest(url_host="x", title="t", fields=[], buttons=[], text=(
+        "Create your account\n'jane.doe@example.com' is already registered. Call 555-010-0199."))
+    assert apply_run.page_problem(digest) == "[quoted] is already registered. Call [number]."
+    # a step, a year or a count stays: fewer than seven digits
+    assert apply_run._page_words("Step 2 of 4: 2024 hires, 100000 per year", 80) == (
+        "Step 2 of 4: 2024 hires, 100000 per year")
+    ns = SimpleNamespace(submit_clicked=True, _submit_repairs=1, _spared_park=lambda t: None,
+                         _decide=lambda *a, **k: None)
+    watch = SimpleNamespace(any=lambda: True, first=lambda: "POST https://x/apply")
+    with pytest.raises(apply_run._Parked) as e:
+        apply_run._JobRun._not_sent(ns, [native], [
+            {"text": "We could not reach jane.doe@example.com", "field": True}], watch)
+    assert "jane.doe" not in e.value.reason and "[email]" in e.value.reason, e.value.reason
+    assert not ns.submit_clicked
 
 
 def test_received_words_new_since_the_click_are_the_confirmation(context, tmp_path):
@@ -591,6 +682,49 @@ def test_the_gate_refuses_an_empty_required_control_the_extractor_leaves_out(
     assert not [a for a in rec.actions if a.kind == "click"]
 
 
+@pytest.mark.parametrize("text, only", [
+    ("Next", True), ("Save and continue", True), ("Sign in", True), ("Log in", True),
+    ("Create account", True), ("Back", True), ("Continue →", True),
+    ("Submit application", False), ("Save and submit", False), ("Continue to review", False),
+    ("Complete", False), ("Create account and apply", False), ("Send", False), ("", False)])
+def test_a_step_only_button_is_one_of_a_steps_words_alone(text, only):
+    # final review B Known Minor 4
+    assert apply_run.step_only(text) is only
+
+
+class _StepAsSubmit(jev.FakeJev):
+    """Reads "Save and continue" as the submit at 0.9."""
+
+    def judge(self, state, questions):
+        out = dict(super().judge(state, questions))
+        texts = {b["n"]: b["text"] for b in (state or {}).get("buttons") or []}
+        for qid in questions:
+            m = re.fullmatch(r"button_(\d+)_role", qid)
+            if m and texts.get(int(m[1])) == "Save and continue":
+                out[qid] = jev.Answer(kind="choice", choice="submit", confidence=0.9,
+                                      probabilities={"submit": 0.9, "advance": 0.1})
+        return out
+
+
+@pytest.mark.parametrize("submit", [True, False], ids=["submit_mode", "park_mode"])
+def test_a_step_button_read_as_the_submit_is_never_clicked_as_the_send(context, tmp_path, submit):
+    # final review B Known Minor 4: in submit mode the gate refuses a submit
+    # whose words are only a step's, and nothing is clicked; park mode parks
+    # at the gate as before
+    _Posts(context, {"/apply/42": _form("Save and continue",
+                                        "document.getElementById('go').onclick = function () {"
+                                        " document.body.dataset.submitted = 1; };")})
+    out, rec, _ = _drain(context, tmp_path, APPLY_URL, judge=_StepAsSubmit(),
+                         auto_apply_submit=submit)
+    assert not [a for a in rec.actions if a.kind == "click"], rec.actions
+    if submit:
+        assert (out.status, out.reason) == (
+            "needs_human", "the submit button (Save and continue) holds only a step's words; "
+                           "it is never clicked as the send"), out
+    else:
+        assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+
+
 def test_can_submit_names_each_live_refusal():
     from apply_judge import PlannedField, VerifyResult
     plan = FillPlan(fields=[PlannedField(0, (0, "#f"), "First name", True, "first_name", "Jane",
@@ -602,7 +736,7 @@ def test_can_submit_names_each_live_refusal():
         False, "no application on the page (x)")
     assert apply_run.can_submit(plan, ver, on, {"invalid": [
         {"label": "Phone", "message": "Match the format", "reason": "patternMismatch"}]}) == (
-        False, "the form reports an invalid field: Phone (Match the format)")
+        False, "the form reports an invalid field: Phone (does not match the requested format)")
     assert apply_run.can_submit(plan, ver, on, {"required_empty": [
         {"label": "Start date", "kind": "input"}]})[1].startswith(
         "required field without an answer: Start date")
@@ -830,29 +964,218 @@ def test_an_account_code_steps_verify_read_as_the_submit_is_a_step_control(
     assert job._code_sent and not job.submit_clicked and not job._maybe_sent()
 
 
-def test_a_code_steps_verify_read_as_the_submit_after_the_form_may_send_in_submit_mode(
-        monkeypatch):
-    job, digest, plan = _code_job("Verify", "submit", conf=0.6)
+# the code step's button after the application's answers: read as the
+# submit, read as the way on, or no button judged (the step's own "Verify",
+# `code_advance`)
+_CODE_ROLES = pytest.mark.parametrize("role, conf, clicked_as", [
+    ("submit", 0.6, "submit"), ("advance", 0.8, "advance"), (None, 0.0, "advance")],
+    ids=["submit_role", "advance_role", "code_advance"])
+
+
+@_CODE_ROLES
+def test_a_code_steps_button_after_the_form_may_send_in_submit_mode(monkeypatch, role, conf,
+                                                                    clicked_as):
+    job, digest, plan = _code_job("Verify", role or "advance", conf=conf)
+    if role is None:
+        plan = FillPlan(buttons={})
     job.form_filled = True
     roles = _landed_clicks(monkeypatch, job)
     job._code_gate(digest, plan, {"filled": []})
-    # the site may have held the application for the code: clicked once in
-    # the submit role (no second click), never re-queued, and only received
-    # words confirm it (M9)
-    assert roles == ["submit"]
+    # the site may have held the application for the code: clicked once (no
+    # second click), never re-queued, and only received words confirm it (M9)
+    assert roles == [clicked_as]
     assert not job.submit_clicked and job._code_may_send and job._maybe_sent()
 
 
-def test_park_mode_never_clicks_a_code_steps_button_read_as_the_submit_after_the_form(
-        monkeypatch):
-    job, digest, plan = _code_job("Verify", "submit", conf=0.6, submit=False)
+@_CODE_ROLES
+def test_park_mode_never_clicks_a_code_steps_button_after_the_form(monkeypatch, role, conf,
+                                                                   clicked_as):
+    # final review A-I2 and A Known Minor 10: whatever the judge read the
+    # button as, it may send what the site held for the code. Park mode ends
+    # there as its submit end, the code typed and the button never clicked
+    job, digest, plan = _code_job("Verify", role or "advance", conf=conf, submit=False)
+    if role is None:
+        plan = FillPlan(buttons={})
     job.form_filled = True
     roles = _landed_clicks(monkeypatch, job)
-    with pytest.raises(apply_run._Parked, match=r"read as the submit \(0\.60\), and park mode "
-                                                r"sends nothing") as p:
+    with pytest.raises(apply_run._Parked) as p:
         job._code_gate(digest, plan, {"filled": []})
-    assert p.value.status == "needs_human" and roles == []
-    assert not job.submit_clicked and not job._code_sent
+    assert p.value.status == "ready_to_submit", p.value.reason
+    assert p.value.reason.startswith("auto_apply_submit is off; the emailed code is entered and "
+                                     "its button (Verify) is the step that may send the "
+                                     "application"), p.value.reason
+    assert roles == []
+    assert not job.submit_clicked and not job._code_sent and not job._maybe_sent()
+
+
+def test_an_email_first_page_is_no_filled_application():
+    # final review A-I2: an address box alone (a remember-me beside it)
+    # starts a sign-in or an application; its fill puts none of the
+    # application on the site, so the code step after it goes on in park mode
+    email = apply_form.Field(0, (0, "#email"), "Email address", "email", True,
+                             id_or_name="email")
+    remember = apply_form.Field(1, (0, "#r"), "Remember me", "checkbox", False, id_or_name="r")
+    first = apply_form.Field(2, (0, "#first"), "First name", "text", True, id_or_name="first")
+    filled = [SimpleNamespace(n=0, value="x")]
+    start = apply_form.FormDigest("careers.example", "Apply", "", fields=[email, remember])
+    assert not apply_run._fills_the_application(start, FillPlan(), filled)
+    form = apply_form.FormDigest("careers.example", "Apply", "", fields=[email, first])
+    assert apply_run._fills_the_application(form, FillPlan(), filled)
+
+
+def _link_job(monkeypatch, submit: bool, shown: str = ""):
+    """A job on a page that says a link was emailed, its inbox holding the
+    link and its link tab showing `shown`; the page settles at once."""
+    job, _, _ = _code_job("Verify", "advance", submit=submit)
+    job.allowed.add("careers.example")
+    job.inbox = SimpleNamespace(fetch_code=Mock(side_effect=AssertionError("a code")),
+                                fetch_link=Mock(return_value="https://careers.example/c?t=1"),
+                                refused=[])
+    job.page = Mock(url="https://careers.example/apply/done")
+    job._open_link = Mock(return_value=shown)
+    monkeypatch.setattr(apply_run.apply_fill, "settle", lambda *a, **kw: {})
+    digest = apply_form.FormDigest("careers.example", "Check your inbox",
+                                   "We sent a verification email. Click the link in the email "
+                                   "to confirm your application.")
+    return job, digest
+
+
+def test_park_mode_never_opens_an_emailed_link_after_the_form(monkeypatch):
+    # final review A-I2: the link may be the step that sends the application
+    job, digest = _link_job(monkeypatch, submit=False)
+    job.form_filled = True
+    with pytest.raises(apply_run._Parked) as p:
+        job._code_gate(digest, FillPlan(), {"filled": [], "clicked": []})
+    assert p.value.status == "ready_to_submit", p.value.reason
+    assert p.value.reason.startswith("auto_apply_submit is off; the emailed link from "
+                                     "careers.example is the step that may send the "
+                                     "application"), p.value.reason
+    job._open_link.assert_not_called()
+    assert not job._maybe_sent()
+
+
+def test_an_accounts_emailed_link_before_the_form_is_opened_in_park_mode_and_the_tab_read_again(
+        monkeypatch):
+    # ACC-05's account check: none of the application is on the site yet.
+    # The job's tab is read again from its URL by a GET, never a reload
+    # (final review A-C1: a reload re-sends the POST that led to the page)
+    job, digest = _link_job(monkeypatch, submit=False)
+    job._code_gate(digest, FillPlan(), {"filled": [], "clicked": []})
+    job._open_link.assert_called_once()
+    job.page.goto.assert_called_once()
+    assert job.page.goto.call_args.args == ("https://careers.example/apply/done",)
+    job.page.reload.assert_not_called()
+    assert not job._maybe_sent()
+
+
+@pytest.mark.parametrize("shown, status, start", [
+    ("Thank you. Your application has been received.", "submitted",
+     "submitted (unconfirmed): the emailed link's page on careers.example says "
+     "'application has been received'"),
+    ("Your email address is confirmed.", "needs_human",
+     apply_run.CHECK_SENT_REASON + ": the emailed link on careers.example was opened")],
+    ids=["received_words", "no_received_words"])
+@pytest.mark.parametrize("after", ["form", "submit"])
+def test_an_emailed_link_after_a_possible_send_never_loads_the_jobs_tab_again(
+        monkeypatch, shown, status, start, after):
+    # final review A-C1: the job's tab came from the post that sent the
+    # application; loading it again would send it again. The link's own page
+    # is read: received words end the job submitted, else the person checks
+    job, digest = _link_job(monkeypatch, submit=True, shown=shown)
+    job.form_filled = True
+    if after == "submit":
+        job.submit_clicked = True
+    seen: list[bool] = []
+    job._open_link.side_effect = lambda link: seen.append(job._maybe_sent()) or shown
+    with pytest.raises(apply_run._Parked) as p:
+        job._code_gate(digest, FillPlan(), {"filled": [], "clicked": []})
+    assert seen == [True], "a possible send once the link is opened"
+    assert (p.value.status, p.value.reason[:len(start)]) == (status, start), p.value.reason
+    if status == "needs_human":
+        assert p.value.tab_note == apply_run.CHECK_SENT_NOTE
+    job.page.reload.assert_not_called()
+    job.page.goto.assert_not_called()
+    assert job._maybe_sent()
+
+
+@pytest.mark.parametrize("text, submit, marked", [
+    ("Confirm", True, True), ("Complete", True, True), ("Continue", True, False),
+    ("Confirm", False, False)], ids=["confirm", "complete", "continue", "park_mode"])
+def test_a_final_worded_advance_in_submit_mode_is_a_possible_send(monkeypatch, text, submit,
+                                                                  marked):
+    # final review A-M3: submit mode clicks a final-worded advance as a step
+    # (park mode sends it to the gate). It may send: marked before the
+    # click, so an outage after it never hands the job back to the queue
+    job, digest, plan = _code_job(text, "advance", submit=submit)
+    seen: list[bool] = []
+
+    def click(digest, n, role, rec, **kw):
+        seen.append(job._maybe_sent())
+        return apply_fill.ClickResult(clicked=True, changed=True)
+    monkeypatch.setattr(job, "_click", click)
+    monkeypatch.setattr(job, "_form_state", lambda *a: {})
+    monkeypatch.setattr(job, "_button_identity", lambda *a: None)
+    job._advance(digest, plan, [], {"clicked": []}, 0, 0.9)
+    assert seen == [marked] and job._maybe_sent() is marked
+
+
+def test_a_final_worded_advance_that_never_landed_is_no_possible_send(monkeypatch):
+    job, digest, plan = _code_job("Confirm", "advance")
+    monkeypatch.setattr(job, "_click", lambda *a, **kw: apply_fill.ClickResult(False, False))
+    monkeypatch.setattr(job, "_form_state", lambda *a: {})
+    monkeypatch.setattr(job, "_button_identity", lambda *a: None)
+    job._advance(digest, plan, [], {"clicked": []}, 0, 0.9)
+    assert not job._maybe_sent()
+
+
+def test_a_request_the_submits_watch_saw_leave_keeps_the_job_a_possible_send():
+    # final review A-M4: validation errors after the submit reset its click
+    # (`_not_sent`), and a request that left still makes the job a possible
+    # send; only a send that never reached the site (`_Unsent`) rules it out
+    job, _, _ = _code_job("Verify", "advance")
+    job._send_watch = SimpleNamespace(any=lambda: True)
+    assert not job.submit_clicked and job._maybe_sent()
+    job._unsent = True
+    assert not job._maybe_sent()
+    job._unsent = False
+    job._send_watch = SimpleNamespace(any=lambda: False)
+    assert not job._maybe_sent()
+
+
+@pytest.mark.parametrize("where", ["_after_submit", "_open"])
+def test_an_interrupted_run_leaves_no_entry_in_progress(context, tmp_path, monkeypatch, where):
+    # final review A-M5: Ctrl+C in a drain ends the job for the person
+    # (after the submit click: the check-sent end) and stops the drain
+    _Posts(context, {"/apply/42": _form("Submit application", """
+      document.getElementById('go').onclick = function () {
+        fetch('/api/applications', {method: 'POST', body: '{}'});
+      };""")})
+
+    def _stop(self, *a, **kw):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(apply_run._JobRun, where, _stop)
+    with pytest.raises(KeyboardInterrupt):
+        _drain(context, tmp_path, APPLY_URL)
+    entry = apply_queue.load()["jobs"][-1]
+    assert entry["status"] == "needs_human", entry
+    if where == "_after_submit":
+        assert entry["notes"].startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after "
+                                         f"the submit click (KeyboardInterrupt at "), entry
+        assert entry["tab_note"] == apply_run.CHECK_SENT_NOTE
+    else:
+        assert entry["notes"].startswith("the run was interrupted (KeyboardInterrupt at "), entry
+
+
+def test_a_post_answered_by_a_link_page_goes_once_and_the_links_page_confirms_it(
+        _browser, flow_server, tmp_path):
+    # final review A-C1: the submit's post is answered, with no redirect, by
+    # a page that says a link to confirm the application was emailed. The
+    # link opens in a tab of its own, and the job's tab (the post's answer)
+    # is never loaded again: the server sees one post
+    before = flow_server.posts.get("link_after_submit", 0)
+    r = _flow("link_after_submit", _browser, flow_server, tmp_path)
+    assert flow_server.posts.get("link_after_submit", 0) - before == 1
+    assert r.status == "submitted" and r.ok and not r.breaks, r
 
 
 def test_a_code_step_after_the_submit_gates_click_keeps_its_submit_role(monkeypatch):
@@ -891,6 +1214,47 @@ def test_the_extractor_never_hints_submit_for_third_party_or_cancel_buttons(brow
     hints = {b.text: b.kind_hint for b in apply_form.extract(browser_page).buttons}
     assert hints.pop("Submit application") == "submit"
     assert all(h_ != "submit" for h_ in hints.values()), hints
+
+
+def _words(pattern: str) -> set[str]:
+    """The words of a regex source's first group (`\\b(a|b|c)\\b`), a
+    `[sz]` class spelled both ways."""
+    out: set[str] = set()
+    for alt in re.search(r"\(([^()]*)\)", pattern).group(1).split("|"):
+        m = re.fullmatch(r"(\w*)\[(\w)(\w)\](\w*)", alt)
+        out |= {m[1] + m[2] + m[4], m[1] + m[3] + m[4]} if m else {alt}
+    return out
+
+
+def _js_regex(js: str, name: str) -> str:
+    return re.search(r"const " + name + r" = /(.*?)/i;", js).group(1)
+
+
+def test_every_copy_of_the_send_and_step_words_holds_the_loops_own():
+    # final review B-M4: the loop's send and last-step words
+    # (`apply_run.SUBMIT_WORDS`, `FINAL_WORDS`) are the source; a word added
+    # there and missing from a copy fails here
+    submit = _words(apply_run.SUBMIT_WORDS.pattern)
+    final = _words(apply_run.FINAL_WORDS.pattern)
+    assert "submit" in submit and "done" in final
+    # the judge's send words: the loop's but "apply" (an Apply is an entry
+    # until the judge says it sends)
+    assert _words(apply_judge.SEND_WORDS.pattern) == submit - {"apply"}
+    # the extractor's `submit` hint
+    hint = re.search(r"submits \|\| /(.*?)/i\.test\(text\)", apply_form._EXTRACT_JS).group(1)
+    assert _words(hint) == submit
+    # a popup's send name, the extractor's and `send_phrase`'s
+    verbs = (submit - {"apply"}) | final
+    assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_VERB")) == verbs
+    assert _words(apply_fill._POPUP_VERB.pattern) == verbs
+    assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_LEAD")) == _words(
+        apply_fill._POPUP_LEAD.pattern)
+    assert _words(_js_regex(apply_form._EXTRACT_JS, "SEND_OBJECT")) == _words(
+        apply_fill._POPUP_SEND_OBJECT.pattern)
+    # the click's arm and the overlay picker splice every send and last-step word
+    assert _words(apply_fill._SEND_JS) == submit | final
+    for js in (apply_fill._ARM_JS, apply_fill._OVERLAY_JS):
+        assert f"new RegExp('{apply_fill._SEND_JS}', 'i')" in js
 
 
 def test_the_embeds_form_leaves_no_field_once_its_thanks_show(browser_page, flow_server):

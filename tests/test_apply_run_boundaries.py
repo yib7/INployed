@@ -171,6 +171,26 @@ def test_a_foreign_frame_loses_its_controls_and_the_page_goes_on():
     assert [b.text for b in kept.buttons] == ["Next"]
 
 
+@pytest.mark.parametrize("frame_url", [
+    "https://js.stripe.com/v3/elements-inner-card-abc.html",
+    "https://assets.braintreegateway.com/web/3.97.2/html/hosted-fields-frame.min.html",
+    "https://www.linkedin.com/embed/feed/apply"])
+def test_a_payment_or_a_linkedin_frame_on_the_form_loses_its_fields(frame_url):
+    # final review B-M7: a card frame's "ZIP" box and a LinkedIn widget's
+    # boxes on the company's form are never planned; the form's own box is
+    job = _job()
+    job.page = Mock(url="https://boards.greenhouse.io/acme/jobs/1")
+    main = SimpleNamespace(url=job.page.url, parent_frame=None)
+    job.page.frames = [main, SimpleNamespace(url=frame_url, parent_frame=main)]
+    digest = apply_form.FormDigest("boards.greenhouse.io", "Apply", "", fields=[
+        apply_form.Field(0, (0, "#first_name"), "First name", "text", True),
+        apply_form.Field(1, (1, "#postal"), "ZIP", "text", False),
+        apply_form.Field(2, (1, "#card"), "Card number", "text", True)])
+    kept = job._drop_foreign_controls(digest)
+    assert [f.label for f in kept.fields] == ["First name"]
+    assert list(job._last_dropped) == [1]
+
+
 @pytest.mark.parametrize("url", ["about:blank", "about:srcdoc"])
 def test_blank_frame_inherits_allowed_parent(url):
     job = _job()

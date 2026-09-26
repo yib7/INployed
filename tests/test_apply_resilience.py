@@ -852,12 +852,15 @@ def test_a_judge_that_stays_down_opens_the_breaker_and_later_requests_fail_at_on
 
 
 def test_a_refused_key_or_a_long_retry_after_opens_the_breaker_without_a_wait():
-    for error in (_Busy(401), _Busy(403), _Busy(429, retry_after_ms=600_000)):
+    # C review M5: a retired or renamed model (404, 410) is refused like a key
+    for error in (_Busy(401), _Busy(403), _Busy(404), _Busy(410),
+                  _Busy(429, retry_after_ms=600_000)):
         sleeps: list[float] = []
         guarded = jev.Guarded(_Flaky([error]), sleep=sleeps.append)
         with pytest.raises(jev.JudgeOutage):
             guarded.judge({}, {})
         assert sleeps == [] and guarded.down == f"_Busy {error.status}"
+        assert guarded.refused is (error.status != 429), error.status
 
 
 def test_a_request_the_service_rejects_passes_through_without_a_retry():
@@ -1000,13 +1003,16 @@ def test_a_judge_that_stays_down_hands_the_job_back_and_stops_the_drain(
     assert "re-queued 1" in apply_run.summary_line(outcomes)
 
 
+@pytest.mark.parametrize("status", [401, 404])
 def test_a_refused_key_hands_the_job_back_with_its_attempt_counted(
-        _browser, flow_server, tmp_path):
+        _browser, flow_server, tmp_path, status):
     # SP8a review M1: only an error the service may get over gives the attempt
-    # back; a refused key is no outage of this job's, so none is counted
+    # back; a refused key is no outage of this job's, so none is counted.
+    # C review M5: a retired model (404) stops the drain the same way, so it
+    # never fails every job in the batch
     import apply_run
     sleeps: list[float] = []
-    (outcomes,), jobs, _ = _two_jobs([_Flaky([_Busy(401)] * 20)], _browser, flow_server,
+    (outcomes,), jobs, _ = _two_jobs([_Flaky([_Busy(status)] * 20)], _browser, flow_server,
                                      tmp_path, sleeps)
     assert [(o.job_id, o.status) for o in outcomes] == [("a", "queued")], outcomes
     assert outcomes[0].reason.endswith(apply_run.KEY_REFUSED_NOTE), outcomes[0].reason
@@ -1190,7 +1196,7 @@ def test_an_outage_inside_the_account_step_reaches_the_run(step, monkeypatch):
     digest = FormDigest(url_host="jobs.example.com", title="Sign in", text="Sign in", fields=[
         Field(n=0, locator=(0, "#email"), label="Email", type="email", required=True),
         Field(n=1, locator=(0, "#password"), label="Password", type="other", required=True,
-              autocomplete="current-password")])
+              autocomplete="current-password", secret=True)])
     if step == "login":     # the sign-up link's judge request, the judge down
         monkeypatch.setattr(apply_run._Accounts, "_signup_link", _down)
         blank = FormDigest(url_host="jobs.example.com", title="Sign in", text="Sign in")
@@ -1663,6 +1669,41 @@ def test_a_judge_down_after_the_code_step_of_a_filled_application_asks_the_perso
     assert reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the code "
                              f"step ({apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
     assert h.policy_park(outcomes[0].status, reason) is True
+
+
+def test_a_code_step_click_whose_tab_closes_is_never_taken_over_or_handed_back(
+        _browser, tmp_path, monkeypatch):
+    # final review A-I1: the code step's click after the application's
+    # answers may send what the site held for the code. The job's tab closes
+    # inside the click, with the tab that opened it moved on to the form: the
+    # person checks the job, which is never re-queued or taken over, and the
+    # form is never sent again
+    import apply_run
+    from playwright.sync_api import Error as PlaywrightError
+    posts: list[str] = []
+    real = apply_run._JobRun._click
+
+    def _click(self, digest, n, role, rec, **kw):
+        result = real(self, digest, n, role, rec, **kw)
+        if any(f.id_or_name == "code" for f in digest.fields):
+            self.page.evaluate(f"window.opener && (window.opener.location.href = "
+                               f"'{_CAREERS}/apply/again')")
+            self.page.close()
+            raise PlaywrightError("Target page, context or browser has been closed")
+        return result
+    monkeypatch.setattr(apply_run._JobRun, "_click", _click)
+    outcomes, _ = _drain_jobs(_browser, tmp_path, [("a", f"{_CAREERS}/jobs/a")], {
+        f"{_CAREERS}/jobs/a": _posting(f"{_CAREERS}/apply"), f"{_CAREERS}/apply": _STEP_ONE,
+        f"{_CAREERS}/apply/again": _STEP_ONE, f"{_CAREERS}/apply/verify": _CODE_STEP,
+        f"{_CAREERS}/post/verify": _sink(posts, "ok"), f"{_CAREERS}/post/next": _WAIT},
+        submit=True, inbox=_Mailbox())
+    assert posts == ["POST"], posts
+    assert [(o.job_id, o.status) for o in outcomes] == [("a", "needs_human")], outcomes
+    reason = outcomes[0].reason
+    assert reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the code "
+                             f"step ({apply_run.TAB_CLOSED_REASON}"), reason
+    assert _entries(tmp_path)["a"]["status"] == "needs_human"
+    assert "tab_taken_over" not in _trace_of(tmp_path, "a")
 
 
 _ACCOUNT_CODE = (_FORMS / "verify_email_code.html").read_text(encoding="utf-8").replace(

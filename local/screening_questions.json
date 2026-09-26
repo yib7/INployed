@@ -327,6 +327,118 @@
       }
     },
     {
+      "id": "auth_eg_citizen",
+      "label": "Are you legally authorized to work in the United States, e.g. as a citizen or permanent resident, without the need for sponsorship?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_help_green_card",
+      "label": "Are you legally authorized to work in the United States?",
+      "help": "For example, you hold a green card and will not need sponsorship now or in the future",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_currently_employed",
+      "label": "Are you currently employed in the US?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "auth_currently_work",
+      "label": "Do you currently work in the US?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "auth_now_without",
+      "label": "Are you currently able to work without sponsorship?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "auth_start_without",
+      "label": "Will you be able to work without sponsorship on your start date?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "auth_now_unrestricted",
+      "label": "Do you currently have unrestricted work authorization?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": null
+      }
+    },
+    {
       "id": "spon_radio",
       "label": "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?",
       "help": "",
@@ -551,6 +663,54 @@
       }
     },
     {
+      "id": "spon_have_visa",
+      "label": "Do you have visa sponsorship?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_have_sponsor",
+      "label": "Do you have a sponsor?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_continue",
+      "label": "Will your employer continue to sponsor your visa?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
       "id": "reloc_radio",
       "label": "Are you willing to relocate?",
       "help": "",
@@ -684,6 +844,54 @@
     {
       "id": "reloc_located_or",
       "label": "Are you located in or willing to relocate to Austin, TX?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "reloc_no_assistance",
+      "label": "Are you willing to relocate to the job location (No Relocation Assistance)?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "reloc_own_expense",
+      "label": "Are you willing to relocate to the job location (At Your Own Expense)?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "reloc_example_cities",
+      "label": "Are you willing to relocate, for example to Austin or Denver, without relocation assistance?",
       "help": "",
       "widget": "toggle",
       "options": [
@@ -906,6 +1114,70 @@
       }
     },
     {
+      "id": "onsite_remote_open",
+      "label": "Are you open to a remote-only position?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_remote_willing",
+      "label": "Are you willing to work remote only?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_currently_office",
+      "label": "Are you currently working in an office?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_currently_onsite",
+      "label": "Do you currently work on-site?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
       "id": "years_select",
       "label": "How many years of professional experience do you have?",
       "help": "",
@@ -1089,6 +1361,40 @@
         "0-1",
         "2-4",
         "5+"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_eg_python",
+      "label": "How many years of experience do you have, e.g. in Python?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "0-2 years",
+        "3-5 years",
+        "6+ years"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_previous_role",
+      "label": "How many years of experience in your previous role?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "0-2 years",
+        "3-5 years",
+        "6+ years"
       ],
       "required": true,
       "expected_fact": null,

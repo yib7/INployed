@@ -1029,15 +1029,20 @@ FLOWS: tuple[Flow, ...] = (
                 "parser's own upload left alone"),
     # the Contoso incident's form; the marker shows only for the
     # answers the typed store holds (a citizen or permanent resident: no
-    # sponsorship, authorized; relocates)
-    Flow("ashby_relocation", "ashby_relocation.html", True, "submitted", _SUBMITTED,
+    # sponsorship, authorized; relocates). SP6c round 5: the plan cannot
+    # reach the job's location, so "the job location (New York)" is another
+    # question than the stored relocation answer, and the run parks on it by
+    # the user's policy (a required question the data cannot answer)
+    Flow("ashby_relocation", "ashby_relocation.html", True, "needs_human",
+         r"^required field without an answer: Are you willing to relocate to the job location "
+         r"\(New York\)\?$",
          confirm="body[data-auth=citizen][data-sponsor=no][data-relocate=willing] "
                  "#thanks:visible",
          recorded=False,
          covers="legal authorization among qualified options only (a Yes on a work visa "
                 "is no Yes), sponsorship on Yes / No buttons settled by the alias set, and a "
-                "relocation question among combined options, both picks over every yes / "
-                "no fact, all verified"),
+                "relocation question naming a place the run cannot check: it parks there and "
+                "sends nothing"),
     Flow("greenhouse_react_select", "greenhouse_react_select.html", True, "submitted",
          _SUBMITTED, confirm="#thanks:visible",
          covers="react-select dropdowns (the pick shown in a sibling, a hidden required twin), "

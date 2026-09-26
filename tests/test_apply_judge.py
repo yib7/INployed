@@ -1523,6 +1523,7 @@ _OWN_QUESTIONS = [
     ("requires_sponsorship", "Do you require visa sponsorship?", True),
     ("requires_sponsorship", "Will you need the company to sponsor an employment-based visa "
                              "(such as an H-1B) for you?", True),
+    # "continue" only before working (round 7, rule 8)
     ("requires_sponsorship", "Will you require sponsorship in the future to continue working "
                              "in the United States?", True),
     ("requires_sponsorship", "Do you require sponsorship (e.g., H-1B, TN, O-1) to work for "
@@ -1625,7 +1626,8 @@ _OWN_QUESTIONS = [
     ("years_experience", "How many years of relevant experience do you have?", True),
     ("years_experience", "Years of relevant work experience", True),
     ("years_experience", "How many years of experience do you have in total?", True),
-    ("years_experience", "Do you have at least 2 years of professional work experience?", True),
+    # round 7 (rule 6): a number in a years question asks another question
+    ("years_experience", "Do you have at least 2 years of professional work experience?", False),
     ("years_experience", "Years of experience", True),
     ("years_experience", "Years of Experience *", True),
     ("years_experience", "Total years of experience", True),
@@ -1641,8 +1643,9 @@ _OWN_QUESTIONS = [
     ("years_experience", "How many years of experience do you have working with React?", False),
     ("years_experience", "How many years of experience do you have in software engineering?",
      False),
-    # a role qualifier asks the total (round 2, decision 3)
-    ("years_experience", "Do you have 3 or more years of experience in a similar role?", True),
+    # a role qualifier asks the total (round 2, decision 3); a number asks
+    # another question (round 7, rule 6)
+    ("years_experience", "Do you have 3 or more years of experience in a similar role?", False),
     ("years_experience", "Years of experience, not counting internships", False),
     ("years_experience", "Years with SQL", False),
     ("years_experience", "Years in the role", False),
@@ -1829,11 +1832,13 @@ _FITS = [
     ("authorized_without_sponsorship", "Do you have unrestricted work authorization on an "
                                        "H-1B?", "other"),
     # years_experience: a role qualifier asks the total, a named field or skill does not
-    ("years_experience", "Do you have 3 or more years of experience in a similar role?", "own"),
+    ("years_experience", "Do you have 3 or more years of experience in a similar role?",
+     "other"),                                  # a number (round 7, rule 6)
     ("years_experience", "How many years of experience do you have in a similar position?",
      "own"),
     ("years_experience", "Years of experience in a similar capacity", "own"),
-    ("years_experience", "How many years of experience do you have in this role?", "own"),
+    # one job's years (round 7, rule 6)
+    ("years_experience", "How many years of experience do you have in this role?", "other"),
     ("years_experience", "Years of experience in a related role", "own"),
     ("years_experience", "How many years of experience relevant to this role do you have?",
      "own"),
@@ -2040,8 +2045,9 @@ _WORDS = [
     ("work_authorized", "Are you legally authorized to work in the United States? * Required",
      "", "own"),
     ("requires_sponsorship", "Do you need visa sponsorship?", "", "own"),
+    # an employer's sponsorship (round 7, rule 8)
     ("requires_sponsorship", "Will you now or in the future need an employer to sponsor your "
-                             "visa?", "", "own"),
+                             "visa?", "", "other"),
     ("requires_sponsorship", "Will you now or at any time in the future require sponsorship?",
      "", "own"),
     # round 6: "If yes, please explain" is a neutral tail of the fixed list
@@ -2073,7 +2079,8 @@ _WORDS = [
     ("years_experience", "How many years of relevant professional experience do you have?", "",
      "own"),
     ("years_experience", "Years of overall experience", "", "own"),
-    ("years_experience", "Do you have 5+ years of related industry experience?", "", "own"),
+    # a number (round 7, rule 6)
+    ("years_experience", "Do you have 5+ years of related industry experience?", "", "other"),
     # round 6: "Please enter a number" is a neutral tail of the fixed list
     ("years_experience", "Years of experience", "Please enter a number.", "own"),
     ("years_experience", "How many years of professional software development experience do "
@@ -2951,3 +2958,308 @@ def test_a_custom_number_answer_settles_only_its_own_visa_type(tmp_path, label, 
     digest = _field_with(label, type_="number", options=())
     p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("answer_petitions", 1.0)}))
     assert (p.fields[0].action, p.fields[0].value) == (action, "1" if action == "fill" else "")
+
+
+# --- cycle 18 SP6c round 7, rules 2 to 9: anchors, the company name, years, days, tails -------
+
+_LEVER = ('Will you now, or in the future, require the Company to commence ("sponsor") an '
+          'immigration case in order to employ you (for example, H-1B or other '
+          'employment-based immigration case)? This is sometimes called "sponsorship" for an '
+          '"employment-based visa status."')
+_LDQUO, _RDQUO = chr(0x201C), chr(0x201D)
+_LEVER_CURLY = (f"Will you now, or in the future, require the Company to commence ({_LDQUO}"
+                f"sponsor{_RDQUO}) an immigration case in order to employ you (for example, H-1B "
+                f"or other employment-based immigration case)? This is sometimes called "
+                f"{_LDQUO}sponsorship{_RDQUO} for an {_LDQUO}employment-based visa "
+                f"status.{_RDQUO}")
+_COMPANY = "Example Co"
+_COMPANY_AUTH = "Are you legally authorized to work in the United States for Example Co?"
+_COMPANY_SPONSOR = ("Will you now or in the future require Example Co to sponsor you for an "
+                    "employment visa?")
+_CURRENT_OR_FUTURE = ("Are you authorized to work in the US without the need for current or "
+                      "future sponsorship?")
+_NOT_IN_FUTURE = ("Are you legally authorized to work in the United States and will not "
+                  "require sponsorship in the future?")
+
+# (fact, label): each settled a value on 208241d; each asks another question
+_ROUND7_OTHER = [
+    # rule 2: a status word needs an authorization word in its own sentence,
+    # and "legally" is none
+    ("work_authorized", "Are you currently legally employed in the United States?"),
+    ("work_authorized", "Are you legally employed in the US?"),
+    ("work_authorized", "Are you legally working in the US?"),
+    ("work_authorized", "Are you currently legally working in the US?"),
+    ("work_authorized", "Are you legally employed?"),
+    ("work_authorized", "Do you legally have work in the US?"),
+    ("work_authorized", "Are you employed? Do you have work authorization?"),
+    ("authorized_without_sponsorship",
+     "Are you currently employed in the US without sponsorship?"),
+    ("authorized_without_sponsorship", "Do you currently work in the US without sponsorship?"),
+    ("authorized_without_sponsorship", "Are you currently working without sponsorship?"),
+    ("authorized_without_sponsorship", "Are you employed in the US without sponsorship?"),
+    ("authorized_without_sponsorship", "Do you work in the US without sponsorship?"),
+    ("authorized_without_sponsorship", "Are you working in the US without sponsorship?"),
+    # "without restrictions" with neither the US nor a sponsorship word: a
+    # duty or a schedule
+    ("authorized_without_sponsorship", "Are you able to work without restrictions?"),
+    ("authorized_without_sponsorship", "Can you work without restrictions?"),
+    ("authorized_without_sponsorship", "Can you work unrestricted?"),
+    # rule 5: "able" and "allowed" with no US ask when the candidate can start
+    ("work_authorized", "Are you able to work now?"),
+    ("work_authorized", "Are you able to work at this time?"),
+    ("work_authorized", "Are you able to take up work now?"),
+    ("work_authorized", "Are you allowed to work now?"),
+    ("work_authorized", "Are you currently allowed to work?"),
+    # rule 3: a plan or a status is no willingness to relocate
+    ("willing_to_relocate", "Will you be relocating for this position?"),
+    ("willing_to_relocate", "Will you be relocating for this role?"),
+    ("willing_to_relocate", "Will you be moving for this job?"),
+    ("willing_to_relocate", "Are you relocating to the job location?"),
+    ("willing_to_relocate", "Would this position be a relocation for you?"),
+    ("willing_to_relocate", "Would this role be a relocation?"),
+    ("willing_to_relocate", "Are you moving to this location?"),
+    ("willing_to_relocate", "Are you currently relocating?"),
+    ("willing_to_relocate", "Are you moving?"),
+    # a change of job
+    ("willing_to_relocate", "Are you open to a job move?"),
+    ("willing_to_relocate", "Are you willing to move to this role?"),
+    ("willing_to_relocate", "Would you move to this position?"),
+    # the present job or the job's terms are no willingness to work on-site
+    ("onsite_ok", "Do you work in an office?"),
+    ("onsite_ok", "Do you work on-site?"),
+    ("onsite_ok", "Are you working on-site?"),
+    ("onsite_ok", "Are you working in an office?"),
+    ("onsite_ok", "Do you work at an office?"),
+    ("onsite_ok", "Do you work from an office?"),
+    ("onsite_ok", "Are you working from our office?"),
+    ("onsite_ok", "Do you work in person?"),
+    ("onsite_ok", "Do you come into the office?"),
+    ("onsite_ok", "Do you report to an office?"),
+    ("onsite_ok", "Are you on-site?"),
+    ("onsite_ok", "Are you in the office?"),
+    ("onsite_ok", "Is your role on-site?"),
+    ("onsite_ok", "Is your position on-site?"),
+    ("onsite_ok", "Is your work on-site?"),
+    ("onsite_ok", "Is that role on-site?"),
+    ("onsite_ok", "Is this role on-site?"),
+    ("onsite_ok", "Is your role hybrid?"),
+    # "currently" with no anchor between it and the work word, or an anchor
+    # in another sentence
+    ("onsite_ok", "Do you currently work in an open office?"),
+    ("onsite_ok", "Do you currently work on-site in an open office?"),
+    ("onsite_ok", "Do you currently work in an open office with this schedule?"),
+    ("onsite_ok", "Are you currently working in an office that is open?"),
+    ("onsite_ok", "Are you currently working in an office open 5 days a week?"),
+    ("onsite_ok", "Are you currently working in an office? Are you comfortable with that?"),
+    ("onsite_ok", "Are you currently working in an office? Would you be comfortable with this?"),
+    ("onsite_ok", "Are you currently working on-site? Is that comfortable?"),
+    ("onsite_ok", "Are you currently working on-site at an office you are comfortable with?"),
+    ("onsite_ok", "Currently working on-site / able to work on-site"),
+    ("onsite_ok", "Are you able to work on-site? Are you currently working on-site?"),
+    ("onsite_ok", "Are you willing to work on-site? Do you currently work on-site?"),
+    ("onsite_ok", "Currently working in an office: able to come into the office?"),
+    ("onsite_ok", "Do you currently work from an office you are willing to report to?"),
+    # remote only: the present job or the job's terms
+    ("remote_only", "Do you only work remotely?"),
+    ("remote_only", "Do you currently work remotely only?"),
+    ("remote_only", "Do you work fully remote only?"),
+    ("remote_only", "Does the position require remote work?"),
+    ("remote_only", "Does your work require you to be remote only?"),
+    # rule 6: a number, or one job, in a years question
+    ("years_experience", "How many years of experience do you have in 1 role?"),
+    ("years_experience", "How many years of experience do you have in 2 or more roles?"),
+    ("years_experience", "How many years of experience do you have in 2024?"),
+    ("years_experience", "Years of experience in 10 years"),
+    ("years_experience", "How many years of experience at this job?"),
+    ("years_experience", "Years of experience in this position"),
+    ("years_experience", "Years of experience at this position"),
+    ("years_experience", "Please enter years of experience at this job"),
+    ("years_experience", "Please enter years of experience in this role"),
+    ("years_experience",
+     "Please enter the number of years of experience you have in this position"),
+    ("years_experience", "Please enter your years of experience in 1 role"),
+    ("years_experience", "Please enter 2 years of experience"),
+    ("years_experience", "Enter how many years of experience you have in 2024"),
+    # rule 7: six or seven days a week
+    ("onsite_ok", "Are you able to work in the office 7 days a week?"),
+    ("onsite_ok", "Are you willing to work on-site six days a week?"),
+    # rule 8: an employer's sponsorship, or continuing one
+    ("requires_sponsorship", "Does your employer require visa sponsorship?"),
+    ("requires_sponsorship", "Will you require the company to continue your visa sponsorship?"),
+    ("requires_sponsorship", "Does your company require visa sponsorship?"),
+]
+
+
+@pytest.mark.parametrize("key, label", _ROUND7_OTHER)
+def test_a_status_a_plan_the_jobs_terms_a_number_or_one_job_asks_another_question(key, label):
+    assert apply_judge.question_fit(key, label) == "other"
+    assert apply_judge.answers_question(key, "Yes", label) is False
+    assert apply_judge.answers_question(key, "No", label) is False
+
+
+# (fact, label, help, company, fit): each refused on 208241d
+_ROUND7_OWN = [
+    # rule 9: Lever's own sponsorship question and its closing sentence
+    ("requires_sponsorship", _LEVER, "", "", "own"),
+    ("requires_sponsorship", _LEVER_CURLY, "", "", "own"),
+    # the fixed trailing sentences
+    ("work_authorized", "Are you legally authorized to work in the United States? (Y/N)", "", "",
+     "own"),
+    ("work_authorized", "Are you legally authorized to work in the United States? Y/N", "", "",
+     "own"),
+    ("requires_sponsorship", "Will you require visa sponsorship?", "Please select an option", "",
+     "own"),
+    ("requires_sponsorship", "Will you require visa sponsorship? Choose one", "", "", "own"),
+    ("requires_sponsorship", "Will you require visa sponsorship? Required field", "", "", "own"),
+    ("requires_sponsorship", "Will you require visa sponsorship? Please select Yes or No.", "",
+     "", "own"),
+    ("years_experience", "How many years of experience do you have?",
+     "Please enter a whole number.", "", "own"),
+    ("years_experience", "Years of experience (numbers only)", "", "", "own"),
+    # the job's company name reads as the company
+    ("work_authorized", _COMPANY_AUTH, "", _COMPANY, "own"),
+    ("requires_sponsorship", _COMPANY_SPONSOR, "", _COMPANY, "own"),
+    ("onsite_ok", "Are you willing to work on-site at Example Co's office?", "", _COMPANY, "own"),
+    # no sponsorship now or later, in two more wordings
+    ("authorized_without_sponsorship", _CURRENT_OR_FUTURE, "", "", "own"),
+    ("authorized_without_sponsorship", _NOT_IN_FUTURE, "", "", "own"),
+]
+
+
+@pytest.mark.parametrize("key, label, help_text, company, fit", _ROUND7_OWN)
+def test_lever_the_new_tails_the_company_name_and_no_sponsorship_later_ask_the_facts_own(
+        key, label, help_text, company, fit):
+    kwargs = {"company": company} if company else {}
+    assert apply_judge.question_fit(key, label, help_text, **kwargs) == fit
+    assert apply_judge.asks_own_question(key, label, help_text, **kwargs) is True
+
+
+# (fact, label, company, fit): read the same on 208241d and now
+_ROUND7_KEPT = [
+    ("work_authorized", "Are you authorized for employment in the US?", "", "own"),
+    ("work_authorized", "Are you able to work in the US?", "", "own"),
+    ("work_authorized", "Are you allowed to work in the United States?", "", "own"),
+    # no country at all: left as it is (M2)
+    ("work_authorized", "Are you legally authorized to work?", "", "own"),
+    ("authorized_without_sponsorship", "Are you able to work in the US without restrictions?",
+     "", "own"),
+    ("authorized_without_sponsorship", "Are you able to work without sponsorship?", "", "own"),
+    ("authorized_without_sponsorship",
+     "Can you work in the United States without the need for sponsorship?", "", "own"),
+    ("willing_to_relocate", "Would you relocate for this position?", "", "own"),
+    ("willing_to_relocate", "Are you open to relocating for this role?", "", "own"),
+    ("willing_to_relocate", "Willing to relocate", "", "own"),
+    ("onsite_ok", "This role requires working in the office. Are you comfortable with this?", "",
+     "own"),
+    ("onsite_ok", "Are you currently able to work on-site?", "", "own"),
+    ("onsite_ok", "Are you currently open to working on-site?", "", "own"),
+    ("onsite_ok", "Are you currently comfortable working in an office?", "", "own"),
+    ("onsite_ok", "Are you able to work in the office 5 days a week?", "", "own"),
+    ("onsite_ok", "Can you work onsite?", "", "own"),
+    ("remote_only", "Do you require a fully remote role?", "", "own"),
+    ("years_experience", "How many years of experience relevant to this role?", "", "own"),
+    ("years_experience", "Years of experience for this position", "", "own"),
+    # the company name read only when the plan has it
+    ("work_authorized", _COMPANY_AUTH, "", "other"),
+    ("requires_sponsorship", _COMPANY_SPONSOR, "", "other"),
+]
+
+
+@pytest.mark.parametrize("key, label, company, fit", _ROUND7_KEPT)
+def test_ability_willingness_and_the_total_still_ask_the_facts_own(key, label, company, fit):
+    kwargs = {"company": company} if company else {}
+    assert apply_judge.question_fit(key, label, **kwargs) == fit
+
+
+@pytest.mark.parametrize("answers", [{}, _SPONSOR])
+@pytest.mark.parametrize("label, key", [
+    ("Are you currently legally employed in the United States?", "work_authorized"),
+    ("Are you able to work now?", "work_authorized"),
+    ("Are you employed in the US without sponsorship?", "authorized_without_sponsorship"),
+    ("Will you be relocating for this position?", "willing_to_relocate"),
+    ("Do you work in an office?", "onsite_ok"),
+    ("Does the position require remote work?", "remote_only"),
+    ("Does your employer require visa sponsorship?", "requires_sponsorship"),
+])
+def test_a_status_or_plan_question_gets_no_value_and_parks(tmp_path, answers, label, key):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: (key, 1.0)},
+                                                    options={0: ("Yes", 1.0)}))
+    pf = p.fields[0]
+    assert (pf.action, pf.option, pf.fact_key) == ("skip", None, None)
+    assert p.park_reason == f"required field without an answer: {label}"
+
+
+@pytest.mark.parametrize("label, help_text, action", [
+    ("How many years of experience at this job?", "", "skip"),
+    ("Please enter 2 years of experience", "", "skip"),
+    ("How many years of experience do you have?", "Please enter a whole number.", "fill"),
+    ("Years of experience (numbers only)", "", "fill"),
+])
+def test_a_years_box_with_one_job_or_a_number_parks_and_a_number_instruction_fills(
+        tmp_path, label, help_text, action):
+    cat = _profile_catalog(tmp_path)
+    digest = _field_with(label, help_text, type_="number", options=())
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("years_experience", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].value) == (action, "2" if action == "fill" else "")
+
+
+@pytest.mark.parametrize("label", [_LEVER, _LEVER_CURLY])
+@pytest.mark.parametrize("answers, option", [({}, "No"), (_SPONSOR, "Yes")])
+def test_levers_sponsorship_question_takes_the_stored_answer(tmp_path, label, answers, option):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(digest, {0: ("requires_sponsorship", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", option)
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("label", [_CURRENT_OR_FUTURE, _NOT_IN_FUTURE])
+@pytest.mark.parametrize("answers, option", [({}, "Yes"), (_SPONSOR, "No")])
+def test_no_sponsorship_current_or_future_takes_the_derived_answer(tmp_path, label, answers,
+                                                                  option):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label)
+    p = apply_judge.plan(digest, cat, _page_answers(
+        digest, {0: ("authorized_without_sponsorship", 1.0)}))
+    assert (p.fields[0].action, p.fields[0].option) == ("select", option)
+    assert p.park_reason == ""
+
+
+@pytest.mark.parametrize("label, key, answers, option", [
+    (_COMPANY_AUTH, "work_authorized", {}, "Yes"),
+    (_COMPANY_SPONSOR, "requires_sponsorship", {}, "No"),
+    (_COMPANY_SPONSOR, "requires_sponsorship", _SPONSOR, "Yes"),
+])
+def test_the_jobs_company_name_in_the_question_reads_as_the_company(tmp_path, label, key,
+                                                                    answers, option):
+    cat = _profile_catalog(tmp_path, **answers)
+    digest = _field_with(label)
+    mapped = _page_answers(digest, {0: (key, 1.0)})
+    p = apply_judge.plan(digest, cat, mapped, company=_COMPANY)
+    assert (p.fields[0].action, p.fields[0].option) == ("select", option)
+    assert p.park_reason == ""
+    p = apply_judge.plan(digest, cat, mapped)
+    assert (p.fields[0].action, p.fields[0].option, p.fields[0].fact_key) == ("skip", None, None)
+
+
+def test_the_company_name_reaches_the_pick_question_and_the_second_look(tmp_path):
+    cat = _profile_catalog(tmp_path)
+    digest = _field_with(_COMPANY_AUTH, options=("Yes, I am authorized", "No, I am not"))
+    mapped = _page_answers(digest, {0: ("work_authorized", 1.0)})
+    p = apply_judge.plan(digest, cat, mapped, company=_COMPANY)
+    assert p.fields[0].fact_key == "work_authorized"
+    _, questions = apply_judge.option_questions(digest, p, catalog=cat, company=_COMPANY)
+    assert list(questions) == ["field_0_pick"]
+    assert apply_judge.reask_targets(digest, cat, {}, p, what="pick", company=_COMPANY) == [0]
+    # without the name, neither is asked
+    assert apply_judge.option_questions(digest, p, catalog=cat)[1] == {}
+    assert apply_judge.reask_targets(digest, cat, {}, p, what="pick") == []
+
+
+@pytest.mark.parametrize("label", ["Are you able to work in the office 7 days a week?",
+                                   "Are you willing to work on-site six days a week?",
+                                   "Are you willing to work on-site 6 days per week?"])
+def test_six_or_seven_days_a_week_is_no_set_phrase(label):
+    assert "DAYSWEEK" not in apply_facts.question_tokens(label)

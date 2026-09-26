@@ -1804,7 +1804,8 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     sponsorship under "H-1B sponsorship") gives no value, and the judge's
     pick does not override it (cycle 18, SP6c); nor does a custom yes / no or
     number answer under a question other than its saved one, or any of them under
-    a cut label (`FactCatalog.answers_field`). Buttons
+    a cut label (`FactCatalog.answers_field`); the job's `company` name in a
+    question reads as the company (round 7). Buttons
     keep the highest-confidence n per role. The one
     park reason is a required field without an answer; the flags are recorded only. A
     button of the site's header or top bar (`Button.chrome`) holds a role only
@@ -1878,7 +1879,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             pf.action = PASSWORD_ACTION
         elif fact_key and not catalog.answers_field(
                 fact_key, f.label, f.help,
-                partial=bool(getattr(f, "label_partial", False))):
+                partial=bool(getattr(f, "label_partial", False)), company=company):
             # the fact answers another question than the field's, a
             # narrower form its value does not settle, or a cut label; a
             # custom yes / no or number answer another question than its
@@ -1954,15 +1955,17 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
 # --- the second request: option picks for model-mapped fields ------------------------
 
 def option_questions(digest: FormDigest, fill_plan: FillPlan,
-                     catalog: FactCatalog | None = None) -> tuple[dict, dict]:
+                     catalog: FactCatalog | None = None, *,
+                     company: str = "") -> tuple[dict, dict]:
     """Option picks (`field_{n}_pick`) for every field with options whose fact
     the model chose (quick_map did not know it), with the fact's answer in the
     instruction (`candidate_answer`: every yes / no fact of `catalog` for
     one of them). A pick code settles (`code_pick`) is never asked, nor one
     for a fact whose value does not answer the field's question
-    (`FactCatalog.answers_field`, or `answers_question` with no catalog). Empty
-    when there is nothing to ask; merge the answers over the first
-    request's and call `plan` again."""
+    (`FactCatalog.answers_field`, or `answers_question` with no catalog; the
+    job's `company` name reads as the company, as in `plan`). Empty when
+    there is nothing to ask; merge the answers over the first request's and
+    call `plan` again."""
     by_n = {f.n: f for f in digest.fields}
     state: dict[str, Any] = {"fields": []}
     questions: dict[str, Any] = {}
@@ -1975,9 +1978,10 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
         partial = bool(getattr(f, "label_partial", False))
         if catalog is not None:
             fits = catalog.answers_field(pf.fact_key, f.label, f.help, value=pf.value,
-                                         partial=partial)
+                                         partial=partial, company=company)
         else:
-            fits = answers_question(pf.fact_key, pf.value, f.label, f.help, partial)
+            fits = answers_question(pf.fact_key, pf.value, f.label, f.help, partial,
+                                    company=company)
         if code_pick(pf.value, f.options) is not None or not fits:
             continue
         i = len(state["fields"])
@@ -2036,7 +2040,7 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
                 and catalog.has(pf.fact_key)
                 and catalog.answers_field(
                     pf.fact_key, f.label, f.help,
-                    partial=bool(getattr(f, "label_partial", False)))):
+                    partial=bool(getattr(f, "label_partial", False)), company=company)):
             continue
         opt, oconf = _choice_of(answers, _pick_qid(pf))
         if opt is None or (opt != "no_match" and oconf < OPTION_MIN_CONF):

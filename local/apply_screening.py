@@ -153,7 +153,8 @@ def screen(question: dict[str, Any], catalog, judge) -> Outcome:
     answers.update(apply_judge.merge_answers([_asked(judge, s, q) for s, q in requests]))
     plan = _plan(digest, catalog, answers)
     plan = _second_look(digest, catalog, answers, plan, judge, "source")
-    state, questions = apply_judge.option_questions(digest, plan, catalog=catalog)
+    state, questions = apply_judge.option_questions(digest, plan, catalog=catalog,
+                                                    company=JOB["company_name"])
     if questions:
         answers.update(_asked(judge, state, questions))
         plan = _plan(digest, catalog, answers)

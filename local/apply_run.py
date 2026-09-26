@@ -7179,7 +7179,8 @@ class _JobRun:
         dropped or weak is asked alone once more, then the picks, then a
         required field whose pick came back dropped or weak."""
         plan = self._reask(digest, answers, plan, rec, "source")
-        s2, q2 = apply_judge.option_questions(digest, plan, catalog=self.catalog)
+        s2, q2 = apply_judge.option_questions(digest, plan, catalog=self.catalog,
+                                              company=self._company())
         if q2:
             picks = self.r.jev.judge(s2, q2)
             answers.update(picks)

@@ -89,12 +89,13 @@ jobs:
       # Chromium over local HTML fixtures. Playwright is optional in
       # requirements.txt, so it is installed here, with the runner's system
       # libraries, on this job only: the Windows job runs the same files and they
-      # skip there with "Chromium not installed". Every one of those skips runs
-      # here, because the browser step below selects each module that opts into
-      # tests/conftest_browser.py, found by its opt-in line. "Chromium not
-      # installed" is also the fallback here should this step ever fail to leave
-      # a launchable browser. Pillow reads the trace's screenshots back, so the
-      # checks that a password or code box is masked run here instead of skipping.
+      # skip there with "could not import playwright". Every one of those skips
+      # runs here, because the browser step below selects each module that opts
+      # into tests/conftest_browser.py, found by its opt-in line. Should this step
+      # ever fail to leave a launchable browser, the browser step fails, since it
+      # sets APPLY_BROWSER_REQUIRED. Pillow reads the trace's
+      # screenshots back, so the checks that a password or code box is masked run
+      # here instead of skipping.
       - name: Install Playwright and Chromium
         run: |
           python -m pip install playwright Pillow
@@ -124,14 +125,16 @@ jobs:
       # module (the submit, resilience and accounts suites among them) runs here
       # without an edit to this file. The two local-capture modules come along and
       # skip with their reason (their captures are never committed). `-rs` prints
-      # every skip with its reason, so a missing browser shows up in the log as a
-      # wall of "Chromium not installed" lines. test_apply_matrix.py is the flow
+      # every skip with its reason. test_apply_matrix.py is the flow
       # matrix (every fixture flow under the fake judge and three noisy seeds, one
       # test per flow; a few minutes). The shell is bash with `set -euo pipefail`,
-      # and a selection that finds no module fails the step.
+      # and a selection that finds no module fails the step. APPLY_BROWSER_REQUIRED
+      # turns "Chromium not installed" into a failure here: a browser that
+      # installs and then cannot launch fails the step.
       - name: Run auto-apply browser tests
         env:
           QT_QPA_PLATFORM: offscreen
+          APPLY_BROWSER_REQUIRED: "1"
         run: |
           set -euo pipefail
           mapfile -t modules < <(grep -l '^pytest_plugins = .*conftest_browser' tests/test_*.py)

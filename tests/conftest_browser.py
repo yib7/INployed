@@ -15,7 +15,9 @@ unloaded). Fixtures:
   `tests/fixtures/forms/`.
 - `browser_page` (function): a fresh page in a fresh context of one headless
   Chromium per test module. Skips with "Chromium not installed" when the
-  launch fails and via `importorskip` when Playwright itself is absent.
+  launch fails and with "could not import playwright" when Playwright itself
+  is absent; with `APPLY_BROWSER_REQUIRED=1` (CI's browser step) each of
+  those fails instead.
 - `flow_server` (session): `apply_harness.FlowServer`, the fixtures served
   with a counted `POST /submit/<name>` (the flow matrix and its invariants).
 
@@ -92,10 +94,35 @@ def _installed_browsers_path() -> str | None:
     return str(real) if real.is_dir() else None
 
 
+# Set by CI's browser step, where Chromium was just installed: a browser that
+# cannot load or launch fails the tests there, never a green step of skips
+# (final review C N3)
+BROWSER_REQUIRED_ENV = "APPLY_BROWSER_REQUIRED"
+
+
+def _no_browser(why: str) -> None:
+    """Skip a test that needs Chromium, or fail it where the browser is
+    required (`BROWSER_REQUIRED_ENV` set to 1)."""
+    if os.environ.get(BROWSER_REQUIRED_ENV) == "1":
+        pytest.fail(f"{why} ({BROWSER_REQUIRED_ENV}=1: the browser is required here)",
+                    pytrace=False)
+    pytest.skip(why)
+
+
+def _launch(chromium):
+    """Headless Chromium from Playwright's `chromium`, or `_no_browser`."""
+    try:
+        return chromium.launch(headless=True)
+    except Exception as e:    # noqa: BLE001  (Playwright raises its own Error class)
+        _no_browser(f"Chromium not installed: {e}")
+
+
 @pytest.fixture(scope="module")
 def _browser():
-    pytest.importorskip("playwright")
-    from playwright.sync_api import sync_playwright
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        _no_browser(f"could not import playwright: {e}")
 
     import apply_harness
 
@@ -108,10 +135,7 @@ def _browser():
         # only the local fixture servers and the test's own routed hosts
         # answer (`apply_harness.offline_contexts`)
         with sync_playwright() as pw, apply_harness.offline_contexts():
-            try:
-                browser = pw.chromium.launch(headless=True)
-            except Exception as e:    # noqa: BLE001  (Playwright raises its own Error class)
-                pytest.skip(f"Chromium not installed: {e}")
+            browser = _launch(pw.chromium)
             try:
                 yield browser
             finally:

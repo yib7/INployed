@@ -1007,6 +1007,29 @@ def test_ci_runs_every_module_that_opts_into_the_browser():
     assert '"${modules[@]}"' in run.split("python -m pytest", 1)[1]
 
 
+@pytest.mark.parametrize("required", [True, False])
+def test_a_browser_that_cannot_launch_fails_where_ci_requires_it(monkeypatch, required):
+    # final review C N3: CI's browser step sets APPLY_BROWSER_REQUIRED, so a
+    # Chromium that installs and then cannot launch fails the step there;
+    # anywhere else the browser tests skip as before
+    import conftest_browser
+
+    class _Chromium:
+        def launch(self, **kw):
+            raise RuntimeError("Executable doesn't exist at /ms-playwright/chromium")
+    if required:
+        monkeypatch.setenv(conftest_browser.BROWSER_REQUIRED_ENV, "1")
+    else:
+        monkeypatch.delenv(conftest_browser.BROWSER_REQUIRED_ENV, raising=False)
+    with pytest.raises((pytest.fail.Exception if required else pytest.skip.Exception),
+                       match="Chromium not installed"):
+        conftest_browser._launch(_Chromium())
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    step = ci.split("- name: Run auto-apply browser tests", 1)[1].split("\n  readme-setup:", 1)[0]
+    env = step.split("run: |", 1)[0]
+    assert re.search(rf'^\s+{conftest_browser.BROWSER_REQUIRED_ENV}: "1"$', env, re.M), env
+
+
 # --- N4: an Enter inside a frame is tied to the frame's form -------------------------------------------
 
 def test_an_enter_pressed_in_a_frame_is_read_in_that_frame(context):

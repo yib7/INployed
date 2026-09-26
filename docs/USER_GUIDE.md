@@ -531,8 +531,9 @@ optional note, up to 300 characters; a longer one blocks Save until you shorten 
 under each row reads "Forms will get: ..." (or says why it will not) so you always see what a
 run would actually type.
 
-A built-in question cannot be deleted, and **Add answer** refuses a new question that repeats
-a built-in's own topic. The top line counts how many answers are not set and how many are not
+A built-in question cannot be deleted, and **Add answer** refuses a new question only when the
+run already fills it from a built-in answer, and names that answer; a question about another
+country, a city, a visa type or years of one skill is yours to add. The top line counts how many answers are not set and how many are not
 confirmed, and those rows carry the warning highlight; **Confirm all** confirms every row that
 already holds an answer, except work authorization, sponsorship and years of experience: those
 three keep their own tick for as long as they still hold the value they started with. A damaged
@@ -566,11 +567,12 @@ in your answers covers it. One click with the live judge costs under a cent.
 
 **After an upgrade.** An older answers file converts to the typed store the first time you open
 this tab. Check the review banner it shows: it lists each answer the conversion touched and
-what it read the old text as, so you can confirm or fix any it got wrong, then click **I've
-checked these**, which also saves. An answer whose old sentence says more than Yes, No or a
-number (for example, "No, but I will need sponsorship after my OPT ends") keeps the rest of
-that sentence in its note and stays unconfirmed; the banner lists these too. Tick Confirmed on
-each once you have checked it: until then, a required question it would answer stops the job.
+what it read the old text as. An answer that read word for word (a plain "Yes", a number, "TX"
+for Texas) is confirmed. Every other listed answer stays unconfirmed, including one whose old
+sentence says more than Yes, No or a number (for example, "No, but I will need sponsorship after
+my OPT ends"): the rest of that sentence is kept in its note. Tick Confirmed on each once you
+have checked it; until then, a required question it would answer stops the job. **I've checked
+these** hides the banner and saves; it confirms nothing.
 
 ### Auto-apply (batch, Jev-judged)
 The **Auto-apply** tab is a live view of a batch apply queue: right-click jobs in any

@@ -13,14 +13,21 @@ confirmation (`ED-5`). Save blocks on `validate` errors and shows `warnings`
 after a clean save (`ED-6`). A damaged store shows its error, offers "Restore
 backup" only when a good `.bak` exists (`ED-7`), and never renders or saves
 defaults over it. A migration's review list shows as a banner the user
-dismisses by saving (`ED-8`).
+dismisses by saving (`ED-8`). "Test my answers" (`ED-9`) runs the shipped
+screening set against the saved, confirmed answers with the live judge, off
+the UI thread; disabled with no TypeSafe key.
 """
 from __future__ import annotations
 
 import json
+import sys
+import types
+from collections import namedtuple
 
+import jev
 from PySide6 import QtGui, QtWidgets
 
+from qt import answers_tab as at
 from qt.answers_tab import AddAnswerDialog, AnswersEditor
 from resume_tailor import apply_answers
 
@@ -655,3 +662,209 @@ def test_collect_preserves_an_unknown_key_on_a_loaded_entry(qtbot, tmp_path):
     ed = _editor(qtbot, store)
     (out,) = ed.collect()
     assert out["extra_key"] == [1, 2]
+
+
+# --- ED-9: "Test my answers" -------------------------------------------------------
+#
+# `local/apply_screening.py` (Agent A's module, built in parallel) is not
+# imported at module scope by `answers_tab.py`: it lands lazily inside the
+# worker closure, so these tests install a stand-in under its exact import
+# name (`import apply_screening`, the same top-level-sibling style every
+# other `local/` module uses) via `sys.modules`. A FakeJev (or a plain stub)
+# is injected through `AnswersEditor`'s `judge_factory` constructor parameter;
+# the real (paid) judge factory is never exercised here.
+
+_Row = namedtuple("Row", "qid question answer")
+
+
+def _stub_apply_screening(monkeypatch, *, rows=None, fn=None):
+    mod = types.ModuleType("apply_screening")
+    mod.run_screening = fn if fn is not None else (lambda answers, judge: list(rows or []))
+    monkeypatch.setitem(sys.modules, "apply_screening", mod)
+    return mod
+
+
+def test_test_answers_button_disabled_without_a_key(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: False)
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is False
+    assert "TypeSafe API key" in ed.test_answers_btn.toolTip()
+
+
+def test_test_answers_button_enabled_with_a_key(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is True
+
+
+def test_test_answers_tooltip_names_the_saved_confirmed_answers(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    ed = _editor(qtbot, store)
+    tip = ed.test_answers_btn.toolTip().lower()
+    assert "saved" in tip and "confirmed" in tip
+
+
+def test_test_answers_disabled_on_a_damaged_store_even_with_a_key(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    store.write_text("not json{", encoding="utf-8")
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    ed = _editor(qtbot, store)
+    assert ed.test_answers_btn.isEnabled() is False
+
+
+def test_test_answers_click_hands_the_work_to_run_async_not_the_ui_thread(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    calls = []
+    _stub_apply_screening(monkeypatch, fn=lambda answers, judge: (calls.append(1), [])[1])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None:
+            captured.update(fn=fn, on_done=on_done, on_error=on_error))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    # the click handler must hand the work to run_async, never run it inline
+    assert calls == []
+    assert "fn" in captured
+    captured["fn"]()
+    assert calls == [1]
+
+
+def test_test_answers_button_disables_itself_while_a_run_is_in_flight(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    _stub_apply_screening(monkeypatch, rows=[])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    assert ed.test_answers_btn.isEnabled() is False
+
+
+def test_test_answers_runs_against_the_saved_store_not_unsaved_edits(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    seen = {}
+    _stub_apply_screening(
+        monkeypatch,
+        fn=lambda answers, judge: (seen.setdefault("answers", answers), [])[1])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    _row(ed, "work_authorized")["answer_widget"].setCurrentText("No")  # unsaved edit
+    ed.test_answers_btn.click()
+    captured["fn"]()
+    assert seen["answers"][0]["answer"] == "Yes"   # the saved value, not the live edit
+
+
+def test_test_answers_shows_a_table_of_the_run_picks_or_stops_here(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    rows = [_Row("q1", "Are you authorized to work in the US?", "Yes"),
+            _Row("q2", "Do you require sponsorship?", None)]
+    _stub_apply_screening(monkeypatch, rows=rows)
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn, on_done=on_done))
+    seen = {}
+    monkeypatch.setattr(at.QtWidgets.QDialog, "exec",
+                        lambda self: seen.setdefault("dialog", self))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    result = captured["fn"]()
+    captured["on_done"](result)
+    dlg = seen["dialog"]
+    assert dlg.table.rowCount() == 2
+    assert dlg.table.item(0, 0).text() == "Are you authorized to work in the US?"
+    assert dlg.table.item(0, 1).text() == "Yes"
+    assert dlg.table.item(1, 1).text() == "stops here"
+
+
+def test_test_answers_spend_falls_back_to_a_request_count_with_no_reported_cost(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    jev.reset_usage()   # FakeJev never counts a live request (jev.py's own contract)
+    _stub_apply_screening(monkeypatch, rows=[])
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn, on_done=on_done))
+    seen = {}
+    monkeypatch.setattr(at.QtWidgets.QDialog, "exec",
+                        lambda self: seen.setdefault("dialog", self))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    result = captured["fn"]()
+    captured["on_done"](result)
+    text = seen["dialog"].spend_label.text()
+    assert "$" not in text
+    assert "0" in text
+
+
+def test_test_answers_spend_shows_the_cost_the_judge_reports(qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    jev.reset_usage()
+
+    def fn(answers, judge):
+        jev.count_usage(1000)   # simulate one live request the run just made
+        return []
+
+    _stub_apply_screening(monkeypatch, fn=fn)
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(fn=fn, on_done=on_done))
+    seen = {}
+    monkeypatch.setattr(at.QtWidgets.QDialog, "exec",
+                        lambda self: seen.setdefault("dialog", self))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    result = captured["fn"]()
+    captured["on_done"](result)
+    assert "$" in seen["dialog"].spend_label.text()
+
+
+def test_test_answers_failure_shows_a_message_and_re_enables_the_button(
+        qtbot, tmp_path, monkeypatch):
+    store = tmp_path / "apply_answers.json"
+    _seed_v2(store, [_entry("work_authorized", "yes_no", "Yes", confirmed=True)])
+    monkeypatch.setattr(at, "_typesafe_key_present", lambda: True)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(
+        at.workers, "run_async",
+        lambda owner, fn, on_done=None, on_error=None: captured.update(on_error=on_error))
+    ed = AnswersEditor(store_path=store, judge_factory=lambda: jev.FakeJev())
+    qtbot.addWidget(ed)
+    ed.test_answers_btn.click()
+    assert ed.test_answers_btn.isEnabled() is False
+    captured["on_error"](RuntimeError("boom"))
+    assert ed.test_answers_btn.isEnabled() is True
+    assert "failed" in ed.status.text().lower()

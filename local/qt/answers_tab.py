@@ -18,9 +18,20 @@ fails `validate`. Save runs `validate` (blocking on problems) and shows
 or saves defaults over it, and offers "Restore backup" only when a good
 `.bak` sits next to it. A migration's review list shows as a banner; "I've
 checked these" clears it and saves.
+
+"Test my answers" (`ED-9`, SP6) runs the shipped screening set
+(`apply_screening.run_screening`) over the answers on disk -- the saved,
+confirmed ones, never this tab's unsaved widget state -- with the live judge
+the dashboard's auto-apply run already builds (`jev.get("typesafe")`), on a
+worker thread (`qt.workers.run_async`), and shows the picks in
+`TestAnswersDialog`. No `TYPESAFE_API_KEY` -> the button is disabled with a
+tooltip naming the setting. `apply_screening` is imported lazily inside the
+worker closure (a sibling module built alongside this one); the judge factory
+is a constructor parameter so tests inject `jev.FakeJev` and never the live one.
 """
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -28,7 +39,8 @@ from typing import Callable
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import errmsg
-from qt import theme
+import jev
+from qt import theme, workers
 from resume_tailor import apply_answers
 
 # The built-in's own text is authoritative for the address rules; hard-coded
@@ -52,6 +64,80 @@ def _is_us(answer: str) -> bool:
 
 def _number_validator(parent=None) -> QtGui.QRegularExpressionValidator:
     return QtGui.QRegularExpressionValidator(QtCore.QRegularExpression(_NUMBER_SHAPE), parent)
+
+
+# --- ED-9: "Test my answers" -------------------------------------------------------
+
+def _typesafe_key_present() -> bool:
+    """Whether `jev.KEY_ENV` (TYPESAFE_API_KEY) is set -- presence only, the
+    value itself is never read, printed or logged here."""
+    try:
+        import settings
+        if bool(settings.secret_status().get(jev.KEY_ENV)):
+            return True
+    except Exception:      # noqa: BLE001 - a broken settings backend must not crash the tab
+        pass
+    return bool(os.environ.get(jev.KEY_ENV, "").strip())
+
+
+def _default_judge_factory():
+    """The live judge: the same `jev.get` factory `local/apply_run.py` calls
+    for a real auto-apply run, pinned to "typesafe" (this button always tests
+    the live judge, regardless of the auto-apply mode currently configured)."""
+    return jev.get("typesafe")
+
+
+def _usage_delta(before: dict, after: dict) -> dict:
+    return {"requests": after["requests"] - before["requests"],
+            "input_tokens": after["input_tokens"] - before["input_tokens"],
+            "usd": after["usd"] - before["usd"]}
+
+
+def _spend_text(delta: dict) -> str:
+    """The run's spend line: the judge's reported cost, or the request count
+    when the run made no billed request (a fake or replayed judge)."""
+    usd = delta.get("usd") or 0.0
+    requests = int(delta.get("requests") or 0)
+    noun = "request" if requests == 1 else "requests"
+    if usd:
+        return "This run cost about $%.4f (%d %s)." % (usd, requests, noun)
+    return "%d live %s made (no cost reported)." % (requests, noun)
+
+
+class TestAnswersDialog(QtWidgets.QDialog):
+    """ED-9's result: one row per shipped screening question, the run's pick
+    for it or "stops here", and the run's spend line."""
+
+    def __init__(self, rows: list, spend_text: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Test my answers")
+        v = QtWidgets.QVBoxLayout(self)
+        note = QtWidgets.QLabel(
+            "Ran the shipped screening questions against your saved, confirmed "
+            "answers with the live judge.")
+        note.setWordWrap(True)
+        note.setProperty("muted", True)
+        v.addWidget(note)
+
+        self.table = QtWidgets.QTableWidget(len(rows), 2)
+        self.table.setHorizontalHeaderLabels(["Question", "The run would answer"])
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        for r, row in enumerate(rows):
+            self.table.setItem(r, 0, QtWidgets.QTableWidgetItem(str(row.question)))
+            text = row.answer if row.answer is not None else "stops here"
+            self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(str(text)))
+        self.table.resizeColumnsToContents()
+        theme.register_table(self.table)
+        v.addWidget(self.table, 1)
+
+        self.spend_label = QtWidgets.QLabel(spend_text)
+        self.spend_label.setProperty("muted", True)
+        v.addWidget(self.spend_label)
+
+        box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        box.rejected.connect(self.reject)
+        box.accepted.connect(self.accept)
+        v.addWidget(box)
 
 
 class AddAnswerDialog(QtWidgets.QDialog):
@@ -176,7 +262,8 @@ class AddAnswerDialog(QtWidgets.QDialog):
 
 class AnswersEditor(QtWidgets.QWidget):
     def __init__(self, on_saved: Callable[[], None] | None = None,
-                 store_path: Path | None = None, parent=None):
+                 store_path: Path | None = None, parent=None,
+                 judge_factory: Callable[[], object] | None = None):
         super().__init__(parent)
         self.on_saved = on_saved
         # The live tab (no explicit path) always offers the complete standard set
@@ -188,6 +275,8 @@ class AnswersEditor(QtWidgets.QWidget):
         self.rows: list[dict] = []
         self.load_error = ""
         self.review: list[dict] = []
+        # ED-9: the live judge by default; tests pass a fake/stub factory.
+        self._judge_factory = judge_factory or _default_judge_factory
 
         self._build_shell()
         self.reload()
@@ -251,11 +340,13 @@ class AnswersEditor(QtWidgets.QWidget):
         self.restore_backup_btn = QtWidgets.QPushButton("Restore backup")
         self.restore_backup_btn.clicked.connect(self._restore_backup_clicked)
         bar.addWidget(self.restore_backup_btn)
+        self.test_answers_btn = QtWidgets.QPushButton("Test my answers")
+        self.test_answers_btn.clicked.connect(self._test_answers_clicked)
+        bar.addWidget(self.test_answers_btn)
         self.status = QtWidgets.QLabel("")
         self.status.setProperty("muted", True)
         bar.addWidget(self.status)
         bar.addStretch(1)
-        # Room left in this bar for SP6's "Test my answers" (ED-9); not built here.
         v.addLayout(bar)
 
     def reload(self) -> None:
@@ -275,6 +366,7 @@ class AnswersEditor(QtWidgets.QWidget):
             self._update_damaged_controls()
             self._refresh_counts()
             self._update_review_banner()
+            self._refresh_test_answers_state()
             return
         entries = store["answers"]
         if self._merge_defaults:
@@ -290,6 +382,7 @@ class AnswersEditor(QtWidgets.QWidget):
         self._update_damaged_controls()
         self._refresh_counts()
         self._update_review_banner()
+        self._refresh_test_answers_state()
 
     # ---- rows ------------------------------------------------------------------
 
@@ -668,3 +761,48 @@ class AnswersEditor(QtWidgets.QWidget):
         self.review = []
         self._update_review_banner()
         self.save()
+
+    # ---- ED-9: "Test my answers" ----------------------------------------------------
+
+    def _refresh_test_answers_state(self) -> None:
+        present = _typesafe_key_present()
+        self.test_answers_btn.setEnabled(present and not self.load_error)
+        if not present:
+            self.test_answers_btn.setToolTip(
+                "Set 'TypeSafe API key (Jev judge)' in Settings > Auto-apply to use this.")
+        elif self.load_error:
+            self.test_answers_btn.setToolTip("Fix the damaged answers file first.")
+        else:
+            self.test_answers_btn.setToolTip(
+                "Runs the shipped screening questions against your saved, confirmed "
+                "answers here (not any unsaved edits in this tab) with the live judge. "
+                "Costs a small live-request fee per click.")
+
+    def _test_answers_clicked(self) -> None:
+        store_path = self.store_path
+        judge_factory = self._judge_factory
+        self.test_answers_btn.setEnabled(False)
+        self.status.setText("Testing your answers with the live judge...")
+
+        def work():
+            import apply_screening   # Agent A's sibling module; not yet present at import time
+            answers = apply_answers.load(store_path)   # the saved, confirmed store, not this tab
+            judge = judge_factory()
+            before = jev.usage()
+            rows = apply_screening.run_screening(answers, judge)
+            after = jev.usage()
+            return rows, _usage_delta(before, after)
+
+        workers.run_async(self, work, on_done=self._test_answers_done,
+                          on_error=self._test_answers_failed)
+
+    def _test_answers_done(self, result) -> None:
+        rows, spend = result
+        self._refresh_test_answers_state()
+        self.status.setText("Tested your answers.")
+        TestAnswersDialog(rows, _spend_text(spend), parent=self).exec()
+
+    def _test_answers_failed(self, exc) -> None:
+        self._refresh_test_answers_state()
+        self.status.setText("Test my answers failed.")
+        QtWidgets.QMessageBox.critical(self, "Test my answers", errmsg.for_user(exc))

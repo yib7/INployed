@@ -242,12 +242,56 @@ def test_the_script_fails_on_an_off_policy_park_and_on_the_floors(
     assert (f"apply_matrix: FAILED: {fails}" in err) if fails else ("FAILED" not in err), err
 
 
+def test_a_replay_miss_in_the_real_column_fails_the_script(monkeypatch, capsys):
+    # final review C N4: a `--real replay` request missing from the cache
+    # fails the exit, and the replay line names the flows left out for
+    # their recorded=False flags
+    real = dataclasses.replace(_row("real", True), replay_misses=2)
+    monkeypatch.setattr(apply_matrix, "_run_parallel",
+                        lambda *a, **k: [_row("fake", True), real])
+    monkeypatch.setattr(apply_matrix, "_isolate", lambda *a, **k: None)
+    unrecorded = dataclasses.replace(h.flow("post_form"), name="__never_recorded__",
+                                     recorded=False)
+    monkeypatch.setattr(h, "FLOWS", h.FLOWS + (unrecorded,))
+    code = apply_matrix.main(["--flows", f"post_form,{unrecorded.name}", "--seeds", "0",
+                              "--jobs", "2", "--real", "replay"])
+    out, err = capsys.readouterr()
+    assert code == 1, err
+    assert "apply_matrix: FAILED: 2 replay miss(es) in the real column" in err
+    assert "2 miss(es) over 1 flow(s)" in out
+    assert re.search(r"left out, not recorded yet \(their recorded=False flags in "
+                     r"tests/apply_harness\.py flip after the next recording\): "
+                     r"__never_recorded__$", out, re.M), out
+    # the same run with no miss passes
+    monkeypatch.setattr(apply_matrix, "_run_parallel",
+                        lambda *a, **k: [_row("fake", True), _row("real", True)])
+    assert apply_matrix.main(["--flows", "post_form", "--seeds", "0", "--jobs", "2",
+                              "--real", "replay"]) == 0
+
+
+def test_a_recording_names_the_flows_it_recorded_that_are_still_flagged_unrecorded():
+    # final review C N4: the flags to flip after a recording
+    fresh = dataclasses.replace(h.flow("post_form"), name="__fresh__", recorded=False)
+    old = h.flow("lever_single_park")
+    import unittest.mock
+    with unittest.mock.patch.object(h, "FLOWS", (old, fresh)):
+        assert apply_matrix._recorded_now(h, [_row("real", True),
+                                              dataclasses.replace(_row("real", True),
+                                                                  flow="__fresh__")]) == [
+            "__fresh__"]
+        assert apply_matrix._recorded_now(h, [_row("real", True)]) == []
+
+
 def test_default_flow_timeout_scales_with_the_judge_count():
     base = apply_matrix._default_flow_timeout(21)
     assert base == pytest.approx(53.0 * 3.0)
     half = apply_matrix._default_flow_timeout(3)
     assert half < base
     assert half >= apply_matrix._MIN_FLOW_TIMEOUT_S
+    # final review C N5: a run of few judges (a `--real replay --seeds 0`
+    # has two) gets at least 120s a flow
+    assert apply_matrix._MIN_FLOW_TIMEOUT_S == 120.0
+    assert apply_matrix._default_flow_timeout(2) == 120.0
 
 
 if __name__ == "__main__":

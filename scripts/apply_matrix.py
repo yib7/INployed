@@ -70,7 +70,9 @@ for sub in ("local", "tests"):
 _BASELINE_FLOW_S = 53.0
 _BASELINE_JUDGES = 21          # 1 fake + 20 noisy seeds, the script's own default
 _TIMEOUT_FACTOR = 3.0
-_MIN_FLOW_TIMEOUT_S = 30.0
+# a floor for a run of few judges: the slowest flow (slow_signup, about 21s
+# alone) with a slow Chromium start on a busy machine (final review C N5)
+_MIN_FLOW_TIMEOUT_S = 120.0
 
 
 def _isolate(tmp: Path, *, appdata: str = "appdata") -> None:
@@ -164,13 +166,17 @@ def _crashed(results) -> int:
 def _failures(h, results, *, whole: bool) -> list[str]:
     """What fails the run (final review C-I2): an invariant break, a crashed
     or hung worker, a park outside the user's policy that missed its flow's
-    end, the fake judge under `FAKE_SUCCESS_FLOOR`, and on a run of the
-    whole registry (`whole`) the noisy seeds under `SUCCESS_FLOOR`; []
-    when the run passes."""
+    end, the fake judge under `FAKE_SUCCESS_FLOOR`, on a run of the whole
+    registry (`whole`) the noisy seeds under `SUCCESS_FLOOR`, and a request
+    the real column's replay did not find in its cache (final review C N4);
+    [] when the run passes."""
     rt = h.rates(results)
     out = []
     if rt["breaks"]:
         out.append(f"{rt['breaks']} invariant break(s)")
+    misses = sum(r.replay_misses for r in results if r.judge == h.REAL)
+    if misses:
+        out.append(f"{misses} replay miss(es) in the real column")
     crashed = _crashed(results)
     if crashed:
         out.append(f"{crashed} run(s) lost to a crashed or hung worker")
@@ -267,6 +273,14 @@ def _run_parallel(flows, seeds: tuple, fast: bool, jobs: int, flow_timeout: floa
 
 # --- the real judge's recording ----------------------------------------------------------------
 
+def _recorded_now(h, results) -> list[str]:
+    """The flows a recording ran to its end (`results`) that the registry
+    still marks `recorded=False`: the flags to flip, or the replay keeps
+    leaving them out."""
+    ran = {r.flow for r in results}
+    return [f.name for f in h.FLOWS if f.name in ran and f.replayable and not f.recorded]
+
+
 def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
                  verbose: bool, json_out: str) -> int:
     """`--real record` or `--real dry`: the real judge's column alone, one
@@ -319,6 +333,12 @@ def _record_real(h, flows, mode: str, cache: Path, workdir: Path, *, fast: bool,
     if col.stopped:
         print(f"apply_matrix: {col.stopped}; left unrecorded: {', '.join(col.unrecorded)}",
               file=sys.stderr)
+    flip = _recorded_now(h, col.results) if mode == "record" else []
+    if flip:
+        # the replay leaves a `recorded=False` flow out until its flag is
+        # flipped (final review C N4)
+        print(f"apply_matrix: recorded now, still marked recorded=False in "
+              f"tests/apply_harness.py (flip each to recorded=True): {', '.join(flip)}")
     if json_out:
         rows = [{k: v for k, v in asdict(r).items() if k != "actions"} for r in col.results]
         Path(json_out).write_text(json.dumps({"results": rows, "unrecorded": col.unrecorded,
@@ -411,8 +431,9 @@ def main(argv: list[str] | None = None) -> int:
                   + (f"; flows with a miss: {', '.join(missed)}" if missed else "")
                   + (f"; left out, their text changes with the clock: {', '.join(apart)}"
                      if apart else "")
-                  + (f"; left out, not recorded yet: {', '.join(unrecorded)}"
-                     if unrecorded else ""))
+                  + (f"; left out, not recorded yet (their recorded=False flags in "
+                     f"tests/apply_harness.py flip after the next recording): "
+                     f"{', '.join(unrecorded)}" if unrecorded else ""))
         print(f"the suite's pinned floors (fake and seeds {h.SUITE_SEEDS[0]} to "
               f"{h.SUITE_SEEDS[-1]}): noisy {h.SUCCESS_FLOOR:.1%}, fake "
               f"{h.FAKE_SUCCESS_FLOOR:.1%}; {len(flows)} flows x {len(judge_list)} judges in "

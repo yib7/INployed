@@ -57,6 +57,12 @@ alone, one flow at a time in one process, and stops starting flows at the cap;
 a replay runs in the worker pool with the rest. `ticker_page` is left out of a
 replay: its page text changes with the clock, so no recorded key can hit.
 
+A flow marked `recorded=False` in `tests/apply_harness.py` is one the cache has
+no answers for yet: a replay leaves it out and names it. A recording runs it
+and prints it as a flag to flip; after the next recording, set each one it
+names to `recorded=True`, so the replay covers it. A replay that misses a
+request exits 1.
+
 ## Commands (from the repo root)
 
 Every live recording goes through `scripts/jev_record.ps1`, which loads the

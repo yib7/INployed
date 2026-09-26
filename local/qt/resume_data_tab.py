@@ -817,34 +817,63 @@ class ResumeDataEditor(QtWidgets.QWidget):
         dlg.setWindowTitle("Add achievement")
         form = QtWidgets.QFormLayout(dlg)
         what = QtWidgets.QLineEdit()
+        what.setObjectName("add_atom_what")
         angles = QtWidgets.QLineEdit()
+        angles.setObjectName("add_atom_angles")
         imp = QtWidgets.QPlainTextEdit()
+        imp.setObjectName("add_atom_impact")
         imp.setFixedHeight(64)
         form.addRow("What (required)", what)
         form.addRow("Angles (comma-separated, required)", angles)
         form.addRow("Impact (one per line)", imp)
+        problems_label = QtWidgets.QLabel("")
+        problems_label.setObjectName("add_atom_problems")
+        problems_label.setWordWrap(True)
+        problems_label.setProperty("danger", True)
+        form.addRow(problems_label)
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         form.addRow(buttons)
+        ok_btn = buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
+
+        def _collect() -> dict:
+            return {"what": what.text().strip(),
+                    "angles": [a.strip() for a in angles.text().split(",") if a.strip()],
+                    "impact": [ln.strip() for ln in imp.toPlainText().splitlines() if ln.strip()]}
+
+        # Same treatment as the add-entry dialog: re-check on every keystroke
+        # with the same rules `add_atom` enforces (`master_edit.atom_problems`),
+        # so a problem is visible (and OK is disabled) before the user ever
+        # tries to submit, not only after a rejected write. The on-disk document
+        # is read once, when the dialog opens, so the "target entry still
+        # exists" check reflects what a write would actually see.
+        doc = self._read()
+
+        def _recheck() -> None:
+            problems = master_edit.atom_problems(section, idx, _collect(), doc)
+            problems_label.setText("\n".join(problems))
+            ok_btn.setEnabled(not problems)
+
+        what.textChanged.connect(_recheck)
+        angles.textChanged.connect(_recheck)
+        imp.textChanged.connect(_recheck)
+        _recheck()
+
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
-        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        ang = [a.strip() for a in angles.text().split(",") if a.strip()]
-        impact = [ln.strip() for ln in imp.toPlainText().splitlines() if ln.strip()]
-        if not what.text().strip() or not ang:
-            QtWidgets.QMessageBox.critical(self, "Add achievement",
-                                           "Need a 'what' and at least one angle.")
-            return
-        self.add_atom(section, idx, what.text().strip(), ang, impact)
-
-    def add_atom(self, section: str, idx: int, what: str, angles: list, impact: list) -> None:
-        try:
-            master_edit.add_atom(section, idx, {"what": what, "angles": angles, "impact": impact},
-                                 self.master_path)
-        except (ValueError, OSError) as exc:
-            QtWidgets.QMessageBox.critical(self, "Add achievement", errmsg.for_user(exc))
-            return
+        # Looped rather than a single exec(): a failed WRITE (e.g. the file
+        # became unwritable) must keep the dialog open with every field the
+        # user typed still intact, not discard it and force them to retype it.
+        while True:
+            if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            data = _collect()
+            try:
+                master_edit.add_atom(section, idx, data, self.master_path)
+            except (ValueError, OSError) as exc:
+                QtWidgets.QMessageBox.critical(self, "Add achievement", errmsg.for_user(exc))
+                continue
+            break
         self.reload()
         self._set_status("Added an achievement.")
 

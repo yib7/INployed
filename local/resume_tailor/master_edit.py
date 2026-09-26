@@ -15,7 +15,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ruamel.yaml import YAML
 
@@ -263,11 +263,67 @@ def delete_entry(section: str, index: int, path: Optional[Path] = None) -> None:
     _write_doc(y, doc, target)
 
 
+_EM_DASH = "—"
+
+
+def _atom_text_fields(atom: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """(label, text) for every free-text field a user types for one achievement,
+    in the shape add_atom/append_entry receive them (what already a string,
+    angles/impact already split into their own list items) -- read for the
+    em-dash style check below, never rewritten."""
+    out: List[Tuple[str, str]] = [("what", str(atom.get("what") or ""))]
+    for a in atom.get("angles") or []:
+        out.append(("an angle", str(a or "")))
+    for line in atom.get("impact") or []:
+        out.append(("an impact line", str(line or "")))
+    return out
+
+
+def atom_problems(section: str, index: int, atom: Dict[str, Any],
+                  doc: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Every problem with `atom` as a new achievement for section[index] ([] means
+    it's fine).
+
+    entry_problems' twin for a single atom added through `add_atom` rather than
+    the first achievement of a new entry: the same "needs a 'what'" / "needs at
+    least one angle" rules the add-atom dialog has always enforced on submit (an
+    atom missing either renders as an empty line in `assets.atom_line()` and is
+    silently dropped, never reaching the tailored resume), the target entry must
+    exist when `doc` is given (the same check `add_atom`'s `_entry()` raises on
+    today, surfaced here before any write is attempted so `add_atom` can refuse
+    up front instead of failing partway through), and an em dash anywhere in the
+    atom's own text is flagged, since the user's style rule bans it from resume
+    text -- this only reports the problem, it never rewrites what the user typed.
+
+    `doc` is optional: the add-atom dialog reads the on-disk document once per
+    open and passes it in (mirroring `_pending_problems`'s use of a loaded
+    document); a caller with none yet just gets the content-only checks.
+    """
+    if section not in _SECTIONS:
+        return ["unknown section %r" % section]
+    problems: List[str] = []
+    if doc is not None:
+        seq = doc.get(section) or []
+        if not (0 <= index < len(seq)):
+            problems.append("%s index %d out of range" % (section, index))
+    if not (atom.get("what") or "").strip():
+        problems.append("achievement needs a 'what'")
+    if not [x for x in (atom.get("angles") or []) if str(x).strip()]:
+        problems.append("achievement needs at least one angle")
+    for label, text in _atom_text_fields(atom):
+        if _EM_DASH in text:
+            problems.append(f"{label} has an em dash; remove it")
+    return problems
+
+
 def add_atom(section: str, index: int, atom: Dict[str, Any],
              path: Optional[Path] = None) -> None:
     """Append a new achievement atom to an entry, assigning a unique id."""
     target = _path(path)
     y, doc = _load_doc(target)
+    problems = atom_problems(section, index, atom, doc)
+    if problems:
+        raise ValueError(problems[0])
     entry = _entry(doc, section, index)[index]
     name = str(entry.get(_NAME_KEY[section], "atom"))
     [aid] = _unique_ids(_slug(name), 1, _all_ids(doc))

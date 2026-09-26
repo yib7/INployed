@@ -287,3 +287,61 @@ def test_validate_still_raises_on_the_first_problem_only():
     # append_entry's contract (raise ValueError, first problem) is unchanged.
     with pytest.raises(ValueError, match="name is required"):
         master_edit._validate("projects", {"name": "", "dates": ""})
+
+
+# --- cycle 18 gap: atom_problems is entry_problems' twin for a single achievement
+# added through add_atom, so the add-atom dialog can list every problem inline (and
+# add_atom itself refuses to write one) instead of the dialog's old one-shot "what
+# + angle" check that only ran once, on submit, and never caught an em dash. -------
+
+def test_atom_problems_empty_for_a_valid_atom(master):
+    import yaml
+    doc = yaml.safe_load(master.read_text(encoding="utf-8"))
+    assert master_edit.atom_problems("projects", 0, {"what": "x", "angles": ["a"]}, doc) == []
+
+
+def test_atom_problems_lists_every_problem_not_only_the_first():
+    problems = master_edit.atom_problems("projects", 0, {"what": "", "angles": []})
+    assert "achievement needs a 'what'" in problems
+    assert "achievement needs at least one angle" in problems
+    assert len(problems) == 2   # every rule fired, none short-circuited another
+
+
+def test_atom_problems_unknown_section_is_the_only_problem():
+    assert master_edit.atom_problems("bogus", 0, {"what": "x", "angles": ["a"]}) == \
+        ["unknown section 'bogus'"]
+
+
+def test_atom_problems_flags_a_missing_target_entry(master):
+    import yaml
+    doc = yaml.safe_load(master.read_text(encoding="utf-8"))
+    problems = master_edit.atom_problems("projects", 9, {"what": "x", "angles": ["a"]}, doc)
+    assert problems == ["projects index 9 out of range"]
+
+
+def test_atom_problems_skips_the_target_entry_check_without_a_doc():
+    # No doc given (the add-atom dialog reads one before every recheck, but a
+    # future caller with none yet should get a content-only answer, not a crash).
+    assert master_edit.atom_problems("projects", 9, {"what": "x", "angles": ["a"]}) == []
+
+
+def test_atom_problems_flags_an_em_dash_in_any_free_text_field():
+    problems = master_edit.atom_problems(
+        "projects", 0,
+        {"what": "shipped it—fast", "angles": ["back—end"],
+         "impact": ["cut cost—a lot"]})
+    assert sum("em dash" in p for p in problems) == 3
+
+
+def test_add_atom_rejects_an_empty_what(master):
+    before = master.read_bytes()
+    with pytest.raises(ValueError, match="needs a 'what'"):
+        master_edit.add_atom("projects", 0, {"what": "", "angles": ["a"]})
+    assert master.read_bytes() == before
+
+
+def test_add_atom_rejects_an_em_dash(master):
+    before = master.read_bytes()
+    with pytest.raises(ValueError, match="em dash"):
+        master_edit.add_atom("projects", 0, {"what": "shipped it—fast", "angles": ["a"]})
+    assert master.read_bytes() == before

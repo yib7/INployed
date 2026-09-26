@@ -355,6 +355,59 @@ def test_a_fill_that_raises_leaves_its_error_type_in_the_trace(context, tmp_path
     assert "Jane" not in json.dumps(fill)
 
 
+_TIED_DEPARTMENT = """<body><form>
+  <label for="dept">Department</label><input id="dept" autocomplete="off">
+  <ul id="dept-list" class="results"></ul></form>
+  <script>
+    const box = document.getElementById('dept'), list = document.getElementById('dept-list');
+    box.addEventListener('input', () => { list.innerHTML = '';
+      if (!box.value) return;
+      ['Software Engineering', 'Hardware Engineering'].forEach((c) => {
+        const li = document.createElement('li'); li.textContent = c;
+        li.onclick = () => { box.value = c; }; list.appendChild(li); }); });
+  </script></body>"""
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_a_box_whose_options_tie_parks_when_required_and_stays_blank_when_optional(
+        context, tmp_path, required):
+    # final review B R2 M2: the options that hold "Engineering" differ in what
+    # it leaves out; the site's order picked the first, and now none is chosen
+    folder = h.write_job_folder(tmp_path / "job")
+    _enqueue(folder, "https://careers.fabrikam.example/jobs/42")
+    run = apply_run._JobRun(_runner(context, tmp_path), context, _entry())
+    run._prepare()
+    run.trace = apply_trace.Trace(folder, attempt=1, job_id="42")
+    run.trace.start()
+    try:
+        run.page = context.new_page()
+        run.page.set_content(_TIED_DEPARTMENT)
+        digest = apply_form.extract(run.page)
+        run._new_page_record("application_form", 1.0, digest=digest, answers={})
+        plan = FillPlan(fields=[PlannedField(n=0, locator=(0, "#dept"), label="Department",
+                                             required=required, fact_key="answer_dept",
+                                             value="Engineering", option=None, confidence=1.0,
+                                             action="fill", widget="typeahead")])
+        if required:
+            with pytest.raises(apply_run._Parked) as parked:
+                run._fill_and_verify(digest, plan, run.pages[-1])
+            assert (parked.value.status, parked.value.reason) == (
+                "needs_human", "required field without an answer: Department (the options "
+                               "that hold its answer tie and differ in meaning)")
+        else:
+            assert run._fill_and_verify(digest, plan, run.pages[-1]) == []
+        assert run.page.locator("#dept").input_value() == ""
+    finally:
+        run.trace.close()
+    assert [m["question"] for m in run.missing] == ["Department"]
+    events = _pages(folder / "apply_trace" / "attempt-1")[0]["events"]
+    assert [e["fields"] for e in events
+            if e["kind"] == "decision" and e["what"] == "option_tie"] == [["Department"]]
+    fill = next(e for e in events if e["kind"] == "fill")
+    assert fill["errors"] == [{"n": 0, "label": "Department", "action": "fill",
+                               "error": "OptionTie"}]
+
+
 def test_an_account_step_error_is_traced_by_its_type(context, tmp_path, monkeypatch):
     folder = h.write_job_folder(tmp_path / "job")
     _enqueue(folder, "https://careers.fabrikam.example/jobs/42")

@@ -437,6 +437,29 @@ def test_a_reasons_form_and_page_words_leave_out_what_they_quote():
     assert not ns.submit_clicked
 
 
+def test_a_quoted_field_name_in_the_forms_words_stays():
+    # final review A R2-M7: a message that quotes the field's own label keeps
+    # it (a label is the form's words, never what the person typed); any
+    # other quote is still left out
+    labels = ["Start date *", "Email:"]
+    assert apply_run._page_words("Please complete the 'Start date' field", 100, labels) == (
+        "Please complete the 'Start date' field")
+    assert apply_run._page_words('"email" must be filled in; "2026-10-01" is too early', 100,
+                                 labels) == '"email" must be filled in; [quoted] is too early'
+    assert apply_run._page_words("Please complete the 'Start date' field", 100) == (
+        "Please complete the [quoted] field")
+    refused = apply_run._JobRun._refused_words(
+        None, [{"kind": "error", "text": "'Start date' is required"}], labels)
+    assert refused == "the form says: 'Start date' is required"
+    ns = SimpleNamespace(submit_clicked=True, _submit_repairs=1, _spared_park=lambda t: None,
+                         _decide=lambda *a, **k: None)
+    watch = SimpleNamespace(any=lambda: True, first=lambda: "POST https://x/apply")
+    with pytest.raises(apply_run._Parked) as e:
+        apply_run._JobRun._not_sent(ns, [], [{"text": "Please complete the 'Start date' field",
+                                              "field": True}], watch, labels)
+    assert "'Start date'" in e.value.reason, e.value.reason
+
+
 def test_received_words_new_since_the_click_are_the_confirmation(context, tmp_path):
     class _Other(jev.FakeJev):
         """The fake, reading every page after the first as `other`."""
@@ -685,7 +708,10 @@ def test_the_gate_refuses_an_empty_required_control_the_extractor_leaves_out(
 @pytest.mark.parametrize("text, only", [
     ("Next", True), ("Save and continue", True), ("Sign in", True), ("Log in", True),
     ("Create account", True), ("Back", True), ("Continue →", True),
-    ("Submit application", False), ("Save and submit", False), ("Continue to review", False),
+    # final review B R2 KM4: a review step is a step
+    ("Continue to review", True), ("Review application", True), ("Preview", True),
+    ("Review your application", True),
+    ("Submit application", False), ("Save and submit", False), ("Review and submit", False),
     ("Complete", False), ("Create account and apply", False), ("Send", False), ("", False)])
 def test_a_step_only_button_is_one_of_a_steps_words_alone(text, only):
     # final review B Known Minor 4
@@ -693,14 +719,20 @@ def test_a_step_only_button_is_one_of_a_steps_words_alone(text, only):
 
 
 class _StepAsSubmit(jev.FakeJev):
-    """Reads "Save and continue" as the submit at 0.9."""
+    """Reads `TEXT` ("Save and continue") as the submit at 0.9."""
+
+    TEXT = "Save and continue"
+
+    def __init__(self, text: str = TEXT):
+        super().__init__()
+        self.text = text
 
     def judge(self, state, questions):
         out = dict(super().judge(state, questions))
         texts = {b["n"]: b["text"] for b in (state or {}).get("buttons") or []}
         for qid in questions:
             m = re.fullmatch(r"button_(\d+)_role", qid)
-            if m and texts.get(int(m[1])) == "Save and continue":
+            if m and texts.get(int(m[1])) == self.text:
                 out[qid] = jev.Answer(kind="choice", choice="submit", confidence=0.9,
                                       probabilities={"submit": 0.9, "advance": 0.1})
         return out
@@ -723,6 +755,30 @@ def test_a_step_button_read_as_the_submit_is_never_clicked_as_the_send(context, 
                            "it is never clicked as the send"), out
     else:
         assert (out.status, out.reason) == ("ready_to_submit", "auto_apply_submit is off"), out
+
+
+@pytest.mark.parametrize("text, handed_off, password, step", [
+    ("Continue", False, True, True), ("Next", True, False, True),
+    ("Save and continue", False, True, True), ("Continue to review", True, False, True),
+    ("Create account", False, True, False), ("Sign in", True, False, False),
+    ("Register", False, True, False), ("Log in", True, False, False),
+    ("Create account", False, False, True)],
+    ids=["password_continue", "handed_off_next", "password_save", "handed_off_review",
+         "password_create", "handed_off_sign_in", "password_register", "handed_off_log_in",
+         "no_account_create"])
+def test_an_account_screen_keeps_only_its_account_buttons_words_as_the_send(
+        text, handed_off, password, step):
+    # final review B R2 KM4: a page that types the master password (or one the
+    # account step handed back) was exempt for every step word, "Next" and
+    # "Continue" too; only the account's own button may be its send
+    from apply_judge import PlannedField
+    job, digest, _ = _code_job(text, "submit")
+    job.handed_off = handed_off
+    job.form_filled = True
+    fields = [PlannedField(0, (0, "#pw"), "Password", True, None, "", None, 1.0,
+                           apply_judge.PASSWORD_ACTION)] if password else []
+    out = job._gate_read(digest, FillPlan(fields=fields, buttons={"submit": (0, 0.9)}))
+    assert ("step_button" in out) is step, out
 
 
 def test_can_submit_names_each_live_refusal():
@@ -1054,18 +1110,48 @@ def test_park_mode_never_opens_an_emailed_link_after_the_form(monkeypatch):
     assert not job._maybe_sent()
 
 
+@pytest.mark.parametrize("url, loads", [
+    ("https://careers.example/apply/done", ["https://careers.example/apply/done"]),
+    # final review A R2-M1: a load of the same URL with its fragment moves
+    # inside the document and loads nothing; the URL without it is a new
+    # document, and the fragment then goes back on
+    ("https://careers.example/apply/done#/verify",
+     ["https://careers.example/apply/done", "https://careers.example/apply/done#/verify"])],
+    ids=["path", "hash_route"])
 def test_an_accounts_emailed_link_before_the_form_is_opened_in_park_mode_and_the_tab_read_again(
-        monkeypatch):
+        monkeypatch, url, loads):
     # ACC-05's account check: none of the application is on the site yet.
     # The job's tab is read again from its URL by a GET, never a reload
     # (final review A-C1: a reload re-sends the POST that led to the page)
     job, digest = _link_job(monkeypatch, submit=False)
+    job.page.url = url
     job._code_gate(digest, FillPlan(), {"filled": [], "clicked": []})
     job._open_link.assert_called_once()
-    job.page.goto.assert_called_once()
-    assert job.page.goto.call_args.args == ("https://careers.example/apply/done",)
+    assert [c.args[0] for c in job.page.goto.call_args_list] == loads
     job.page.reload.assert_not_called()
     assert not job._maybe_sent()
+
+
+def test_a_hash_routed_accounts_page_is_loaded_again_by_a_get_after_its_link(
+        context, monkeypatch):
+    # final review A R2-M1 in a browser: the job's tab is a new document after
+    # the link (its script runs again) and keeps its route; nothing is posted
+    page_html = """<body><h1>Check your inbox</h1><p id="route"></p><script>
+      sessionStorage.n = String(Number(sessionStorage.n || 0) + 1);
+      const show = () => { document.getElementById('route').textContent = location.hash; };
+      show(); window.addEventListener('hashchange', show);</script></body>"""
+    posts = _Posts(context, {"/apply/done": page_html, "/c": "<body>Email confirmed</body>"})
+    job, digest = _link_job(monkeypatch, submit=False)
+    job.page = context.new_page()
+    job.page.goto(f"{CAREERS}/apply/done#/verify")
+    job.allowed.add("careers.fabrikam.example")
+    job.inbox.fetch_link = Mock(return_value=f"{CAREERS}/c?t=1")
+    digest = dataclasses.replace(digest, url_host="careers.fabrikam.example")
+    job._code_gate(digest, FillPlan(), {"filled": [], "clicked": []})
+    assert job.page.evaluate("sessionStorage.n") == "2", "the page was loaded again"
+    assert job.page.url == f"{CAREERS}/apply/done#/verify"
+    assert job.page.locator("#route").inner_text() == "#/verify"
+    assert posts.count == 0 and not job._maybe_sent()
 
 
 @pytest.mark.parametrize("shown, status, start", [
@@ -1096,17 +1182,86 @@ def test_an_emailed_link_after_a_possible_send_never_loads_the_jobs_tab_again(
     job.page.reload.assert_not_called()
     job.page.goto.assert_not_called()
     assert job._maybe_sent()
+    # final review A R2-M5: the step a check-sent end names
+    assert job._sent_step() == ("the submit click" if after == "submit" else "the link step")
 
 
-@pytest.mark.parametrize("text, submit, marked", [
-    ("Confirm", True, True), ("Complete", True, True), ("Continue", True, False),
-    ("Confirm", False, False)], ids=["confirm", "complete", "continue", "park_mode"])
+def _no_link(job):
+    job.inbox.fetch_link = Mock(return_value=None)
+
+
+def _refused_link(job):
+    job.inbox.fetch_link = Mock(return_value=None)
+    job.inbox.refused = ["mail-tracker.example"]
+
+
+def _off_sites_link(job):
+    job.inbox.fetch_link = Mock(return_value="https://elsewhere.example/c?t=1")
+
+
+def _followed_link(job):
+    job._links_followed.add(apply_run._site("careers.example"))
+
+
+_UNOPENED = pytest.mark.parametrize("setup, why", [
+    (_no_link, "no verification link from careers.example in the inbox"),
+    (_refused_link, "the email's link goes to mail-tracker.example, outside the application's "
+                    "sites; it was never opened"),
+    (_off_sites_link, "the email's link goes to elsewhere.example, outside the application's "
+                      "sites; it was never opened"),
+    (_followed_link, "the emailed link was opened and careers.example still asks for it")],
+    ids=["no_link", "refused", "off_sites", "followed"])
+
+
+@_UNOPENED
+@pytest.mark.parametrize("after", ["form", "submit"])
+def test_an_unopened_emailed_link_after_the_answers_never_asks_for_a_requeue(
+        monkeypatch, setup, why, after):
+    # final review A R2-M3: in submit mode after the answers, the link may be
+    # the step that sends the application; "open it, then Re-queue" would
+    # apply a second time. The park carries the check-sent reason, and its
+    # note asks the person to open the link and Mark applied
+    job, digest = _link_job(monkeypatch, submit=True)
+    job.form_filled = True
+    if after == "submit":
+        job.submit_clicked = True
+    setup(job)
+    with pytest.raises(apply_run._Parked) as p:
+        job._code_gate(digest, FillPlan(), {"filled": [], "clicked": []})
+    assert p.value.status == "needs_human"
+    assert p.value.reason == (f"{apply_run.CHECK_SENT_REASON}: {apply_run.LINK_REASON}, and the "
+                              f"link may send the application: {why}")
+    assert p.value.tab_note == apply_run.LINK_HELD_NOTE
+    assert "Re-queue" not in p.value.tab_note
+    job._open_link.assert_not_called()
+    assert job._maybe_sent()
+
+
+@_UNOPENED
+def test_an_unopened_emailed_link_before_the_answers_asks_for_the_link(monkeypatch, setup, why):
+    job, digest = _link_job(monkeypatch, submit=True)
+    setup(job)
+    with pytest.raises(apply_run._Parked) as p:
+        job._code_gate(digest, FillPlan(), {"filled": [], "clicked": []})
+    assert (p.value.status, p.value.reason, p.value.tab_note) == (
+        "needs_human", f"{apply_run.LINK_REASON}: {why}", apply_run.LINK_NOTE)
+    assert not job._maybe_sent()
+
+
+@pytest.mark.parametrize("text, submit, filled, marked", [
+    ("Confirm", True, True, True), ("Complete", True, True, True),
+    ("Continue", True, True, False), ("Confirm", False, True, False),
+    ("Confirm", True, False, False)],
+    ids=["confirm", "complete", "continue", "park_mode", "before_the_answers"])
 def test_a_final_worded_advance_in_submit_mode_is_a_possible_send(monkeypatch, text, submit,
-                                                                  marked):
+                                                                  filled, marked):
     # final review A-M3: submit mode clicks a final-worded advance as a step
     # (park mode sends it to the gate). It may send: marked before the
-    # click, so an outage after it never hands the job back to the queue
+    # click, so an outage after it never hands the job back to the queue.
+    # Before the application's answers are on the site it has nothing to
+    # send (an address screen's "Confirm", final review A R2-M2)
     job, digest, plan = _code_job(text, "advance", submit=submit)
+    job.form_filled = filled
     seen: list[bool] = []
 
     def click(digest, n, role, rec, **kw):
@@ -1121,11 +1276,76 @@ def test_a_final_worded_advance_in_submit_mode_is_a_possible_send(monkeypatch, t
 
 def test_a_final_worded_advance_that_never_landed_is_no_possible_send(monkeypatch):
     job, digest, plan = _code_job("Confirm", "advance")
+    job.form_filled = True
     monkeypatch.setattr(job, "_click", lambda *a, **kw: apply_fill.ClickResult(False, False))
     monkeypatch.setattr(job, "_form_state", lambda *a: {})
     monkeypatch.setattr(job, "_button_identity", lambda *a: None)
     job._advance(digest, plan, [], {"clicked": []}, 0, 0.9)
     assert not job._maybe_sent()
+
+
+def _live_refused(job):
+    """A `_click` whose live check stops the click (`_refused_click`)."""
+    def click(digest, n, role, rec, **kw):
+        job._refused_click(role, _button_text(digest, n), "it reads 'Submit' now")
+    return click
+
+
+def _button_text(digest, n):
+    return next(b.text for b in digest.buttons if b.n == n)
+
+
+def test_a_final_worded_advance_the_live_check_stopped_is_no_possible_send(monkeypatch):
+    # final review A R2-M5: the live check raises inside `_click`, and the
+    # mark set before the click stayed while the park said nothing was clicked
+    job, digest, plan = _code_job("Confirm", "advance")
+    job.form_filled = True
+    monkeypatch.setattr(job, "_click", _live_refused(job))
+    monkeypatch.setattr(job, "_form_state", lambda *a: {})
+    monkeypatch.setattr(job, "_button_identity", lambda *a: None)
+    with pytest.raises(apply_run._Parked) as p:
+        job._advance(digest, plan, [], {"clicked": []}, 0, 0.9)
+    assert p.value.reason.endswith("nothing was clicked"), p.value.reason
+    assert not job._final_advance and not job._maybe_sent()
+
+
+@pytest.mark.parametrize("role, conf", [("advance", 0.8), ("submit", 0.6)])
+def test_a_code_steps_button_the_live_check_stopped_is_no_possible_send(monkeypatch, role, conf):
+    # final review A R2-M5: an advance's refusal raised inside `_click`, past
+    # the code step's restore (the submit role's refusal came back as a result)
+    job, digest, plan = _code_job("Verify", role, conf=conf)
+    job.form_filled = True
+    locator = SimpleNamespace(first=SimpleNamespace(fill=lambda *a, **kw: None))
+    monkeypatch.setattr(apply_run.apply_form, "resolve", lambda *a: locator)
+    monkeypatch.setattr(apply_run.apply_fill, "click",
+                        lambda *a, **kw: apply_fill.ClickResult(False, False,
+                                                                refused="it reads 'Submit' now"))
+    with pytest.raises(apply_run._Parked) as p:
+        job._code_gate(digest, plan, {"filled": [], "clicked": []})
+    assert "changed before the click" in p.value.reason, p.value.reason
+    assert not job._code_sent and not job._code_may_send and not job._maybe_sent()
+
+
+def test_a_retry_the_live_check_stopped_keeps_the_possible_send_and_says_the_first_landed(
+        monkeypatch):
+    # final review A R2-M5: on the retry the first click had landed and
+    # changed nothing; the mark stays (fail safe) and the words say so
+    job, digest, plan = _code_job("Confirm", "advance")
+    job.form_filled = True
+    clicks = iter([apply_fill.ClickResult(True, False),
+                   apply_fill.ClickResult(False, False, refused="it reads 'Submit' now")])
+    monkeypatch.setattr(apply_run.apply_fill, "click", lambda *a, **kw: next(clicks))
+    monkeypatch.setattr(job, "_form_state", lambda *a: {})
+    monkeypatch.setattr(job, "_form_problems", lambda *a: [])
+    monkeypatch.setattr(job, "_button_identity", lambda *a: None)
+    monkeypatch.setattr(job, "_busy", lambda: False)
+    job.page.wait_for_timeout = lambda ms: None
+    with pytest.raises(apply_run._Parked) as p:
+        job._advance(digest, plan, [], {"clicked": []}, 0, 0.9)
+    assert not isinstance(p.value, apply_run._NotClicked)
+    assert p.value.reason == ("the advance button (Confirm) changed before its second click: it "
+                              "reads 'Submit' now; the first click landed and changed nothing")
+    assert job._final_advance and job._maybe_sent()
 
 
 def test_a_request_the_submits_watch_saw_leave_keeps_the_job_a_possible_send():
@@ -1140,6 +1360,101 @@ def test_a_request_the_submits_watch_saw_leave_keeps_the_job_a_possible_send():
     job._unsent = False
     job._send_watch = SimpleNamespace(any=lambda: False)
     assert not job._maybe_sent()
+
+
+_BOARD_POST = "POST https://boards.example/apply"
+
+
+def _board_watch(*rows):
+    rows = list(rows)
+    return SimpleNamespace(sent=rows, possible=[], unplaced_sends=lambda: [],
+                           any=lambda: bool(rows), first=lambda: rows[0])
+
+
+def _board_guard():
+    return SimpleNamespace(posts=[_BOARD_POST], blocked=["boards.example"], posted=True,
+                           post_host=lambda: "boards.example", before="the form")
+
+
+def test_a_stopped_post_the_watch_counted_as_sent_is_no_send():
+    # final review A R2-M6: the watch counts a post to an admitted job board
+    # as sent. When that post is the one the guard stopped, a "submitted
+    # (unconfirmed)" resting on the watch's rows alone claims nothing
+    job, digest, _ = _code_job("Submit application", "submit")
+    job.submit_clicked = True
+    job._send_watch = _board_watch(_BOARD_POST)
+    with pytest.raises(apply_run._SentSeen) as seen:
+        job._inconclusive("confirmation", 0.9, digest, job._send_watch, {"url": "x"}, False)
+    out = job._stopped_post(_board_guard(), seen.value)
+    assert isinstance(out, apply_run._Unsent), out.reason
+    assert out.reason == ("the form posts to boards.example, outside the allowed sites; the run "
+                          "stopped it and nothing was sent")
+    assert not job._maybe_sent()
+
+
+@pytest.mark.parametrize("seen, rows", [
+    (False, [_BOARD_POST]),
+    (True, [_BOARD_POST, "POST https://careers.example/api/applications"])],
+    ids=["received_words", "another_request"])
+def test_a_stopped_post_keeps_a_send_the_step_or_another_request_shows(seen, rows):
+    step = (apply_run._SentSeen("submitted", "submitted (unconfirmed): a request left") if seen
+            else apply_run._Parked("submitted", "confirmation page: 'application received'"))
+    job, _, _ = _code_job("Submit application", "submit")
+    job.submit_clicked = True
+    job._send_watch = _board_watch(*rows)
+    out = job._stopped_post(_board_guard(), step)
+    assert not isinstance(out, apply_run._Unsent)
+    assert (out.status, out.reason) == ("submitted",
+                                        f"{step.reason}; the run stopped a post to boards.example")
+    assert job._maybe_sent()
+
+
+class _Blocked:
+    """A navigation guard that stopped a GET to another host."""
+
+    def __init__(self, run, page):
+        self.blocked, self.posted, self.posts = ["elsewhere.example"], False, []
+        self.before = "the form"
+
+    def stop(self):
+        pass
+
+    def post_host(self):
+        return ""
+
+
+def test_a_stopped_page_after_a_request_left_keeps_the_check_sent_end(monkeypatch):
+    # final review A R2-M6: validation errors after the submit reset its
+    # click while a request had left; the guard's "before the submit" test
+    # read the click and replaced the check-sent end with "left the allowed
+    # sites", whose note invites a Re-queue
+    job, _, _ = _code_job("Submit application", "submit")
+    job._send_watch = SimpleNamespace(any=lambda: True)
+    monkeypatch.setattr(apply_run, "_NavGuard", _Blocked)
+    step = apply_run._Parked("needs_human", f"{apply_run.CHECK_SENT_REASON}: a request left after "
+                                            "the submit click and the page reads as the form "
+                                            "again", apply_run.CHECK_SENT_NOTE)
+    with pytest.raises(apply_run._Parked) as p:
+        with job._password_guard():
+            raise step
+    assert p.value is step
+
+
+def test_a_stopped_page_after_a_final_worded_step_asks_the_person_to_check(monkeypatch):
+    job, _, _ = _code_job("Confirm", "advance")
+    job._final_advance = True
+    monkeypatch.setattr(apply_run, "_NavGuard", _Blocked)
+    with pytest.raises(apply_run._Parked) as p:
+        with job._password_guard():
+            pass
+    assert (p.value.status, p.value.reason, p.value.tab_note) == (
+        "needs_human", f"{apply_run.CHECK_SENT_REASON}: after the final-worded step the run "
+                       f"stopped the page going to elsewhere.example", apply_run.CHECK_SENT_NOTE)
+    job._final_advance = False
+    with pytest.raises(apply_run._Parked) as p:
+        with job._password_guard():
+            pass
+    assert p.value.reason == "left the allowed sites: elsewhere.example"
 
 
 @pytest.mark.parametrize("where", ["_after_submit", "_open"])
@@ -1216,14 +1531,46 @@ def test_the_extractor_never_hints_submit_for_third_party_or_cancel_buttons(brow
     assert all(h_ != "submit" for h_ in hints.values()), hints
 
 
-def _words(pattern: str) -> set[str]:
-    """The words of a regex source's first group (`\\b(a|b|c)\\b`), a
-    `[sz]` class spelled both ways."""
+def _spelled(alts: list[str]) -> set[str]:
+    """Each alternative as the words it matches: a `[sz]` class spelled both
+    ways, a last letter marked `?` with and without it."""
     out: set[str] = set()
-    for alt in re.search(r"\(([^()]*)\)", pattern).group(1).split("|"):
+    for alt in alts:
         m = re.fullmatch(r"(\w*)\[(\w)(\w)\](\w*)", alt)
-        out |= {m[1] + m[2] + m[4], m[1] + m[3] + m[4]} if m else {alt}
+        if m:
+            out |= {m[1] + m[2] + m[4], m[1] + m[3] + m[4]}
+            continue
+        m = re.fullmatch(r"(\w*)(\w)\?", alt)
+        out |= {m[1], m[1] + m[2]} if m else {alt}
     return out
+
+
+def _words(pattern: str) -> set[str]:
+    """The words of a regex source that is one group of words between
+    anchors (`\\b(a|b|c)\\b`, `^(a|b)$`). A pattern with an alternative or a
+    group outside that group fails here: its other words would go unread
+    (final review B R2 M4)."""
+    m = re.fullmatch(r"([^()|]*)\((?:\?:)?([^()]*)\)([^()|]*)", pattern)
+    assert m, f"a pattern with more than its one group of words: {pattern!r}"
+    return _spelled(m[2].split("|"))
+
+
+def _top(pattern: str) -> list[str]:
+    """The top-level alternatives of a regex source."""
+    out, cur, depth, i = [], "", 0, 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\":
+            cur, i = cur + pattern[i:i + 2], i + 2
+            continue
+        depth += {"(": 1, ")": -1}.get(c, 0)
+        if c == "|" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    return out + [cur]
 
 
 def _js_regex(js: str, name: str) -> str:
@@ -1255,6 +1602,64 @@ def test_every_copy_of_the_send_and_step_words_holds_the_loops_own():
     assert _words(apply_fill._SEND_JS) == submit | final
     for js in (apply_fill._ARM_JS, apply_fill._OVERLAY_JS):
         assert f"new RegExp('{apply_fill._SEND_JS}', 'i')" in js
+
+
+def test_the_words_reader_fails_on_an_alternative_outside_its_group():
+    # final review B R2 M4: a word added outside the group is never missed
+    for pattern in (r"\b(submit|send)\b|\bsend\s+it\b", r"^(a|b)$|c", r"\b(a|b)\b(c|d)"):
+        with pytest.raises(AssertionError):
+            _words(pattern)
+    assert _words(r"^(forms?|finali[sz]e)$") == {"form", "forms", "finalise", "finalize"}
+
+
+def test_the_popup_names_the_overlays_never_and_the_step_words_pin_each_difference():
+    # final review B R2 M4: the copies the send-word parity test does not
+    # hold equal, each known difference pinned, so a change on either side
+    # shows up here
+    submit = _words(apply_run.SUBMIT_WORDS.pattern)
+    final = _words(apply_run.FINAL_WORDS.pattern)
+    js = apply_form._EXTRACT_JS
+    # the extractor's `sendName` reads no leading Apply: the live check
+    # (`send_phrase`) refuses "Apply now" and "Apply with" as a popup's name,
+    # the extractor only reads them as a way on (POPUP_GO_ON, "apply with"),
+    # so the Python side is the stricter and the difference fails safe
+    body = re.search(r"const sendName = \(t\) => \{(.*?)\n  \};", js, re.S).group(1)
+    assert "apply" not in body.lower()
+    assert apply_fill._POPUP_APPLY.pattern == r"^\s*apply\b"
+    assert _words(apply_fill._POPUP_APPLY_OBJECT.pattern) == {
+        "with", "using", "via", "through", "now", "here", "for", "to", "online", "today"}
+    # the extractor's fillers are `_POPUP_FILLER` but "&": its words are
+    # letters only (/[a-z]+/gi), so "&" never reaches FILLER
+    assert _words(_js_regex(js, "FILLER")) == set(apply_fill._POPUP_FILLER) - {"&"}
+    assert "&" in apply_fill._POPUP_FILLER
+    # POPUP_GO_ON has no Python twin: its words, and its "continue" is the
+    # loop's own next word
+    go_on = _words(_js_regex(js, "POPUP_GO_ON"))
+    assert go_on == {"continue", "apply with", "next step"}
+    assert "continue" in _words(apply_run._NEXT_WORDS.pattern)
+    # the overlay's NEVER: the send words it holds are the loop's submit
+    # words; "finish" and the last-step words are refused through its SEND
+    # (`_SEND_JS`); the rest accept, sign up or chat
+    never = _top(_js_regex(apply_fill._OVERLAY_JS, "NEVER"))
+    assert set(never) == {"accept", "allow", "agree", "submit", "apply", "send", "sign ?up",
+                          "subscribe", "start chat", "chat now"}
+    assert set(never) & (submit | final) == submit - {"finish"}
+    # the step words: the loop's next words are step verbs, every step verb
+    # is a step-only word, and no step-only word sends or ends
+    step_verb = _words(apply_run._STEP_VERB.pattern)
+    only = re.fullmatch(r"\(\?:\\b\(\?:([^()]*)\)\\b\|\[\\W_\]\)\+", apply_run._STEP_ONLY.pattern)
+    assert only, apply_run._STEP_ONLY.pattern
+    step_only = _spelled(only[1].split("|"))
+    assert _words(apply_run._NEXT_WORDS.pattern) == {"next", "continue"}
+    assert _words(apply_run._NEXT_WORDS.pattern) <= step_verb <= step_only
+    assert {"review", "preview", "application"} <= step_only
+    assert not step_only & (submit | final)
+    # the judge's advance words: the next words, and a consent step's
+    # leading accept or agree, which is never a step-only word
+    advance = _top(apply_judge.ADVANCE_WORDS.pattern)
+    assert advance == [r"\b(next|continue)\b", r"^\s*(i\s+)?(accept|agree)\b"]
+    assert _words(advance[0]) == _words(apply_run._NEXT_WORDS.pattern)
+    assert not {"accept", "agree"} & step_only
 
 
 def test_the_embeds_form_leaves_no_field_once_its_thanks_show(browser_page, flow_server):

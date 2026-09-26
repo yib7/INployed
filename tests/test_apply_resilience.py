@@ -1668,6 +1668,9 @@ def test_a_judge_down_after_the_code_step_of_a_filled_application_asks_the_perso
     assert outcomes[0].status == "needs_human", outcomes
     assert reason.startswith(f"{apply_run.CHECK_SENT_REASON}: the run stopped after the code "
                              f"step ({apply_run.JUDGE_DOWN_REASON}: _Busy 529 at "), reason
+    # final review A R2-M5: no request watch runs before the submit gate, so
+    # the reason never says nothing was seen leaving
+    assert reason.endswith("; the run was not watching requests at this step"), reason
     assert h.policy_park(outcomes[0].status, reason) is True
 
 

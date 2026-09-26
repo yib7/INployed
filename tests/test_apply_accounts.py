@@ -693,6 +693,38 @@ def test_a_verification_link_behind_a_bot_check_is_not_recorded_as_opened(
     assert decided == [] and rec["clicked"] == [] and run._links_followed == set()
 
 
+@pytest.mark.parametrize("path, why, note", [
+    ("/cf", "the emailed link's page asked for a bot check (cf-mitigated: challenge)",
+     "LINK_HELD_NOTE"),
+    ("/hopcf", "the emailed link's page asked for a bot check (cf-mitigated: challenge) after "
+               "the link's own address had answered, so the link may have been used",
+     "CHECK_SENT_NOTE"),
+    ("/gone", "the site refused the emailed link ('link has expired')", "CHECK_SENT_NOTE"),
+    ("/loop", "the emailed link did not open (TooManyRedirects)", "CHECK_SENT_NOTE")])
+def test_a_link_that_parks_after_the_answers_asks_the_person_to_check_and_never_to_requeue(
+        browser_page, tmp_path, monkeypatch, redirecting_site, path, why, note):
+    # final review A R2-M3: in submit mode, once the application's answers
+    # are on the site the emailed link may be the step that sends it. A park
+    # of the link's tab then carries the check-sent reason and no Re-queue:
+    # a link held on its own address is the person's to open, then Mark
+    # applied; one whose address answered may have sent the application
+    from types import SimpleNamespace
+    run, _ = _link_run(tmp_path, browser_page, monkeypatch)
+    link = f"http://127.0.0.1:{redirecting_site.port}{path}"
+    run.inbox = SimpleNamespace(fetch_link=lambda page, host, inbox_url: link, refused=[])
+    run.form_filled = True
+    with pytest.raises(apply_run._Parked) as parked:
+        run._verify_link(apply_run.apply_form.FormDigest("127.0.0.1", "Verify your email", ""),
+                         {"clicked": []})
+    assert parked.value.status == "needs_human"
+    assert parked.value.reason == (f"{apply_run.CHECK_SENT_REASON}: {apply_run.LINK_REASON}, and "
+                                   f"the link may send the application: {why}")
+    assert parked.value.tab_note == getattr(apply_run, note)
+    assert parked.value.tab_note not in (apply_run.LINK_NOTE, apply_run.LINK_BOT_NOTE,
+                                         apply_run.LINK_USED_NOTE)
+    assert run._maybe_sent()
+
+
 @pytest.mark.parametrize("fields, text, said", [
     ([], "Verify Your Account. We sent a verification email to your address. Click the link in "
          "the email to activate your account.", "verification email"),

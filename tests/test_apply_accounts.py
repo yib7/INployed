@@ -151,7 +151,8 @@ def _signin_digest(*buttons: str) -> "apply_run.apply_form.FormDigest":
     form = apply_run.apply_form
     return form.FormDigest("127.0.0.1", "Sign In", "Sign In", fields=[
         form.Field(0, (0, "#email"), "Email Address", "text", False),
-        form.Field(1, (0, "#password"), "Password", "other", False, id_or_name="password")],
+        form.Field(1, (0, "#password"), "Password", "other", False, id_or_name="password",
+                   secret=True)],
         buttons=[form.Button(i, (0, f"#b{i}"), t) for i, t in enumerate(buttons)])
 
 
@@ -248,7 +249,8 @@ class _Steps:
 def _boxes_digest(*boxes: tuple[str, str], forgot: bool = False):
     form = apply_run.apply_form
     fields = [form.Field(0, (0, "#email"), "Email", "email", False)]
-    fields += [form.Field(i + 1, (0, f"#p{i}"), label, "other", False, autocomplete=auto)
+    fields += [form.Field(i + 1, (0, f"#p{i}"), label, "other", False, autocomplete=auto,
+                          secret=True)
                for i, (label, auto) in enumerate(boxes)]
     buttons = [form.Button(0, (0, "#go"), "Continue")]
     if forgot:
@@ -1047,7 +1049,7 @@ def test_an_account_park_falls_back_to_sso_only_where_the_screen_has_no_way_on_o
         assert (parked.reason, parked.tab_note) == (reason, apply_run.LOGIN_NOTE)
     # a box to fill is the account step's to fill: never the SSO park
     boxed = dataclasses.replace(digest, fields=[form.Field(1, (0, "#p"), "Password", "password",
-                                                           True)])
+                                                           True, secret=True)])
     assert run._account_park(boxed, reason).reason == reason
 
 
@@ -1231,8 +1233,10 @@ def test_an_application_form_asking_for_the_password_a_third_time_parks(
 def test_password_rules_read_a_sign_ups_stated_rules(text, help_, rules):
     form = apply_run.apply_form
     digest = form.FormDigest("127.0.0.1", "Create Account", text, fields=[
-        form.Field(0, (0, "#p"), "Password", "other", True, id_or_name="password", help=help_),
-        form.Field(1, (0, "#c"), "Confirm password", "other", True, id_or_name="confirm"),
+        form.Field(0, (0, "#p"), "Password", "other", True, id_or_name="password", help=help_,
+                   secret=True),
+        form.Field(1, (0, "#c"), "Confirm password", "other", True, id_or_name="confirm",
+                   secret=True),
         form.Field(2, (0, "#t"), "Phone number", "tel", False)])
     got, said = apply_run.password_rules(digest)
     assert got == rules, said
@@ -1259,8 +1263,9 @@ _OVER_READ = [
 def _rules_digest(text: str, *others: tuple[str, str]):
     form = apply_run.apply_form
     return form.FormDigest("127.0.0.1", "Create Account", text, fields=[
-        form.Field(0, (0, "#p"), "Password", "other", True, id_or_name="password"),
-        form.Field(1, (0, "#c"), "Confirm password", "other", True, id_or_name="confirm"),
+        form.Field(0, (0, "#p"), "Password", "other", True, id_or_name="password", secret=True),
+        form.Field(1, (0, "#c"), "Confirm password", "other", True, id_or_name="confirm",
+                   secret=True),
         *[form.Field(i + 2, (0, f"#o{i}"), label, kind, False)
           for i, (label, kind) in enumerate(others)]])
 
@@ -1633,9 +1638,10 @@ def test_the_account_steps_own_buttons_are_never_a_job_alerts_sign_up():
     form = apply_run.apply_form
     digest = form.FormDigest("127.0.0.1", "Create Account", "Create Account", fields=[
         form.Field(0, (0, "#email"), "Email Address", "email", False),
-        form.Field(1, (0, "#p"), "Password", "other", False, autocomplete="new-password"),
+        form.Field(1, (0, "#p"), "Password", "other", False, autocomplete="new-password",
+                   secret=True),
         form.Field(2, (0, "#c"), "Verify New Password", "other", False,
-                   autocomplete="new-password")],
+                   autocomplete="new-password", secret=True)],
         buttons=[form.Button(0, (0, "#b0"), "Sign up for job alerts"),
                  form.Button(1, (0, "#b1"), "Create Account")])
     plan = FillPlan(buttons={"advance": (0, 0.93), "other": (1, 0.94)})

@@ -62,7 +62,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from apply_facts import FactCatalog, quick_map
-from apply_form import FormDigest, is_password_field
+from apply_form import FormDigest, password_box
 from jev import APOSTROPHES, PAGE_KIND_NOULS, Answer, request_fits
 
 log = logging.getLogger("apply_judge")
@@ -1077,7 +1077,7 @@ class PageFacts:
 def _password_kind(f) -> str:
     """"new password", "current password" or "password" for a password box,
     else ""."""
-    if not is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
+    if not password_box(f):
         return ""
     auto = str(f.autocomplete or "").lower()
     if auto == "new-password" or NEW_PASSWORD.search(f"{f.label} {f.id_or_name}"):
@@ -1787,7 +1787,7 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # a masked "Passport number" box is one of these before it is a
             # password box
             fact_key, pf.fact_key = None, None
-        elif is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
+        elif password_box(f):
             # the only writer of a password field is `ats_accounts.fill_password`,
             # through the accounts hook or the runner's form step; no fact ever
             # lands in one
@@ -1906,8 +1906,7 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
         f = by_n.get(pf.n)
         if f is None or not pf.required or pf.action != "skip":
             continue
-        if is_sensitive_field(f.label, f.id_or_name) or \
-                is_password_field(f.type, f.id_or_name, f.label, f.autocomplete):
+        if is_sensitive_field(f.label, f.id_or_name) or password_box(f):
             continue
         if what == "source":
             if pf.quick:

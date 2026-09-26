@@ -69,6 +69,7 @@ class Field:
     refused: str = ""
     ident: str = ""             # who the control is (tag|type|id|name|aria|...): read again
                                 # before every act (FILL-02)
+    secret: bool = False        # an `<input type=password>`: its value is masked
 
 
 PASSWORD_WORDS = ("pass", "pwd", "secret")
@@ -76,22 +77,36 @@ PASSWORD_AUTOCOMPLETE = ("current-password", "new-password")
 
 
 def is_password_field(type_: str, id_or_name: str = "", label: str = "",
-                      autocomplete: str = "") -> bool:
-    """A password-shaped control: an `other` control (the extractor's type for
-    a password input) whose id, name or label carries `pass`, `pwd` or
-    `secret`, or any control whose autocomplete token is `current-password` /
-    `new-password`.
+                      autocomplete: str = "", *, secret: bool | None = None) -> bool:
+    """A password box. For a control the extractor read (`secret` given:
+    `Field.secret`, `password_box`), only a real `<input type=password>`:
+    sites put `autocomplete="new-password"` on an address or a location box
+    to stop the browser's autofill, and that box takes its fact; a masked box
+    labelled "PIN" is one whatever its words (final review B-I2). For a
+    recorded row, which keeps no DOM type (`secret` None): an `other` control
+    whose id, name or label carries `pass`, `pwd` or `secret`, or any control
+    whose autocomplete token is `current-password` / `new-password`; the
+    record hides such a row's value, and hiding more is never a leak.
 
     One definition for the planner (which never puts a fact in such a field),
     the accounts hook (the only writer) and the record (which hides it), so the
     three cannot drift apart. `Passport number` is a text control and stays an
     ordinary field."""
+    if secret is not None:
+        return bool(secret)
     if str(autocomplete or "").lower() in PASSWORD_AUTOCOMPLETE:
         return True
     if str(type_ or "") != "other":
         return False
     blob = f"{id_or_name or ''} {label or ''}".lower()
     return any(w in blob for w in PASSWORD_WORDS)
+
+
+def password_box(f: Any) -> bool:
+    """Is the extracted control `f` a password box (`is_password_field` on
+    its `secret`)?"""
+    return is_password_field(f.type, f.id_or_name, f.label, f.autocomplete,
+                             secret=bool(getattr(f, "secret", False)))
 
 
 @dataclass
@@ -145,7 +160,8 @@ class FormDigest:
                         option_locators=[str(o) for o in (f.get("option_locators") or [])],
                         section=str(f.get("section", "") or ""),
                         ident=str(f.get("ident", "") or ""),
-                        label_partial=bool(f.get("label_partial", False)))
+                        label_partial=bool(f.get("label_partial", False)),
+                        secret=bool(f.get("secret", False)))
                   for f in (raw.get("fields") or [])]
         buttons = [Button(n=int(b["n"]), locator=_locator(b.get("locator")),
                           text=str(b.get("text", "")),
@@ -1174,6 +1190,7 @@ _EXTRACT_JS = r"""
       autocomplete: norm(el.getAttribute('autocomplete')).toLowerCase(),
       click: x.click || '', option_css: x.option_css || [], widget: x.widget || '',
       section: sectionOf(el), ident: identOf(el), label_partial: cutLabels.has(el),
+      secret: el.tagName === 'INPUT' && typeAttr(el) === 'password',
     };
   };
 
@@ -1219,8 +1236,12 @@ _EXTRACT_JS = r"""
     // react-select's dummy input: a field through its face (review R2 Minor 2)
     if (comboFace(el) && !closestC(el, '[aria-hidden=true]')) return '';
     if (closestC(el, '[aria-hidden=true]')) return 'aria-hidden';
-    const st = getComputedStyle(el);
-    if (el.getAttribute('tabindex') === '-1' && parseFloat(st.opacity) < 0.1) return 'hidden';
+    // a box a person cannot see: it or a box around it nearly transparent,
+    // whatever its tabindex (final review B-M3: a trap at opacity 0, or in
+    // a transparent wrapper, labelled "Website")
+    for (let n = el; n && n !== document.body; n = up(n)) {
+      if (n.nodeType === 1 && parseFloat(getComputedStyle(n).opacity) < 0.1) return 'hidden';
+    }
     const r = el.getBoundingClientRect();
     const x = window.scrollX || 0, y = window.scrollY || 0;
     if (r.right + x < 0 || r.bottom + y < 0 || r.left + x < -500 || r.top + y < -500) return 'offscreen';
@@ -1587,9 +1608,10 @@ _EXTRACT_JS = r"""
   const POPUP_GO_ON = /\b(continue|apply with|next step)\b/i;
   const POPUP_WAY_ON = { test: (t) => sendName(t) || POPUP_GO_ON.test(t || '') };
   // A form's note about its required marks ("* Required field", "* indicates
-  // a required field", "Fields marked with * are required"): neither a
-  // question nor a star of any control (review round 9, Minor)
-  const REQ_NOTE = /^\s*(?:[*✱＊]\s*)?(?:(?:indicates|denotes|marks)\s+(?:an?\s+)?)?(?:required|mandatory)(?:\s+(?:fields?|questions?|information))?(?:\s+(?:are|is)\s+(?:marked|shown|indicated)(?:\s+(?:with|by)(?:\s+an?)?)?(?:\s+(?:asterisk|star|[*✱＊]))?)?\.?\s*$|^\s*(?:all\s+)?(?:fields|questions)\s+(?:marked|shown)\s+(?:with|by)\s+(?:an?\s+)?(?:[*✱＊]|asterisk|star)\s*(?:\(\s*[*✱＊]\s*\)\s*)?(?:are|is)\s+(?:required|mandatory)\.?\s*$/i;
+  // a required field", "Fields marked with * are required", "Required
+  // fields are marked with an asterisk (*)"): neither a question nor a star
+  // of any control (review round 9, Minor; final review B-M5)
+  const REQ_NOTE = /^\s*(?:[*✱＊]\s*)?(?:(?:indicates|denotes|marks)\s+(?:an?\s+)?)?(?:required|mandatory)(?:\s+(?:fields?|questions?|information))?(?:\s+(?:are|is)\s+(?:marked|shown|indicated)(?:\s+(?:with|by)(?:\s+an?)?)?(?:\s+(?:asterisk|star|[*✱＊]))?)?(?:\s*\(\s*[*✱＊]\s*\))?\.?\s*$|^\s*(?:all\s+)?(?:fields|questions)\s+(?:marked|shown)\s+(?:with|by)\s+(?:an?\s+)?(?:[*✱＊]|asterisk|star)\s*(?:\(\s*[*✱＊]\s*\)\s*)?(?:are|is)\s+(?:required|mandatory)\.?\s*$/i;
   // a star after the control in its box: a marker's own text node, or one
   // drawn by CSS or a class, outside a note (the words before the control
   // carry their own markers through `seen`)
@@ -1988,7 +2010,7 @@ def extract(page, *, content_site: Callable[[str], bool] | None = None) -> FormD
                 click_locator=(idx, str(f["click"])) if f.get("click") else None,
                 option_locators=[str(o) for o in (f.get("option_css") or [])],
                 section=str(f.get("section") or ""), ident=str(f.get("ident") or ""),
-                label_partial=bool(f.get("label_partial"))))
+                label_partial=bool(f.get("label_partial")), secret=bool(f.get("secret"))))
         for b in raw.get("buttons") or []:
             buttons.append(Button(n=len(buttons), locator=(idx, str(b["css"])),
                                   text=str(b["text"]), kind_hint=str(b.get("kind_hint") or ""),

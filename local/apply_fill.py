@@ -294,7 +294,9 @@ def _ci_match(want: str, candidates: list[str]) -> int:
     """Index of the candidate equal to `want` case-insensitively (whitespace
     folded), else the one a name of `want` matches (`apply_judge.match_option`:
     USA for United States, CA for California, a decline for a decline;
-    FILL-07), else the one containing it, else -1."""
+    FILL-07), else the shortest one that holds it (`_holds`: "no" is never
+    inside "None", and "Chicago, IL" wins over "Chicago Heights, IL"; final
+    review B-M2), else -1."""
     w = " ".join((want or "").split()).lower()
     folded = [" ".join(str(c).split()).lower() for c in candidates]
     if w in folded:
@@ -302,19 +304,50 @@ def _ci_match(want: str, candidates: list[str]) -> int:
     found = apply_judge.match_option(want, [str(c) for c in candidates])
     if found is not None:
         return [str(c) for c in candidates].index(found)
-    for i, c in enumerate(folded):
-        if w and w in c:
-            return i
-    return -1
+    parts = [p.strip() for p in w.split(",") if p.strip()]
+    if not parts:
+        return -1
+    held = [i for i, c in enumerate(folded) if _holds(parts, c)]
+    return min(held, key=lambda i: (len(folded[i]), i)) if held else -1
+
+
+def _holds(parts: list[str], option: str) -> bool:
+    """Every comma part of a value is in `option` as whole words, or is a
+    name one of the option's comma parts goes by ("Anytown, CA" in
+    "Anytown, California, United States"; `apply_judge._alias_set`)."""
+    pieces = {apply_judge._norm_option(p) for p in option.split(",")}
+    for part in parts:
+        if re.search(r"(?<!\w)" + re.escape(part) + r"(?!\w)", option):
+            continue
+        if not apply_judge._alias_set(part) & pieces:
+            return False
+    return True
 
 
 # --- the actions ------------------------------------------------------------------
 
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+
+
+def _keys_for(loc, text: object) -> str:
+    """`text` as keys for the box `loc` names: a line break is a space in
+    anything but a TEXTAREA, where a key-by-key Enter would submit the form
+    (implicit submission; final review B-I1)."""
+    text = str(text or "")
+    try:
+        tag = str(loc.first.evaluate("el => el.tagName", timeout=ACTION_TIMEOUT_MS) or "")
+    except Exception:       # noqa: BLE001  (a box gone: the typing finds out)
+        tag = ""
+    return text if tag.upper() == "TEXTAREA" else _LINE_BREAK.sub(" ", text)
+
+
 def _typed(loc, text: str) -> None:
     """Clear the box and type `text` key by key (a masked box takes keys,
-    never a pasted value)."""
+    never a pasted value); a line break is a space outside a TEXTAREA
+    (`_keys_for`)."""
+    keys = _keys_for(loc, text)
     loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
-    loc.first.press_sequentially(text, delay=15, timeout=ACTION_TIMEOUT_MS)
+    loc.first.press_sequentially(keys, delay=15, timeout=ACTION_TIMEOUT_MS)
 
 
 def _fill(loc, kind: dict[str, str], value: str) -> str:
@@ -753,9 +786,9 @@ def _type_to_filter(page, frame, loc, want: str):
         return None
     target = loc.first if (loc.first.evaluate("el => el.tagName") or "") == "INPUT" \
         else loc.first.locator("input").first
+    keys = _keys_for(target, str(want or "").split(",")[0].strip())
     target.fill("", timeout=ACTION_TIMEOUT_MS)
-    target.press_sequentially(str(want or "").split(",")[0].strip(), delay=10,
-                              timeout=ACTION_TIMEOUT_MS)
+    target.press_sequentially(keys, delay=10, timeout=ACTION_TIMEOUT_MS)
     options = _options_locator(frame, loc)
     try:
         options.first.wait_for(state="visible", timeout=LISTBOX_WAIT_MS)
@@ -790,8 +823,11 @@ def _pick_listbox(page, frame, loc, want: str, *, popup: bool = False, face=None
 
 # The matches a typeahead offers under its box (study G7: Lever's location has
 # no ARIA): the visible entries of the nearest results list around it, each
-# marked for the click.
+# marked for the click. An earlier typeahead's marks are cleared first: the
+# click takes the first mark in the document (final review B-M1).
 _TYPEAHEAD_OPTIONS_JS = """el => {
+  (el.ownerDocument || document).querySelectorAll('[data-apply-option]')
+    .forEach((n) => n.removeAttribute('data-apply-option'));
   const visible = (n) => { const st = getComputedStyle(n); const r = n.getBoundingClientRect();
     return st.display !== 'none' && st.visibility !== 'hidden' && (r.width > 0 || r.height > 0); };
   let box = el.parentElement;
@@ -815,8 +851,9 @@ _TYPEAHEAD_OPTIONS_JS = """el => {
 def _type_ahead(page, frame, loc, value: str) -> None:
     """Type the value into a typeahead (study G7), wait for its matches and
     click the one that fits; with no match the typed value stays."""
+    keys = _keys_for(loc, value)
     loc.first.fill("", timeout=ACTION_TIMEOUT_MS)
-    loc.first.press_sequentially(value, delay=10, timeout=ACTION_TIMEOUT_MS)
+    loc.first.press_sequentially(keys, delay=10, timeout=ACTION_TIMEOUT_MS)
     deadline = time.monotonic() + LISTBOX_WAIT_MS / 1000
     texts: list[str] = []
     while time.monotonic() < deadline:
@@ -1437,11 +1474,16 @@ def _norm(text: str) -> str:
 # close, looked for in the banner's own root too when the climbed overlay
 # holds none of its controls; anywhere else a close, dismiss, minimise, "no
 # thanks" or bare "x" control of the overlay (never one that accepts,
-# allows, agrees, sends or applies); marked `data-apply-close`. A dialog of
-# the application itself (two or more fields, or a control that applies,
-# uploads or submits) is no cover: nothing is picked and `own` says so (SP6
-# review M4). Returns {what, kind: consent|close|none, text, own} or null
+# allows, agrees, or holds a send or last-step word of `_SEND_JS`); marked
+# `data-apply-close`. A box of the application itself, a dialog or a fixed
+# bar (two or more fields, or a control that applies, uploads or submits)
+# is no cover: nothing is picked and `own` says so (SP6 review M4; final
+# review B-M6). Returns {what, kind: consent|close|none, text, own} or null
 # when nothing covers it.
+# The loop's send and last-step words (`apply_run.SUBMIT_WORDS` and
+# `FINAL_WORDS`) as a JS regex source for a string literal: the overlay
+# picker and the click's arm (`_ARM_JS`) splice it (final review B-M4).
+_SEND_JS = r"\\b(submit|apply|send|finish|complete|confirm|finali[sz]e|done)\\b"
 _OVERLAY_JS = r"""el => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
   el.scrollIntoView({block: 'center', inline: 'center'});
@@ -1464,8 +1506,8 @@ _OVERLAY_JS = r"""el => {
   const CLOSE = /^(close|dismiss|hide|minimi[sz]e|no,? thanks|not now|maybe later|skip|x)\b|^[\u00d7\u2715\u2716](\s|$)/i;
   const CLOSE_ARIA = /\b(close|dismiss|hide|minimi[sz]e)\b/i;
   const NEVER = /accept|allow|agree|submit|apply|send|sign ?up|subscribe|start chat|chat now/i;
+  const SEND = new RegExp('__SEND__', 'i');
   const APP = /\b(apply|application|autofill|resume|cv|upload|submit)\b/i;
-  const DIALOG = 'dialog, [role=dialog], [role=alertdialog], [aria-modal=true]';
   const CTRLS = 'button, [role=button], input[type=button], input[type=submit], a:not([href]), a[href="#"]';
   const shown = (n) => { const b = n.getBoundingClientRect(); const st = getComputedStyle(n);
     return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
@@ -1474,9 +1516,11 @@ _OVERLAY_JS = r"""el => {
   const name = norm((root.id ? '#' + root.id + ' ' : '') + (root.getAttribute('aria-label') || '')
     + ' ' + (root.innerText || '').slice(0, 60)).slice(0, 80);
   const ctrls = Array.from(root.querySelectorAll(CTRLS)).filter((c) => shown(c) && !c.disabled);
-  if (!consent && (root.matches(DIALOG) || root.querySelector(DIALOG))) {
-    // the application's own dialog (Workday's "Start Your Application"):
-    // its fields or its apply, upload or submit controls; never put away
+  if (!consent) {
+    // the application's own box (Workday's "Start Your Application" dialog,
+    // a fixed footer with "Skip this step" beside the submit): its fields or
+    // its apply, upload or submit controls; never put away, a dialog or not
+    // (final review B-M6)
     const fields = Array.from(root.querySelectorAll(
       'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=checkbox])'
       + ':not([type=radio]), select, textarea')).filter(shown);
@@ -1492,7 +1536,7 @@ _OVERLAY_JS = r"""el => {
       // a banner's reject before the words that accept: "Disagree and
       // close", "Continue without agreeing", "Allow necessary only"
       if (consent && REJECT.test(label)) { pick = c; kind = 'consent'; return; }
-      if (NEVER.test(label) || NEVER.test(aria)) continue;
+      if (NEVER.test(label) || NEVER.test(aria) || SEND.test(label) || SEND.test(aria)) continue;
       if (!pick && (CLOSE.test(label) || CLOSE_ARIA.test(aria))) { pick = c; kind = consent ? 'consent' : 'close'; }
     }
   };
@@ -1509,7 +1553,7 @@ _OVERLAY_JS = r"""el => {
   if (pick) pick.setAttribute('data-apply-close', '1');
   return {what: name, kind: kind, text: pick ? (norm(pick.innerText) || norm(pick.value)
     || norm(pick.getAttribute('aria-label'))).slice(0, 60) : '', own: false};
-}""".replace("__CONSENT__", apply_form.CONSENT_ROOTS_JS)
+}""".replace("__CONSENT__", apply_form.CONSENT_ROOTS_JS).replace("__SEND__", _SEND_JS)
 _INTERCEPTED = ("intercepts pointer events", "is not visible", "outside of the viewport")
 
 
@@ -1539,7 +1583,6 @@ def clear_overlay(frame, target) -> dict:
 # its dispatch, before any handler of the page sees it (INV-04: the check
 # and the click are one step). The listener is removed once the run's click
 # is over (`_DISARM_JS`): a later click of the person's is never touched.
-_SEND_JS = r"\\b(submit|apply|send|finish|complete|confirm|finali[sz]e|done)\\b"
 _ARM_JS = """(el, want) => {
   const w = el.ownerDocument.defaultView;
   const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();

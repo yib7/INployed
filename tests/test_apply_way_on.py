@@ -103,6 +103,16 @@ _COVERS = {
                    'Autofill with Resume</button><button type="button">Apply Manually</button>'
                    '<button type="button" aria-label="Close">×</button></div>',
                    ("none", "", True)),
+    # final review B-M6: the application's own fixed footer, no dialog; its
+    # "Skip this step" is never clicked to put it away
+    "own_sticky_bar": ('<div class="step-footer" style="position: fixed; inset: 0; '
+                       'background: #fff"><button type="button">Skip this step</button>'
+                       '<button type="button">Submit application</button></div>',
+                       ("none", "", True)),
+    # final review B-M4: a close that holds a last-step word is never picked
+    "final_word": ('<div id="promo" style="position: fixed; inset: 0; background: #eee">Almost '
+                   'there<button type="button">Skip and finish</button></div>',
+                   ("none", "", False)),
 }
 
 

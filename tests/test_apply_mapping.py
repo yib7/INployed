@@ -36,7 +36,7 @@ def _f(n, label, type_="text", required=False, options=(), section=""):
 
 def _pw(n, label, autocomplete=""):
     return Field(n=n, locator=(0, f"#p{n}"), label=label, type="other", required=True,
-                 id_or_name=f"password{n}", autocomplete=autocomplete)
+                 id_or_name=f"password{n}", autocomplete=autocomplete, secret=True)
 
 
 def _strip_flags(state):

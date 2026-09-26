@@ -80,8 +80,10 @@ def catalog(tmp_path):
 
 
 def _f(n, label, type_="text", required=False, options=(), ident="", help=""):
+    # an `other` control here stands for an `<input type=password>` (the
+    # extractor's type for one, with `secret` set)
     return Field(n=n, locator=(0, f"#f{n}"), label=label, type=type_, required=required,
-                 options=list(options), id_or_name=ident, help=help)
+                 options=list(options), id_or_name=ident, help=help, secret=type_ == "other")
 
 
 def _greenhouse(consent=""):

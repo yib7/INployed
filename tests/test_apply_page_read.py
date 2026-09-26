@@ -29,8 +29,11 @@ from apply_judge import FillPlan  # noqa: E402
 
 
 def _f(n, label, type_="text", required=False, ident="", auto="", options=()):
+    # an `other` control here stands for an `<input type=password>` (the
+    # extractor's type for one, with `secret` set)
     return Field(n=n, locator=(0, f"#f{n}"), label=label, type=type_, required=required,
-                 id_or_name=ident, autocomplete=auto, options=list(options))
+                 id_or_name=ident, autocomplete=auto, options=list(options),
+                 secret=type_ == "other")
 
 
 def _b(n, text, in_form=False):

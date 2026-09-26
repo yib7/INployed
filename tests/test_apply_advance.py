@@ -299,6 +299,23 @@ def test_a_required_field_note_beside_a_menu_is_no_question_and_no_star(browser_
     assert "More submit options" not in [f.label for f in d.fields]
 
 
+def test_a_note_that_ends_in_a_parenthesised_star_is_no_question(browser_page):
+    # final review B-M5: "Required fields are marked with an asterisk (*)"
+    # beside an unlabelled menu is a note, never the menu's question, starred
+    # or not (the starred one parked as a required field without an answer)
+    browser_page.set_content("""<body><form>
+      <div class="tools"><span>* Required fields are marked with an asterisk (*)</span>
+        <button type="button" aria-haspopup="menu">Tools</button></div>
+      <div class="tools2"><span>Required fields are marked with an asterisk (*)</span>
+        <button type="button" aria-haspopup="true">View</button></div>
+      <div class="q"><span>Start month</span>
+        <button type="button" aria-haspopup="listbox">Select</button>
+        <span class="req" aria-hidden="true">*</span></div>
+      </form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [(f.label, f.required) for f in d.fields] == [("Start month", True)]
+
+
 # === values the page reshapes (FILL-01, FILL-04, FILL-05, FILL-06, FILL-08) =============================
 
 def test_a_masked_phone_is_typed_key_by_key_and_verified_by_its_digits(browser_page, fixture_url):

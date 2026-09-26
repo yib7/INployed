@@ -224,6 +224,19 @@ def test_honeypots_read_only_boxes_and_hidden_twins_are_no_fields(browser_page, 
     assert apply_form.extract(browser_page).fields == []
 
 
+def test_a_transparent_box_or_a_box_in_a_transparent_wrapper_is_no_field(browser_page):
+    # final review B-M3: a trap at opacity 0 with no tabindex=-1, or inside a
+    # transparent wrapper, is never a field; a radio behind its label still is
+    browser_page.set_content("""<body><form>
+      <label for="site">Website</label><input id="site" type="text" style="opacity:0">
+      <div style="opacity:0.05"><label for="co">Company</label><input id="co" type="text"></div>
+      <label for="name">Full name</label><input id="name" type="text">
+      <p>Remote?</p><input type="radio" id="r1" name="remote" value="y" style="opacity:0">
+      <label for="r1">Yes</label></form></body>""")
+    d = apply_form.extract(browser_page)
+    assert [f.label for f in d.fields] == ["Full name", "Remote?"]
+
+
 def test_the_harness_breaks_on_a_fill_into_a_honeypot_or_a_read_only_box(browser_page):
     browser_page.set_content("""<body><form>
       <label for="site">Website</label><input id="site" type="text" data-harness-junk="honeypot">
@@ -385,6 +398,58 @@ def test_an_async_combobox_is_typed_in_and_its_match_picked(browser_page):
     assert values[city.n] == "Anytown, California, United States"
 
 
+def test_a_second_typeahead_clicks_its_own_match_never_an_earlier_lists(browser_page):
+    # final review B-M1: the first typeahead's list stays open with its
+    # marks; the second's click took the first mark in the document
+    browser_page.set_content("""<body><form>
+      <div><label for="a">Home city</label><input id="a" autocomplete="off">
+        <ul id="a-list" class="results"></ul></div>
+      <div><label for="b">Work city</label><input id="b" autocomplete="off">
+        <ul id="b-list" class="results"></ul></div></form>
+      <script>
+        for (const id of ['a', 'b']) {
+          const box = document.getElementById(id), list = document.getElementById(id + '-list');
+          box.addEventListener('input', () => { list.innerHTML = '';
+            ['Anytown, CA', 'Shelbyville, IL'].filter((c) => c.toLowerCase().startsWith(
+              box.value.toLowerCase().slice(0, 2))).forEach((c) => {
+              const li = document.createElement('li'); li.textContent = c;
+              li.onclick = () => { box.value = c; box.dataset.picked = c; };
+              list.appendChild(li); }); });
+        }
+      </script></body>""")
+    frame = browser_page.main_frame
+    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#a"), "Anytown")
+    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#b"), "Shelbyville")
+    assert browser_page.locator("#a").input_value() == "Anytown, CA"
+    assert browser_page.locator("#b").input_value() == "Shelbyville, IL"
+    assert browser_page.locator("#a-list li").count() == 1       # the first list stayed open
+
+
+def test_a_line_break_typed_key_by_key_never_submits_the_form(browser_page):
+    # final review B-I1: typed key by key, a value's line break is an Enter,
+    # and an Enter in a one-line box submits its form
+    browser_page.set_content("""<body><form id="app" onsubmit="document.body.dataset.submitted
+        = (document.body.dataset.submitted || '') + 'x'; return false">
+      <label for="addr">Street address *</label><input id="addr" name="addr" required>
+      <label for="city">City</label><input id="city" name="city">
+      <label for="loc">Location</label><input id="loc" name="loc" role="combobox"
+        aria-expanded="false" autocomplete="off">
+      <label for="note">Note</label><textarea id="note" name="note"></textarea>
+      <button>Submit application</button></form></body>""")
+    d = apply_form.extract(browser_page)
+    addr = _planned(_by_label(d, "Street address"), "fill", "12 Main St\r\nApt 4\nRear")
+    assert apply_fill.repair(browser_page, addr).value == "12 Main St Apt 4 Rear"
+    frame = browser_page.main_frame
+    apply_fill._type_ahead(browser_page, frame, browser_page.locator("#city"), "Any\rtown")
+    assert apply_fill._type_to_filter(browser_page, frame, browser_page.locator("#loc"),
+                                      "North\nside") is None
+    note = _planned(_by_label(d, "Note"), "fill", "line one\nline two")
+    assert apply_fill.repair(browser_page, note).value == "line one\nline two"
+    assert browser_page.locator("#city").input_value() == "Any town"
+    assert browser_page.locator("#loc").input_value() == "North side"
+    assert browser_page.evaluate("document.body.dataset.submitted || ''") == ""
+
+
 def test_placeholder_options_are_dropped(browser_page, fixture_url):
     d = _open(browser_page, fixture_url, "lever_cards.html")
     assert _by_label(d, "How did you hear about this job?").options == [
@@ -488,6 +553,22 @@ def test_a_long_lists_pick_question_carries_a_shortlist_for_the_value():
     assert len(names) == apply_judge.OPTIONS_CAP + 1 and "Wisconsin" in names
     assert names[0] == "Wisconsin" and names[-1] == "no_match"
     assert apply_fill._ci_match("United States", ["Canada", "USA"]) == 1
+
+
+@pytest.mark.parametrize("want, options, index", [
+    # final review B-M2: the last fallback holds the value as whole words,
+    # and the shortest option that does wins
+    ("chicago", ["Chicago Heights, IL", "Chicago, IL", "Chicagoland"], 1),
+    ("heights", ["Chicago Heights, IL", "Heightsville"], 0),
+    ("anytown", ["Anytownship, CA", "Anytown, CA, United States"], 1),
+    ("nowhere", ["Nowhereville", "Somewhere"], -1),
+    ("no", ["None", "Nope"], -1),
+    # a comma part may be a name the option's part goes by
+    ("Anytown, CA", ["Anyville, Texas", "Anytown, California, United States"], 1),
+    ("Springfield, IL", ["Springfield, MO", "Springfield, Illinois"], 1),
+    ("", ["Anything"], -1)])
+def test_the_last_match_is_a_whole_word_one_and_the_shortest(want, options, index):
+    assert apply_fill._ci_match(want, options) == index
 
 
 # --- EXT-10: react-select's pick is read from its sibling ----------------------------------------

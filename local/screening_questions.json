@@ -748,7 +748,7 @@
       "expected_fact": "years_experience",
       "expect": {
         "citizen": "No",
-        "sponsor": null
+        "sponsor": "Yes"
       }
     },
     {

@@ -385,8 +385,12 @@ _PROFILE_APPLY = apply_judge.PROFILE_APPLY
 # since a sent application's page can look the same.
 _OPENED_BY_ACCOUNT = frozenset(("application_form", "login_wall", "signup_form"))
 # the reads a page that says a verification link was emailed (and has no box
-# to fill) is taken from: it is the account check (ACC-05)
-_LINK_REMAPS = frozenset(("application_form", "review_page", "login_wall", "signup_form"))
+# to fill) is taken from: it is the account check (ACC-05). A confirmation is
+# one of them: `apply_judge.link_sent` holds no page with received words, and
+# the live judge read "Check your inbox ... click the link in the email to
+# confirm your application" as a confirmation (cycle 18 recording)
+_LINK_REMAPS = frozenset(("application_form", "review_page", "login_wall", "signup_form",
+                          "confirmation"))
 # The loop's send vocabulary: a button whose text has one of `SUBMIT_WORDS`
 # reads as sending the application (`_submit_shaped`), and one with a
 # `FINAL_WORDS` word as a last step (`_final_shaped`). The flow harness checks
@@ -5610,7 +5614,9 @@ class _JobRun:
                 state = "application_form"
                 if any(_is_email_box(f) for f in digest.fields):
                     self.accounts.email_sites.add(_site(digest.url_host or _host(self.page.url)))
-            if state == "confirmation":
+            # a page that says a link was emailed, with no received words, is
+            # the link step below (`_LINK_REMAPS`), whatever else it was read as
+            if state == "confirmation" and not facts.link_sent:
                 step, detail, then = confirmation_step(
                     digest, answers, conf, submit_clicked=self.submit_clicked,
                     code_sent=self._code_sent)
@@ -8502,6 +8508,15 @@ class _JobRun:
                 rec = self._new_page_record(state, conf, digest=digest, answers=answers)
                 judged = seen
                 self.log.info("job %s after submit: %s (%.2f)", self.job_id, state, conf)
+                said = apply_judge.link_sent(digest)
+                if state in _LINK_REMAPS and said:
+                    # ACC-05 after the submit too: a page with no box that
+                    # says a link was emailed, and no received words, waits
+                    # for that link, a confirmation read included
+                    self._decide("remap", f"read as {state} ({conf:.2f}) after the submit "
+                                          f"click; the page says {said!r} and has no box to "
+                                          "fill: the emailed link", to="code_gate")
+                    state = "code_gate"
             self._confirmed(marker, state, conf, digest, watch, code_entered,
                             judged=judged == seen)
             if self._human_check_showing():

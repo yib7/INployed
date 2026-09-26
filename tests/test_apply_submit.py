@@ -1700,6 +1700,35 @@ def test_a_form_read_as_a_confident_confirmation_before_any_submit_goes_on_as_th
     assert (r.status, r.reason) == ("submitted", "confirmation page") and r.ok, r
 
 
+class _LinkPageAsConfirmation(jev.FakeJev):
+    """The fake, reading a page that says a link was emailed ("Check your
+    inbox") as a confirmation, as the live judge did in cycle 18's
+    recording."""
+
+    def judge(self, state, questions):
+        out = super().judge(state, questions)
+        a = out.get("page_state")
+        if a is not None and "check your inbox" in str((state.get("page") or {}).get("title", "")).lower():
+            out["page_state"] = jev.Answer(kind="choice", choice="confirmation",
+                                           probabilities={"confirmation": 0.875,
+                                                          a.choice: 0.125},
+                                           confidence=0.875)
+        return out
+
+
+@pytest.mark.parametrize("name", ["link_after_submit", "link_after_answers",
+                                  "link_after_answers_park"])
+def test_a_link_page_read_as_a_confirmation_is_still_the_emailed_link_step(
+        name, _browser, flow_server, tmp_path):
+    # cycle 18 recording: the live judge read link_sent.html as a confirmation
+    # (0.875 after the submit, 0.74 after the answers). The page says a link was
+    # emailed and holds no received words, so it is the link step: after the
+    # submit a "submitted" there went out unconfirmed (FALSE-SUBMITTED)
+    r = h.run_flow(h.flow(name), _LinkPageAsConfirmation(), "misread", browser=_browser,
+                   server=flow_server, workdir=tmp_path)
+    assert r.ok and not r.breaks, r
+
+
 def test_a_confirmation_before_any_submit_never_reads_as_submitted(tmp_path):
     digest = apply_form.FormDigest("jobs.example", "Thanks", "Thank you for applying.")
     answers = {"page_state": jev.Answer(kind="choice", choice="confirmation", confidence=1.0,

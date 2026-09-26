@@ -547,7 +547,11 @@ qualified one. A field that asks something narrower or the reverse of a saved an
 answered only when that answer covers it: "authorized to work without sponsorship" is answered
 from your authorization and sponsorship answers together, while your total years of experience
 does not answer "years of Python experience", so a required field like that stops the job for
-you.
+you. The same goes for a question naming another country, a city, a visa type, a number of
+years or your current job, and for a status list under a "Work authorization" heading. A custom
+yes, no or number answer you add fills only the question it was saved for, word for word. When
+a job stops on a question like that, add a custom answer with the question exactly as the form
+words it, then run the job again.
 
 **Test my answers.** Click **Test my answers** to run the shipped screening questions against
 your saved, confirmed answers, off the UI thread, with the judge your Auto-apply judge setting

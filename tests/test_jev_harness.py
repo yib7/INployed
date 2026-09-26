@@ -74,9 +74,22 @@ def test_cache_path_comes_from_the_env_else_the_tracked_fixture_file(tmp_path):
     assert jev_harness.cache_path_from({jev.CACHE_ENV: str(tmp_path / "c.json")}) == tmp_path / "c.json"
 
 
-def test_cap_comes_from_the_env_and_defaults_to_what_the_approval_has_left():
-    assert jev_harness.cap_from({}) == jev_harness.DEFAULT_CAP_USD == 0.93
+def test_cap_comes_from_the_env_and_a_live_recording_without_it_is_refused(tmp_path):
+    # C KM2: a live recording names its cap; only a dry run has a default
     assert jev_harness.cap_from({jev_harness.CAP_ENV: "0.25"}) == 0.25
+    with pytest.raises(ValueError, match=jev_harness.CAP_ENV):
+        jev_harness.cap_from({})
+    assert jev_harness.cap_from({}, live=False) == jev_harness.DRY_CAP_USD == 0.88
+    key = {jev.KEY_ENV: "k-test", jev_harness.MODE_ENV: "record"}
+    with pytest.raises(ValueError, match="jev_record.ps1 -Cap"):
+        jev_harness.Session("record", tmp_path / "cache.json", env=key)
+    with pytest.raises(ValueError, match=jev_harness.CAP_ENV):
+        jev_harness.Session.from_env(key)
+    assert not (tmp_path / "cache.json").exists()
+    dry = jev_harness.Session.from_env({**key, jev_harness.DRY_ENV: "1"})
+    assert dry.dry and dry.cap_usd == 0.88
+    assert jev_harness.Session.from_env({**key, jev_harness.CAP_ENV: "0.3"}).cap_usd == 0.3
+    assert jev_harness.Session("replay", tmp_path / "cache.json", env={}).cap_usd == 0.88
 
 
 def test_fake_mode_hands_out_a_fresh_fake_and_never_opens_the_cache(tmp_path):
@@ -103,7 +116,7 @@ def test_record_mode_records_through_the_live_factory(tmp_path, monkeypatch):
     live = _Bumping()
     monkeypatch.setattr(jev_harness, "live_judge", lambda: live)
     cache = tmp_path / "cache.json"
-    s = jev_harness.Session("record", cache, env={jev.KEY_ENV: "k-test"})
+    s = jev_harness.Session("record", cache, cap_usd=1.0, env={jev.KEY_ENV: "k-test"})
     s.begin("t::a")
     s.judge().judge(STATE, QUESTIONS)
     assert live.calls == 1 and cache.is_file()
@@ -112,7 +125,7 @@ def test_record_mode_records_through_the_live_factory(tmp_path, monkeypatch):
 
 
 def test_record_mode_without_a_key_skips_with_the_reason(tmp_path):
-    s = jev_harness.Session("record", tmp_path / "cache.json", env={})
+    s = jev_harness.Session("record", tmp_path / "cache.json", cap_usd=1.0, env={})
     reason = s.skip_reason()
     assert reason and jev.KEY_ENV in reason and "record" in reason
 
@@ -137,7 +150,9 @@ def test_replay_miss_is_recorded_on_the_test_and_re_raised(tmp_path):
     assert rec.misses[0]["questions"] == ["page_state", "verify_0"]
     text = s.miss_text(rec)
     assert "jev_judge" in text and "tests/test_apply_run.py::test_a" in text
-    assert "AUTO_APPLY_TEST_JEV=record" in text and str(tmp_path / "cache.json") in text
+    # C KM2: the re-record command is the script, which names the cap
+    assert r"jev_record.ps1 -Target runner -Cap <USD>" in text
+    assert str(tmp_path / "cache.json") in text
 
 
 class _Raising:
@@ -152,7 +167,8 @@ def test_observed_records_only_the_exception_type_and_re_raises(tmp_path, monkey
     """An SDK / HTTP error in record mode lands in `outcomes.jsonl` as the type
     name alone: the message can quote the request, the URL or the key."""
     monkeypatch.setattr(jev_harness, "live_judge", lambda: _Raising())
-    s = jev_harness.Session("record", tmp_path / "cache.json", env={jev.KEY_ENV: "k-test"})
+    s = jev_harness.Session("record", tmp_path / "cache.json", cap_usd=1.0,
+                            env={jev.KEY_ENV: "k-test"})
     rec = s.begin("t::boom")
     with pytest.raises(RuntimeError):
         s.judge().judge(STATE, QUESTIONS)
@@ -348,11 +364,16 @@ def test_the_record_script_takes_a_live_recording_only_with_a_cap_above_zero(tmp
     assert said in res.stdout, res.stdout + res.stderr
 
 
-def test_the_cap_env_parses_and_defaults():
-    # the default is what the cycle's approval had left under its limit
-    # after SP8b, never the whole approval
-    assert jev.record_cap({}) == jev.DEFAULT_RECORD_CAP_USD == 0.93
+def test_the_cap_env_parses_and_only_a_dry_run_has_a_default():
+    # C KM2: a live recording names its cap; the dry run's default is what
+    # the cycle's approval had left under its limit after SP8b
+    with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):
+        jev.record_cap({})
+    with pytest.raises(ValueError, match=jev.RECORD_CAP_ENV):
+        jev.record_cap({jev.RECORD_CAP_ENV: "  "})
+    assert jev.record_cap({}, live=False) == jev.DRY_RECORD_CAP_USD == 0.88
     assert jev.record_cap({jev.RECORD_CAP_ENV: " 0.35 "}) == 0.35
+    assert jev.record_cap({jev.RECORD_CAP_ENV: " 0.35 "}, live=False) == 0.35
     assert jev_harness.dry_from({jev_harness.DRY_ENV: "1"})
     assert jev_harness.dry_from({jev_harness.DRY_ENV: "Yes"})
     assert not jev_harness.dry_from({}) and not jev_harness.dry_from({jev_harness.DRY_ENV: "0"})
@@ -461,12 +482,27 @@ def cjev():
 def test_configure_refuses_record_mode_on_an_xdist_worker(cjev, monkeypatch, tmp_path):
     monkeypatch.setenv(jev_harness.MODE_ENV, "record")
     monkeypatch.setenv(jev.KEY_ENV, "k-test")
+    monkeypatch.setenv(jev.RECORD_CAP_ENV, "0.5")
     monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
     cfg = _FakeConfig(worker=True)    # this config's own workerinput: a real worker
     with pytest.raises(pytest.UsageError) as exc:
         cjev.pytest_configure(cfg)
     assert jev_harness.serial_command("record") in str(exc.value)
     assert not (tmp_path / "cache.json").exists()
+    assert not (tmp_path / "outcomes.jsonl").exists()
+
+
+def test_configure_refuses_a_live_recording_that_names_no_cap(cjev, monkeypatch, tmp_path):
+    # C KM2: the run stops before any test, with the variable named
+    monkeypatch.setenv(jev_harness.MODE_ENV, "record")
+    monkeypatch.setenv(jev.KEY_ENV, "k-test")
+    monkeypatch.delenv(jev.RECORD_CAP_ENV, raising=False)
+    monkeypatch.delenv(jev_harness.DRY_ENV, raising=False)
+    monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
+    cfg = _FakeConfig()
+    with pytest.raises(pytest.UsageError, match=jev.RECORD_CAP_ENV):
+        cjev.pytest_configure(cfg)
+    assert cjev.SESSION_KEY not in cfg.stash
     assert not (tmp_path / "outcomes.jsonl").exists()
 
 
@@ -490,6 +526,7 @@ def test_configure_ignores_xdist_in_fake_mode(cjev, monkeypatch, tmp_path):
 def test_configure_runs_record_mode_serially(cjev, monkeypatch, tmp_path):
     monkeypatch.setenv(jev_harness.MODE_ENV, "record")
     monkeypatch.setenv(jev.KEY_ENV, "k-test")
+    monkeypatch.setenv(jev.RECORD_CAP_ENV, "0.5")
     monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
     cfg = _FakeConfig()           # no -n: neither a worker nor a busy controller
     cjev.pytest_configure(cfg)    # must not raise
@@ -573,7 +610,7 @@ def test_fixture_in_replay_mode_fails_a_miss_naming_the_fixture_and_test(
     result.assert_outcomes(failed=3)
     out = result.stdout.str()
     assert "jev_judge" in out and "test_inner.py::test_one" in out
-    assert "AUTO_APPLY_TEST_JEV=record" in out
+    assert "jev_record.ps1 -Target runner -Cap <USD>" in out
 
 
 def test_fixture_in_replay_mode_replays_and_turns_a_divergence_into_an_xfail(
@@ -599,6 +636,7 @@ def test_fixture_in_replay_mode_replays_and_turns_a_divergence_into_an_xfail(
 def test_fixture_in_record_mode_without_a_key_skips_every_test(pytester, monkeypatch, tmp_path):
     monkeypatch.setenv(jev_harness.MODE_ENV, "record")
     monkeypatch.delenv(jev.KEY_ENV, raising=False)
+    monkeypatch.setenv(jev.RECORD_CAP_ENV, "0.5")
     monkeypatch.setenv(jev.CACHE_ENV, str(tmp_path / "cache.json"))
     _inner(pytester)
     result = pytester.runpytest_inprocess("-q", "-rs", "-p", "no:cacheprovider")

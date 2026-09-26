@@ -118,6 +118,14 @@ for _leaked in (
 ):
     os.environ.pop(_leaked, None)
 
+# The judge's key (`jev.get()` builds the typesafe judge by default): a key
+# exported in the shell must never reach a test that builds the judge with no
+# key argument. Only a recording run keeps it (`scripts/jev_record.ps1`
+# exports it for that one run).
+if not any((os.environ.get(_mode) or "").strip().lower() == "record"
+           for _mode in ("AUTO_APPLY_TEST_JEV", "AUTO_APPLY_CAPTURE_JEV")):
+    os.environ.pop("TYPESAFE_API_KEY", None)
+
 # Whatever a stray default resolves to, it must not be the real Downloads folder.
 os.environ["RESUME_TAILOR_OUTPUT"] = tempfile.mkdtemp(prefix="inployed-test-output-")
 

@@ -9,13 +9,15 @@
   cache. Needs `TYPESAFE_API_KEY` in the environment (the fixture skips with
   the reason when it is unset). `jev.SpendCap` refuses a live request whose
   estimated cost would take the session's spend past
-  `AUTO_APPLY_RECORD_USD_CAP` (default `jev.DEFAULT_RECORD_CAP_USD`); the test it stops skips
-  with the reason, and so does every test after it.
+  `AUTO_APPLY_RECORD_USD_CAP`, which a live recording must set (the run is
+  refused without it); the test it stops skips with the reason, and so does
+  every test after it.
 - `record` with `AUTO_APPLY_RECORD_DRY=1`: the dry run. The fake answers in
   place of the live model and each request counts at its estimated size
   (`jev.DryRun`), over a temp copy of the cache: the request count and the
-  spend a recording would make, and the cap at work, with no key, no network
-  and the cache left as it was.
+  spend a recording would make, and the cap at work (`jev.DRY_RECORD_CAP_USD`
+  when the variable is unset), with no key, no network and the cache left as
+  it was.
 - `replay`: `ReplayJev(None, cache)`; a miss raises `JevUnavailable` inside
   the runner (which parks the job as failed) and the harness turns that into a
   test failure naming the fixture, the test and the re-record command.
@@ -51,10 +53,13 @@ from jsonutil import read_json_dict  # noqa: E402
 MODE_ENV = "AUTO_APPLY_TEST_JEV"
 CAP_ENV = jev.RECORD_CAP_ENV
 DRY_ENV = "AUTO_APPLY_RECORD_DRY"
-DEFAULT_CAP_USD = jev.DEFAULT_RECORD_CAP_USD
+DRY_CAP_USD = jev.DRY_RECORD_CAP_USD
 MODES = ("fake", "record", "replay")
 FIXTURE = "jev_judge"
 RUNNER_TESTS = "tests/test_apply_run.py tests/test_apply_run_boundaries.py"
+# the recording command a miss points at: the script sets the cap, exports
+# the key for one run and runs the runner tests serially
+RECORD_COMMAND = r".\scripts\jev_record.ps1 -Target runner -Cap <USD>"
 
 
 def mode_from(env: Mapping[str, str]) -> str:
@@ -68,8 +73,10 @@ def serial_command(mode: str) -> str:
     """The one-process record/replay command. Never add -n/--numprocesses to
     it: `record` and `replay` read-modify-write a shared repo-tree cache and
     truncate/append a shared outcomes file with no cross-process lock, so
-    `conftest_jev.pytest_configure` refuses to run either mode under xdist."""
-    return f"{MODE_ENV}={mode} QT_QPA_PLATFORM=offscreen python -m pytest {RUNNER_TESTS} -q"
+    `conftest_jev.pytest_configure` refuses to run either mode under xdist.
+    A live recording names its cap."""
+    cap = f"{CAP_ENV}=<USD> " if mode == "record" else ""
+    return f"{cap}{MODE_ENV}={mode} QT_QPA_PLATFORM=offscreen python -m pytest {RUNNER_TESTS} -q"
 
 
 def cache_path_from(env: Mapping[str, str]) -> Path:
@@ -77,8 +84,10 @@ def cache_path_from(env: Mapping[str, str]) -> Path:
     return Path(raw) if raw else REPO / jev.DEFAULT_CACHE
 
 
-def cap_from(env: Mapping[str, str]) -> float:
-    return jev.record_cap(env)
+def cap_from(env: Mapping[str, str], *, live: bool = True) -> float:
+    """`AUTO_APPLY_RECORD_USD_CAP`; a live recording without it is refused
+    (ValueError), anything else takes `jev.DRY_RECORD_CAP_USD`."""
+    return jev.record_cap(env, live=live)
 
 
 def dry_from(env: Mapping[str, str]) -> bool:
@@ -141,17 +150,20 @@ class Session:
     """One pytest run's harness state: the mode, the shared replay cache, the
     per-test records, the live spend and the cap."""
 
-    def __init__(self, mode: str, cache_path: Path, cap_usd: float = DEFAULT_CAP_USD,
+    def __init__(self, mode: str, cache_path: Path, cap_usd: float | None = None,
                  env: Mapping[str, str] | None = None, *, dry: bool = False):
         if mode not in MODES:
             raise ValueError(f"unknown harness mode {mode!r}")
         self.mode = mode
         self.dry = bool(dry) and mode == "record"
+        self.env = os.environ if env is None else env
+        # checked before the dry copy is made: a live recording without a cap
+        # is refused (ValueError) before anything is written
+        self.cap_usd = (cap_from(self.env, live=self.live) if cap_usd is None
+                        else float(cap_usd))
         # a dry run writes its fake answers into a temp copy, never the cache
         self.source_cache = Path(cache_path)
         self.cache_path = dry_copy(cache_path) if self.dry else Path(cache_path)
-        self.cap_usd = float(cap_usd)
-        self.env = os.environ if env is None else env
         self.replay: jev.ReplayJev | None = None
         self.cap: jev.SpendCap | None = None
         self.records: dict[str, TestRecord] = {}
@@ -165,8 +177,12 @@ class Session:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Session:
         env = os.environ if env is None else env
-        return cls(mode_from(env), cache_path_from(env), cap_from(env), env=env,
-                   dry=dry_from(env))
+        return cls(mode_from(env), cache_path_from(env), None, env=env, dry=dry_from(env))
+
+    @property
+    def live(self) -> bool:
+        """A recording through the live model (record mode, not the dry run)."""
+        return self.mode == "record" and not self.dry
 
     @property
     def soft(self) -> bool:
@@ -232,10 +248,12 @@ class Session:
         ids = sorted({q for m in record.misses for q in m["questions"]})
         return (f"Jev replay cache miss in {record.test} (fixture `{FIXTURE}`, cache "
                 f"{self.cache_path}): {len(record.misses)} request(s) with question ids "
-                f"{ids}. Re-record with {serial_command('record')} (a key and a small "
-                f"spend; run it serially, never with -n/--numprocesses: record and "
-                f"replay write a shared cache and outcomes file with no cross-process "
-                f"lock, see conftest_jev.pytest_configure), or run the one test with -k.")
+                f"{ids}. Re-record with {RECORD_COMMAND} (a live recording: a key and "
+                f"a spend up to the cap you name, at most what the spend ledger has "
+                f"left; the script runs the tests serially, never with "
+                f"-n/--numprocesses: record and replay write a shared cache and "
+                f"outcomes file with no cross-process lock, see "
+                f"conftest_jev.pytest_configure).")
 
 
 # --- the module-level factory the test helpers call ----------------------------------

@@ -170,12 +170,14 @@ RETRY_DELAYS_S = (5.0, 15.0, 40.0)
 RETRY_AFTER_CAP_S = 60.0     # a longer Retry-After reads as the judge being down
 _BUSY_STATUS = frozenset((408, 409, 425, 429))
 _OVERLOADED_STATUS = frozenset((503, 529))      # the service, whoever asks
-_REFUSED_STATUS = frozenset((401, 402, 403))    # the key or the account
+# the key or the account (401, 402, 403), or a model the service retired or
+# renamed (404, 410): no wait mends either, and every job would fail on it
+_REFUSED_STATUS = frozenset((401, 402, 403, 404, 410))
 
 
 class JudgeOutage(RuntimeError):
     """The judge stayed unreachable through the retries, asked for a longer
-    wait than `RETRY_AFTER_CAP_S`, or refused the key. `kind` names the
+    wait than `RETRY_AFTER_CAP_S`, or refused the key or the model. `kind` names the
     error's class and status, never its message (a service error can quote
     the request, which carries the page and the applicant's facts)."""
 
@@ -236,9 +238,10 @@ class Guarded:
     or 5xx, a dropped connection, a timeout) is tried again after each of
     `delays`, or after the service's Retry-After when that is longer. When
     the last try fails too, when the service asks for a wait over
-    `RETRY_AFTER_CAP_S`, or when it refuses the key (401, 402, 403), the
-    breaker opens: `down` names the error's class and status, `refused`
-    says it was the key (no wait mends that), and every later request
+    `RETRY_AFTER_CAP_S`, or when it refuses the key (401, 402, 403) or no
+    longer has the model (404, 410), the breaker opens: `down` names the
+    error's class and status, `refused` says it was the key or the model
+    (no wait mends either), and every later request
     raises `JudgeOutage` at once, so the run can hand its job back to the
     queue and stop the drain. Any other error (a request the service
     rejected, a bug) passes through as it was. `answers` counts the
@@ -977,10 +980,14 @@ class ReplayJev:
 # --- a recording's spend cap (SP8b) ------------------------------------------------------
 
 RECORD_CAP_ENV = "AUTO_APPLY_RECORD_USD_CAP"
-# What cycle 17's 1.00 USD approval had left under its 0.95 limit after SP8b
-# (0.95 - 0.0694, rounded down). `scripts/jev_record.ps1` takes no default for
-# a live recording: its `-Cap` is required there.
-DEFAULT_RECORD_CAP_USD = 0.93
+# A live recording names its cap (`AUTO_APPLY_RECORD_USD_CAP`, which
+# `scripts/jev_record.ps1 -Cap` sets): at most what the spend ledger has left
+# under the approval's limit, and only the person reading the ledger knows
+# that, so `record_cap` refuses a live recording without it. A dry run spends
+# nothing and takes this cap when it names none: what cycle 17's approval had
+# left under its 0.95 USD limit after SP8b's 0.0694 USD (rounded down), so its
+# estimate stops where such a recording would have to.
+DRY_RECORD_CAP_USD = 0.88
 
 
 class SpendCapReached(JevUnavailable):
@@ -1000,12 +1007,19 @@ def checked_cap(value: Any, *, source: str = RECORD_CAP_ENV) -> float:
     return cap
 
 
-def record_cap(env: Mapping[str, str] | None = None) -> float:
-    """The recording's cap in USD: `AUTO_APPLY_RECORD_USD_CAP`, else
-    `DEFAULT_RECORD_CAP_USD`; ValueError for a value that is no finite amount
-    above 0 (`checked_cap`)."""
+def record_cap(env: Mapping[str, str] | None = None, *, live: bool = True) -> float:
+    """The recording's cap in USD: `AUTO_APPLY_RECORD_USD_CAP` (ValueError
+    for a value that is no finite amount above 0, `checked_cap`). Without
+    it a live recording is refused (ValueError naming the variable); a dry
+    run (`live` False) takes `DRY_RECORD_CAP_USD`."""
     raw = ((os.environ if env is None else env).get(RECORD_CAP_ENV) or "").strip()
-    return checked_cap(raw) if raw else DEFAULT_RECORD_CAP_USD
+    if raw:
+        return checked_cap(raw)
+    if live:
+        raise ValueError(f"{RECORD_CAP_ENV} is not set: a live recording names its cap, at most "
+                         f"what the spend ledger has left under the limit "
+                         f"(scripts/jev_record.ps1 -Cap <USD>)")
+    return DRY_RECORD_CAP_USD
 
 
 class SpendCap:

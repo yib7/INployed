@@ -57,7 +57,12 @@ def _xdist_active(config) -> bool:
 def pytest_configure(config):
     if SESSION_KEY in config.stash:
         return
-    session = jev_harness.Session.from_env()
+    try:
+        session = jev_harness.Session.from_env()
+    except ValueError as e:
+        # an unknown mode, a cap that is no amount above 0, or a live
+        # recording with no cap: nothing runs
+        raise pytest.UsageError(str(e)) from None
     config.stash[SESSION_KEY] = session
     if session.soft:
         # SP3.5 review finding 1: record/replay read-modify-write a shared

@@ -87,8 +87,10 @@ class _Reads:
             inner = None
         else:
             self.cache = jev_harness.dry_copy(cache) if mode == "dry" else cache
+            # a live recording names its cap (refused without it); a dry run
+            # has a default
             self.cap = jev.SpendCap(jev.DryRun() if mode == "dry" else jev.TypeSafeJev(),
-                                    jev.record_cap())
+                                    jev.record_cap(live=mode != "dry"))
             inner = self.cap
         self.judge = jev.ReplayJev(inner, self.cache)
         self.rows: list[dict] = []

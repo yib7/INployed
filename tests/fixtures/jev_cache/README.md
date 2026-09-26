@@ -68,10 +68,12 @@ against the page-read gate):
 
 ## Cost guard
 
-Every live entry point honours `AUTO_APPLY_RECORD_USD_CAP` (`-Cap` sets it,
-and a live recording through `jev_record.ps1` must pass one; without the
-variable the Python entry points take 0.93 USD, what the cycle's approval had
-left under its limit after SP8b). A cap that is no finite amount above 0
+Every live entry point honours `AUTO_APPLY_RECORD_USD_CAP` (`-Cap` sets it).
+A live recording names its cap, at most what the spend ledger has left under
+the limit: `jev_record.ps1` refuses a live run without `-Cap`, and the Python
+entry points refuse one without the variable. Only a dry run or a replay
+(neither spends anything) has a default, 0.88 USD, what the cycle's approval
+had left under its limit after SP8b. A cap that is no finite amount above 0
 (NaN, inf, 0) is refused. `jev.SpendCap` checks each request before it
 leaves: when the spend so far plus the request's estimated cost (chars/3
 tokens at 0.042 USD per million input tokens) would pass the cap, the request

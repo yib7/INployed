@@ -18,8 +18,10 @@
 # in .env, and exports it to this one process only; the value is never printed.
 # Every live entry point stops at the cap (AUTO_APPLY_RECORD_USD_CAP, from -Cap):
 # a request whose estimated cost would pass it is never sent. A live recording
-# must pass -Cap (no default); a dry run or a replay spends nothing and takes
-# 0.93 when it is left out. -Dry answers with
+# must pass -Cap (no default, and the Python entry points refuse one without
+# the variable); a dry run or a replay spends nothing and takes 0.88 (what the
+# cycle's approval had left under its limit after SP8b) when it is left out.
+# -Dry answers with
 # the fake at each request's estimated size into a temp copy of the cache, with
 # no key: the request count and the spend a recording would make. When the run
 # ends, the variables this script set are removed, so a later plain pytest stays
@@ -31,7 +33,7 @@ param(
     [string]$Mode = "record",
     [ValidateSet("runner", "matrix", "captures")]
     [string]$Target = "runner",
-    [double]$Cap = 0.93,
+    [double]$Cap = 0.88,
     [string]$Cache = "",
     [string]$Flows = "",
     [string]$Json = "",

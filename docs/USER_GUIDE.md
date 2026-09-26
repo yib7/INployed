@@ -504,7 +504,9 @@ clicks the final submit.** At a login / account / verification / CAPTCHA wall it
 asks you to do that one step, then resumes. Where the form asks for an electronic signature
 it types your name + today's date; a required field with no answer gets a `XXXXX`
 placeholder it flags for you. Manage your reusable answers (including address) in the
-**Apply Answers** tab (see *Your saved answers* below).
+**Apply Answers** tab (see *Your saved answers* below). Before a manual apply,
+`python local/apply_queue.py refresh-answers <id>` rewrites that job's apply sheet from your
+saved answers.
 
 CLI equivalent (from `local/`): `python -m resume_tailor.apply --job-id <id> --open`.
 
@@ -538,6 +540,14 @@ backup** when a good `.bak` copy sits next to it.
 field from an answer that is both set and confirmed. An answer you typed but left unconfirmed,
 or left blank, reads as not set: an optional field it would have filled stays blank, and a
 required one stops the job for you (see *Where a drain stops* below).
+
+**A field gets an answer only for its own question.** A saved yes or no matches only its own
+option: on a dropdown offering "Yes" and "Yes, on a work visa", a saved Yes never becomes the
+qualified one. A field that asks something narrower or the reverse of a saved answer is
+answered only when that answer covers it: "authorized to work without sponsorship" is answered
+from your authorization and sponsorship answers together, while your total years of experience
+does not answer "years of Python experience", so a required field like that stops the job for
+you.
 
 **Test my answers.** Click **Test my answers** to run the shipped screening questions against
 your saved, confirmed answers, off the UI thread, with the judge your Auto-apply judge setting

@@ -67,6 +67,12 @@ _OLD_QUESTIONS = {
 }
 
 
+def test_all_exports_the_documented_constants():
+    for name in ("VERSION", "YES_NO", "TEXT_MAX", "NOTE_MAX", "STATE_TEXT_MAX", "NUMBER_MAX"):
+        assert name in aa.__all__, name
+        assert hasattr(aa, name), name
+
+
 # --- ST-1 / ST-2: the built-ins, their options and the seed -------------------------------
 
 def test_builtins_are_ordered_and_typed_as_the_spec_lists_them():
@@ -191,7 +197,7 @@ def test_fact_value_gives_nothing_when_unset_or_unconfirmed():
 
 
 def test_fact_value_gives_nothing_for_an_answer_that_does_not_fit_its_type():
-    # a hand-edited file: the run gets nothing rather than a second reading
+    # a hand-edited file: an answer that no longer fits its type reads as unset
     assert aa.fact_value(_v2("work_authorized", "Yes, I am a US citizen")) == ""
     assert aa.fact_value(_v2("years_experience", "3+")) == ""
     assert aa.fact_value(_v2("gender", "Man")) == ""
@@ -216,7 +222,13 @@ def test_answer_store_error_names_the_path_and_reason(tmp_path):
     ('{"version": 2, "answers": [1]}', "answer 1 is not a record"),
     ('{"answers": [{"id": "a"}, 3]}', "answer 2 is not a record"),
     ('{"version": 9, "answers": []}', "version"),
+    ('{"version": true, "answers": []}', "version"),
     ('{"version": 2, "answers": [], "review": {}}', "review"),
+    ('{"version": 2, "answers": [], "review": ["x"]}', "review item 1"),
+    ('{"version": 2, "answers": [], "review": '
+     '[{"id": "a", "question": "Q", "before": "x"}]}', "review item 1"),
+    ('{"version": 2, "answers": [], "review": '
+     '[{"id": 1, "question": "Q", "before": "x", "after": "y"}]}', "review item 1"),
 ])
 def test_a_damaged_file_raises_and_never_falls_back_to_defaults(tmp_path, text, reason):
     path = tmp_path / "apply_answers.json"
@@ -234,6 +246,13 @@ def test_a_file_that_is_not_utf8_raises(tmp_path):
     path.write_bytes(b'\xff\xfe{"answers": []}')
     with pytest.raises(aa.AnswerStoreError):
         aa.load(path)
+
+
+def test_a_bom_prefixed_file_reads_and_is_not_damaged(tmp_path):
+    path = tmp_path / "apply_answers.json"
+    payload = json.dumps({"version": 2, "answers": [], "review": []})
+    path.write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+    assert aa.load(path) == []
 
 
 def test_load_absent_file_seeds_and_migrates(tmp_path, monkeypatch):
@@ -312,6 +331,31 @@ def test_save_refuses_to_write_over_a_damaged_file(tmp_path):
         aa.save(aa.seed_defaults(), path)
     assert path.read_text(encoding="utf-8") == "not json{"
     assert bak.read_text(encoding="utf-8") == "the good copy"
+
+
+def test_restore_bytes_keeps_a_good_bak_when_the_current_file_is_damaged(tmp_path):
+    # SP1 fix round 1, item 1: reverting a damaged store used to copy the
+    # damaged bytes over the one good backup, destroying it.
+    path = tmp_path / "apply_answers.json"
+    bak = path.with_name(path.name + ".bak")
+    bak.write_text("the good copy", encoding="utf-8")
+    path.write_text("not json{", encoding="utf-8")
+    good_snapshot = json.dumps({"version": 2, "answers": [], "review": []}).encode("utf-8")
+    aa.restore_bytes(good_snapshot, path)
+    assert bak.read_text(encoding="utf-8") == "the good copy"
+    assert path.read_bytes() == good_snapshot
+
+
+def test_restore_bytes_still_backs_up_a_readable_current_file(tmp_path):
+    path = tmp_path / "apply_answers.json"
+    bak = path.with_name(path.name + ".bak")
+    current = json.dumps({"version": 2, "answers": [], "review": []}).encode("utf-8")
+    path.write_bytes(current)
+    snapshot = json.dumps({"version": 2, "answers": [_v2("how_did_you_hear", "LinkedIn")],
+                          "review": []}).encode("utf-8")
+    aa.restore_bytes(snapshot, path)
+    assert bak.read_bytes() == current
+    assert path.read_bytes() == snapshot
 
 
 def test_save_rejects_invalid(tmp_path):
@@ -406,6 +450,19 @@ def test_outside_the_us_the_state_is_text_and_the_zip_is_free():
                  _v2("address_zip", "K1A 0B1")]
         errs = aa.validate(store)
         assert any("state" in e for e in errs) and any("ZIP" in e for e in errs), errs
+
+
+def test_validate_does_not_limit_a_choice_entrys_note():
+    # the 300-character cap applies only to yes_no and number (a migrated
+    # unmatched choice keeps its full original text as the note)
+    entry = _v2("gender", "Male", note="n" * 400)
+    assert aa.validate([entry]) == []
+
+
+def test_a_missing_address_country_entry_still_applies_the_us_rules():
+    store = [_v2("address_state", "Ontario"), _v2("address_zip", "K1A 0B1")]
+    errs = aa.validate(store)
+    assert any("state" in e for e in errs) and any("ZIP" in e for e in errs), errs
 
 
 def test_validate_ignores_the_legacy_kind_and_flags_duplicate_ids():
@@ -510,6 +567,15 @@ def test_migrate_keeps_an_unreadable_yes_no_as_a_note_for_review():
     ("2.75", "", "2.75"),
     ("100", "", "100"),
     ("75", "", "75"),
+    ("3 1/2 years", "", "3 1/2 years"),          # a fraction after a space is unreadable
+    # words for zero years of experience migrate to "0", the full text kept as the note
+    ("less than 1 year", "0", "less than 1 year"),
+    ("Less than one year", "0", "Less than one year"),
+    ("under 1 year", "0", "under 1 year"),
+    ("<1", "0", "<1"),
+    ("< 1 year", "0", "< 1 year"),
+    ("None", "0", "None"),
+    ("no experience", "0", "no experience"),
 ])
 def test_migrate_reads_a_leading_number(text, answer, note):
     out, review = aa.migrate_v1([_v1("years_experience", text)])
@@ -529,10 +595,59 @@ def test_migrate_reads_a_leading_number(text, answer, note):
     ("address_country", "U.S.", "United States"),
     ("address_state", "MA", "Massachusetts"),
     ("address_state", "new york", "New York"),
+    # SP1 fix round 1, item 3: short EEO answer aliases, applied per id
+    ("gender", "Man", "Male"),
+    ("gender", "M", "Male"),
+    ("gender", "Woman", "Female"),
+    ("gender", "F", "Female"),
+    ("race_ethnicity", "Black", "Black or African American"),
+    ("race_ethnicity", "African American", "Black or African American"),
+    ("race_ethnicity", "Hispanic", "Hispanic or Latino"),
+    ("race_ethnicity", "Latino", "Hispanic or Latino"),
+    ("race_ethnicity", "Latina", "Hispanic or Latino"),
+    ("race_ethnicity", "Latinx", "Hispanic or Latino"),
+    ("race_ethnicity", "Native American", "American Indian or Alaska Native"),
+    ("race_ethnicity", "Pacific Islander", "Native Hawaiian or Other Pacific Islander"),
+    ("race_ethnicity", "Caucasian", "White"),
+    ("race_ethnicity", "Multiracial", "Two or more races"),
+    ("race_ethnicity", "Mixed", "Two or more races"),
+    ("race_ethnicity", "Two or more", "Two or more races"),
+    ("veteran_status", "No", "I am not a protected veteran"),
+    ("veteran_status", "Not a veteran", "I am not a protected veteran"),
+    ("veteran_status", "Non-veteran", "I am not a protected veteran"),
+    ("veteran_status", "Yes",
+     "I identify as one or more of the classifications of protected veteran"),
+    ("veteran_status", "Protected veteran",
+     "I identify as one or more of the classifications of protected veteran"),
+    ("disability_status", "No",
+     "No, I do not have a disability and have not had one in the past"),
+    ("disability_status", "No disability",
+     "No, I do not have a disability and have not had one in the past"),
+    ("disability_status", "I do not have a disability",
+     "No, I do not have a disability and have not had one in the past"),
+    ("disability_status", "Yes", "Yes, I have a disability, or have had one in the past"),
+    ("disability_status", "I have a disability",
+     "Yes, I have a disability, or have had one in the past"),
 ])
 def test_migrate_matches_a_choice_by_case_and_the_alias_table(eid, text, want):
     out, _ = aa.migrate_v1([_v1(eid, text)])
     assert (out[0]["answer"], out[0]["note"], out[0]["confirmed"]) == (want, "", True)
+
+
+def test_a_trailing_period_or_extra_spaces_never_blocks_an_exact_match():
+    for text in ("Female.", "  Female  ", "female."):
+        out, _ = aa.migrate_v1([_v1("gender", text)])
+        assert out[0]["answer"] == "Female", text
+
+
+def test_a_state_code_alias_applies_only_to_address_state():
+    # SP1 fix round 1, item 6: "Georgia" is both a US state and a country, so a
+    # v1 country answer of "GA" must not become the country Georgia.
+    out, review = aa.migrate_v1([_v1("address_country", "GA")])
+    assert out[0]["answer"] == ""
+    assert review == [{"id": "address_country",
+                       "question": aa.BUILTINS["address_country"].question,
+                       "before": "GA", "after": "Not set, note 'GA'"}]
 
 
 def test_migrate_keeps_an_unmatched_choice_as_a_note_for_review():
@@ -634,7 +749,11 @@ _Q["onsite_ok"] = "Are you willing to work on-site (in the office)?"
     ("Are you comfortable working in the office?", "onsite_ok"),
     ("How many years of professional experience do you have?", "years_experience"),
     ("What is your gender identity?", "gender"),
-    ("Are you Hispanic or Latino?", "race_ethnicity"),
+    # SP1 fix round 1, item 2: an EEO form's own "Hispanic or Latino?" question
+    # is a custom row, not the race_ethnicity built-in's topic
+    ("Are you Hispanic or Latino?", None),
+    ("What is your race?", "race_ethnicity"),
+    ("Ethnicity", "race_ethnicity"),
     ("Are you a protected veteran?", "veteran_status"),
     ("Do you have a disability?", "disability_status"),
     ("How did you find this job?", "how_did_you_hear"),
@@ -656,3 +775,11 @@ def test_find_collision_between_custom_questions_uses_normalised_text():
     assert aa.find_collision("What is your GitHub?", entries, own_id="github") is None
     assert aa.find_collision("What is your GitLab?", entries) is None
     assert aa.find_collision("", entries) is None
+
+
+def test_find_collision_prefers_a_built_ins_own_text_over_another_topic_match():
+    # SP1 fix round 1, item 9: "authorization_statement" has no topic regex of
+    # its own, and its exact text trips work_authorized's "authori[sz]" regex;
+    # the exact match must win.
+    question = aa.BUILTINS["authorization_statement"].question
+    assert aa.find_collision(question, aa.seed_defaults()) == question

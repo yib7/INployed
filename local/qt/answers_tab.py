@@ -144,8 +144,10 @@ class AnswersEditor(QtWidgets.QWidget):
         return row
 
     def add_row(self, entry: dict | None = None) -> dict:
+        # No "kind" here: a new row is a version 2 row and never had one, so
+        # collect() below leaves it out of the saved entry.
         entry = entry or {"id": "", "question": "", "type": "text", "answer": "", "note": "",
-                          "confirmed": False, "kind": "open-ended", "status": "active"}
+                          "confirmed": False, "status": "active"}
         row = self._add_row_widgets(entry)
         return row
 
@@ -169,8 +171,9 @@ class AnswersEditor(QtWidgets.QWidget):
                 rid = apply_answers.new_id(question or rid, taken)
             taken.add(rid)
             entry = dict(row["entry"])
-            entry.update({"id": rid, "question": question, "answer": answer,
-                          "kind": row["kind"].currentText(), "status": "active"})
+            entry.update({"id": rid, "question": question, "answer": answer, "status": "active"})
+            if "kind" in row["entry"]:            # only a v1-loaded row had one
+                entry["kind"] = row["kind"].currentText()
             entry.setdefault("type", "text")
             entry.setdefault("note", "")
             entry["confirmed"] = entry.get("confirmed") is True
@@ -207,6 +210,10 @@ class AnswersEditor(QtWidgets.QWidget):
         return True
 
     def _validate_clicked(self) -> None:
+        if self.load_error:
+            QtWidgets.QMessageBox.critical(self, "Validate", self.load_error)
+            self.status.setText(self.load_error)
+            return
         errs = self.validate()
         if not errs:
             QtWidgets.QMessageBox.information(self, "Validate", "Looks good: no problems found.")
@@ -217,15 +224,21 @@ class AnswersEditor(QtWidgets.QWidget):
             self.status.setText(f"{len(errs)} problem(s); see the list.")
 
     def revert(self) -> None:
+        # A damaged store has no good snapshot to go back to (self.snapshot is
+        # the damaged bytes); reverting would overwrite the file's own .bak with
+        # them. Do nothing and say so; the user restores the .bak by hand.
+        if self.load_error:
+            self.status.setText("Not reverted: the answers file is damaged.")
+            return
         if self.snapshot:
             apply_answers.restore_bytes(self.snapshot, self.store_path)
         elif self.store_path.exists():
             self.store_path.unlink()
         self.reload()
+        self.status.setText("Reverted to opening state.")
 
     def _revert_clicked(self) -> None:
         if QtWidgets.QMessageBox.question(
                 self, "Revert", "Undo every change since you opened this tab?"
         ) == QtWidgets.QMessageBox.StandardButton.Yes:
             self.revert()
-            self.status.setText("Reverted to opening state.")

@@ -115,6 +115,36 @@ def test_revert_restores_snapshot(qtbot, tmp_path):
     assert ed.rows[0]["answer"].text() == "orig"
 
 
+def test_collect_keeps_kind_only_when_the_loaded_entry_had_one(qtbot, tmp_path):
+    # SP1 fix round 1, item 8: a v1-migrated row still carries its legacy
+    # "kind", but a brand-new row (and a v2 entry, which never had one) does not.
+    store = tmp_path / "apply_answers.json"
+    _seed(store, [{"id": "q1", "question": "Legacy Q", "answer": "a",
+                   "kind": "fixed", "status": "active"}])
+    ed = _editor(qtbot, store)
+    row = ed.add_row()
+    row["question"].setText("New question")
+    row["answer"].setText("New answer")
+    legacy, new = ed.collect()
+    assert legacy["kind"] == "fixed"
+    assert "kind" not in new
+
+
+def test_revert_does_nothing_on_a_damaged_store_and_keeps_the_bak(qtbot, tmp_path):
+    # SP1 fix round 1, item 1: reverting a damaged store must never touch the
+    # one good backup sitting next to it.
+    store = tmp_path / "apply_answers.json"
+    bak = store.with_name(store.name + ".bak")
+    bak.write_text("the good copy", encoding="utf-8")
+    store.write_text("not json{", encoding="utf-8")
+    ed = _editor(qtbot, store)
+    assert ed.load_error
+    ed.revert()
+    assert "damaged" in ed.status.text()
+    assert bak.read_text(encoding="utf-8") == "the good copy"
+    assert store.read_text(encoding="utf-8") == "not json{"
+
+
 # --- cycle 18 (SP1): the version 2 bridge ---------------------------------------------
 
 def _v2_store(path):
@@ -186,3 +216,20 @@ def test_a_damaged_store_shows_its_error_and_is_never_saved_over(qtbot, tmp_path
     assert ed.save() is False
     assert shown and "damaged" in shown[0]
     assert store.read_text(encoding="utf-8") == "not json{"
+
+
+def test_validate_button_reports_the_load_error_on_a_damaged_store(qtbot, tmp_path, monkeypatch):
+    # SP1 fix round 1, item 7: an empty row list validates clean, so a damaged
+    # store used to show "Looks good" and hide the real problem.
+    store = tmp_path / "apply_answers.json"
+    store.write_text("not json{", encoding="utf-8")
+    shown = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        lambda *a, **k: shown.append(a[2]))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    ed = _editor(qtbot, store)
+    ed._validate_clicked()
+    assert shown and "damaged" in shown[0]
+    assert not any("Looks good" in s for s in shown)
+    assert "damaged" in ed.status.text()

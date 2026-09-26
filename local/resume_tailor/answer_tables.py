@@ -79,19 +79,64 @@ DISABILITY_OPTIONS = (
     "No, I do not have a disability and have not had one in the past",
     DECLINE)
 
-# Another way to write a choice answer -> the option it means. A migrating
-# answer is matched against its own question's options first (case aside), then
-# through this table; an alias counts only when its option is one of that
-# question's options.
-CHOICE_ALIASES = {
-    "I am not a veteran": "I am not a protected veteran",
+# Another way to write a choice answer -> the option it means, keyed by the
+# built-in id it applies to (a v1 country "GA" must not become the state
+# Georgia, and "No" means something different for veteran_status than for
+# disability_status). A migrating answer is matched against its own question's
+# options first (case aside), then through its id's entry here; an alias counts
+# only when its option is one of that question's options.
+_EEO_DECLINE_ALIASES = {
     "Decline": DECLINE,
     "Prefer not to say": DECLINE,
     "I don't wish to answer": DECLINE,
-    "US": US_COUNTRY,
-    "USA": US_COUNTRY,
-    "U.S.": US_COUNTRY,
-    "U.S.A.": US_COUNTRY,
-    "United States of America": US_COUNTRY,
-    **US_STATES,
+}
+
+CHOICE_ALIASES = {
+    "gender": {
+        **_EEO_DECLINE_ALIASES,
+        "Man": "Male", "M": "Male",
+        "Woman": "Female", "F": "Female",
+    },
+    "race_ethnicity": {
+        **_EEO_DECLINE_ALIASES,
+        "Black": "Black or African American",
+        "African American": "Black or African American",
+        "Hispanic": "Hispanic or Latino",
+        "Latino": "Hispanic or Latino",
+        "Latina": "Hispanic or Latino",
+        "Latinx": "Hispanic or Latino",
+        "Native American": "American Indian or Alaska Native",
+        "Pacific Islander": "Native Hawaiian or Other Pacific Islander",
+        "Caucasian": "White",
+        "Multiracial": "Two or more races",
+        "Mixed": "Two or more races",
+        "Two or more": "Two or more races",
+    },
+    "veteran_status": {
+        **_EEO_DECLINE_ALIASES,
+        "I am not a veteran": "I am not a protected veteran",
+        "No": "I am not a protected veteran",
+        "Not a veteran": "I am not a protected veteran",
+        "Non-veteran": "I am not a protected veteran",
+        "Yes": "I identify as one or more of the classifications of protected veteran",
+        "Protected veteran":
+            "I identify as one or more of the classifications of protected veteran",
+    },
+    "disability_status": {
+        **_EEO_DECLINE_ALIASES,
+        "No": "No, I do not have a disability and have not had one in the past",
+        "No disability": "No, I do not have a disability and have not had one in the past",
+        "I do not have a disability":
+            "No, I do not have a disability and have not had one in the past",
+        "Yes": "Yes, I have a disability, or have had one in the past",
+        "I have a disability": "Yes, I have a disability, or have had one in the past",
+    },
+    "address_country": {
+        "US": US_COUNTRY,
+        "USA": US_COUNTRY,
+        "U.S.": US_COUNTRY,
+        "U.S.A.": US_COUNTRY,
+        "United States of America": US_COUNTRY,
+    },
+    "address_state": dict(US_STATES),
 }

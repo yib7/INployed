@@ -38,7 +38,8 @@ from .answer_tables import (
 
 __all__ = [
     "AnswerStoreError", "BOOL_IDS", "BUILTINS", "Builtin", "CUSTOM_TYPES", "KINDS",
-    "STATUSES", "STORE_PATH", "TYPES", "US_STATES", "as_standard_answers", "fact_value",
+    "NOTE_MAX", "NUMBER_MAX", "STATE_TEXT_MAX", "STATUSES", "STORE_PATH", "TEXT_MAX",
+    "TYPES", "US_STATES", "VERSION", "YES_NO", "as_standard_answers", "fact_value",
     "find_collision", "load", "load_store", "load_with_defaults", "migrate_from_apply_config",
     "migrate_v1", "new_id", "restore_bytes", "save", "seed_defaults", "validate", "warnings",
     "with_missing_builtins", "yes_no",
@@ -113,7 +114,7 @@ _TOPICS = {
     "years_experience": re.compile(
         r"^how many years of (relevant |professional |work )?experience\b"),
     "gender": re.compile(r"\bgender\b"),
-    "race_ethnicity": re.compile(r"\b(race|ethnicity|hispanic|latino)\b"),
+    "race_ethnicity": re.compile(r"\b(race|racial|ethnicity)\b"),
     "veteran_status": re.compile(r"\bveteran"),
     "disability_status": re.compile(r"\bdisabilit"),
     "how_did_you_hear": re.compile(r"\bhow did you (hear|find)\b"),
@@ -265,8 +266,14 @@ _WORD_RE = re.compile(r"[a-z0-9]+", re.I)
 _LEAD_PUNCT = re.compile(r"^[\s.,;:!?\-\u2013\u2014]+")
 _BARE_YES_NO = re.compile(r"(yes|no|true|false|1|0)[.!]?")
 _LEAD_NUMBER = re.compile(r"\d{1,2}(\.5)?")
-# after a leading number: more digits, a decimal, or a range makes it unreadable
-_NUMBER_TAIL_BAD = re.compile(r"^(?:[.,]?\d|\s*(?:-|\u2013|\u2014|to\b|or\b)\s*\d)", re.I)
+# after a leading number: more digits, a decimal, a range, or a slash fraction
+# ("3 1/2 years") makes it unreadable
+_NUMBER_TAIL_BAD = re.compile(
+    r"^(?:[.,]?\d|\s*(?:-|\u2013|\u2014|to\b|or\b)\s*\d|\s+\d+\s*/\s*\d+)", re.I)
+# a years_experience answer with no leading digit (or one an unreadable tail
+# rules out) that still means zero
+_ZERO_EXPERIENCE_RE = re.compile(
+    r"^(?:less than (?:1|one)|under 1|<\s?1|none|no experience|0)\b", re.I)
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
@@ -276,7 +283,11 @@ def _norm(text: Any) -> str:
     return " ".join(_NON_ALNUM.sub(" ", s).split())
 
 
-_ALIASES = {_norm(k): v for k, v in CHOICE_ALIASES.items()}
+# Nested by built-in id, so an alias like "No" means one thing for
+# veteran_status and another for disability_status, and a US state code
+# ("GA") never leaks into matching a country.
+_ALIASES = {eid: {_norm(k): v for k, v in aliases.items()}
+            for eid, aliases in CHOICE_ALIASES.items()}
 
 
 def _v1_text(value: Any) -> str:
@@ -285,12 +296,12 @@ def _v1_text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def _match_option(text: str, options: Tuple[str, ...]) -> Optional[str]:
+def _match_option(eid: str, text: str, options: Tuple[str, ...]) -> Optional[str]:
     n = _norm(text)
     for option in options:
         if _norm(option) == n:
             return option
-    alias = _ALIASES.get(n)
+    alias = _ALIASES.get(eid, {}).get(n)
     return alias if alias in options else None
 
 
@@ -306,14 +317,17 @@ def _read_v1(eid: str, etype: str, raw: str, us: bool) -> Tuple[str, str, bool]:
         return word, _LEAD_PUNCT.sub("", raw[m.end():]).strip(), True
     if etype == "number":
         m = _LEAD_NUMBER.match(raw)
-        rest = raw[m.end():] if m else ""
-        if not m or _NUMBER_TAIL_BAD.match(rest) or float(m.group(0)) > NUMBER_MAX:
-            return "", raw, False
-        return m.group(0), rest.strip(), True
+        if m:
+            rest = raw[m.end():]
+            if not _NUMBER_TAIL_BAD.match(rest) and float(m.group(0)) <= NUMBER_MAX:
+                return m.group(0), rest.strip(), True
+        if eid == "years_experience" and _ZERO_EXPERIENCE_RE.match(raw):
+            return "0", raw, True
+        return "", raw, False
     if etype == "choice":
         if eid == "address_state" and not us:
             return (raw, "", True) if len(raw) <= STATE_TEXT_MAX else ("", raw, False)
-        hit = _match_option(raw, BUILTINS[eid].options if eid in BUILTINS else ())
+        hit = _match_option(eid, raw, BUILTINS[eid].options if eid in BUILTINS else ())
         return (hit, "", True) if hit else ("", raw, False)
     if eid == "address_zip" and us and not _ZIP_RE.match(raw):
         return "", raw, False
@@ -385,10 +399,13 @@ def migrate_v1(entries: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Lis
 
 # --- load and save ------------------------------------------------------------------------
 
+_REVIEW_KEYS = {"id", "question", "before", "after"}
+
+
 def _read_file(path: Path) -> Dict[str, Any]:
     """The parsed file, shape-checked; AnswerStoreError when it cannot be used."""
     try:
-        text = path.read_bytes().decode("utf-8")
+        text = path.read_bytes().decode("utf-8-sig")   # a BOM-prefixed file still reads
     except OSError as exc:
         raise AnswerStoreError(path, f"it could not be read ({exc.strerror or exc})") from exc
     except UnicodeDecodeError as exc:
@@ -412,8 +429,13 @@ def _read_file(path: Path) -> Dict[str, Any]:
     for i, e in enumerate(answers):
         if not isinstance(e, dict):
             raise AnswerStoreError(path, f"answer {i + 1} is not a record")
-    if not isinstance(data.get("review", []), list):
+    review = data.get("review", [])
+    if not isinstance(review, list):
         raise AnswerStoreError(path, "its review list is not a list")
+    for i, r in enumerate(review):
+        if (not isinstance(r, dict) or set(r) != _REVIEW_KEYS
+                or not all(isinstance(v, str) for v in r.values())):
+            raise AnswerStoreError(path, f"review item {i + 1} is not a valid record")
     return data
 
 
@@ -547,7 +569,8 @@ def save(answers: List[Dict[str, Any]], path: Union[Path, None] = None,
     """Validate, then atomically write {"version": 2, "answers", "review"}, backing
     up the current file to `<name>.bak` first. `review=None` keeps the review list
     a version 2 file has now ([] otherwise). Raises ValueError when the store is
-    invalid, and AnswerStoreError rather than write over a damaged file."""
+    invalid. When the file on disk is damaged, raises AnswerStoreError and writes
+    nothing."""
     errs = validate(answers)
     if errs:
         raise ValueError("; ".join(errs))
@@ -602,11 +625,17 @@ def find_collision(question: str, entries: List[Dict[str, Any]],
     if not norm:
         return None
     words = norm.split()
+    # A custom question that is verbatim a built-in's own text names that
+    # built-in, even when the text also happens to trip another built-in's
+    # topic regex (e.g. the authorization_statement text contains "authoriz").
+    for eid, b in BUILTINS.items():
+        if eid != own_id and norm == _norm(b.question):
+            return b.question
     for eid, b in BUILTINS.items():
         if eid == own_id:
             continue
         topic = _TOPICS.get(eid)
-        if ((topic is not None and topic.search(norm)) or norm == _norm(b.question)
+        if ((topic is not None and topic.search(norm))
                 or (eid == "work_authorized" and "legally" in words and "work" in words)):
             return b.question
     for e in entries or []:
@@ -622,14 +651,21 @@ def find_collision(question: str, entries: List[Dict[str, Any]],
 
 def restore_bytes(data: bytes, path: Union[Path, None] = None) -> None:
     """Overwrite the store with raw bytes (the editor's "revert to opening state"),
-    backing the current file up to `<name>.bak` first."""
+    backing the current file up to `<name>.bak` first when that current file is
+    itself readable. A damaged current file is left out of `.bak`, so a good
+    backup already there survives the revert."""
     path = Path(path) if path is not None else STORE_PATH
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".answers_", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         if path.exists():
-            shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
+            try:
+                _read_file(path)
+            except AnswerStoreError:
+                pass
+            else:
+                shutil.copy2(str(path), str(path.with_name(path.name + ".bak")))
         os.replace(tmp, str(path))
     except Exception:
         try:

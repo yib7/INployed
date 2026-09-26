@@ -643,6 +643,9 @@ def test_a_custom_answer_with_a_derived_id_stays_a_custom_fact(tmp_path):
     ("Years of experience", "years_experience"),
     ("Years of Python experience", None),
     ("How many years of experience do you have with Python?", None),
+    # round 3: a skill before the words, a cut label
+    ("Python - years of experience", None),
+    ("Java (years of experience)", None),
 ])
 def test_quick_map_leaves_a_label_that_fails_the_own_question_gate_to_the_judge(
         monkeypatch, label, expected):

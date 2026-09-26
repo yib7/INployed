@@ -161,6 +161,29 @@ class FactCatalog:
         f = self.facts.get(key)
         return f.value if f else ""
 
+    def custom_type(self, key: str) -> str:
+        """The store type of a custom answer's fact (`answer_<id>`): a gated
+        type (`GATED_CUSTOM_TYPES`) when any entry with that id has one, else
+        the entry's type; "" for any other fact."""
+        if not key.startswith("answer_") or key not in self.facts:
+            return ""
+        eid = key[len("answer_"):]
+        types = [str(e.get("type", "") or "") for e in self._bank
+                 if isinstance(e, dict) and str(e.get("id", "")).strip() == eid]
+        return next((t for t in types if t in GATED_CUSTOM_TYPES), types[0] if types else "")
+
+    def answers_field(self, key: str, label: str, help_text: str = "", *,
+                      value: str | None = None, partial: bool = False) -> bool:
+        """Does `key`'s value (this catalog's, or `value`) answer a field with
+        this label and help? A custom yes / no or number answer answers only
+        its own saved question, word for word (`same_question`); every other
+        fact goes through `answers_question`. A cut label (`partial`) answers
+        neither: the words it lost are unread."""
+        if self.custom_type(key) in GATED_CUSTOM_TYPES:
+            return not partial and same_question(label, help_text, self.facts[key].description)
+        return answers_question(key, self.value(key) if value is None else value, label,
+                                help_text, partial)
+
     def to_criteria(self) -> dict[str, str]:
         """key -> description for every fact that has a value. Never a value."""
         return {k: f.description for k, f in self.facts.items() if f.value}
@@ -516,190 +539,196 @@ def _quick_key(label: str, id_or_name: str, type_: str) -> str | None:
 # --- a fact's own question (cycle 18, SP6c) -------------------------------------------
 
 # Code fills or settles a yes / no or number fact only when the field asks that
-# fact's own question. A saved "Yes" to "authorized to work?" is no answer to
-# "authorized to work without sponsorship?", and total years are no answer to
-# "years of Python". One table per fact: the subject the question must name,
-# and the scope or polarity words that make it another question unless the
-# fact's own question uses them.
+# fact's own question: every content word of the field's label and help
+# belongs to the fact's own-question vocabulary (round 3). A saved "Yes" to
+# "authorized to work?" is no answer to "authorized to work? (Without
+# sponsorship)", and total years are no answer to "Python - years of
+# experience". The text is read whole (`question_words`): examples and
+# neutral tails are dropped, set phrases become one token (`_PHRASES`), the
+# shared filler goes, and any word left outside the fact's vocabulary makes it
+# another question: a country, a city, a skill, "commute", "assistance",
+# "comfortable", "rather", "clearance", a parenthetical scope or an
+# instruction such as "Answer No if ...".
 
 @dataclass(frozen=True)
 class _OwnQuestion:
-    topic: re.Pattern                        # the subject the question names
-    own: frozenset[str] = frozenset()        # `_SCOPE` words its own question uses
-    scope: tuple[re.Pattern, ...] = ()       # its scope words beside `_SCOPE`
-    skills: bool = False                     # a named skill or field narrows it (years)
+    vocabulary: frozenset[str]               # every word its own question may use
+    # the subject: each set must share a word with the question
+    topic: tuple[frozenset[str], ...]
+    digits: bool = False                     # a number is one of its words (years)
     # a narrower form of its question, and the value that answers every
-    # narrower form too (round 2: no sponsorship now or in the future is No
-    # to H-1B sponsorship and to sponsorship now)
-    narrower: tuple[re.Pattern, ...] = ()
+    # narrower form too (no sponsorship now or in the future is No to H-1B
+    # sponsorship and to sponsorship now; on-site work is Yes to hybrid work)
+    narrower: frozenset[str] = frozenset()
     settles_narrower: str = ""
 
 
-# every fact's scope and polarity words, by name
-_SCOPE: dict[str, re.Pattern] = {name: re.compile(p) for name, p in (
-    ("without", r"\bwithout\b"),
-    ("only", r"\bonly\b"),
-    ("transfer", r"\btransfer"),
-    ("other than", r"\bother than\b"),
-    ("except", r"\bexcept"),
-    ("never", r"\bnever\b"),
-    ("not", r"\bnot\b|n't\b"),
-    ("no longer", r"\bno longer\b"),
-    ("ever", r"\bever\b"),
-)}
-# a visa type named outside an example
-_VISA_TYPE = re.compile(r"\b(?:h-?1b?|h-?4|l-?1[ab]?|o-?1[ab]?|e-?3|f-?1|j-?1|tn|opt|cpt|ead)\b")
-# a visa or a sponsorship the candidate holds now: another status
-_VISA_HELD = re.compile(r"\bcurrently sponsored\b|\bcurrent visa\b"
-                        r"|\bcurrently (?:on|hold|holding|have|in)\b[^.?!]*\bvisa\b")
-_SPONSOR = re.compile(r"sponsor")
-# sponsorship now only: a word of now with no word of later
-_NOW_ONLY = re.compile(r"(?s)^(?!.*\b(?:future|later|any time|anytime|any point)\b)"
-                       r".*\b(?:current(?:ly)?|now|at this time|at present|presently)\b")
-# any word of restriction: unrestricted work is the derived fact's question
-_RESTRICT = re.compile(r"restrict")
-# a restriction the derived fact's own words do not name: "any restrictions"
-# and "restricted" ask the inverse
-_RESTRICT_OTHER = re.compile(r"(?<!without )(?<!without any )\brestrict")
-
-OWN_QUESTIONS: dict[str, _OwnQuestion] = {
-    "work_authorized": _OwnQuestion(
-        re.compile(r"authori[sz]|eligib|\blegal(?:ly)?\b|\bright to work\b"
-                   r"|\b(?:permitted|allowed) to\b|\bwork permit\b"),
-        scope=(_VISA_TYPE, _VISA_HELD, _SPONSOR, _RESTRICT)),
-    "requires_sponsorship": _OwnQuestion(
-        _SPONSOR, scope=(_VISA_HELD,), narrower=(_VISA_TYPE, _NOW_ONLY),
-        settles_narrower="No"),
-    "authorized_without_sponsorship": _OwnQuestion(
-        re.compile(r"\bwithout\b[^.?!]*\bsponsor|\bwithout (?:any )?restrictions?\b"
-                   r"|\bunrestricted\b"),
-        own=frozenset({"without"}), scope=(_VISA_TYPE, _VISA_HELD, _RESTRICT_OTHER)),
-    "willing_to_relocate": _OwnQuestion(re.compile(r"relocat|\bmov(?:e|ing) (?:to|for)\b")),
-    "onsite_ok": _OwnQuestion(
-        re.compile(r"\bon[- ]?site\b|\bin[- ]person\b|\boffice\b|\bhybrid\b")),
-    "remote_only": _OwnQuestion(
-        re.compile(r"\bremote(?:ly)?\b[^.?!]*\bonly\b|\bonly\b[^.?!]*\bremote"),
-        own=frozenset({"only"})),
-    "years_experience": _OwnQuestion(
-        re.compile(r"(?s)^(?=.*\b(?:years?|yrs?)\b).*\bexperience\b"), skills=True),
-}
-OWN_QUESTION_KEYS = frozenset(OWN_QUESTIONS)
-
+# the words no question turns on
+_FILLER = frozenset((
+    "are", "you", "do", "does", "will", "would", "be", "to", "the", "a", "an", "of", "in",
+    "for", "your", "legally", "able", "i", "am", "can", "have", "has"))
+# a place name set beside "location" names the job's location: "the job
+# location (New York)" (read before the text is lowercased)
+_PLACE = re.compile(r"\b([Ll]ocation)\s*\([A-Z][\w.'-]*(?:,?\s+[A-Z][\w.'-]*)*\)")
 _ABBREV = re.compile(r"\b(?:[a-z]\.){2,}")              # u.s. -> us, e.g. -> eg
 # an example is no scope: "(e.g., H-1B visa status)", "such as an H-1B"
-_EXAMPLE = re.compile(r"\((?:eg|for example|for instance|such as|including|like)\b[^)]*\)"
-                      r"|\b(?:eg|for example|for instance|such as|including)\b[^.?!;()]*")
-_SENTENCE = re.compile(r"(?<=[.?!])\s+|\n+")
-_WORD = re.compile(r"[a-z0-9]+")
-_YEARS = frozenset(("year", "years", "yr", "yrs"))
-# the qualifiers "years of ... experience" may carry and still ask the total
-_GENERIC_EXPERIENCE = frozenset((
-    "relevant", "professional", "work", "working", "total", "overall", "industry", "related",
-    "full", "time", "fulltime", "paid", "practical", "hands", "prior", "previous", "field",
-    "job", "employment", "career", "combined", "role", "position", "experience", "similar",
-    "capacity", *_YEARS))
-_FILLER = frozenset((
-    "a", "an", "the", "this", "that", "your", "our", "of", "you", "do", "does", "have", "has",
-    "had", "how", "many", "much", "what", "is", "are", "at", "least", "more", "or", "than",
-    "and", "plus", "minimum", "please", "enter", "number", "approximately", "about", "in",
-    "on"))
-_OBJECT_OF = frozenset(("with", "in", "using", "at", "as", "on", "for", "within"))
+_EXAMPLE = re.compile(r"\((?:eg|for example|for instance|such as)\b[^)]*\)"
+                      r"|\b(?:eg|for example|for instance|such as)\b[^.?!;()]*")
+# a neutral tail or lead: "(If not, please explain.)", "Please select one",
+# "(Yes/No)", "Please enter", "Required", "*"; "in order to" reads "to"
+_NEUTRAL = re.compile(r"\(?\bif (?:not|yes|so),? please (?:explain|specify)\b[.:]?\)?"
+                      r"|\(?\b(?:please )?(?:select|choose) one\b[.:]?\)?"
+                      r"|\(?\b(?:please )?enter a (?:whole )?number\b[.:]?\)?"
+                      r"|\(?\byes(?: ?/ ?| or )no\b\)?|\bplease (?:enter|provide|indicate)\b"
+                      r"|\(required\)|\bin order(?= to\b)")
+_REQUIRED_TAIL = re.compile(r"(?m)(?<=[?.*:\n-])\s*required\s*$")
+# set phrases, each one token, in this order
+_PHRASES: tuple[tuple[str, re.Pattern], ...] = tuple((token, re.compile(p)) for token, p in (
+    ("NOSPONSOR", r"\bwithout (?:the need (?:for|of) |needing |requiring |any )?"
+                  r"(?:(?:employer|employment|visa|company|work|any) )*sponsorship\b"
+                  r"|\b(?:(?:will|do|does|would) not|won't|don't|doesn't|wouldn't) "
+                  r"(?:now or in the future )?(?:need|require) (?:any )?"
+                  r"(?:(?:employer|employment|visa|work) )*sponsorship\b"),
+    ("UNRESTRICTED", r"\bwithout (?:any )?restrictions?\b|\bunrestricted\b"),
+    ("NOWFUTURE", r"\b(?:now|currently),? (?:or|and),? (?:will you )?(?:at any time )?"
+                  r"in (?:the )?future\b|\bnow or (?:at any time|later)\b|\bat any time\b"),
+    ("FUTURE", r"\bin (?:the )?future\b"),
+    ("NOW", r"\bright now\b|\bat this time\b|\bat present\b|\bpresently\b|\bcurrently\b"
+            r"|\bnow\b"),
+    ("STARTDATE", r"\b(?:on|by|as of) (?:your|the) start date\b"),
+    ("US", r"\b(?:in|within|inside) (?:the )?(?:united states(?: of america)?|usa|us|america)\b"
+           r"|\b(?:the )?united states(?: of america)?\b|\busa\b|\bamerica\b"),
+    ("ONSITE", r"\bon[- ]?site\b|\bin[- ]person\b|\bin (?:the |our |an )?office\b"),
+    ("DAYSWEEK", r"\b(?:\d+|one|two|three|four|five|six|seven)"
+                 r"(?:\s*(?:-|to|or)\s*(?:\d+|one|two|three|four|five|six|seven))?"
+                 r" days? (?:a|per|each|every) week\b"),
+    ("VISATYPE", r"\b(?:h-?1b?|h-?4|l-?1[ab]?|o-?1[ab]?|e-?3|f-?1|j-?1|tn|opt|cpt|ead)\b"),
+))
+_TOKEN = re.compile(r"[A-Z]+|[a-z0-9]+(?:'[a-z]+)?")
+# a word of later: with one, "now" asks now or later
+_LATER = frozenset(("FUTURE", "NOWFUTURE"))
+
+_AUTHORIZED = frozenset(("authorized", "authorised", "authorization", "authorisation",
+                         "eligible", "permitted", "allowed", "right", "legal", "lawfully"))
+_WORK = frozenset(("work", "working", "employment", "employed"))
+# "us" is a word of the vocabulary ("to work for us"); only US, the phrase,
+# names the country
+_USA = frozenset(("US", "us"))
+_WORK_AUTHORIZED = _AUTHORIZED | _WORK | _USA | {"take", "up", "STARTDATE", "NOW"}
+_YEARS = frozenset(("years", "year", "yrs", "yr"))
+
+OWN_QUESTIONS: dict[str, _OwnQuestion] = {
+    # authorized, or work in the US: (A or W) and (A or US)
+    "work_authorized": _OwnQuestion(
+        _WORK_AUTHORIZED, (_AUTHORIZED | _WORK, _AUTHORIZED | {"US"})),
+    "requires_sponsorship": _OwnQuestion(
+        frozenset(("require", "need", "sponsorship", "sponsor", "visa", "employment", "based",
+                   "status", "company", "employer", "work", "working", "continue", "this",
+                   "or", "US", "us", "NOWFUTURE", "FUTURE", "NOW", "VISATYPE",
+                   # "require the Company to commence ("sponsor") an immigration
+                   # case in order to employ you"
+                   "commence", "immigration", "case", "petition", "employ")),
+        (frozenset(("sponsorship", "sponsor")),),
+        narrower=frozenset(("NOW", "VISATYPE")), settles_narrower="No"),
+    "authorized_without_sponsorship": _OwnQuestion(
+        _WORK_AUTHORIZED | {"NOSPONSOR", "UNRESTRICTED", "and", "NOWFUTURE"},
+        (frozenset(("NOSPONSOR", "UNRESTRICTED")),)),
+    "willing_to_relocate": _OwnQuestion(
+        frozenset(("relocate", "relocating", "relocation", "move", "moving", "willing", "open",
+                   "consider", "job's", "job", "location", "position", "role", "this", "NOW")),
+        (frozenset(("relocate", "relocating", "relocation", "move", "moving")),)),
+    "onsite_ok": _OwnQuestion(
+        frozenset(("ONSITE", "office", "hybrid", "work", "working", "our", "at", "into", "come",
+                   "report", "from", "DAYSWEEK", "schedule", "willing", "open", "NOW")),
+        (frozenset(("ONSITE", "office", "hybrid")),),
+        narrower=frozenset(("hybrid",)), settles_narrower="Yes"),
+    "remote_only": _OwnQuestion(
+        frozenset(("remote", "remotely", "only", "fully", "looking", "seeking", "role", "roles",
+                   "position", "positions", "require", "open", "work", "willing", "NOW")),
+        (frozenset(("remote", "remotely")), frozenset(("only", "require")))),
+    "years_experience": _OwnQuestion(
+        _YEARS | {"experience", "how", "many", "much", "number", "relevant", "professional",
+                  "work", "working", "total", "overall", "industry", "related", "full", "time",
+                  "fulltime", "paid", "practical", "prior", "previous", "job", "employment",
+                  "career", "combined", "similar", "role", "position", "capacity", "this",
+                  "field", "at", "least", "or", "more", "plus", "NOW"},
+        (_YEARS, frozenset(("experience",))), digits=True),
+}
+OWN_QUESTION_KEYS = frozenset(OWN_QUESTIONS)
+# the custom answer types code settles: only for their own saved question
+GATED_CUSTOM_TYPES = ("yes_no", "number")
 
 
-def _question_text(label: str, help_text: str) -> str:
-    """The label and help, lowercased, with abbreviations joined ("U.S."
-    reads "us", so a sentence never ends inside one) and examples dropped."""
-    text = f"{label or ''}\n{help_text or ''}".lower().replace(chr(0x2019), "'")
+def question_words(label: str, help_text: str = "") -> tuple[str, ...]:
+    """The content words of a field's label and help, in order: lowercased,
+    with a place name beside "location", examples ("e.g. H-1B", "such as
+    ...") and neutral tails ("If not, please explain", "Please select one",
+    "Required", "*") dropped, each set phrase as one token (`_PHRASES`: now
+    or in the future is NOWFUTURE, in the United States is US, without
+    sponsorship is NOSPONSOR, without restriction is UNRESTRICTED, on-site
+    or in the office is ONSITE, 3 days a week is DAYSWEEK, a visa type is
+    VISATYPE, ...) and the filler (`_FILLER`) removed."""
+    text = _PLACE.sub(r"\1", f"{label or ''}\n{help_text or ''}")
+    text = text.lower().replace(chr(0x2019), "'")
     text = _ABBREV.sub(lambda m: m.group(0).replace(".", ""), text)
-    return _EXAMPLE.sub(" ", text)
+    text = _EXAMPLE.sub(" ", text)
+    text = _NEUTRAL.sub(" ", text)
+    text = _REQUIRED_TAIL.sub(" ", text).replace("*", " ")
+    for token, pattern in _PHRASES:
+        text = pattern.sub(f" {token} ", text)
+    return tuple(w for w in _TOKEN.findall(text) if w not in _FILLER)
 
 
-def _narrowed(words: list[str]) -> bool:
-    return any(w not in _GENERIC_EXPERIENCE and w not in _FILLER and not w.isdigit()
-               for w in words)
-
-
-def _names_a_skill(text: str) -> bool:
-    """Does a years question name a skill, tool, language or field ("years
-    of Python experience", "experience with React", "in sales")? Generic
-    qualifiers (relevant, professional, total, industry, ...) and a role
-    ("in a similar role", "in this role", "relevant to this role") do not."""
-    for sentence in _SENTENCE.split(text):
-        words = _WORD.findall(sentence)
-        if "experience" not in words or not _YEARS & set(words):
-            continue
-        for i, w in enumerate(words):
-            if w != "experience":
-                continue
-            before = words[:i]
-            years = [j for j, b in enumerate(before) if b in _YEARS]
-            if years:
-                qualifiers = before[years[-1] + 1:]
-            else:
-                qualifiers = []
-                for b in reversed(before):
-                    if b in _FILLER:
-                        break
-                    qualifiers.append(b)
-            after = words[i + 1:]
-            at = next((j for j, a in enumerate(after) if a in _OBJECT_OF), None)
-            if _narrowed(qualifiers) or (at is not None and _narrowed(after[at + 1:])):
-                return True
-    return False
-
-
-def question_fit(fact_key: str | None, label: str, help_text: str = "") -> str:
+def question_fit(fact_key: str | None, label: str, help_text: str = "",
+                 partial: bool = False) -> str:
     """How a field with this label and help relates to `fact_key`'s own
     question (`OWN_QUESTIONS`): "own", "narrower" (a narrower form of it:
-    H-1B sponsorship, sponsorship now) or "other". A fact with no table is
-    always "own".
+    H-1B sponsorship, sponsorship now, hybrid work) or "other". A fact with
+    no table is always "own".
 
-    The question sentences (those holding "?") that name the fact's subject
-    are read; with none, a question sentence on another fact's subject makes
-    it "other" ("This role is on-site. Are you willing to relocate?" is no
-    on-site question), and else the whole text is read. The text read must
-    name the subject and carry no scope or polarity word the fact's own
-    question does not use (`_SCOPE`, and its own list: a visa type, a visa
-    held now or a restriction for the work facts, a visa held now for
-    sponsorship), and a years question must name no skill
-    (`_names_a_skill`). An example ("e.g. H-1B") is no scope."""
+    Every content word (`question_words`) must be one of the fact's
+    vocabulary and the words must name its subject (`topic`); a word of
+    now beside a word of later asks now or later. A cut label (`partial`)
+    is "other": the words it lost are unread."""
     spec = OWN_QUESTIONS.get(fact_key or "")
     if spec is None:
         return "own"
-    text = _question_text(label, help_text)
-    questions = [s for s in _SENTENCE.split(text) if "?" in s]
-    own = [s for s in questions if spec.topic.search(s)]
-    if own:
-        text = " ".join(own)
-    elif any(other.topic.search(s) for key, other in OWN_QUESTIONS.items()
-             if key != fact_key for s in questions):
+    if partial:
         return "other"
-    elif not spec.topic.search(text):
+    words = set(question_words(label, help_text))
+    if "NOW" in words and words & _LATER:
+        words.discard("NOW")
+    if spec.digits:
+        words = {w for w in words if not w.isdigit()}
+    if not words <= spec.vocabulary or not all(words & t for t in spec.topic):
         return "other"
-    if any(p.search(text) for name, p in _SCOPE.items() if name not in spec.own):
-        return "other"
-    if any(p.search(text) for p in spec.scope):
-        return "other"
-    if spec.skills and _names_a_skill(text):
-        return "other"
-    return "narrower" if any(p.search(text) for p in spec.narrower) else "own"
+    return "narrower" if words & spec.narrower else "own"
 
 
-def asks_own_question(fact_key: str | None, label: str, help_text: str = "") -> bool:
+def asks_own_question(fact_key: str | None, label: str, help_text: str = "",
+                      partial: bool = False) -> bool:
     """Does a field with this label and help ask `fact_key`'s own question
     (`question_fit` is "own")? A fact with no table always does."""
-    return question_fit(fact_key, label, help_text) == "own"
+    return question_fit(fact_key, label, help_text, partial) == "own"
 
 
 def answers_question(fact_key: str | None, value: str, label: str,
-                     help_text: str = "") -> bool:
+                     help_text: str = "", partial: bool = False) -> bool:
     """Does `value` of `fact_key` answer the field's question? Its own
     question, for any value; a narrower form only for the value that answers
     every narrower form (`settles_narrower`: a stored No to sponsorship now
     or in the future is No to "Will you require H-1B sponsorship?", and a
     Yes there is no answer); another question, never."""
-    fit = question_fit(fact_key, label, help_text)
+    fit = question_fit(fact_key, label, help_text, partial)
     if fit == "narrower":
         settles = OWN_QUESTIONS[fact_key].settles_narrower
         return bool(settles) and (value or "").strip().lower() == settles.lower()
     return fit == "own"
+
+
+def same_question(label: str, help_text: str, saved: str) -> bool:
+    """Does a field with this label and help ask `saved` word for word
+    (`question_words` as sets, with at least one word)? A custom yes / no or
+    number answer settles only its own saved question."""
+    words = set(question_words(label, help_text))
+    return bool(words) and words == set(question_words(saved))

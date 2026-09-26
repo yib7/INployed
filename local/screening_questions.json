@@ -231,6 +231,102 @@
       }
     },
     {
+      "id": "auth_paren_without",
+      "label": "Are you legally authorized to work in the United States? (Without sponsorship)",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_select_no_if",
+      "label": "Are you legally authorized to work in the United States? (If you will require sponsorship, please select No.)",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_help_no_if",
+      "label": "Are you legally authorized to work in the United States?",
+      "help": "Answer No if you need sponsorship.",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "auth_canada",
+      "label": "Are you authorized to work in Canada?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "auth_able",
+      "label": "Are you able to work in the US?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "work_authorized",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "auth_and_no_sponsor",
+      "label": "Are you authorized to work in the US and will not require sponsorship?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "authorized_without_sponsorship",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "No"
+      }
+    },
+    {
       "id": "spon_radio",
       "label": "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?",
       "help": "",
@@ -387,7 +483,7 @@
       "expected_fact": "requires_sponsorship",
       "expect": {
         "citizen": null,
-        "sponsor": "checked"
+        "sponsor": null
       }
     },
     {
@@ -435,6 +531,22 @@
       "expected_fact": "answer_authorization_statement",
       "expect": {
         "citizen": "No",
+        "sponsor": null
+      }
+    },
+    {
+      "id": "spon_uk",
+      "label": "Will you require sponsorship to work in the UK?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
         "sponsor": null
       }
     },
@@ -554,6 +666,38 @@
       }
     },
     {
+      "id": "reloc_assistance",
+      "label": "Do you require relocation assistance?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "reloc_located_or",
+      "label": "Are you located in or willing to relocate to Austin, TX?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
       "id": "onsite_radio",
       "label": "Are you willing to work on-site?",
       "help": "",
@@ -666,6 +810,102 @@
       }
     },
     {
+      "id": "onsite_hybrid_schedule",
+      "label": "Are you willing to work a hybrid schedule?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "onsite_ok",
+      "expect": {
+        "citizen": "Yes",
+        "sponsor": "Yes"
+      }
+    },
+    {
+      "id": "onsite_require_remote",
+      "label": "Do you require a fully remote role?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": "remote_only",
+      "expect": {
+        "citizen": "No",
+        "sponsor": "No"
+      }
+    },
+    {
+      "id": "onsite_remote_preamble",
+      "label": "This role is remote only. Are you comfortable with that?",
+      "help": "",
+      "widget": "toggle",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_commute",
+      "label": "Are you able to commute to our office?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_commute_distance",
+      "label": "Are you located within commuting distance of our office?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "onsite_rather_remote",
+      "label": "Would you rather work remotely than in the office?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
       "id": "years_select",
       "label": "How many years of professional experience do you have?",
       "help": "",
@@ -761,6 +1001,94 @@
         "Less than 1 year",
         "1-3 years",
         "More than 3 years"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_python_dash",
+      "label": "Python - years of experience",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "None",
+        "Less than 1 year",
+        "1-3 years",
+        "More than 3 years"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_java_paren",
+      "label": "Java (years of experience)",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "0-1",
+        "2-4",
+        "5+"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_python_then",
+      "label": "Do you have experience with Python? How many years?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "None",
+        "1-2 years",
+        "3-5 years",
+        "6+ years"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_managing",
+      "label": "How many years of experience do you have managing people?",
+      "help": "",
+      "widget": "select",
+      "options": [
+        "None",
+        "1-2 years",
+        "3-5 years",
+        "6+ years"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "years_building_apis",
+      "label": "Years of experience building APIs",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "0-1",
+        "2-4",
+        "5+"
       ],
       "required": true,
       "expected_fact": null,
@@ -1026,6 +1354,22 @@
     {
       "id": "none_clearance",
       "label": "Do you have an active security clearance?",
+      "help": "",
+      "widget": "radio",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "required": true,
+      "expected_fact": null,
+      "expect": {
+        "citizen": null,
+        "sponsor": null
+      }
+    },
+    {
+      "id": "none_clearance_eligible",
+      "label": "Are you eligible to obtain a U.S. security clearance?",
       "help": "",
       "widget": "radio",
       "options": [

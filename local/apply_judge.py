@@ -1802,7 +1802,9 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
     (`answers_question`: "authorized to work without sponsorship" mapped to
     `work_authorized`, "years of Python" to `years_experience`, a Yes to
     sponsorship under "H-1B sponsorship") gives no value, and the judge's
-    pick does not override it (cycle 18, SP6c). Buttons
+    pick does not override it (cycle 18, SP6c); nor does a custom yes / no or
+    number answer under a question other than its saved one, or any of them under
+    a cut label (`FactCatalog.answers_field`). Buttons
     keep the highest-confidence n per role. The one
     park reason is a required field without an answer; the flags are recorded only. A
     button of the site's header or top bar (`Button.chrome`) holds a role only
@@ -1874,12 +1876,14 @@ def plan(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str, Answer]
             # lands in one
             fact_key, pf.fact_key = None, None
             pf.action = PASSWORD_ACTION
-        elif fact_key and not answers_question(fact_key, catalog.value(fact_key),
-                                               f.label, f.help):
-            # the fact answers another question than the field's, or a
-            # narrower form its value does not settle (cycle 18, SP6c): no
-            # value from it, so a required field parks and an optional one
-            # stays blank
+        elif fact_key and not catalog.answers_field(
+                fact_key, f.label, f.help,
+                partial=bool(getattr(f, "label_partial", False))):
+            # the fact answers another question than the field's, a
+            # narrower form its value does not settle, or a cut label; a
+            # custom yes / no or number answer another question than its
+            # saved one (cycle 18, SP6c): no value from it, so a required
+            # field parks and an optional one stays blank
             log.debug("field %d %r: %s does not answer its question; no value",
                       f.n, f.label, fact_key)
             fact_key, pf.fact_key = None, None
@@ -1956,7 +1960,7 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
     instruction (`candidate_answer`: every yes / no fact of `catalog` for
     one of them). A pick code settles (`code_pick`) is never asked, nor one
     for a fact whose value does not answer the field's question
-    (`answers_question`). Empty
+    (`FactCatalog.answers_field`, or `answers_question` with no catalog). Empty
     when there is nothing to ask; merge the answers over the first
     request's and call `plan` again."""
     by_n = {f.n: f for f in digest.fields}
@@ -1968,8 +1972,13 @@ def option_questions(digest: FormDigest, fill_plan: FillPlan,
             continue
         if pf.fact_key in SPECIAL_SOURCES or pf.quick:
             continue
-        if code_pick(pf.value, f.options) is not None \
-                or not answers_question(pf.fact_key, pf.value, f.label, f.help):
+        partial = bool(getattr(f, "label_partial", False))
+        if catalog is not None:
+            fits = catalog.answers_field(pf.fact_key, f.label, f.help, value=pf.value,
+                                         partial=partial)
+        else:
+            fits = answers_question(pf.fact_key, pf.value, f.label, f.help, partial)
+        if code_pick(pf.value, f.options) is not None or not fits:
             continue
         i = len(state["fields"])
         state["fields"].append(_compact_field(f))
@@ -1998,7 +2007,7 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
     `leave_blank` too: an unsure "nothing fits" is no answer), or a
     `consent_attest` tick under its floor (`consent_floor`); a field `quick_map`
     settles is never one. With "pick": its fact is known and has a value,
-    its value answers the field's question (`answers_question`), it has options
+    its value answers the field's question (`FactCatalog.answers_field`), it has options
     and its pick is missing or under
     `OPTION_MIN_CONF`. A confident `leave_blank` or a confident `no_match` is
     the data's own answer: that field parks as it did. A consent tick's
@@ -2025,8 +2034,9 @@ def reask_targets(digest: FormDigest, catalog: FactCatalog, answers: Mapping[str
             continue
         if not (f.options and pf.fact_key and pf.fact_key not in SPECIAL_SOURCES
                 and catalog.has(pf.fact_key)
-                and answers_question(pf.fact_key, catalog.value(pf.fact_key),
-                                     f.label, f.help)):
+                and catalog.answers_field(
+                    pf.fact_key, f.label, f.help,
+                    partial=bool(getattr(f, "label_partial", False)))):
             continue
         opt, oconf = _choice_of(answers, _pick_qid(pf))
         if opt is None or (opt != "no_match" and oconf < OPTION_MIN_CONF):
